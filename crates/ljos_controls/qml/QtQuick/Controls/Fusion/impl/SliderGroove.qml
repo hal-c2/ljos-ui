@@ -13,12 +13,14 @@ Rectangle {
     property real progress: 0
     property bool vertical: false
     property real fillOpacity: 1
-    // Whether the fill keeps the highlight when the control is not enabled.
+    // Whether the fill keeps the highlight when the control is not enabled:
+    // the active one, as qml6 shows (palette-groups.feature).
     property bool alwaysHighlighted: false
 
     readonly property color window: control.palette.window
     readonly property color button: control.palette.button
-    readonly property color highlight: control.palette.highlight
+    readonly property color highlight: alwaysHighlighted ? control.palette.active.highlight
+                                                         : control.palette.highlight
     readonly property bool lit: control.enabled || alwaysHighlighted
 
     function shade(c, scale) {

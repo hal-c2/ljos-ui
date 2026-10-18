@@ -15,6 +15,15 @@
 //! set for a control that is not enabled, and both again for a dark colour
 //! scheme (`Qt.styleHints.colorScheme`).
 //!
+//! The same holds for each colour of each of the palette's groups
+//! (`palette.disabled.button`): one set in a group of an object, or else on
+//! its palette, is that group's colour there and below. What a control
+//! reads now is its disabled group's when it is not enabled and its active
+//! group's otherwise. A group's colours are written only where they are
+//! not what the group starts out as, so that most controls never make one;
+//! a script that sets a group's colour on an object makes it listen to all
+//! of them (`palette-groups.feature`).
+//!
 //! The `locale` of a control or an `ApplicationWindow` is the nearest
 //! such ancestor's as a whole until it is given one, and the
 //! application's (`Qt.locale()`) when no ancestor has one.
@@ -67,7 +76,9 @@ use crate::text_area::TextArea;
 use crate::text_field::TextField;
 use crate::util::{check, warn};
 use crate::window::{ApplicationWindow, Window};
-use ljos_quick::palette::{FUSION_ROLES, ROLE_COUNT, ROLES, Role, role_props};
+use ljos_quick::palette::{
+    FUSION_ROLES, ROLE_COUNT, ROLES, Role, group_props, has_groups, role_props,
+};
 
 /// Which of the types that have a font or a palette an object is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -277,6 +288,11 @@ struct PlainItems {
     /// This module is writing a plain item's colours: the write is not an
     /// author's.
     handing: Cell<bool>,
+    /// The objects that listen to the colours of their groups.
+    groups_watched: RefCell<HashSet<ObjectId>>,
+    /// This module is writing a colour of a group: the write is not an
+    /// author's.
+    grouping: Cell<bool>,
 }
 
 /// The engine's application font: a graph node, so that what reads it runs
@@ -454,6 +470,70 @@ fn roles_of(kind: Kind) -> &'static [PropIndex; ROLE_COUNT] {
     }
 }
 
+/// The groups of a palette, as in [`ljos_quick::palette::GROUPS`].
+const ACTIVE: usize = 0;
+const DISABLED: usize = 2;
+
+/// The properties of each group's roles, as [`roles_of`].
+fn groups_of(kind: Kind) -> &'static [[PropIndex; ROLE_COUNT]; 3] {
+    static CONTROL: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
+    static LABEL: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
+    static WINDOW: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
+    static TEXT_FIELD: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
+    static TEXT_AREA: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
+    static ITEM: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
+    match kind {
+        Kind::Control => CONTROL.get_or_init(|| group_props(Control::static_meta())),
+        Kind::Label => LABEL.get_or_init(|| group_props(Label::static_meta())),
+        Kind::TextField => TEXT_FIELD.get_or_init(|| group_props(TextField::static_meta())),
+        Kind::TextArea => TEXT_AREA.get_or_init(|| group_props(TextArea::static_meta())),
+        Kind::Item => ITEM.get_or_init(|| group_props(Item::static_meta())),
+        Kind::Window | Kind::ApplicationWindow => {
+            WINDOW.get_or_init(|| group_props(Window::static_meta()))
+        }
+    }
+}
+
+/// The group whose colours `obj` reads now (tracked): the disabled one
+/// when it is not enabled. DECISION: never the inactive one, as Ljós does
+/// not tell its windows apart by focus.
+fn group_now(engine: &Engine, obj: ObjectId, kind: Kind) -> usize {
+    let enabled = match kind {
+        Kind::Window | Kind::ApplicationWindow | Kind::Item => true,
+        // In a scene this is false inside a disabled item too.
+        Kind::Control | Kind::Label | Kind::TextField | Kind::TextArea => {
+            engine.read(obj, Item::ENABLED.index).to_boolean()
+        }
+    };
+    if enabled { ACTIVE } else { DISABLED }
+}
+
+/// The colour an author gave role `i` of group `g` on `obj` (tracked): in
+/// the group, or on the palette, which sets it in every group. `groups`
+/// says whether `obj` has groups of its own to look in. DECISION: one set
+/// in the group wins over one set on the palette, whichever was set last.
+fn author_colour(
+    engine: &Engine,
+    obj: ObjectId,
+    kind: Kind,
+    groups: bool,
+    g: usize,
+    i: usize,
+) -> Option<Color> {
+    if groups {
+        let p = groups_of(kind)[g][i];
+        if author_set(engine, obj, p) {
+            return color_of(&engine.read(obj, p));
+        }
+    }
+    let p = roles_of(kind)[i];
+    if author_set(engine, obj, p) {
+        color_of(&engine.read(obj, p))
+    } else {
+        None
+    }
+}
+
 fn state_of(engine: &Engine, obj: ObjectId, kind: Kind) -> Option<Rc<InheritState>> {
     match kind {
         Kind::Control => engine.with::<Control, _>(obj, |c| c.inherit.clone()),
@@ -560,7 +640,12 @@ pub(crate) fn attach(
     // After that, the objects made with this one read its colours as they
     // resolve (a creation assigns before anything completes), and one
     // bump per object would resolve every palette again for each.
-    if roles.iter().any(|p| author_set(engine, obj, *p)) {
+    let grouped = has_groups(engine, obj)
+        && groups_of(kind)
+            .iter()
+            .flatten()
+            .any(|p| author_set(engine, obj, *p));
+    if grouped || roles.iter().any(|p| author_set(engine, obj, *p)) {
         // The plain items inside it take them.
         colours_changed(engine, obj);
     }
@@ -810,6 +895,8 @@ fn color_of(v: &Value) -> Option<Color> {
     }
 }
 
+/// Gives `obj` the colours nobody set on it: what it reads now, and, where
+/// it is not what its group starts out as, each of its groups' colours.
 fn resolve_palette(
     engine: &Engine,
     obj: ObjectId,
@@ -817,25 +904,61 @@ fn resolve_palette(
     state: &InheritState,
 ) -> Result<(), EngineError> {
     let in_use = in_use(engine, Which::Palette);
-    let enabled = match kind {
-        Kind::Window | Kind::ApplicationWindow | Kind::Item => true,
-        // In a scene this is false inside a disabled item too.
-        Kind::Control | Kind::Label | Kind::TextField | Kind::TextArea => {
-            engine.read(obj, Item::ENABLED.index).to_boolean()
-        }
-    };
+    let now = group_now(engine, obj, kind);
     // Tracked: every palette is resolved again when the scheme changes.
     let dark = ljos_quick::color_scheme(engine) == ColorScheme::Dark;
     let roles = style_roles(engine);
-    if !in_use && enabled && !dark && roles.is_none() && !state.palette_touched.get() {
+    if !in_use && now == ACTIVE && !dark && roles.is_none() && !state.palette_touched.get() {
         return Ok(());
     }
     let roles = roles.unwrap_or(&ROLES);
     let own = roles_of(kind);
-    let mut inherited: [Option<Color>; ROLE_COUNT] = [None; ROLE_COUNT];
-    let mine: Vec<bool> = own.iter().map(|p| author_set(engine, obj, *p)).collect();
+    let own_groups = groups_of(kind);
+    // What is read now, then each group: role `i` of slot `s` is at
+    // `s * ROLE_COUNT + i`.
+    const SLOTS: usize = 4 * ROLE_COUNT;
+    let prop = |at: usize| match at / ROLE_COUNT {
+        0 => own[at],
+        s => own_groups[s - 1][at % ROLE_COUNT],
+    };
+    let group = |at: usize| match at / ROLE_COUNT {
+        0 => now,
+        s => s - 1,
+    };
+    let mine_groups = has_groups(engine, obj);
+    let mut found: [Option<Color>; SLOTS] = [None; SLOTS];
+    let mut mine = [false; SLOTS];
+    for (at, m) in mine.iter_mut().enumerate() {
+        *m = (at < ROLE_COUNT || mine_groups) && author_set(engine, obj, prop(at));
+    }
+    let mut open = SLOTS - mine.iter().filter(|m| **m).count();
+    // What `p` gives the slots still open.
+    let mut look_in = |p: ObjectId, k: Kind, open: &mut usize| {
+        let groups = has_groups(engine, p);
+        for i in 0..ROLE_COUNT {
+            let wanting = |at: &usize| !mine[*at] && found[*at].is_none();
+            if !(0..4).map(|s| s * ROLE_COUNT + i).any(|at| wanting(&at)) {
+                continue;
+            }
+            // Without groups, one colour for every slot of the role.
+            let all = (!groups)
+                .then(|| author_colour(engine, p, k, false, ACTIVE, i))
+                .flatten();
+            for at in (0..4).map(|s| s * ROLE_COUNT + i) {
+                if mine[at] || found[at].is_some() {
+                    continue;
+                }
+                found[at] = if groups {
+                    author_colour(engine, p, k, true, group(at), i)
+                } else {
+                    all
+                };
+                *open -= usize::from(found[at].is_some());
+            }
+        }
+    };
+    look_in(obj, kind, &mut open);
     if in_use {
-        let mut open = mine.iter().filter(|m| !**m).count();
         let mut cur = above(engine, obj);
         let mut ended = false;
         // A tree deeper than this is a cycle someone built by hand.
@@ -849,13 +972,7 @@ fn resolve_palette(
                 break;
             }
             if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k)) {
-                let theirs = roles_of(k);
-                for i in 0..ROLE_COUNT {
-                    if !mine[i] && inherited[i].is_none() && author_set(engine, p, theirs[i]) {
-                        inherited[i] = color_of(&engine.read(p, theirs[i]));
-                        open -= usize::from(inherited[i].is_some());
-                    }
-                }
+                look_in(p, k, &mut open);
             }
             cur = above(engine, p);
         }
@@ -863,15 +980,18 @@ fn resolve_palette(
             warn(engine, "palette: the item tree does not end");
         }
     }
-    for i in 0..ROLE_COUNT {
-        if mine[i] {
-            continue;
-        }
-        let c = inherited[i].unwrap_or(roles[i].colour(dark, enabled));
-        let cur = engine.untrack(|| engine.read(obj, own[i]));
+    let plain = engine.extension::<PlainItems>();
+    for at in (0..SLOTS).filter(|at| !mine[*at]) {
+        let g = group(at);
+        let c = found[at].unwrap_or(roles[at % ROLE_COUNT].colour(dark, g != DISABLED));
+        let p = prop(at);
+        let cur = engine.untrack(|| engine.read(obj, p));
         if color_of(&cur) != Some(c) {
             state.palette_touched.set(true);
-            engine.write_derived(obj, own[i], Value::Color(c))?;
+            plain.grouping.set(true);
+            let done = engine.write_derived(obj, p, Value::Color(c));
+            plain.grouping.set(false);
+            done?;
         }
     }
     Ok(())
@@ -889,6 +1009,30 @@ fn hands_down(engine: &Engine, obj: ObjectId, kind: Kind) -> bool {
 pub(crate) fn register(engine: &Engine) {
     ljos_quick::palette::set_role_reset(engine, take_role_back, role_from_above);
     ljos_quick::palette::set_on_item_palette(engine, item_palette_set);
+    ljos_quick::palette::set_on_group_written(engine, group_written);
+}
+
+/// A colour is about to be set in a group of `obj` from a script: from now
+/// on, a change of any colour of its groups is news to it and to the
+/// objects inside it. Few objects ever have a group's colour set.
+fn group_written(engine: &Engine, obj: ObjectId) {
+    let plain = engine.extension::<PlainItems>();
+    if plain.grouping.get() || plain.groups_watched.borrow().contains(&obj) {
+        return;
+    }
+    let Some(kind) = kind_of(engine, obj) else {
+        return;
+    };
+    plain.groups_watched.borrow_mut().insert(obj);
+    for p in groups_of(kind).iter().flatten().copied() {
+        // It hears the write about to be stored.
+        let watched = engine.watch(obj, p, move |e, _| {
+            if author_set(e, obj, p) {
+                colours_changed(e, obj);
+            }
+        });
+        check(engine, "palette", watched.map(|_| ()));
+    }
 }
 
 /// An item completed, or was given a colour after it completed. A plain
@@ -1014,20 +1158,48 @@ fn take_from_above(engine: &Engine, item: ObjectId) {
     }
 }
 
-/// Which role of `obj`'s palette `prop` is.
-fn role_at(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Option<(Kind, usize)> {
+/// Which role of `obj`'s palette `prop` is, and in which group, if it is
+/// one of a group's.
+fn role_at(
+    engine: &Engine,
+    obj: ObjectId,
+    prop: PropIndex,
+) -> Option<(Kind, Option<usize>, usize)> {
     let kind = kind_of(engine, obj)?;
-    let i = roles_of(kind).iter().position(|p| *p == prop)?;
-    Some((kind, i))
+    if let Some(i) = roles_of(kind).iter().position(|p| *p == prop) {
+        return Some((kind, None, i));
+    }
+    groups_of(kind).iter().enumerate().find_map(|(g, props)| {
+        let i = props.iter().position(|p| *p == prop)?;
+        Some((kind, Some(g), i))
+    })
 }
 
 /// What the role is where the object has no colour of its own (tracked):
-/// the nearest ancestor's that was given one, or the style's.
+/// the nearest ancestor's that was given one, or the style's. Where the
+/// role is a group's, a colour set on the object's palette is one.
 fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
-    let Some((kind, i)) = role_at(engine, obj, prop) else {
+    let Some((kind, group, i)) = role_at(engine, obj, prop) else {
         // A popup's colours are its item's.
         return crate::popup::look_from_above(engine, obj, prop)
             .unwrap_or_else(|| engine.default_value(obj, prop));
+    };
+    let g = match group {
+        Some(g) => {
+            let p = roles_of(kind)[i];
+            if author_set(engine, obj, p) {
+                return engine.read(obj, p);
+            }
+            g
+        }
+        None => {
+            let g = group_now(engine, obj, kind);
+            let p = groups_of(kind)[g][i];
+            if has_groups(engine, obj) && author_set(engine, obj, p) {
+                return engine.read(obj, p);
+            }
+            g
+        }
     };
     if in_use(engine, Which::Palette) {
         let mut cur = above(engine, obj);
@@ -1035,23 +1207,16 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
             let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
                 break;
             };
-            if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k)) {
-                let theirs = roles_of(k)[i];
-                if author_set(engine, p, theirs) {
-                    return engine.read(p, theirs);
-                }
+            if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k))
+                && let Some(c) = author_colour(engine, p, k, has_groups(engine, p), g, i)
+            {
+                return Value::Color(c);
             }
             cur = above(engine, p);
         }
     }
-    let enabled = match kind {
-        Kind::Window | Kind::ApplicationWindow | Kind::Item => true,
-        Kind::Control | Kind::Label | Kind::TextField | Kind::TextArea => {
-            engine.read(obj, Item::ENABLED.index).to_boolean()
-        }
-    };
     let dark = ljos_quick::color_scheme(engine) == ColorScheme::Dark;
-    Value::Color(style_roles(engine).unwrap_or(&ROLES)[i].colour(dark, enabled))
+    Value::Color(style_roles(engine).unwrap_or(&ROLES)[i].colour(dark, g != DISABLED))
 }
 
 /// The colours of a style other than Basic whose module the application

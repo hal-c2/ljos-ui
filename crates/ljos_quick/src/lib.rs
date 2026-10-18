@@ -122,7 +122,7 @@ pub use log::{LogEntry, QuickLog};
 pub use metrics::{FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
 pub use paint_item::{ItemPaint, ReadPaint, register_paint_item, request_repaint};
-pub use palette::Palette;
+pub use palette::{ColorGroup, Palette};
 pub use pointer_item::{
     HoverMove, PointerItem, contains_point, follows_implicit_size, give_size, is_mirrored,
     register_hover_move, register_pointer_item,

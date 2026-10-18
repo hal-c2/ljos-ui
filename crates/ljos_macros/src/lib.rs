@@ -35,7 +35,8 @@
 //! derives `QmlObject` too), `lazy` (with `group`, on an `Option<Box<T>>`
 //! field: the group is made on its first write, and until then reads give
 //! `T::default()`, so an object that never sets the group pays for a
-//! pointer and not for the group), `list` (a QML `list<T>` property, on a
+//! pointer and not for the group; `lazy = path` names a `fn() -> T` to
+//! give instead, when two groups of a type start out differently), `list` (a QML `list<T>` property, on a
 //! `QmlList` field), `append = path` (with `list`: a
 //! `fn(&Cx, ObjectId) -> Result<(), EngineError>` every append goes
 //! through), `insert = path` (with `append`: a
@@ -276,6 +277,8 @@ struct FieldAttrs {
     group: bool,
     /// With `group`: an `Option<Box<T>>` made on the first write.
     lazy: bool,
+    /// `lazy = path`: what an unset lazy group is.
+    lazy_default: Option<syn::Path>,
     list: bool,
     append: Option<syn::Path>,
     insert: Option<syn::Path>,
@@ -365,6 +368,9 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.group = true;
             } else if p.is_ident("lazy") {
                 f.lazy = true;
+                if m.input.peek(syn::Token![=]) {
+                    f.lazy_default = Some(m.value()?.parse::<syn::Path>()?);
+                }
             } else if p.is_ident("list") {
                 f.list = true;
             } else if p.is_ident("append") {
@@ -571,19 +577,21 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                 let inner = boxed_inner(fty).ok_or_else(|| {
                     Error::new(fty.span(), "a `lazy` group is an `Option<Box<T>>` field")
                 })?;
+                let unset = match &a.lazy_default {
+                    Some(path) => self_to(path, ty),
+                    None => quote!(<#inner as ::std::default::Default>::default),
+                };
                 accessors.push(quote! {
                     fn #get(o: &dyn #e::QmlObject) -> &dyn #e::QmlObject {
                         static UNSET: ::std::sync::OnceLock<#inner> = ::std::sync::OnceLock::new();
                         match &#p::downcast::<#ty>(o).#ident {
                             ::std::option::Option::Some(g) => &**g,
-                            ::std::option::Option::None => {
-                                UNSET.get_or_init(<#inner as ::std::default::Default>::default)
-                            }
+                            ::std::option::Option::None => UNSET.get_or_init(#unset),
                         }
                     }
                     fn #get_mut(o: &mut dyn #e::QmlObject) -> &mut dyn #e::QmlObject {
                         &mut **#p::downcast_mut::<#ty>(o).#ident.get_or_insert_with(
-                            ::std::default::Default::default,
+                            || #p::Box::new(#unset()),
                         )
                     }
                 });

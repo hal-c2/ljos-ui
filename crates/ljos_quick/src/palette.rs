@@ -14,8 +14,13 @@
 //! (`ljos_controls::inherit`): it says so through [`set_role_reset`] and
 //! [`set_on_item_palette`].
 //!
-//! TODO(palette): the `active`, `inactive` and `disabled` sub-groups and
-//! a whole `Palette {}` assigned at once are not built.
+//! A palette has three colour groups ([`ColorGroup`]): what `palette.button`
+//! reads is the colour of the group the item is in now, and a colour set
+//! on the palette itself is set in each. Which group that is, and what a
+//! group's colour is where nobody set it, is the controls' business too
+//! (`features/controls/palette-groups.feature`).
+//!
+//! TODO(palette): a whole `Palette {}` assigned at once is not built.
 
 use std::cell::Cell;
 
@@ -39,6 +44,17 @@ pub type OnItemPalette = fn(&Engine, ObjectId, bool);
 struct Hooks {
     reset: Cell<Option<(ResetApply, ResetValue)>>,
     on_item: Cell<Option<OnItemPalette>>,
+    on_group: Cell<Option<OnGroupWritten>>,
+}
+
+/// Told of a colour about to be written in a group of an object that
+/// completed.
+pub type OnGroupWritten = fn(&Engine, ObjectId);
+
+/// What is told of a colour set in a group from a script, so that what
+/// the object reads now and what the items inside it read can follow.
+pub fn set_on_group_written(engine: &Engine, hook: OnGroupWritten) {
+    engine.extension::<Hooks>().on_group.set(Some(hook));
 }
 
 /// How a colour of a palette is taken back, and what it is then.
@@ -58,6 +74,18 @@ pub fn set_on_item_palette(engine: &Engine, hook: OnItemPalette) {
 pub fn has_own(engine: &Engine, item: ObjectId) -> bool {
     engine
         .with(item, |i: &crate::Item| i.palette.is_some())
+        .unwrap_or(false)
+}
+
+/// Whether a group of the item's palette was ever written: until then its
+/// groups are Basic's.
+pub fn has_groups(engine: &Engine, item: ObjectId) -> bool {
+    engine
+        .with(item, |i: &crate::Item| {
+            i.palette
+                .as_ref()
+                .is_some_and(|p| p.active.is_some() || p.inactive.is_some() || p.disabled.is_some())
+        })
         .unwrap_or(false)
 }
 
@@ -82,6 +110,19 @@ fn role_written(cx: &Cx, c: Color) -> Option<Color> {
     Some(c)
 }
 
+/// A colour's setter in a group: as [`role_written`], for an object of any
+/// type, as the group's colour may be the one it reads now.
+fn group_written(cx: &Cx, c: Color) -> Option<Color> {
+    let (engine, obj) = (cx.engine, cx.this);
+    let complete = engine
+        .flags(obj)
+        .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
+    if complete && let Some(hook) = engine.extension::<Hooks>().on_group.get() {
+        hook(engine, obj);
+    }
+    Some(c)
+}
+
 fn take_role_back(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Result<(), EngineError> {
     match engine.extension::<Hooks>().reset.get() {
         Some((apply, _)) => apply(engine, obj, prop),
@@ -94,6 +135,55 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
         Some((_, value)) => value(engine, obj, prop),
         None => engine.default_value(obj, prop),
     }
+}
+
+/// One of a palette's colour groups: `palette.active`, `.inactive` and
+/// `.disabled`, the same roles again.
+#[derive(Clone, Debug, QmlObject)]
+#[qml(name = "ColorGroup", uncreatable)]
+pub struct ColorGroup {
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub accent: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub alternate_base: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub base: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub bright_text: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub button: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub button_text: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub dark: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub highlight: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub highlighted_text: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub light: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub link: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub link_visited: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub mid: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub midlight: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub placeholder_text: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub shadow: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub text: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub tool_tip_base: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub tool_tip_text: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub window: Color,
+    #[qml(notify, reset = ROLE_RESET, write = group_written)]
+    pub window_text: Color,
 }
 
 /// The `palette` group.
@@ -142,6 +232,17 @@ pub struct Palette {
     pub window: Color,
     #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub window_text: Color,
+    /// The colours of a control in an active window; what `palette.button`
+    /// reads there unless it is not enabled. Made when first written: most
+    /// palettes never are, and read Basic's colours until then.
+    #[qml(group, lazy = active_group)]
+    pub active: Option<Box<ColorGroup>>,
+    /// In a window that is not active.
+    #[qml(group, lazy = active_group)]
+    pub inactive: Option<Box<ColorGroup>>,
+    /// Of a control that is not enabled.
+    #[qml(group, lazy = disabled_group)]
+    pub disabled: Option<Box<ColorGroup>>,
 }
 
 /// How many colour roles a palette has.
@@ -321,8 +422,54 @@ impl Default for Palette {
             tool_tip_text: c(18),
             window: c(19),
             window_text: c(20),
+            active: None,
+            inactive: None,
+            disabled: None,
         }
     }
+}
+
+impl Default for ColorGroup {
+    fn default() -> Self {
+        active_group()
+    }
+}
+
+/// Basic's colours in a light colour scheme, for a control that is enabled
+/// or not.
+fn group_of(enabled: bool) -> ColorGroup {
+    let c = |i: usize| ROLES[i].colour(false, enabled);
+    ColorGroup {
+        accent: c(0),
+        alternate_base: c(1),
+        base: c(2),
+        bright_text: c(3),
+        button: c(4),
+        button_text: c(5),
+        dark: c(6),
+        highlight: c(7),
+        highlighted_text: c(8),
+        light: c(9),
+        link: c(10),
+        link_visited: c(11),
+        mid: c(12),
+        midlight: c(13),
+        placeholder_text: c(14),
+        shadow: c(15),
+        text: c(16),
+        tool_tip_base: c(17),
+        tool_tip_text: c(18),
+        window: c(19),
+        window_text: c(20),
+    }
+}
+
+fn active_group() -> ColorGroup {
+    group_of(true)
+}
+
+fn disabled_group() -> ColorGroup {
+    group_of(false)
 }
 
 /// The properties of the roles on a type that has a `palette` group, in
@@ -331,6 +478,20 @@ pub fn role_props(meta: &MetaObject) -> [PropIndex; ROLE_COUNT] {
     std::array::from_fn(|i| {
         meta.property_index(&format!("palette.{}", ROLES[i].name))
             .expect("the type has a palette group")
+    })
+}
+
+/// A palette's colour groups, in the order of their properties.
+pub const GROUPS: [&str; 3] = ["active", "inactive", "disabled"];
+
+/// The properties of each group's roles on a type that has a `palette`
+/// group: [`GROUPS`] by [`ROLES`].
+pub fn group_props(meta: &MetaObject) -> [[PropIndex; ROLE_COUNT]; 3] {
+    std::array::from_fn(|g| {
+        std::array::from_fn(|i| {
+            meta.property_index(&format!("palette.{}.{}", GROUPS[g], ROLES[i].name))
+                .expect("the type has a palette group")
+        })
     })
 }
 
