@@ -7,9 +7,8 @@
 //! network is touched: nothing fetches until a server is picked,
 //! and this test never picks one.
 //!
-//! Two toolkit gaps stand between this backend and a whole
-//! `Main.qml` today, and the tests pin both exactly instead of
-//! hiding them:
+//! One toolkit gap stands between this backend and the compiler, and
+//! the tests pin it exactly instead of hiding it:
 //!
 //! - The front end cannot know native types yet (docs/MIGRATION.md
 //!   §6: they "do not reach the compiler's table of types"), so
@@ -18,14 +17,14 @@
 //!   Main.qml. Any other error — a missing member, a bad
 //!   binding — fails the test now; when the front end learns
 //!   registered types, those four go to zero and it still passes.
-//! - `QtQuick.Effects` (`MultiEffect`, used by ColorView.qml and
-//!   UserMenu.qml for avatar masks) is not implemented in Ljós
-//!   at all, so creating Main stops there. Until it lands, the
-//!   first screen — the real `ServerSelection.qml`, which needs
-//!   no Effects — is created with this backend wired to it the
-//!   way Main.qml:21-57 wires it, which is the object tree the
-//!   user actually sees first. When Effects arrives, the Main
-//!   creation in the first test starts succeeding and takes over.
+//!   Handlers written on those types in a file the compiler cannot
+//!   place are not wired either, so the wiring below listens
+//!   through `Connections`.
+//!
+//! The whole `Main.qml` is created (its avatar masks need
+//! `QtQuick.Effects`, which Ljós has), and the first screen, the
+//! real `ServerSelection.qml`, is also created on its own with this
+//! backend wired to it the way Main.qml:21-57 wires it.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -66,7 +65,7 @@ fn engine() -> Engine {
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     // Main.qml's own wiring of the backend (its lines 39-57),
     // alone, so the first screen can be given the very objects
-    // Main would give it while Main itself stops at Effects.
+    // Main gives it, and the session driven without the views.
     project.add(
         "ColorPalette/Backend",
         r#"
@@ -74,7 +73,17 @@ import QtQuick
 RestService {
     PaginatedResource { path: "users" }
     PaginatedResource { path: "unknown" }
-    BasicLogin { loginPath: "login"; logoutPath: "logout" }
+    BasicLogin {
+        id: login
+        loginPath: "login"; logoutPath: "logout"
+        // Who is logged in when loggedIn turns true, as ColorView's
+        // avatar binding sees it.
+        property string userWhenIn: ""
+    }
+    Connections {
+        target: login
+        function onLoggedInChanged() { if (login.loggedIn) login.userWhenIn = login.user }
+    }
 }
 "#,
     );
@@ -183,19 +192,15 @@ fn assert_backend(e: &Engine, roots: &[ObjectId]) {
 }
 
 #[test]
-fn main_qml_creates_or_stops_only_at_the_missing_effects_module() {
-    if !corpus_present("main_qml_creates_or_stops_only_at_the_missing_effects_module") {
+fn main_qml_creates_with_its_backend() {
+    if !corpus_present("main_qml_creates_with_its_backend") {
         return;
     }
     let e = engine();
-    match e.create_from_url("ColorPalette/Main", None, Vec::new()) {
-        Ok(root) => assert_backend(&e, &[root]),
-        Err(err) => assert!(
-            err.to_string()
-                .contains("module \"QtQuick.Effects\" is not installed"),
-            "Main stopped somewhere else: {err}"
-        ),
-    }
+    let root = e
+        .create_from_url("ColorPalette/Main", None, Vec::new())
+        .unwrap_or_else(|err| panic!("Main: {err}"));
+    assert_backend(&e, &[root]);
 }
 
 #[test]
@@ -417,6 +422,13 @@ fn login_and_writes_travel_over_the_request_seam() {
     assert_eq!(
         e.read_by_name(session, "user").to_js_string().as_str(),
         "ada@example.org"
+    );
+    assert_eq!(
+        e.read_by_name(session, "userWhenIn")
+            .to_js_string()
+            .as_str(),
+        "ada@example.org",
+        "loggedIn turned true before user was set"
     );
     assert_eq!(
         server.sent_to("https://reqres.in/api/login"),

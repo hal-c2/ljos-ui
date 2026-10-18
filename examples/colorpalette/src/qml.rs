@@ -405,7 +405,11 @@ impl BasicLogin {
     }
 }
 
-/// The properties follow the session, wherever it moved.
+/// The properties follow the session, wherever it moved. `user` is
+/// whoever is logged in whenever `loggedIn` reads true: set before it
+/// on the way in and after it on the way out, so a binding that looks
+/// the user up on `loggedIn` (ColorView.qml's avatar) never runs with
+/// nobody.
 fn session_moved(cx: &Cx) {
     let (logged_in, user) = cx
         .with::<BasicLogin, _>(|l| {
@@ -413,8 +417,13 @@ fn session_moved(cx: &Cx) {
             (s.logged_in(), s.user().to_owned())
         })
         .unwrap_or_default();
-    let _ = cx.set(BasicLogin::LOGGED_IN, logged_in);
-    let _ = cx.set(BasicLogin::USER, user);
+    if logged_in {
+        let _ = cx.set(BasicLogin::USER, user);
+        let _ = cx.set(BasicLogin::LOGGED_IN, true);
+    } else {
+        let _ = cx.set(BasicLogin::LOGGED_IN, false);
+        let _ = cx.set(BasicLogin::USER, user);
+    }
 }
 
 /// A JSON row as QML reads it: primitives as themselves, an array
