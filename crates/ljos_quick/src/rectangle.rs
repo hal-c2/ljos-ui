@@ -1,7 +1,8 @@
 //! `Rectangle`.
 
 use ljos_engine::{
-    Color, Cx, Engine, EngineError, LogLevel, ObjectId, QmlObject, Value, WriteKind, qml_impl,
+    Color, Cx, Engine, EngineError, LogLevel, ObjectFlags, ObjectId, QmlObject, Value, WriteKind,
+    qml_impl,
 };
 use ljos_render::{Border as RenderBorder, DisplayListBuilder, DrawOp, Paint, Rgba, kurbo};
 
@@ -32,7 +33,7 @@ pub struct Rectangle {
     /// nothing. Qt has it as a script value without a change signal: it
     /// reads `undefined` until it is assigned, and `null` after `null`.
     /// Qt's presets (`Gradient.NightFade`, `"NightFade"`) are not built.
-    #[qml(reset)]
+    #[qml(reset, write = gradient_written)]
     pub gradient: Value,
 }
 
@@ -80,15 +81,12 @@ impl Rectangle {
             follow_radius(e, obj)?;
         }
         // What is not a gradient is refused when it is assigned, as Qt
-        // does, and not each time the rectangle is painted.
+        // does, and not each time the rectangle is painted: what was given
+        // before now, here, and later writes by `gradient_written`.
         let given = cx
             .engine
             .untrack(|| cx.engine.read(obj, Rectangle::GRADIENT.index));
         refuse_what_is_no_gradient(cx.engine, obj, &given);
-        cx.engine
-            .watch(obj, Rectangle::GRADIENT.index, move |e, v| {
-                refuse_what_is_no_gradient(e, obj, v);
-            })?;
         Ok(())
     }
 }
@@ -118,13 +116,51 @@ fn follow_radius(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     Ok(())
 }
 
-/// Qt takes a `Gradient`, the number or the name of a preset, or nothing;
-/// anything else it warns about and then reads as `undefined`. Ljós has no
-/// presets, so no number and no name is one.
+/// `gradient` written to a complete rectangle. A filter rather than a
+/// watcher, which would be a node and an effect on every rectangle.
+fn gradient_written(cx: &Cx, v: Value) -> Option<Value> {
+    let complete = cx
+        .engine
+        .flags(cx.this)
+        .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
+    match complete.then(|| no_gradient(cx.engine, &v)).flatten() {
+        Some(why) => {
+            warn_no_gradient(cx.engine, &why);
+            Some(Value::Undefined)
+        }
+        None => Some(v),
+    }
+}
+
+/// What was given before the rectangle was complete, refused as
+/// [`gradient_written`] refuses a later write.
 fn refuse_what_is_no_gradient(engine: &Engine, rect: ObjectId, v: &Value) {
-    let why = match v {
-        Value::Undefined | Value::Null => return,
-        Value::Object(o) if !engine.is_alive(*o) || as_gradient(engine, v).is_some() => return,
+    let Some(why) = no_gradient(engine, v) else {
+        return;
+    };
+    warn_no_gradient(engine, &why);
+    // Not an assignment: a binding that gave the value stays, as in Qt.
+    let _ = engine.write_internal(
+        rect,
+        Rectangle::GRADIENT.index,
+        Value::Undefined,
+        WriteKind::Host,
+    );
+}
+
+fn warn_no_gradient(engine: &Engine, why: &str) {
+    engine.log(LogLevel::Warning, "qml", format!("QML Rectangle: {why}"));
+}
+
+/// Why `v` is no gradient. Qt takes a `Gradient`, the number or the name
+/// of a preset, or nothing; anything else it warns about and then reads as
+/// `undefined`. Ljós has no presets, so no number and no name is one.
+fn no_gradient(engine: &Engine, v: &Value) -> Option<String> {
+    Some(match v {
+        Value::Undefined | Value::Null => return None,
+        Value::Object(o) if !engine.is_alive(*o) || as_gradient(engine, v).is_some() => {
+            return None;
+        }
         Value::Object(o) => {
             let ty = engine.meta_of(*o).map(|m| m.name.to_string());
             format!(
@@ -137,15 +173,7 @@ fn refuse_what_is_no_gradient(engine: &Engine, rect: ObjectId, v: &Value) {
         Value::Real(n) => format!("No such gradient preset '{}'", n.trunc()),
         Value::String(name) => format!("No such gradient preset '{name}'"),
         _ => "Unknown gradient type. Expected int, string, or Gradient".to_owned(),
-    };
-    engine.log(LogLevel::Warning, "qml", format!("QML Rectangle: {why}"));
-    // Not an assignment: a binding that gave the value stays, as in Qt.
-    let _ = engine.write_internal(
-        rect,
-        Rectangle::GRADIENT.index,
-        Value::Undefined,
-        WriteKind::Host,
-    );
+    })
 }
 
 /// The `border` group of [`Rectangle`].

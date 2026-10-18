@@ -5,9 +5,9 @@ use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 
 use ljos_engine::{
-    Atom, ConvertError, Cx, Engine, EngineError, EnumValue, LogLevel, ObjectId, Point, PropIndex,
-    QmlList, QmlObject, QmlType, QmlValue, QtObject, Rect, Reset, TypeTag, Value, WriteKind,
-    qml_impl,
+    Atom, ConvertError, Cx, Engine, EngineError, EnumValue, LogLevel, ObjectFlags, ObjectId, Point,
+    PropIndex, QmlList, QmlObject, QmlType, QmlValue, QtObject, Rect, Reset, TypeTag, Value,
+    WriteKind, qml_impl,
 };
 use ljos_render::kurbo::{self, Affine};
 
@@ -298,7 +298,7 @@ pub struct Anchors {
     pub fill: Option<ObjectId>,
     #[qml(notify, reset)]
     pub center_in: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, write = margins_written)]
     pub margins: f64,
     /// The four side margins follow `margins` until they are set.
     #[qml(notify, reset = Reset::Follow(all_margins))]
@@ -532,6 +532,21 @@ pub(crate) fn is_unset_tracked(engine: &Engine, obj: ObjectId, p: PropIndex) -> 
         engine.provenance_tracked(obj, p),
         Some(ljos_engine::Provenance::Default) | None
     )
+}
+
+/// `anchors.margins` written to a complete item: the sides start to follow
+/// it. A filter rather than a watcher, which would be a node and an effect
+/// on every item, for a property nearly none sets. What it binds hears this
+/// write when it is stored.
+fn margins_written(cx: &Cx, m: f64) -> Option<f64> {
+    let (engine, obj) = (cx.engine, cx.this);
+    let complete = engine
+        .flags(obj)
+        .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
+    if complete && let Err(err) = follow_margins(engine, obj) {
+        engine.log(LogLevel::Warning, "qml", format!("anchors.margins: {err}"));
+    }
+    Some(m)
 }
 
 /// Makes every side margin that has no value of its own read
@@ -778,15 +793,9 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
         // Assigning `width` replaces this binding, as in Qt.
         let unset = |p| is_unset(engine, obj, p);
         // Most items never set `margins`, so the four side bindings are
-        // only made once it has a value; one watcher waits for that.
-        let margins = AnchorProps::get().margins;
-        if unset(margins) {
-            engine.watch(obj, margins, move |e, _| {
-                if let Err(err) = follow_margins(e, obj) {
-                    e.log(LogLevel::Warning, "qml", format!("anchors.margins: {err}"));
-                }
-            })?;
-        } else {
+        // only made once it has a value: here, or when it is first written
+        // ([`margins_written`]).
+        if !unset(AnchorProps::get().margins) {
             follow_margins(engine, obj)?;
         }
         for size in [Item::WIDTH.index, Item::HEIGHT.index] {
