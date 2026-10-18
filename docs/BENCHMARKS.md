@@ -1888,3 +1888,45 @@ On llvmpipe Ljós is below qml6 in every app, in PSS and in anon PSS (rectangles
 - **Startup**: the fallback for a glyph no font in the family has ("⅟x" in calqlatr) runs
   fontconfig's sort, 4–7 ms. The QML module files are still parsed when the engine starts, not
   compiled ahead.
+
+### Ljós's `dist` binary against Qt, at equal window sizes (2026-10-18)
+
+`BENCH_PROFILE=dist BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench calqlatr clocks samegame
+todolist rssnews --profile desktop --settle 1 --idle 3 --load 5`: the binary that is handed out
+(lto fat, one codegen unit) against `qml6` 6.11.2 with the Basic style, both Wayland clients of
+the sandbox's headless sway, medians of 3 runs, load average 3.2–6.1. Ljós at 009ed006, todolist's
+driven rows again at 77d6a7af.
+
+| Ljós/Qt, geometric mean | Before (42c1ac11) | After |
+|---|---:|---:|
+| first frame | ×0.29 | ×0.23 |
+| CPU to first frame | ×0.59 | ×0.56 |
+| first frame that answers input | | ×0.28 |
+| peak memory while starting | | ×0.57 |
+| settled memory (cgroup) | | ×0.50 |
+| settled private PSS | | ×0.46 |
+| settled PSS | ×0.59 | ×0.60 |
+| idle CPU | | ×0.55 |
+| CPU while driven | ×0.60 | ×0.38 |
+
+| Driven | Ljós | Qt |
+|---|---:|---:|
+| samegame CPU, before (800×600 against 320×480) | 49.9 % | 29.7 % |
+| samegame CPU, after (both 320×480) | 105 % | 249 % |
+| samegame frames a second, before / after | 38.1 / 57.3 | 59.9 / 62.1 |
+| todolist median input-to-frame latency, before / after | 1 507 / 231 ms | 149 / 220 ms |
+| todolist 95th percentile latency, before / after | 2 468 / 472 ms | 410 / 467 ms |
+
+- **Equal windows.** Until this run Ljós was given the gallery's capture size and Qt took the
+  root's own, so clocks, rssnews and samegame drew bigger windows on Ljós; samegame's board was
+  800×600 against 320×480, which made it look 1.7 times Qt's CPU when it is 0.42 times. Both now
+  open at the root's size. Stray samegame processes from a diagnosis ran during one of the
+  intermediate runs, not this one.
+- **todolist** waited 1.5 s per click. The sandbox's seat has a pointer and no keyboard, and winit
+  hears of focus only from the keyboard, so the window was never active and a press could not
+  give the field the focus. A press now activates a window until a keyboard is heard of. Qt still
+  shows more frames (7.2 a second against 2.3) for the same latency; Ljós draws only the blink.
+
+**What is left.** samegame's slowest idle frame interval (286 ms against 16 ms) and the 95th
+percentile frame interval while driven in calqlatr and rssnews (48 and 32 ms against 16 ms). rssnews
+idles at 1.45 times Qt's CPU.
