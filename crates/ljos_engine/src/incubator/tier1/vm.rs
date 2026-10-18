@@ -13,12 +13,12 @@ use std::rc::{Rc, Weak};
 use ljos_ir::{Arg, Binding, BindingKind, ExprId, Op, Tier1};
 use smallvec::SmallVec;
 
-use super::{MethodFn, Program, builtins, has_js, normal, ops, passed, signed_zero};
+use super::{Key, Looked, MethodFn, Program, builtins, has_js, normal, ops, passed, signed_zero};
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{MethodIndex, ObjectId, PropIndex};
 use crate::incubator::Instance;
-use crate::meta::PropertyFlags;
+use crate::meta::{MetaObject, PropertyFlags};
 use crate::value::{Color, Value};
 
 /// What a program came to.
@@ -43,7 +43,8 @@ pub(super) struct Run<'a> {
 
 /// What a member of an object is, found while the store is borrowed and
 /// read after.
-enum Member {
+#[derive(Clone, Copy)]
+pub(super) enum Member {
     Read(PropIndex),
     /// The member of a grouped property (`border.width`), which is a
     /// property of the object under both names.
@@ -187,7 +188,7 @@ impl Run<'_> {
                     let Value::Object(o) = r[usize::from(obj)] else {
                         return None;
                     };
-                    self.guard(o, self.name(name), expr)?;
+                    self.guard(o, name, expr)?;
                 }
                 Op::Target {
                     dst,
@@ -198,7 +199,7 @@ impl Run<'_> {
                     let Value::Object(o) = r[usize::from(obj)] else {
                         return None;
                     };
-                    let (target, group) = self.target(o, self.name(name))?;
+                    let (target, group) = self.target(o, name)?;
                     r[usize::from(dst)] = Value::Object(target);
                     r[usize::from(grouped)] = Value::Bool(group);
                 }
@@ -240,7 +241,7 @@ impl Run<'_> {
                         return None;
                     };
                     let from = usize::from(base);
-                    let v = self.invoke(o, self.name(name), &r[from..from + usize::from(count)])?;
+                    let v = self.invoke(o, name, &r[from..from + usize::from(count)])?;
                     r[usize::from(dst)] = v;
                 }
                 Op::Return { src } => {
@@ -356,30 +357,20 @@ impl Run<'_> {
         )
     }
 
-    /// What the member `name` of the object `o` is. `None` for what only
-    /// JavaScript answers: a method, a signal, a name the object lacks.
-    /// For a grouped property `pair` is the name of the property its
-    /// member is (`border.width`).
-    fn member(&self, o: ObjectId, name: &str, pair: Option<&str>) -> Option<Member> {
+    /// What the member named `name` of the object `o` is. `None` for what
+    /// only JavaScript answers: a method, a signal, a name the object
+    /// lacks. For a grouped property `pair` is the name of the property
+    /// its member is (`border.width`).
+    fn member(&self, o: ObjectId, name: u16, pair: Option<&str>) -> Option<Member> {
         let store = self.e.inner.store.borrow();
         let meta = &store.objects.get(o)?.meta;
-        if meta.method_index(name).is_some() || name == "toString" || name == "destroy" {
-            return None;
+        let key = Key::Member(pair.is_some());
+        if let Some(Looked::Member(m)) = self.p.looked(name, meta, key) {
+            return m;
         }
-        let Some(p) = meta.property_index(name) else {
-            return (name == "parent").then_some(Member::Parent);
-        };
-        if !meta.property(p)?.flags.contains(PropertyFlags::GROUP) {
-            return Some(Member::Read(p));
-        }
-        let Some(pair) = pair else {
-            return Some(Member::Group);
-        };
-        let leaf = meta.property_index(pair)?;
-        if meta.property(leaf)?.flags.contains(PropertyFlags::GROUP) {
-            return None;
-        }
-        Some(Member::Leaf(leaf))
+        let m = member_of(meta, self.name(name), pair);
+        self.p.keep(name, meta, key, Looked::Member(m));
+        m
     }
 
     /// A property of a live object, read as the JS host reads it.
@@ -413,7 +404,7 @@ impl Run<'_> {
                     let pair = (i + 1 < names.len())
                         .then(|| self.p.pairs.get(path + i).map(|s| &**s))
                         .flatten();
-                    match self.member(*o, name, pair)? {
+                    match self.member(*o, (path + i) as u16, pair)? {
                         Member::Read(p) => self.read(*o, p)?,
                         Member::Leaf(p) => {
                             // Two names of the path.
@@ -441,7 +432,7 @@ impl Run<'_> {
 
     /// The object a write to `o.name.member` goes to, and whether `name`
     /// is a group of `o` (then the object is `o` itself).
-    fn target(&self, o: ObjectId, name: &str) -> Option<(ObjectId, bool)> {
+    fn target(&self, o: ObjectId, name: u16) -> Option<(ObjectId, bool)> {
         match self.member(o, name, None)? {
             Member::Group => Some((o, true)),
             Member::Read(p) | Member::Leaf(p) => match self.e.try_read(o, p) {
@@ -465,17 +456,19 @@ impl Run<'_> {
         (!meta.property(p)?.flags.contains(PropertyFlags::GROUP)).then_some(p)
     }
 
-    /// The function of a script `o` has by `name`, as it is installed.
-    fn script_method(&self, o: ObjectId, name: &str) -> Option<(MethodIndex, Rc<MethodFn>)> {
+    /// The function of a script `o` has by the name `name`, as it is
+    /// installed.
+    fn script_method(&self, o: ObjectId, name: u16) -> Option<(MethodIndex, Rc<MethodFn>)> {
         let store = self.e.inner.store.borrow();
         let h = store.objects.get(o)?;
-        if h.meta.property_index(name).is_some() {
-            return None;
-        }
-        let m = h.meta.method_index(name)?;
-        if h.meta.method(m)?.thunk.is_some() {
-            return None;
-        }
+        let m = match self.p.looked(name, &h.meta, Key::Method) {
+            Some(Looked::Method(m)) => m,
+            _ => {
+                let m = script_method_of(&h.meta, self.name(name));
+                self.p.keep(name, &h.meta, Key::Method, Looked::Method(m));
+                m
+            }
+        }?;
         let f = h
             .ext
             .as_ref()?
@@ -490,7 +483,7 @@ impl Run<'_> {
     /// that writes nothing: the program's result. It reads what the JS
     /// function would read, in its order, so stopping in it is stopping
     /// here.
-    fn invoke(&self, o: ObjectId, name: &str, args: &[Value]) -> Option<Value> {
+    fn invoke(&self, o: ObjectId, name: u16, args: &[Value]) -> Option<Value> {
         /// A function that calls itself goes on until JavaScript says so.
         const MAX_DEPTH: u8 = 8;
         if args.iter().any(has_js) {
@@ -535,7 +528,7 @@ impl Run<'_> {
 
     /// Whether the function `o` has by `name` is `expr` of this file, the
     /// one whose body the program has in place of the call.
-    fn guard(&self, o: ObjectId, name: &str, expr: ExprId) -> Option<()> {
+    fn guard(&self, o: ObjectId, name: u16, expr: ExprId) -> Option<()> {
         let (m, f) = self.script_method(o, name)?;
         let methods = self.e.inner.tier1.methods.borrow();
         let rec = methods.get(&(o, m))?;
@@ -549,6 +542,38 @@ impl Run<'_> {
             && std::ptr::eq(rec.inst, callee);
         same.then_some(())
     }
+}
+
+/// What [`Run::member`] finds of `name` on objects of the type `meta`
+/// describes.
+fn member_of(meta: &MetaObject, name: &str, pair: Option<&str>) -> Option<Member> {
+    if meta.method_index(name).is_some() || name == "toString" || name == "destroy" {
+        return None;
+    }
+    let Some(p) = meta.property_index(name) else {
+        return (name == "parent").then_some(Member::Parent);
+    };
+    if !meta.property(p)?.flags.contains(PropertyFlags::GROUP) {
+        return Some(Member::Read(p));
+    }
+    let Some(pair) = pair else {
+        return Some(Member::Group);
+    };
+    let leaf = meta.property_index(pair)?;
+    if meta.property(leaf)?.flags.contains(PropertyFlags::GROUP) {
+        return None;
+    }
+    Some(Member::Leaf(leaf))
+}
+
+/// The method of a script that objects of the type `meta` describes have
+/// by `name`: not a property's name, nor a native method.
+fn script_method_of(meta: &MetaObject, name: &str) -> Option<MethodIndex> {
+    if meta.property_index(name).is_some() {
+        return None;
+    }
+    let m = meta.method_index(name)?;
+    meta.method(m)?.thunk.is_none().then_some(m)
 }
 
 /// `obj[index]` for an array or a string and a number.

@@ -39,12 +39,14 @@
 //! script that assigns `Math.max` or `qsTr` is not followed.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 
 use ljos_ir::{Binding, CompiledFile, Const, ExprId, Op, Reg, Tier1};
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::WriteKind;
 use crate::atom::Atom;
@@ -53,6 +55,7 @@ use crate::error::EngineError;
 use crate::ids::{MethodIndex, ObjectId, PropIndex};
 use crate::incubator::Instance;
 use crate::loader::LoadedFile;
+use crate::meta::MetaRef;
 use crate::types::TypeTag;
 use crate::value::Value;
 
@@ -130,7 +133,7 @@ pub(crate) struct State {
     stats: Cell<Tier1Stats>,
     /// The functions programs have inlined, by the object and method they
     /// were installed as: what [`Op::Guard`] asks.
-    methods: RefCell<HashMap<(ObjectId, MethodIndex), MethodRecord>>,
+    methods: RefCell<FxHashMap<(ObjectId, MethodIndex), MethodRecord>>,
     /// The size of `methods` at which records of dead closures are next
     /// dropped.
     sweep_at: Cell<usize>,
@@ -149,7 +152,7 @@ impl Default for State {
             check: Cell::new(env.check.unwrap_or(cfg!(debug_assertions))),
             skip: RefCell::new(Vec::new()),
             stats: Cell::new(Tier1Stats::default()),
-            methods: RefCell::new(HashMap::new()),
+            methods: RefCell::new(FxHashMap::default()),
             sweep_at: Cell::new(64),
             spy: RefCell::new(None),
             spying: Cell::new(false),
@@ -273,7 +276,32 @@ pub(crate) struct Program {
     pure: bool,
     oks: Cell<u32>,
     bails: Cell<u32>,
+    /// Per name, what it was found to be on the last types it was looked
+    /// up on: a lookup by name costs more than the read it is for.
+    looked: Box<[RefCell<Looks>]>,
 }
+
+/// The types one name was last looked up on, and what it was on each: a
+/// name is mostly read off one or two types.
+type Looks = SmallVec<[(MetaRef, Key, Looked); 2]>;
+
+/// What a name was looked up as.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Key {
+    /// A member, with or without a property it is grouped with.
+    Member(bool),
+    Method,
+}
+
+#[derive(Clone, Copy)]
+enum Looked {
+    Member(Option<vm::Member>),
+    Method(Option<MethodIndex>),
+}
+
+/// The types a name is remembered for: a program is shared by the
+/// instances of its file, which a derived type's objects are too.
+const LOOKED_TYPES: usize = 4;
 
 impl Program {
     /// `None` when the bytecode is not sound (a register past the frame, a
@@ -394,6 +422,7 @@ impl Program {
             pure: !t.writes(),
             oks: Cell::new(0),
             bails: Cell::new(0),
+            looked: t.names.iter().map(|_| RefCell::default()).collect(),
         })
     }
 
@@ -405,6 +434,25 @@ impl Program {
             .binary_search_by_key(&(at as u32), |(pc, _)| *pc)
             .ok()?;
         Some(&self.sets[i].1)
+    }
+
+    /// What the name `name` was found to be on objects of the type `meta`.
+    fn looked(&self, name: u16, meta: &MetaRef, key: Key) -> Option<Looked> {
+        let seen = self.looked.get(usize::from(name))?.borrow();
+        seen.iter()
+            .find(|(m, k, _)| *k == key && MetaRef::ptr_eq(m, meta))
+            .map(|(_, _, l)| *l)
+    }
+
+    fn keep(&self, name: u16, meta: &MetaRef, key: Key, looked: Looked) {
+        let Some(seen) = self.looked.get(usize::from(name)) else {
+            return;
+        };
+        let mut seen = seen.borrow_mut();
+        if seen.len() >= LOOKED_TYPES {
+            seen.remove(0);
+        }
+        seen.push((meta.clone(), key, looked));
     }
 
     fn qt_key(&self, key: u16) -> Option<f64> {
