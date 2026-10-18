@@ -169,6 +169,8 @@ struct Run {
     picture: Option<ObjectId>,
     /// The sheets taken in when the sequence started, kept while it is.
     sheets: Vec<ImageHandle>,
+    /// The sheet the frame shown waits for, decoding aside.
+    awaited: Option<String>,
     /// What the weights and variations are chosen with.
     rng: u64,
 }
@@ -184,6 +186,7 @@ impl Default for Run {
             jump: None,
             picture: None,
             sheets: Vec::new(),
+            awaited: None,
             rng: 0x5eed_5eed_5eed_5eed,
         }
     }
@@ -572,10 +575,20 @@ fn show(e: &Engine, me: ObjectId) {
         url: url.clone(),
         request: Default::default(),
     };
-    let sheet = ImageStore::of(e)
-        .load_now(&key, true)
-        .map(|img| (f64::from(img.width()), f64::from(img.height())))
-        .ok();
+    let store = ImageStore::of(e);
+    let sheet = match store.cached(&key) {
+        Some(img) => Some(img),
+        // A picture with a header decodes aside: the frame is shown when
+        // it is in, so a sequence made mid-game costs its frame no decode.
+        None if store.header_size(&key).is_some() => {
+            await_sheet(e, me, &store, url);
+            return;
+        }
+        // A drawing has no header to wait on; it is made here.
+        None => store.load_now(&key, true).ok(),
+    }
+    .map(|img| (f64::from(img.width()), f64::from(img.height())));
+    with_run(e, me, |r| r.awaited = None);
     let count = int(e, sprite, Sprite::FRAME_COUNT.index).max(1);
     let frame = if read(e, sprite, Sprite::REVERSE.index).to_boolean() {
         count - 1 - frame
@@ -615,6 +628,31 @@ fn show(e: &Engine, me: ObjectId) {
         );
         if let Some(clip) = clip {
             w(Image::SOURCE_CLIP_RECT.index, Value::Rect(clip.into()));
+        }
+    });
+}
+
+/// Shows the frame again once the sheet at `url` is decoded. A decode
+/// under way for it, the one the start took in, is shared, not repeated.
+fn await_sheet(e: &Engine, me: ObjectId, store: &ImageStore, url: String) {
+    let asked = with_run(e, me, |r| {
+        let asked = r.awaited.as_deref() == Some(url.as_str());
+        r.awaited = Some(url.clone());
+        asked
+    });
+    if asked != Some(false) {
+        return;
+    }
+    store.load(e, &url.clone(), move |e, got| {
+        let Ok(sheet) = got else {
+            return;
+        };
+        let current = with_run(e, me, |r| {
+            r.sheets.push(sheet);
+            r.awaited.as_deref() == Some(url.as_str())
+        });
+        if current == Some(true) {
+            show(e, me);
         }
     });
 }
