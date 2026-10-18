@@ -23,6 +23,9 @@ Feature: A pinned wall clock
         property string stamp: ""
         property double ms: 0
         property string fixed: new Date(2020, 0, 2, 3, 4, 5).toISOString()
+        property bool isDate: new Date() instanceof Date && new Date().constructor === Date
+        property string later: new (class Later extends Date {})().toISOString()
+        property bool called: Date() === new Date().toString()
         function sample() {
           stamp = new Date().toISOString()
           ms = Date.now()
@@ -45,3 +48,12 @@ Feature: A pinned wall clock
 
   Scenario: A Date made from arguments is not the clock's business
     Then the property "fixed" of "root" is not "2026-10-11T17:57:09.000Z"
+
+  Scenario: A Date of the pinned time is a Date
+    Then the property "isDate" of "root" is true
+
+  Scenario: A subclass of Date made without arguments is the pinned time
+    Then the property "later" of "root" is "2026-10-11T17:57:09.000Z"
+
+  Scenario: Date called as a function is the pinned time as text
+    Then the property "called" of "root" is true

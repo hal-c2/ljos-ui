@@ -630,7 +630,7 @@ pub(crate) struct TimerState {
     wake: Option<Rc<dyn Fn()>>,
     /// The pinned wall clock: a UNIX epoch in milliseconds and the value
     /// of `clock` when it was pinned.
-    wall: Option<(f64, Time)>,
+    pub(crate) wall: Option<(f64, Time)>,
 }
 
 impl Default for TimerState {
@@ -798,6 +798,10 @@ impl Engine {
     pub fn set_wall_clock_origin(&self, epoch_ms: Option<f64>) {
         let at = self.now();
         self.inner.timers.borrow_mut().wall = epoch_ms.map(|ms| (ms, at));
+        let js = self.inner.js.borrow().clone();
+        if let Some(js) = js {
+            self.tell_scripts_wall_clock(&js);
+        }
     }
 
     /// The pinned wall clock now, in milliseconds since the UNIX epoch;

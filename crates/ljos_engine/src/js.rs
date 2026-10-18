@@ -1430,6 +1430,19 @@ impl Engine {
         }
     }
 
+    /// Tells the prelude's `Date` whether the wall clock is pinned.
+    pub(crate) fn tell_scripts_wall_clock(&self, js: &JsState) {
+        let pinned = self.inner.timers.borrow().wall.is_some();
+        let src = if pinned {
+            "__ljos_wallClock.pinned = true"
+        } else {
+            "__ljos_wallClock.pinned = false"
+        };
+        if let Err(e) = js.host.eval_script("wall clock", src) {
+            self.log(LogLevel::Warning, "js", format!("wall clock: {e}"));
+        }
+    }
+
     fn install_globals(&self, js: &JsState) -> Result<(), EngineError> {
         let weak = Rc::downgrade(&self.inner);
         let w = weak.clone();
@@ -1626,6 +1639,7 @@ impl Engine {
         // The value types first: the prelude puts their makers on `Qt`.
         value_faces::define(&js.host).map_err(err)?;
         js.host.eval_script("prelude", PRELUDE).map_err(err)?;
+        self.tell_scripts_wall_clock(js);
         js.host
             .eval_script("colors", value_faces::COLORS)
             .map_err(err)?;
@@ -1822,31 +1836,55 @@ const PRELUDE: &str = r##"
 
   // `new Date()`, `Date()` and `Date.now()` read the host's wall clock
   // when it is pinned; everything else about Date is the engine's own.
-  // A Proxy keeps `instanceof Date`, the statics and the prototype.
-  const wallNow = g.__ljos_wallNow;
+  // A plain function in front of the engine's Date shares its prototype,
+  // so `instanceof Date` and the methods hold. A Proxy did that too, but
+  // a trap per `new Date` and per `Date.now` read cost a clock's tick
+  // more than the rest of it.
+  // Whether the clock is pinned: the engine sets it, so that a Date of
+  // the machine's time costs no call out.
+  const wall = { pinned: false };
+  Object.defineProperty(g, "__ljos_wallClock", { value: wall });
+  const hostNow = g.__ljos_wallNow;
+  const wallNow = () => (wall.pinned ? hostNow() : undefined);
   const RealDate = g.Date;
-  g.Date = new Proxy(RealDate, {
-    construct(target, args, newTarget) {
-      if (args.length === 0) {
-        const ms = wallNow();
-        if (ms !== undefined) return Reflect.construct(target, [ms], newTarget);
-      }
-      return Reflect.construct(target, args, newTarget);
-    },
-    apply(target, thisArg, args) {
+  const Date = function Date(year, month) {
+    if (new.target === undefined) {
       const ms = wallNow();
-      return ms === undefined ? target() : new target(ms).toString();
-    },
-    get(target, key, receiver) {
-      if (key === "now") {
-        return function now() {
-          const ms = wallNow();
-          return ms === undefined ? target.now() : Math.floor(ms);
-        };
+      return ms === undefined ? RealDate() : new RealDate(ms).toString();
+    }
+    if (new.target !== Date) {
+      const ms = arguments.length === 0 ? wallNow() : undefined;
+      return Reflect.construct(RealDate, ms === undefined ? arguments : [ms], new.target);
+    }
+    switch (arguments.length) {
+      case 0: {
+        if (!wall.pinned) return new RealDate();
+        const ms = hostNow();
+        return ms === undefined ? new RealDate() : new RealDate(ms);
       }
-      return Reflect.get(target, key, receiver);
-    },
+      case 1: return new RealDate(year);
+      case 2: return new RealDate(year, month);
+      default: return Reflect.construct(RealDate, arguments, Date);
+    }
+  };
+  for (const key of Reflect.ownKeys(RealDate)) {
+    if (key !== "prototype" && key !== "name" && key !== "length")
+      Object.defineProperty(Date, key, Object.getOwnPropertyDescriptor(RealDate, key));
+  }
+  Object.defineProperty(Date, "length", { value: 7, configurable: true });
+  Object.defineProperty(Date, "prototype", { value: RealDate.prototype });
+  Object.defineProperty(RealDate.prototype, "constructor", {
+    value: Date, writable: true, configurable: true,
   });
+  const realNow = RealDate.now;
+  Object.defineProperty(Date, "now", {
+    value: function now() {
+      const ms = wallNow();
+      return ms === undefined ? realNow() : Math.floor(ms);
+    },
+    writable: true, configurable: true,
+  });
+  Object.defineProperty(g, "Date", { value: Date, writable: true, configurable: true });
 
   // A grouped property (`rect.border`): accessors over the flat
   // `border.width` names.
