@@ -224,6 +224,9 @@ struct Slot {
     held: Option<Instant>,
     /// The frame part of `held`: what a pass asked for at once waits for.
     paced: Option<Instant>,
+    /// When the last drawn pass held the next until: the display's
+    /// rhythm, which the next keeps if it began on time.
+    beat: Option<Instant>,
     /// When the earliest repaint the next pass answers was due, for the
     /// inspector.
     #[cfg(feature = "mcp")]
@@ -281,6 +284,7 @@ impl Slot {
             undrawn: 0,
             held: None,
             paced: None,
+            beat: None,
             #[cfg(feature = "mcp")]
             asked: None,
         }
@@ -331,6 +335,7 @@ impl Slot {
         self.undrawn = 0;
         self.held = None;
         self.paced = None;
+        self.beat = None;
     }
 
     /// A pass changed nothing to draw; the scene wants the next in
@@ -381,12 +386,36 @@ impl Slot {
     /// and the passes keep its phase: counted from a frame that began
     /// before, each pass started as long after the display's refresh as
     /// that one had, and those that then missed the next refresh were
-    /// shown two apart.
+    /// shown two apart. A pass that began a little after it was let go
+    /// (the loop wakes late, the platform hands the redraw over late) does
+    /// not push the next back by as much: counted from each one's start,
+    /// the passes came a frame and a millisecond apart on a display that
+    /// draws every frame, and one in fifty missed its refresh.
     fn drawn(&mut self, began: Instant, now: Instant) {
         self.undrawn = 0;
-        let due = began + self.frame_interval();
+        let interval = self.frame_hold();
+        let from = match self.beat {
+            Some(beat) if began >= beat && began < beat + interval / 2 => beat,
+            _ => began,
+        };
+        let due = from + interval;
+        self.beat = Some(due);
         self.held = (due > now).then_some(due);
         self.paced = self.held;
+    }
+
+    /// How long a drawn pass holds the next. A display that does not say
+    /// how often it draws may draw more often than the 60 Hz assumed for
+    /// it: the sandbox's headless one says 0 and draws at about 62, and a
+    /// pass held a 60 Hz frame missed one refresh in thirty. Held three
+    /// quarters of that, the platform's own pacing (the frame callback, a
+    /// swap that waits) decides, and a presenter that returns at once
+    /// still does not draw a frame more than four times in three.
+    fn frame_hold(&self) -> Duration {
+        match self.refresh.filter(|hz| *hz > 0.0) {
+            Some(hz) => Duration::from_secs_f64(1.0 / hz),
+            None => Duration::from_secs_f64(0.75 / 60.0),
+        }
     }
 
     /// How long a frame is shown on the window's display.
@@ -2112,5 +2141,36 @@ mod tests {
         assert_eq!(slot.held, Some(t + ms(111)));
         slot.drawn(t + ms(111), t + ms(120));
         assert_eq!(slot.held, Some(t + ms(131)));
+    }
+
+    // The sandbox's headless display says no refresh and draws at about
+    // 62 Hz: a drawn pass does not hold the next past its next refresh.
+    #[test]
+    fn a_display_that_does_not_say_its_refresh_is_not_held_to_60_hz() {
+        let t = Instant::now();
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.drawn(t, t + Duration::from_millis(3));
+        assert_eq!(slot.held, Some(t + Duration::from_secs_f64(0.75 / 60.0)));
+        assert!(slot.held < Some(t + Duration::from_secs_f64(1.0 / 62.0)));
+    }
+
+    // The loop let each pass go a millisecond after it was due: the passes
+    // keep the display's rhythm, and do not slip a millisecond a frame
+    // until one misses its refresh.
+    #[test]
+    fn passes_that_begin_a_little_late_keep_the_rhythm() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.drawn(t, t + ms(5));
+        assert_eq!(slot.held, Some(t + ms(20)));
+        slot.drawn(t + ms(21), t + ms(26));
+        assert_eq!(slot.held, Some(t + ms(40)));
+        slot.drawn(t + ms(41), t + ms(46));
+        assert_eq!(slot.held, Some(t + ms(60)));
+        // One that ran early, asked for at once, starts a rhythm of its own.
+        slot.drawn(t + ms(55), t + ms(57));
+        assert_eq!(slot.held, Some(t + ms(75)));
     }
 }
