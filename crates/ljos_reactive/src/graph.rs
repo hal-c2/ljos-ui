@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, VecDeque};
 use std::fmt;
 
 use slotmap::SlotMap;
@@ -318,14 +318,14 @@ impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
         if i.queues.is_empty() {
             i.queues.push(Queue::new());
         }
-        for Reverse(entry) in left {
+        for entry in left.drain() {
             let n = entry.2;
             if let Some(node) = i.nodes.get_mut(n)
                 && node.queued
                 && node.queued_level as usize == below + 1
             {
                 node.queued_level = below as u32;
-                i.queues[below].push(Reverse(entry));
+                i.queues[below].push(entry);
             }
         }
     }
@@ -1745,7 +1745,7 @@ impl<V: Clone + 'static> Graph<V> {
     fn flush(&self) {
         {
             let mut i = self.inner.borrow_mut();
-            if i.batch_depth > 0 || i.queues.last().is_none_or(BinaryHeap::is_empty) {
+            if i.batch_depth > 0 || i.queues.last().is_none_or(Queue::is_empty) {
                 return;
             }
             if i.flush_depth == 0 {
@@ -2147,7 +2147,54 @@ fn drop_source_slot<V>(nodes: &mut SlotMap<NodeId, Node<V>>, obs: NodeId, at: u3
     Some(removed)
 }
 
-type Queue = BinaryHeap<Reverse<(u32, u64, NodeId)>>;
+type Entry = (u32, u64, NodeId);
+
+/// The roots waiting on one flush level, smallest (height, creation) first.
+///
+/// They nearly always come in that order: the effects of a frame's writes
+/// are at one height and were made in the order they are written in. Those
+/// queue up in `run` and leave from its front at no cost; a heap of the
+/// same, sifted on every pop, was most of what queuing an effect cost. One
+/// that comes out of order goes to `rest`, and the smaller of the two
+/// fronts leaves first.
+#[derive(Default)]
+struct Queue {
+    /// Ascending.
+    run: VecDeque<Entry>,
+    rest: BinaryHeap<Reverse<Entry>>,
+}
+
+impl Queue {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.run.is_empty() && self.rest.is_empty()
+    }
+
+    fn push(&mut self, e: Entry) {
+        if self.run.back().is_none_or(|last| *last <= e) {
+            self.run.push_back(e);
+        } else {
+            self.rest.push(Reverse(e));
+        }
+    }
+
+    fn pop(&mut self) -> Option<Entry> {
+        match (self.run.front(), self.rest.peek()) {
+            (Some(a), Some(Reverse(b))) if b < a => self.rest.pop().map(|Reverse(e)| e),
+            (Some(_), _) => self.run.pop_front(),
+            (None, _) => self.rest.pop().map(|Reverse(e)| e),
+        }
+    }
+
+    fn drain(self) -> impl Iterator<Item = Entry> {
+        self.run
+            .into_iter()
+            .chain(self.rest.into_iter().map(|Reverse(e)| e))
+    }
+}
 
 /// How deep flushes nest before an effect's writes flush only what they
 /// queued (`Inner::queues`).
@@ -2163,7 +2210,7 @@ fn enqueue<V>(queues: &mut [Queue], n: NodeId, node: &mut Node<V>) {
     }
     node.queued = true;
     node.queued_level = top as u32;
-    queues[top].push(Reverse((node.height, node.seq, n)));
+    queues[top].push((node.height, node.seq, n));
 }
 
 impl<V: Clone + 'static> Inner<V> {
@@ -2216,7 +2263,7 @@ impl<V: Clone + 'static> Inner<V> {
     /// per-flush re-run cap.
     fn next_to_run(&mut self) -> Option<NodeId> {
         let level = self.queues.len() - 1;
-        while let Some(Reverse((_, _, n))) = self.queues[level].pop() {
+        while let Some((_, _, n)) = self.queues[level].pop() {
             let Some(node) = self.nodes.get_mut(n) else {
                 continue;
             };
@@ -2662,5 +2709,54 @@ impl<V: Clone + 'static> Inner<V> {
         } else if let Some(p) = parent.and_then(|p| self.scopes.get_mut(p)) {
             p.last_child = prev;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use slotmap::KeyData;
+
+    use super::*;
+
+    #[test]
+    fn the_queue_gives_the_smallest_first_however_it_was_filled() {
+        let n = NodeId::from(KeyData::from_ffi(1));
+        let mut q = Queue::new();
+        // In order, then out of it, then a tie with the front.
+        for e in [
+            (0, 1),
+            (0, 2),
+            (1, 5),
+            (0, 3),
+            (2, 0),
+            (0, 0),
+            (1, 5),
+            (3, 9),
+            (1, 1),
+        ] {
+            q.push((e.0, e.1, n));
+        }
+        let mut out = Vec::new();
+        while let Some((h, s, _)) = q.pop() {
+            out.push((h, s));
+            if out.len() == 4 {
+                q.push((0, 4, n));
+            }
+        }
+        let mut want = vec![
+            (0, 0),
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (0, 4),
+            (1, 1),
+            (1, 5),
+            (1, 5),
+            (2, 0),
+            (3, 9),
+        ];
+        want.sort_unstable();
+        assert_eq!(out, want);
+        assert!(q.is_empty());
     }
 }
