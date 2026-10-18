@@ -541,6 +541,10 @@ struct Desktop<M> {
     root_closed: bool,
     next_key: u64,
     last_root: Option<ObjectId>,
+    /// The size the first root that is a plain item said for itself, with
+    /// [`ShellConfig::root_sized`]; read once, so that a reload does not
+    /// undo what the user made of the window.
+    root_size: Option<[f32; 2]>,
     /// Windows can be drawn into.
     live: bool,
     app_state: AppState,
@@ -599,6 +603,7 @@ impl<M: Send + 'static> Desktop<M> {
             root_closed: false,
             next_key: 1,
             last_root: None,
+            root_size: None,
             live: false,
             app_state: AppState::Inactive,
             refused: Vec::new(),
@@ -622,7 +627,7 @@ impl<M: Send + 'static> Desktop<M> {
 
     /// The window the shell gives a root that is a plain item.
     fn root_spec(&self) -> WindowSpec {
-        let [w, h] = self.config.size;
+        let [w, h] = self.root_size.unwrap_or(self.config.size);
         WindowSpec {
             title: self.config.title.clone(),
             size: [f64::from(w), f64::from(h)],
@@ -675,6 +680,19 @@ impl<M: Send + 'static> Desktop<M> {
         }
         self.last_root = root;
         let root_window = root.filter(|r| sys.spec(engine, *r).is_some());
+        if self.config.root_sized
+            && self.root_size.is_none()
+            && let Some(root) = root.filter(|_| root_window.is_none())
+        {
+            // Before the view makes the root as large as the window.
+            let side = |name, or| {
+                let n = engine.read_by_name(root, name).to_number();
+                #[allow(clippy::cast_possible_truncation)]
+                if n >= 1.0 { n.ceil() as f32 } else { or }
+            };
+            let [w, h] = self.config.size;
+            self.root_size = Some([side("width", w), side("height", h)]);
+        }
         if self.slots[0].window != root_window || self.slots[0].applied.is_none() {
             let slot = &mut self.slots[0];
             slot.window = root_window;

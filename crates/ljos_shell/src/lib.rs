@@ -65,6 +65,9 @@ pub struct ShellConfig {
     pub title: String,
     /// Initial inner size in logical pixels.
     pub size: [f32; 2],
+    /// A root that is a plain item opens a window of its own width and
+    /// height, as `qml6` does; `size` is for a side it leaves at 0.
+    pub root_sized: bool,
     pub min_size: Option<[f32; 2]>,
     /// Painted behind a root that is a plain item (QQuickWindow's default
     /// is white). A root `Window` paints its own `color`.
@@ -96,6 +99,7 @@ impl Default for ShellConfig {
         Self {
             title: "Ljós".to_owned(),
             size: [800.0, 600.0],
+            root_sized: false,
             min_size: None,
             background: Color::WHITE,
             inbox_capacity: 1024,
@@ -116,6 +120,12 @@ impl ShellConfig {
 
     pub fn with_size(mut self, width: f32, height: f32) -> Self {
         self.size = [width, height];
+        self
+    }
+
+    /// See [`ShellConfig::root_sized`].
+    pub fn root_sized(mut self) -> Self {
+        self.root_sized = true;
         self
     }
 

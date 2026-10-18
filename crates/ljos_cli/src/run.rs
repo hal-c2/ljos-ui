@@ -32,9 +32,11 @@ pub struct Run {
     /// application, keeping its state.
     #[arg(long)]
     watch: bool,
-    /// The window's size in logical pixels.
-    #[arg(long, value_parser = parse_size, default_value = "800x600", value_name = "WxH")]
-    size: (f32, f32),
+    /// The window's size in logical pixels. Without it, a root that is a
+    /// plain item opens at its own size, as `qml6` opens it, and 800x600
+    /// for a side it leaves at 0.
+    #[arg(long, value_parser = parse_size, value_name = "WxH")]
+    size: Option<(f32, f32)>,
     /// Serve the running application to MCP clients on this machine, so
     /// that an agent can look at it and, if you say so, act on it. Each
     /// capability is granted by name: `--mcp=inspect,input,mutate,eval`.
@@ -320,7 +322,11 @@ impl Run {
             Some(project) => entry_in(&self.file, project)?,
             None => entry(&self.file)?,
         };
-        let config = ShellConfig::new(format!("{key}.qml")).with_size(self.size.0, self.size.1);
+        let config = ShellConfig::new(format!("{key}.qml"));
+        let config = match self.size {
+            Some((w, h)) => config.with_size(w, h),
+            None => config.root_sized(),
+        };
         let tools = Tools {
             top: self.top,
             inspector: match self.mcp {

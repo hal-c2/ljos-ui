@@ -23,6 +23,9 @@ use ljos_engine::{Engine, LogLevel, MapSource};
 use qml_front::TypeOracle;
 use serde_json::{Value, json};
 
+/// The size of a root that says none, in logical pixels.
+const DEFAULT_SIZE: (u32, u32) = (800, 600);
+
 #[derive(Args)]
 pub struct Render {
     /// The project directory: every `.qml` file below it is part of it.
@@ -30,9 +33,11 @@ pub struct Render {
     /// The entry file, relative to the directory.
     #[arg(long, default_value = "Main.qml")]
     entry: String,
-    /// The window's size in logical pixels.
-    #[arg(long, value_parser = parse_size, default_value = "800x600", value_name = "WxH")]
-    size: (u32, u32),
+    /// The window's size in logical pixels. Without it, the root's own
+    /// size, as `qml6` opens a window, and 800x600 for a side it leaves
+    /// at 0.
+    #[arg(long, value_parser = parse_size, value_name = "WxH")]
+    size: Option<(u32, u32)>,
     /// Milliseconds of application time to let pass before the picture.
     #[arg(long, default_value_t = 1500, value_name = "MS")]
     settle: u64,
@@ -190,10 +195,16 @@ impl Render {
         // The reference picture of a window is of its items: the window's
         // own colour is not in it, and where no item paints the picture is
         // transparent (corpus/harness/reference.qml).
-        let picture = ljos::render::Picture::new(self.size.0, self.size.1)
-            .settle(self.settle)
-            .on_scene_message(move |text| sink.add(text))
-            .without_window_colour();
+        let (width, height) = self.size.unwrap_or(DEFAULT_SIZE);
+        let picture = ljos::render::Picture::new(width, height);
+        let picture = if self.size.is_none() {
+            picture.root_sized()
+        } else {
+            picture
+        }
+        .settle(self.settle)
+        .on_scene_message(move |text| sink.add(text))
+        .without_window_colour();
         picture.install(&engine);
         engine.set_wall_clock_origin(self.now);
         let sink = said.clone();
@@ -387,7 +398,7 @@ mod tests {
         let r = Render {
             dir: dir.to_owned(),
             entry: entry.to_owned(),
-            size: (40, 30),
+            size: Some((40, 30)),
             settle: 100,
             out: out.clone(),
             example: None,
@@ -543,7 +554,7 @@ mod tests {
         let r = Render {
             dir: dir.path().to_owned(),
             entry: "Main.qml".to_owned(),
-            size: (40, 30),
+            size: Some((40, 30)),
             settle: 100,
             out: out.clone(),
             example: None,
@@ -566,7 +577,7 @@ mod tests {
         let r = Render {
             dir: dir.path().to_owned(),
             entry: "Main.qml".to_owned(),
-            size: (40, 30),
+            size: Some((40, 30)),
             settle: 100,
             out: out.clone(),
             example: Some("no-such-example".to_owned()),

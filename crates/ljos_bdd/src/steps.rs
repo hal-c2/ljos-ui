@@ -2656,6 +2656,12 @@ fn json_file_has(w: &mut LjosWorld, name: String, pointer: String, json: String)
     author.json_file_has(files, &name, &pointer, &want)
 }
 
+#[then(regex = r#"^the picture "([^"]+\.png)" is (\d+) by (\d+) pixels$"#)]
+fn picture_file_is(w: &mut LjosWorld, name: String, width: u32, height: u32) -> StepResult {
+    let (author, files) = w.author();
+    author.picture_is(files, &name, width, height)
+}
+
 #[then("the command prints:")]
 fn command_prints(w: &mut LjosWorld, step: &Step) -> StepResult {
     let want = author_doc(step)?;

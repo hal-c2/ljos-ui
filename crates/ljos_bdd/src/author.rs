@@ -655,6 +655,33 @@ impl Slot {
         }
     }
 
+    /// Checks the size of a PNG of the project, as a command wrote it.
+    ///
+    /// # Errors
+    /// The file is not a PNG, or is of another size.
+    pub fn picture_is(
+        &mut self,
+        files: &Files,
+        name: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<(), String> {
+        let path = self.rig(files)?.path(name)?;
+        let file = fs::File::open(&path).map_err(|e| format!("cannot read {name:?}: {e}"))?;
+        let reader = png::Decoder::new(std::io::BufReader::new(file))
+            .read_info()
+            .map_err(|e| format!("{name:?} is not a PNG: {e}"))?;
+        let info = reader.info();
+        if (info.width, info.height) == (width, height) {
+            Ok(())
+        } else {
+            Err(format!(
+                "{name:?} is {} by {} pixels, not {width} by {height}",
+                info.width, info.height
+            ))
+        }
+    }
+
     /// Checks the text at `pointer` of the last answer against a doc string.
     ///
     /// # Errors

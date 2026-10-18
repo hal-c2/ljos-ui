@@ -87,6 +87,7 @@ pub struct Picture {
     clock: Arc<VirtualClock>,
     scene_messages: Option<SceneMessages>,
     window_colour: bool,
+    root_sized: bool,
 }
 
 impl std::fmt::Debug for Picture {
@@ -108,6 +109,7 @@ impl Picture {
             clock: Arc::new(VirtualClock::new()),
             scene_messages: None,
             window_colour: true,
+            root_sized: false,
         }
     }
 
@@ -138,6 +140,15 @@ impl Picture {
         self
     }
 
+    /// Takes each side the root says, its own width and height or else
+    /// its implicit ones, as `qml6` opens a window as large as its root;
+    /// the picture's size is for a side the root leaves at 0.
+    #[must_use]
+    pub fn root_sized(mut self) -> Self {
+        self.root_sized = true;
+        self
+    }
+
     /// Runs `engine` on this picture's virtual clock from now on, which
     /// stands still until [`png`](Self::png) lets time pass. Install it
     /// before the root is made for the root's timers and animations to
@@ -154,7 +165,17 @@ impl Picture {
     /// window that leaves its size unsaid is as large as the picture.
     /// `Err` when the scene does not come to rest or cannot be drawn.
     pub fn png(&self, engine: &Engine, root: ObjectId) -> Result<Vec<u8>, String> {
-        let (width, height) = self.size;
+        let (mut width, mut height) = self.size;
+        if self.root_sized {
+            // Before the scene lays the root out at its own size.
+            let side = |name, or| {
+                let n = engine.read_by_name(root, name).to_number();
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                if n >= 1.0 { n.ceil() as u32 } else { or }
+            };
+            width = side("width", width);
+            height = side("height", height);
+        }
         let mut scene = QuickScene::new(kurbo::Size::new(f64::from(width), f64::from(height)));
         if let Some(f) = &self.scene_messages {
             let f = Rc::clone(f);
