@@ -972,6 +972,15 @@ impl Engine {
         self.inner.reload.forwards.borrow().len()
     }
 
+    /// Whether `obj` is there to make objects (a `Component`) or to give a
+    /// model its rows (a `ListElement`), holding no state of its own.
+    fn reload_template(&self, obj: ObjectId) -> bool {
+        self.meta_of(obj).is_some_and(|m| {
+            m.inherits(<crate::qtqml::Component as QmlType>::static_meta())
+                || m.inherits(<crate::listmodel::ListElement as QmlType>::static_meta())
+        })
+    }
+
     /// Scripts let go of `objs`: a replaced one among them is reached no
     /// more. Every full reload replaces every object, so the forwards
     /// would otherwise grow by a tree each time.
@@ -1480,6 +1489,10 @@ impl Engine {
                     None if reset => {
                         p.remounted.insert(*id);
                     }
+                    // Often gone once it was used (a style's part made,
+                    // a model's rows read): nothing in the old tree to go
+                    // on for, and nothing lost.
+                    _ if self.reload_template(*id) => {}
                     _ => p.fresh += 1,
                 }
             }

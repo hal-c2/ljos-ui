@@ -976,3 +976,36 @@ fn reloads_forget_the_replaced_objects_no_script_holds() {
     assert_eq!(r.h.engine.reload_forward_count(), before);
     assert_eq!(r.num("box", "taps"), 12.0);
 }
+
+const WITH_TEMPLATES: &str = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+  width: 10
+  Component { id: chip; objectName: "chip"; Item {} }
+  ListModel {
+    id: rows
+    ListElement { name: "a" }
+    ListElement { name: "b" }
+  }
+  function spend() { rows.clear() }
+}
+"#;
+
+#[test]
+fn a_component_and_list_elements_made_again_are_not_new() {
+    let mut r = rig(&[("Main", WITH_TEMPLATES)]);
+    // What they were made for is done (a control made its part, a script
+    // emptied the model), and they are gone.
+    r.h.engine.destroy_now(r.find("chip"));
+    r.call("root", "spend");
+    assert!(r.h.engine.collect_garbage());
+    let done = r
+        .edit(
+            "Main",
+            &WITH_TEMPLATES.replace("width: 10", "width: 3 * 10"),
+        )
+        .unwrap();
+    assert_ne!(done.roots[0].0, done.roots[0].1, "made again");
+    assert_eq!(done.fresh, 0);
+}
