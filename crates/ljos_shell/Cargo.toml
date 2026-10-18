@@ -133,3 +133,7 @@ workspace = true
 [[example]]
 name = "reload_profile"
 required-features = ["dev"]
+
+[[example]]
+name = "edit_fuzz"
+required-features = ["dev"]
