@@ -41,7 +41,8 @@ pub use config::{JsConfig, Slice};
 pub use fault::{JsFault, SourceMapper, SourceText};
 pub use host::{DirectCall, DirectParam, FnId, HostFn, JsHost, MemoryStats, ModuleHandle, Scope};
 pub use objects::{
-    HostError, HostObjects, HostTypeId, MethodDef, MethodFace, PropDef, SignalDef, TypeDef,
+    HostError, HostObjects, HostTypeId, MethodDef, MethodFace, PlainValue, PropDef, SignalDef,
+    TypeDef,
 };
 pub use value::{JsArg, JsOut, JsRef, JsValue, ValueKind};
 

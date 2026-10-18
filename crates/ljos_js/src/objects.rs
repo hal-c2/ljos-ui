@@ -82,6 +82,14 @@ impl HostError {
     }
 }
 
+/// A value [`HostObjects::get_plain`] and [`HostObjects::set_plain`]
+/// pass: one QuickJS holds with no reference.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlainValue {
+    Number(f64),
+    Bool(bool),
+}
+
 /// What a script reads for a method of an object
 /// ([`HostObjects::method_face`]).
 #[derive(Debug)]
@@ -112,6 +120,13 @@ pub trait HostObjects {
 
     fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsOut, HostError>;
 
+    /// [`get`](Self::get) for a property that holds a number or a bool,
+    /// when the host can tell without the script's scope; `None` reads it
+    /// with [`get`](Self::get). It runs no script.
+    fn get_plain(&self, _obj: u64, _prop: u32) -> Option<PlainValue> {
+        None
+    }
+
     fn set<'js>(
         &self,
         scope: &Scope<'js>,
@@ -119,6 +134,18 @@ pub trait HostObjects {
         prop: u32,
         value: JsArg,
     ) -> Result<(), HostError>;
+
+    /// [`set`](Self::set) of a number or a bool, when the host can do it
+    /// without the script's scope; `None` writes it with
+    /// [`set`](Self::set) instead, as though this had not been called.
+    fn set_plain(
+        &self,
+        _obj: u64,
+        _prop: u32,
+        _value: PlainValue,
+    ) -> Option<Result<(), HostError>> {
+        None
+    }
 
     fn call<'js>(
         &self,

@@ -22,7 +22,8 @@ pub use direct::{DirectCall, DirectParam};
 
 use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
-    MethodDef, MethodFace, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef, ValueKind,
+    MethodDef, MethodFace, PlainValue, PropDef, SignalDef, Slice, SourceMapper, SourceText,
+    TypeDef, ValueKind,
     objects::{HostWrapper, new_wrapper, register_wrapper_class, wrapper_id},
     value::{Pending, WeakRef},
 };
@@ -1921,10 +1922,14 @@ unsafe extern "C" fn raw_get(
     // SAFETY: QuickJS calls it on a live context with the data it was made
     // with.
     unsafe {
+        let prop = prop_id(data);
+        match raw_plain(ctx, this, |host, id| host.get_plain(id, prop)) {
+            Some(PlainValue::Number(n)) => return raw_number(n),
+            Some(PlainValue::Bool(b)) => return raw_bool(b),
+            _ => {}
+        }
         raw_accessor(ctx, this, |scope, host, id| {
-            let out = host
-                .get(scope, id, prop_id(data))
-                .map_err(|e| e.into_js(&scope.ctx));
+            let out = host.get(scope, id, prop).map_err(|e| e.into_js(&scope.ctx));
             raw_out(scope, &scope.back(out)?)
         })
     }
@@ -1943,6 +1948,33 @@ unsafe extern "C" fn raw_set(
     // the data it was made with.
     unsafe {
         let value = if argc > 0 { *argv } else { qjs::JS_UNDEFINED };
+        let prop = prop_id(data);
+        let plain = match raw_in(value) {
+            Some(JsValue::Number(n)) => Some(PlainValue::Number(n)),
+            Some(JsValue::Bool(b)) => Some(PlainValue::Bool(b)),
+            _ => None,
+        };
+        let done = plain.and_then(|v| raw_plain(ctx, this, |host, id| host.set_plain(id, prop, v)));
+        match done {
+            // What the write set off may have been stopped: the scope says so.
+            Some(Ok(())) => {
+                if !raw_state(ctx).is_some_and(|st| st.stopped.get()) {
+                    return qjs::JS_UNDEFINED;
+                }
+                return raw_accessor(ctx, this, |scope, _, _| {
+                    scope.back(Ok(()))?;
+                    Ok(qjs::JS_UNDEFINED)
+                });
+            }
+            Some(Err(e)) => {
+                let mut e = Some(e);
+                return raw_accessor(ctx, this, |scope, _, _| {
+                    let e = e.take().expect("called once");
+                    scope.back(Err(e.into_js(&scope.ctx)))
+                });
+            }
+            _ => {}
+        }
         raw_accessor(ctx, this, |scope, host, id| {
             let v = match raw_in(value) {
                 Some(v) => v,
@@ -1952,11 +1984,50 @@ unsafe extern "C" fn raw_set(
                 }
             };
             scope.back(
-                host.set(scope, id, prop_id(data), v)
+                host.set(scope, id, prop, v)
                     .map_err(|e| e.into_js(&scope.ctx)),
             )?;
             Ok(qjs::JS_UNDEFINED)
         })
+    }
+}
+
+/// Runs `f` for the wrapper `this` is and its host, without the scope
+/// [`raw_accessor`] makes: `None` when there is none, or when `f`
+/// panicked, which the long way then meets again and reports.
+unsafe fn raw_plain<T>(
+    raw: *mut rquickjs::qjs::JSContext,
+    this: rquickjs::qjs::JSValue,
+    f: impl FnOnce(&dyn HostObjects, u64) -> Option<T>,
+) -> Option<T> {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: QuickJS calls with a live context.
+        let state = unsafe { raw_state(raw) }?;
+        // SAFETY: the class is the runtime's.
+        let id = unsafe { wrapper_id(state.wrapper_class, this) }?;
+        let host = state.host.borrow();
+        f(&**host.as_ref()?, id)
+    }))
+    .ok()
+    .flatten()
+}
+
+#[allow(clippy::float_cmp)]
+fn raw_number(n: f64) -> rquickjs::qjs::JSValue {
+    use rquickjs::qjs;
+    // As `Value::new_number` makes it.
+    if n == f64::from(n as i32) {
+        qjs::JS_MKVAL(qjs::JS_TAG_INT, n as i32)
+    } else {
+        qjs::JS_NewFloat64(n)
+    }
+}
+
+fn raw_bool(b: bool) -> rquickjs::qjs::JSValue {
+    if b {
+        rquickjs::qjs::JS_TRUE
+    } else {
+        rquickjs::qjs::JS_FALSE
     }
 }
 
@@ -1967,17 +2038,8 @@ fn raw_out(scope: &Scope<'_>, v: &JsValue) -> rquickjs::Result<rquickjs::qjs::JS
     Ok(match *v {
         JsValue::Undefined => qjs::JS_UNDEFINED,
         JsValue::Null => qjs::JS_NULL,
-        JsValue::Bool(b) => {
-            if b {
-                qjs::JS_TRUE
-            } else {
-                qjs::JS_FALSE
-            }
-        }
-        // As `Value::new_number` makes it.
-        #[allow(clippy::float_cmp)]
-        JsValue::Number(n) if n == f64::from(n as i32) => qjs::JS_MKVAL(qjs::JS_TAG_INT, n as i32),
-        JsValue::Number(n) => qjs::JS_NewFloat64(n),
+        JsValue::Bool(b) => raw_bool(b),
+        JsValue::Number(n) => raw_number(n),
         _ => owned_raw(scope.to_value(v)?),
     })
 }

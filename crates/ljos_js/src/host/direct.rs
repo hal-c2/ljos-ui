@@ -116,7 +116,13 @@ unsafe extern "C" fn raw_direct(
             return given;
         }
         let mut told_with = [thrown, given];
-        let told = qjs::JS_Call(ctx, slot(RETELL), qjs::JS_UNDEFINED, 2, told_with.as_mut_ptr());
+        let told = qjs::JS_Call(
+            ctx,
+            slot(RETELL),
+            qjs::JS_UNDEFINED,
+            2,
+            told_with.as_mut_ptr(),
+        );
         free_all(ctx, &told_with);
         if qjs::JS_IsException(told) {
             return told;
@@ -152,9 +158,8 @@ impl<'js> Scope<'js> {
             ));
         };
         let count = |n: usize| {
-            i32::try_from(n).map_err(|_| {
-                rquickjs::Exception::throw_range(&self.ctx, "too many parameters")
-            })
+            i32::try_from(n)
+                .map_err(|_| rquickjs::Exception::throw_range(&self.ctx, "too many parameters"))
         };
         let (params, takes) = (count(call.params.len())?, count(call.takes.len())?);
         let mut data: Vec<Value<'js>> = Vec::with_capacity(HEAD + 2 * call.params.len());

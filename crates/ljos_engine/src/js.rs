@@ -730,6 +730,41 @@ impl HostObjects for EngineHost {
         }
     }
 
+    fn get_plain(&self, obj: u64, prop: u32) -> Option<ljos_js::PlainValue> {
+        let engine = self.engine().ok()?;
+        match engine.plain_script_read(u64_to_obj(obj), PropIndex(prop))? {
+            Value::Int(i) => Some(ljos_js::PlainValue::Number(f64::from(i))),
+            Value::Real(r) => Some(ljos_js::PlainValue::Number(r)),
+            Value::Bool(b) => Some(ljos_js::PlainValue::Bool(b)),
+            _ => None,
+        }
+    }
+
+    fn set_plain(
+        &self,
+        obj: u64,
+        prop: u32,
+        value: ljos_js::PlainValue,
+    ) -> Option<Result<(), HostError>> {
+        let engine = self.engine().ok()?;
+        let v = match value {
+            ljos_js::PlainValue::Number(n) => Value::Real(n),
+            ljos_js::PlainValue::Bool(b) => Value::Bool(b),
+        };
+        let (id, p) = (u64_to_obj(obj), PropIndex(prop));
+        if engine.tier1_spying() {
+            return None;
+        }
+        match engine.plain_script_write(id, p, &v) {
+            Ok(true) => {
+                engine.noted_plain_write(id, p);
+                Some(Ok(()))
+            }
+            Ok(false) => None,
+            Err(e) => Some(Err(host_err(e))),
+        }
+    }
+
     fn set<'js>(
         &self,
         scope: &Scope<'js>,
@@ -752,12 +787,7 @@ impl HostObjects for EngineHost {
             && !engine.tier1_spying()
             && engine.plain_script_write(id, p, &v).map_err(host_err)?
         {
-            if let Some(js) = &*engine.inner.js.borrow() {
-                js.plain_writes.set(js.plain_writes.get() + 1);
-            }
-            if engine.inner.reload.tracking.get() {
-                engine.reload_note_assigned(id, p);
-            }
+            engine.noted_plain_write(id, p);
             return Ok(());
         }
         let (id, prop) = forwarded_prop(&engine, id, prop);
@@ -2121,5 +2151,17 @@ pub(crate) fn color_from_js(v: &JsValue) -> Color {
         JsValue::Color([r, g, b, a]) => Color::rgba16(r, g, b, a),
         JsValue::InvalidColor([r, g, b, a]) => Color::rgba16(r, g, b, a).invalidated(),
         _ => Color::TRANSPARENT,
+    }
+}
+
+impl Engine {
+    /// What a script's write that went the plain way leaves to be noted.
+    fn noted_plain_write(&self, id: ObjectId, p: PropIndex) {
+        if let Some(js) = &*self.inner.js.borrow() {
+            js.plain_writes.set(js.plain_writes.get() + 1);
+        }
+        if self.inner.reload.tracking.get() {
+            self.reload_note_assigned(id, p);
+        }
     }
 }

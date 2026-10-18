@@ -26,8 +26,8 @@ use rustc_hash::FxHashMap;
 
 use crate::engine::{Engine, Tracking};
 use crate::ids::{ObjectId, PropIndex};
-use crate::object::ObjectFlags;
 use crate::meta::MetaObject;
+use crate::object::ObjectFlags;
 use crate::value::Value;
 
 /// How a value reached an [`Interceptor`].
