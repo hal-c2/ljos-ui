@@ -170,6 +170,31 @@ Item {
 }
 
 #[test]
+fn stopping_the_next_timer_wakes_the_host_and_another_does_not() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  Timer { id: soon; interval: 100; running: true }
+  Timer { id: late; interval: 900; running: true }
+  function stopLate() { late.stop() }
+  function stopSoon() { soon.stop() }
+}
+"#,
+    );
+    let woke = std::rc::Rc::new(std::cell::Cell::new(0));
+    let w = woke.clone();
+    h.engine.set_timer_wake(move || w.set(w.get() + 1));
+    // Its deadline was not the one the host waits for.
+    h.engine.invoke_by_name(root, "stopLate", &[]).unwrap();
+    assert_eq!(woke.get(), 0);
+    // The host waits for this one: it is told, and asks again.
+    h.engine.invoke_by_name(root, "stopSoon", &[]).unwrap();
+    assert_eq!(woke.get(), 1);
+    assert_eq!(h.engine.next_timer_deadline(), None);
+}
+
+#[test]
 fn call_later_runs_once_after_the_current_work() {
     let h = engine();
     let root = h.load(

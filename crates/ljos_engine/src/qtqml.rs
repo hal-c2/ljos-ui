@@ -1017,8 +1017,9 @@ impl Engine {
         {
             return;
         }
-        {
+        let later = {
             let mut st = self.inner.timers.borrow_mut();
+            let before = st.sched.next_wake();
             if let Some(t) = st.by_timer.remove(&obj) {
                 st.sched.cancel(t);
                 st.pending.remove(&t);
@@ -1027,9 +1028,16 @@ impl Engine {
                 st.sched.cancel(t);
                 st.pending.remove(&t);
             }
-        }
+            before.is_some() && st.sched.next_wake() != before
+        };
         if !running {
             self.inner.timers.borrow_mut().parked.remove(&obj);
+            // The host still waits for the deadline that went: told now,
+            // it asks again, and does not wake for nothing (a press and
+            // hold let go of before its time).
+            if later {
+                self.wake_host();
+            }
             return;
         }
         let now = self.now();
