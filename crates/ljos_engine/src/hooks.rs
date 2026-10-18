@@ -152,7 +152,7 @@ impl Engine {
         }
     }
 
-    fn interceptor(&self, obj: ObjectId, prop: PropIndex) -> Option<Interceptor> {
+    pub(crate) fn interceptor(&self, obj: ObjectId, prop: PropIndex) -> Option<Interceptor> {
         let all = self.inner.hooks.interceptors.borrow();
         if all.is_empty() {
             return None;

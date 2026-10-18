@@ -252,6 +252,8 @@ pub(crate) struct JsState {
     /// tool runs one (devtools.rs), so an application no tool looks at
     /// does not pay for them.
     pub(crate) devtools: Cell<bool>,
+    /// How many script writes went straight to their node.
+    plain_writes: Cell<u64>,
 }
 
 impl JsState {
@@ -690,6 +692,26 @@ impl HostObjects for EngineHost {
         let engine = self.engine()?;
         let (id, prop) = forwarded_prop(&engine, u64_to_obj(obj), prop);
         let p = PropIndex(prop);
+        // Nearly every write a script makes is of a number, a bool or a
+        // text to a plain property, which goes straight to its node.
+        let plain = match &value {
+            JsValue::Number(n) => Some(Value::Real(*n)),
+            JsValue::Bool(b) => Some(Value::Bool(*b)),
+            JsValue::String(s) => Some(Value::String(s.as_str().into())),
+            _ => None,
+        };
+        if let Some(v) = plain
+            && !engine.tier1_spying()
+            && engine.plain_script_write(id, p, &v).map_err(host_err)?
+        {
+            if let Some(js) = &*engine.inner.js.borrow() {
+                js.plain_writes.set(js.plain_writes.get() + 1);
+            }
+            if engine.inner.reload.tracking.get() {
+                engine.reload_note_assigned(id, p);
+            }
+            return Ok(());
+        }
         let ty = {
             let store = engine.inner.store.borrow();
             let h = store
@@ -1071,6 +1093,7 @@ impl Engine {
             calling: Cell::new(None),
             lists: crate::list_faces::ListFaces::default(),
             devtools: Cell::new(false),
+            plain_writes: Cell::new(0),
         });
         *self.inner.js.borrow_mut() = Some(state.clone());
         self.install_globals(&state)?;
@@ -1428,6 +1451,17 @@ impl Engine {
             }
             v => self.js_to_value(scope, v, ty),
         }
+    }
+
+    /// How many writes scripts made went straight to the property's node,
+    /// with no look for an alias, a setter, a model row or a Behavior.
+    #[doc(hidden)]
+    pub fn plain_script_writes(&self) -> u64 {
+        self.inner
+            .js
+            .borrow()
+            .as_ref()
+            .map_or(0, |js| js.plain_writes.get())
     }
 
     /// Tells the prelude's `Date` whether the wall clock is pinned.

@@ -1643,6 +1643,76 @@ impl Engine {
         h.node(prop)
     }
 
+    /// A script's write of `v` that needs nothing between: a number, a
+    /// bool or a text to a property of that kind with no alias, setter,
+    /// model row, Behavior, reset or value still to be made. It is made
+    /// here, and true comes back; what [`write_impl`](Self::write_impl)
+    /// does with such a write comes to the same, after a look for each.
+    pub(crate) fn plain_script_write(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        v: &Value,
+    ) -> Result<bool, EngineError> {
+        let (node, v) = {
+            let store = self.inner.store.borrow();
+            let Some(h) = store.objects.get(obj) else {
+                return Ok(false);
+            };
+            let Some(p) = h.meta.property(prop) else {
+                return Ok(false);
+            };
+            let kind = matches!(
+                (&p.ty, v),
+                (TypeTag::Real | TypeTag::Int, Value::Real(_))
+                    | (TypeTag::Bool, Value::Bool(_))
+                    | (TypeTag::String, Value::String(_))
+            );
+            let unfiltered = matches!(
+                p.access,
+                PropertyAccess::Field { write: None, .. } | PropertyAccess::Dynamic { .. }
+            );
+            if !kind
+                || !unfiltered
+                || p.is_alias()
+                || p.is_readonly()
+                || p.flags
+                    .intersects(PropertyFlags::GROUP | PropertyFlags::CONSTANT)
+                || h.makes_on_read(prop)
+                || h.ext.as_ref().is_some_and(|x| x.write_hook.is_some())
+                || matches!(v, Value::String(s) if s.is_empty())
+            {
+                return Ok(false);
+            }
+            let node = h.node(prop);
+            // A reader follows it without a node: the long way makes one.
+            if node.is_none() && h.read_without_node(prop) {
+                return Ok(false);
+            }
+            let Ok(v) = p.ty.coerce(v) else {
+                return Ok(false);
+            };
+            (node, v)
+        };
+        if self.interceptor(obj, prop).is_some() {
+            return Ok(false);
+        }
+        match node {
+            Some(n) => self.write_node(obj, prop, n, v, WriteKind::Imperative)?,
+            None => {
+                // Nobody observes it: the field is the only copy.
+                let mut store = self.inner.store.borrow_mut();
+                let h = store
+                    .objects
+                    .get_mut(obj)
+                    .ok_or_else(|| EngineError::dead(obj))?;
+                store_in(h, prop, &v)?;
+                h.mark_assigned(prop);
+            }
+        }
+        Ok(true)
+    }
+
     fn write_node(
         &self,
         obj: ObjectId,

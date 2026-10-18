@@ -554,3 +554,47 @@ fn qt_namespace_enum_keys_read_the_same_as_literals_and_in_javascript() {
     assert_eq!(h.get(root, "button"), Value::Int(8));
     assert!(h.warnings().is_empty());
 }
+
+#[test]
+fn a_script_s_plain_write_goes_straight_to_the_property() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property int n: 1
+  property real r
+  property bool b
+  property string s: "a"
+  property int bound: n + 1
+  readonly property int fixed: 3
+  property int changes: 0
+  onNChanged: changes++
+  function plain() { n = 2; r = 2.5; b = true; s = "b"; bound = 7; n = 2 }
+  function others() { s = ""; n = 4.5; try { fixed = 4 } catch (e) {} }
+}
+"#,
+    );
+    let e = &h.engine;
+    let before = e.plain_script_writes();
+    e.invoke_by_name(root, "plain", &[]).unwrap();
+    assert_eq!(e.plain_script_writes() - before, 6);
+    assert_eq!(h.num(root, "n"), 2.0);
+    assert_eq!(h.num(root, "r"), 2.5);
+    assert_eq!(h.get(root, "b"), Value::Bool(true));
+    assert_eq!(h.get(root, "s"), Value::from("b"));
+    // The write ends the binding, and the same value written again tells
+    // nobody.
+    h.set(root, "n", Value::Int(2));
+    assert_eq!(h.num(root, "bound"), 7.0);
+    assert_eq!(h.num(root, "changes"), 1.0);
+
+    // A text that may stand for none, a number an int has to round and a
+    // read-only property take the long way.
+    let before = e.plain_script_writes();
+    e.invoke_by_name(root, "others", &[]).unwrap();
+    assert_eq!(e.plain_script_writes() - before, 1);
+    assert_eq!(h.get(root, "s"), Value::from(""));
+    assert_eq!(h.num(root, "n"), 4.0);
+    assert_eq!(h.num(root, "fixed"), 3.0);
+}
