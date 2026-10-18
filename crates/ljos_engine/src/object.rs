@@ -173,6 +173,21 @@ impl FieldReads {
             self.last_props.iter_mut().for_each(|w| *w = 0);
         }
         set_bit(&mut self.last_props, prop);
+        // An effect that runs every frame (an item's geometry under an
+        // animation) reads the same properties each time: its new run
+        // takes the entry of a run before its last, which stopped
+        // counting when the last finished, so the list does not grow to
+        // be swept. The last run's entry stays: should this one not
+        // finish, the effect still hears of a change, as by its edges.
+        if has_bit(&self.props, prop)
+            && let Some(e) = self
+                .entries
+                .iter_mut()
+                .find(|(p, e)| *p == prop && e.node == r.node && !current(*e))
+        {
+            e.1 = r;
+            return;
+        }
         if self.entries.len() >= self.sweep_at {
             self.entries.retain(|(_, e)| current(*e));
             self.props.iter_mut().for_each(|w| *w = 0);
@@ -460,3 +475,26 @@ pub(crate) struct ObjectExt {
 
 /// See [`ObjectExt::write_hook`].
 pub(crate) type WriteHook = Rc<dyn Fn(&Engine, PropIndex, &Value) -> bool>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slotmap::KeyData;
+
+    #[test]
+    fn a_reader_run_every_frame_keeps_two_entries_and_the_last_finished_one() {
+        let node = NodeId::from(KeyData::from_ffi(1));
+        let mut reads = FieldReads::new(3);
+        let (x, y) = (PropIndex(0), PropIndex(2));
+        // Run `k` reads while run `k - 1` is the one that finished.
+        for run in 1..1000u64 {
+            let current = |r: Reader| r.run + 1 >= run;
+            reads.add(x, Reader { node, run }, current);
+            reads.add(y, Reader { node, run }, current);
+        }
+        assert_eq!(reads.entries.len(), 4);
+        // Run 999 stopped part way: 998 still hears of a change.
+        let runs: Vec<u64> = reads.take(x).iter().map(|r| r.run).collect();
+        assert!(runs.contains(&998) && runs.contains(&999), "{runs:?}");
+    }
+}
