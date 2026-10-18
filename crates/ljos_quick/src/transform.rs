@@ -34,6 +34,22 @@ impl Projective {
     pub const IDENTITY: Projective =
         Projective([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
 
+    /// `*self == Projective::IDENTITY`, as nine plain comparisons rather
+    /// than a loop over each row: asked of every item that moves, every
+    /// frame.
+    pub fn is_identity(&self) -> bool {
+        let [[a, b, c], [d, e, f], [g, h, i]] = self.0;
+        a == 1.0
+            && e == 1.0
+            && i == 1.0
+            && b == 0.0
+            && c == 0.0
+            && d == 0.0
+            && f == 0.0
+            && g == 0.0
+            && h == 0.0
+    }
+
     pub fn from_affine(a: Affine) -> Projective {
         let [a, b, c, d, e, f] = a.as_coeffs();
         Projective([[a, c, e], [b, d, f], [0.0, 0.0, 1.0]])
@@ -494,7 +510,7 @@ pub(crate) fn compose(
     origin: i32,
     list: &Projective,
 ) -> Affine {
-    if *list == Projective::IDENTITY {
+    if list.is_identity() {
         return compose_transform(x, y, w, h, rotation, scale, origin);
     }
     let own = Projective::from_affine(compose_transform(0.0, 0.0, w, h, rotation, scale, origin));
