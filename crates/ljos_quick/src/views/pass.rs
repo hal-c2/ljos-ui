@@ -597,15 +597,47 @@ impl Fill<'_> {
                     // it was made and none is running, and the view lays
                     // its rows out again then.
                     let polishing = follows && crate::scene::polishing();
-                    if !follows || (!polishing && size > 0.0 && self.st.settled(o, made)) {
+                    // The row the view waits for is measured after two
+                    // polishes, as it is waited for: the first may have
+                    // run before its text was shaped, and every row still
+                    // to be made would be taken to be as short as it was.
+                    let early = self.guess <= 0.0
+                        && key.is_some_and(|k| {
+                            matches!(self.st.waited.get(), Some((w, then))
+                                if w == k && then + 2 > crate::scene::polishes())
+                        });
+                    if !follows || (!polishing && size > 0.0 && !early && self.st.settled(o, made))
+                    {
                         (size, true)
                     } else if size > 0.0 {
                         super::changes::polished_later(e, self.view);
-                        if self.guess <= 0.0 {
+                        // Nor does the first row stand for the rest at the
+                        // length a positioner gave it before its text had
+                        // one: a column of a title and a picture would be
+                        // taken as the picture's height, and a new view
+                        // would make rows that the polish then lets go.
+                        // Qt measures a row it made before it makes the
+                        // next (observed on qml6).
+                        // A row made in this pass has not been laid out
+                        // at all, polishing or not.
+                        let laid = polishing && made == Made::Existing;
+                        if let Some(k) = key
+                            && self.guess <= 0.0
+                            && !laid
+                            && !self.no_wait
+                            && !self.waiting
+                        {
+                            self.wait_for(k);
+                        }
+                        if self.guess <= 0.0 && !self.waiting {
                             // The first row stands for the rest until then.
                             self.guess = size;
                         }
-                        let other = if polishing { size } else { self.guess };
+                        let other = if laid || self.guess <= 0.0 {
+                            size
+                        } else {
+                            self.guess
+                        };
                         (known.unwrap_or(other), false)
                     } else {
                         if let Some(k) = key

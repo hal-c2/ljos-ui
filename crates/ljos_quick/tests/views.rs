@@ -565,6 +565,43 @@ Item {
     assert!((5.0..=12.0).contains(&live), "live {live}");
 }
 
+/// A new view whose rows are a text over a block of fixed height: the
+/// first row's length is not the block's alone, which a column has before
+/// its text is laid out. Rows made at that length were dropped again once
+/// they had their own.
+#[test]
+fn a_new_view_makes_no_row_it_lets_go_when_its_rows_are_text_over_a_block() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+  id: root
+  width: 400; height: 300
+  property int created: 0
+  property int destroyed: 0
+  ListView {
+    anchors.fill: parent
+    model: 40
+    delegate: Column {
+      required property int index
+      width: 400
+      Text { text: "Row " + parent.index; font.pixelSize: 40 }
+      Rectangle { width: 10; height: 50 }
+      Component.onCompleted: root.created++
+      Component.onDestruction: root.destroyed++
+    }
+  }
+}"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    settle(&mut s, &e, 0);
+    // Qt: 7 made (rows of 95, the view and its cache of 320) and none let go.
+    let created = num(&e, root, "created");
+    assert!((6.0..=8.0).contains(&created), "created {created}");
+    assert_eq!(num(&e, root, "destroyed"), 0.0);
+}
+
 /// Rows that stay 0 long after their polish: the view does not wait on
 /// them for good.
 #[test]
