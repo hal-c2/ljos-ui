@@ -526,6 +526,16 @@ fn fusion_makes_no_more_objects_than_it_draws() {
         ("TextField", 4),
         ("ProgressBar", 12),
         ("BusyIndicator", 12),
+        ("GroupBox", 3),
+        ("PageIndicator", 2),
+        ("RangeSlider", 20),
+        ("DelayButton", 15),
+        ("Dial", 8),
+        ("Tumbler", 10),
+        ("ItemDelegate", 3),
+        ("CheckDelegate", 13),
+        ("RadioDelegate", 6),
+        ("SwitchDelegate", 16),
     ] {
         let made = objects_of("Fusion", control);
         assert!(

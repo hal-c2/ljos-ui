@@ -4090,12 +4090,12 @@ module QtQuick.Controls.Fusion
 	Calendar QtQuick.Controls.Calendar
 	CalendarModel QtQuick.Controls.CalendarModel
 	CheckBox QtQuick/Controls/Fusion/CheckBox.qml
-	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
+	CheckDelegate QtQuick/Controls/Fusion/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Fusion/ComboBox.qml
 	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
 	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
-	DelayButton QtQuick/Controls/Basic/DelayButton.qml
+	DelayButton QtQuick/Controls/Fusion/DelayButton.qml
 	Dial QtQuick/Controls/Fusion/Dial.qml
 	Dialog QtQuick/Controls/Fusion/Dialog.qml
 	DialogButtonBox QtQuick/Controls/Fusion/DialogButtonBox.qml
@@ -4103,7 +4103,7 @@ module QtQuick.Controls.Fusion
 	Drawer QtQuick/Controls/Basic/Drawer.qml
 	Frame QtQuick/Controls/Fusion/Frame.qml
 	Fusion QtQuick.Controls.Fusion.Fusion
-	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	GroupBox QtQuick/Controls/Fusion/GroupBox.qml
 	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
 	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
 	ItemDelegate QtQuick/Controls/Fusion/ItemDelegate.qml
@@ -4116,13 +4116,13 @@ module QtQuick.Controls.Fusion
 	MonthGrid QtQuick/Controls/Basic/MonthGrid.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
-	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
+	PageIndicator QtQuick/Controls/Fusion/PageIndicator.qml
 	Pane QtQuick/Controls/Fusion/Pane.qml
 	Popup QtQuick/Controls/Fusion/Popup.qml
 	ProgressBar QtQuick/Controls/Fusion/ProgressBar.qml
 	RadioButton QtQuick/Controls/Fusion/RadioButton.qml
-	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
-	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
+	RadioDelegate QtQuick/Controls/Fusion/RadioDelegate.qml
+	RangeSlider QtQuick/Controls/Fusion/RangeSlider.qml
 	RoundButton QtQuick/Controls/Fusion/RoundButton.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
@@ -4136,7 +4136,7 @@ module QtQuick.Controls.Fusion
 	SwipeDelegate QtQuick/Controls/Basic/SwipeDelegate.qml
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Fusion/Switch.qml
-	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
+	SwitchDelegate QtQuick/Controls/Fusion/SwitchDelegate.qml
 	TabBar QtQuick/Controls/Fusion/TabBar.qml
 	TabButton QtQuick/Controls/Fusion/TabButton.qml
 	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
@@ -4157,10 +4157,16 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.Button named
 	type QtQuick/Controls/Fusion/CheckBox.qml CheckBox
 		prototype QtQuick.Templates.CheckBox named
+	type QtQuick/Controls/Fusion/CheckDelegate.qml CheckDelegate
+		prototype QtQuick.Templates.CheckDelegate named
 	type QtQuick/Controls/Fusion/ComboBox.qml ComboBox
 		prototype QtQuick.Templates.ComboBox named
+	type QtQuick/Controls/Fusion/DelayButton.qml DelayButton
+		prototype QtQuick.Templates.DelayButton named
 	type QtQuick/Controls/Fusion/Dial.qml Dial
 		prototype QtQuick.Templates.Dial named
+		prop side QtQml.real named readonly
+		signal sideChanged
 	type QtQuick/Controls/Fusion/Dialog.qml Dialog
 		prototype QtQuick.Templates.Dialog named
 	type QtQuick/Controls/Fusion/DialogButtonBox.qml DialogButtonBox
@@ -4175,6 +4181,8 @@ module QtQuick.Controls.Fusion
 		prop darkShade QtQuick.color named readonly
 		prop topShadow QtQuick.color named readonly
 		prop innerContrastLine QtQuick.color named readonly
+	type QtQuick/Controls/Fusion/GroupBox.qml GroupBox
+		prototype QtQuick.Templates.GroupBox named
 	type QtQuick/Controls/Fusion/ItemDelegate.qml ItemDelegate
 		prototype QtQuick.Templates.ItemDelegate named
 	type QtQuick/Controls/Fusion/Menu.qml Menu
@@ -4187,6 +4195,8 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.MenuItem named
 	type QtQuick/Controls/Fusion/MenuSeparator.qml MenuSeparator
 		prototype QtQuick.Templates.MenuSeparator named
+	type QtQuick/Controls/Fusion/PageIndicator.qml PageIndicator
+		prototype QtQuick.Templates.PageIndicator named
 	type QtQuick/Controls/Fusion/Pane.qml Pane
 		prototype QtQuick.Templates.Pane named
 	type QtQuick/Controls/Fusion/Popup.qml Popup
@@ -4195,6 +4205,10 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.ProgressBar named
 	type QtQuick/Controls/Fusion/RadioButton.qml RadioButton
 		prototype QtQuick.Templates.RadioButton named
+	type QtQuick/Controls/Fusion/RadioDelegate.qml RadioDelegate
+		prototype QtQuick.Templates.RadioDelegate named
+	type QtQuick/Controls/Fusion/RangeSlider.qml RangeSlider
+		prototype QtQuick.Templates.RangeSlider named
 	type QtQuick/Controls/Fusion/RoundButton.qml RoundButton
 		prototype QtQuick.Templates.RoundButton named
 	type QtQuick/Controls/Fusion/Slider.qml Slider
@@ -4203,6 +4217,8 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.SpinBox named
 	type QtQuick/Controls/Fusion/Switch.qml Switch
 		prototype QtQuick.Templates.Switch named
+	type QtQuick/Controls/Fusion/SwitchDelegate.qml SwitchDelegate
+		prototype QtQuick.Templates.SwitchDelegate named
 	type QtQuick/Controls/Fusion/TabBar.qml TabBar
 		prototype QtQuick.Templates.TabBar named
 	type QtQuick/Controls/Fusion/TabButton.qml TabButton
@@ -4223,6 +4239,7 @@ module QtQuick.Controls.Fusion
 module QtQuick.Controls.Fusion.impl
 	ButtonPanel QtQuick/Controls/Fusion/impl/ButtonPanel.qml
 	CheckIndicator QtQuick/Controls/Fusion/impl/CheckIndicator.qml
+	RadioIndicator QtQuick/Controls/Fusion/impl/RadioIndicator.qml
 	SliderGroove QtQuick/Controls/Fusion/impl/SliderGroove.qml
 	SliderHandle QtQuick/Controls/Fusion/impl/SliderHandle.qml
 	SwitchIndicator QtQuick/Controls/Fusion/impl/SwitchIndicator.qml
@@ -4254,6 +4271,10 @@ module QtQuick.Controls.Fusion.impl
 		signal checkMarkColorChanged
 		signal checkStateChanged
 		method ink
+	type QtQuick/Controls/Fusion/impl/RadioIndicator.qml RadioIndicator
+		prototype QtQuick.Rectangle named
+		prop control QtQuick.Templates.AbstractButton named pointer
+		signal controlChanged
 	type QtQuick/Controls/Fusion/impl/SliderGroove.qml SliderGroove
 		prototype QtQuick.Rectangle named
 		prop control QtQuick.Controls.Basic.Control named pointer

@@ -31,9 +31,11 @@ Feature: The parts Fusion draws its controls with
           id: toggle
           indicator: SwitchIndicator { id: knob; control: toggle; x: toggle.width - width }
         }
+        RadioButton { id: radio; indicator: RadioIndicator { id: ring; control: radio; y: radio.topPadding + (radio.availableHeight - height) / 2 } }
         property bool centred: tick.y === check.topPadding + (check.availableHeight - tick.height) / 2
+                               && ring.y === radio.topPadding + (radio.availableHeight - ring.height) / 2
         property bool atTheEnd: knob.x === toggle.width - knob.width
-        property bool sized: tick.height > 0 && tick.height < 40 && knob.width > 0 && knob.width < 100
+        property bool sized: tick.height > 0 && tick.height < 40 && ring.height > 0 && ring.height < 40 && knob.width > 0 && knob.width < 100
       }
       """
     Then the property "centred" of "root" is true

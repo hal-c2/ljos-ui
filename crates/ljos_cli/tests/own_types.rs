@@ -1175,6 +1175,10 @@ const NOT_YET: &[(&str, &str)] = &[
         "described by nothing in Qt's table, which so gives it no default property",
     ),
     (
+        "QtQuick.Controls.Fusion.impl.RadioIndicator",
+        "described by nothing in Qt's table, which so gives it no default property",
+    ),
+    (
         "QtQuick.Controls.Fusion.impl.SliderGroove",
         "described by nothing in Qt's table, which so gives it no default property",
     ),
