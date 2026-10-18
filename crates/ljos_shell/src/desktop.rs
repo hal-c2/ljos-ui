@@ -223,8 +223,6 @@ struct Slot {
     held: Option<Instant>,
     /// The frame part of `held`: what a pass asked for at once waits for.
     paced: Option<Instant>,
-    /// When the next drawn frame is due, a frame after the last one.
-    frame_due: Option<Instant>,
     /// When the earliest repaint the next pass answers was due, for the
     /// inspector.
     #[cfg(feature = "mcp")]
@@ -282,7 +280,6 @@ impl Slot {
             undrawn: 0,
             held: None,
             paced: None,
-            frame_due: None,
             #[cfg(feature = "mcp")]
             asked: None,
         }
@@ -333,7 +330,6 @@ impl Slot {
         self.undrawn = 0;
         self.held = None;
         self.paced = None;
-        self.frame_due = None;
     }
 
     /// A pass changed nothing to draw; the scene wants the next in
@@ -342,7 +338,13 @@ impl Slot {
     /// made a frame early. One that comes at once is let through (egui
     /// runs one more pass after one that asked for another at once),
     /// and from the second in a row they wait a frame, so that a scene
-    /// whose animations show nothing does not spin.
+    /// whose animations show nothing does not spin. A scene that asks for
+    /// a later pass is not held past it: it asks for its next frame a
+    /// frame after its last, so it does not spin, and a wheel turned while
+    /// a frame was presented runs two passes that show nothing yet (the
+    /// glide starts where the content is), after which a whole frame's
+    /// wait missed the display's next, and the glide was shown at half
+    /// its rate.
     fn not_drawn(&mut self, now: Instant, wake: Option<Duration>) {
         self.undrawn += 1;
         let least = if self.undrawn > 1 {
@@ -350,34 +352,38 @@ impl Slot {
         } else {
             Duration::ZERO
         };
-        let wait = wake.map_or(least, |w| w.max(least));
+        let wait = match wake {
+            Some(w) if w > Duration::ZERO => w,
+            _ => least,
+        };
         self.held = (wait > Duration::ZERO).then(|| now + wait);
         self.paced = (least > Duration::ZERO).then(|| now + least);
     }
 
     /// Something asked for a pass at once: another thread's result, the
-    /// inspector, a change. It waits for the frame and not for the
-    /// scene's timer, which is what it would wait for until it fires.
+    /// inspector, a change. It waits for the frame, or for the scene if
+    /// that comes sooner, and not for the scene's timer, which is what it
+    /// would wait for until it fires.
     fn asked_at_once(&mut self) {
-        self.held = self.paced;
+        self.held = match (self.held, self.paced) {
+            (Some(held), Some(paced)) => Some(held.min(paced)),
+            (_, paced) => paced,
+        };
     }
 
-    /// A pass was drawn. The display holds a drawn frame until it is
-    /// shown, which paces the passes, except where presenting returns at
-    /// once: a software rasteriser on an X server without DRI3 does, and
-    /// an animation there was drawn three times a frame. The next pass
-    /// waits until a frame after the last, so a display that does hold
-    /// it is not waited for twice. A pass that came more than a frame late
-    /// starts the count again.
-    fn drawn(&mut self, now: Instant) {
+    /// A pass that began at `began` was drawn. The display holds a drawn
+    /// frame until it is shown, which paces the passes, except where
+    /// presenting returns at once: a software rasteriser on an X server
+    /// without DRI3 does, and an animation there was drawn three times a
+    /// frame. The next pass waits until a frame after this one began. A
+    /// display that holds the frame has waited for most of that already,
+    /// and the passes keep its phase: counted from a frame that began
+    /// before, each pass started as long after the display's refresh as
+    /// that one had, and those that then missed the next refresh were
+    /// shown two apart.
+    fn drawn(&mut self, began: Instant, now: Instant) {
         self.undrawn = 0;
-        let frame = self.frame_interval();
-        let due = self
-            .frame_due
-            .map(|d| d + frame)
-            .filter(|d| *d + frame >= now)
-            .unwrap_or(now);
-        self.frame_due = Some(due);
+        let due = began + self.frame_interval();
         self.held = (due > now).then_some(due);
         self.paced = self.held;
     }
@@ -1175,6 +1181,7 @@ impl<M: Send + 'static> Desktop<M> {
             ..
         } = self;
         let slot = &mut slots[i];
+        let began = Instant::now();
         // What was asked until now, this pass answers. egui forgets a
         // delayed repaint with every pass too, and is asked again.
         repaints.forget(slot.key);
@@ -1364,7 +1371,7 @@ impl<M: Send + 'static> Desktop<M> {
             // Only now does the platform say which display it is on.
             *screens_stale = true;
         }
-        slot.drawn(Instant::now());
+        slot.drawn(began, Instant::now());
         if !std::mem::replace(&mut self.drawn_once, true) {
             self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
         }
@@ -2006,16 +2013,38 @@ mod tests {
         assert_eq!(slot.held, Some(t + ms(21)));
         slot.not_drawn(t + ms(21), None);
         assert_eq!(slot.held, Some(t + ms(41)));
-        // A drawn pass lets the next one run at once again.
-        slot.drawn(t + ms(41));
-        assert_eq!(slot.held, None);
+        // A drawn pass holds the next a frame after it began, and the
+        // pass after that, which drew nothing, runs at once again.
+        slot.drawn(t + ms(41), t + ms(41));
+        assert_eq!(slot.held, Some(t + ms(61)));
         slot.not_drawn(t + ms(50), None);
         assert_eq!(slot.held, None);
         // An animation's next frame is when the scene said, not the
         // frame earlier egui made of it.
-        slot.drawn(t + ms(60));
+        slot.drawn(t + ms(60), t + ms(60));
         slot.not_drawn(t + ms(60), Some(ms(15)));
         assert_eq!(slot.held, Some(t + ms(75)));
+    }
+
+    // A wheel turned while a frame was presented: its pass and egui's
+    // next show nothing yet, and the glide's first frame is when the
+    // scene asks, not a frame after them.
+    #[test]
+    fn passes_not_drawn_wait_for_the_scene_when_it_asks_before_a_frame() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.drawn(t, t);
+        slot.not_drawn(t + ms(1), Some(ms(8)));
+        assert_eq!(slot.held, Some(t + ms(9)));
+        slot.not_drawn(t + ms(2), Some(ms(7)));
+        assert_eq!(slot.held, Some(t + ms(9)));
+        slot.asked_at_once();
+        assert_eq!(slot.held, Some(t + ms(9)), "not the frame, which is later");
+        // A scene that asks for nothing still waits a frame.
+        slot.not_drawn(t + ms(9), None);
+        assert_eq!(slot.held, Some(t + ms(29)));
     }
 
     // A long Timer is pending and the pass drew nothing: a picture
@@ -2037,8 +2066,8 @@ mod tests {
         slot.not_drawn(t + ms(1), Some(Duration::from_secs(60)));
         slot.asked_at_once();
         assert_eq!(slot.held, Some(t + ms(21)));
-        // A drawn pass holds nothing back.
-        slot.drawn(t + ms(22));
+        // A pass that took a frame to draw holds nothing back.
+        slot.drawn(t + ms(2), t + ms(22));
         slot.asked_at_once();
         assert_eq!(slot.held, None);
     }
@@ -2049,26 +2078,34 @@ mod tests {
         let ms = Duration::from_millis;
         let mut slot = Slot::new(0, None, egui::Context::default(), None);
         slot.refresh = Some(50.0);
-        slot.drawn(t);
-        assert_eq!(slot.held, None, "the first is drawn when it comes");
         // Presenting returned at once: the next waits for its frame, and
         // so does one asked for at once.
-        slot.drawn(t + ms(3));
+        slot.drawn(t, t + ms(3));
         assert_eq!(slot.held, Some(t + ms(20)));
         slot.asked_at_once();
         assert_eq!(slot.held, Some(t + ms(20)));
-        slot.drawn(t + ms(23));
+        slot.drawn(t + ms(20), t + ms(23));
         assert_eq!(slot.held, Some(t + ms(40)));
         // A display that holds each frame until it is shown is not
         // waited for again.
-        slot.drawn(t + ms(60));
+        slot.drawn(t + ms(40), t + ms(60));
         assert_eq!(slot.held, None);
-        slot.drawn(t + ms(81));
+        slot.drawn(t + ms(61), t + ms(81));
         assert_eq!(slot.held, None);
-        // After a pause the count starts again.
-        slot.drawn(t + ms(500));
-        assert_eq!(slot.held, None);
-        slot.drawn(t + ms(502));
-        assert_eq!(slot.held, Some(t + ms(520)));
+    }
+
+    // The display's refresh was at 80 and 100 ms; a pass began late, at 91,
+    // and was shown at 100. The next is not held past the refresh after.
+    #[test]
+    fn a_pass_that_began_late_holds_the_next_only_a_frame_after_it() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.drawn(t + ms(61), t + ms(80));
+        slot.drawn(t + ms(91), t + ms(100));
+        assert_eq!(slot.held, Some(t + ms(111)));
+        slot.drawn(t + ms(111), t + ms(120));
+        assert_eq!(slot.held, Some(t + ms(131)));
     }
 }
