@@ -2057,7 +2057,6 @@ Feature: What a reload changes
       Then the property "order" of "root" is "two,one,mid"
       And the property "x" of "box" is at least 40
 
-
   Rule: An id given to another object names it, and the rest goes on
 
     Bindings that name the id name the object that has it now. The objects
@@ -2098,6 +2097,40 @@ Feature: What a reload changes
       Then the property "tag" of "root" is "b"
       And the property "text" of "a" is "a"
       And the property "x" of "box" is at least 40
+
+    Scenario: An anchor and a component made inside follow an object moved among its siblings
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Item { objectName: "follower"; width: 10; anchors.left: mark.right }
+          Loader {
+            sourceComponent: Component {
+              Item { objectName: "inner"; property real seen: mark.x }
+            }
+          }
+          Item { id: mark; objectName: "mark"; x: 30; width: 20 }
+        }
+        """
+      When 100 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 100
+          Item { id: mark; objectName: "mark"; x: 60; width: 20 }
+          Item { objectName: "follower"; width: 10; anchors.left: mark.right }
+          Loader {
+            sourceComponent: Component {
+              Item { objectName: "inner"; property real seen: mark.x }
+            }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "follower" is 80
+      And the property "seen" of "inner" is 60
 
   Rule: Other changes to objects make them again, as the file now writes them
 

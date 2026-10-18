@@ -455,16 +455,35 @@ impl Engine {
             *slot.borrow_mut() = (renew(&inst, &files, &mut memo), *to);
         }
         // A binding that names an id that came or went, once
-        // the slots name the objects of the new instances.
-        self.batch(|| {
-            for g in grown.iter().filter(|g| g.ids) {
-                for &id in &g.new.objects {
-                    if self.is_alive(id) {
-                        self.in_place_refresh(id);
+        // the slots name the objects of the new instances: those of the
+        // instance, and of a delegate or template made inside it, which
+        // sees its ids.
+        let named: Vec<&Rc<Instance>> = grown.iter().filter(|g| g.ids).map(|g| &g.new).collect();
+        if !named.is_empty() {
+            let sees = |i: &Instance| {
+                let mut cur = Some(i);
+                while let Some(c) = cur {
+                    if named
+                        .iter()
+                        .any(|n| Rc::ptr_eq(&n.file, &c.file) && n.comp == c.comp)
+                    {
+                        return true;
+                    }
+                    cur = c.outer.as_deref();
+                }
+                false
+            };
+            let instances: Vec<Rc<Instance>> = st.instances.borrow().clone();
+            self.batch(|| {
+                for inst in instances.iter().filter(|i| sees(i)) {
+                    for &id in &inst.objects {
+                        if self.is_alive(id) {
+                            self.in_place_refresh(id);
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
         let added: rustc_hash::FxHashSet<ObjectId> = grown
             .iter()
             .flat_map(|g| g.cr.all.iter().copied())
