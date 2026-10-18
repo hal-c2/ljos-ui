@@ -616,6 +616,23 @@ fn own() -> &'static Table {
     TABLE.get_or_init(|| read("", OWN))
 }
 
+#[test]
+fn the_table_keeps_no_room_it_grew_while_read() {
+    let own = own();
+    assert_eq!(own.types.capacity(), own.types.len());
+    for ty in &own.types {
+        assert_eq!(
+            ty.properties.capacity(),
+            ty.properties.len(),
+            "{}",
+            ty.class
+        );
+        assert_eq!(ty.enums.capacity(), ty.enums.len(), "{}", ty.class);
+        assert_eq!(ty.signals.capacity(), ty.signals.len(), "{}", ty.class);
+        assert_eq!(ty.methods.capacity(), ty.methods.len(), "{}", ty.class);
+    }
+}
+
 fn own_type(uri: &str, name: &str) -> &'static Type {
     let own = own();
     let index = own

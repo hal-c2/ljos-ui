@@ -533,6 +533,25 @@ struct Table {
 }
 
 impl Table {
+    /// Gives back the room the lists grew while they were read: the table
+    /// lives as long as the program, and that room was about half of it.
+    fn shrink(&mut self) {
+        for ty in &mut self.types {
+            ty.enums.shrink_to_fit();
+            ty.properties.shrink_to_fit();
+            ty.signals.shrink_to_fit();
+            ty.methods.shrink_to_fit();
+            ty.added.shrink_to_fit();
+        }
+        for module in self.modules.values_mut() {
+            module.imports.shrink_to_fit();
+            module.exports.shrink_to_fit();
+        }
+        self.types.shrink_to_fit();
+        self.classes.shrink_to_fit();
+        self.modules.shrink_to_fit();
+    }
+
     /// The type `name` is in a file that imports the module `uri`, by its
     /// index: one of the module's own or of a module that comes with it.
     fn type_named(&self, uri: &str, name: &str, seen: &mut Vec<&'static str>) -> Option<usize> {
@@ -823,6 +842,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
             table.types[to].added.extend(&over.types[*own].0);
         }
     }
+    table.shrink();
     table
 }
 
