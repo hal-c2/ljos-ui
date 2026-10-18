@@ -457,19 +457,6 @@ pub fn shown_text_style(engine: &Engine, f: &Font) -> TextStyle {
     style
 }
 
-/// The text of `obj` in the letters its font's `capitalization` asks for
-/// (tracked): what is laid out, while the property keeps what was written.
-pub(crate) fn drawn_text(engine: &Engine, obj: ObjectId, font: PropIndex, text: PropIndex) -> Atom {
-    let written = engine.read(obj, text).to_js_string();
-    let Value::Font(f) = engine.read(obj, font) else {
-        return written;
-    };
-    match f.drawn(written.as_str()) {
-        std::borrow::Cow::Borrowed(_) => written,
-        std::borrow::Cow::Owned(drawn) => Atom::from(drawn.as_str()),
-    }
-}
-
 pub(crate) fn elide_mode(v: i32) -> ElideMode {
     match v {
         elide::LEFT => ElideMode::Left,
@@ -548,20 +535,59 @@ impl TextInputs {
     /// where it changes the result, so resizing a plain label does not lay
     /// it out again.
     pub fn read(engine: &Engine, obj: ObjectId) -> Self {
-        let int = |p: ljos_engine::PropIndex| engine.read(obj, p).to_number() as i32;
-        let h_align = int(Text::HORIZONTAL_ALIGNMENT.index);
-        let v_align = int(Text::VERTICAL_ALIGNMENT.index);
-        let wrap = wrap(int(Text::WRAP_MODE.index));
-        let elide = elide_mode(int(Text::ELIDE.index));
-        let line_height = engine.read(obj, Text::LINE_HEIGHT.index).to_number();
-        let max_lines = int(Text::MAXIMUM_LINE_COUNT.index);
-        let pad = [
-            Text::LEFT_PADDING.index,
-            Text::TOP_PADDING.index,
-            Text::RIGHT_PADDING.index,
-            Text::BOTTOM_PADDING.index,
-        ]
-        .map(|p| num(engine, obj, p));
+        // Read together: a text's inputs are read as it is made, by its
+        // layout and by its paint, and one at a time each read looked the
+        // object and its reader up again.
+        let [
+            h_align,
+            v_align,
+            wrap_v,
+            elide_v,
+            line_height,
+            max_lines,
+            left,
+            top_pad,
+            right,
+            bottom,
+            written,
+            format_v,
+            font,
+            color_v,
+            style_v,
+            style_color_v,
+            link_color_v,
+            line_height_mode,
+        ] = engine.read_values(
+            obj,
+            [
+                Text::HORIZONTAL_ALIGNMENT.index,
+                Text::VERTICAL_ALIGNMENT.index,
+                Text::WRAP_MODE.index,
+                Text::ELIDE.index,
+                Text::LINE_HEIGHT.index,
+                Text::MAXIMUM_LINE_COUNT.index,
+                Text::LEFT_PADDING.index,
+                Text::TOP_PADDING.index,
+                Text::RIGHT_PADDING.index,
+                Text::BOTTOM_PADDING.index,
+                Text::TEXT.index,
+                Text::TEXT_FORMAT.index,
+                Text::FONT.index,
+                Text::COLOR.index,
+                Text::STYLE.index,
+                Text::STYLE_COLOR.index,
+                Text::LINK_COLOR.index,
+                Text::LINE_HEIGHT_MODE.index,
+            ],
+        );
+        let int = |v: &Value| v.to_number() as i32;
+        let h_align = int(&h_align);
+        let v_align = int(&v_align);
+        let wrap = wrap(int(&wrap_v));
+        let elide = elide_mode(int(&elide_v));
+        let line_height = line_height.to_number();
+        let max_lines = int(&max_lines);
+        let pad = [left, top_pad, right, bottom].map(|v| v.to_number());
         // Qt wraps and elides to a width the item was given, never to the
         // one it took from the text itself.
         // The size is read either way: a layout that sizes the item stops
@@ -583,18 +609,24 @@ impl TextInputs {
             None
         };
         let top = v_align & (align::BOTTOM | align::V_CENTER) == 0;
-        let color = |p: PropIndex, or: Color| match engine.read(obj, p) {
+        let color = |v: Value, or: Color| match v {
             Value::Color(c) => c,
             _ => or,
         };
-        let written = engine.read(obj, Text::TEXT.index).to_js_string();
-        let format = resolve_format(int(Text::TEXT_FORMAT.index), written.as_str());
+        let written = written.to_js_string();
+        let format = resolve_format(int(&format_v), written.as_str());
+        let font = match font {
+            Value::Font(f) => Some(f),
+            _ => None,
+        };
         // Capitals are for plain text: in markup they would change tags,
         // character references and addresses with the words.
-        let text = if format == TextFormat::Plain {
-            drawn_text(engine, obj, Text::FONT.index, Text::TEXT.index)
-        } else {
-            written
+        let text = match &font {
+            Some(f) if format == TextFormat::Plain => match f.drawn(written.as_str()) {
+                std::borrow::Cow::Borrowed(_) => written,
+                std::borrow::Cow::Owned(drawn) => Atom::from(drawn.as_str()),
+            },
+            _ => written,
         };
         let member = scope::member(engine, obj);
         let document = if format != TextFormat::Plain || member.is_some() {
@@ -618,27 +650,23 @@ impl TextInputs {
             _ => None,
         };
         let small_caps = document.is_none()
-            && matches!(
-                engine.read(obj, Text::FONT.index),
-                Value::Font(f) if f.capitalization == Font::SMALL_CAPS
-            );
+            && font
+                .as_ref()
+                .is_some_and(|f| f.capitalization == Font::SMALL_CAPS);
         TextInputs {
             text,
             small_caps,
-            color: color(Text::COLOR.index, Color::BLACK),
-            overline: matches!(
-                engine.read(obj, Text::FONT.index),
-                Value::Font(f) if f.overline
-            ),
-            text_style: int(Text::STYLE.index),
-            style_color: color(Text::STYLE_COLOR.index, Color::BLACK),
-            link_color: color(Text::LINK_COLOR.index, Color::BLACK),
+            color: color(color_v, Color::BLACK),
+            overline: font.as_ref().is_some_and(|f| f.overline),
+            text_style: int(&style_v),
+            style_color: color(style_color_v, Color::BLACK),
+            link_color: color(link_color_v, Color::BLACK),
             format,
             epoch: document.as_ref().map_or(0, |(_, epoch)| *epoch),
             rich: document.map(|(d, _)| d),
             focused,
             selection,
-            style: read_style(engine, obj, Text::FONT.index),
+            style: shown_text_style(engine, &font.unwrap_or_default()),
             h_align,
             v_align,
             pad,
@@ -654,7 +682,7 @@ impl TextInputs {
                 } else {
                     max_lines.max(0) as u32
                 },
-                line_height: if int(Text::LINE_HEIGHT_MODE.index) == line_height_mode::FIXED {
+                line_height: if int(&line_height_mode) == line_height_mode::FIXED {
                     LineHeight::Fixed(line_height)
                 } else {
                     LineHeight::Proportional(line_height)

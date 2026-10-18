@@ -1274,6 +1274,7 @@ impl Engine {
         // A plain loop: `props.map` was a call per property and more.
         let mut nodes = [None; N];
         let mut out = [None; N];
+        let mut kept = [false; N];
         {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj)?;
@@ -1288,15 +1289,19 @@ impl Engine {
                 }
                 match h.node(prop) {
                     Some(n) => nodes[i] = Some(n),
-                    None if !tracking
-                        || p.flags
-                            .intersects(PropertyFlags::CONSTANT | PropertyFlags::GROUP) =>
-                    {
+                    None => {
                         out[i] = fast(&read_access(&*h.native, &h.dynamic, &p.access));
+                        kept[i] = out[i].is_some()
+                            && tracking
+                            && !p
+                                .flags
+                                .intersects(PropertyFlags::CONSTANT | PropertyFlags::GROUP);
                     }
-                    None => {}
                 }
             }
+        }
+        if kept.contains(&true) {
+            self.keep_field_reads(obj, (0..N).filter(|&i| kept[i]).map(|i| props[i]));
         }
         let mut numbers = [0.0; N];
         for i in 0..N {
@@ -1307,6 +1312,72 @@ impl Engine {
             numbers[i] = v.unwrap_or_else(|| self.read(obj, props[i]).to_number());
         }
         Some(numbers)
+    }
+
+    /// [`Engine::read`] of each of `props` of `obj`, with the object
+    /// looked up once and the tracked reads of fields kept together: a
+    /// scene reads the forty inputs of a text, or a rectangle's paint, as
+    /// each is made. What only its field holds is read as the object is
+    /// looked up, before a binding of another of `props` that is out of
+    /// date runs.
+    pub fn read_values<const N: usize>(&self, obj: ObjectId, props: [PropIndex; N]) -> [Value; N] {
+        #[derive(Clone, Copy)]
+        enum Slot {
+            Node(NodeId),
+            Read,
+            /// As [`Engine::read`] does it.
+            Slow,
+        }
+        let mut out: [Value; N] = std::array::from_fn(|_| Value::Undefined);
+        let mut slots = [Slot::Slow; N];
+        let mut kept = [false; N];
+        {
+            let store = self.inner.store.borrow();
+            let Some(h) = store.objects.get(obj) else {
+                return std::array::from_fn(|_| Value::Null);
+            };
+            let tracking = self.inner.tracking.get() != 0;
+            for i in 0..N {
+                let prop = props[i];
+                let Some(p) = h.meta.property(prop) else {
+                    continue;
+                };
+                if p.is_alias() || h.makes_on_read(prop) {
+                    continue;
+                }
+                match h.node(prop) {
+                    Some(n) => slots[i] = Slot::Node(n),
+                    None => {
+                        let v = read_access(&*h.native, &h.dynamic, &p.access);
+                        // A record is made a node on its first read.
+                        if matches!(v, Value::Map(_)) {
+                            continue;
+                        }
+                        kept[i] = tracking
+                            && !p
+                                .flags
+                                .intersects(PropertyFlags::CONSTANT | PropertyFlags::GROUP);
+                        out[i] = v;
+                        slots[i] = Slot::Read;
+                    }
+                }
+            }
+        }
+        if kept.contains(&true) {
+            self.keep_field_reads(obj, (0..N).filter(|&i| kept[i]).map(|i| props[i]));
+        }
+        for i in 0..N {
+            let v = match slots[i] {
+                Slot::Node(n) => self.inner.graph.try_get(n).unwrap_or_default(),
+                Slot::Read => std::mem::take(&mut out[i]),
+                Slot::Slow => {
+                    out[i] = self.read(obj, props[i]);
+                    continue;
+                }
+            };
+            out[i] = self.live(v);
+        }
+        out
     }
 
     /// [`Engine::property_index`] for a caller that has no use for why
@@ -2109,6 +2180,12 @@ impl Engine {
     /// Keeps a tracked read of a property that has no node
     /// ([`FieldReads`]).
     pub(crate) fn keep_field_read(&self, obj: ObjectId, prop: PropIndex) {
+        self.keep_field_reads(obj, std::iter::once(prop));
+    }
+
+    /// [`Engine::keep_field_read`] of each of `props`, with the reader and
+    /// the object looked up once.
+    fn keep_field_reads(&self, obj: ObjectId, props: impl Iterator<Item = PropIndex>) {
         let g = &self.inner.graph;
         let Some(r) = g.reader() else {
             return;
@@ -2116,9 +2193,12 @@ impl Engine {
         let mut store = self.inner.store.borrow_mut();
         if let Some(h) = store.objects.get_mut(obj) {
             let len = h.meta.properties.len();
-            h.field_reads
-                .get_or_insert_with(|| Box::new(FieldReads::new(len)))
-                .add(prop, r, |e| g.is_current(e));
+            let reads = h
+                .field_reads
+                .get_or_insert_with(|| Box::new(FieldReads::new(len)));
+            for prop in props {
+                reads.add(prop, r, |e| g.is_current(e));
+            }
         }
     }
 
