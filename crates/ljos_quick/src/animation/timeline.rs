@@ -25,10 +25,10 @@ use super::shown;
 use super::smooth::{Params, Reversing, Track};
 use super::spring;
 use super::types::{
-    AnchorAnimation, Animation, Animator, ColorAnimation, NumberAnimation, OpacityAnimator,
-    ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction, PropertyAnimation,
-    RotationAnimation, RotationAnimator, ScaleAnimator, ScriptAction, SequentialAnimation,
-    SmoothedAnimation, SpringAnimation, UniformAnimator, XAnimator, YAnimator,
+    AnchorAnimation, Animation, Animator, ColorAnimation, EasingGroup, NumberAnimation,
+    OpacityAnimator, ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction,
+    PropertyAnimation, RotationAnimation, RotationAnimator, ScaleAnimator, ScriptAction,
+    SequentialAnimation, SmoothedAnimation, SpringAnimation, UniformAnimator, XAnimator, YAnimator,
 };
 use crate::item::{Item, is_a, is_item, is_unset};
 
@@ -713,16 +713,31 @@ pub(crate) fn moves(engine: &Engine, anim: ObjectId, d: &Defaults) -> bool {
 }
 
 fn curve_of(engine: &Engine, anim: ObjectId) -> Curve {
-    let num = |name: &str| engine.read_by_name(anim, name).to_number();
-    let bezier = match engine.read_by_name(anim, "easing.bezierCurve") {
+    // Read at every start: the types that have the group are read by
+    // index, with no names to look up.
+    let group = if is_a::<PropertyAnimation>(engine, anim) {
+        Some(PropertyAnimation::EASING)
+    } else if is_a::<Animator>(engine, anim) {
+        Some(Animator::EASING)
+    } else if is_a::<AnchorAnimation>(engine, anim) {
+        Some(AnchorAnimation::EASING)
+    } else {
+        None
+    };
+    let read = |leaf: PropIndex, name: &str| match group {
+        Some(g) => engine.read(anim, PropIndex(g.index.0 + 1 + leaf.0)),
+        None => engine.read_by_name(anim, name),
+    };
+    let num = |leaf: PropIndex, name: &str| read(leaf, name).to_number();
+    let bezier = match read(EasingGroup::BEZIER_CURVE.index, "easing.bezierCurve") {
         Value::List(l) => l.iter().map(Value::to_number).collect(),
         _ => Vec::new(),
     };
     Curve {
-        ty: num("easing.type") as i32,
-        amplitude: num("easing.amplitude"),
-        overshoot: num("easing.overshoot"),
-        period: num("easing.period"),
+        ty: num(EasingGroup::TY.index, "easing.type") as i32,
+        amplitude: num(EasingGroup::AMPLITUDE.index, "easing.amplitude"),
+        overshoot: num(EasingGroup::OVERSHOOT.index, "easing.overshoot"),
+        period: num(EasingGroup::PERIOD.index, "easing.period"),
         bezier,
     }
 }

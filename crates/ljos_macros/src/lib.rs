@@ -603,6 +603,18 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             builder.push(quote! {
                 .group(#name, <#fty as #e::QmlType>::static_meta(), #flags, #get, #get_mut)
             });
+            let cname = format_ident!(
+                "{}",
+                ident.to_string().trim_start_matches('_').to_uppercase()
+            );
+            let doc = format!(
+                "The `{name}` group; each member follows it, at its index in the group plus one."
+            );
+            consts.push(quote! {
+                #[doc = #doc]
+                pub const #cname: #e::Prop<#fty> =
+                    #e::Prop::new(#index, <#ty as #e::QmlType>::static_meta);
+            });
             count.push(quote!((1 + <#fty as #e::QmlType>::PROPERTY_COUNT)));
             continue;
         }
