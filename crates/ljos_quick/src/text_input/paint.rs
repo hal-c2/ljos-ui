@@ -213,9 +213,12 @@ impl EditorPaint {
             let y = top + layout.lines[line].baseline + 1.0;
             out.fill_rect(kurbo::Rect::new(x + r.x0, y, x + r.x1, y + 1.0), self.color);
         }
+        // The cursor covers every pixel its rectangle touches, solid:
+        // blended into the two a fractional x splits it across, a pixel's
+        // width read as a grey smear (qml6 draws both black).
         if let Some(c) = self.cursor {
             out.fill_rect(
-                kurbo::Rect::new(c.x, c.y, c.x + c.width, c.y + c.height),
+                kurbo::Rect::new(c.x, c.y, c.x + c.width, c.y + c.height).expand(),
                 self.color,
             );
         }
