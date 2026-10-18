@@ -101,3 +101,21 @@ Feature: PDF documents in an Image
       """
     Then the pixel at 150, 100 of the window is "#ff0000"
     And the pixel at 20, 20 of the window is "#0000ff"
+
+  Scenario: A width asked after the page came keeps its shape
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Image {
+          objectName: "picture"; source: "pages.pdf"
+          width: parent.width - 400; sourceSize.width: width
+        }
+      }
+      """
+    When the property "width" of "root" is set to 1000
+    Then the property "implicitWidth" of "picture" is 600
+    And the property "implicitHeight" of "picture" is 400
+    And the property "sourceSize.width" of "picture" is 600
+    And the property "sourceSize.height" of "picture" is 0

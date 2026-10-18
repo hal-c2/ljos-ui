@@ -104,6 +104,26 @@ Feature: Image source size
     And the property "implicitWidth" of "picture" is 30
     And the property "implicitHeight" of "picture" is 20
 
+  Scenario: A side bound to a width not yet known reads as bound, and asks once it is
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Image {
+          objectName: "picture"; source: "wide.png"
+          width: parent.width - 400; sourceSize.width: width
+        }
+      }
+      """
+    Then the property "sourceSize.width" of "picture" is -400
+    And the property "sourceSize.height" of "picture" is 0
+    And the property "implicitWidth" of "picture" is 60
+    When the property "width" of "root" is set to 430
+    Then the property "sourceSize.width" of "picture" is 30
+    And the property "implicitWidth" of "picture" is 30
+    And the property "implicitHeight" of "picture" is 20
+
   Scenario: Taking the source size back gives the whole picture
     Given the QML:
       """qml
