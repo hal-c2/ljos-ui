@@ -2929,3 +2929,64 @@ this change; the frame times are. photosurface scrolls at qml6's rate here for a
   uploads about 130 k a call.
 - The scene: a delegate made costs about 115 k instructions in polish, reconcile and adopt, and its
   Text's polish about 101 k; the bench makes and drops about eight a frame at 60 frames a second.
+
+### Script gaps to qml6, third pass: clocks' dispatch and calqlatr's children (2026-10-18)
+
+The bench copies and runs of the two sections above. The base is the "after" of the second pass
+(d970be89). Ir is from callgrind on a release build: clocks per `timeChanged` (700 calls),
+calqlatr per press (140 presses). Wall time is the fastest of 8 runs, alternating Ljós and
+`qml6` 6.11.2, with Date on the machine's clock (`--wall`) for Ljós. Other work kept the load
+average at 39–64, so the wall rows are only good to a few per cent.
+
+| | qml6 | Ljós base | Ljós after |
+|---|---:|---:|---:|
+| clocks, Ir per `timeChanged` | | 37.1 k | 12.8 k |
+| clocks, wall per `timeChanged` (140 000 calls) | 0.66 µs | 2.50 µs | 0.68 µs |
+| calqlatr, Ir per press | | 2.02 M | 1.56 M |
+| calqlatr, wall per press (2 800 presses) | 0.102 ms | 0.169 ms | 0.136 ms |
+
+**clocks.** Neither app is below qml6 yet. Clocks is within the noise: 95.5 ms against 92 ms
+for the run. The cuts, in order:
+- A QML method with plain parameters is the exported function itself, with no closure and no
+  `apply` per call: 37.1 k → 32.5 k Ir.
+- Property accessors and host globals are QuickJS C functions (`JS_NewCFunctionData`) and not
+  rquickjs closures: 32.5 k → 27.0 k.
+- The wrappers have a QuickJS class of their own, so one `JS_GetOpaque` is the type check, and
+  primitives cross by their tag: 22.9 k → 20.3 k.
+- A write of the value a property already holds is no write. `Date` has nothing in front of it
+  unless the clock is pinned.
+- A plain read is one look at the object, and a plain write asks no map whether to forward or
+  intercept.
+- A direct method is a C function holding its bound arguments: 17.96 k → 16.38 k. Its
+  arguments are on the stack.
+- A number or bool is read and written with no `Scope`, no `JsValue` and no conversion:
+  15.37 k → 13.96 k.
+- The wrapper answers its type's properties itself (`host/answer.rs`), about 14.0 k → 12.8 k.
+  Its class is exotic, so QuickJS asks it for a name it does not hold. It finds the name among
+  its type's slots by atom and reads or writes with no accessor call. A name with no slot walks
+  the prototypes as before, and a method or signal that took a property's name drops its slot.
+  `JsHost::accessor_calls` counts what still calls an accessor
+  (`the_wrapper_answers_its_properties_with_no_accessor_call`).
+
+What is left of a call: the interpreter (about 3 k), `Date`'s field split (about 1.2 k), the
+slot lookups (about 100 Ir each), and the engine's plain read and write (about 500 each).
+
+**calqlatr.**
+- `children`, `resources` and `data` are a live list (`live_list.rs`): a QuickJS object that
+  asks the engine for its length and entries, not a copy of the list for each read
+  (`features/items/children-list.feature`, @qt-parity).
+- A script's read of an object or a field kept on the object takes the quick way.
+- A Behavior's easing curve is read by index from its group.
+
+What is left per press is mostly the 33 writes and the bindings they flush: about 35 % of the
+press, of which the graph's flush is 0.64 M. The 11 Behavior starts are about 40 k together,
+with no allocation of note left. `tint::tinted` is about 15 k, in the image store.
+
+DECISIONs:
+- A live list over a copy kept until the children change. It is what Qt has: a held list stays
+  right, and a script that mutates the list is told what Qt tells it.
+- An exotic wrapper class over an extra prototype level of plain data, which would have to be
+  kept in step with every write.
+- A write the wrapper refuses throws a TypeError whenever QuickJS says the write may throw.
+  Ljós runs scripts strict.
+- One object of the live list's prototype is kept, so QuickJS reuses its shape.
