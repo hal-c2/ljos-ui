@@ -2571,7 +2571,7 @@ impl Engine {
                 let Some(v) = self.arg_value(inst, arg) else {
                     return JsValue::Undefined;
                 };
-                // A native list is a copy of the array kept for it.
+                // A native list is read through to the property.
                 let face = matches!(v, Value::List(_))
                     .then(|| {
                         let o = inst.resolve(*object)?;
@@ -2579,7 +2579,7 @@ impl Engine {
                         let js = self.inner.js.borrow().clone()?;
                         match self.script_list(o, p) {
                             Some((owner, list)) => self.list_face(s, &js, owner, list).ok(),
-                            None => self.native_list(s, &js, o, p, &v)?.ok(),
+                            None => self.native_list(o, p),
                         }
                     })
                     .flatten();

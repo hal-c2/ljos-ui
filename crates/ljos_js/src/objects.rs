@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use rquickjs::{Ctx, Exception, qjs};
 
-use crate::{JsArg, JsOut, Scope};
+use crate::{JsArg, JsOut, JsValue, Scope};
 
 /// Identifies a registered host type (a prototype with accessors).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -145,6 +145,41 @@ pub trait HostObjects {
         _value: PlainValue,
     ) -> Option<Result<(), HostError>> {
         None
+    }
+
+    /// How many entries the list the property `prop` of `obj` holds has
+    /// now, for a script's [`JsValue::LiveList`] of it; 0 once the object
+    /// is gone. A read, which a binding follows.
+    fn list_len(&self, _obj: u64, _prop: u32) -> u32 {
+        0
+    }
+
+    /// Entry `index` of that list; `None` past its end.
+    fn list_entry(&self, _obj: u64, _prop: u32, _index: u32) -> Option<JsValue> {
+        None
+    }
+
+    /// A script put `item` at the end of that list (`push`).
+    fn list_append<'js>(
+        &self,
+        _scope: &Scope<'js>,
+        _obj: u64,
+        _prop: u32,
+        _item: JsArg,
+    ) -> Result<(), HostError> {
+        Ok(())
+    }
+
+    /// A script set that list's length to `len`, which is shorter than
+    /// it: the entries after it go.
+    fn list_truncate<'js>(
+        &self,
+        _scope: &Scope<'js>,
+        _obj: u64,
+        _prop: u32,
+        _len: u32,
+    ) -> Result<(), HostError> {
+        Ok(())
     }
 
     fn call<'js>(

@@ -184,6 +184,42 @@ impl Engine {
         }
     }
 
+    /// Shortens the list property `prop` of `obj` to `len` entries, as a
+    /// script does by setting its length: the entries after it are taken
+    /// out from the last, each through the property's remove hook when it
+    /// has one (an item taken out of `children` has no parent then).
+    pub fn list_truncate(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        len: usize,
+    ) -> Result<(), EngineError> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let hook = {
+            let store = self.inner.store.borrow();
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
+            h.meta.property(prop).and_then(|p| p.list_remove)
+        };
+        let taken: Vec<Value> = match self.untrack(|| self.read(obj, prop)) {
+            Value::List(l) if l.len() > len => l[len..].iter().rev().cloned().collect(),
+            _ => return Ok(()),
+        };
+        self.batch(|| {
+            match hook {
+                Some(f) => {
+                    for item in taken.iter().filter_map(Value::as_object) {
+                        f(&Cx::new(self, obj), item)?;
+                    }
+                }
+                None => self.list_edit(obj, prop, &|items| items.truncate(len))?,
+            }
+            Ok(())
+        })
+    }
+
     /// Whether [`Engine::list_insert`] can put an item of the list property
     /// `prop` of `obj` before another.
     pub fn list_takes_insert(&self, obj: ObjectId, prop: PropIndex) -> bool {

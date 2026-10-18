@@ -23,10 +23,14 @@ pub enum JsValue {
     Handle(JsRef),
     /// Into JS only: a new plain object with these fields, in order.
     Map(Vec<(String, JsValue)>),
-    /// Into JS only: a new array of the entries the held array has, made
-    /// whole. What a script is given of an array kept for it, so that the
-    /// copy is the script's own and is let go with it.
-    CopyOf(JsRef),
+    /// The list the property `prop` of the Engine object `obj` holds, as
+    /// a script reads it: a list object whose length and entries are the
+    /// property's whenever they are read ([`crate::HostObjects::list_len`]).
+    /// A new object each time it crosses into JS; what comes back of one.
+    LiveList {
+        obj: u64,
+        prop: u32,
+    },
     /// A colour: red, green, blue and alpha, 16 bits each, not
     /// premultiplied. JS sees one frozen object per distinct colour, so two
     /// equal colours are `===` there as well.

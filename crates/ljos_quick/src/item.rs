@@ -73,10 +73,18 @@ pub struct Item {
         notify,
         list,
         append = crate::tree::item_data_append,
-        insert = crate::tree::item_data_insert
+        insert = crate::tree::item_data_insert,
+        remove = crate::tree::item_data_remove
     )]
     pub data: QmlList,
-    #[qml(notify, list)]
+    /// Appending makes the item a child, as Qt's `children` does.
+    #[qml(
+        notify,
+        list,
+        append = crate::tree::item_children_append,
+        insert = crate::tree::item_children_insert,
+        remove = crate::tree::item_children_remove
+    )]
     pub children: QmlList,
     #[qml(notify, list)]
     pub resources: QmlList,

@@ -717,11 +717,10 @@ impl HostObjects for EngineHost {
                 .list_face(scope, &js, owner, list)
                 .map_err(HostError::from);
         }
-        if let Ok(v @ Value::List(_)) = &read
-            && let Some(js) = engine.inner.js.borrow().clone()
-            && let Some(made) = engine.native_list(scope, &js, id, p, v)
+        if let Ok(Value::List(_)) = &read
+            && let Some(list) = engine.native_list(id, p)
         {
-            return made.map_err(HostError::from);
+            return Ok(list);
         }
         match read {
             Ok(v) => Ok(engine.to_js(&v)),
@@ -862,6 +861,57 @@ impl HostObjects for EngineHost {
                 )),
                 e => host_err(e),
             })?;
+        if engine.inner.reload.tracking.get() {
+            engine.reload_note_assigned(id, p);
+        }
+        Ok(())
+    }
+
+    fn list_len(&self, obj: u64, prop: u32) -> u32 {
+        self.engine()
+            .ok()
+            .and_then(|e| e.live_list(obj, prop))
+            .map_or(0, |items| u32::try_from(items.len()).unwrap_or(u32::MAX))
+    }
+
+    fn list_entry(&self, obj: u64, prop: u32, index: u32) -> Option<JsValue> {
+        self.engine().ok()?.live_list_entry(obj, prop, index)
+    }
+
+    fn list_append<'js>(
+        &self,
+        _scope: &Scope<'js>,
+        obj: u64,
+        prop: u32,
+        item: JsValue,
+    ) -> Result<(), HostError> {
+        let engine = self.engine()?;
+        let (id, p) = (u64_to_obj(obj), PropIndex(prop));
+        // Only an object can be in a list of objects.
+        let JsValue::Object(item) = item else {
+            return Ok(());
+        };
+        engine
+            .list_append(id, p, u64_to_obj(item))
+            .map_err(host_err)?;
+        if engine.inner.reload.tracking.get() {
+            engine.reload_note_assigned(id, p);
+        }
+        Ok(())
+    }
+
+    fn list_truncate<'js>(
+        &self,
+        _scope: &Scope<'js>,
+        obj: u64,
+        prop: u32,
+        len: u32,
+    ) -> Result<(), HostError> {
+        let engine = self.engine()?;
+        let (id, p) = (u64_to_obj(obj), PropIndex(prop));
+        engine
+            .list_truncate(id, p, len as usize)
+            .map_err(host_err)?;
         if engine.inner.reload.tracking.get() {
             engine.reload_note_assigned(id, p);
         }
@@ -1382,7 +1432,11 @@ impl Engine {
             // property of another type refuses it by its name.
             JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
             // Made only into JS; read back, it is what it copies.
-            JsValue::CopyOf(r) => self.js_to_value(scope, JsValue::Handle(r), ty),
+            // What the property holds now: a list kept elsewhere is the
+            // entries it had then, as on Qt.
+            JsValue::LiveList { obj, prop } => self
+                .live_list(obj, prop)
+                .map_or_else(|| Value::list(Vec::new()), Value::List),
             // The script's own array, going where a list is kept.
             JsValue::Handle(r) if r.is_array() => {
                 let items = scope.array_items(&r).unwrap_or_default();

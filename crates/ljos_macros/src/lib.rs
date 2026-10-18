@@ -40,7 +40,9 @@
 //! `fn(&Cx, ObjectId) -> Result<(), EngineError>` every append goes
 //! through), `insert = path` (with `append`: a
 //! `fn(&Cx, ObjectId, ObjectId) -> Result<(), EngineError>` that puts an
-//! item before another), `skip`, `rename = "name"`, `enumeration = "Name"` (on an `i32`
+//! item before another), `remove = path` (with `append`: a
+//! `fn(&Cx, ObjectId) -> Result<(), EngineError>` that takes an item out
+//! when a script shortens the list), `skip`, `rename = "name"`, `enumeration = "Name"` (on an `i32`
 //! field: the property holds a key of that enum of the type, one of those
 //! `enums` lists or an inherited one; QML may then give the key by name, and
 //! what is neither a key's name nor a number is refused; `"Qt.Name"` is an
@@ -277,6 +279,7 @@ struct FieldAttrs {
     list: bool,
     append: Option<syn::Path>,
     insert: Option<syn::Path>,
+    remove: Option<syn::Path>,
     skip: bool,
     rename: Option<String>,
     enumeration: Option<String>,
@@ -368,6 +371,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.append = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("insert") {
                 f.insert = Some(m.value()?.parse::<syn::Path>()?);
+            } else if p.is_ident("remove") {
+                f.remove = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("skip") {
                 f.skip = true;
             } else if p.is_ident("rename") {
@@ -392,7 +397,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, skip, rename, enumeration, flags, reset, object, holds, write",
+                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write",
                 ));
             }
             Ok(())
@@ -521,6 +526,12 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             return Err(Error::new(
                 ident.span(),
                 "`insert` needs `append`: a list without an append hook is inserted into as it is",
+            ));
+        }
+        if a.remove.is_some() && a.append.is_none() {
+            return Err(Error::new(
+                ident.span(),
+                "`remove` needs `append`: a list without an append hook is taken from as it is",
             ));
         }
         let flags = quote!(#e::PropertyFlags::empty() #(.union(#flags))*);
@@ -652,6 +663,9 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         }
         if let Some(insert) = &a.insert {
             builder.push(quote!(.list_insert(#insert)));
+        }
+        if let Some(remove) = &a.remove {
+            builder.push(quote!(.list_remove(#remove)));
         }
         if let Some(holds) = &a.holds {
             builder.push(quote!(.holds(#holds)));

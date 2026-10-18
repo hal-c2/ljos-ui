@@ -221,7 +221,7 @@ fn only_objects_are_kept_in_a_native_list() {
 }
 
 #[test]
-fn a_script_s_loop_over_a_native_list_makes_one_array_of_it() {
+fn a_script_s_loop_over_a_native_list_reads_one_entry_a_step() {
     let h = engine();
     let e = &h.engine;
     let root = h.load(
@@ -240,32 +240,29 @@ Item {
         for (let i = 0; i < children.length; i++) if (children[i].parent === this) n++
         return n
     }
-    function own() {
+    function held() {
         const a = children, b = children
-        a.push(null)
         return (a !== b) + "," + b.length + "," + children.length
     }
 }"#,
     );
-    let before = e.native_list_arrays();
-    assert_eq!(e.invoke_by_name(root, "names", &[]).unwrap(), Value::Int(8));
+    let before = e.native_list_entries();
     assert_eq!(e.invoke_by_name(root, "names", &[]).unwrap(), Value::Int(8));
     assert_eq!(e.invoke_by_name(root, "byId", &[]).unwrap(), Value::Int(8));
     assert_eq!(h.num(root, "shown"), 8.0);
-    // Seventeen reads of the list in each loop, by its own name and by the
-    // object's, and the list never changed.
-    assert_eq!(e.native_list_arrays() - before, 1);
+    // An entry for each `children[i]`; reading the length or the list
+    // itself copies none.
+    assert_eq!(e.native_list_entries() - before, 16);
 
-    // Each read is still an array of the script's own.
+    // Each read is a list object of its own.
     assert_eq!(
-        e.invoke_by_name(root, "own", &[]).unwrap(),
+        e.invoke_by_name(root, "held", &[]).unwrap(),
         Value::from("true,8,8")
     );
 
-    // A changed list is made again, once.
+    // A changed list is read as it is now, and a binding follows it.
     e.list_push(root, Item::CHILDREN.index, item(&h)).unwrap();
     assert_eq!(e.invoke_by_name(root, "names", &[]).unwrap(), Value::Int(8));
     assert_eq!(e.invoke_by_name(root, "byId", &[]).unwrap(), Value::Int(9));
     assert_eq!(h.num(root, "shown"), 9.0);
-    assert_eq!(e.native_list_arrays() - before, 2);
 }

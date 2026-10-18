@@ -13,10 +13,10 @@
 //! only while a script passes it around: stored in a `var`, sent with a
 //! signal or assigned to another list, it is the entries it had.
 //!
-//! A list of a native type is not given a face: what reads it is given a
-//! new array each time, as before. That array is a copy of one the engine
-//! keeps for the list while it is unchanged, so that a loop over
-//! `children[i]` costs a copy of an array, not a wrapper for every entry.
+//! A list of a native type (`children`, `data`) is not given a face but a
+//! [`JsValue::LiveList`]: a new list object on every read that asks the
+//! engine for its length and entries when they are read, so that a loop
+//! over `children[i]` costs one entry per step, not a copy of the list.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -44,11 +44,8 @@ pub(crate) struct ListFaces {
     /// [`JsRef::id`] of a face to its property. The table above holds the
     /// reference, so the id stays that face's.
     by_ref: RefCell<FxHashMap<u64, (ObjectId, PropIndex)>>,
-    /// The array last made of a native list of objects, by property, with
-    /// the list it was made of. Held, not only compared, as in [`Face`].
-    natives: RefCell<FxHashMap<(ObjectId, PropIndex), (Value, JsRef)>>,
-    /// How many arrays have been made into `natives`.
-    native_builds: Cell<u64>,
+    /// How many entries scripts have read of native lists.
+    live_entries: Cell<u64>,
 }
 
 struct Face {
@@ -60,14 +57,6 @@ struct Face {
 
 impl ListFaces {
     pub(crate) fn forget(&self, objects: &[ObjectId]) {
-        if !self.natives.borrow().is_empty() {
-            // An array that holds a gone object is made again when read.
-            self.natives.borrow_mut().retain(|(o, _), (list, _)| {
-                !objects.contains(o)
-                    && !matches!(list, Value::List(items)
-                        if items.iter().any(|i| i.as_object().is_some_and(|i| objects.contains(&i))))
-            });
-        }
         if self.by_prop.borrow().is_empty() {
             return;
         }
@@ -325,69 +314,53 @@ impl Engine {
         Ok(JsValue::Handle(face))
     }
 
-    /// A new array of `list`, which `prop` of `obj` holds, when that is a
-    /// native list of objects; `None` for any other value. The array is a
-    /// copy of one kept until the property holds another list: an entry of
-    /// a list of objects is a wrapper, which costs more to find than to
-    /// copy, and a copy is the script's own as a new array is.
-    pub(crate) fn native_list(
-        &self,
-        scope: &Scope<'_>,
-        js: &JsState,
-        obj: ObjectId,
-        prop: PropIndex,
-        list: &Value,
-    ) -> Option<rquickjs::Result<JsValue>> {
-        let Value::List(items) = list else {
-            return None;
+    /// What a script is given of the property `prop` of `obj` when that
+    /// is a list of a native type: a list of the property the read ends
+    /// at, past any alias. `None` for any other property.
+    pub(crate) fn native_list(&self, obj: ObjectId, prop: PropIndex) -> Option<JsValue> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let native = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .get(obj)
+                .and_then(|h| h.meta.property(prop))
+                .is_some_and(|p| p.list_field.is_some())
         };
-        // A list kept is one whose entries were all looked at when it was.
-        let kept = js
-            .lists
-            .natives
-            .borrow()
-            .get(&(obj, prop))
-            .and_then(|(seen, r)| match seen {
-                Value::List(a) if Arc::ptr_eq(a, items) => Some(r.clone()),
-                _ => None,
-            });
-        // An entry that is not an object may be made a JS object of its
-        // own, which a copy would share.
-        if kept.is_none()
-            && (items.is_empty()
-                || !items
-                    .iter()
-                    .all(|i| matches!(i, Value::Object(_) | Value::Null)))
-        {
-            return None;
-        }
-        Some((|| {
-            let array = match kept {
-                Some(r) => r,
-                None => {
-                    let made = scope.to_value(&self.to_js(list))?;
-                    let r = scope.keep(made);
-                    js.lists
-                        .natives
-                        .borrow_mut()
-                        .insert((obj, prop), (list.clone(), r.clone()));
-                    js.lists.native_builds.set(js.lists.native_builds.get() + 1);
-                    r
-                }
-            };
-            Ok(JsValue::CopyOf(array))
-        })())
+        native.then(|| JsValue::LiveList {
+            obj: obj_to_u64(obj),
+            prop: prop.0,
+        })
     }
 
-    /// How many arrays scripts' reads of native lists of objects have
-    /// made; a read of a list that has not changed since makes none.
+    /// What the list a [`JsValue::LiveList`] reads holds now. A read, which
+    /// a binding follows.
+    pub(crate) fn live_list(&self, obj: u64, prop: u32) -> Option<Arc<Vec<Value>>> {
+        match self.try_read(u64_to_obj(obj), PropIndex(prop)) {
+            Ok(Value::List(items)) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// Entry `index` of that list, as a script is given it.
+    pub(crate) fn live_list_entry(&self, obj: u64, prop: u32, index: u32) -> Option<JsValue> {
+        let items = self.live_list(obj, prop)?;
+        let v = items.get(index as usize)?;
+        if let Some(js) = self.inner.js.borrow().as_ref() {
+            js.lists.live_entries.set(js.lists.live_entries.get() + 1);
+        }
+        Some(self.to_js(v))
+    }
+
+    /// How many entries scripts have read of native lists of objects: one
+    /// per entry read, however long the list.
     #[doc(hidden)]
-    pub fn native_list_arrays(&self) -> u64 {
+    pub fn native_list_entries(&self) -> u64 {
         self.inner
             .js
             .borrow()
             .as_ref()
-            .map_or(0, |js| js.lists.native_builds.get())
+            .map_or(0, |js| js.lists.live_entries.get())
     }
 
     /// Gives the list back to the property after a script changed it. A

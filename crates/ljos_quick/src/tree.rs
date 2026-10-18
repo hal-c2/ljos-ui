@@ -50,6 +50,45 @@ pub(crate) fn item_data_insert(
     }
 }
 
+/// The `Item.data` remove hook: an item a script takes out has no parent,
+/// anything else is no longer a resource.
+pub(crate) fn item_data_remove(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
+    if is_item(cx.engine, child) {
+        set_parent_item(cx.engine, child, None)
+    } else {
+        forget_resource(cx.engine, cx.this, child)
+    }
+}
+
+/// The `Item.children` append hook: what a script pushes becomes a child,
+/// leaving the parent it had. What is not an item cannot be one.
+pub(crate) fn item_children_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
+    if is_item(cx.engine, child) {
+        set_parent_item(cx.engine, child, Some(cx.this))
+    } else {
+        Ok(())
+    }
+}
+
+/// The `Item.children` insert hook: [`item_children_append`], right
+/// before `anchor`.
+pub(crate) fn item_children_insert(
+    cx: &Cx,
+    child: ObjectId,
+    anchor: ObjectId,
+) -> Result<(), EngineError> {
+    if is_item(cx.engine, child) {
+        set_parent_item_before(cx.engine, child, cx.this, anchor).map(drop)
+    } else {
+        Ok(())
+    }
+}
+
+/// The `Item.children` remove hook: the item has no parent.
+pub(crate) fn item_children_remove(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
+    set_parent_item(cx.engine, child, None)
+}
+
 /// Puts `item` right before `anchor` in the list `prop` of `obj` as it
 /// is, without its hooks, or at its end when `anchor` is not in it: what
 /// an insert hook calls for each list it keeps in step.

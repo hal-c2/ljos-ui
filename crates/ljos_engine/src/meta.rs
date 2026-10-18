@@ -148,6 +148,10 @@ pub type ListAppend = fn(&Cx<'_>, crate::ids::ObjectId) -> Result<(), EngineErro
 /// in the list. `cx.this` is the list's object.
 pub type ListInsert =
     fn(&Cx<'_>, crate::ids::ObjectId, crate::ids::ObjectId) -> Result<(), EngineError>;
+/// Takes an item out of a list property whose appends go through a
+/// [`ListAppend`], when a script shortens the list. `cx.this` is the
+/// list's object.
+pub type ListRemove = fn(&Cx<'_>, crate::ids::ObjectId) -> Result<(), EngineError>;
 /// Gets a native list field from the struct that declares it, to change it
 /// where it is: an append then costs the same however long the list is.
 pub type ListField = fn(&mut dyn QmlObject) -> &mut crate::list::QmlList;
@@ -263,6 +267,9 @@ pub struct PropertyInfo {
     /// For a list property with an append hook, the hook that puts an
     /// item before another, if the type has one.
     pub list_insert: Option<ListInsert>,
+    /// For a list property with an append hook, the hook that takes an
+    /// item out, if the type has one.
+    pub list_remove: Option<ListRemove>,
     /// For a native list property, the field itself.
     pub list_field: Option<ListField>,
     /// How `undefined` takes the property back, if it can be.
@@ -927,6 +934,7 @@ impl MetaBuilder {
             access,
             list_append: None,
             list_insert: None,
+            list_remove: None,
             list_field: None,
             reset: None,
             holds: None,
@@ -1081,6 +1089,16 @@ impl MetaBuilder {
     pub fn list_insert(mut self, f: ListInsert) -> Self {
         if let Some(p) = self.last_property() {
             p.list_insert = Some(f);
+        }
+        self
+    }
+
+    /// Routes what a script takes out of the property just added through
+    /// `f` ([`Engine::list_truncate`](crate::Engine::list_truncate)).
+    #[inline(never)]
+    pub fn list_remove(mut self, f: ListRemove) -> Self {
+        if let Some(p) = self.last_property() {
+            p.list_remove = Some(f);
         }
         self
     }

@@ -18,6 +18,7 @@ use rustc_hash::FxHashMap;
 use slotmap::{SlotMap, new_key_type};
 
 mod direct;
+mod live_list;
 pub use direct::{DirectCall, DirectParam};
 
 use crate::{
@@ -100,6 +101,12 @@ pub(crate) struct HostState {
     panicked: RefCell<Option<Box<dyn Any + Send>>>,
     /// The QuickJS class of every wrapper (objects::register_wrapper_class).
     wrapper_class: rquickjs::qjs::JSClassID,
+    /// The class of [`JsValue::LiveList`] (live_list.rs), its prototype
+    /// and an object that keeps the prototype's shape, made with the first
+    /// list, and the atom of `length` it answers.
+    list_class: rquickjs::qjs::JSClassID,
+    list_proto: RefCell<Option<(Persistent<Object<'static>>, Persistent<Object<'static>>)>>,
+    length_atom: rquickjs::qjs::JSAtom,
     /// The functions of [`JsHost::set_global_function`], by the `magic`
     /// QuickJS calls them with.
     globals: RefCell<Vec<HostFn>>,
@@ -505,52 +512,6 @@ impl<'js> Scope<'js> {
         key
     }
 
-    /// A new array of the entries `from` holds, made whole, where `slice`
-    /// defines them one by one; `from` itself when it is not an array.
-    fn copy_array(&self, from: Value<'js>) -> rquickjs::Result<Value<'js>> {
-        let Some(array) = from.as_array() else {
-            return Ok(from);
-        };
-        let ctx = self.ctx.as_raw().as_ptr();
-        let raw = array.as_raw();
-        // Read through the C API: an entry read as a `Value` holds the
-        // context too, which costs as much again as the read.
-        let mut len = 0i64;
-        // SAFETY: the context is alive for the call and `raw` is the array.
-        if unsafe { rquickjs::qjs::JS_GetLength(ctx, raw, &raw mut len) } < 0 {
-            return Err(rquickjs::Error::Exception);
-        }
-        let Ok(count) = i32::try_from(len) else {
-            return Err(Exception::throw_range(&self.ctx, "array too long"));
-        };
-        let mut entries = Vec::with_capacity(count.unsigned_abs() as usize);
-        for i in 0..count.unsigned_abs() {
-            // SAFETY: as above; what is read is an owned reference, which
-            // the new array takes over or is freed below.
-            let v = unsafe { rquickjs::qjs::JS_GetPropertyUint32(ctx, raw, i) };
-            if unsafe { rquickjs::qjs::JS_IsException(v) } {
-                for v in entries {
-                    // SAFETY: each is an owned reference read above.
-                    unsafe { rquickjs::qjs::JS_FreeValue(ctx, v) };
-                }
-                return Err(rquickjs::Error::Exception);
-            }
-            entries.push(v);
-        }
-        // SAFETY: the context is alive for the call, and the entries are
-        // owned references the new array takes over (or frees, on failure).
-        let made = unsafe {
-            Value::from_raw(
-                self.ctx.clone(),
-                rquickjs::qjs::JS_NewArrayFrom(ctx, count, entries.as_ptr()),
-            )
-        };
-        if made.is_exception() {
-            return Err(rquickjs::Error::Exception);
-        }
-        Ok(made)
-    }
-
     /// Keeps a JS value alive for Rust. An object that is held already
     /// gives the reference it has.
     pub fn keep(&self, v: Value<'js>) -> JsRef {
@@ -887,7 +848,7 @@ impl<'js> Scope<'js> {
             }
             JsValue::Object(id) => self.wrapper(*id)?.into_value(),
             JsValue::Handle(r) => self.restore(r)?,
-            JsValue::CopyOf(r) => self.copy_array(self.restore(r)?)?,
+            JsValue::LiveList { obj, prop } => self.live_list(*obj, *prop)?,
             JsValue::Map(fields) => {
                 let o = Object::new(ctx.clone())?;
                 for (k, v) in fields {
@@ -1064,11 +1025,14 @@ impl<'js> Scope<'js> {
                 // SAFETY: the class is this runtime's.
                 match unsafe { wrapper_id(self.state.wrapper_class, o.as_raw()) } {
                     Some(id) => JsValue::Object(id),
-                    None => match self.read_color(o)? {
-                        Some(c) => c,
-                        None => match self.read_typed(o, depth)? {
-                            Some(typed) => typed,
-                            None => JsValue::Handle(self.keep(v.clone())),
+                    None => match self.live_list_of(v) {
+                        Some(list) => list,
+                        None => match self.read_color(o)? {
+                            Some(c) => c,
+                            None => match self.read_typed(o, depth)? {
+                                Some(typed) => typed,
+                                None => JsValue::Handle(self.keep(v.clone())),
+                            },
                         },
                     },
                 }
@@ -1237,6 +1201,12 @@ impl JsHost {
         let wrapper_class =
             unsafe { register_wrapper_class(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) }
                 .ok_or(rquickjs::Error::Allocation)?;
+        // SAFETY: as above.
+        let list_class = unsafe { live_list::register(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) }
+            .ok_or(rquickjs::Error::Allocation)?;
+        // One of the atoms QuickJS is made with, so it is never freed.
+        // SAFETY: the context is alive.
+        let length_atom = unsafe { rquickjs::qjs::JS_NewAtom(raw.as_ptr(), c"length".as_ptr()) };
         let state = Rc::new(HostState {
             fns: RefCell::default(),
             types: RefCell::default(),
@@ -1260,6 +1230,9 @@ impl JsHost {
             panicked: RefCell::default(),
             globals: RefCell::default(),
             wrapper_class,
+            list_class,
+            list_proto: RefCell::default(),
+            length_atom,
         });
         // SAFETY: the context is alive; the raw accessors read it back as a
         // `Weak` (raw_state), and `Drop` takes it out before the context goes.
