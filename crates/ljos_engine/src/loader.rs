@@ -410,6 +410,9 @@ pub(crate) struct LoaderState {
     pub(crate) incubating: Vec<crate::incubator::CreationJob>,
     /// Module types written in QML ([`Engine::register_qml_type`]).
     pub(crate) qml_types: crate::qml_types::QmlTypes,
+    /// The modules the application's files import or make objects of
+    /// ([`Engine::uses_module`]).
+    pub(crate) used_modules: std::collections::HashSet<String>,
 }
 
 /// A binding that reads a path of properties from one parameter
@@ -621,6 +624,7 @@ impl Engine {
         let mut l = self.inner.loader.borrow_mut();
         l.source = Some(Rc::new(source));
         l.files.clear();
+        l.used_modules.clear();
         drop(l);
         self.singletons_sources_changed();
     }
@@ -744,15 +748,42 @@ impl Engine {
                 )));
             }
         }
+        let used = modules_of(&ir);
         let file = Rc::new(LoadedFile::new(key, url, ir, source.bytecode(key)));
         file.epoch.set(self.inner.reload.epoch.get());
-        self.inner
-            .loader
-            .borrow_mut()
-            .files
-            .insert(key.to_owned(), file.clone());
+        let mut loader = self.inner.loader.borrow_mut();
+        loader.used_modules.extend(used);
+        loader.files.insert(key.to_owned(), file.clone());
         Ok(file)
     }
+
+    /// Whether a file of the application imports the module `uri`, or makes
+    /// an object of a type the compiler found in it. A style's palette is
+    /// the application's when it uses the style: `import QtQuick.Controls`
+    /// compiled for a style makes objects of that style's module.
+    pub fn uses_module(&self, uri: &str) -> bool {
+        self.inner.loader.borrow().used_modules.contains(uri)
+    }
+}
+
+/// The modules `ir` imports or makes objects of, the project's own left out.
+fn modules_of(ir: &CompiledFile) -> Vec<String> {
+    let imported = ir.imports.iter().filter_map(|i| match &i.source {
+        ImportSource::Module(uri) if !i.in_project => Some(uri),
+        _ => None,
+    });
+    let made = ir
+        .components
+        .iter()
+        .flat_map(|c| &c.objects)
+        .filter_map(|o| match &o.ty {
+            ljos_ir::TypeRef::Native { module, .. } => Some(module),
+            _ => None,
+        });
+    let mut out: Vec<String> = imported.chain(made).cloned().collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 #[cfg(test)]

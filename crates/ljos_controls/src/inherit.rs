@@ -67,7 +67,7 @@ use crate::text_area::TextArea;
 use crate::text_field::TextField;
 use crate::util::{check, warn};
 use crate::window::{ApplicationWindow, Window};
-use ljos_quick::palette::{ROLE_COUNT, ROLES, role_props};
+use ljos_quick::palette::{FUSION_ROLES, ROLE_COUNT, ROLES, Role, role_props};
 
 /// Which of the types that have a font or a palette an object is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -826,9 +826,11 @@ fn resolve_palette(
     };
     // Tracked: every palette is resolved again when the scheme changes.
     let dark = ljos_quick::color_scheme(engine) == ColorScheme::Dark;
-    if !in_use && enabled && !dark && !state.palette_touched.get() {
+    let roles = style_roles(engine);
+    if !in_use && enabled && !dark && roles.is_none() && !state.palette_touched.get() {
         return Ok(());
     }
+    let roles = roles.unwrap_or(&ROLES);
     let own = roles_of(kind);
     let mut inherited: [Option<Color>; ROLE_COUNT] = [None; ROLE_COUNT];
     let mine: Vec<bool> = own.iter().map(|p| author_set(engine, obj, *p)).collect();
@@ -865,7 +867,7 @@ fn resolve_palette(
         if mine[i] {
             continue;
         }
-        let c = inherited[i].unwrap_or(ROLES[i].colour(dark, enabled));
+        let c = inherited[i].unwrap_or(roles[i].colour(dark, enabled));
         let cur = engine.untrack(|| engine.read(obj, own[i]));
         if color_of(&cur) != Some(c) {
             state.palette_touched.set(true);
@@ -998,7 +1000,8 @@ fn take_from_above(engine: &Engine, item: ObjectId) {
         if inherited[i].is_none() && !has_palette && !engine.is_made_on_read(item, p) {
             continue;
         }
-        let c = Value::Color(inherited[i].unwrap_or(ROLES[i].active));
+        let c =
+            Value::Color(inherited[i].unwrap_or(style_roles(engine).unwrap_or(&ROLES)[i].active));
         let done = if engine.observers_of(item, p).is_empty() {
             engine.make_on_read(item, p, move |_| c)
         } else {
@@ -1048,7 +1051,19 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
         }
     };
     let dark = ljos_quick::color_scheme(engine) == ColorScheme::Dark;
-    Value::Color(ROLES[i].colour(dark, enabled))
+    Value::Color(style_roles(engine).unwrap_or(&ROLES)[i].colour(dark, enabled))
+}
+
+/// The colours of a style other than Basic whose module the application
+/// uses: as in Qt, the style an application imports gives every control
+/// its palette, the controls it has no file of too. DECISION: a bare
+/// `Control` or `Container` of `import QtQuick.Controls` is the template's
+/// type, not the style's, so an application that makes nothing else keeps
+/// Basic's colours.
+fn style_roles(engine: &Engine) -> Option<&'static [Role; ROLE_COUNT]> {
+    engine
+        .uses_module("QtQuick.Controls.Fusion")
+        .then_some(&FUSION_ROLES)
 }
 
 fn take_role_back(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Result<(), EngineError> {

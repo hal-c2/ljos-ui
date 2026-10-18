@@ -60,10 +60,7 @@ Feature: The Fusion style's menu bar
       | marked | background.visible    | true        |
       | marked | background.color      | "#112233"   |
 
-  # Fusion draws in the platform's palette and not in Basic's; Ljós has one
-  # palette for every style.
-  @backlog
-  Scenario: A Fusion bar that sets no colours is in the platform's palette
+  Scenario: A Fusion bar that sets no colours is in Fusion's palette
     Given the QML:
       """qml
       import QtQuick

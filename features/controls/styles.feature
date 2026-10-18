@@ -128,7 +128,7 @@ Feature: Material, Fusion and Universal styles
       }
       """
     Then the property "<property>" of "<object>" is <value>
-    And the pixel at 10, 140 of the window is within 10 of "#ffffff"
+    And the pixel at 10, 140 of the window is within 10 of "#efefef"
 
     Examples:
       | object | property       | value       |

@@ -256,6 +256,46 @@ pub const ROLES: [Role; ROLE_COUNT] = [
     ),
 ];
 
+/// A role of the Fusion style: its own light colours, enabled and not,
+/// and Basic's dark ones.
+const fn fusion(i: usize, active: Color, disabled: Color) -> Role {
+    Role {
+        name: ROLES[i].name,
+        active,
+        disabled,
+        dark_active: ROLES[i].dark_active,
+        dark_disabled: ROLES[i].dark_disabled,
+    }
+}
+
+/// The Fusion style's roles, in [`ROLES`]' order: what Qt 6.11 reports in
+/// a light colour scheme (`features/controls/fusion-palette.feature`).
+/// DECISION: the dark ones are Basic's, as the oracle cannot be put in a
+/// dark scheme to measure Fusion's.
+pub const FUSION_ROLES: [Role; ROLE_COUNT] = [
+    fusion(0, rgb(0x308cc6), rgb(0x919191)),
+    fusion(1, rgb(0xf7f7f7), rgb(0xf7f7f7)),
+    fusion(2, rgb(0xffffff), rgb(0xefefef)),
+    fusion(3, rgb(0xffffff), rgb(0xffffff)),
+    fusion(4, rgb(0xefefef), rgb(0xefefef)),
+    fusion(5, rgb(0x000000), rgb(0xbebebe)),
+    fusion(6, rgb(0x9f9f9f), rgb(0xbebebe)),
+    fusion(7, rgb(0x308cc6), rgb(0x919191)),
+    fusion(8, rgb(0xffffff), rgb(0xffffff)),
+    fusion(9, rgb(0xffffff), rgb(0xffffff)),
+    fusion(10, rgb(0x0000ff), rgb(0x0000ff)),
+    fusion(11, rgb(0xff00ff), rgb(0xff00ff)),
+    fusion(12, rgb(0xb8b8b8), rgb(0xb8b8b8)),
+    fusion(13, rgb(0xcacaca), rgb(0xcacaca)),
+    fusion(14, argb(0x80000000), argb(0x80000000)),
+    fusion(15, rgb(0x767676), rgb(0xb1b1b1)),
+    fusion(16, rgb(0x000000), rgb(0xbebebe)),
+    fusion(17, rgb(0xffffdc), rgb(0xffffdc)),
+    fusion(18, rgb(0x000000), rgb(0x000000)),
+    fusion(19, rgb(0xefefef), rgb(0xefefef)),
+    fusion(20, rgb(0x000000), rgb(0xbebebe)),
+];
+
 impl Default for Palette {
     fn default() -> Self {
         let c = |i: usize| ROLES[i].active;

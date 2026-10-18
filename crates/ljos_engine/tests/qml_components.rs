@@ -664,3 +664,18 @@ Item {
         "bye,omega,omegaChanged,toString alpha,alphaChanged,hello,toString true 3 hi 5 own function One_QMLTYPE_1"
     );
 }
+
+#[test]
+fn the_engine_knows_the_modules_the_application_uses() {
+    let h = engine();
+    h.files(&[
+        ("Leaf", "import QtQml\nQtObject {}\n"),
+        ("Main", "import QtQuick\nItem { Leaf {} }\n"),
+    ]);
+    assert!(!h.engine.uses_module("QtQuick"));
+    h.engine.create_from_url("Main", None, vec![]).unwrap();
+    assert!(h.engine.uses_module("QtQuick"));
+    // Leaf's import, and the module of the type it makes.
+    assert!(h.engine.uses_module("QtQml"));
+    assert!(!h.engine.uses_module("QtQuick.Controls"));
+}
