@@ -2252,3 +2252,35 @@ Feature: What a reload changes
         """
       And a reload happens
       Then the property "tag" of "root" is "b"
+
+  Rule: An object removed leaves the lists of the item it was shown in
+
+    A popup's item is shown in the overlay, not in the object it is written
+    in. Removing the popup takes it out of the overlay too.
+
+    Scenario: A removed popup leaves the overlay
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        ApplicationWindow {
+          objectName: "root"; width: 200; height: 200; visible: true
+          property int n: Overlay.overlay ? Overlay.overlay.children.length : -1
+          Dialog { width: 50; height: 50 }
+          Item { objectName: "other" }
+        }
+        """
+      When 100 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        ApplicationWindow {
+          objectName: "root"; width: 200; height: 200; visible: true
+          property int n: Overlay.overlay ? Overlay.overlay.children.length : -1
+          Item { objectName: "other" }
+        }
+        """
+      And a reload happens
+      And 100 milliseconds pass
+      Then the property "n" of "root" is 0

@@ -743,7 +743,9 @@ impl Engine {
         // Survivors whose visual parent died, to tell listeners.
         let mut orphans = Vec::new();
         // Survivors that may still list the dead: the owner and the
-        // visual parent of the object destroyed.
+        // visual parent of the object destroyed, and the visual parent of
+        // anything it owns that was put in another item (a popup's item in
+        // the overlay).
         let mut holders: SmallVec<[ObjectId; 2]> = SmallVec::new();
         {
             let mut store = self.inner.store.borrow_mut();
@@ -760,11 +762,17 @@ impl Engine {
                 }
                 headers.push((*id, h));
             }
-            if let Some((_, h)) = headers.last() {
-                for p in [h.owner, h.visual_parent].into_iter().flatten() {
-                    if s.objects.contains_key(p) && !holders.contains(&p) {
-                        holders.push(p);
-                    }
+            if let Some((_, h)) = headers.last()
+                && let Some(p) = h.owner
+                && s.objects.contains_key(p)
+            {
+                holders.push(p);
+            }
+            // Each one shown in an item other than its owner (a popup in the
+            // overlay) leaves that item's lists too.
+            for p in headers.iter().filter_map(|(_, h)| h.visual_parent) {
+                if s.objects.contains_key(p) && !holders.contains(&p) {
+                    holders.push(p);
                 }
             }
             // Unlink survivors from the dead. A survivor lists only the dead
