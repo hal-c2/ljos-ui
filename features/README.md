@@ -62,7 +62,7 @@ Tags on a `Feature`, `Rule` or `Examples` table apply to everything below them.
 
 | Group | Tags |
 |---|---|
-| Surface | `@headless` (default when no surface tag), `@desktop`, `@android`, `@ios`, `@wgpu`. The headless runner skips scenarios that name only other surfaces. |
+| Surface | `@headless` (default when no surface tag), `@desktop`, `@android`, `@ios`, `@wgpu`. The runner skips scenarios that name only surfaces it does not provide. It provides `@desktop` when the desktop sandbox runs (`scripts/cua-sandbox.sh`: a headless sway on its own bus whose seat has a virtual pointer and no keyboard): `mise run features:ljos` starts one when the selected files have a `@desktop` scenario, runs those on `ljos run` there, and stops it after; without sway or `dbus-run-session` it leaves them out and says why. |
 | Status | none = passes everywhere it applies · `@backlog` (passes nowhere yet) · `@backlog-<surface>` (does not pass on that surface yet) · `@dropped` (decided against; a comment gives the reason) · `@blocked` (a comment names what it waits for) · `@priority-high` / `@priority-low` |
 | Oracle | `@qt-parity` · `@qt-diverges` · `@ljos-only` · `@qt-pixels` |
 | Ledger | `@api-<Module>.<Type>.<member>` · `@a11y` |

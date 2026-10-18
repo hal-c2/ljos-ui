@@ -21,7 +21,7 @@ fn workspace_root() -> PathBuf {
         .expect("workspace root exists")
 }
 
-fn target_dir() -> PathBuf {
+pub(crate) fn target_dir() -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR")
         .map_or_else(|| workspace_root().join("target"), PathBuf::from)
 }
@@ -71,11 +71,21 @@ fn changes_files(
 pub fn run() -> bool {
     let mode = BackendMode::from_env();
     // Without Ljós in the run, a scenario that Qt cannot see has nothing to run on.
-    let selection = Selection {
+    let mut selection = Selection {
         require_tag: (mode == BackendMode::Qt).then(|| "qt-parity".to_owned()),
         oracle_only: mode == BackendMode::Qt,
         ..Selection::default()
     };
+    // The desktop surface is Ljós on the desktop sandbox; without one its
+    // scenarios are left out, and the run says why.
+    if mode != BackendMode::Qt {
+        match crate::backend::desktop::unavailable() {
+            None => selection.surfaces.push("desktop".into()),
+            // Empty when none was selected.
+            Some(why) if why.is_empty() => {}
+            Some(why) => eprintln!("@desktop scenarios not run: {why}"),
+        }
+    }
     let junit = junit_path();
     fs::create_dir_all(junit.parent().expect("junit has a parent"))
         .expect("create target/features");
@@ -97,11 +107,13 @@ pub fn run() -> bool {
             .max_concurrent_scenarios(1)
             .fail_on_skipped()
             .before(|feature, rule, scenario, world| {
-                let tagged = |t: &String| t == "qt-parity";
-                let parity = feature.tags.iter().any(tagged)
-                    || rule.is_some_and(|r| r.tags.iter().any(tagged))
-                    || scenario.tags.iter().any(tagged);
-                world.prepare(parity);
+                let tagged = |tag: &str| {
+                    let is = |t: &String| t == tag;
+                    feature.tags.iter().any(is)
+                        || rule.is_some_and(|r| r.tags.iter().any(is))
+                        || scenario.tags.iter().any(is)
+                };
+                world.prepare(tagged("qt-parity"), tagged("desktop"));
                 if changes_files(feature, rule, scenario) {
                     world.watch_files();
                 }

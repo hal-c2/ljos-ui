@@ -10,7 +10,8 @@ use cucumber::{Parser, parser};
 use futures::{StreamExt as _, stream::LocalBoxStream};
 use gherkin::{Feature, Rule, Scenario};
 
-/// Surfaces the headless runner provides. A scenario with no surface tag is `@headless`.
+/// The surface tags. A scenario with no surface tag is `@headless`; the runner provides
+/// the ones in [`Selection::surfaces`].
 const SURFACES: &[&str] = &["headless", "desktop", "android", "ios", "wgpu"];
 
 /// On a scenario of what a build says that has no table of Qt's types. A build that has one

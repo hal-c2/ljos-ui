@@ -29,4 +29,39 @@ case ${#globs[@]} in
   1) args+=(--input "$PWD/features/${globs[0]}") ;;
   *) args+=(--input "$PWD/features/{$(IFS=,; echo "${globs[*]}")}") ;;
 esac
-exec cargo test --quiet -p ljos_bdd --test features -- "${args[@]}"
+
+# @desktop scenarios run Ljós on a real compositor: the desktop sandbox (scripts/cua-sandbox.sh),
+# headless and on its own bus, of its own here so that a sandbox someone drives is left alone.
+# It is started only when the selected files have such a scenario, and stopped after the run.
+# Without it the runner leaves them out and says why.
+desktop=
+if [ "${LJOS_BDD_BACKEND:-ljos}" != qt ]; then
+  shopt -s globstar nullglob
+  files=()
+  if [ ${#globs[@]} -eq 0 ]; then
+    files=(features/**/*.feature)
+  else
+    # shellcheck disable=SC2206 # the glob is meant to expand
+    for g in "${globs[@]}"; do files+=(features/$g); done
+  fi
+  shopt -u globstar nullglob
+  if [ ${#files[@]} -gt 0 ] && grep -qs '@desktop' "${files[@]}"; then
+    desktop=1
+  fi
+fi
+if [ -n "$desktop" ]; then
+  target="${CARGO_TARGET_DIR:-$PWD/target}"
+  export LJOS_CUA_HOME="$target/cua-features"
+  mkdir -p "$target/features"
+  if why=$(scripts/cua-sandbox.sh env 2>&1 > "$target/features/desktop.env"); then
+    cargo build --quiet -p ljos_cli
+    export LJOS_BDD_DESKTOP="$target/features/desktop.env"
+    trap 'scripts/cua-sandbox.sh stop' EXIT
+  else
+    export LJOS_BDD_DESKTOP_SKIP="${why##*$'\n'}"
+  fi
+  cargo test --quiet -p ljos_bdd --test features -- "${args[@]}"
+else
+  export LJOS_BDD_DESKTOP_SKIP=
+  exec cargo test --quiet -p ljos_bdd --test features -- "${args[@]}"
+fi
