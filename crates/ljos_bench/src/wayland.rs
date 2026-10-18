@@ -312,6 +312,117 @@ impl FrameCounter {
     }
 }
 
+/// Frames of one region of the first output, as pixels.
+struct Region {
+    queue: EventQueue<State>,
+    state: State,
+    output: wl_output::WlOutput,
+    shm: wl_shm::WlShm,
+    manager: ZwlrScreencopyManagerV1,
+    rect: (i32, i32, i32, i32),
+    buffer: Option<(wl_buffer::WlBuffer, std::fs::File, usize)>,
+}
+
+impl Region {
+    fn new(display: &Path, rect: (i32, i32, i32, i32)) -> Result<Self, Error> {
+        let conn = connect(display)?;
+        let (globals, queue) = registry_queue_init::<State>(&conn).map_err(protocol)?;
+        let qh = queue.handle();
+        Ok(Self {
+            output: globals
+                .bind(&qh, 1..=4, ())
+                .map_err(|_| Error::Missing("an output"))?,
+            shm: globals
+                .bind(&qh, 1..=1, ())
+                .map_err(|_| Error::Missing("wl_shm"))?,
+            manager: globals
+                .bind(&qh, 2..=3, ())
+                .map_err(|_| Error::Missing("zwlr_screencopy_manager_v1 version 2"))?,
+            queue,
+            state: State::default(),
+            rect,
+            buffer: None,
+        })
+    }
+
+    /// The region's pixels: as they are now, or once the compositor has
+    /// shown a frame that changed something, when `damage`. `None` when
+    /// `deadline` passed first.
+    fn copy(&mut self, damage: bool, deadline: Instant) -> Result<Option<Vec<u8>>, Error> {
+        let qh = self.queue.handle();
+        let (x, y, w, h) = self.rect;
+        let frame = self
+            .manager
+            .capture_output_region(0, &self.output, x, y, w, h, &qh, ());
+        self.state.ready = None;
+        if self.buffer.is_none() {
+            self.state.shape = None;
+            self.state.shape_done = false;
+            while !(self.state.shape_done
+                || (self.manager.version() < 3 && self.state.shape.is_some()))
+            {
+                if Instant::now() > deadline {
+                    return Ok(None);
+                }
+                pump(&mut self.queue, &mut self.state, Duration::from_millis(20))?;
+            }
+            let (format, bw, bh, stride) = self.state.shape.ok_or(Error::Protocol(
+                "screencopy offered no shm buffer".to_owned(),
+            ))?;
+            let (buffer, file) = shm_buffer(&self.shm, &qh, format, bw, bh, stride)?;
+            let size = usize::try_from(u64::from(stride) * u64::from(bh)).map_err(protocol)?;
+            self.buffer = Some((buffer, file, size));
+        }
+        let Some((target, file, size)) = &self.buffer else {
+            return Ok(None);
+        };
+        if damage {
+            frame.copy_with_damage(target);
+        } else {
+            frame.copy(target);
+        }
+        while self.state.ready.is_none() && Instant::now() < deadline {
+            pump(&mut self.queue, &mut self.state, Duration::from_millis(5))?;
+        }
+        frame.destroy();
+        match self.state.ready.take() {
+            Some(Ok(_)) => {
+                use std::os::unix::fs::FileExt;
+                let mut pixels = vec![0; *size];
+                file.read_exact_at(&mut pixels, 0).map_err(protocol)?;
+                Ok(Some(pixels))
+            }
+            Some(Err(())) => Err(Error::Protocol("screencopy failed a frame".to_owned())),
+            None => Ok(None),
+        }
+    }
+}
+
+/// When the region `(x, y, w, h)` of the first output first shows anything
+/// other than what it showed before `cause` ran: `None` when nothing
+/// changed by `deadline`.
+///
+/// # Errors
+/// The compositor cannot be reached, has no screencopy or failed a copy.
+pub fn first_change(
+    display: &Path,
+    region: (i32, i32, i32, i32),
+    deadline: Instant,
+    cause: impl FnOnce(),
+) -> Result<Option<Instant>, Error> {
+    let mut r = Region::new(display, region)?;
+    let Some(before) = r.copy(false, deadline)? else {
+        return Ok(None);
+    };
+    cause();
+    while let Some(now) = r.copy(true, deadline)? {
+        if now != before {
+            return Ok(Some(Instant::now()));
+        }
+    }
+    Ok(None)
+}
+
 fn count(
     mut queue: EventQueue<State>,
     output: &wl_output::WlOutput,
@@ -340,7 +451,7 @@ fn count(
             let (format, bw, bh, stride) = state.shape.ok_or(Error::Protocol(
                 "screencopy offered no shm buffer".to_owned(),
             ))?;
-            buffer = Some(shm_buffer(shm, &qh, format, bw, bh, stride)?);
+            buffer = Some(shm_buffer(shm, &qh, format, bw, bh, stride)?.0);
         }
         let Some(target) = &buffer else { break };
         frame.copy_with_damage(target);
@@ -369,7 +480,7 @@ fn shm_buffer(
     width: u32,
     height: u32,
     stride: u32,
-) -> Result<wl_buffer::WlBuffer, Error> {
+) -> Result<(wl_buffer::WlBuffer, std::fs::File), Error> {
     let size = u64::from(stride) * u64::from(height);
     let dir = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
     let path = dir.join(format!("ljos-bench-{}.shm", std::process::id()));
@@ -395,5 +506,5 @@ fn shm_buffer(
         (),
     );
     pool.destroy();
-    Ok(buffer)
+    Ok((buffer, file))
 }

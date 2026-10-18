@@ -15,7 +15,8 @@ Feature: Measuring an application under a limit
   reports what it used as JSON: its peak and settled memory from the
   limit's own accounting, the CPU it took, and whether the kernel killed it
   for want of memory. Under load it is clicked, dragged or scrolled, as
-  asked. It never measures an application that is not inside the limit it
+  asked. On a compositor it times the first frame shown and the first
+  frame drawn in answer to the compositor once the window is up. It never measures an application that is not inside the limit it
   asked for.
 
   Background:
@@ -75,6 +76,7 @@ Feature: Measuring an application under a limit
       And the JSON file "out/report.json" has "/runs/0/settled/anon" equal to 1048576
       And the JSON file "out/report.json" has "/runs/0/oom_killed" equal to false
       And the JSON file "out/report.json" has "/runs/0/first_frame_ms" equal to null
+      And the JSON file "out/report.json" has "/runs/0/input_ready_ms" equal to null
       And the JSON file "out/report.json" has "/runs/0/outcome" equal to "no-frame"
       And the JSON file "out/report.json" has "/runs/0/gesture" equal to "click"
 

@@ -131,6 +131,10 @@ const METRICS: &[Metric] = &[
         value: |r| r.first_frame_ms,
     },
     Metric {
+        title: "Time to first frame that answers input (ms)",
+        value: |r| r.input_ready_ms,
+    },
+    Metric {
         title: "CPU time to first frame (ms)",
         value: |r| r.first_frame_ms.and(r.startup_cpu_ms),
     },

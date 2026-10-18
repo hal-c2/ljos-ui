@@ -21,7 +21,7 @@ use crate::{
     procfs,
     profile::{Profile, cpu_set},
     sway::{Mapped, Sway},
-    wayland::{FrameCounter, Pointer},
+    wayland::{self, FrameCounter, Pointer},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -198,6 +198,12 @@ pub struct Run {
     pub exit: Option<String>,
     /// From the gate opening to the compositor mapping its window.
     pub first_frame_ms: Option<f64>,
+    /// From the gate opening to the first frame drawn in answer to the
+    /// compositor once the window was mapped: a resize asked for at the
+    /// map, seen on screen. Input reaches an application the same way, so
+    /// until then a click would have waited too.
+    #[serde(default)]
+    pub input_ready_ms: Option<f64>,
     /// CPU used by then.
     pub startup_cpu_ms: Option<f64>,
     /// The most memory the cgroup held by then.
@@ -656,6 +662,32 @@ fn first_frame(
     }
 }
 
+/// Asks the compositor to make the window of `pid` wider and waits for
+/// the application to fill what it grew by; then asks for its size back,
+/// so what is measured afterwards sees the window it asked for.
+///
+/// sway keeps a floating window's centre and says at once that it has the
+/// new size, so the frame is looked for: until the application commits one
+/// of the new width, a strip just past its old right edge shows the
+/// background.
+fn answered(
+    sway: &Sway,
+    display: &Path,
+    pid: u32,
+    w: &mut Watch<'_>,
+    deadline: Instant,
+) -> Option<Instant> {
+    let (x, y, width, height) = sway.window_rect(pid).ok().flatten()?;
+    let resize = |w: i32| format!("[pid={pid}] resize set width {w} px height {height} px");
+    let strip = (x + width + 8, y + height / 4, 16, (height / 2).max(1));
+    let at = wayland::first_change(display, strip, deadline, || {
+        let _ = sway.command(&resize(width + 64));
+    });
+    let _ = sway.command(&resize(width));
+    w.sample();
+    at.ok().flatten().filter(|_| w.exited.is_none())
+}
+
 /// Runs one application on one runtime under one profile.
 ///
 /// # Errors
@@ -758,6 +790,11 @@ pub fn run(
             None
         }
     };
+    let startup_cpu = w.cg.cpu_usec();
+    let ready = match (&setup.sway, &setup.wayland, shown) {
+        (Some(sway), Some(display), Some(_)) => answered(sway, display, pid, &mut w, deadline),
+        _ => None,
+    };
     w.sample();
     let mut out = Run {
         app: app.to_owned(),
@@ -779,7 +816,8 @@ pub fn run(
         oom_killed: false,
         exit: None,
         first_frame_ms: shown.map(|at| at.duration_since(t0).as_secs_f64() * 1000.0),
-        startup_cpu_ms: w.cg.cpu_usec().map(|c| ms(c.saturating_sub(cpu0))),
+        input_ready_ms: ready.map(|at| at.duration_since(t0).as_secs_f64() * 1000.0),
+        startup_cpu_ms: startup_cpu.map(|c| ms(c.saturating_sub(cpu0))),
         peak_memory: w.cg.peak().or(w.peak),
         settled: None,
         idle: None,

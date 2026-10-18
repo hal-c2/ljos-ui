@@ -193,13 +193,15 @@ pub fn run(
                     let mut r = measure::run(setup, &app.id, &rt, profile, plan.phases, app.drive)?;
                     r.repeat = repeat;
                     let line = format!(
-                        "{} {} {} #{repeat} (load {}): {:?}, first frame {}, peak {}",
+                        "{} {} {} #{repeat} (load {}): {:?}, first frame {}, answers {}, peak {}",
                         app.id,
                         name,
                         profile.name,
                         r.load_average.map_or("?".to_owned(), |l| format!("{l:.1}")),
                         r.outcome,
                         r.first_frame_ms
+                            .map_or("—".to_owned(), |v| format!("{v:.0} ms")),
+                        r.input_ready_ms
                             .map_or("—".to_owned(), |v| format!("{v:.0} ms")),
                         r.peak_memory
                             .map_or("—".to_owned(), |b| format!("{} KiB", b >> 10)),
