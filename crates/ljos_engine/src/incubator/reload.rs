@@ -47,6 +47,8 @@ use std::sync::Arc;
 use ljos_ir::{CompiledFile, KeySeg, ObjIdx, ObjRef, ObjectKey, ReloadOp, ReloadPatch};
 use ljos_js::Bytecode;
 
+mod in_place;
+
 use super::{Creation, Initial, Instance, Template};
 use crate::atom::Atom;
 use crate::engine::Engine;
@@ -370,6 +372,18 @@ pub(crate) struct ReloadState {
     state_props: RefCell<Vec<(String, String)>>,
     migrators: RefCell<Vec<Rc<Migrator>>>,
     overlay: RefCell<Option<Overlay>>,
+    /// Every component instance made while tracking, in the order made:
+    /// where a reload that only gives objects other values finds them
+    /// (in_place.rs). Held until their objects are gone and a sweep sees it.
+    instances: RefCell<Vec<Rc<Instance>>>,
+    /// `Component` objects given a template while tracking.
+    templates: RefCell<Vec<ObjectId>>,
+    /// The length of `instances` and `templates` at which the dead ones
+    /// are swept out next.
+    sweep_at: Cell<usize>,
+    /// The properties whoever made a root gave it, which outrank what its
+    /// file says.
+    given: RefCell<HashMap<ObjectId, Vec<String>>>,
 }
 
 // Paths and prints are made for every object a reload makes, so they are
@@ -682,12 +696,15 @@ impl Engine {
             }
         }
         *st.pending.borrow_mut() = None;
+        if let Some(done) = self.reload_in_place(patch, roots) {
+            return Ok(done);
+        }
         let mut phases = Phases::start();
         let mut pending = self.reload_snapshot(patch);
         pending.old_roots = plan.iter().map(|(root, ..)| *root).collect();
         phases.mark("snapshot");
         let old: HashSet<ObjectId> = st.info.borrow().keys().copied().collect();
-        let saved = self.reload_patch_loader(patch)?;
+        let saved = self.reload_patch_loader(patch, true)?;
         phases.mark("loader");
         st.epoch.set(st.epoch.get() + 1);
         st.tree.set(st.tree.get() + 1);
@@ -766,6 +783,7 @@ impl Engine {
         for (old_root, _) in &made {
             self.destroy_now(*old_root);
         }
+        self.reload_sweep();
         phases.mark("destroy");
         st.muting.set(false);
         st.muted.borrow_mut().clear();
@@ -1104,7 +1122,13 @@ impl Engine {
         })
     }
 
-    fn reload_patch_loader(&self, patch: &ReloadPatch) -> Result<SavedLoader, ReloadError> {
+    /// Without `clear_metas` the types made for objects of the files stay:
+    /// the patch declares nothing anew (in_place.rs).
+    fn reload_patch_loader(
+        &self,
+        patch: &ReloadPatch,
+        clear_metas: bool,
+    ) -> Result<SavedLoader, ReloadError> {
         let st = &self.inner.reload;
         let mut l = self.inner.loader.borrow_mut();
         let current = l.source.clone().ok_or(ReloadError::NoSource)?;
@@ -1141,8 +1165,10 @@ impl Engine {
         }
         // The type made for an object of an unchanged file may derive
         // from one of a changed file.
-        for f in l.files.values() {
-            f.metas.borrow_mut().clear();
+        if clear_metas {
+            for f in l.files.values() {
+                f.metas.borrow_mut().clear();
+            }
         }
         let installed: Rc<dyn ComponentSource> = Rc::new(PatchedSource {
             base: base.clone(),
@@ -1266,6 +1292,7 @@ impl Engine {
         let mut by_path = st.by_path.borrow_mut();
         let mut assigned = st.assigned.borrow_mut();
         let mut origins = st.origins.borrow_mut();
+        let mut given = st.given.borrow_mut();
         for id in dead {
             if let Some(i) = info.remove(id)
                 && by_path.get(&i.path) == Some(id)
@@ -1274,8 +1301,9 @@ impl Engine {
             }
             assigned.remove(id);
             origins.remove(id);
+            given.remove(id);
         }
-        drop((info, by_path, assigned, origins));
+        drop((info, by_path, assigned, origins, given));
         let mut scripted = st.scripted.borrow_mut();
         if !scripted.is_empty() {
             for id in dead {
@@ -1334,6 +1362,7 @@ impl Engine {
         let Some(top) = cr.top.clone() else {
             return;
         };
+        self.reload_note_instances(&top);
         let forced = st.forced.borrow_mut().take();
         let above = self
             .owner(root)

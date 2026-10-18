@@ -110,8 +110,9 @@ fn an_object_with_an_id_keeps_what_a_script_assigned() {
     r.call("box", "tap");
     r.call("box", "tap");
     let before = r.find("box");
+    // A value made a binding: the file is made again, not edited in place.
     let done = r
-        .edit("Main", &COUNTER.replace("width: 10", "width: 30"))
+        .edit("Main", &COUNTER.replace("width: 10", "width: 3 * 10"))
         .unwrap();
     assert_eq!(done.generation, 1);
     assert_eq!(r.h.engine.reload_generation(), 1);
@@ -344,6 +345,25 @@ Item {
 }
 
 #[test]
+fn a_value_edited_in_place_keeps_the_objects() {
+    let mut r = rig(&[("Main", COUNTER)]);
+    r.call("box", "tap");
+    let (root, before) = (r.root, r.find("box"));
+    let done = r
+        .edit("Main", &COUNTER.replace("width: 10", "width: 30"))
+        .unwrap();
+    assert_eq!(done.roots, vec![(root, root)]);
+    assert_eq!((done.kept, done.fresh, done.remounted), (2, 0, 0));
+    assert_eq!(r.find("box"), before);
+    assert_eq!(r.num("box", "width"), 30.0);
+    assert_eq!(r.num("box", "taps"), 1.0);
+    // And back, once more in place.
+    r.edit("Main", COUNTER).unwrap();
+    assert_eq!(r.find("box"), before);
+    assert_eq!(r.num("box", "width"), 10.0);
+}
+
+#[test]
 fn a_patch_for_another_generation_is_refused() {
     let mut r = rig(&[("Main", COUNTER)]);
     r.session
@@ -390,8 +410,9 @@ fn reload_needs_tracking_and_a_root_it_made() {
 #[test]
 fn the_host_swaps_the_roots_before_the_old_ones_go() {
     let mut r = rig(&[("Main", COUNTER)]);
+    // A value made a binding, so the roots are made again.
     r.session
-        .set_file("Main", COUNTER.replace("width: 10", "width: 30"));
+        .set_file("Main", COUNTER.replace("width: 10", "width: 3 * 10"));
     let patch = r.session.build().unwrap().unwrap();
     let old = r.root;
     let mut seen = Vec::new();
@@ -733,7 +754,8 @@ fn rows_made_again_while_the_first_ones_go_are_carried() {
             .unwrap();
     }
     let done = r
-        .edit("Main", &REMADE_ROWS.replace("size: 10", "size: 20"))
+        // A binding, so the rows are made again on the full path.
+        .edit("Main", &REMADE_ROWS.replace("size: 10", "size: 2 * 10"))
         .unwrap();
     assert_eq!(
         r.call("root", "taps").to_js_string().as_str(),
@@ -756,7 +778,7 @@ fn every_object_made_from_qml_has_a_path_that_outlives_it() {
     let was = r.find("two");
     r.edit(
         "Main",
-        &USES_COUNTER.replace("Counter { id: two", "Counter { width: 3; id: two"),
+        &USES_COUNTER.replace("Counter { id: two", "Counter { width: 1 + 2; id: two"),
     )
     .unwrap();
     let e = &r.h.engine;
@@ -818,7 +840,9 @@ Item {
     r.h.engine
         .with_mut::<Tally, _>(r.find("tally"), |t| t.marks = vec![1, 2])
         .unwrap();
-    r.edit("Main", &src.replace("width: 1", "width: 2"))
+    // A binding, then a value again: each time the objects are made again
+    // and the state migrates.
+    r.edit("Main", &src.replace("width: 1", "width: 1 + 1"))
         .unwrap();
     assert_eq!(marks(&r), vec![1, 2]);
     assert_eq!(r.num("tally", "width"), 2.0);

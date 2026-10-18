@@ -194,7 +194,8 @@ fn a_save_changes_the_scene_and_keeps_its_state() {
     app.call("box", "tap");
     let before = app.scene.root();
 
-    app.save("Main.qml", &MAIN.replace("width: 10;", "width: 30;"));
+    // A value made a binding: the objects are made again.
+    app.save("Main.qml", &MAIN.replace("width: 10;", "width: 3 * 10;"));
     let reports = app.wait();
     let stats = reloaded(&reports);
     assert_eq!(stats.generation, 1);
@@ -209,13 +210,17 @@ fn a_save_changes_the_scene_and_keeps_its_state() {
     assert_eq!(app.session.reloads(), 1);
     assert!(before.is_some_and(|old| !app.engine.is_alive(old)));
 
-    // And again, from the generation it is at.
+    // And again, from the generation it is at: only the binding changed,
+    // so the objects are edited where they stand.
     app.call("box", "tap");
-    app.save("Main.qml", &MAIN.replace("width: 10;", "width: 40;"));
+    let kept = app.scene.root();
+    app.save("Main.qml", &MAIN.replace("width: 10;", "width: 4 * 10;"));
     let reports = app.wait();
     assert_eq!(reloaded(&reports).generation, 2);
     assert_eq!(app.num("box", "width"), 40.0);
     assert_eq!(app.num("box", "taps"), 3.0);
+    assert_eq!(app.scene.root(), kept);
+    assert_eq!(app.session.root(), kept);
 }
 
 #[test]

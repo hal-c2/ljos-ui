@@ -240,11 +240,12 @@ fn a_reload_keeps_each_window_s_object() {
         }
     });
 
+    // A new property besides the edit, so the roots are made again.
     session.set_file(
         "Main",
         MAIN.replace(
             "property string title: Document.title",
-            "property string title: \"now \" + Document.title",
+            "property string title: \"now \" + Document.title\n    property int edits: 1",
         ),
     );
     let patch = session.build().unwrap().unwrap();

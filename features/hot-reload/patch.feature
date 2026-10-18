@@ -353,3 +353,79 @@ Feature: What a reload changes
       And a reload happens
       Then the property "width" of "badge" is 20
       And the property "height" of "root" is 20
+
+  Rule: A change to values and bindings alone leaves every object where it is
+
+    The objects go on as they are and only the edited properties are set
+    again, so what nothing records (an animation half way) goes on too.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: "old" }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: A running animation goes on when a text beside it changes
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: "new" }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "text" of "label" is "new"
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
+  Rule: The rows of a view take an edited binding of their delegate, also the rows made later
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Column {
+          id: root; objectName: "root"
+          property int rows: 2
+          Repeater {
+            model: root.rows
+            Text { objectName: "row" + index; text: "row " + index }
+          }
+        }
+        """
+
+    Scenario: Every row shows the new binding
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Column {
+          id: root; objectName: "root"
+          property int rows: 2
+          Repeater {
+            model: root.rows
+            Text { objectName: "row" + index; text: "line " + index }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "text" of "row0" is "line 0"
+      And the property "text" of "row1" is "line 1"
+      When the property "rows" of "root" is set to 3
+      Then the property "text" of "row2" is "line 2"

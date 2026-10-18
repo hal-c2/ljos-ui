@@ -571,6 +571,7 @@ impl Engine {
         props: &[(String, Value)],
         how: &Initial,
     ) -> Result<(), EngineError> {
+        self.reload_note_given(root, props);
         match how {
             Initial::Native => self.finish_props(root, props),
             how => {
@@ -2573,6 +2574,7 @@ impl Engine {
             comp.template = Some(Rc::new(template));
             comp.url = Url(url);
         });
+        self.reload_note_template(c);
         let _ = self.write_internal(
             c,
             Component::STATUS.index,

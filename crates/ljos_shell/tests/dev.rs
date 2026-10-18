@@ -151,7 +151,8 @@ fn a_save_is_applied_to_the_window_with_its_state_kept() {
         .write_by_name(root, "taps", Value::Int(3))
         .unwrap();
 
-    w.save(&MAIN.replace("width: 10;", "width: 50;"));
+    // A value made a binding: a new root is made and shown.
+    w.save(&MAIN.replace("width: 10;", "width: 5 * 10;"));
     w.until(|app| app.reloads() == Some(1));
 
     assert_eq!(w.num("box", "width"), 50.0);
