@@ -236,3 +236,37 @@ Feature: Processes and mailboxes from the inspector
         {"topics": ["colours"]}
         """
       Then the agent is refused with "invalid_argument"
+
+  # A pass is drawn only in a window, so how the counts move is checked in
+  # ljos_dev's tests; here, what a watch of items is told and refused.
+  Rule: A watch can follow how often each of a few items was drawn again
+
+    Scenario: A watched item is counted from when it is first watched
+      When the agent calls the tool "app_watch" with:
+        """json
+        {"items": ["@1.1"]}
+        """
+      Then the answer's "/counts/items/@1.1" is 0
+
+    Scenario: A watch for an item that is not drawn again waits out its time
+      When the agent calls the tool "app_watch" with:
+        """json
+        {"items": ["@1.1"], "since": {"items": {"@1.1": 0}}, "topics": ["items"], "wait_ms": 50}
+        """
+      Then the answer's "/waited" is true
+      And the answer's "/changed" has 0 entries
+
+    Scenario: A watch of more than sixteen items is refused
+      When the agent calls the tool "app_watch" with:
+        """json
+        {"items": ["@1.1", "@2.1", "@3.1", "@4.1", "@5.1", "@6.1", "@7.1", "@8.1", "@9.1",
+                   "@10.1", "@11.1", "@12.1", "@13.1", "@14.1", "@15.1", "@16.1", "@17.1"]}
+        """
+      Then the agent is refused with "invalid_argument"
+
+    Scenario: An item that is not named by a handle is refused
+      When the agent calls the tool "app_watch" with:
+        """json
+        {"items": ["id=top"]}
+        """
+      Then the agent is refused with "invalid_argument"

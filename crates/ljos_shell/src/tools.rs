@@ -225,6 +225,27 @@ impl<M> ShellApp<M> {
         }
     }
 
+    /// Whether a client follows items, so that each pass says where it
+    /// changed the picture.
+    pub(crate) fn watches_items(&self) -> bool {
+        self.tools
+            .inspector
+            .as_ref()
+            .is_some_and(|served| served.inspector().watches_items())
+    }
+
+    /// Where a pass of the primary window changed the picture; `None` for
+    /// all of it.
+    pub(crate) fn record_changed(
+        &mut self,
+        engine: &ljos_engine::Engine,
+        areas: Option<&[[f64; 4]]>,
+    ) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().record_changed(engine, areas);
+        }
+    }
+
     /// A frame of the primary window's display: what a slow frame is
     /// slower than.
     pub(crate) fn set_frame_budget(&mut self, budget: std::time::Duration) {
@@ -395,6 +416,10 @@ mod inspector {
 
         pub(crate) fn take_work(&mut self) -> Option<FrameReport> {
             self.inspector.take_work()
+        }
+
+        pub(crate) fn inspector(&self) -> &Inspector {
+            &self.inspector
         }
 
         /// What the host says of painting the window.

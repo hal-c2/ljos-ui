@@ -74,8 +74,8 @@ known, oldest first, at most 100. `level` sets the least severe level listed; `s
 
 pub const METRICS: &str = "\
 Frame work since the inspector attached: frames, time over budget, time per scheduler lane, \
-jobs polled and done, and the owners (application, boundaries, the inspector itself) that took \
-the most time. Use it to see which component ate the frame.";
+jobs, the owners that took the most time, and `memory` (resident, the process's own, scripts, \
+reactive nodes, objects). Use it to see what ate the frame or the memory.";
 
 pub const CLICK: &str = "\
 Click the item `target` (a reference or locator) at its centre: a move, a press and a release \
@@ -1012,6 +1012,22 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             let most = super::watch::MAX_SETTLE_MS;
             if a.settle_ms.is_some_and(|w| w > most) {
                 return Err(bad(tool, format!("`settle_ms` is at most {most}")));
+            }
+            let most = super::watch::MAX_ITEMS;
+            if a.items.len() > most {
+                return Err(bad(tool, format!("`items` holds at most {most} handles")));
+            }
+            if let Some(h) = a
+                .items
+                .iter()
+                .find(|h| super::objects::object_of(h).is_none())
+            {
+                return Err(bad(
+                    tool,
+                    format!(
+                        "`items` are handles such as `@12.3`, as `app_objects` gives them; not `{h}`"
+                    ),
+                ));
             }
             holder(tool, a.holder.as_deref())?;
             Kind::Watch(a)

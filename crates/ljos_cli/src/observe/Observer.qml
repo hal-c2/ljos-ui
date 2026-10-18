@@ -163,6 +163,7 @@ ApplicationWindow {
     // The page shown.
     readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace"]
     property int page: 0
+    onPageChanged: watcher.start()
 
     function refresh(changed) {
         var all = changed === undefined
@@ -171,7 +172,8 @@ ApplicationWindow {
             processes.load()
         else if (page === 2)
             mailboxes.load()
-        else if (page === 3 && (all || changed.indexOf("paints") >= 0 || changed.indexOf("reloads") >= 0))
+        else if (page === 3 && (all || changed.indexOf("paints") >= 0 || changed.indexOf("items") >= 0
+                                || changed.indexOf("reloads") >= 0))
             objects.load(all || changed.indexOf("reloads") >= 0)
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
@@ -182,12 +184,17 @@ ApplicationWindow {
     // Follows the application: one `app_watch` waiting at a time, asked
     // again when it answers. A busy application is shown once a second:
     // each showing costs a handful of calls, and the inspector takes
-    // twenty a second from everyone.
+    // twenty a second from everyone. An item picked on the Objects page
+    // is followed instead of every pass, so that an application busy
+    // elsewhere asks nothing of the observer.
     QtObject {
         id: watcher
         property var counts: null
         property bool live: true
-        property bool waiting: false
+        // How many watches are out, and the item the newest follows: one
+        // that follows something else answers into nothing.
+        property int out: 0
+        property string following: ""
         // When the last answer said nothing changed.
         property string quietSince: ""
 
@@ -195,19 +202,41 @@ ApplicationWindow {
         // shows nothing until followed again.
         property bool missed: false
 
+        function wanted() {
+            return page === 3 && objects.pickedItem ? objects.picked : ""
+        }
+
         function start() {
-            if (waiting)
+            var item = wanted()
+            if (out > 0 && following === item)
                 return
-            waiting = true
-            var args = counts === null ? {}
-                : { since: { paints: counts.paints, logs: counts.logs, reloads: counts.reloads,
-                            traces: counts.traces },
-                    wait_ms: 30000, settle_ms: 1000, holder: window.holder }
+            following = item
+            out += 1
+            var args = {}
+            if (counts !== null) {
+                var since = { logs: counts.logs, reloads: counts.reloads, traces: counts.traces }
+                var known = item !== "" && counts.items !== undefined && counts.items[item] !== undefined
+                if (item === "")
+                    since.paints = counts.paints
+                else if (known) {
+                    since.items = {}
+                    since.items[item] = counts.items[item]
+                }
+                // An item not followed yet is counted from now: the
+                // first answer comes at once with its count.
+                args = { since: since, wait_ms: item === "" || known ? 30000 : 0,
+                         settle_ms: 1000, holder: window.holder }
+            }
+            if (item !== "")
+                args.items = [item]
             window.ask("app_watch", args, "watch")
         }
 
         function answered(ok, s) {
-            waiting = false
+            out -= 1
+            var item = ok && s.counts.items !== undefined ? Object.keys(s.counts.items)[0] : ""
+            if (ok && item !== following)
+                return
             if (!ok) {
                 // The application is gone or not there yet: try again
                 // in a while, and only while that is so.
@@ -1252,6 +1281,9 @@ ApplicationWindow {
                     property string picked: ""
                     property string pickedName: ""
                     property bool pickedItem: true
+                    // The item picked is what the watch follows.
+                    onPickedChanged: watcher.start()
+                    onPickedItemChanged: watcher.start()
                     property var props: []
                     // The rows are kept while their number stays: a
                     // refresh changes what they say, and a row being

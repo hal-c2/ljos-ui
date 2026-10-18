@@ -95,20 +95,25 @@ pub(crate) fn handle(obj: ObjectId) -> String {
     format!("@{}.{}", ffi & 0xffff_ffff, ffi >> 32)
 }
 
+/// The object `what` names if it is written as a handle, alive or not.
+pub(crate) fn object_of(what: &str) -> Option<ObjectId> {
+    let rest = what.trim().strip_prefix('@')?;
+    let (index, version) = rest
+        .split_once('.')
+        .and_then(|(i, v)| Some((i.parse::<u32>().ok()?, v.parse::<u32>().ok()?)))?;
+    Some(KeyData::from_ffi((u64::from(version) << 32) | u64::from(index)).into())
+}
+
 /// The object a handle names, if `what` is written as one. A handle of an
 /// object that is gone is stale.
 pub(crate) fn parse_handle(engine: &Engine, what: &str) -> Option<Result<ObjectId, SurfaceError>> {
-    let rest = what.trim().strip_prefix('@')?;
-    let parsed = rest
-        .split_once('.')
-        .and_then(|(i, v)| Some((i.parse::<u32>().ok()?, v.parse::<u32>().ok()?)));
-    let Some((index, version)) = parsed else {
+    what.trim().strip_prefix('@')?;
+    let Some(obj) = object_of(what) else {
         return Some(Err(SurfaceError::invalid_argument(format!(
             "`{what}` is not a handle. A handle is `@` and two numbers, as `app_objects` and \
              `app_processes` give them (`@12.3`)"
         ))));
     };
-    let obj: ObjectId = KeyData::from_ffi((u64::from(version) << 32) | u64::from(index)).into();
     if engine.is_alive(obj) {
         Some(Ok(obj))
     } else {

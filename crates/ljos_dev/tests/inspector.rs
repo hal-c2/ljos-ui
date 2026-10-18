@@ -1838,3 +1838,49 @@ fn a_hash_names_the_object_with_that_id_when_none_has_that_object_name() {
     let named = app.call("app_inspect", json!({ "target": "#inner" }));
     assert_eq!(property(&named.structured, "n")["value"], "2");
 }
+
+#[test]
+fn app_watch_counts_the_passes_that_drew_an_item_again() {
+    let mut app = app_with(
+        "import QtQuick\n\
+         Item { width: 400; height: 400\n\
+           Rectangle { id: left; width: 100; height: 100 }\n\
+           Rectangle { id: right; x: 200; width: 100; height: 100 }\n\
+           Rectangle { id: hidden; visible: false; width: 400; height: 400 } }\n",
+        InspectorConfig::default(),
+    );
+    let rows = app.call("app_objects", json!({}));
+    let handle = |id: &str| {
+        rows.structured["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .and_then(|r| r["handle"].as_str())
+            .unwrap_or_else(|| panic!("`{id}` is listed: {}", rows.text))
+            .to_owned()
+    };
+    let (left, right, hidden) = (handle("left"), handle("right"), handle("hidden"));
+    let items = json!([left, right, hidden]);
+    let first = app.call("app_watch", json!({ "items": items }));
+    assert_eq!(first.structured["counts"]["items"][&left], 0);
+    let inspector = app.inspector.as_mut().unwrap();
+    assert!(inspector.watches_items());
+
+    // A pass that changed the picture over the left one only.
+    inspector.record_changed(&app.engine, Some(&[[10.0, 10.0, 20.0, 20.0]]));
+    // One that changed nothing where any lies.
+    inspector.record_changed(&app.engine, Some(&[[120.0, 0.0, 50.0, 50.0]]));
+    // One that drew everything: all but the one not shown.
+    inspector.record_changed(&app.engine, None);
+    let told = app.call(
+        "app_watch",
+        json!({ "items": items, "since": first.structured["counts"], "topics": ["items"] }),
+    );
+    let counts = &told.structured["counts"]["items"];
+    assert_eq!(counts[&left], 2, "{}", told.text);
+    assert_eq!(counts[&right], 1, "{}", told.text);
+    assert_eq!(counts[&hidden], 0, "{}", told.text);
+    assert_eq!(told.structured["changed"], json!(["items"]));
+    assert_eq!(app.pumps, 0, "a watch is answered on the server's thread");
+}

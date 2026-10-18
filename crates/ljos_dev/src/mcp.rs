@@ -391,6 +391,46 @@ impl Inspector {
         self.frames.record_paint(report);
     }
 
+    /// Whether a client follows items with `app_watch`: only then need the
+    /// host work out where a pass changed the picture and tell
+    /// [`Inspector::record_changed`].
+    pub fn watches_items(&self) -> bool {
+        self.changes.follows_any()
+    }
+
+    /// A pass of the primary window changed the picture in `areas`, boxes
+    /// `[x, y, width, height]` in the window's points, or all of it for
+    /// `None`. Each followed item that is shown and lies in one of them
+    /// was drawn again.
+    pub fn record_changed(&mut self, engine: &Engine, areas: Option<&[[f64; 4]]>) {
+        let followed = self.changes.followed_items();
+        if followed.is_empty() {
+            return;
+        }
+        let meets = |a: &[f64; 4], b: &[f64; 4]| {
+            a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
+        };
+        let drawn: Vec<String> = engine.untrack(|| {
+            followed
+                .into_iter()
+                .filter(|h| {
+                    let Some(obj) = objects::object_of(h) else {
+                        return false;
+                    };
+                    if !engine.is_alive(obj) || !tools::visible_to_the_top(engine, obj) {
+                        return false;
+                    }
+                    let item = tools::window_box(engine, obj);
+                    match areas {
+                        None => true,
+                        Some(areas) => areas.iter().any(|a| meets(a, &item)),
+                    }
+                })
+                .collect()
+        });
+        self.changes.drawn_again(&drawn);
+    }
+
     /// Says how long a frame may take before `app_metrics` logs it as
     /// slow: a frame of the primary window's display. 1/60 s until told.
     pub fn set_frame_budget(&mut self, budget: Duration) {

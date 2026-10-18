@@ -354,7 +354,7 @@
     "read_only": true
   },
   {
-    "description": "Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads, `traces`. Give the `counts` of the last answer as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst into one answer. Wakes nothing in the app.",
+    "description": "Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads, `traces`, or passes that drew the `items` given by handle. Give the `counts` of the last answer as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.",
     "input_schema": {
       "$defs": {
         "Since": {
@@ -367,6 +367,19 @@
               "minimum": 0,
               "type": [
                 "integer",
+                "null"
+              ]
+            },
+            "items": {
+              "additionalProperties": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "default": null,
+              "description": "By handle; an item left out is not compared.",
+              "type": [
+                "object",
                 "null"
               ]
             },
@@ -436,6 +449,11 @@
               "const": "traces",
               "description": "Events `app_trace` wrote down.",
               "type": "string"
+            },
+            {
+              "const": "items",
+              "description": "Passes that changed the picture where one of the watch's `items`\nlies.",
+              "type": "string"
             }
           ]
         }
@@ -449,6 +467,14 @@
             "string",
             "null"
           ]
+        },
+        "items": {
+          "default": [],
+          "description": "Items to follow, by handle (`@12.3`, as `app_objects` gives them),\nat most 16: how many passes changed the picture where each lies,\ncounted from when it was first watched.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "settle_ms": {
           "default": null,
@@ -472,7 +498,7 @@
           "description": "The `counts` of the last answer. Without them the counts are\nanswered at once."
         },
         "topics": {
-          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`. All by default.",
+          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`, `items`. All by default.",
           "items": {
             "$ref": "#/$defs/Topic"
           },

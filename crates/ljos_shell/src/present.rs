@@ -164,6 +164,36 @@ pub(crate) enum Change {
     All,
 }
 
+impl Change {
+    /// For a painter that draws the whole window or nothing.
+    pub(crate) fn whole(self) -> Change {
+        match self {
+            Change::None => Change::None,
+            _ => Change::All,
+        }
+    }
+
+    /// Where the picture changed, as boxes `[x, y, width, height]` in
+    /// points; `None` for all of it.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn boxes(&self) -> Option<Vec<[f64; 4]>> {
+        let of = |r: &Rect| {
+            [
+                f64::from(r.min.x),
+                f64::from(r.min.y),
+                f64::from(r.width()),
+                f64::from(r.height()),
+            ]
+        };
+        match self {
+            Change::None => Some(Vec::new()),
+            Change::Area(areas) => Some(areas.iter().map(of).collect()),
+            Change::Scroll(s) => Some(std::iter::once(&s.rect).chain(&s.areas).map(of).collect()),
+            Change::All => None,
+        }
+    }
+}
+
 /// The content of `rect` (on whole device pixels) moved `by` (whole device
 /// pixels) from the last picture: moved there, it is the picture again
 /// except inside `areas` (which may overlap, and take in what the move

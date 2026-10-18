@@ -1354,10 +1354,23 @@ impl<M: Send + 'static> Desktop<M> {
         let clear = view.backdrop().unwrap_or(slot.clear);
         let wake = view.wakes_in();
         let now = Instant::now();
-        let change = if painter.wants_areas() {
+        // Where a pass changed the picture is worked out for a painter that
+        // draws all of it too while a client follows items in it.
+        #[cfg(feature = "mcp")]
+        let follows = slot.view.is_none() && app.watches_items();
+        #[cfg(not(feature = "mcp"))]
+        let follows = false;
+        let change = if painter.wants_areas() || follows {
             slot.shown.change(&shapes, pixels_per_point, clear)
         } else {
             slot.shown.differs(&shapes, pixels_per_point, clear)
+        };
+        #[cfg(feature = "mcp")]
+        let changed = follows.then(|| change.boxes());
+        let change = if painter.wants_areas() {
+            change
+        } else {
+            change.whole()
         };
         let frame = painter.frame(change, &slot.pending, pixels_per_point);
         #[cfg(feature = "mcp")]
@@ -1403,6 +1416,10 @@ impl<M: Send + 'static> Desktop<M> {
         );
         #[cfg(not(feature = "mcp"))]
         let _ = steps;
+        #[cfg(feature = "mcp")]
+        if let Some(changed) = changed {
+            app.record_changed(&engine, changed.as_deref());
+        }
         #[cfg(feature = "mcp")]
         if let Some(meter) = meter {
             app.record_paint(&meter.report(asked, steps));
