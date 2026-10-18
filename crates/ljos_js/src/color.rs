@@ -5,7 +5,10 @@
 //! (`color.r`). JS only compares objects by identity, so there is exactly one
 //! object per distinct colour that something still holds. The table that
 //! finds it keeps weak references, and is swept when it has doubled since
-//! the last sweep; nothing runs for it between colour reads.
+//! the last sweep; nothing runs for it between colour reads. The last
+//! colours made are held as well, a few dozen: a colour that crosses into
+//! a binding and is let go at once would otherwise be made again, all its
+//! members with it, every time it crosses.
 //!
 //! The objects are frozen. One object stands for every use of that colour,
 //! so a write to a channel has nowhere to go.
@@ -25,6 +28,8 @@ pub(crate) const FACE: &str = r##"
   const f = Math.fround;
   const live = new Map();
   let sweepAt = 256;
+  const recent = new Array(64);
+  let next = 0;
 
   const hex = (v) => {
     const n = Math.floor((Math.round(v * U) * 255 + 32767) / U);
@@ -85,6 +90,8 @@ pub(crate) const FACE: &str = r##"
     c.valid = !invalid;
     Object.freeze(c);
     live.set(key, new WeakRef(c));
+    recent[next] = c;
+    next = (next + 1) & 63;
     if (live.size >= sweepAt) {
       for (const [k, w] of live) if (w.deref() === undefined) live.delete(k);
       sweepAt = Math.max(256, live.size * 2);

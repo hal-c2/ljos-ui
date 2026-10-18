@@ -80,6 +80,21 @@ fn a_colour_kept_by_script_is_still_the_one_handed_out_later() {
     assert_eq!(call(&host, &m, "isKept", &[RED]), JsValue::Bool(true));
 }
 
+/// A colour that crossed and was let go is the one made before when it
+/// crosses again: not made again, members and all, each time it crosses.
+#[test]
+fn a_colour_let_go_is_not_made_again_while_it_is_recent() {
+    let host = host();
+    let m = module(
+        &host,
+        "let seen; export function watch(c) { seen = new WeakRef(c); } \
+         export function same(c) { return seen.deref() === c; }",
+    );
+    call(&host, &m, "watch", &[RED]);
+    host.collect_now();
+    assert_eq!(call(&host, &m, "same", &[RED]), JsValue::Bool(true));
+}
+
 #[test]
 fn a_colour_reads_as_its_hex_text() {
     let host = host();
