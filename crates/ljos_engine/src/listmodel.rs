@@ -12,6 +12,11 @@
 //! `get(i)` hands out a live object for the row: reading it reads the
 //! row, writing it writes the row. It is made on first use and kept
 //! until the row goes.
+//!
+//! What changes is said with `QAbstractItemModel`'s signals, as Qt's
+//! `ListModel` says it (measured on Qt 6.11): a role is named by its
+//! index among the model's roles, a clear is a removal of every row, and
+//! the reset, layout, column and header signals are there but never sent.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -324,9 +329,40 @@ impl ListState {
         values[role] = v;
     }
 
-    /// After a change: the count, then the views, as one batch so what
-    /// depends on several of them runs once.
-    fn changed(&self, engine: &Engine, had_roles: usize, change: Option<ModelChange>) {
+    /// Sends the signal `name` with what `args` makes, when anything
+    /// listens: model indexes are made by script and most models are
+    /// heard only by their views.
+    fn tell(&self, engine: &Engine, name: &str, args: impl FnOnce(ObjectId) -> Vec<Value>) {
+        let Some(me) = self.me.get() else { return };
+        let Some(s) = <ListModel as QmlType>::static_meta().signal_index(name) else {
+            return;
+        };
+        if engine.signal_connected(me, s) {
+            let _ = engine.emit(me, s, &args(me));
+        }
+    }
+
+    /// `first` to `last`, under no parent, as the row signals give them.
+    fn tell_rows(&self, engine: &Engine, name: &str, first: usize, count: usize) {
+        self.tell(engine, name, |_| {
+            vec![
+                crate::item_selection::invalid_index(engine),
+                Value::Int(first as i32),
+                Value::Int((first + count) as i32 - 1),
+            ]
+        });
+    }
+
+    /// After a change: the count, the views, then the signal `tell`
+    /// sends, as one batch so what depends on several of them runs once
+    /// and `countChanged` comes last, as in Qt.
+    fn changed(
+        &self,
+        engine: &Engine,
+        had_roles: usize,
+        change: Option<ModelChange>,
+        tell: impl FnOnce(),
+    ) {
         engine.batch(|| {
             if let Some(me) = self.me.get() {
                 let _ = engine.set_internal(me, ListModel::COUNT, self.len() as i32);
@@ -337,6 +373,7 @@ impl ListState {
             if let Some(c) = change {
                 self.listeners.emit(engine, &c);
             }
+            tell();
         });
     }
 
@@ -372,17 +409,20 @@ impl ListState {
             engine,
             &ModelChange::RowsAboutToBeInserted { first: at, count },
         );
+        self.tell_rows(engine, "rowsAboutToBeInserted", at, count);
         self.rows.borrow_mut().splice(at..at, rows);
         self.changed(
             engine,
             had,
             Some(ModelChange::RowsInserted { first: at, count }),
+            || self.tell_rows(engine, "rowsInserted", at, count),
         );
     }
 
     fn remove(&self, engine: &Engine, first: usize, count: usize) {
         self.listeners
             .emit(engine, &ModelChange::RowsAboutToBeRemoved { first, count });
+        self.tell_rows(engine, "rowsAboutToBeRemoved", first, count);
         // A listener may have changed the model.
         let len = self.len();
         let first = first.min(len);
@@ -393,6 +433,11 @@ impl ListState {
             engine,
             roles,
             Some(ModelChange::RowsRemoved { first, count }),
+            || {
+                if count > 0 {
+                    self.tell_rows(engine, "rowsRemoved", first, count);
+                }
+            },
         );
         for row in gone {
             self.drop_row(engine, row);
@@ -416,6 +461,21 @@ impl ListState {
     }
 
     fn move_rows(&self, engine: &Engine, from: usize, to: usize, count: usize) {
+        // Qt names the row the moved ones go before, as it was.
+        let before = if to > from { to + count } else { to };
+        let tell = |name: &str| {
+            self.tell(engine, name, |_| {
+                let none = crate::item_selection::invalid_index(engine);
+                vec![
+                    none.clone(),
+                    Value::Int(from as i32),
+                    Value::Int((from + count) as i32 - 1),
+                    none,
+                    Value::Int(before as i32),
+                ]
+            });
+        };
+        tell("rowsAboutToBeMoved");
         {
             let mut rows = self.rows.borrow_mut();
             let moved: Vec<ListRow> = rows.drain(from..from + count).collect();
@@ -426,6 +486,7 @@ impl ListState {
             engine,
             roles,
             Some(ModelChange::RowsMoved { from, to, count }),
+            || tell("rowsMoved"),
         );
     }
 
@@ -439,6 +500,7 @@ impl ListState {
     ) -> bool {
         let had = self.roles.borrow().len();
         let mut changed = Vec::new();
+        let mut ids = Vec::new();
         for (name, v) in entries {
             let Some((i, v)) = self.resolve(engine, &name, v, source) else {
                 continue;
@@ -466,6 +528,7 @@ impl ListState {
                 engine.destroy(o);
             }
             changed.push(Atom::intern(&name));
+            ids.push(Value::Int(i as i32));
         }
         let any = !changed.is_empty();
         if any {
@@ -480,6 +543,18 @@ impl ListState {
                     count: 1,
                     roles: changed,
                 }),
+                || {
+                    if any {
+                        self.tell(engine, "dataChanged", |me| {
+                            let at = crate::item_selection::make_index(
+                                engine,
+                                Some(me),
+                                &[(row as i32, 0)],
+                            );
+                            vec![at.clone(), at, Value::list(ids)]
+                        });
+                    }
+                },
             );
         }
         any
@@ -494,6 +569,7 @@ impl ListState {
             engine,
             &ModelChange::RowsAboutToBeRemoved { first: 0, count },
         );
+        self.tell_rows(engine, "rowsAboutToBeRemoved", 0, count);
         let gone: Vec<ListRow> = std::mem::take(&mut *self.rows.borrow_mut());
         if gone.is_empty() {
             return;
@@ -506,6 +582,7 @@ impl ListState {
                 first: 0,
                 count: gone.len(),
             }),
+            || self.tell_rows(engine, "rowsRemoved", 0, gone.len()),
         );
         for row in gone {
             self.drop_row(engine, row);
@@ -671,6 +748,84 @@ pub(crate) fn nested_model(
 
 #[qml_impl]
 impl ListModel {
+    #[qml(signal, name = "dataChanged")]
+    fn data_changed(top_left: Value, bottom_right: Value, roles: Value);
+
+    #[qml(signal, name = "headerDataChanged")]
+    fn header_data_changed(orientation: i32, first: i32, last: i32);
+
+    #[qml(signal, name = "layoutAboutToBeChanged")]
+    fn layout_about_to_be_changed(parents: Value, hint: i32);
+
+    #[qml(signal, name = "layoutChanged")]
+    fn layout_changed(parents: Value, hint: i32);
+
+    #[qml(signal, name = "modelAboutToBeReset")]
+    fn model_about_to_be_reset();
+
+    #[qml(signal, name = "modelReset")]
+    fn model_reset();
+
+    #[qml(signal, name = "rowsAboutToBeInserted")]
+    fn rows_about_to_be_inserted(parent: Value, first: i32, last: i32);
+
+    #[qml(signal, name = "rowsInserted")]
+    fn rows_inserted(parent: Value, first: i32, last: i32);
+
+    #[qml(signal, name = "rowsAboutToBeRemoved")]
+    fn rows_about_to_be_removed(parent: Value, first: i32, last: i32);
+
+    #[qml(signal, name = "rowsRemoved")]
+    fn rows_removed(parent: Value, first: i32, last: i32);
+
+    #[qml(signal, name = "rowsAboutToBeMoved")]
+    fn rows_about_to_be_moved(
+        source_parent: Value,
+        source_start: i32,
+        source_end: i32,
+        destination_parent: Value,
+        destination_row: i32,
+    );
+
+    #[qml(signal, name = "rowsMoved")]
+    fn rows_moved(
+        source_parent: Value,
+        source_start: i32,
+        source_end: i32,
+        destination_parent: Value,
+        destination_row: i32,
+    );
+
+    #[qml(signal, name = "columnsAboutToBeInserted")]
+    fn columns_about_to_be_inserted(parent: Value, first: i32, last: i32);
+
+    #[qml(signal, name = "columnsInserted")]
+    fn columns_inserted(parent: Value, first: i32, last: i32);
+
+    #[qml(signal, name = "columnsAboutToBeRemoved")]
+    fn columns_about_to_be_removed(parent: Value, first: i32, last: i32);
+
+    #[qml(signal, name = "columnsRemoved")]
+    fn columns_removed(parent: Value, first: i32, last: i32);
+
+    #[qml(signal, name = "columnsAboutToBeMoved")]
+    fn columns_about_to_be_moved(
+        source_parent: Value,
+        source_start: i32,
+        source_end: i32,
+        destination_parent: Value,
+        destination_column: i32,
+    );
+
+    #[qml(signal, name = "columnsMoved")]
+    fn columns_moved(
+        source_parent: Value,
+        source_start: i32,
+        source_end: i32,
+        destination_parent: Value,
+        destination_column: i32,
+    );
+
     /// The model index of the row: what a selection model or a view is
     /// handed; the invalid index out of range.
     #[qml(invokable)]

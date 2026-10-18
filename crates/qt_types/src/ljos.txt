@@ -798,6 +798,24 @@ module QtQml.Models
 		prop dynamicRoles QtQml.bool named
 		signal countChanged
 		signal dynamicRolesChanged
+		signal dataChanged topLeft bottomRight roles
+		signal headerDataChanged orientation first last
+		signal layoutAboutToBeChanged parents hint
+		signal layoutChanged parents hint
+		signal modelAboutToBeReset
+		signal modelReset
+		signal rowsAboutToBeInserted parent first last
+		signal rowsInserted parent first last
+		signal rowsAboutToBeRemoved parent first last
+		signal rowsRemoved parent first last
+		signal rowsAboutToBeMoved sourceParent sourceStart sourceEnd destinationParent destinationRow
+		signal rowsMoved sourceParent sourceStart sourceEnd destinationParent destinationRow
+		signal columnsAboutToBeInserted parent first last
+		signal columnsInserted parent first last
+		signal columnsAboutToBeRemoved parent first last
+		signal columnsRemoved parent first last
+		signal columnsAboutToBeMoved sourceParent sourceStart sourceEnd destinationParent destinationColumn
+		signal columnsMoved sourceParent sourceStart sourceEnd destinationParent destinationColumn
 		method index
 		method get
 		method append

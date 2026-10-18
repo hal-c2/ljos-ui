@@ -1423,6 +1423,10 @@ impl Engine {
                     crate::listmodel::nested_model(self, model, nested),
                 ));
             }
+            // Qt numbers an element's new roles from its last one (measured
+            // on Qt 6.11: `{ a; b }` makes `b` role 0), which is the order
+            // `get()` lists them in and the ids `dataChanged` gives.
+            row.reverse();
             rows.push(row);
         }
         rows
