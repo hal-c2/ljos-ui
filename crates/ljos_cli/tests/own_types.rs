@@ -1163,4 +1163,35 @@ const NOT_YET: &[(&str, &str)] = &[
         "QtQuick.ViewSection",
         "only what a view's `section` is; Qt lets a file make one as well",
     ),
+    // Qt's table names the parts of its Fusion style but describes nothing
+    // of them, so it gives them no default property; here each is the Item
+    // its file is built on. No file writes an object in one.
+    (
+        "QtQuick.Controls.Fusion.impl.ButtonPanel",
+        "described by nothing in Qt's table, which so gives it no default property",
+    ),
+    (
+        "QtQuick.Controls.Fusion.impl.CheckIndicator",
+        "described by nothing in Qt's table, which so gives it no default property",
+    ),
+    (
+        "QtQuick.Controls.Fusion.impl.SliderGroove",
+        "described by nothing in Qt's table, which so gives it no default property",
+    ),
+    (
+        "QtQuick.Controls.Fusion.impl.SliderHandle",
+        "described by nothing in Qt's table, which so gives it no default property",
+    ),
+    (
+        "QtQuick.Controls.Fusion.impl.SwitchIndicator",
+        "described by nothing in Qt's table, which so gives it no default property",
+    ),
+    (
+        "QtQuick.Controls.Fusion.impl.TextFieldBackground",
+        "described by nothing in Qt's table, which so gives it no default property",
+    ),
+    (
+        "QtQuick.Controls.Fusion.impl: BusyIndicatorImpl",
+        "a part of Qt's Fusion; Ljós's Fusion draws its ring in BusyIndicator itself, and has the name in QtQuick.Controls.Basic.impl alone",
+    ),
 ];
