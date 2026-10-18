@@ -781,6 +781,8 @@ mod tests {
             remounted: 0,
             warnings: Vec::new(),
             saved: std::time::Instant::now(),
+            quiet: Duration::from_micros(15_000),
+            waited: Duration::ZERO,
             shown: Some(Duration::from_micros(48_300)),
         }));
         assert_eq!(

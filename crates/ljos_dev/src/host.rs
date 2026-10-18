@@ -182,6 +182,11 @@ pub struct ReloadStats {
     pub warnings: Vec<CompileFault>,
     /// When the first file event of the saves it applied came.
     pub saved: Instant,
+    /// From that event to the start of the build.
+    pub quiet: Duration,
+    /// From the end of the build to the start of the apply: the message
+    /// waiting for the application's thread.
+    pub waited: Duration,
     /// From that event to the end of the first frame that shows the
     /// result: filled in by a host that paints, once it has.
     pub shown: Option<Duration>,
@@ -480,7 +485,8 @@ impl DevSession {
                     warnings,
                     build,
                     saved,
-                } => out.push(self.reload(engine, host, &patch, warnings, build, saved)),
+                    quiet,
+                } => out.push(self.reload(engine, host, &patch, warnings, build, (saved, quiet))),
             }
         }
         out
@@ -493,9 +499,10 @@ impl DevSession {
         patch: &ReloadPatch,
         warnings: Vec<CompileFault>,
         build: Duration,
-        saved: Instant,
+        (saved, quiet): (Instant, Duration),
     ) -> Report {
         let started = Instant::now();
+        let waited = started.duration_since(saved).saturating_sub(quiet + build);
         let roots: Vec<ObjectId> = self.root.into_iter().collect();
         let window = host.window();
         let applied = apply(engine, patch, &roots, window, &mut |e, old, new| {
@@ -578,6 +585,8 @@ impl DevSession {
             remounted: done.remounted,
             warnings,
             saved,
+            quiet,
+            waited,
             shown: None,
         })
     }

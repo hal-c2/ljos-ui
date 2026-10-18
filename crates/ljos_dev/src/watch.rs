@@ -50,6 +50,9 @@ pub enum DevMsg {
         build: Duration,
         /// When the first file event of the saves it brings came.
         saved: Instant,
+        /// From that event to the start of the build: the quiet time, and
+        /// a build before it that was still being applied.
+        quiet: Duration,
     },
     /// The files do not compile; the application goes on as it is.
     Failed(Vec<CompileFault>),
@@ -482,6 +485,9 @@ impl<O: TypeOracle + Clone> Run<O> {
                     patch,
                     warnings,
                     build: started.elapsed(),
+                    quiet: self
+                        .saved
+                        .map_or(Duration::ZERO, |s| started.duration_since(s)),
                     saved: self.saved.take().unwrap_or(started),
                 })
             }

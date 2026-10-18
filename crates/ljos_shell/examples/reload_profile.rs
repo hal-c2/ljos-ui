@@ -1,8 +1,9 @@
 //! What a hot reload costs, without a window: a watched QML project is
 //! shown in a `ShellApp` on an `egui::Context`, an edit is saved again
-//! and again, and each reload is told with its build, its apply, the time
-//! from the save to the first pass that shows it, and the process's
-//! resident memory after it. The edit swaps `OLD` for `NEW` in `FILE` and
+//! and again, and each reload is told with the steps from the save to the
+//! first pass that shows it (the watcher's quiet time, the build, the wait
+//! for the application's thread, the apply and the frame after it), and
+//! the process's resident memory after it. The edit swaps `OLD` for `NEW` in `FILE` and
 //! back, so every save changes the file.
 //!
 //! `cargo run --release -p ljos_shell --features dev --example reload_profile --
@@ -156,10 +157,21 @@ fn main() -> anyhow::Result<()> {
         } else {
             original.clone()
         };
-        std::fs::write(&path, text)?;
+        // Written on a thread of its own, as an editor does: ext4 writes a
+        // truncated file out when it is closed, and that took up to 2.5 s
+        // here, which the reload would wait for on the thread it is applied on.
+        let writer = std::thread::spawn({
+            let path = path.clone();
+            move || std::fs::write(path, text)
+        });
         let until = Instant::now() + Duration::from_secs(10);
+        let (mut passes, mut in_passes, mut longest) = (0u32, Duration::ZERO, Duration::ZERO);
         let stats = loop {
+            let t = Instant::now();
             pass(&mut app);
+            passes += 1;
+            in_passes += t.elapsed();
+            longest = longest.max(t.elapsed());
             let got = reports.borrow_mut().drain(..).collect::<Vec<_>>();
             let mut done = None;
             for r in got {
@@ -176,18 +188,29 @@ fn main() -> anyhow::Result<()> {
             }
             std::thread::sleep(Duration::from_millis(1));
         };
+        writer.join().expect("the writer panicked")?;
         let Some(s) = stats else {
             println!("reload {i}: nothing came in 10 s");
             continue;
         };
-        settle(&mut app, &mut pass, Duration::from_millis(300));
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        // The thread the reload is applied on: what kept it from taking
+        // the reload sooner.
+        println!(
+            "  {passes} passes until it came, {:.1} ms in them, the longest {:.1} ms",
+            ms(in_passes),
+            ms(longest)
+        );
+        settle(&mut app, &mut pass, Duration::from_millis(300));
         let shown = s.shown.map_or(f64::NAN, ms);
         shown_all.push(shown);
         println!(
-            "reload {i}: build {:.1} ms, apply {:.1} ms, shown {:.1} ms; {} kept, {} new, {} made again; rss {} kB",
+            "reload {i}: quiet {:.1} ms, build {:.1} ms, waited {:.1} ms, apply {:.1} ms, frame {:.1} ms, shown {:.1} ms; {} kept, {} new, {} made again; rss {} kB",
+            ms(s.quiet),
             ms(s.build),
+            ms(s.waited),
             ms(s.apply),
+            shown - ms(s.quiet + s.build + s.waited + s.apply),
             shown,
             s.kept,
             s.fresh,
