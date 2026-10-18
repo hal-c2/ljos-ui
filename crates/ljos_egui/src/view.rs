@@ -27,6 +27,14 @@ use crate::text::{self, TextBridge};
 /// A frame of a display whose refresh rate the host never told.
 const SIXTY_HZ: Duration = Duration::from_micros(16_667);
 
+/// How long a decoded picture waits for its pass. Pictures arriving
+/// while something else draws (an animation, the user's hand) come with
+/// that frame. Arriving on their own, they are shown together a few
+/// frames apart and not each in a frame of its own: a window filling
+/// with hundreds of pictures over a costly backdrop draws it a few
+/// times, not a hundred.
+const PICTURES_EVERY: Duration = Duration::from_millis(50);
+
 #[derive(Debug, thiserror::Error)]
 pub enum ViewError {
     #[error("cannot show the root item: {0}")]
@@ -610,7 +618,8 @@ impl QmlView {
         // A decoded picture is waiting: the worker thread wakes egui, and
         // the pass that follows hands the result to the items.
         let ctx = ctx.clone();
-        ljos_quick::ImageStore::of(&self.engine).set_waker(move || ctx.request_repaint());
+        ljos_quick::ImageStore::of(&self.engine)
+            .set_waker(move || ctx.request_repaint_after(PICTURES_EVERY));
     }
 
     /// Runs `f` with the scene's waker held, for work done right before a

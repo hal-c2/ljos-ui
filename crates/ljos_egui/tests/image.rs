@@ -31,6 +31,21 @@ fn two_halves() -> Vec<u8> {
     out
 }
 
+/// A grey PNG of `w` by `h`.
+fn grey(w: u32, h: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Grayscale);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().unwrap();
+        writer
+            .write_image_data(&vec![128; (w * h) as usize])
+            .unwrap();
+    }
+    out
+}
+
 fn make<T: QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
     let o = e.create_native(T::default(), parent).unwrap();
     if let Some(p) = parent {
@@ -165,6 +180,60 @@ fn a_picture_decoded_in_the_background_wakes_egui_and_then_it_idles() {
     }
     assert_eq!(h.state().view.stats().frames, frames);
     assert_eq!(ImageStore::of(&e).pending(), 0);
+}
+
+#[test]
+fn pictures_decoded_in_the_background_ask_for_their_pass_a_moment_later() {
+    let (e, root, image) = items(true);
+    // egui takes the frame it predicts off a later pass; a window's is
+    // a sixtieth of a second, kittest's a quarter.
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(200.0, 120.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(
+            |ui, st: &mut State| st.rect = st.view.show(ui).rect,
+            state(&e, root),
+        );
+    h.step();
+    ComputePool::global().wait_idle();
+    h.run();
+    assert_eq!(status(&e, image), image_status::READY);
+
+    // Larger than is decoded on the spot, and held when done, so that
+    // its result waits with no pass asked for.
+    let store = ImageStore::of(&e);
+    store.set_held(true);
+    store.register_resource("large.png", grey(600, 600));
+    set(&e, image, "source", Value::Url("large.png".into()));
+    h.run();
+    ComputePool::global().wait_idle();
+    h.run();
+    assert_eq!(status(&e, image), image_status::LOADING);
+    assert!(!h.ctx.has_requested_repaint());
+
+    let delays = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&delays);
+    h.ctx.set_request_repaint_callback(move |info| {
+        seen.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(info.delay);
+    });
+    // A waker put in while a result waits is called at once.
+    let ctx = h.ctx.clone();
+    h.state_mut().view.bind_context(&ctx);
+    let delays = delays
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    // Others arriving by then are shown in the same pass.
+    assert_eq!(delays.len(), 1, "{delays:?}");
+    assert!(
+        delays[0] >= std::time::Duration::from_millis(30),
+        "{delays:?}"
+    );
+    store.set_held(false);
+    h.run();
+    assert_eq!(status(&e, image), image_status::READY);
 }
 
 /// egui_kittest's renderer filters textures in the shader, "predictably":
