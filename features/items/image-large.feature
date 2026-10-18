@@ -51,7 +51,8 @@ Feature: A picture larger than the window
     Then the property "implicitWidth" of "picture" is 3000
     And the property "sourceSize.width" of "picture" is 3000
     And the property "sourceSize.height" of "picture" is 2000
-    And the pixel at 75, 50 of the window is within 4 of "#2060a0"
+    When 100 milliseconds pass
+    Then the pixel at 75, 50 of the window is within 4 of "#2060a0"
 
   Scenario: A Canvas draws a large Image at the picture's own size
     Given a 3000 by 2000 image file "large.png" filled with "#2060a0"

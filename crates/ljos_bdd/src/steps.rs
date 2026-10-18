@@ -1595,6 +1595,16 @@ fn asked_to_quit(w: &mut LjosWorld, not: String) -> StepResult {
     })
 }
 
+#[then(regex = r#"^no picture is kept for "([^"]+)" yet$"#)]
+fn no_picture_kept(w: &mut LjosWorld, object: String) -> StepResult {
+    w.each(|b| match b.kept_picture(&object)? {
+        None => Ok(()),
+        Some((w, h)) => Err(BackendError::Failed(format!(
+            "the picture of {object:?} is kept at {w} by {h} pixels already"
+        ))),
+    })
+}
+
 #[then(regex = r#"^the picture of "([^"]+)" is kept at (\d+) by (\d+) pixels$"#)]
 fn picture_kept_at(w: &mut LjosWorld, object: String, width: u32, height: u32) -> StepResult {
     w.each(|b| match b.kept_picture(&object)? {

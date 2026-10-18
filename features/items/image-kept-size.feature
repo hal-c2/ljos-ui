@@ -30,7 +30,8 @@ Feature: A picture is kept at the size its item draws it
     Then the property "status" of "picture" is 1
     And the property "sourceSize.width" of "picture" is 2048
     And the property "implicitWidth" of "picture" is 2048
-    And the picture of "picture" is kept at 112 by 56 pixels
+    When 100 milliseconds pass
+    Then the picture of "picture" is kept at 112 by 56 pixels
 
   Scenario: A row's picture from the web is kept at the size the row draws it
     Given the web server serves a 2048 by 1024 image file "photo.png" filled with "#2060a0"
