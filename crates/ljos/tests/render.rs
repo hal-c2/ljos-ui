@@ -84,3 +84,22 @@ fn a_window_keeps_its_colour_unless_asked_not_to() {
     let png = picture.png(&engine, root).unwrap();
     assert_eq!(pixel(&png, 40, 30, 20)[3], 0);
 }
+
+#[test]
+fn a_picture_waits_for_the_answers_the_scene_was_promised() {
+    let (_dir, app) = application(
+        "import QtQuick\nRectangle { objectName: \"root\"; width: 40; height: 30; color: \"red\" }\n",
+    );
+    let (engine, root) = app.build().unwrap();
+    // As a fetch is answered: on the Engine thread, after real time has
+    // passed that the virtual clock knows nothing of.
+    let reply = Platform::of(&engine).expect();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        reply.send(move |e| {
+            e.write_by_name(root, "color", Value::from("blue")).unwrap();
+        });
+    });
+    let png = ljos::render::render_png(&engine, root, (40, 30), 0).unwrap();
+    assert_eq!(pixel(&png, 40, 5, 5), [0, 0, 255, 255]);
+}

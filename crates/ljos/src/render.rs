@@ -6,7 +6,11 @@
 //! pass on it — every timer fired at its own deadline, the scene
 //! settled in between, as a host woken at each deadline would — and
 //! draws the scene with the CPU reference renderer to a PNG. It is
-//! what `ljos render` does after the project is loaded.
+//! what `ljos render` does after the project is loaded. What the scene
+//! was promised and is still waiting for — a picture being decoded, a
+//! fetch, a file read off the Engine thread — takes real time the virtual
+//! clock knows nothing of, so it is waited for (within a bound) before
+//! any virtual time passes and before the picture is taken.
 //!
 //! ```no_run
 //! # mod my_module { pub fn register(_: &ljos::Engine) {} }

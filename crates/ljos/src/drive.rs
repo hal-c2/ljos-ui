@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use ljos_engine::Engine;
+use ljos_platform::Platform;
 use ljos_quick::{ImageStore, QuickScene};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
 
@@ -12,6 +13,9 @@ use ljos_runtime::{Clock as _, Time, VirtualClock};
 /// with it, and timer firings before the time to let pass is given up on.
 const MAX_SETTLE_FRAMES: usize = 64;
 const MAX_TIMER_STEPS: usize = 100_000;
+/// Rounds of answers that ask for more answers (a feed whose rows ask for
+/// their pictures) before the rest is left for later.
+const MAX_ANSWER_ROUNDS: usize = 8;
 
 /// The scene and the clock it runs on, being driven as a host drives them.
 pub(crate) struct Run<'a> {
@@ -41,8 +45,7 @@ impl Run<'_> {
     /// Lets `ms` pass, firing each timer at its own deadline and settling in
     /// between, as a host woken at each deadline would.
     pub(crate) fn advance(&mut self, ms: u64) -> Result<(), String> {
-        let images = ImageStore::of(self.engine);
-        images.finish(self.engine);
+        self.finish()?;
         let end = self.clock.now() + Duration::from_millis(ms);
         for _ in 0..MAX_TIMER_STEPS {
             let next = [self.engine.next_timer_deadline(), *self.wake]
@@ -60,13 +63,39 @@ impl Run<'_> {
                 _ => {
                     self.clock.set(end);
                     self.engine.advance_timers(end);
-                    images.finish(self.engine);
-                    return self.settle();
+                    self.settle()?;
+                    return self.finish();
                 }
             }
         }
         Err(format!(
             "timers fired more than {MAX_TIMER_STEPS} times in {ms} ms"
         ))
+    }
+
+    /// Waits for what the scene was promised: pictures being decoded and
+    /// the platform's answers (a fetch, a file read off the Engine thread).
+    /// They take real time the virtual clock knows nothing of, so they
+    /// have arrived by the time any virtual time has passed, as they would
+    /// by the time a user looks: waited for, not slept for.
+    fn finish(&mut self) -> Result<(), String> {
+        let images = ImageStore::of(self.engine);
+        let platform = Platform::of(self.engine);
+        for _ in 0..MAX_ANSWER_ROUNDS {
+            if images.pending() == 0 && platform.pending() == 0 {
+                return Ok(());
+            }
+            platform.finish(self.engine);
+            // Left unanswered only when it gave up (and said so): waiting
+            // again would only give up again.
+            let gave_up = platform.pending() > 0;
+            self.settle()?;
+            images.finish(self.engine);
+            if gave_up || images.pending() > 0 {
+                return self.settle();
+            }
+            self.settle()?;
+        }
+        Ok(())
     }
 }
