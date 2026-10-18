@@ -122,12 +122,13 @@ pub(crate) fn follow(
     let Some(anim) = anim.filter(|a| engine.is_alive(*a)) else {
         return false;
     };
-    let defaults = Defaults {
+    let mut defaults = Defaults {
         obj: target,
         prop,
         to: Some(after.clone()),
+        aimed: None,
     };
-    if !enabled || !moves(engine, anim, &defaults) {
+    if !enabled || !moves(engine, anim, &mut defaults) {
         return false;
     }
     release(engine, target, prop);
@@ -249,13 +250,14 @@ fn intercept(
     });
     let anim = anim.filter(|a| e.is_alive(*a));
     let to = ty.coerce(v).unwrap_or_else(|_| v.clone());
-    let defaults = Defaults {
+    let mut defaults = Defaults {
         obj: target,
         prop,
         to: Some(to.clone()),
+        aimed: None,
     };
     let through = match anim {
-        Some(a) => !enabled || !moves(e, a, &defaults),
+        Some(a) => !enabled || !moves(e, a, &mut defaults),
         None => true,
     };
     if how == Interception::Write {

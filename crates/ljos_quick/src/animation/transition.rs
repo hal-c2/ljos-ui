@@ -112,6 +112,7 @@ pub fn run_transition(
         obj: target,
         prop: NO_PROPERTY,
         to: None,
+        aimed: None,
     };
     run(engine, transition, &defaults, Rc::new(done));
 }
@@ -133,6 +134,7 @@ pub fn run_transition_to(
         obj: target,
         prop,
         to: Some(to),
+        aimed: None,
     };
     run(engine, transition, &defaults, Rc::new(done));
 }

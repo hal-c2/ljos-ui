@@ -221,6 +221,7 @@ pub(crate) fn start(engine: &Engine, anim: ObjectId) {
             obj,
             prop,
             to: None,
+            aimed: None,
         });
     begin(engine, &d, anim, defaults.as_ref(), false, None);
 }

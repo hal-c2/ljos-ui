@@ -13,6 +13,7 @@
 //! in order.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use ljos_engine::{
     Atom, Color, Engine, LogLevel, NumberSlot, ObjectId, Point, PropIndex, Rect, Size, TypeTag,
@@ -44,6 +45,17 @@ pub(crate) struct Defaults {
     pub prop: PropIndex,
     /// The value a Behavior animates to, for animations without `to`.
     pub to: Option<Value>,
+    /// What [`moves`] found the animation it was asked of moves: the
+    /// Behavior asks at every value it hears, and the start that follows
+    /// would look it all up again.
+    pub aimed: Option<Rc<Aimed>>,
+}
+
+/// The slots of one animation, as [`slots`] gives them.
+#[derive(Debug)]
+pub(crate) struct Aimed {
+    anim: ObjectId,
+    slots: Vec<Slot>,
 }
 
 /// [`Defaults::prop`] of a run that has an object to move and no property
@@ -504,11 +516,27 @@ fn duration_of(engine: &Engine, anim: ObjectId) -> i64 {
 /// The properties `target`, `targets`, `property` and `properties` name,
 /// with the defaults filling in for what is not named.
 fn slots(engine: &Engine, anim: ObjectId, defaults: Option<&Defaults>, quiet: bool) -> Vec<Slot> {
+    if let Some(a) = defaults.and_then(|d| d.aimed.as_ref())
+        && a.anim == anim
+    {
+        return a.slots.clone();
+    }
+    slots_of(engine, anim, defaults, quiet).0
+}
+
+/// [`slots`], and whether every property named was there: one that is not
+/// is warned of unless `quiet`.
+fn slots_of(
+    engine: &Engine,
+    anim: ObjectId,
+    defaults: Option<&Defaults>,
+    quiet: bool,
+) -> (Vec<Slot>, bool) {
     let (mut targets, mut names) = named(engine, anim);
     let slot = |obj: ObjectId, prop: PropIndex| Slot::of(engine, obj, prop);
     if let Some(d) = defaults {
         if targets.is_empty() && names.is_empty() && d.prop != NO_PROPERTY {
-            return vec![slot(d.obj, d.prop)];
+            return (vec![slot(d.obj, d.prop)], true);
         }
         if targets.is_empty() {
             targets.push(d.obj);
@@ -528,11 +556,13 @@ fn slots(engine: &Engine, anim: ObjectId, defaults: Option<&Defaults>, quiet: bo
         names.extend(["rotation".to_owned(), "angle".to_owned()]);
     }
     let mut out = Vec::new();
+    let mut all = true;
     for t in &targets {
         for n in &names {
             match engine.property_index(*t, n) {
                 Ok(p) => out.push(slot(*t, p)),
-                Err(_) if quiet || assumed => {}
+                Err(_) if assumed => {}
+                Err(_) if quiet => all = false,
                 Err(_) => warn(
                     engine,
                     anim,
@@ -541,7 +571,7 @@ fn slots(engine: &Engine, anim: ObjectId, defaults: Option<&Defaults>, quiet: bo
             }
         }
     }
-    out
+    (out, all)
 }
 
 /// The objects and the property names an animation names itself.
@@ -706,18 +736,34 @@ pub(crate) fn script_names(engine: &Engine, anims: &[ObjectId]) -> Vec<Atom> {
 /// Whether `anim`, run with these defaults, takes the defaults' property
 /// somewhere: one of its parts animates or sets it. A `Behavior` whose
 /// animation does not lets the value through.
-pub(crate) fn moves(engine: &Engine, anim: ObjectId, d: &Defaults) -> bool {
+///
+/// What a single animation of properties moves is kept in `d`, for its
+/// start to take, unless a name it gives is missing: the start warns of
+/// that.
+pub(crate) fn moves(engine: &Engine, anim: ObjectId, d: &mut Defaults) -> bool {
     if is_a::<SequentialAnimation>(engine, anim) || is_a::<ParallelAnimation>(engine, anim) {
-        objects(engine, anim, "animations")
-            .into_iter()
-            .any(|c| moves(engine, c, d))
+        let found = |c| {
+            moves(
+                engine,
+                c,
+                &mut Defaults {
+                    aimed: None,
+                    ..d.clone()
+                },
+            )
+        };
+        objects(engine, anim, "animations").into_iter().any(found)
     } else if is_a::<PropertyAnimation>(engine, anim)
         || is_a::<PropertyAction>(engine, anim)
         || is_a::<Animator>(engine, anim)
     {
-        slots(engine, anim, Some(d), true)
-            .iter()
-            .any(|s| s.obj == d.obj && s.prop == d.prop)
+        d.aimed = None;
+        let (slots, all) = slots_of(engine, anim, Some(d), true);
+        let found = slots.iter().any(|s| s.obj == d.obj && s.prop == d.prop);
+        if all {
+            d.aimed = Some(Rc::new(Aimed { anim, slots }));
+        }
+        found
     } else {
         false
     }
