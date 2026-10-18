@@ -602,6 +602,50 @@ Item {
     assert_eq!(num(&e, root, "destroyed"), 0.0);
 }
 
+/// A first row shorter than the rest does not stand for them: each row is
+/// laid out before the view decides whether another fits, as on Qt, and
+/// in the frame the view first shows.
+#[test]
+fn a_view_measures_each_row_before_it_makes_the_next() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+  id: root
+  width: 400; height: 300
+  property int created: 0
+  property int destroyed: 0
+  ListView {
+    anchors.fill: parent
+    cacheBuffer: 200
+    model: 40
+    delegate: Column {
+      required property int index
+      objectName: "r" + index
+      width: 400
+      Text {
+        text: parent.index === 0 ? "first" : "a\nb\nc\nd"
+        lineHeightMode: Text.FixedHeight; lineHeight: 25
+      }
+      Component.onCompleted: root.created++
+      Component.onDestruction: root.destroyed++
+    }
+  }
+}"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    s.frame(&e, Time::ZERO);
+    // Rows of 25 and 100: 0 to 3 are shown, 4 and 5 start in the cache.
+    let r3 = find(&e, root, "r3");
+    assert_eq!(num(&e, r3, "y"), 225.0);
+    settle(&mut s, &e, 16);
+    assert_eq!(num(&e, root, "created"), 6.0);
+    assert_eq!(num(&e, root, "destroyed"), 0.0);
+    let r5 = find(&e, root, "r5");
+    assert_eq!(num(&e, r5, "y"), 425.0);
+}
+
 /// Rows that stay 0 long after their polish: the view does not wait on
 /// them for good.
 #[test]

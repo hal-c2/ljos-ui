@@ -7,7 +7,10 @@
 //! length of the content. Rows that were never measured count as long as
 //! the average of those that were, which is how Qt estimates too
 //! (observed on qml6): `contentHeight` of a long list is a guess that
-//! gets better as the view moves through it.
+//! gets better as the view moves through it. A row just made whose
+//! length is still to come from what is in it is laid out by a polish
+//! before the next one is made, as Qt does (observed on qml6), so the
+//! window holds as many rows as fit and none is made for a guess.
 //!
 //! The pass runs inside one effect ([`super::start`]) that reads what a
 //! layout depends on, and directly whenever the engine tells the view
@@ -457,18 +460,19 @@ struct Fill<'a> {
     sections: Option<Sections>,
     /// How long a row that was never measured is taken to be.
     guess: f64,
-    /// A row's length is still to come from what is in it (a text not
-    /// laid out yet) and nothing is measured to guess the others by: rows
-    /// laid after it now would each be taken as 1 long, and a new view
-    /// would make far more than it shows. The pass asks for one more row,
-    /// later, and stops; the pass that row's making runs fills on with
-    /// the length the polish gave.
+    /// A row just made has its length still to come from what is in it
+    /// (a text not laid out yet): whether another row fits is not known
+    /// until it has one. The pass stops; the one that runs once the scene
+    /// laid the row out fills on with the length it has then. Qt measures
+    /// each row it makes before it makes the next (observed on qml6).
     waiting: bool,
-    /// A row was asked for while waiting.
-    asked: bool,
-    /// The row waited for is 0 long still after polishes: the rows are,
+    /// The row waited for is 0 long still after a polish: the rows are,
     /// and the view fills as for any rows of no length.
     no_wait: bool,
+    /// A row after those laid out is still being made.
+    held: bool,
+    /// The shortest and the longest row measured in this pass.
+    spread: (f64, f64),
     /// The delegates there are, with the logical span of each.
     items: Vec<(usize, ObjectId, f64, f64)>,
     /// Section headings, with where each starts and how long it is.
@@ -545,8 +549,7 @@ impl Fill<'_> {
     fn wait_for(&mut self, key: RowKey) {
         let now = crate::scene::polishes();
         match self.st.waited.get() {
-            // Two: the first may have run before the row joined the scene.
-            Some((k, then)) if k == key && then + 2 <= now => self.no_wait = true,
+            Some((k, then)) if k == key && then < now => self.no_wait = true,
             Some((k, _)) if k == key => self.waiting = true,
             _ => {
                 self.st.waited.set(Some((key, now)));
@@ -569,16 +572,13 @@ impl Fill<'_> {
             At::End(end) => (end - block, end),
         };
         let shown = top < self.zone.1 && end > self.zone.0;
-        let urgency = if !self.waiting && (shown || Some(row) == self.current) {
+        let urgency = if shown || Some(row) == self.current {
             Urgency::Now
         } else {
             Urgency::Later
         };
         let mut item = None;
         let got = self.d.request(e, row, urgency);
-        if self.waiting && got.is_none_or(|(_, made)| made != Made::Existing) {
-            self.asked = true;
-        }
         let (size, measured) = match got {
             Some((o, made)) => {
                 if made == Made::Reused {
@@ -597,66 +597,75 @@ impl Fill<'_> {
                     // it was made and none is running, and the view lays
                     // its rows out again then.
                     let polishing = follows && crate::scene::polishing();
-                    // The row the view waits for is measured after two
-                    // polishes, as it is waited for: the first may have
-                    // run before its text was shaped, and every row still
-                    // to be made would be taken to be as short as it was.
-                    let early = self.guess <= 0.0
-                        && key.is_some_and(|k| {
-                            matches!(self.st.waited.get(), Some((w, then))
-                                if w == k && then + 2 > crate::scene::polishes())
-                        });
-                    if !follows || (!polishing && size > 0.0 && !early && self.st.settled(o, made))
-                    {
+                    if !follows || (!polishing && size > 0.0 && self.st.settled(o, made)) {
                         (size, true)
-                    } else if size > 0.0 {
+                    } else {
                         super::changes::polished_later(e, self.view);
-                        // Nor does the first row stand for the rest at the
-                        // length a positioner gave it before its text had
-                        // one: a column of a title and a picture would be
-                        // taken as the picture's height, and a new view
+                        // Nor is it as long as the first row was, or as
+                        // long as a positioner made it before its text had
+                        // a length: a column of a title and a picture would
+                        // be taken as the picture's height, and a new view
                         // would make rows that the polish then lets go.
-                        // Qt measures a row it made before it makes the
-                        // next (observed on qml6).
                         // A row made in this pass has not been laid out
                         // at all, polishing or not.
                         let laid = polishing && made == Made::Existing;
+                        // A row measured before is as long as it was then.
+                        // Rows made before this pass and not waited for (a
+                        // method laid them out) are laid on: stopping at
+                        // one would let go of those after it.
+                        let new = made != Made::Existing
+                            || matches!(self.st.waited.get(), Some((w, _)) if Some(w) == key);
                         if let Some(k) = key
-                            && self.guess <= 0.0
+                            && new
+                            && known.is_none()
                             && !laid
                             && !self.no_wait
                             && !self.waiting
                         {
                             self.wait_for(k);
                         }
-                        if self.guess <= 0.0 && !self.waiting {
-                            // The first row stands for the rest until then.
-                            self.guess = size;
-                        }
-                        let other = if laid || self.guess <= 0.0 {
-                            size
+                        if size <= 0.0 {
+                            (hint, false)
                         } else {
-                            self.guess
-                        };
-                        (known.unwrap_or(other), false)
-                    } else {
-                        if let Some(k) = key
-                            && self.guess <= 0.0
-                            && !self.no_wait
-                            && !self.waiting
-                        {
-                            self.wait_for(k);
+                            if self.guess <= 0.0 && !self.waiting {
+                                // The first row stands for the rest until then.
+                                self.guess = size;
+                            }
+                            let other = if laid || self.guess <= 0.0 {
+                                size
+                            } else {
+                                self.guess
+                            };
+                            (known.unwrap_or(other), false)
                         }
-                        (hint, false)
                     }
                 } else {
                     (0.0, true)
                 }
             }
-            None => (hint, false),
+            None => {
+                // A row ahead still being made has no length either: where
+                // the rows differ in length, the pass that its being ready
+                // runs fills on from it. Where they are all as long, the
+                // guess is right and the buffer fills as fast as the
+                // incubator makes rows. Behind, the rows laid out go on to
+                // where the view's origin is worked out from, and that
+                // stays where a method put it.
+                if !self.no_wait
+                    && matches!(at, At::Top(_))
+                    && self.spread.1 - self.spread.0 > 0.5
+                    && self.d.pending().contains(&row)
+                {
+                    self.held = true;
+                }
+                (hint, false)
+            }
         };
         if measured && let Some(k) = key {
             self.st.sizes.borrow_mut().insert(k, size);
+        }
+        if measured || known.is_some() {
+            self.spread = (self.spread.0.min(size), self.spread.1.max(size));
         }
         if measured && self.guess <= 0.0 {
             // The first row measured says how long the ones still to be
@@ -975,8 +984,11 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         sections: Sections::read(e, view, st),
         guess: st.avg.get(),
         waiting: false,
-        asked: false,
-        no_wait: false,
+        // Rows that are items of their own are all laid out anyway: none
+        // is made for a guess, so none is waited for.
+        no_wait: d.rows_show_themselves(),
+        held: false,
+        spread: (f64::INFINITY, f64::NEG_INFINITY),
         items: Vec::new(),
         heads: Vec::new(),
         used_heads: FxHashSet::default(),
@@ -994,7 +1006,8 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
             if last.line + 1 >= lines
                 || last.end() + g.spacing > window.1
                 || budget == 0
-                || fill.waiting && fill.asked
+                || fill.waiting
+                || fill.held
             {
                 break;
             }
@@ -1012,11 +1025,7 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         }
         empty = 0;
         while let Some(first) = slots.front().copied() {
-            if first.line == 0
-                || first.top() <= window.0
-                || budget == 0
-                || fill.waiting && fill.asked
-            {
+            if first.line == 0 || first.top() <= window.0 || budget == 0 || fill.waiting {
                 break;
             }
             let s = fill.lay(first.line - 1, At::End(first.top() - g.spacing));

@@ -66,13 +66,17 @@ pub(crate) fn polished_later(e: &Engine, view: ObjectId) {
 
 /// The scene has laid its items out: the views that waited for that lay
 /// their rows out with the lengths the delegates have now.
-pub(crate) fn polish_ends(e: &Engine) {
+/// Whether one did.
+pub(crate) fn polish_ends(e: &Engine) -> bool {
     let due = std::mem::take(&mut *e.extension::<Polishing>().0.borrow_mut());
+    let mut laid = false;
     for view in due {
         if e.is_alive(view) {
             pass::refresh(e, view);
+            laid = true;
         }
     }
+    laid
 }
 
 /// What the engine's delegates call on a view.
@@ -111,7 +115,15 @@ impl ViewHost for Host {
         });
     }
 
-    fn ready(&self, e: &Engine, _: usize, _: ObjectId) {
+    fn ready(&self, e: &Engine, _: usize, object: ObjectId) {
+        // A row the incubator made has not been laid out either: it is
+        // measured after a polish. It is not waited for, as rows after it
+        // may be being made already.
+        if let Some(st) = state_of(e, self.0) {
+            st.fresh
+                .borrow_mut()
+                .insert(object, crate::scene::polishes());
+        }
         let inc = e.extension::<Incubating>();
         if inc.open.get() {
             let mut due = inc.due.borrow_mut();

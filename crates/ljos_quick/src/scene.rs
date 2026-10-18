@@ -64,6 +64,9 @@ pub const POLISH_CATEGORY: &str = "qt.quick.polish";
 pub const SCENE_CATEGORY: &str = "qt.quick.scene";
 /// Polish passes per frame before the scene gives up and warns.
 pub const MAX_POLISH_PASSES: usize = 10;
+/// Passes per frame in which views lay out the rows they just made, before
+/// those count as passes too.
+pub const MAX_ROW_PASSES: usize = 1024;
 /// Time per frame for making the items of asynchronous Loaders
 /// (ARCHITECTURE §6.3).
 pub const INCUBATION_BUDGET: Duration = Duration::from_millis(3);
@@ -996,14 +999,21 @@ impl QuickScene {
     }
 
     fn polish(&mut self, engine: &Engine) {
-        POLISHES.set(POLISHES.get() + 1);
-        for _ in 0..MAX_POLISH_PASSES {
+        let (mut passes, mut rows, mut free) = (0, 0, false);
+        while passes < MAX_POLISH_PASSES {
             // Items made since the last sync (a view's delegates) join the
             // tree first, so that they are laid out in this polish and not
             // a frame later.
             if !self.shared.borrow().structure.is_empty() {
                 self.reconcile(engine);
             }
+            // Counted per pass: a view measures a row it made once a pass
+            // has run since, and makes the next one then (`Fill::wait_for`).
+            POLISHES.set(POLISHES.get() + 1);
+            if !free {
+                passes += 1;
+            }
+            free = false;
             let mut set: Vec<(usize, ObjectId)> = {
                 let mut s = self.shared.borrow_mut();
                 s.polish
@@ -1016,9 +1026,19 @@ impl QuickScene {
                 // The views that waited for the items in their delegates
                 // lay their rows out now; what they make is polished next.
                 POLISHING.set(false);
-                crate::views::polish_ends(engine);
-                if self.shared.borrow().polish.is_empty() {
-                    return;
+                let laid = crate::views::polish_ends(engine);
+                {
+                    let s = self.shared.borrow();
+                    if s.polish.is_empty() && s.structure.is_empty() {
+                        return;
+                    }
+                }
+                // A view that made a row lays it out in the next pass and
+                // then makes the one after it, as Qt does: those passes
+                // fill a window and are not a loop.
+                if laid && rows < MAX_ROW_PASSES {
+                    rows += 1;
+                    free = true;
                 }
                 continue;
             }
