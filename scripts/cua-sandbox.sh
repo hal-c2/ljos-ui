@@ -254,6 +254,26 @@ with() {
     json="{\"$1\":$2,${json#*\{}"
   fi
 }
+# Foreground input waits for its window to be the focused one, and cua-driver cannot take
+# focus from another XWayland window under sway: with two apps up (an app and an observer of
+# it), input for the one without focus was refused. The compositor is the sandbox's own, so
+# it is asked to focus the window the call names, by X11 id, else by pid.
+focus_target() {
+  [[ $json == *'"delivery_mode"'*'"foreground"'* ]] || return 0
+  local criteria sock
+  if [[ $json =~ \"window_id\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
+    criteria="id=${BASH_REMATCH[1]}"
+  elif [[ $json =~ \"pid\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
+    criteria="pid=${BASH_REMATCH[1]}"
+  else
+    return 0
+  fi
+  for sock in "$run"/sway-ipc.*.sock; do
+    [[ -S $sock ]] && break
+  done
+  [[ -S $sock ]] || return 0
+  swaymsg -s "$sock" "[$criteria] focus" > /dev/null 2>&1 || true
+}
 call() {
   (($#)) || die "usage: mise run desktop:cua:call <tool> [<json>]   (cua-driver list-tools names them)"
   pid_of cua > /dev/null || die "cua-driver is not running in the sandbox: mise run desktop:cua (needs cua-driver on the PATH)"
@@ -265,6 +285,7 @@ call() {
   with session "\"$session\""
   app=$(pid_of app) && with pid "$app"
   with delivery_mode '"foreground"'
+  focus_target
   # A pointer tool shows the agent cursor again, and its overlay would take the next click.
   [[ $tool == *agent_cursor* ]] || "${sandbox_env[@]}" cua-driver call --socket "$run/cua.sock" \
     set_agent_cursor_enabled "{\"session\":\"$session\",\"enabled\":false}" > /dev/null
