@@ -2341,3 +2341,122 @@ Feature: What a reload changes
       And a reload happens
       Then the property "where" of "pack" is "area"
       And the property "n" of "area" is 1
+
+  Rule: An edit to a member of a group or of an attached object leaves every object where it is
+
+    `font.pixelSize`, `border.color` and `Layout.preferredWidth` are set
+    again on the object that holds them, as a member of the object is.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Rectangle {
+            objectName: "box"; width: 10; height: 10; border.color: "red"
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 10
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: A member of a value group takes its new value
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Rectangle {
+            objectName: "box"; width: 10; height: 10; border.color: "red"
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 24
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "font.pixelSize" of "label" is 24
+      And the property "x" of "box" is at least 40
+
+    Scenario: A member of a group made a binding follows what it reads
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Rectangle {
+            objectName: "box"; width: 10; height: 10; border.color: width > 5 ? "blue" : "red"
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 10
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "border.color" of "box" is "#0000ff"
+      And the property "x" of "box" is at least 40
+      When the property "width" of "box" is set to 2
+      Then the property "border.color" of "box" is "#ff0000"
+
+    Scenario: A member of an attached object takes its new value
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Rectangle {
+            objectName: "box"; width: 10; height: 10; border.color: "red"
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 10
+            Layout.preferredWidth: 50; property real pw: Layout.preferredWidth
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "pw" of "label" is 50
+      And the property "x" of "box" is at least 40
+
+  Rule: A member of a group a user of the component sets keeps the user's value
+
+    Scenario: An edited font size of a component its user sets stays the user's
+      Given the file "Caption.qml":
+        """qml
+        import QtQuick
+        Text { text: "a"; font.pixelSize: 10 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Caption { objectName: "big"; font.pixelSize: 30 }
+          Caption { objectName: "plain" }
+        }
+        """
+      When the file "Caption.qml" is changed to:
+        """qml
+        import QtQuick
+        Text { text: "a"; font.pixelSize: 20 }
+        """
+      And a reload happens
+      Then the property "font.pixelSize" of "big" is 30
+      And the property "font.pixelSize" of "plain" is 20

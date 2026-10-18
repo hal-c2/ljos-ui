@@ -24,6 +24,7 @@
 //! in the new file by its place among the object's; and the objects and
 //! bindings are told where they now are written.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -39,7 +40,8 @@ use super::{Phases, ReloadOutcome, resets};
 use crate::engine::Engine;
 use crate::ids::ObjectId;
 use crate::incubator::{
-    AllocFrame, Allocation, Creation, Instance, RootSpec, Template, is_component_attached,
+    AllocFrame, Allocation, Creation, Instance, RootSpec, Target as IncTarget, Template,
+    is_component_attached,
 };
 use crate::loader::LoadedFile;
 use crate::meta::{MetaRef, PropertyAccess};
@@ -51,6 +53,31 @@ use crate::{EngineError, PropIndex, WriteKind};
 
 /// Where the dead instances and components are first swept out.
 const FIRST_SWEEP: usize = 1024;
+
+/// Where an edited member is written.
+enum Placed<'d> {
+    /// `leaf` of `members` gives `at`.
+    Member {
+        at: IncTarget,
+        members: Cow<'d, Members>,
+        leaf: String,
+    },
+    /// A field of the value-type property `path` of `on`, which `at` is.
+    Value {
+        at: IncTarget,
+        on: ObjectId,
+        members: Cow<'d, Members>,
+        path: Vec<String>,
+    },
+}
+
+impl Placed<'_> {
+    fn at(&self) -> &IncTarget {
+        match self {
+            Placed::Member { at, .. } | Placed::Value { at, .. } => at,
+        }
+    }
+}
 
 /// The code a binding, handler or method made while tracking runs.
 pub(crate) type CodeSlot = RefCell<(Rc<Instance>, ExprId)>;
@@ -636,7 +663,7 @@ impl Engine {
                     file,
                     object,
                     property,
-                } if !property.contains('.') => (file, object, Edited::Property(property)),
+                } => (file, object, Edited::Property(property)),
                 ReloadOp::HandlerChanged { file, object, .. } => (file, object, Edited::Handler),
                 ReloadOp::DeclarationChanged { file, object, name } => {
                     (file, object, Edited::Function(name))
@@ -996,16 +1023,21 @@ impl Engine {
         let given = given.get(&id);
         let old = &c.old.ir.component(t.inst.comp).objects[t.was];
         for name in t.names {
-            let Ok(target) = self.untrack(|| self.member_target(id, &[], name)) else {
+            let Some(target) = self.untrack(|| self.in_place_placed(&t.inst, id, t.def, name))
+            else {
                 return Err("an edited member is not found");
             };
+            let target = target.at();
             // A member the file did not give may be held by what took it
             // over (a view sizes a page that has no size of its own),
             // which decides again when the object is made again.
             if !sets(old, name) && self.overridden(target.obj, target.prop) {
                 return Err("an edited member is held by what took it over");
             }
-            if given.is_some_and(|g| g.iter().any(|n| is_or_under(n, name))) {
+            if given.is_some_and(|g| {
+                g.iter()
+                    .any(|n| is_or_under(n, name) || is_or_under(name, n))
+            }) {
                 return Err("an edited member is given where the object is made");
             }
         }
@@ -1057,12 +1089,98 @@ impl Engine {
         node.is_some_and(|n| self.inner.graph.override_count(n) > 0)
     }
 
+    /// Where `od` writes the member `name` of `obj`: among its own, in a
+    /// group (`font.pixelSize`) or on what is attached (`Layout.fillWidth`).
+    fn in_place_placed<'d>(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        od: &'d ObjectDef,
+        name: &str,
+    ) -> Option<Placed<'d>> {
+        let Some((path, leaf)) = name.rsplit_once('.') else {
+            return Some(Placed::Member {
+                at: self.member_target(obj, &[], name).ok()?,
+                members: Cow::Borrowed(&od.members),
+                leaf: name.to_owned(),
+            });
+        };
+        if let Some(g) = od.grouped.iter().find(|g| g.path.join(".") == path) {
+            if let Some((at, _)) = self.value_target(obj, &g.path) {
+                return Some(Placed::Value {
+                    at,
+                    on: obj,
+                    members: Cow::Borrowed(&g.members),
+                    path: g.path.clone(),
+                });
+            }
+            return Some(Placed::Member {
+                at: self.member_target(obj, &g.path, leaf).ok()?,
+                members: Cow::Borrowed(&g.members),
+                leaf: leaf.to_owned(),
+            });
+        }
+        let (a, rest) = od.attached.iter().find_map(|a| {
+            let rest = name.strip_prefix(a.written.as_str())?.strip_prefix('.')?;
+            Some((a, rest))
+        })?;
+        if is_component_attached(&a.ty) {
+            return None;
+        }
+        let meta = self.type_meta(&inst.file, &a.ty).ok()?;
+        // Made with its object; one made later is made by what reads it.
+        let att = self.existing_attached_object(obj, &meta)?;
+        let (own, fields) = self.value_fields_of(att, &a.members);
+        let through = rest.rsplit_once('.').map(|(t, _)| t);
+        if let Some((path, m)) = fields
+            .into_iter()
+            .find(|(p, _)| through.is_some_and(|t| p.join(".") == t))
+        {
+            let (at, _) = self.value_target(att, &path)?;
+            return Some(Placed::Value {
+                at,
+                on: att,
+                members: Cow::Owned(m),
+                path,
+            });
+        }
+        Some(Placed::Member {
+            at: self.member_target(att, &[], rest).ok()?,
+            members: Cow::Owned(own),
+            leaf: rest.to_owned(),
+        })
+    }
+
     /// Gives `obj` the member `name` as the new file writes it.
     fn in_place_set(&self, inst: &Rc<Instance>, obj: ObjectId, od: &ObjectDef, name: &str) {
-        let Ok(t) = self.untrack(|| self.member_target(obj, &[], name)) else {
+        let Some(placed) = self.untrack(|| self.in_place_placed(inst, obj, od, name)) else {
             return;
         };
-        if let Some(a) = od.members.assignments.iter().find(|a| a.name == name) {
+        let t = match placed {
+            // Its fields are folded into one value, or one binding.
+            Placed::Value {
+                at,
+                on,
+                members,
+                path,
+            } => {
+                self.apply_value_members(inst, on, &members, &path);
+                at
+            }
+            Placed::Member { at, members, leaf } => {
+                self.in_place_member(inst, &at, &members, &leaf);
+                at
+            }
+        };
+        // The edit outranks what a script assigned there.
+        let (o, p) = self.redirect(t.obj, t.prop);
+        if let Some(props) = self.inner.reload.assigned.borrow_mut().get_mut(&o) {
+            props.retain(|q| *q != p);
+        }
+    }
+
+    fn in_place_member(&self, inst: &Rc<Instance>, t: &IncTarget, m: &Members, name: &str) {
+        if let Some(a) = m.assignments.iter().find(|a| a.name == name) {
             if matches!(a.value, Literal::Undefined) {
                 if let Err(e) =
                     self.write_internal(t.obj, t.prop, Value::Undefined, WriteKind::Initial)
@@ -1071,15 +1189,10 @@ impl Engine {
                     self.warn(format!("{}:{line}:{col}: {e}", inst.file.url));
                 }
             } else {
-                self.apply_literal(inst, &t, &a.value, (a.span.line, a.span.column));
+                self.apply_literal(inst, t, &a.value, (a.span.line, a.span.column));
             }
-        } else if let Some(pb) = od.members.bindings.iter().find(|b| b.name == name) {
-            self.install_binding(inst, &t, pb);
-        }
-        // The edit outranks what a script assigned there.
-        let (o, p) = self.redirect(t.obj, t.prop);
-        if let Some(props) = self.inner.reload.assigned.borrow_mut().get_mut(&o) {
-            props.retain(|q| *q != p);
+        } else if let Some(pb) = m.bindings.iter().find(|b| b.name == name) {
+            self.install_binding(inst, t, pb);
         }
     }
 
@@ -1285,36 +1398,62 @@ fn is_or_under(given: &str, name: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('.'))
 }
 
-/// Whether `od` gives its object `name` in any way.
+/// Whether `od` gives its object `name` in any way: `name` itself, a
+/// member of it, or what it is a member of.
 fn sets(od: &ObjectDef, name: &str) -> bool {
-    let m = &od.members;
-    m.assignments.iter().any(|a| is_or_under(&a.name, name))
-        || m.bindings.iter().any(|b| is_or_under(&b.name, name))
-        || m.objects.iter().any(|o| o.name == name)
-        || od
-            .grouped
-            .iter()
-            .any(|g| g.path.first().is_some_and(|p| p == name))
+    given_names(od).any(|g| is_or_under(&g, name) || is_or_under(name, &g))
+}
+
+/// The members `od` gives, dotted under their group or what is attached.
+fn given_names(od: &ObjectDef) -> impl Iterator<Item = String> + '_ {
+    fn of<'m>(prefix: String, m: &'m Members) -> impl Iterator<Item = String> + 'm {
+        let names = m.assignments.iter().map(|a| &a.name);
+        let names = names
+            .chain(m.bindings.iter().map(|b| &b.name))
+            .chain(m.objects.iter().map(|o| &o.name));
+        names.map(move |n| dotted(&prefix, n))
+    }
+    of(String::new(), &od.members)
+        .chain(
+            od.grouped
+                .iter()
+                .flat_map(|g| of(g.path.join("."), &g.members)),
+        )
+        .chain(
+            od.attached
+                .iter()
+                .flat_map(|a| of(a.written.clone(), &a.members)),
+        )
+}
+
+/// The members of `od` the member `name` is written among, and its name
+/// there: `pixelSize` of the group `font`, `fillWidth` of `Layout`.
+fn held_in<'d, 'n>(od: &'d ObjectDef, name: &'n str) -> Option<(&'d Members, &'n str)> {
+    let Some((path, leaf)) = name.rsplit_once('.') else {
+        return Some((&od.members, name));
+    };
+    if let Some(g) = od.grouped.iter().find(|g| g.path.join(".") == path) {
+        return Some((&g.members, leaf));
+    }
+    od.attached.iter().find_map(|a| {
+        let rest = name.strip_prefix(a.written.as_str())?.strip_prefix('.')?;
+        Some((&a.members, rest))
+    })
+}
+
+fn dotted(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{prefix}.{name}")
+    }
 }
 
 /// Whether `od` sets `name` of what its alias `alias` stands for:
 /// `label.text: ...` or `label { text: ... }`.
 fn sets_through(od: &ObjectDef, alias: &str, name: &str) -> bool {
     let dotted = format!("{alias}.{name}");
-    let m = &od.members;
-    m.assignments.iter().any(|a| is_or_under(&a.name, &dotted))
-        || m.bindings.iter().any(|b| is_or_under(&b.name, &dotted))
-        || od.grouped.iter().any(|g| {
-            g.path.first().is_some_and(|p| p == alias)
-                && (g.path.get(1).is_some_and(|p| p == name)
-                    || (g.path.len() == 1 && members_set(&g.members, name)))
-        })
-}
-
-fn members_set(m: &Members, name: &str) -> bool {
-    m.assignments.iter().any(|a| is_or_under(&a.name, name))
-        || m.bindings.iter().any(|b| is_or_under(&b.name, name))
-        || m.objects.iter().any(|o| o.name == name)
+    given_names(od).any(|g| is_or_under(&g, &dotted))
 }
 
 /// Whether an alias of `file` stands for `name` of object `obj` of `comp`.
@@ -1448,17 +1587,21 @@ fn same_but_edits(
             return not_here("a model's elements changed");
         }
         for name in &e.names {
-            let given = |m: &Members| {
-                m.assignments.iter().any(|a| a.name == *name)
-                    || m.bindings.iter().any(|b| b.name == *name)
+            let given = |od: &ObjectDef| {
+                held_in(od, name).is_some_and(|(m, leaf)| {
+                    m.assignments.iter().any(|a| a.name == leaf)
+                        || m.bindings.iter().any(|b| b.name == leaf)
+                })
             };
-            let written = |m: &Members| m.objects.iter().any(|a| a.name == *name);
+            let written = |od: &ObjectDef| {
+                held_in(od, name).is_some_and(|(m, leaf)| m.objects.iter().any(|a| a.name == leaf))
+            };
             // A member no longer given goes back to its default, which
             // nothing here knows.
-            if !given(&n.members) {
+            if !given(n) {
                 return not_here("a member is no longer given");
             }
-            if written(&n.members) || written(&o.members) {
+            if written(n) || written(o) {
                 return not_here("a member given an object changed");
             }
             if aliased(new, e.comp, e.obj, name) {
@@ -1802,21 +1945,21 @@ fn renumber(od: &mut ObjectDef, comp: usize, objects: &[Objects]) {
 /// The expressions of `od` in the order both files are walked in, but
 /// for the bindings of the edited `names`, which have none to match.
 fn exprs_of(od: &ObjectDef, names: &[String], out: &mut Vec<ExprId>) {
-    fn members(m: &Members, skip: &[String], out: &mut Vec<ExprId>) {
+    fn members(m: &Members, prefix: &str, skip: &[String], out: &mut Vec<ExprId>) {
         out.extend(
             m.bindings
                 .iter()
-                .filter(|b| !skip.contains(&b.name))
+                .filter(|b| !skip.contains(&dotted(prefix, &b.name)))
                 .map(|b| b.expr),
         );
         out.extend(m.handlers.iter().map(|h| h.expr));
     }
-    members(&od.members, names, out);
+    members(&od.members, "", names, out);
     for g in &od.grouped {
-        members(&g.members, &[], out);
+        members(&g.members, &g.path.join("."), names, out);
     }
     for a in &od.attached {
-        members(&a.members, &[], out);
+        members(&a.members, &a.written, names, out);
     }
     out.extend(od.functions.iter().map(|f| f.expr));
 }
@@ -1824,29 +1967,29 @@ fn exprs_of(od: &ObjectDef, names: &[String], out: &mut Vec<ExprId>) {
 /// The places `od` writes its object and members at, but for the edited
 /// `names`, in the order both files are walked in.
 fn places(od: &ObjectDef, names: &[String], out: &mut Vec<SourceSpan>) {
-    fn members(m: &Members, skip: &[String], out: &mut Vec<SourceSpan>) {
+    fn members(m: &Members, prefix: &str, skip: &[String], out: &mut Vec<SourceSpan>) {
         out.extend(
             m.assignments
                 .iter()
-                .filter(|a| !skip.contains(&a.name))
+                .filter(|a| !skip.contains(&dotted(prefix, &a.name)))
                 .map(|a| a.span),
         );
         out.extend(
             m.bindings
                 .iter()
-                .filter(|b| !skip.contains(&b.name))
+                .filter(|b| !skip.contains(&dotted(prefix, &b.name)))
                 .map(|b| b.name_span),
         );
         out.extend(m.handlers.iter().map(|h| h.name_span));
     }
     out.push(od.span);
     out.extend(od.properties.iter().map(|p| p.span));
-    members(&od.members, names, out);
+    members(&od.members, "", names, out);
     for g in &od.grouped {
-        members(&g.members, &[], out);
+        members(&g.members, &g.path.join("."), names, out);
     }
     for a in &od.attached {
-        members(&a.members, &[], out);
+        members(&a.members, &a.written, names, out);
     }
 }
 
@@ -1855,8 +1998,19 @@ fn places(od: &ObjectDef, names: &[String], out: &mut Vec<SourceSpan>) {
 /// binding moves those after it; the patch tells which changed).
 fn shape(od: &ObjectDef, names: &[String]) -> ObjectDef {
     let mut o = od.clone();
-    o.members.assignments.retain(|a| !names.contains(&a.name));
-    o.members.bindings.retain(|b| !names.contains(&b.name));
+    let unedited = |m: &mut Members, prefix: &str| {
+        m.assignments
+            .retain(|a| !names.contains(&dotted(prefix, &a.name)));
+        m.bindings
+            .retain(|b| !names.contains(&dotted(prefix, &b.name)));
+    };
+    unedited(&mut o.members, "");
+    for g in &mut o.grouped {
+        unedited(&mut g.members, &g.path.join("."));
+    }
+    for a in &mut o.attached {
+        unedited(&mut a.members, &a.written);
+    }
     for f in &mut o.functions {
         f.expr = ExprId(0);
     }
