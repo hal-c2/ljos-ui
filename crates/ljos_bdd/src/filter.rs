@@ -21,6 +21,12 @@ const NO_QT_TABLE: &str = "no-qt-table";
 /// against Ljós's own types alone, and says less.
 const QT_TABLE: &str = "qt-table";
 
+/// The oracle's tag.
+const QT_PARITY: &str = "qt-parity";
+
+/// Oracle tags that keep a scenario from the Qt oracle, whatever its feature says.
+const NOT_PARITY: &[&str] = &["qt-diverges", "ljos-only"];
+
 /// What a run keeps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -62,6 +68,11 @@ impl Selection {
         if let Some(req) = &self.require_tag
             && !has(req)
         {
+            return false;
+        }
+        // A scenario that differs from Qt in a feature that otherwise agrees
+        // inherits the feature's `@qt-parity`, and is still not the oracle's.
+        if self.require_tag.as_deref() == Some(QT_PARITY) && NOT_PARITY.iter().any(|t| has(t)) {
             return false;
         }
         if self.qt_table && has(NO_QT_TABLE) || !self.qt_table && has(QT_TABLE) {
@@ -218,6 +229,18 @@ mod tests {
             !sel.keeps(&tags(&["backlog"])),
             "still needs the oracle tag"
         );
+    }
+
+    #[test]
+    fn a_diverging_scenario_in_a_parity_feature_is_not_the_oracle_s() {
+        let sel = Selection {
+            oracle_only: true,
+            require_tag: Some("qt-parity".into()),
+            ..Selection::default()
+        };
+        assert!(!sel.keeps(&tags(&["qt-parity", "qt-diverges"])));
+        assert!(!sel.keeps(&tags(&["qt-parity", "ljos-only"])));
+        assert!(Selection::default().keeps(&tags(&["qt-parity", "qt-diverges"])));
     }
 
     #[test]

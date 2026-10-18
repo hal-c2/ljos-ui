@@ -33,8 +33,8 @@ use crate::pointer_item::PointerItem;
 /// A tree deeper than this is a cycle someone built by hand.
 const DEPTH: usize = 4096;
 
-/// How far along the path the pointer goes before the drag begins. Not
-/// the platform's drag distance: qml6 measured 10 where that was 8.
+/// How far along the path the pointer goes before the drag begins: 10 in
+/// qml6, as the default drag distance, but kept when a host changes that.
 const TAKE: f64 = 10.0;
 
 /// How long a pointer rests before it lets go for a release to throw

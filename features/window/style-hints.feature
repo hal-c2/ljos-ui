@@ -1,7 +1,8 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtquick-stylehints.html
 #   https://doc.qt.io/qt-6/qml-qtquick-application.html
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.11.2 (qml6, offscreen); the scenarios marked @qt-diverges
+# say what qml6 reads without a desktop theme.
 
 @qt-parity
 Feature: Style hints
@@ -31,26 +32,37 @@ Feature: Style hints
   Scenario: Both names are the same object
     Then the property "same" of "root" is true
 
-  @api-QtQuick.StyleHints.colorScheme
+  # qml6 without a desktop theme (offscreen, vnc) says the scheme is
+  # Unknown (0); Ljós answers as a light desktop, as a theme would.
+  @qt-diverges @api-QtQuick.StyleHints.colorScheme
   Scenario: Light is what the system says without a preference
     Then the property "scheme" of "root" is 1
     And the property "light" of "root" is true
 
-  @api-QtQuick.StyleHints.startDragDistance @api-QtQuick.StyleHints.cursorFlashTime
-  @api-QtQuick.StyleHints.keyboardInputInterval @api-QtQuick.StyleHints.mousePressAndHoldInterval
-  @api-QtQuick.StyleHints.useHoverEffects @api-QtQuick.StyleHints.wheelScrollLines
-  Scenario Outline: The constants are a desktop's
+  @api-QtQuick.StyleHints.startDragDistance @api-QtQuick.StyleHints.keyboardInputInterval
+  @api-QtQuick.StyleHints.mousePressAndHoldInterval @api-QtQuick.StyleHints.wheelScrollLines
+  Scenario Outline: The constants are Qt's own
     Then the property "<property>" of "root" is <value>
 
     Examples:
       | property         | value |
-      | dragDistance     | 8     |
-      | flash            | 1200  |
+      | dragDistance     | 10    |
       | keyboardInterval | 400   |
       | pressAndHold     | 800   |
-      | hover            | true  |
       | wheelLines       | 3     |
 
-  @api-QtQuick.StyleHints.passwordMaskCharacter
+  # qml6 without a desktop theme flashes the cursor every 1000 ms, has no
+  # hover effects and masks with "●"; Ljós answers as a desktop's theme.
+  @qt-diverges @api-QtQuick.StyleHints.cursorFlashTime @api-QtQuick.StyleHints.useHoverEffects
+  Scenario Outline: Where qml6 has no theme, the constants are a desktop's
+    Then the property "<property>" of "root" is <value>
+
+    Examples:
+      | property | value |
+      | flash    | 1200  |
+      | hover    | true  |
+
+  # See the scenario above.
+  @qt-diverges @api-QtQuick.StyleHints.passwordMaskCharacter
   Scenario: The password mask is a bullet
     Then the property "mask" of "root" is "•"

@@ -3,14 +3,13 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-swipedelegate.html#swipe-prop
 # The Qt oracle drags in one go, too quickly for these. The values were
 # measured on Qt 6.11.2 with qmltestrunner (offscreen) instead, by
-# mousePress, mouseMove and mouseRelease with the same timings. The
-# offscreen platform there reads Qt.styleHints.startDragDistance as 10; a
-# desktop, and Ljós, read 8, so the swipe starts past 8 pixels here.
+# mousePress, mouseMove and mouseRelease with the same timings. Qt and
+# Ljós read Qt.styleHints.startDragDistance as 10 there.
 
 @ljos-only
 Feature: Where a swiped row goes when it is let go
   A swipe starts once the pointer has gone further across the row than
-  `Qt.styleHints.startDragDistance`, 8 pixels. Let go, the row opens to the side it was swiped to if it was swiped
+  `Qt.styleHints.startDragDistance`, 10 pixels. Let go, the row opens to the side it was swiped to if it was swiped
   more than half the way, or if the pointer went that way at more than 300
   pixels a second on average since the press. Otherwise it closes.
 
@@ -37,12 +36,12 @@ Feature: Where a swiped row goes when it is let go
   Scenario: The swipe starts past the start drag distance and follows the pointer from the press
     When the user presses the pointer at 20, 25
     And 100 milliseconds pass
-    And the user moves the pointer to 28, 25
+    And the user moves the pointer to 30, 25
     Then the property "swipe.position" of "d" is 0
     When 100 milliseconds pass
-    And the user moves the pointer to 29, 25
-    Then the property "swipe.position" of "d" is 0.09
-    And the property "contentItem.x" of "d" is 21
+    And the user moves the pointer to 31, 25
+    Then the property "swipe.position" of "d" is 0.11
+    And the property "contentItem.x" of "d" is 23
     When 100 milliseconds pass
     And the user moves the pointer to 50, 30
     Then the property "swipe.position" of "d" is 0.3

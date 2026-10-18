@@ -95,9 +95,11 @@ pub struct StyleHints {
     pub mouse_quick_selection_threshold: i32,
 }
 
-/// `startDragDistance` until a host says otherwise: what qml6 reads on a
-/// desktop (features/input/drag-threshold.feature).
-pub const START_DRAG_DISTANCE: i32 = 8;
+/// `startDragDistance` until a host says otherwise: Qt's own default, what
+/// qml6 reads on every platform without a desktop theme
+/// (features/input/drag-threshold.feature). A host on a desktop that says
+/// less (GNOME's 8) writes it with [`set_start_drag_distance`].
+pub const START_DRAG_DISTANCE: i32 = 10;
 
 /// `Qt.styleHints.accessibility`. `contrastPreference` is Qt's (6.10),
 /// `motionPreference` is documented for Qt 6.12; `fontScale` and
