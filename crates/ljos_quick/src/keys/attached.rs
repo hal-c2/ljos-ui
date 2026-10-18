@@ -303,8 +303,7 @@ pub(crate) fn register(engine: &Engine) {
                     return;
                 };
                 if is_unset(e, theirs, back) && e.read(theirs, back).is_nullish() {
-                    let _ =
-                        e.write_internal(theirs, back, Value::Object(obj), WriteKind::Animation);
+                    let _ = e.write_internal(theirs, back, Value::Object(obj), WriteKind::Host);
                 }
             });
             if let Err(err) = watched {

@@ -2143,7 +2143,7 @@ impl Engine {
             let given = self.untrack(|| self.provenance(src, from));
             if matches!(
                 given,
-                Some(Provenance::Default | Provenance::Animated) | None
+                Some(Provenance::Default | Provenance::Animated | Provenance::Host) | None
             ) {
                 continue;
             }

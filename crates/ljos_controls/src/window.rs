@@ -461,7 +461,7 @@ fn put(engine: &Engine, win: ObjectId, prop: ljos_engine::PropIndex, v: Value) {
     check(
         engine,
         "Window",
-        engine.write_internal(win, prop, v, WriteKind::Animation),
+        engine.write_internal(win, prop, v, WriteKind::Host),
     );
 }
 
@@ -510,7 +510,7 @@ fn place(engine: &Engine, win: ObjectId, st: &WinState, show: i32) {
                 check(
                     engine,
                     "Window",
-                    engine.write(win, prop, Value::Real(v), WriteKind::Animation),
+                    engine.write(win, prop, Value::Real(v), WriteKind::Host),
                 );
             }
         }
@@ -595,7 +595,7 @@ fn apply_limits(engine: &Engine, win: ObjectId) {
                 check(
                     engine,
                     "Window",
-                    engine.write(win, size, Value::Real(fit), WriteKind::Animation),
+                    engine.write(win, size, Value::Real(fit), WriteKind::Host),
                 );
             }
         }

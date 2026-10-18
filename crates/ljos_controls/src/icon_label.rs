@@ -258,7 +258,10 @@ fn shown(engine: &Engine, label: ObjectId) -> Shown {
 }
 
 fn unset(p: Provenance) -> bool {
-    matches!(p, Provenance::Default | Provenance::Animated)
+    matches!(
+        p,
+        Provenance::Default | Provenance::Animated | Provenance::Host
+    )
 }
 
 /// Makes or drops the item in `slot` so that there is one exactly when

@@ -46,7 +46,7 @@ pub(crate) fn completed(engine: &Engine, m: ObjectId) {
             match how {
                 Interception::Write => system(e, m, WriteKind::Imperative),
                 Interception::Binding => {
-                    e.after_binding(move |e| system(e, m, WriteKind::Animation));
+                    e.after_binding(move |e| system(e, m, WriteKind::Host));
                 }
             }
             true

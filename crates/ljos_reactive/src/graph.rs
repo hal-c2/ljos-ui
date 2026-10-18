@@ -51,6 +51,9 @@ struct Prop<V> {
     /// Usually empty, so it costs no allocation.
     overrides: Vec<Layer<V>>,
     animated: bool,
+    /// The step over the binding was the host's ([`WriteKind::Host`]),
+    /// not an animation's. Only read while `animated`.
+    host: bool,
 }
 
 impl<V> Prop<V> {
@@ -684,6 +687,7 @@ impl<V: Clone + 'static> Graph<V> {
                 },
                 overrides: Vec::new(),
                 animated: false,
+                host: false,
             }),
             Some(value),
             NodeState::Clean,
@@ -711,6 +715,7 @@ impl<V: Clone + 'static> Graph<V> {
                     },
                     overrides: Vec::new(),
                     animated: false,
+                    host: false,
                 }),
                 Some(initial),
                 NodeState::Dirty,
@@ -1075,9 +1080,10 @@ impl<V: Clone + 'static> Graph<V> {
                         p.base.provenance = Provenance::Assigned;
                     }
                 }
-                WriteKind::Animation => {
+                WriteKind::Animation | WriteKind::Host => {
                     dropped = Content::Value(None);
                     p.animated = true;
+                    p.host = how == WriteKind::Host;
                     i.set_value(n, v);
                 }
                 WriteKind::Layout if p.is_bound() => {
@@ -1481,9 +1487,11 @@ impl<V: Clone + 'static> Graph<V> {
     // ------------------------------------------------------------ inspection
 
     /// Provenance of the current value: the top layer's, or
-    /// [`Provenance::Animated`] after an animation write.
+    /// [`Provenance::Animated`] after an animation write, or
+    /// [`Provenance::Host`] after a host's.
     pub fn provenance(&self, n: NodeId) -> Option<Provenance> {
         match &self.inner.borrow().nodes.get(n)?.kind {
+            Kind::Property(p) if p.animated && p.host => Some(Provenance::Host),
             Kind::Property(p) if p.animated => Some(Provenance::Animated),
             Kind::Property(p) => Some(p.top().provenance),
             Kind::Effect(_) => None,

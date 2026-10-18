@@ -144,7 +144,7 @@ fn refuse_what_is_no_gradient(engine: &Engine, rect: ObjectId, v: &Value) {
         rect,
         Rectangle::GRADIENT.index,
         Value::Undefined,
-        WriteKind::Animation,
+        WriteKind::Host,
     );
 }
 

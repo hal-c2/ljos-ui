@@ -10,7 +10,7 @@ pub const CATEGORY: &str = "qt.quick.controls";
 pub(crate) fn is_unset(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
     matches!(
         engine.provenance(obj, p),
-        Some(Provenance::Default | Provenance::Animated) | None
+        Some(Provenance::Default | Provenance::Animated | Provenance::Host) | None
     )
 }
 

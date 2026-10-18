@@ -483,7 +483,7 @@ pub(crate) fn register(engine: &Engine) {
                     // The property shows the drag once the areas were told,
                     // and keeps its binding.
                     Interception::Binding => {
-                        e.after_binding(move |e| toggle(e, att, on, WriteKind::Animation));
+                        e.after_binding(move |e| toggle(e, att, on, WriteKind::Host));
                     }
                 }
                 true

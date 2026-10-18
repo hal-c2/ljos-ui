@@ -548,7 +548,7 @@ pub(crate) fn icon_giver(
     let given = |o: ObjectId, p: PropIndex| {
         !matches!(
             engine.provenance_tracked(o, p),
-            Some(Provenance::Default | Provenance::Animated) | None
+            Some(Provenance::Default | Provenance::Animated | Provenance::Host) | None
         )
     };
     let own = engine

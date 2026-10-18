@@ -316,7 +316,7 @@ into the answer's structured content.
 | `Then the answer's "/pointer" has N entries` / `is absent` | a list or an object of N entries; nothing at all |
 | `Then the answer is at most N bytes` | each copy of the answer, the data and the text, is that small |
 | `Then the answer does not contain "text"` | neither its text nor its structured content |
-| `Then the inspected property "p" is "provenance"` | `"assigned"`, `"bound"`, `"animated"` or `"default"` |
+| `Then the inspected property "p" is "provenance"` | `"assigned"`, `"bound"`, `"animated"`, `"host"` or `"default"` |
 | `Then the inspected property "p" is assigned by "devtools"` / `is not assigned by "devtools"` | who assigned a property that was assigned: the agent, through `app_set_property` |
 | `Then the inspected property "p" has the value "text"` / `was written at line N` / `is bound at tier T` | the tier is `0`, `1` or `js` |
 | `Then the answer has no inspected property "p"` | |

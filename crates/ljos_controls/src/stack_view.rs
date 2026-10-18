@@ -1080,7 +1080,7 @@ fn place_still(e: &Engine, item: ObjectId) {
             check(
                 e,
                 "StackView",
-                e.write_internal(item, p, Value::Real(0.0), WriteKind::Animation),
+                e.write_internal(item, p, Value::Real(0.0), WriteKind::Host),
             );
         }
     }

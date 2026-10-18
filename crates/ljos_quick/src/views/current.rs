@@ -299,12 +299,7 @@ pub(crate) fn give_focus(e: &Engine, item: ObjectId) {
     warn(
         e,
         "focus",
-        e.write_internal(
-            item,
-            Item::FOCUS.index,
-            Value::Bool(true),
-            WriteKind::Animation,
-        ),
+        e.write_internal(item, Item::FOCUS.index, Value::Bool(true), WriteKind::Host),
     );
 }
 

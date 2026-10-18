@@ -100,7 +100,7 @@ fn micros(d: Duration) -> i64 {
 /// Shows a state on the animation object. Like an animated value, it
 /// leaves a binding on the property in place (`running: mouse.pressed`).
 fn show(engine: &Engine, anim: ObjectId, prop: PropIndex, v: bool) {
-    let _ = engine.write_internal(anim, prop, Value::Bool(v), WriteKind::Animation);
+    let _ = engine.write_internal(anim, prop, Value::Bool(v), WriteKind::Host);
 }
 
 fn emit(engine: &Engine, anim: ObjectId, signal: &str) {

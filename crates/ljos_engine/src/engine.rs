@@ -1368,7 +1368,7 @@ impl Engine {
     /// follows something else (a control's font and palette follow its
     /// ancestors'). Readers see it and a binding stays in place, as with
     /// an animation step, and the property does not read as assigned:
-    /// [`Engine::provenance`] says `Default` or `Animated` afterwards,
+    /// [`Engine::provenance`] says `Default` or `Host` afterwards,
     /// unless it was assigned before.
     pub fn write_derived(
         &self,
@@ -1395,13 +1395,13 @@ impl Engine {
                     // where a write can: unfiltered, through the full path.
                     Filtered::WithCx(_, v) => {
                         drop(store);
-                        return self.write_impl(obj, prop, v, WriteKind::Animation, true);
+                        return self.write_impl(obj, prop, v, WriteKind::Host, true);
                     }
                 }
                 return Ok(());
             }
         }
-        self.write_impl(obj, prop, v, WriteKind::Animation, true)
+        self.write_impl(obj, prop, v, WriteKind::Host, true)
     }
 
     fn check_writable<'h>(
@@ -1510,8 +1510,11 @@ impl Engine {
         }
         let n = match (node, how) {
             (Some(n), _) => n,
-            // An override entry only exists on a node.
-            (None, WriteKind::Override(_)) => self.ensure_node(obj, prop)?,
+            // An override entry only exists on a node, and so does the
+            // host's mark: without one the value would read as assigned,
+            // and what follows a property until its author sets it
+            // (a control's font) would stop following.
+            (None, WriteKind::Override(_) | WriteKind::Host) => self.ensure_node(obj, prop)?,
             (None, _) => {
                 // Nobody observes it: the field is the only copy.
                 let mut store = self.inner.store.borrow_mut();

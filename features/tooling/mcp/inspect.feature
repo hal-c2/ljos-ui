@@ -30,6 +30,8 @@ Feature: Inspecting one item
           Accessible.name: "Card"
           NumberAnimation on opacity { from: 0.5; to: 1; duration: 1000 }
         }
+        Item { objectName: "field"; focus: true }
+        Item { objectName: "other" }
       }
       """
     And the inspector is connected
@@ -61,6 +63,15 @@ Feature: Inspecting one item
       | x        | bound      |
       | width    | bound      |
       | opacity  | animated   |
+
+  # What the toolkit writes itself (focus, a window's size, a font that
+  # follows the parent's) keeps a binding below it as an animation step
+  # does, and is still not an animation.
+  Scenario: A value the toolkit gives is said to be the host's
+    When the property "focus" of "other" is set to true
+    And the agent inspects every property of "#field"
+    Then the inspected property "activeFocus" is "host"
+    And the inspected property "activeFocus" has the value "false"
 
   Scenario: A bound property says where its binding was written
     When the agent inspects "#card"

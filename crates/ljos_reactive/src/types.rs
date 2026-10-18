@@ -78,6 +78,10 @@ pub enum Provenance {
     /// Written by an animation or Behavior; the binding, if any, stays
     /// installed and wins on its next evaluation.
     Animated,
+    /// Written by the toolkit itself (a window's place, an item's focus, a
+    /// timer that stopped); as with [`Provenance::Animated`], a binding
+    /// stays installed.
+    Host,
 }
 
 /// How a write treats the property's binding and override stack.
@@ -92,6 +96,10 @@ pub enum WriteKind {
     /// An animation step. Sets the current value without removing any
     /// binding.
     Animation,
+    /// A value the toolkit gives on its own account: what the window
+    /// system, the focus chain or a running timer says. Treated as
+    /// [`WriteKind::Animation`]; [`Provenance::Host`] tells them apart.
+    Host,
     /// A value from whatever arranges the property's owner: a layout or a
     /// positioner placing a child. A binding on the top layer stays and
     /// gives the property its value again when it next runs; without one

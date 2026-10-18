@@ -884,7 +884,7 @@ fn round_end(engine: &Engine, obj: ObjectId, p: &Props, end: PropIndex) {
     let v = engine.untrack(|| num(engine, obj, end));
     let r = round_to(v, d);
     if r != v && !r.is_nan() {
-        let w = engine.write(obj, end, Value::Real(r), WriteKind::Animation);
+        let w = engine.write(obj, end, Value::Real(r), WriteKind::Host);
         check(engine, "DoubleSpinBox", w);
     }
 }

@@ -1060,7 +1060,7 @@ impl Engine {
                 obj,
                 Timer::RUNNING.index,
                 Value::Bool(false),
-                WriteKind::Animation,
+                WriteKind::Host,
             );
         }
         if let Some(s) = Timer::meta_ref().signal_index("triggered") {

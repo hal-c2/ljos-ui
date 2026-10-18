@@ -578,6 +578,7 @@ impl Look<'_> {
                 Provenance::Assigned => "assigned",
                 Provenance::Bound => "bound",
                 Provenance::Animated => "animated",
+                Provenance::Host => "host",
             };
             let mut held = None;
             let value = match &p.value {

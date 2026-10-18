@@ -169,7 +169,7 @@ fn bump_style_epoch(engine: &Engine) {
 fn author_set(engine: &Engine, obj: ObjectId, prop: PropIndex) -> bool {
     match engine.provenance_tracked(obj, prop) {
         Some(Provenance::Assigned | Provenance::Bound) => true,
-        Some(Provenance::Animated) => {
+        Some(Provenance::Animated | Provenance::Host) => {
             // Resolving an enum to a color uses a derived write. Keep the
             // author's raw choice until a reset explicitly clears it.
             engine

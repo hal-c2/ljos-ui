@@ -352,6 +352,24 @@ fn animation_write_keeps_binding() {
 }
 
 #[test]
+fn host_write_keeps_binding_and_says_it_was_the_host() {
+    let g = Graph::new();
+    let r = g.root();
+    let target = g.property(r, 100).unwrap();
+    let x = g.binding(r, 0, move |g| g.get(target)).unwrap();
+    assert_eq!(g.get(x), 100);
+    g.write(x, 50, WriteKind::Host).unwrap();
+    assert_eq!(g.get(x), 50);
+    assert_eq!(g.provenance(x), Some(Provenance::Host));
+    g.write(x, 60, WriteKind::Animation).unwrap();
+    assert_eq!(g.provenance(x), Some(Provenance::Animated));
+    g.write(x, 70, WriteKind::Host).unwrap();
+    g.set(target, 200);
+    assert_eq!(g.get(x), 200);
+    assert_eq!(g.provenance(x), Some(Provenance::Bound));
+}
+
+#[test]
 fn override_stack_restore_modes() {
     let g = Graph::new();
     let r = g.root();

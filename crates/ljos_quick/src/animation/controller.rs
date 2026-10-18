@@ -63,7 +63,7 @@ impl AnimationController {
                         me,
                         AnimationController::PROGRESS.index,
                         Value::Real(kept),
-                        WriteKind::Animation,
+                        WriteKind::Host,
                     );
                 }
             })?;

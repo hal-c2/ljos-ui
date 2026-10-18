@@ -52,8 +52,8 @@ Find items by locator: `role=button[name=\"Save\"]`, `text=notes`, `#objectName`
 reference, path, bounds and states per match. No match is an empty list, not an error.";
 
 pub const INSPECT: &str = "\
-One item in depth: type, id, file and line, geometry, its window's singletons, its \
-properties with where each value comes from (assigned, bound at tier 0, 1 or js, animated, \
+One item in depth: type, id, file and line, geometry, its window's singletons, \
+properties with where each value is from (assigned, bound at tier 0, 1 or js, animated, host, \
 default). `target` is a reference or locator. `all` adds defaults; `dependencies` names a \
 property: its reads, readers, tier.";
 

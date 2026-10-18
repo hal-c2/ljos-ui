@@ -323,7 +323,7 @@ impl WindowSystem {
             engine.batch(|| {
                 for (prop, v) in [(Item::WIDTH.index, size[0]), (Item::HEIGHT.index, size[1])] {
                     if engine.untrack(|| engine.read(win, prop)).to_number() != v {
-                        let _ = engine.write(win, prop, Value::Real(v), WriteKind::Animation);
+                        let _ = engine.write(win, prop, Value::Real(v), WriteKind::Host);
                     }
                 }
             });
@@ -340,8 +340,7 @@ impl WindowSystem {
                 for (prop, v) in [(Window::X.index, at[0]), (Window::Y.index, at[1])] {
                     let v = v.round() as i32;
                     if engine.untrack(|| engine.read(win, prop)).to_number() as i32 != v {
-                        let _ =
-                            engine.write_internal(win, prop, Value::Int(v), WriteKind::Animation);
+                        let _ = engine.write_internal(win, prop, Value::Int(v), WriteKind::Host);
                     }
                 }
             });
@@ -366,7 +365,7 @@ impl WindowSystem {
                 win,
                 Window::VISIBILITY.index,
                 Value::Int(show.qt_value()),
-                WriteKind::Animation,
+                WriteKind::Host,
             );
         });
     }

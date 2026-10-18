@@ -114,7 +114,7 @@ fn write_flag(engine: &Engine, obj: ObjectId, prop: PropIndex, on: bool) {
     if !engine.is_alive(obj) {
         return;
     }
-    if let Err(err) = engine.write_internal(obj, prop, Value::Bool(on), WriteKind::Animation) {
+    if let Err(err) = engine.write_internal(obj, prop, Value::Bool(on), WriteKind::Host) {
         warn(engine, "cannot write a focus property", err);
     }
 }

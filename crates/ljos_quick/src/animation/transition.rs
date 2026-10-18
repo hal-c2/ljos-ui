@@ -81,7 +81,7 @@ pub(crate) fn show_running(engine: &Engine, transition: ObjectId, on: bool) {
             transition,
             Transition::RUNNING.index,
             Value::Bool(on),
-            WriteKind::Animation,
+            WriteKind::Host,
         );
     }
 }
