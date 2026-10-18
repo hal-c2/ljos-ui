@@ -521,6 +521,51 @@ pub fn quiet(
     }
 }
 
+/// A picture of the region `(x, y, w, h)` of the first output as it is
+/// shown now: its width, height and pixels, four bytes each as R, G, B, A,
+/// row after row.
+///
+/// # Errors
+/// The compositor cannot be reached, has no screencopy, failed the copy,
+/// gave it in a format other than 32-bit RGB, or not by `deadline`.
+pub fn picture(
+    display: &Path,
+    region: (i32, i32, i32, i32),
+    deadline: Instant,
+) -> Result<(u32, u32, Vec<u8>), Error> {
+    let mut r = Region::new(display, region)?;
+    let bytes = r
+        .copy(false, deadline)?
+        .ok_or_else(|| Error::Protocol("screencopy gave no picture in time".to_owned()))?;
+    let (format, w, h, stride) = r
+        .state
+        .shape
+        .ok_or_else(|| Error::Protocol("screencopy offered no shm buffer".to_owned()))?;
+    // Little-endian words: Xrgb8888 and Argb8888 lie in memory as B, G, R, X/A;
+    // Xbgr8888 and Abgr8888 as R, G, B, X/A.
+    let (swap, alpha) = match format {
+        wl_shm::Format::Xrgb8888 => (true, false),
+        wl_shm::Format::Argb8888 => (true, true),
+        wl_shm::Format::Xbgr8888 => (false, false),
+        wl_shm::Format::Abgr8888 => (false, true),
+        other => {
+            return Err(Error::Protocol(format!(
+                "screencopy gave the picture as {other:?}"
+            )));
+        }
+    };
+    let row = w as usize * 4;
+    let mut rgba = Vec::with_capacity(row * h as usize);
+    for line in bytes.chunks(stride as usize).take(h as usize) {
+        for px in line[..row].as_chunks::<4>().0 {
+            let [a, b, c, d] = *px;
+            let (r, g, b) = if swap { (c, b, a) } else { (a, b, c) };
+            rgba.extend_from_slice(&[r, g, b, if alpha { d } else { 255 }]);
+        }
+    }
+    Ok((w, h, rgba))
+}
+
 fn count(
     mut queue: EventQueue<State>,
     output: &wl_output::WlOutput,

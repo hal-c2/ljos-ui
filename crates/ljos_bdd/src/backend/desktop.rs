@@ -37,6 +37,12 @@ const STARTUP: Duration = Duration::from_secs(60);
 /// before what it did is read. The compositor and the inspector are two
 /// sockets, so nothing orders a read after the input it follows.
 const INPUT_SETTLES: Duration = Duration::from_millis(150);
+/// How long the window must show no change before its picture is taken:
+/// longer than a frame, so a scroll or a slide still under way is seen
+/// through to its end.
+const STILL: Duration = Duration::from_millis(250);
+/// How long a picture may take, the window settling included.
+const PICTURE: Duration = Duration::from_secs(10);
 
 /// Why `@desktop` scenarios cannot run here, or `None` when they can.
 #[must_use]
@@ -238,6 +244,8 @@ pub struct DesktopBackend {
     work_from: Vec<(&'static str, Counted)>,
     /// What the agent was last answered.
     seen: Seen,
+    /// What the application's environment has besides the sandbox's.
+    env: Vec<(String, String)>,
 }
 
 /// Work read when counting began, and the work one reading does.
@@ -247,6 +255,14 @@ impl DesktopBackend {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Runs the applications it starts from now on with `key` set to
+    /// `value`, as a knob of the runtime is turned for one run.
+    #[must_use]
+    pub fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.env.push((key.to_owned(), value.to_owned()));
+        self
     }
 
     fn running(&mut self) -> Result<&mut Running> {
@@ -300,6 +316,7 @@ impl DesktopBackend {
             .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
             .env_remove("AT_SPI_BUS_ADDRESS")
             .envs(sandbox.env.iter().filter(|(k, _)| *k != "DISPLAY"))
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(
@@ -410,6 +427,14 @@ impl DesktopBackend {
         let mut running = Running::attach(&ljos, &token, observer, (0, 0, 0, 0))?;
         running.ask("app_status", json!({}))?;
         Ok(running)
+    }
+
+    /// What the running application's inspector measures (`app_metrics`).
+    ///
+    /// # Errors
+    /// No application is running, or its inspector went away.
+    pub fn metrics(&mut self) -> Result<Value> {
+        self.running()?.ask("app_metrics", json!({}))
     }
 
     /// The passes of the application's window so far, painted or not
@@ -658,7 +683,39 @@ impl Backend for DesktopBackend {
     }
 
     fn grab(&mut self) -> Result<Vec<u8>> {
-        Err(not_yet("a picture of the window on the desktop"))
+        // What the compositor shows, as a person sees it: the frames the
+        // application sent, after whatever it painted them with.
+        let rect = self.running()?.rect;
+        let display = self
+            .sandbox
+            .as_ref()
+            .ok_or_else(|| BackendError::Failed("no sandbox".into()))?
+            .path("WAYLAND_DISPLAY")?;
+        let deadline = Instant::now() + PICTURE;
+        let failed = |e: ljos_bench::wayland::Error| {
+            BackendError::Failed(format!("the sandbox's screencopy: {e}"))
+        };
+        ljos_bench::wayland::quiet(&display, rect, STILL, deadline)
+            .map_err(failed)?
+            .ok_or_else(|| {
+                BackendError::Failed(format!(
+                    "the window kept changing for {} s",
+                    PICTURE.as_secs()
+                ))
+            })?;
+        let (width, height, rgba) =
+            ljos_bench::wayland::picture(&display, rect, deadline).map_err(failed)?;
+        let encoding =
+            |e: png::EncodingError| BackendError::Failed(format!("encoding the picture: {e}"));
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(std::io::Cursor::new(&mut png), width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fastest);
+        let mut writer = encoder.write_header().map_err(encoding)?;
+        writer.write_image_data(&rgba).map_err(encoding)?;
+        writer.finish().map_err(encoding)?;
+        Ok(png)
     }
 
     fn translation(&mut self, _: &str, _: &str) -> Result<()> {
