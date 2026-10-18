@@ -31,6 +31,7 @@ Feature: Tracing what happens to an object over time
         function poke() { count += 1; poked(count) }
         function many() { for (var i = 0; i < 1100; ++i) count += 1 }
         Item { objectName: "other"; property int n: 0 }
+        Rectangle { objectName: "box"; width: 10; height: 10; border.color: top.open ? "red" : "blue" }
         TextInput { objectName: "secret"; width: 100; height: 20; echoMode: TextInput.Password }
         Loader {
           active: top.open
@@ -120,6 +121,19 @@ Feature: Tracing what happens to an object over time
       Then the answer's "/events/0/name" is "level"
       And the answer's "/events/0/value" is 736.0003
       And the answer's text contains "= 736.0003"
+
+    # A group's member has no change signal of its own; it changes all
+    # the same, and its group is a part of the object already.
+    Scenario: A member of a group is written down by its full name
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#box"}
+        """
+      And the property "open" of "root" is set to false
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events/0/name" is "border.color"
+      And the answer's "/events/0/value" is "#0000ff"
+      And the answer's "/events" has 1 entries
 
   Rule: The list is read from where the last answer ended
 

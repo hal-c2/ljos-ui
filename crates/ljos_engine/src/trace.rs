@@ -10,16 +10,21 @@
 //! run after the handlers connected before it, and would make a signal
 //! that counts as taken once somebody hears it (`Keys`) taken. While
 //! nothing is traced an emission pays one look at a flag.
+//!
+//! A leaf of a group (`border.color`) has no change signal of its own; it
+//! is watched in the graph instead. The group is a field of the object, so
+//! watching its leaves makes nothing that was not there.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use ljos_reactive::NodeId;
 use rustc_hash::FxHashMap;
 
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ConnectionId, ObjectId, PropIndex, SignalIndex};
-use crate::meta::PropertyFlags;
+use crate::meta::{PropertyAccess, PropertyFlags};
 use crate::value::Value;
 
 /// What a traced object was told.
@@ -44,6 +49,7 @@ pub type TraceSink = Rc<dyn Fn(&Engine, ObjectId, Traced<'_>)>;
 struct Trace {
     sink: TraceSink,
     conns: Vec<ConnectionId>,
+    watches: Vec<NodeId>,
 }
 
 #[derive(Default)]
@@ -59,13 +65,26 @@ impl Engine {
     /// sink.
     pub fn trace(&self, obj: ObjectId, sink: TraceSink) -> Result<(), EngineError> {
         self.untrace(obj);
-        let changes: Vec<(SignalIndex, PropIndex)> = {
+        let (changes, leaves): (Vec<(SignalIndex, PropIndex)>, Vec<PropIndex>) = {
             let store = self.inner.store.borrow();
             let h = store
                 .objects
                 .get(obj)
                 .ok_or_else(|| EngineError::dead(obj))?;
-            h.meta
+            let leaves = h
+                .meta
+                .properties
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| {
+                    matches!(p.access, PropertyAccess::Group { .. })
+                        && !p.flags.contains(PropertyFlags::GROUP)
+                })
+                .map(|(i, _)| PropIndex(i as u32))
+                .filter(|p| !h.makes_on_read(*p))
+                .collect();
+            let changes = h
+                .meta
                 .signals
                 .iter()
                 .enumerate()
@@ -78,7 +97,8 @@ impl Engine {
                         .is_some_and(|p| !p.flags.contains(PropertyFlags::GROUP))
                         && !h.makes_on_read(*p)
                 })
-                .collect()
+                .collect();
+            (changes, leaves)
         };
         let mut conns = Vec::with_capacity(changes.len() + 1);
         for (signal, prop) in changes {
@@ -93,16 +113,30 @@ impl Engine {
                 conns.push(c);
             }
         }
+        let mut watches = Vec::with_capacity(leaves.len());
+        for prop in leaves {
+            let sink = sink.clone();
+            let told = self.watch(obj, prop, move |engine, value| {
+                sink(engine, obj, Traced::Change { prop, value });
+            });
+            if let Ok(n) = told {
+                watches.push(n);
+            }
+        }
         let end = sink.clone();
         conns.push(self.connect(obj, SignalIndex::DESTROYED, move |engine, _| {
             engine.inner.traces.forget(obj);
             end(engine, obj, Traced::Destroyed);
         })?);
         let traces = &self.inner.traces;
-        traces
-            .by_object
-            .borrow_mut()
-            .insert(obj, Trace { sink, conns });
+        traces.by_object.borrow_mut().insert(
+            obj,
+            Trace {
+                sink,
+                conns,
+                watches,
+            },
+        );
         traces.on.set(true);
         Ok(())
     }
@@ -114,6 +148,10 @@ impl Engine {
         };
         for c in trace.conns {
             self.disconnect(c);
+        }
+        for n in trace.watches {
+            // Gone already if the object's scope went first.
+            let _ = self.inner.graph.dispose(n);
         }
         true
     }
