@@ -784,8 +784,31 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             fn base_mut(&mut self) -> #p::Option<&mut dyn #e::QmlObject> {
                 #p::Option::Some(&mut self.#f)
             }
+            fn part(
+                &self,
+                ty: ::core::any::TypeId,
+            ) -> #p::Option<#p::Option<&dyn #e::QmlObject>> {
+                if ty == ::core::any::TypeId::of::<Self>() {
+                    return #p::Option::Some(#p::Option::Some(self));
+                }
+                // The base's own, called as its type's: no call through
+                // the vtable for each part.
+                #p::Option::Some(
+                    #e::QmlObject::part(&self.#f, ty)
+                        .unwrap_or_else(|| #e::find_native(&self.#f, ty)),
+                )
+            }
         },
-        None => quote!(),
+        None => quote! {
+            fn part(
+                &self,
+                ty: ::core::any::TypeId,
+            ) -> #p::Option<#p::Option<&dyn #e::QmlObject>> {
+                #p::Option::Some(
+                    (ty == ::core::any::TypeId::of::<Self>()).then_some(self as &dyn #e::QmlObject),
+                )
+            }
+        },
     };
     let base_call = base_ty
         .as_ref()

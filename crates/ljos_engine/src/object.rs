@@ -33,6 +33,13 @@ pub trait QmlObject: Any {
     fn base_mut(&mut self) -> Option<&mut dyn QmlObject> {
         None
     }
+    /// The part of this object's native chain that is a `ty`, or `None`
+    /// to have [`find_native`] ask each part its type and its base. The
+    /// derive answers itself, in one call where the walk makes two a part:
+    /// every read of a native field looks for its part.
+    fn part(&self, _ty: TypeId) -> Option<Option<&dyn QmlObject>> {
+        None
+    }
 }
 
 /// Static facts about a native type, for generated code.
@@ -45,6 +52,9 @@ pub trait QmlType: QmlObject + Sized {
 
 /// The part of `root`'s native chain that is a `ty`.
 pub fn find_native(root: &dyn QmlObject, ty: TypeId) -> Option<&dyn QmlObject> {
+    if let Some(found) = root.part(ty) {
+        return found;
+    }
     let mut cur = Some(root);
     while let Some(o) = cur {
         if o.as_any().type_id() == ty {
