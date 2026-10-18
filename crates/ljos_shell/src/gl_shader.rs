@@ -10,6 +10,13 @@
 //! egui_glow sets its own state again after a callback, but not the
 //! sampler objects, the uniform buffer binding or culling, which this
 //! leaves as it found them.
+//!
+//! An effect drawn a second time with nothing changed (the same
+//! [`ShaderPaint`], at the same place) is drawn once more into a picture
+//! of its own, which later frames copy: a program that is costly per pixel
+//! (a background drawn under everything) is then run once, not again for
+//! each frame something over it changes. One that changes each frame is
+//! never kept.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -37,6 +44,18 @@ struct Cache {
     ubo: Option<glow::Buffer>,
     /// Programs that failed to link, said once each.
     failed: HashMap<usize, Arc<Program>>,
+    /// By the address of the paint's `Arc`, which the entry holds.
+    kept: HashMap<usize, Kept>,
+    /// Draws a kept picture: its program and the vertex array it needs.
+    copy: Option<(glow::Program, glow::VertexArray)>,
+}
+
+/// An effect seen drawn, and once drawn again unchanged, its picture.
+struct Kept {
+    paint: Arc<ShaderPaint>,
+    /// Left, bottom, width and height in the window's pixels.
+    viewport: [i32; 4],
+    picture: Option<(glow::Framebuffer, glow::Texture)>,
 }
 
 /// Smooth, from mipmaps, and repeating across and down.
@@ -73,6 +92,13 @@ impl Programs {
                 }
                 gl.delete_program(l.gl);
             }
+            for k in cache.kept.into_values() {
+                delete_picture(gl, &k);
+            }
+            if let Some((p, vao)) = cache.copy {
+                gl.delete_program(p);
+                gl.delete_vertex_array(vao);
+            }
             if let Some(t) = cache.empty {
                 gl.delete_texture(t);
             }
@@ -105,7 +131,7 @@ pub(crate) fn programs(programs: &Programs, shapes: &mut [ClippedShape]) {
 
 fn draw(
     cache: &mut Cache,
-    paint: &ShaderPaint,
+    paint: &Arc<ShaderPaint>,
     info: &PaintCallbackInfo,
     painter: &egui_glow::Painter,
 ) {
@@ -128,8 +154,116 @@ fn draw(
             }
         }
     }
-    // SAFETY: as above; everything bound here is bound back to none.
+    let v = info.viewport_in_pixels();
+    let top = info.screen_size_px[1] as i32 - v.from_bottom_px - v.height_px;
+    let on_screen = Viewport {
+        left: v.left_px as f32,
+        top: top as f32,
+        width: v.width_px as f32,
+        height: v.height_px as f32,
+    };
+    let viewport = [v.left_px, v.from_bottom_px, v.width_px, v.height_px];
+    let es = gl.version().is_embedded;
+    let at = Arc::as_ptr(paint) as usize;
+    if !keeps(paint, viewport, info.screen_size_px) {
+        // SAFETY: as above.
+        unsafe { run(cache, painter, key, paint, on_screen) };
+        return;
+    }
+    let picture = match cache.kept.get(&at) {
+        Some(k) if k.viewport == viewport => k.picture,
+        _ => {
+            if let Some(old) = cache.kept.insert(
+                at,
+                Kept {
+                    paint: Arc::clone(paint),
+                    viewport,
+                    picture: None,
+                },
+            ) {
+                // SAFETY: as above.
+                unsafe { delete_picture(gl, &old) };
+            }
+            // SAFETY: as above.
+            unsafe { run(cache, painter, key, paint, on_screen) };
+            return;
+        }
+    };
+    // SAFETY: as above; the framebuffer, viewport and scissor test the
+    // painter set are set back before the copy.
     unsafe {
+        let texture = match picture {
+            Some((_, t)) => t,
+            None => {
+                let (w, h) = (viewport[2], viewport[3]);
+                let shown = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+                let (fb, t) = picture_of(gl, w, h);
+                gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(fb));
+                gl.viewport(0, 0, w, h);
+                gl.disable(glow::SCISSOR_TEST);
+                gl.clear_color(0.0, 0.0, 0.0, 0.0);
+                gl.clear(glow::COLOR_BUFFER_BIT);
+                run(cache, painter, key, paint, on_screen);
+                gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, shown);
+                gl.viewport(viewport[0], viewport[1], w, h);
+                gl.enable(glow::SCISSOR_TEST);
+                if let Some(k) = cache.kept.get_mut(&at) {
+                    k.picture = Some((fb, t));
+                }
+                t
+            }
+        };
+        let (program, vao) = *cache.copy.get_or_insert_with(|| copier(gl, es));
+        gl.use_program(Some(program));
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.bind_sampler(0, None);
+        // The picture holds the effect over transparent black, blended
+        // as the effect itself is, so it is put down as the effect would be.
+        gl.enable(glow::BLEND);
+        gl.blend_equation(glow::FUNC_ADD);
+        gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+        gl.disable(glow::CULL_FACE);
+        gl.bind_vertex_array(Some(vao));
+        gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+        gl.bind_vertex_array(None);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+    }
+}
+
+/// Whether an effect is worth a picture of its own and drawn the same
+/// into it. One that is not blended writes even where it is transparent,
+/// which a copy blended over what is there would not. A picture is at
+/// most the window's size; and one placed away from the window's corner
+/// is not kept if its program reads where on the window it is.
+fn keeps(paint: &ShaderPaint, viewport: [i32; 4], screen: [u32; 2]) -> bool {
+    let [left, bottom, w, h] = viewport;
+    let fits = w > 0 && h > 0 && (w as i64 * h as i64) <= screen[0] as i64 * screen[1] as i64;
+    let placed = (left == 0 && bottom == 0) || !reads_where(&paint.op.program);
+    paint.op.blending && fits && placed
+}
+
+fn reads_where(program: &Program) -> bool {
+    [&program.vertex, &program.fragment]
+        .iter()
+        .any(|c| c.gl330.contains("gl_FragCoord") || c.es300.contains("gl_FragCoord"))
+}
+
+/// Runs the effect's program into the viewport the painter set.
+///
+/// # Safety
+/// The painter's context is current.
+unsafe fn run(
+    cache: &mut Cache,
+    painter: &egui_glow::Painter,
+    key: usize,
+    paint: &ShaderPaint,
+    viewport: Viewport,
+) {
+    // SAFETY: the caller's context is current; everything bound here is
+    // bound back to none.
+    unsafe {
+        let gl = painter.gl();
         let empty = *cache.empty.get_or_insert_with(|| empty_texture(gl));
         let ubo = *cache
             .ubo
@@ -148,14 +282,7 @@ fn draw(
             }
         };
 
-        let v = info.viewport_in_pixels();
-        let top = info.screen_size_px[1] as i32 - v.from_bottom_px - v.height_px;
-        let uniforms = paint.uniforms(Viewport {
-            left: v.left_px as f32,
-            top: top as f32,
-            width: v.width_px as f32,
-            height: v.height_px as f32,
-        });
+        let uniforms = paint.uniforms(viewport);
 
         gl.use_program(Some(linked.gl));
         if !uniforms.is_empty() {
@@ -219,7 +346,16 @@ fn draw(
 }
 
 /// Deletes what was linked for programs nothing draws any more.
+/// Pictures go first: they hold the programs they were drawn with.
 fn forget_dead(cache: &mut Cache, gl: &glow::Context) {
+    cache.kept.retain(|_, k| {
+        let live = Arc::strong_count(&k.paint) > 1;
+        if !live {
+            // SAFETY: the context is current (see `draw`).
+            unsafe { delete_picture(gl, k) };
+        }
+        live
+    });
     cache.failed.retain(|_, p| Arc::strong_count(p) > 1);
     cache.linked.retain(|_, l| {
         let live = Arc::strong_count(&l.program) > 1;
@@ -336,6 +472,105 @@ unsafe fn grid(gl: &glow::Context, paint: &ShaderPaint) -> Grid {
     }
 }
 
+/// A framebuffer drawing into a texture of `w` by `h` pixels.
+unsafe fn picture_of(gl: &glow::Context, w: i32, h: i32) -> (glow::Framebuffer, glow::Texture) {
+    // SAFETY: the caller's context is current.
+    unsafe {
+        let t = gl.create_texture().expect("a GL texture");
+        gl.bind_texture(glow::TEXTURE_2D, Some(t));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            w,
+            h,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        for (what, how) in [
+            (glow::TEXTURE_MIN_FILTER, glow::NEAREST),
+            (glow::TEXTURE_MAG_FILTER, glow::NEAREST),
+            (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
+            (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
+        ] {
+            gl.tex_parameter_i32(glow::TEXTURE_2D, what, how as i32);
+        }
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        let fb = gl.create_framebuffer().expect("a GL framebuffer");
+        gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(fb));
+        gl.framebuffer_texture_2d(
+            glow::DRAW_FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(t),
+            0,
+        );
+        (fb, t)
+    }
+}
+
+unsafe fn delete_picture(gl: &glow::Context, k: &Kept) {
+    if let Some((fb, t)) = k.picture {
+        // SAFETY: the caller's context is current.
+        unsafe {
+            gl.delete_framebuffer(fb);
+            gl.delete_texture(t);
+        }
+    }
+}
+
+/// The program that puts a kept picture over the viewport, its corners
+/// made from the vertex's index.
+unsafe fn copier(gl: &glow::Context, es: bool) -> (glow::Program, glow::VertexArray) {
+    let head = if es {
+        "#version 300 es\nprecision mediump float;\n"
+    } else {
+        "#version 330 core\n"
+    };
+    let vertex = format!(
+        "{head}out vec2 uv;\nvoid main() {{\n  vec2 p = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));\n  uv = p;\n  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n}}\n"
+    );
+    let fragment = format!(
+        "{head}in vec2 uv;\nuniform sampler2D picture;\nout vec4 color;\nvoid main() {{ color = texture(picture, uv); }}\n"
+    );
+    // SAFETY: the caller's context is current.
+    unsafe {
+        let p = gl.create_program().expect("a GL program");
+        let mut shaders = Vec::new();
+        for (kind, source) in [
+            (glow::VERTEX_SHADER, vertex),
+            (glow::FRAGMENT_SHADER, fragment),
+        ] {
+            let s = gl.create_shader(kind).expect("a GL shader");
+            gl.shader_source(s, &source);
+            gl.compile_shader(s);
+            debug_assert!(
+                gl.get_shader_compile_status(s),
+                "{}",
+                gl.get_shader_info_log(s)
+            );
+            gl.attach_shader(p, s);
+            shaders.push(s);
+        }
+        gl.link_program(p);
+        for s in shaders {
+            gl.detach_shader(p, s);
+            gl.delete_shader(s);
+        }
+        debug_assert!(
+            gl.get_program_link_status(p),
+            "{}",
+            gl.get_program_info_log(p)
+        );
+        gl.use_program(Some(p));
+        gl.uniform_1_i32(gl.get_uniform_location(p, "picture").as_ref(), 0);
+        let vao = gl.create_vertex_array().expect("a GL vertex array");
+        (p, vao)
+    }
+}
+
 unsafe fn delete_grid(gl: &glow::Context, g: &Grid) {
     // SAFETY: the caller's context is current.
     unsafe {
@@ -401,5 +636,66 @@ unsafe fn sampler(gl: &glow::Context, (smooth, mipmap, wrap): Sampling) -> glow:
         gl.sampler_parameter_i32(s, glow::TEXTURE_WRAP_S, edge(wrap[0]) as i32);
         gl.sampler_parameter_i32(s, glow::TEXTURE_WRAP_T, edge(wrap[1]) as i32);
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ljos_render::kurbo::Affine;
+    use ljos_render::ljos_shader::{default_fragment, default_vertex};
+    use ljos_render::{ShaderOp, ShaderTexture};
+
+    use super::*;
+
+    fn paint(blending: bool, fragment: Compiled) -> ShaderPaint {
+        let program = Program::new(default_vertex(), Arc::new(fragment)).expect("a program");
+        let op = ShaderOp {
+            program: Arc::new(program),
+            uniforms: Vec::new(),
+            textures: Vec::<ShaderTexture>::new(),
+            grid: (1, 1),
+            blending,
+            cull: Cull::None,
+        };
+        ShaderPaint {
+            op: Arc::new(op),
+            rect: Rect::new(0.0, 0.0, 100.0, 100.0),
+            to_screen: Affine::IDENTITY,
+            opacity: 1.0,
+            ppp: 1.0,
+            textures: Vec::new(),
+        }
+    }
+
+    const SCREEN: [u32; 2] = [200, 100];
+
+    #[test]
+    fn a_blended_effect_on_the_window_is_kept() {
+        let p = paint(true, (*default_fragment()).clone());
+        assert!(keeps(&p, [0, 0, 200, 100], SCREEN));
+        assert!(keeps(&p, [50, 20, 100, 50], SCREEN));
+    }
+
+    #[test]
+    fn an_effect_that_replaces_what_is_below_is_drawn_each_time() {
+        let p = paint(false, (*default_fragment()).clone());
+        assert!(!keeps(&p, [0, 0, 200, 100], SCREEN));
+    }
+
+    #[test]
+    fn a_picture_larger_than_the_window_is_not_kept() {
+        let p = paint(true, (*default_fragment()).clone());
+        assert!(!keeps(&p, [-100, 0, 400, 100], SCREEN));
+        assert!(!keeps(&p, [0, 0, 0, 100], SCREEN));
+    }
+
+    #[test]
+    fn a_program_that_reads_where_it_is_is_kept_only_at_the_corner() {
+        let mut f = (*default_fragment()).clone();
+        f.gl330.push_str("\n// gl_FragCoord\n");
+        f.es300.push_str("\n// gl_FragCoord\n");
+        let p = paint(true, f);
+        assert!(keeps(&p, [0, 0, 100, 50], SCREEN));
+        assert!(!keeps(&p, [10, 0, 100, 50], SCREEN));
     }
 }
