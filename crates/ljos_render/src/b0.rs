@@ -1420,10 +1420,17 @@ fn image_segs(
     let size = (image.width(), image.height());
     // egui multiplies the texture by the vertex colour, so a tint costs no
     // texture of its own and the quads still join the batch of the picture.
-    let tint = tint.map(|t| {
+    let tint = tint.map_or(Color32::WHITE, |t| {
         let [r, g, b, _] = t.to_straight_u8();
         Color32::from_rgb(r, g, b)
     });
+    // Every quad is made white: one colour for all, worked out once and
+    // not for each corner of each of a particle system's pictures.
+    let tint = if opacity < 1.0 {
+        tint.gamma_multiply(opacity)
+    } else {
+        tint
+    };
     let key = |repeat| TextureKey {
         image: image.id(),
         smooth,
@@ -1449,14 +1456,9 @@ fn image_segs(
         complete &= blit_quads(blit, size, smooth, &mut clamp, &mut repeat);
     }
     let colour = |vertices: &mut [Vertex]| {
-        if let Some(tint) = tint {
-            for v in &mut *vertices {
-                v.color = tint;
-            }
-        }
-        if opacity < 1.0 {
+        if tint != Color32::WHITE {
             for v in vertices {
-                v.color = v.color.gamma_multiply(opacity);
+                v.color = tint;
             }
         }
     };
