@@ -729,12 +729,20 @@ fn curve_of(engine: &Engine, anim: ObjectId) -> Curve {
         None => engine.read_by_name(anim, name),
     };
     let num = |leaf: PropIndex, name: &str| read(leaf, name).to_number();
-    let bezier = match read(EasingGroup::BEZIER_CURVE.index, "easing.bezierCurve") {
-        Value::List(l) => l.iter().map(Value::to_number).collect(),
+    let ty = num(EasingGroup::TY.index, "easing.type") as i32;
+    // Only a spline goes by its points, and the list is made anew at
+    // each read.
+    let bezier = match ty {
+        super::easing::BEZIER_SPLINE => {
+            match read(EasingGroup::BEZIER_CURVE.index, "easing.bezierCurve") {
+                Value::List(l) => l.iter().map(Value::to_number).collect(),
+                _ => Vec::new(),
+            }
+        }
         _ => Vec::new(),
     };
     Curve {
-        ty: num(EasingGroup::TY.index, "easing.type") as i32,
+        ty,
         amplitude: num(EasingGroup::AMPLITUDE.index, "easing.amplitude"),
         overshoot: num(EasingGroup::OVERSHOOT.index, "easing.overshoot"),
         period: num(EasingGroup::PERIOD.index, "easing.period"),
