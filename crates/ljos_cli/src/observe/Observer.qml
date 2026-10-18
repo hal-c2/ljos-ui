@@ -1673,15 +1673,32 @@ ApplicationWindow {
                                                 : prop.modelData.provenance === "animated" ? theme.violet
                                                 : theme.subtle
                                             color: Qt.rgba(tone.r, tone.g, tone.b, 0.16)
+                                            // That the binding is kept below an
+                                            // edit is told on hover: in the chip
+                                            // it left the value too narrow to
+                                            // click.
+                                            readonly property string kept: prop.edited && prop.modelData.binding_kept
+                                                ? "The binding is kept below the edit; Revert brings it back" : ""
+                                            Accessible.role: Accessible.StaticText
+                                            Accessible.name: chipText.text
+                                            Accessible.description: kept
+                                            ToolTip.text: kept
+                                            ToolTip.visible: kept !== "" && chipArea.containsMouse
+                                            ToolTip.delay: 400
                                             Text {
                                                 id: chipText
                                                 anchors.centerIn: parent
                                                 text: prop.edited ? (prop.modelData.provenance === "bound" ? "rebound" : "edited")
-                                                        + (prop.modelData.binding_kept ? " · bound below" : "")
                                                     : prop.fixed ? prop.modelData.provenance + " · read-only"
                                                     : prop.modelData.provenance
                                                 color: parent.tone
                                                 font.pixelSize: 11
+                                            }
+                                            MouseArea {
+                                                id: chipArea
+                                                anchors.fill: parent
+                                                enabled: parent.kept !== ""
+                                                hoverEnabled: enabled
                                             }
                                         }
                                         Text {
