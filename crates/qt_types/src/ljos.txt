@@ -4073,12 +4073,12 @@ module QtQuick.Controls.Fusion
 	CalendarModel QtQuick.Controls.CalendarModel
 	CheckBox QtQuick/Controls/Fusion/CheckBox.qml
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
-	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	ComboBox QtQuick/Controls/Fusion/ComboBox.qml
 	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
 	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
-	Dial QtQuick/Controls/Basic/Dial.qml
+	Dial QtQuick/Controls/Fusion/Dial.qml
 	Dialog QtQuick/Controls/Fusion/Dialog.qml
 	DialogButtonBox QtQuick/Controls/Fusion/DialogButtonBox.qml
 	DoubleSpinBox QtQuick/Controls/Basic/DoubleSpinBox.qml
@@ -4088,7 +4088,7 @@ module QtQuick.Controls.Fusion
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
 	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
 	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
-	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	ItemDelegate QtQuick/Controls/Fusion/ItemDelegate.qml
 	Label QtQuick/Controls/Basic/Label.qml
 	Menu QtQuick/Controls/Fusion/Menu.qml
 	MenuBar QtQuick/Controls/Fusion/MenuBar.qml
@@ -4111,7 +4111,7 @@ module QtQuick.Controls.Fusion
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
 	SelectionRectangle QtQuick/Controls/Basic/SelectionRectangle.qml
 	Slider QtQuick/Controls/Fusion/Slider.qml
-	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SpinBox QtQuick/Controls/Fusion/SpinBox.qml
 	SplitHandle QtQuick.Templates.SplitHandle
 	SplitView QtQuick/Controls/Basic/SplitView.qml
 	StackView QtQuick/Controls/Basic/StackView.qml
@@ -4122,7 +4122,7 @@ module QtQuick.Controls.Fusion
 	TabBar QtQuick/Controls/Fusion/TabBar.qml
 	TabButton QtQuick/Controls/Fusion/TabButton.qml
 	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
-	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextArea QtQuick/Controls/Fusion/TextArea.qml
 	TextField QtQuick/Controls/Fusion/TextField.qml
 	ToolBar QtQuick/Controls/Fusion/ToolBar.qml
 	ToolButton QtQuick/Controls/Fusion/ToolButton.qml
@@ -4139,6 +4139,10 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.Button named
 	type QtQuick/Controls/Fusion/CheckBox.qml CheckBox
 		prototype QtQuick.Templates.CheckBox named
+	type QtQuick/Controls/Fusion/ComboBox.qml ComboBox
+		prototype QtQuick.Templates.ComboBox named
+	type QtQuick/Controls/Fusion/Dial.qml Dial
+		prototype QtQuick.Templates.Dial named
 	type QtQuick/Controls/Fusion/Dialog.qml Dialog
 		prototype QtQuick.Templates.Dialog named
 	type QtQuick/Controls/Fusion/DialogButtonBox.qml DialogButtonBox
@@ -4153,6 +4157,8 @@ module QtQuick.Controls.Fusion
 		prop darkShade QtQuick.color named readonly
 		prop topShadow QtQuick.color named readonly
 		prop innerContrastLine QtQuick.color named readonly
+	type QtQuick/Controls/Fusion/ItemDelegate.qml ItemDelegate
+		prototype QtQuick.Templates.ItemDelegate named
 	type QtQuick/Controls/Fusion/Menu.qml Menu
 		prototype QtQuick.Templates.Menu named
 	type QtQuick/Controls/Fusion/MenuBar.qml MenuBar
@@ -4175,12 +4181,16 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.RoundButton named
 	type QtQuick/Controls/Fusion/Slider.qml Slider
 		prototype QtQuick.Templates.Slider named
+	type QtQuick/Controls/Fusion/SpinBox.qml SpinBox
+		prototype QtQuick.Templates.SpinBox named
 	type QtQuick/Controls/Fusion/Switch.qml Switch
 		prototype QtQuick.Templates.Switch named
 	type QtQuick/Controls/Fusion/TabBar.qml TabBar
 		prototype QtQuick.Templates.TabBar named
 	type QtQuick/Controls/Fusion/TabButton.qml TabButton
 		prototype QtQuick.Templates.TabButton named
+	type QtQuick/Controls/Fusion/TextArea.qml TextArea
+		prototype QtQuick.Templates.TextArea named
 	type QtQuick/Controls/Fusion/TextField.qml TextField
 		prototype QtQuick.Templates.TextField named
 	type QtQuick/Controls/Fusion/ToolBar.qml ToolBar
