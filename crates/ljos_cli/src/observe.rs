@@ -6,14 +6,15 @@
 //! The window is a QML application like any other. What it shows comes
 //! only from the inspector's MCP tools, which it calls as an agent would,
 //! so there is nothing the window knows that an agent cannot ask. Its one
-//! native type, `InspectorClient`, sends a tool call over HTTP on a
-//! thread of its own (`Platform::request`) and answers on the Engine
-//! thread. Nothing is asked on a timer: neither the window nor its
-//! target does work while nobody touches the window.
+//! native type, `InspectorClient`, posts a tool call to the inspector's
+//! port or Unix socket from the one client thread of the process
+//! (`crate::inspector`) and answers on the Engine thread. Nothing is
+//! asked on a timer: neither the window nor its target does work while
+//! nobody touches the window.
 
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -22,6 +23,8 @@ use ljos_compiler::{Project, compile_file};
 use ljos_engine::MapSource;
 use ljos_shell::ShellConfig;
 use serde_json::{Value as Json, json};
+
+use crate::inspector::{self, Answer, find_token_file, read_token_file};
 
 /// The window, compiled when `ljos observe` starts: the binary carries
 /// it, so the observer runs wherever `ljos` does.
@@ -90,94 +93,6 @@ fn register(engine: &Engine) {
     engine.register_module(ljos::module!("Ljos.Observer" 1.0 => [InspectorClient]));
 }
 
-/// What a token file says of the inspector that wrote it.
-#[derive(Debug)]
-struct Target {
-    url: String,
-    token: String,
-    pid: Option<u32>,
-}
-
-fn read_token_file(path: &Path) -> anyhow::Result<Target> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("{}", path.display()))?;
-    let body: Json =
-        serde_json::from_str(&text).with_context(|| format!("{} is not JSON", path.display()))?;
-    let field = |name: &str| {
-        body[name]
-            .as_str()
-            .map(str::to_owned)
-            .with_context(|| format!("{} has no {name:?}", path.display()))
-    };
-    let url = field("url")?;
-    // A Unix socket needs a client of its own; until there is one, said
-    // here rather than as a failed connection.
-    if !url.starts_with("http://") {
-        bail!(
-            "{url} is not an HTTP address: `ljos observe` speaks HTTP only. \
-             Start the application with --mcp without --mcp-socket"
-        );
-    }
-    Ok(Target {
-        url,
-        token: field("token")?,
-        pid: body["pid"].as_u64().and_then(|p| u32::try_from(p).ok()),
-    })
-}
-
-/// The token file `target` names, or the newest live one in it.
-fn find_token_file(target: &Path) -> anyhow::Result<PathBuf> {
-    if target.is_file() {
-        return Ok(target.to_owned());
-    }
-    if !target.is_dir() {
-        bail!(
-            "{} is neither a token file nor a directory",
-            target.display()
-        );
-    }
-    let mut found: Vec<(SystemTime, PathBuf)> = Vec::new();
-    for dir in [target.to_owned(), target.join("target/ljos")] {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !(name.starts_with("mcp-") && name.ends_with(".json")) {
-                continue;
-            }
-            // A file a killed process left names a port nobody listens on.
-            let alive = read_token_file(&path)
-                .ok()
-                .is_some_and(|t| t.pid.is_none_or(running));
-            if !alive {
-                continue;
-            }
-            let at = entry
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            found.push((at, path));
-        }
-    }
-    found.sort();
-    match found.pop() {
-        Some((_, path)) => Ok(path),
-        None => bail!(
-            "no running application with an inspector in {}: start one with \
-             `ljos run --mcp FILE` in that directory, or name its token file",
-            target.display()
-        ),
-    }
-}
-
-/// Whether process `pid` runs; where that cannot be told, it is taken to.
-fn running(pid: u32) -> bool {
-    let proc = Path::new("/proc");
-    !proc.is_dir() || proc.join(pid.to_string()).exists()
-}
-
 /// `InspectorClient`: calls the tools of the inspector a token file
 /// names. `call` sends one call and returns its serial at once; the
 /// answer comes as `answered`, on the Engine thread, with the tool's
@@ -244,51 +159,56 @@ impl InspectorClient {
             }
         };
         cx.set(InspectorClient::URL, target.url.clone())?;
+        let tool_name = tool.clone();
+        // A watch is answered when its wait is over; anything else soon.
+        let wait = args["wait_ms"].as_u64().unwrap_or(0);
+        let limit = Duration::from_millis(wait) + PATIENCE;
         let body = json!({
             "jsonrpc": "2.0",
             "id": serial,
             "method": "tools/call",
-            "params": { "name": tool, "arguments": args },
+            "params": { "name": &tool, "arguments": args },
         });
-        let request = Request::new(Method::Post, target.url)
-            .header("Authorization", format!("Bearer {}", target.token))
-            .header("Accept", "application/json, text/event-stream")
-            .json(&body.to_string());
-        Platform::of(e).request(request, move |e, got| {
-            let got = match got {
-                Ok(response) => read_answer(&response),
-                Err(why) => Err(Unreached(why.to_string())),
+        let reply = Platform::of(e).expect();
+        let job = async move {
+            let got = match inspector::post(&target, body.to_string(), limit).await {
+                Ok(answer) => read_answer(&answer),
+                Err(why) => Err(Unreached(why)),
             };
-            answer_reached(e, me, serial, &tool, got);
-        });
+            reply.send(move |e| answer_reached(e, me, serial, &tool, got));
+        };
+        if let Err(why) = inspector::spawn(job) {
+            e.call_at(e.now(), move |e| {
+                answer_reached(e, me, serial, &tool_name, Err(Unreached(why)));
+            });
+        }
         Ok(serial)
     }
 }
+
+/// How long a call may take beyond the wait it asks for.
+const PATIENCE: Duration = Duration::from_secs(30);
 
 /// The inspector could not be asked at all.
 struct Unreached(String);
 
 /// What a response says: the tool's result, a refusal (reached), or no
 /// answer (unreached).
-fn read_answer(response: &Response) -> Result<Result<Json, String>, Unreached> {
-    let text = String::from_utf8_lossy(&response.body);
+fn read_answer(answer: &Answer) -> Result<Result<Json, String>, Unreached> {
+    let text = String::from_utf8_lossy(&answer.body);
     // Turned away for asking too often: the inspector is there.
-    if response.status == 429 {
+    if answer.status == 429 {
         return Ok(Err(format!("rate_limited: {}", text.trim())));
     }
-    if !response.ok() {
+    if !(200..300).contains(&answer.status) {
         return Err(Unreached(format!(
             "the inspector answered {}: {}",
-            response.status,
+            answer.status,
             text.trim()
         )));
     }
-    // A streaming answer carries the message on its `data:` line.
-    let json = text
-        .lines()
-        .find_map(|l| l.strip_prefix("data:"))
-        .unwrap_or(&text);
-    let body: Json = serde_json::from_str(json.trim())
+    let json = answer.messages().first().copied().unwrap_or("");
+    let body: Json = serde_json::from_str(json)
         .map_err(|e| Unreached(format!("the inspector's answer is not JSON: {e}")))?;
     if let Some(error) = body.get("error") {
         let message = error["message"].as_str().unwrap_or("refused");
@@ -350,41 +270,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_newest_live_token_file_in_a_directory_is_found() {
-        let dir = tempfile::tempdir().unwrap();
-        let below = dir.path().join("target/ljos");
-        std::fs::create_dir_all(&below).unwrap();
-        let file = |name: &str, pid: u32| {
-            let path = below.join(name);
-            let body = json!({"url": "http://127.0.0.1:1/mcp", "token": "t", "pid": pid});
-            std::fs::write(&path, body.to_string()).unwrap();
-            path
-        };
-        let mine = file("mcp-1.json", std::process::id());
-        // No process has this pid: the kernel's limit is below it.
-        file("mcp-2.json", u32::MAX - 1);
-        assert_eq!(find_token_file(dir.path()).unwrap(), mine);
-        assert_eq!(find_token_file(&mine).unwrap(), mine);
-    }
-
-    #[test]
-    fn a_directory_without_an_inspector_says_how_to_start_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let why = find_token_file(dir.path()).unwrap_err().to_string();
-        assert!(why.contains("ljos run --mcp"), "{why}");
-    }
-
-    #[test]
-    fn a_socket_target_is_refused_by_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("mcp-1.json");
-        let body = json!({"url": "unix:/run/x.sock", "token": "t", "pid": 1});
-        std::fs::write(&path, body.to_string()).unwrap();
-        let why = read_token_file(&path).unwrap_err().to_string();
-        assert!(why.contains("HTTP only"), "{why}");
-    }
-
-    #[test]
     fn the_window_compiles() {
         let engine = ljos::engine();
         register(&engine);
@@ -393,9 +278,8 @@ mod tests {
 
     #[test]
     fn an_answer_is_read_plain_or_streamed() {
-        let response = |body: &str| Response {
+        let response = |body: &str| Answer {
             status: 200,
-            headers: Vec::new(),
             body: body.as_bytes().to_vec(),
         };
         let plain = r#"{"jsonrpc":"2.0","id":1,"result":{"isError":false}}"#;
@@ -408,9 +292,8 @@ mod tests {
 
     #[test]
     fn an_inspector_asked_too_often_is_still_reached() {
-        let busy = Response {
+        let busy = Answer {
             status: 429,
-            headers: Vec::new(),
             body: br#"{"error":{"code":"rate_limited"}}"#.to_vec(),
         };
         assert!(matches!(read_answer(&busy), Ok(Err(m)) if m.starts_with("rate_limited")));

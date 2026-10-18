@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 use ljos_mcp_author::{AuthorServer, Project, QmlFrontEnd};
 use ljos_mcp_core::CapSet;
 
+mod attach;
 mod bench;
 mod check;
 mod demand;
@@ -15,6 +16,7 @@ mod fmt;
 #[cfg(feature = "dhat-heap")]
 mod heap;
 mod i18n;
+mod inspector;
 mod observe;
 mod render;
 mod run;
@@ -82,6 +84,11 @@ enum Command {
     /// with their properties for editing and a picture of the one picked.
     /// The application is one started with `ljos run --mcp`.
     Observe(observe::Observe),
+    /// Serve a running application's inspector on stdio, for an MCP
+    /// client that starts its servers as programs: each line is one
+    /// JSON-RPC message, posted to the inspector's port or Unix socket.
+    /// The application is one started with `ljos run --mcp`.
+    Attach(attach::Attach),
     /// What `ljos bench` starts an application through.
     #[command(hide = true)]
     BenchGate(bench::Gate),
@@ -144,6 +151,7 @@ fn run() -> anyhow::Result<()> {
         Command::Check(check) => check.run(),
         Command::Run(run) => run.run(),
         Command::Observe(observe) => observe.run(),
+        Command::Attach(attach) => attach.run(),
         // The status says whether a picture was written; why not is in the
         // notes it printed.
         Command::Render(render) => {
