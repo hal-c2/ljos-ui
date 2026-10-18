@@ -38,6 +38,8 @@ pub struct EditorPaint {
     /// The colour of each run of rich text, by a layout run's tag less
     /// one.
     run_colors: Option<Arc<Vec<Option<Rgba>>>>,
+    /// The colour behind each run of rich text, by the same index.
+    run_backgrounds: Option<Arc<Vec<Option<Rgba>>>>,
     /// The pictures of rich text's images, where they are drawn.
     images: Vec<(ImageHandle, kurbo::Rect)>,
     /// The left, top, right and bottom padding the text is clipped to,
@@ -91,6 +93,7 @@ impl EditorPaint {
         // highlighter for the spans of a text that changed.
         let highlighted = highlight::lines(&st);
         let run_colors = super::rich::run_colors(&mut st.borrow_mut());
+        let run_backgrounds = super::rich::run_backgrounds(&mut st.borrow_mut());
         let s = st.borrow();
         let images = super::rich::placed_images(&s);
         let selection = s.model.selection();
@@ -105,6 +108,7 @@ impl EditorPaint {
             cursor: (cursor_visible && s.blink_on && !has_delegate).then_some(s.cursor_rect),
             highlighted,
             run_colors,
+            run_backgrounds,
             images,
             clip_inset,
         }
@@ -131,6 +135,47 @@ impl EditorPaint {
             .unwrap_or(self.color)
     }
 
+    /// The colour behind a run of the layout, if it has one.
+    fn run_background(&self, tag: u32) -> Option<Rgba> {
+        let index = (tag as usize).wrapping_sub(1);
+        self.run_backgrounds.as_ref()?.get(index).copied().flatten()
+    }
+
+    /// The colours behind the parts of rich text. Measured on Qt 6.11, as
+    /// for a rich `Text`: a part's colour fills that part of its line from
+    /// the line's top to its bottom, and runs that meet under one colour
+    /// are one rectangle, so no lighter seam is left between them.
+    fn paint_run_backgrounds(&self, layout: &EditLayout, out: &mut DisplayListBuilder) {
+        if self.run_backgrounds.is_none() {
+            return;
+        }
+        let top = self.geo.top;
+        for (index, line) in layout.lines.iter().enumerate() {
+            let x = self.line_x(index);
+            let (y0, y1) = (top + line.top, top + line.top + line.height);
+            let mut fill = |(color, x0, x1): (Rgba, f64, f64)| {
+                out.fill_rect(kurbo::Rect::new(x + x0, y0, x + x1, y1), color);
+            };
+            let mut open: Option<(Rgba, f64, f64)> = None;
+            for run in &line.runs {
+                let background = self.run_background(run.run.tag);
+                let (x0, x1) = (run.run.overline.x0, run.run.overline.x1);
+                match (&mut open, background) {
+                    (Some((color, _, end)), Some(next))
+                        if *color == next && (x0 - *end).abs() < 0.01 =>
+                    {
+                        *end = x1;
+                    }
+                    _ => {
+                        open.take().map(&mut fill);
+                        open = background.map(|color| (color, x0, x1));
+                    }
+                }
+            }
+            open.take().map(&mut fill);
+        }
+    }
+
     fn line_x(&self, line: usize) -> f64 {
         self.geo.line_x.get(line).copied().unwrap_or(0.0)
     }
@@ -145,6 +190,7 @@ impl EditorPaint {
             return;
         };
         let top = self.geo.top;
+        self.paint_run_backgrounds(layout, out);
         // A highlighted background is behind the selection, which is what
         // the user is doing now.
         for (index, line) in layout.lines.iter().enumerate() {

@@ -16,8 +16,9 @@
 //!
 //! Paragraph margins, indents and list markers are laid out as a rich
 //! `Text` lays them out ([`edit_blocks`]). What is read-only here: tables
-//! are read as their cells' text and are not written back as tables; a
-//! background colour is kept and not painted.
+//! are read as their cells' text and are not written back as tables. A
+//! part's background colour is painted behind its line as a rich `Text`
+//! paints it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -71,6 +72,8 @@ pub(crate) struct RichEdit {
     pub pressed: Option<Arc<str>>,
     /// The colour of each run, by the run's index.
     colors: Option<Arc<Vec<Option<Rgba>>>>,
+    /// The colour behind each run, by the run's index.
+    backgrounds: Option<Arc<Vec<Option<Rgba>>>>,
 }
 
 impl std::fmt::Debug for RichEdit {
@@ -195,6 +198,7 @@ pub(crate) fn assign(s: &mut State, format: Option<TextFormat>, source: &str, fo
         images,
         pressed: None,
         colors: None,
+        backgrounds: None,
     });
     s.layout = None;
 }
@@ -350,6 +354,7 @@ fn changed(s: &mut State) {
     if let Some(r) = s.rich.as_mut() {
         r.dirty = true;
         r.colors = None;
+        r.backgrounds = None;
     }
     s.layout = None;
 }
@@ -582,6 +587,28 @@ pub(crate) fn run_colors(s: &mut State) -> Option<Arc<Vec<Option<Rgba>>>> {
         r.colors = Some(Arc::new(colors));
     }
     r.colors.clone()
+}
+
+/// The colour behind each run of the document, by the run's index; none
+/// for a run with no background or a transparent one.
+pub(crate) fn run_backgrounds(s: &mut State) -> Option<Arc<Vec<Option<Rgba>>>> {
+    let r = s.rich.as_mut()?;
+    if r.backgrounds.is_none() {
+        let backgrounds = r
+            .doc
+            .runs()
+            .map(|(_, f)| {
+                f.inline
+                    .background
+                    .as_deref()
+                    .and_then(editor_css_color)
+                    .filter(|c| c.a != 0)
+                    .map(to_rgba)
+            })
+            .collect();
+        r.backgrounds = Some(Arc::new(backgrounds));
+    }
+    r.backgrounds.clone()
 }
 
 /// Where the pictures of the images are drawn, in the item.
