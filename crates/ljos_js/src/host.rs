@@ -497,16 +497,31 @@ impl<'js> Scope<'js> {
             return Ok(from);
         };
         let ctx = self.ctx.as_raw().as_ptr();
-        let entries = array
-            .iter::<Value<'js>>()
-            .collect::<rquickjs::Result<Vec<_>>>()?
-            .iter()
-            // SAFETY: a reference for the new array to own, of each entry.
-            .map(|v| unsafe { rquickjs::qjs::JS_DupValue(ctx, v.as_raw()) })
-            .collect::<Vec<_>>();
-        let Ok(count) = i32::try_from(entries.len()) else {
+        let raw = array.as_raw();
+        // Read through the C API: an entry read as a `Value` holds the
+        // context too, which costs as much again as the read.
+        let mut len = 0i64;
+        // SAFETY: the context is alive for the call and `raw` is the array.
+        if unsafe { rquickjs::qjs::JS_GetLength(ctx, raw, &raw mut len) } < 0 {
+            return Err(rquickjs::Error::Exception);
+        }
+        let Ok(count) = i32::try_from(len) else {
             return Err(Exception::throw_range(&self.ctx, "array too long"));
         };
+        let mut entries = Vec::with_capacity(count.unsigned_abs() as usize);
+        for i in 0..count.unsigned_abs() {
+            // SAFETY: as above; what is read is an owned reference, which
+            // the new array takes over or is freed below.
+            let v = unsafe { rquickjs::qjs::JS_GetPropertyUint32(ctx, raw, i) };
+            if unsafe { rquickjs::qjs::JS_IsException(v) } {
+                for v in entries {
+                    // SAFETY: each is an owned reference read above.
+                    unsafe { rquickjs::qjs::JS_FreeValue(ctx, v) };
+                }
+                return Err(rquickjs::Error::Exception);
+            }
+            entries.push(v);
+        }
         // SAFETY: the context is alive for the call, and the entries are
         // owned references the new array takes over (or frees, on failure).
         let made = unsafe {
