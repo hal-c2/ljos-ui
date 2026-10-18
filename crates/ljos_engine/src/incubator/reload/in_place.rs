@@ -979,6 +979,12 @@ impl Engine {
         if moved.is_empty() {
             return;
         }
+        if let Some(js) = self.inner.js.borrow().as_ref() {
+            let mut lines = js.lines.borrow_mut();
+            for c in changed.iter().filter(|c| !c.moved.is_empty()) {
+                lines.moved(&c.old.url, &c.new, &c.moved);
+            }
+        }
         let shift = |l: &mut crate::object::Location| {
             if let Some(&(line, column)) = moved
                 .get(l.url.as_str())

@@ -638,6 +638,61 @@ Feature: What a reload changes
       And the property "running" of "slide" is true
       And the property "x" of "box" is at least 40
 
+  Rule: A function a script made before lines moved is told at the line it is now on
+
+    A callback given to `connect` or a binding made with `Qt.binding`
+    was made from the file as it was. What it throws after a change that
+    moved its lines is told at the line the file now gives it.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var thing: ({ name: "a" })
+          property string bound
+          signal poke
+          Component.onCompleted: {
+            poke.connect(function () {
+              console.log(thing.name)
+            })
+            bound = Qt.binding(function () {
+              return thing.name
+            })
+          }
+          function drop() { thing = null; poke() }
+        }
+        """
+
+    Scenario: A callback and a binding made before a line was added above them
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var thing: ({ name: "a" })
+          // A line added above them.
+          property string bound
+          signal poke
+          Component.onCompleted: {
+            poke.connect(function () {
+              console.log(thing.name)
+            })
+            bound = Qt.binding(function () {
+              return thing.name
+            })
+          }
+          function drop() { thing = null; poke() }
+        }
+        """
+      And a reload happens
+      And the method "drop" of "root" is called
+      Then the log has a warning matching "Scenario.qml:10:"
+      And the log has a warning matching "Scenario.qml:13:"
+      And the log has no warning matching "Scenario.qml:9:"
+      And the log has no warning matching "Scenario.qml:12:"
+
   Rule: An object added to one that stays, or one removed, leaves every other object where it is
 
     The added object is made into the object it is written in, at the

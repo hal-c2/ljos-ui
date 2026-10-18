@@ -89,8 +89,8 @@ struct LoadedModule {
 /// One module's place in its QML file.
 struct ModuleLines {
     url: String,
-    /// (First JS line of a function, its QML line).
-    lines: Vec<(u32, u32)>,
+    /// (First JS line of a function, its QML line and column).
+    lines: Vec<(u32, u32, u32)>,
     /// The file its source is in. A file loaded again after a reload lets
     /// the earlier one go: its lines stay, its source does not.
     file: Option<Source>,
@@ -117,11 +117,12 @@ impl LineTable {
                 continue;
             };
             let mut parts = pos.rsplitn(3, ':');
-            let (Some(_col), Some(line), Some(_file)) = (parts.next(), parts.next(), parts.next())
+            let (Some(column), Some(line), Some(_file)) =
+                (parts.next(), parts.next(), parts.next())
             else {
                 continue;
             };
-            if let Ok(line) = line.parse::<u32>() {
+            if let (Ok(line), Ok(column)) = (line.parse::<u32>(), column.parse::<u32>()) {
                 // An expression is wrapped as `return (…);` on the line after
                 // `export function …`; a block body keeps its own lines, its
                 // `{` sharing the export line. Lines are 1-based.
@@ -141,9 +142,9 @@ impl LineTable {
                 // the `export function` line itself (`null.foo()`): that
                 // line is the expression's too.
                 if first != i + 2 {
-                    lines.push(((i + 2) as u32, line));
+                    lines.push(((i + 2) as u32, line, column));
                 }
-                lines.push((first as u32, line));
+                lines.push((first as u32, line, column));
             }
         }
         for m in self.modules.values_mut() {
@@ -175,7 +176,7 @@ impl LineTable {
             url.to_owned(),
             ModuleLines {
                 url: url.to_owned(),
-                lines: vec![(1, 1)],
+                lines: vec![(1, 1, 1)],
                 file: Some(Source::Script(source.into())),
             },
         );
@@ -183,9 +184,30 @@ impl LineTable {
 
     pub(crate) fn map(&self, module: &str, js_line: u32) -> Option<(String, u32)> {
         let ModuleLines { url, lines, .. } = self.modules.get(module)?;
-        let i = lines.partition_point(|(js, _)| *js <= js_line);
-        let (js, qml) = lines.get(i.checked_sub(1)?)?;
+        let i = lines.partition_point(|(js, ..)| *js <= js_line);
+        let (js, qml, _) = lines.get(i.checked_sub(1)?)?;
         Some((url.clone(), qml + js_line.saturating_sub(*js)))
+    }
+
+    /// A reload in place moved places of `url` (old line and column to
+    /// new): the functions loaded for the file before `now`, which the
+    /// closures made then still run, are told where they are written now.
+    pub(crate) fn moved(
+        &mut self,
+        url: &str,
+        now: &Arc<CompiledFile>,
+        moves: &rustc_hash::FxHashMap<(u32, u32), (u32, u32)>,
+    ) {
+        for m in self.modules.values_mut() {
+            if m.url != url || matches!(&m.file, Some(Source::Qml(f)) if Arc::ptr_eq(f, now)) {
+                continue;
+            }
+            for (_, line, column) in &mut m.lines {
+                if let Some(&(l, c)) = moves.get(&(*line, *column)) {
+                    (*line, *column) = (l, c);
+                }
+            }
+        }
     }
 
     /// Line `js_line` (1-based) of a module's source.

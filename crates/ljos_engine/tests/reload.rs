@@ -454,6 +454,51 @@ fn objects_and_bindings_kept_over_moved_lines_are_told_where_they_now_are() {
     assert!(!said.contains("Main.qml:9:"), "{said}");
 }
 
+const CLOSURES: &str = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+  property var thing: ({ name: "a" })
+  property string got
+  property string bound
+  signal poke
+  function fire() { poke() }
+  Component.onCompleted: {
+    root.poke.connect(function () {
+      root.got = root.thing.name
+    })
+    root.bound = Qt.binding(function () {
+      return root.thing.name
+    })
+  }
+}
+"#;
+
+#[test]
+fn closures_made_before_lines_moved_throw_at_the_lines_they_are_now_on() {
+    let mut r = rig(&[("Main", CLOSURES)]);
+    let root = r.root;
+    let done = r
+        .edit(
+            "Main",
+            &CLOSURES.replace("  property var", "  // A line more.\n  property var"),
+        )
+        .unwrap();
+    assert_eq!(done.roots, vec![(root, root)], "in place");
+    r.h.warnings();
+    r.h.set(root, "thing", Value::Null);
+    r.h.get(root, "bound");
+    r.call("root", "fire");
+    let said = r.h.warnings().join("\n");
+    assert!(
+        said.contains("Main.qml:13:"),
+        "the connect callback: {said}"
+    );
+    assert!(said.contains("Main.qml:16:"), "the binding: {said}");
+    assert!(!said.contains("Main.qml:12:"), "{said}");
+    assert!(!said.contains("Main.qml:15:"), "{said}");
+}
+
 #[test]
 fn a_function_given_other_parameters_is_made_again() {
     let mut r = rig(&[("Main", COUNTER)]);
