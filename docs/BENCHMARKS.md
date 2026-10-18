@@ -2812,3 +2812,80 @@ holds the behaviour. Rectangles' anon PSS on the GPU went from 45.7 to 43.3 MiB,
 - **The binary's file pages**: 21–22 MiB against Qt's 17.5.
 - **Startup** is not lost: it is about half of qml6's on these four apps, and todolist and
   thermostat no longer wait on the compile thread.
+
+### B14: animations below qml6 on the GPU, clocks' native work (2026-10-18)
+
+Instructions retired a second, all threads of the process, sampled by the hardware counter
+(period 20 k) over 8 s after a 40 s warm-up (50 s for clocks). The apps ran off-screen in the
+cua sandbox on the GPU (`/dev/dri/renderD128`) and on llvmpipe (`LIBGL_ALWAYS_SOFTWARE=1`).
+Qt is `qml6` 6.11.2 with the Basic style. Three runs each; 1 M/s is about 16.7 k instructions
+a frame at 60 fps.
+
+| | Batch start | After (ddf8d843) | qml6 |
+|---|---:|---:|---:|
+| animations, GPU | 50.9 M/s | 42.18 / 42.27 / 42.29 | 43.56 / 43.61 / 43.58 |
+| animations, llvmpipe | 1589 (see below) | 469.8 / 470.9 | 1040 / 1041 |
+| clocks, GPU | 20.6 M/s | 20.84 / 20.69 | 14.79 / 14.96 |
+
+Callgrind on the main thread, animations on the GPU, instructions a frame: 790 k at 3ca8044b
+and 773 k at 4a21b3f7. At the start the tick was 214 k, compose 100 k, encode 105 k and the
+swap about 80 k.
+
+- **Animations are 3 % below qml6.** The tick lost the most:
+  - an animated number is stored as it is written, and its node is looked up once a write;
+  - a number is read without making a `Value`, and an item's x and y are read together;
+  - an item's transform is set as its place is read, and an identity transform is known by
+    nine comparisons;
+  - once a frame is asked for, the other runs are not looked at again.
+
+  Compose and encode then lost:
+  - a leaf is composed without sorting its children, or without a span when it has none;
+  - a leaf with no content clip takes its parent's;
+  - a moved node marks its ancestors in one walk;
+  - a solid rectangle waits as its clip, rect and colour until it is drawn;
+  - a rectangle's four edges are checked for whole pixels at once;
+  - `ceil` is done without libm.
+
+  On the shell side:
+  - small rectangles are joined into a mesh in one pass;
+  - the scene's meshes go to the painter as they are;
+  - the last picture keeps the shapes.
+- **Callgrind is not the goal.** It overcounts the driver's `rep movs` copy in
+  `eglSwapBuffers` (64 k a frame for clocks). The hardware total is what is compared. After the
+  batch, the animations process splits as follows:
+  - the binary: 38.6 M/s;
+  - libgallium: 2.3;
+  - libc: 1.7;
+  - wayland: 0.6;
+  - the smithay-clipboard thread: 0.6.
+- **llvmpipe.** The batch started from a base that drew every frame whole on llvmpipe
+  (1589 M/s); 944455e8 fixed it. The rest of the batch kept it at 470–486 against the 472 → 454
+  of earlier sections, under half of Qt's 1040.
+- **Clocks stays above qml6.** At 370 k a frame (580 frames):
+  - `QuickScene::frame` takes 112 k:
+    - the timers take 48 k, of which 45 k is the script `timeChanged` handlers;
+    - the animation tick takes 35 k, of which `list_effect` (the hands' `Rotation`s) is 20 k;
+    - compose takes 18 k and encode 15 k.
+  - The paint takes 141 k, nearly all of it the swap's copy.
+  - `clip_to` takes 14 k.
+
+  By the hardware counter the script share (QuickJS and `ljos_js`) is about 3.3 M/s. That
+  belongs to the script work this batch (ilang), and nothing here touches `ljos_js`. Without
+  it, Ljós would be at about 17.5 M/s against 14.9. The native cuts left are each under
+  1 M/s:
+  - `of_transform`'s field reads: 13 k a frame;
+  - `clip_to`'s bounding rectangles: 6 k;
+  - `refresh_bounds`: 7 k.
+
+  The remaining gap is the driver and the swap (gallium 3.2, libc 2.2 M/s), not the scene.
+
+DECISIONs:
+- The smithay-clipboard thread stays. Data-control would break the clipboard on GNOME.
+- Encode does not merge solid rectangles, because damage would get coarser.
+- `refresh_bounds` keeps its NaN-safe union.
+- `write_number` keeps its two store lookups. Holding the store across `settled` can panic, for
+  about 6 k a frame.
+- Reusing an unchanged mesh across frames does not apply to animations, since every bar moves
+  every frame.
+- The AT-SPI tree update seen in the sandbox is the cua driver asking for the tree. It is not
+  the app's cost.
