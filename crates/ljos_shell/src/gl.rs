@@ -68,7 +68,7 @@ const CLEARED: u32 = 64 * 64;
 /// scrolled are kept for.
 const KEPT_FOR: u32 = 30;
 
-/// How many shapes back a clear is moved past at most (see
+/// How many shapes back a clear or quad is moved past at most (see
 /// [`fill_rects`]): a list's rows lie within a screen of each other, and
 /// a frame of ten thousand shapes does not compare each with the rest.
 const HOISTED: usize = 256;
@@ -1061,113 +1061,158 @@ fn count_compared() {
 /// smoothed edge. A mesh is blended into the frame and samples a texture
 /// at every pixel it covers; on a software rasteriser one the size of the
 /// window costs an eighth of a core at 60 frames a second, and its clear
-/// next to nothing. So one of at least [`CLEARED`] pixels becomes a clear
-/// of them. A smaller one costs little either way, but a clear is a draw
-/// of its own and ends the mesh around it (two hundred small bars were two
-/// hundred draws), so it becomes a quad on the pixels' edges, drawn with
-/// the shapes next to it, and quads one after another are one mesh.
+/// next to nothing. So one that shows at least [`CLEARED`] pixels in its
+/// clip becomes a clear of them. A smaller one costs little either way,
+/// but a clear is a draw of its own and ends the mesh around it (two
+/// hundred small bars were two hundred draws), so it becomes a quad on
+/// the pixels' edges, cut to its clip so that it needs none, and quads
+/// one after another are one mesh. A frame drawn in part cuts a list's
+/// rows to the few pixels around each changed text: by their own size
+/// they were cleared, fifteen draws a frame of a few hundred pixels each.
 ///
-/// A clear is then drawn before the shapes ahead of it that it does not
-/// touch, which leaves the same pixels: a list's rows, each a clear and a
-/// text, were a draw a row, and llvmpipe spends about 60 000 instructions
-/// on the drawing thread for each; their texts are now one draw. Done to
-/// the shapes about to be drawn, after they were compared with the last
-/// picture (a callback is never the same as another).
+/// A clear or a quad is then drawn before the shapes ahead of it that it
+/// does not touch, which leaves the same pixels: a list's rows, each a
+/// clear and a text, were a draw a row, and llvmpipe spends about 60 000
+/// instructions on the drawing thread for each; their texts are now one
+/// draw. Done to the shapes about to be drawn, after they were compared
+/// with the last picture (a callback is never the same as another).
 pub(crate) fn fill_rects(all: &[ClippedShape], pixels_per_point: f32) -> Vec<ClippedShape> {
     // Made anew from what the window keeps (`LastPicture::keep`) rather
     // than from a copy of it: a rectangle that becomes a quad or a clear
     // is only read, and two hundred bars were two hundred clones and
     // drops a frame.
-    let mut shapes = Vec::with_capacity(all.len());
-    // The quads since something else came between them, all in the same
-    // clip rectangle: they become one mesh, made at its size once the run
-    // ends (grown a quad at a time, two hundred bars were a hundred
-    // reallocations a frame), in the first one's place.
-    // Room for every shape once: grown as runs lengthened, it was seven
-    // allocations a frame.
-    let mut run: Vec<(egui::Rect, egui::Color32)> = Vec::with_capacity(all.len());
-    let mut run_clip = egui::Rect::NOTHING;
+    let mut fills: Vec<Fill<'_>> = Vec::with_capacity(all.len());
+    let mut any = false;
     for cs in all {
         let fill = match &cs.shape {
             Shape::Rect(rect) => clearable(rect, pixels_per_point).map(|color| (rect.rect, color)),
             _ => None,
         };
         let Some((r, color)) = fill else {
-            quads_into_mesh(&mut shapes, &mut run, run_clip);
-            shapes.push(cs.clone());
+            fills.push(Fill::Shape(cs));
             continue;
         };
-        if r.area() * pixels_per_point * pixels_per_point < CLEARED as f32 {
-            if !run.is_empty() && run_clip != cs.clip_rect {
-                quads_into_mesh(&mut shapes, &mut run, run_clip);
-            }
-            run_clip = cs.clip_rect;
-            run.push((r, color));
+        any = true;
+        let shown = r.intersect(scissored(cs.clip_rect, pixels_per_point));
+        if !shown.is_positive() {
             continue;
         }
-        quads_into_mesh(&mut shapes, &mut run, run_clip);
-        shapes.push(ClippedShape {
-            clip_rect: cs.clip_rect,
-            shape: Shape::Callback(PaintCallback {
-                rect: r,
-                callback: Arc::new(Clear(color.to_normalized_gamma_f32())),
-            }),
-        });
+        fills.push(
+            if shown.area() * pixels_per_point * pixels_per_point < CLEARED as f32 {
+                Fill::Quad(shown, color)
+            } else {
+                Fill::Clear(cs.clip_rect, r, color.to_normalized_gamma_f32())
+            },
+        );
     }
-    quads_into_mesh(&mut shapes, &mut run, run_clip);
-    hoist_clears(&mut shapes, pixels_per_point);
+    if any {
+        hoist(&mut fills, pixels_per_point);
+    }
+    let mut shapes = Vec::with_capacity(fills.len());
+    // The quads since something else came between them: they become one
+    // mesh, made at its size once the run ends (grown a quad at a time,
+    // two hundred bars were a hundred reallocations a frame).
+    // Room for every shape once: grown as runs lengthened, it was seven
+    // allocations a frame.
+    let mut run: Vec<(egui::Rect, egui::Color32)> = Vec::with_capacity(fills.len());
+    for fill in fills {
+        match fill {
+            Fill::Quad(r, color) => {
+                run.push((r, color));
+                continue;
+            }
+            Fill::Shape(cs) => {
+                quads_into_mesh(&mut shapes, &mut run);
+                shapes.push(cs.clone());
+            }
+            Fill::Clear(clip_rect, rect, color) => {
+                quads_into_mesh(&mut shapes, &mut run);
+                shapes.push(ClippedShape {
+                    clip_rect,
+                    shape: Shape::Callback(PaintCallback {
+                        rect,
+                        callback: Arc::new(Clear(color)),
+                    }),
+                });
+            }
+        }
+    }
+    quads_into_mesh(&mut shapes, &mut run);
     shapes
 }
 
-/// Moves each clear back past the shapes before it that draw none of its
-/// pixels, so that what lay between clears is drawn together. Another
-/// callback draws what only it knows, so a clear stays after it.
-fn hoist_clears(shapes: &mut [ClippedShape], pixels_per_point: f32) {
+/// A shape as [`fill_rects`] draws it.
+enum Fill<'a> {
+    /// As it is.
+    Shape(&'a ClippedShape),
+    /// A quad of these pixels, already cut to its clip.
+    Quad(egui::Rect, egui::Color32),
+    /// A clear, in this clip, of this rectangle, to this colour in gamma.
+    Clear(egui::Rect, egui::Rect, [f32; 4]),
+}
+
+/// `clip` as the scissor cuts it: at the pixel edges nearest its own
+/// (`gl_mesh::scissor`), so a quad cut to it covers the pixels the
+/// rectangle would have in it.
+fn scissored(clip: egui::Rect, pixels_per_point: f32) -> egui::Rect {
+    let at = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
+    egui::Rect::from_min_max(
+        egui::pos2(at(clip.min.x), at(clip.min.y)),
+        egui::pos2(at(clip.max.x), at(clip.max.y)),
+    )
+}
+
+/// Moves each clear and quad back past the shapes before it that draw none
+/// of its pixels, so that what lay between them is drawn together: up to
+/// the last clear or quad, whose run it joins. Another callback draws what
+/// only it knows, so a clear or quad stays after it.
+fn hoist(fills: &mut [Fill<'_>], pixels_per_point: f32) {
     // Where each shape may draw, in points: feathered edges reach half a
     // pixel out, and a pixel is kept for rounding.
     let margin = 1.0 / pixels_per_point;
-    let reach = |s: &ClippedShape| -> Option<egui::Rect> {
+    let reach = |f: &Fill<'_>| -> Option<egui::Rect> {
+        let s = match f {
+            Fill::Quad(r, _) => return Some(*r),
+            Fill::Clear(clip, r, _) => return Some(r.intersect(*clip)),
+            Fill::Shape(s) => s,
+        };
         let r = match &s.shape {
             Shape::Noop => return Some(egui::Rect::NOTHING),
-            Shape::Callback(cb) if cb.callback.is::<Clear>() => cb.rect,
             Shape::Callback(_) => return None,
             other => other.visual_bounding_rect().expand(margin),
         };
         Some(r.intersect(s.clip_rect))
     };
-    let mut reaches: Vec<Option<egui::Rect>> = Vec::new();
-    for i in 0..shapes.len() {
-        let Shape::Callback(cb) = &shapes[i].shape else {
-            continue;
-        };
-        if !cb.callback.is::<Clear>() {
-            continue;
-        }
-        if reaches.is_empty() {
-            reaches = shapes.iter().map(reach).collect();
-        }
+    let mut reaches: Vec<Option<egui::Rect>> = fills.iter().map(reach).collect();
+    for i in 0..fills.len() {
         let Some(mine) = reaches[i] else { continue };
+        let quad = match fills[i] {
+            Fill::Shape(_) => continue,
+            Fill::Quad(..) => true,
+            Fill::Clear(..) => false,
+        };
         let mut to = i;
         while to > 0 && i - to < HOISTED {
+            let kin = match fills[to - 1] {
+                Fill::Shape(_) => false,
+                Fill::Quad(..) => quad,
+                Fill::Clear(..) => !quad,
+            };
             match reaches[to - 1] {
-                Some(r) if !r.intersects(mine) => to -= 1,
+                Some(r) if !kin && !r.intersects(mine) => to -= 1,
                 _ => break,
             }
         }
         if to < i {
-            shapes[to..=i].rotate_right(1);
+            fills[to..=i].rotate_right(1);
             reaches[to..=i].rotate_right(1);
         }
     }
 }
 
-/// Adds the quads of `run`, all in `clip_rect`, to `shapes` as one mesh,
-/// and leaves `run` empty.
-fn quads_into_mesh(
-    shapes: &mut Vec<ClippedShape>,
-    run: &mut Vec<(egui::Rect, egui::Color32)>,
-    clip_rect: egui::Rect,
-) {
+/// Adds the quads of `run` to `shapes` as one mesh, and leaves `run`
+/// empty. They are cut to their clips already.
+fn quads_into_mesh(shapes: &mut Vec<ClippedShape>, run: &mut Vec<(egui::Rect, egui::Color32)>) {
     if run.is_empty() {
         return;
     }
@@ -1178,7 +1223,7 @@ fn quads_into_mesh(
         mesh.add_colored_rect(r, color);
     }
     shapes.push(ClippedShape {
-        clip_rect,
+        clip_rect: egui::Rect::EVERYTHING,
         shape: Shape::mesh(mesh),
     });
     run.clear();
@@ -1551,7 +1596,7 @@ mod tests {
             // Drawn over the first two and under the next: it keeps them apart.
             rounded,
             rect([0.0, 0.0], [10.0, 10.0], Color32::RED),
-            // Cut by a clip of its own.
+            // Cut to a clip of its own already: it joins the one before.
             clipped,
         ];
         let shapes = fill_rects(&shapes, 1.0);
@@ -1563,7 +1608,29 @@ mod tests {
                 other => panic!("{other:?}"),
             })
             .collect();
-        assert_eq!(vertices, [Some(8), Some(0), Some(4), Some(4)]);
+        assert_eq!(vertices, [Some(8), Some(0), Some(8)]);
+    }
+
+    #[test]
+    fn a_row_cut_to_a_few_pixels_is_a_quad_of_them() {
+        // A frame drawn in part cuts a row to the pixels around its text:
+        // they are too few to be worth a clear of their own, and a row
+        // whose part is drawn elsewhere is not drawn here at all.
+        let mut row = rect([0.0, 0.0], [400.0, 40.0], Color32::RED);
+        row.clip_rect = Rect::from_min_max(pos2(10.6, 10.2), pos2(66.4, 23.0));
+        let mut gone = rect([0.0, 40.0], [400.0, 80.0], Color32::RED);
+        gone.clip_rect = row.clip_rect;
+        let shapes = fill_rects(&[row, gone], 1.0);
+        assert_eq!(shapes.len(), 1);
+        let Shape::Mesh(m) = &shapes[0].shape else {
+            panic!("{:?}", shapes[0].shape)
+        };
+        assert_eq!(shapes[0].clip_rect, Rect::EVERYTHING);
+        // The scissor would have cut it at the nearest pixel edges.
+        assert_eq!(
+            m.calc_bounds(),
+            Rect::from_min_max(pos2(11.0, 10.0), pos2(66.0, 23.0))
+        );
     }
 
     #[test]
