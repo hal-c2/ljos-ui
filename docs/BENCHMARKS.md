@@ -678,14 +678,89 @@ What dominated, and what was cut:
   to look again at every reload. Now only the first colour set does. A font set on a control tells
   the others only under a style font.
 
-What is left: apply is now the whole cost. On samegame it is re-binding the 8 137 objects it keeps. On
-thermostat it is remaking the `.ui.qml` page that was edited, with its anchors and images. Getting
-under 100 ms on large Controls pages needs a reload to leave alone the subtrees whose source did
-not change.
+What was left then: apply was the whole cost. On samegame it was re-binding the 8 137 objects it
+keeps. On thermostat it was remaking the `.ui.qml` page that was edited, with its anchors and
+images. The next section takes that on.
 
 Over 20 reloads, RSS stayed within 1.3 MB on samegame, thermostat and todolist. calqlatr's grew
 by 11.8 MB in two steps in one run and stayed flat in the next. Idle CPU after the reloads was 0 % on every app except the ones that animate
-themselves (clocks' timer, maroon's scene).
+themselves (clocks' timer, maroon's scene). The next section explains calqlatr's steps.
+
+### Hot reload: an edit applied where the objects stand (2026-10-18, later)
+
+An edit that changes only values and bindings is now applied to the live objects. Nothing is
+made again and nothing is destroyed: the edited bindings are put in place and the edited values
+written. Any other edit (an object added, removed, moved or retyped, a new member, a changed
+handler) takes the full path of the section above, which makes the edited files' objects again.
+
+These numbers come from `reload_profile` (`crates/ljos_shell/examples/reload_profile.rs`). It
+shows the app in a `ShellApp` on an `egui::Context` with no window, saves an edit again and again,
+and reports the time from the save to the end of the first pass that shows it. Each app was a
+copy in scratch, release build, six saves per row. thermostat had its control page opened and
+samegame a game started before the first save. To make a value edit take the full path, the same
+edit was made with a line break in the new value. The load average on the machine was 13–38.
+
+| App, edit | Before: build + apply → shown | After: build + apply → shown | Kept, new before → after |
+|---|---:|---:|---:|
+| calqlatr, a colour in `content/Display.qml` | 4 + 5 → 26 ms | 2.5 + 0.2 → 18–20 ms | 220, 0 → 233, 0 |
+| calqlatr, the same edit on the full path | 2.6 + 7 → 26–27 ms | 2.4 + 7 → 27–31 ms | 233, 1 → 233, 0 |
+| samegame, a text in `Main.qml` | 5 + 74–96 → 100–121 ms | 5 + 2 → 22–24 ms | 8 620, 0 → 8 620, 0 |
+| samegame, the same edit on the full path | 5 + 74–96 → 100–121 ms | 5 + 70–105 → 96–132 ms | 8 620, 0 → 8 620, 0 |
+| samegame, a duration in `content/Block.qml` (every block) | full path | 4.5 + 2 → 22–23 ms | 8 620, 0 |
+| thermostat, a text in `ThermostatViewForm.ui.qml` | 16 + 188–245 → 262–320 ms | 16 + 2 → 33–40 ms | 4 582, 876 → 4 914, 0 |
+| thermostat, the same edit on the full path | 16 + 188–245 → 262–320 ms | 15 + 185–209 → 234–259 ms | 4 582, 876 → 4 902, 0 |
+
+Every row kept the app's state: samegame's board and score, thermostat's open page, calqlatr's
+display. The shown time of a few in-place saves was 0.5–1.1 s while build and apply stayed at
+2–7 ms. Those saves came when the load was highest. They are left out of the ranges above.
+
+What changed on the full path:
+
+- **A Repeater in a Container made its items twice.** The Container moved the Repeater into its
+  content item as it completed, and the move made the items again. A Repeater declared in a
+  Container now makes its items once. One moved later still makes them again, as on Qt
+  (`features/controls/container-repeater.feature`). On thermostat this halved the objects made
+  new (876 → 431) and took about 30 % off the full path's apply.
+- **The tree being replaced was given back what it was about to lose.** When the root was
+  replaced, the scene put back every hidden and disabled item's own `visible` and `enabled` first.
+  That ran their bindings again just before they were destroyed. Now only items that outlive the
+  old root get them back (`QuickScene::replace_root`).
+- **Releasing the old tree** (`destroy_now`) is now about 14 % of a full reload, and taking
+  objects into the scene is about 8 %. The rest is making the new objects. Dropping the
+  destroyed objects' headers is about 2 %. It is not put off until after the frame, because a
+  native destructor may touch the engine.
+- **Templates counted as new.** A style gives each part of a control as a `Component`, which is
+  destroyed once the part is made. A `ListElement` goes with the rows it declared. With nothing
+  at their place in the old tree, every reload counted them as new (431 on thermostat, 1 on
+  calqlatr). They hold no state and are not counted now.
+
+**calqlatr's memory over reloads.** The two steps of the section above were not a leak.
+Measured by mapping in the windowed sandbox over 90 reloads, they were:
+
+- glibc's heap moving its high-water mark in both directions: 40.7 → 66 → 51.8 → 52.6 MB;
+- pages of shared libraries (LLVM, the GPU driver) paged in and out.
+
+With logging off, the heap stayed at 40.7 MB.
+
+There was also a small real leak, found without a window: about 11 kB more in use per full
+reload. A script that holds an object a reload replaced reaches the object that went on for it,
+through a table of forwards. Every full reload added a forward for every replaced object a script
+had a wrapper for, and dropped none. Now a forward goes when no script holds the old object any
+more. Over 100 full reloads, the memory in use went from 22.6 → 24.45 MB before to 22.6 →
+23.47 MB after, and stayed flat from about the 40th reload. RSS was flat from the 60th.
+
+What is left:
+
+- **The full path is still over 100 ms on large pages.** It takes 234–259 ms on thermostat and
+  96–132 ms on samegame. Getting it lower means making less: keep the subtrees of an edited file
+  whose source did not change, rather than remaking the whole file. Only value and binding edits
+  are under 100 ms now.
+- **samegame's full-path apply rises from about 76 to 100–115 ms over 16 reloads, with RSS
+  flat.** The load rose over the same runs, so it is not yet clear that the reloads cause it.
+- **thermostat logged two warnings each time its control page was made**, at start-up as on a
+  reload, for `palette.highlight: "#2CDE85"` on a `Row`. Every item has a `palette` since, as in
+  qml6, and the warnings are gone.
+
 
 ### A write's cascade, a turning transform and the script crossing (2026-10-18)
 
