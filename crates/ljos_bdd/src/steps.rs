@@ -961,14 +961,19 @@ fn log_has_no_info(w: &mut LjosWorld, pattern: String) -> StepResult {
     log_matches(w, &pattern, LogLevel::Info, false)
 }
 
-#[then(regex = r#"^the log has (\d+) infos matching "([^"]+)"$"#)]
-fn log_has_infos(w: &mut LjosWorld, count: usize, pattern: String) -> StepResult {
+#[then(regex = r#"^the log has (\d+) (infos|warnings) matching "([^"]+)"$"#)]
+fn log_has_infos(w: &mut LjosWorld, count: usize, kind: String, pattern: String) -> StepResult {
     let re = Regex::new(&pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
+    let level = if kind == "infos" {
+        LogLevel::Info
+    } else {
+        LogLevel::Warning
+    };
     w.each(|b| {
         let log = b.log()?;
         let hits = log
             .iter()
-            .filter(|e| e.level == LogLevel::Info && re.is_match(&e.message))
+            .filter(|e| e.level == level && re.is_match(&e.message))
             .count();
         if hits == count {
             return Ok(());
@@ -978,7 +983,7 @@ fn log_has_infos(w: &mut LjosWorld, count: usize, pattern: String) -> StepResult
             .map(|e| format!("  {}: {}", e.level, e.message))
             .collect();
         Err(BackendError::Failed(format!(
-            "expected {count} infos matching {pattern:?}, found {hits}; log was:\n{}",
+            "expected {count} {kind} matching {pattern:?}, found {hits}; log was:\n{}",
             seen.join("\n")
         )))
     })

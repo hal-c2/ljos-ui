@@ -436,6 +436,9 @@ pub(crate) struct LoadedFile {
     /// for a file. Two texts may be given one address, and a module name
     /// is used once.
     pub(crate) text: Cell<u64>,
+    /// The handlers, by expression, already warned of using a signal's
+    /// parameters they do not declare.
+    pub(crate) injected_warned: RefCell<rustc_hash::FxHashSet<u32>>,
 }
 
 impl LoadedFile {
@@ -458,6 +461,7 @@ impl LoadedFile {
             tier1,
             epoch: Cell::new(0),
             text: Cell::new(0),
+            injected_warned: RefCell::default(),
         }
     }
 

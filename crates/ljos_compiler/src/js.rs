@@ -8,7 +8,7 @@
 //! Offsets are kept relative to the script's text, which is where the edits
 //! apply.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
@@ -150,8 +150,8 @@ pub(crate) struct Edit {
 pub(crate) struct Analysis {
     /// In order of appearance, every occurrence.
     pub free: Vec<Free>,
-    /// The parameters the script uses.
-    pub locals: BTreeSet<String>,
+    /// The parameters the script uses, in the order it first uses them.
+    pub locals: Vec<String>,
     /// What is TypeScript and has to go.
     pub edits: Vec<Edit>,
     /// The script reads `arguments` of the function it is.
@@ -372,8 +372,9 @@ impl Reader<'_, '_> {
             Some(symbol) => {
                 if self.wrapper == Some(self.scoping.symbol_scope_id(symbol))
                     && self.args.iter().any(|arg| arg == it.name.as_str())
+                    && !self.analysis.locals.iter().any(|l| l == it.name.as_str())
                 {
-                    self.analysis.locals.insert(it.name.to_string());
+                    self.analysis.locals.push(it.name.to_string());
                 }
                 None
             }

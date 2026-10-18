@@ -28,7 +28,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 10;
+pub const IR_VERSION: u32 = 11;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -490,6 +490,10 @@ pub struct Handler {
     /// `clicked` for `onClicked`.
     pub signal: String,
     pub expr: ExprId,
+    /// Where `onClicked` is written; a function `onClicked` of a
+    /// `Connections`, where the function is. Qt's warnings of a handler
+    /// name this place, not the expression.
+    pub name_span: SourceSpan,
 }
 
 /// A property given objects: `delegate: Rectangle { }`, `states: [ ... ]`.

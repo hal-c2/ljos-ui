@@ -778,9 +778,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 };
                 let args = self.signal_args(owner, &slot, &signal);
                 let expr = self.expr(BindingKind::Handler, form, span, args, &target);
-                self.members_mut(at, &slot)
-                    .handlers
-                    .push(Handler { signal, expr });
+                self.members_mut(at, &slot).handlers.push(Handler {
+                    signal,
+                    expr,
+                    name_span,
+                });
             }
             QmlBindingValue::Expression(expression) => {
                 let color = self.is_color(owner, &slot, &name);
@@ -907,10 +909,15 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 Some(Vec::new()),
                 &target,
             );
+            let name_span = self.span(function.span);
             self.def_mut(self.place[owner])
                 .members
                 .handlers
-                .push(Handler { signal, expr });
+                .push(Handler {
+                    signal,
+                    expr,
+                    name_span,
+                });
             return;
         }
         self.check_name(Declared::Method, &name, id.span);
@@ -1877,7 +1884,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 text: format!(", {module:?}, {name:?})"),
             });
         }
-        for local in &analysis.locals {
+        // A handler that is a function takes the signal's arguments as its
+        // own parameters: the wrapper's are not in its scope at run time.
+        let injected = !(kind == BindingKind::Handler && analysis.is_function_value);
+        for local in analysis.locals.iter().filter(|_| injected) {
             refs.push(Ref {
                 name: local.clone(),
                 resolved: Resolved::Local,

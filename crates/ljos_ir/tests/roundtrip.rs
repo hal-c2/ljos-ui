@@ -128,6 +128,7 @@ fn sample() -> CompiledFile {
                 handlers: vec![Handler {
                     signal: "pressed".into(),
                     expr: ExprId(1),
+                    name_span: span(40, 49),
                 }],
                 ..Members::default()
             },

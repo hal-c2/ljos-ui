@@ -1410,7 +1410,7 @@ impl Engine {
                     continue;
                 };
                 self.inner.destruction_handlers.set(true);
-                self.connect_handler(inst, att, "destruction", h.expr, id);
+                self.connect_handler(inst, att, "destruction", h, id);
             }
             return;
         }
@@ -1537,12 +1537,12 @@ impl Engine {
         }
         for h in &m.handlers {
             if path.is_empty() {
-                self.connect_handler(inst, obj, &h.signal, h.expr, scope);
+                self.connect_handler(inst, obj, &h.signal, h, scope);
             } else if let Some(target) = self.object_at_path(obj, path) {
                 // `form.button.onClicked`: the group is a property that
                 // holds an object (an alias of an id, often), and the
                 // handler is that object's, written where the group is used.
-                self.connect_handler(inst, target, &h.signal, h.expr, scope);
+                self.connect_handler(inst, target, &h.signal, h, scope);
             } else {
                 let b = inst.file.ir.expr(h.expr);
                 self.no_property(
@@ -2047,15 +2047,29 @@ impl Engine {
         inst: &Rc<Instance>,
         obj: ObjectId,
         signal: &str,
-        expr: ExprId,
+        h: &ljos_ir::Handler,
         scope: ObjectId,
     ) {
+        let (expr, at) = (h.expr, h.name_span);
         let i = inst.clone();
+        // The first of the signal's parameters the handler uses without
+        // declaring them, which Qt has deprecated.
+        let injected = inst
+            .file
+            .ir
+            .expr(expr)
+            .refs
+            .iter()
+            .find(|r| matches!(r.resolved, ljos_ir::Resolved::Local))
+            .map(|r| Atom::new(&r.name));
         let handler: crate::Handler = Rc::new(move |e: &Engine, args: &[Value]| {
             // Dev reload: the tree being replaced, or the one being
             // made, is not to act on what the other does.
             if e.reload_muted(scope) {
                 return;
+            }
+            if let Some(name) = &injected {
+                e.warn_injected(&i, expr, at, name);
             }
             e.call_expr(&i, expr, args);
         });
@@ -2086,6 +2100,26 @@ impl Engine {
                 );
             }
         }
+    }
+
+    /// Once for each handler of a file, the first time it runs: it uses
+    /// the signal's parameter `name` without declaring it.
+    fn warn_injected(&self, inst: &Instance, expr: ExprId, at: ljos_ir::SourceSpan, name: &str) {
+        if !inst.file.injected_warned.borrow_mut().insert(expr.0) {
+            return;
+        }
+        self.log(
+            crate::LogLevel::Warning,
+            "qt.qml.context",
+            format!(
+                "{}:{}:{} Parameter \"{name}\" is not declared. Injection of parameters into \
+                 signal handlers is deprecated. Use JavaScript functions with formal parameters \
+                 instead.",
+                inst.url(),
+                at.line,
+                at.column
+            ),
+        );
     }
 
     /// `icon: control.icon`: a group is not a value here, so a whole group
