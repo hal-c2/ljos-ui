@@ -526,23 +526,22 @@ impl RenderTree {
     }
 
     fn compose_fresh(&mut self, id: NodeId, parent: &Parent, walk: &mut Walk) {
+        // One look at the node for all of it: a frame that moves two
+        // hundred bars composes each of them afresh.
+        let n = &mut self.nodes[id];
         // Reuse the cached world data unless this node or an ancestor changed.
-        let n = &self.nodes[id];
         let needs = n.dirty.intersects(Dirty::TRANSFORM | Dirty::OPACITY)
             || n.parent_stamp != parent.stamp
             || n.stamp == 0;
         if needs {
-            let stamp = self.next_stamp;
-            self.next_stamp += 1;
-            let n = &mut self.nodes[id];
             n.world = parent.world * n.local;
             n.effective_opacity = parent.opacity * n.opacity;
-            n.stamp = stamp;
+            n.stamp = self.next_stamp;
+            self.next_stamp += 1;
             n.parent_stamp = parent.stamp;
             n.dirty.remove(Dirty::TRANSFORM | Dirty::OPACITY);
             walk.stats.world_recomputed += 1;
         }
-        let n = &mut self.nodes[id];
         n.dirty.remove(Dirty::VISIBLE | Dirty::LAYER);
         let world = n.world;
         let opacity = n.effective_opacity;
@@ -595,6 +594,22 @@ impl RenderTree {
 
         walk.stats.visited += 1;
         n.last_visible_frame = walk.frame;
+
+        // A node with no children has no order to keep or walk.
+        if n.children.is_empty() && n.paint_order.is_empty() {
+            n.dirty.remove(Dirty::ORDER);
+            let clip = content_clip(walk, &here, world, n.content_clip);
+            walk.items.push(PaintItem {
+                node: id,
+                world,
+                opacity,
+                size: n.size,
+                list: n.content.clone().filter(|_| here.drawn),
+                clip,
+                hit_testable: n.hit_testable,
+            });
+            return;
+        }
 
         self.ensure_order(id);
         let order = std::mem::take(&mut self.nodes[id].paint_order);
