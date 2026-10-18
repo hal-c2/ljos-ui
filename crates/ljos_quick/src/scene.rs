@@ -1381,10 +1381,11 @@ impl QuickScene {
             if std::mem::replace(&mut e.place_read, self.places_read) == self.places_read {
                 continue;
             }
-            if engine.is_alive(obj) {
+            // Both at one look at the object, which also says it lives.
+            if let Some([x, y]) = engine.read_numbers(obj, [Item::X.index, Item::Y.index]) {
                 e.place = (
-                    shown_num(engine, &shown, obj, Item::X.index),
-                    shown_num(engine, &shown, obj, Item::Y.index),
+                    shown.get(obj, Item::X.index).unwrap_or(x),
+                    shown.get(obj, Item::Y.index).unwrap_or(y),
                     e.may_scroll && crate::flickable::content_moving(engine, obj),
                 );
                 // Moved here, while the entry is at hand: a new geometry or

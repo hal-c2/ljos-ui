@@ -1230,35 +1230,60 @@ impl Engine {
     /// on the way when the property holds a number: native code reads the
     /// geometry of every item that moved, every frame.
     pub fn read_number(&self, obj: ObjectId, prop: PropIndex) -> f64 {
+        self.read_numbers(obj, [prop]).map_or(0.0, |[v]| v)
+    }
+
+    /// [`Engine::read_number`] of each of `props` of `obj`, with the
+    /// object looked up once; `None` when it is gone. A scene reads where
+    /// each item that moved is, every frame. What only its field holds is
+    /// read as the object is looked up, before a binding of another of
+    /// `props` that is out of date runs.
+    pub fn read_numbers<const N: usize>(
+        &self,
+        obj: ObjectId,
+        props: [PropIndex; N],
+    ) -> Option<[f64; N]> {
         let fast = |v: &Value| match v {
             Value::Real(r) => Some(*r),
             Value::Int(i) => Some(f64::from(*i)),
             _ => None,
         };
-        let got = {
+        // A plain loop: `props.map` was a call per property and more.
+        let mut nodes = [None; N];
+        let mut out = [None; N];
+        {
             let store = self.inner.store.borrow();
-            let Some(h) = store.objects.get(obj) else {
-                return 0.0;
-            };
-            match h.meta.property(prop) {
-                Some(p) if !p.is_alias() && !h.makes_on_read(prop) => match h.node(prop) {
-                    Some(n) => Ok(n),
-                    None if self.inner.tracking.get() == 0
+            let h = store.objects.get(obj)?;
+            let tracking = self.inner.tracking.get() != 0;
+            for i in 0..N {
+                let prop = props[i];
+                let Some(p) = h.meta.property(prop) else {
+                    continue;
+                };
+                if p.is_alias() || h.makes_on_read(prop) {
+                    continue;
+                }
+                match h.node(prop) {
+                    Some(n) => nodes[i] = Some(n),
+                    None if !tracking
                         || p.flags
                             .intersects(PropertyFlags::CONSTANT | PropertyFlags::GROUP) =>
                     {
-                        Err(fast(&read_access(&*h.native, &h.dynamic, &p.access)))
+                        out[i] = fast(&read_access(&*h.native, &h.dynamic, &p.access));
                     }
-                    None => Err(None),
-                },
-                _ => Err(None),
+                    None => {}
+                }
             }
-        };
-        let v = match got {
-            Ok(n) => self.inner.graph.try_get_with(n, fast).flatten(),
-            Err(v) => v,
-        };
-        v.unwrap_or_else(|| self.read(obj, prop).to_number())
+        }
+        let mut numbers = [0.0; N];
+        for i in 0..N {
+            let v = match nodes[i] {
+                Some(n) => self.inner.graph.try_get_with(n, fast).flatten(),
+                None => out[i],
+            };
+            numbers[i] = v.unwrap_or_else(|| self.read(obj, props[i]).to_number());
+        }
+        Some(numbers)
     }
 
     /// [`Engine::property_index`] for a caller that has no use for why

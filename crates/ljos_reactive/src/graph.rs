@@ -987,11 +987,12 @@ impl<V: Clone + 'static> Graph<V> {
     pub fn try_get_with<R>(&self, n: NodeId, f: impl FnOnce(&V) -> R) -> Option<R> {
         {
             let mut g = self.inner.borrow_mut();
-            let node = g.nodes.get(n)?;
+            let i = &mut *g;
+            let node = i.nodes.get_mut(n)?;
             node.value.as_ref()?;
             if node.state == NodeState::Clean {
-                g.record_read(n);
-                return g.nodes[n].value.as_ref().map(f);
+                record_read_of(n, node, &mut i.frames, &mut i.stats);
+                return node.value.as_ref().map(f);
             }
         }
         self.read_slow(n).as_ref().map(f)
@@ -1300,12 +1301,25 @@ impl<V: Clone + 'static> Graph<V> {
                 }
                 return Ok(());
             }
-            if !i.nodes.contains_key(n) {
+            // `write`, with the node looked up once rather than at each
+            // step of it.
+            let eq = i.options.equals;
+            let Some(node) = i.nodes.get_mut(n) else {
                 return Err(ReactiveError::DeadNode(n));
-            }
-            if !matches!(i.nodes[n].kind, Kind::Property(_)) {
+            };
+            let Kind::Property(p) = &mut node.kind else {
                 return Err(ReactiveError::NotAProperty(n));
+            };
+            let was_unset = !p.animated && p.top().provenance == Provenance::Default;
+            p.animated = true;
+            p.host = false;
+            let changed = !node.value.as_ref().is_some_and(|old| eq(old, &v));
+            if changed {
+                node.value = Some(v);
             }
+            // Animated, it is set now: what asked whether it was is told
+            // when it was not (`tell_if_set`).
+            let tell = node.asked_if_set && was_unset;
             // As in `write`: a binding that writes becomes a root.
             if let Some(&running) = i.eval_stack.last()
                 && running != n
@@ -1314,14 +1328,13 @@ impl<V: Clone + 'static> Graph<V> {
             {
                 r.eager = true;
             }
-            let was_unset = i.unset(n);
-            let Kind::Property(p) = &mut i.nodes[n].kind else {
-                unreachable!()
-            };
-            p.animated = true;
-            p.host = false;
-            i.set_value(n, v);
-            i.tell_if_set(n, was_unset);
+            if changed {
+                i.stats.propagations += 1;
+                i.mark_observers(n, NodeState::Dirty);
+            }
+            if tell {
+                i.mark_observers(n, NodeState::Dirty);
+            }
             let node = &i.nodes[n];
             if node.state == NodeState::Clean {
                 if let Some(v) = &node.value {
@@ -2355,6 +2368,23 @@ impl<V: Clone + 'static> Graph<V> {
 /// must assume it read stale data.
 const ALWAYS_STALE: u64 = u64::MAX;
 
+/// [`Inner::record_read`] of a node already in hand.
+fn record_read_of<V>(n: NodeId, node: &mut Node<V>, frames: &mut [Frame], stats: &mut Stats) {
+    let Some(frame) = frames.last_mut() else {
+        return;
+    };
+    match frame.node {
+        None => {}
+        Some(owner) if owner == n => node.self_read = true,
+        Some(_) if node.read_stamp != frame.stamp => {
+            node.read_stamp = frame.stamp;
+            frame.reads.push(n);
+            stats.reads += 1;
+        }
+        Some(_) => {}
+    }
+}
+
 /// Removes `src.observers[at]` and repairs the back-index of the entry that
 /// the swap moved into its place. Returns the removed entry. The mirror
 /// entry in the observer's `sources` is the caller's to remove.
@@ -2700,20 +2730,7 @@ impl<V: Clone + 'static> Inner<V> {
             stats,
             ..
         } = self;
-        let node = &mut nodes[n];
-        let Some(frame) = frames.last_mut() else {
-            return;
-        };
-        match frame.node {
-            None => {}
-            Some(owner) if owner == n => node.self_read = true,
-            Some(_) if node.read_stamp != frame.stamp => {
-                node.read_stamp = frame.stamp;
-                frame.reads.push(n);
-                stats.reads += 1;
-            }
-            Some(_) => {}
-        }
+        record_read_of(n, &mut nodes[n], frames, stats);
     }
 
     fn mark_observers(&mut self, n: NodeId, first: NodeState) {
