@@ -352,6 +352,9 @@ impl GlPainter {
             }
         }
         let damage = Damage::of(drawn);
+        if damage.mostly(gw.px) {
+            return Frame::Whole;
+        }
         if damage.0.is_empty() {
             Frame::Nothing
         } else {
@@ -577,6 +580,16 @@ impl Px {
 struct Damage(Vec<Px>);
 
 impl Damage {
+    /// Whether the areas leave little of a window of `size` out. Then they
+    /// cost more apart than the window does whole: every shape that
+    /// crosses from one into another is cut and drawn in each, and each is
+    /// a clear of its own, to spare a few pixels.
+    fn mostly(&self, size: [u32; 2]) -> bool {
+        let window = u64::from(size[0]) * u64::from(size[1]);
+        let covered: u64 = self.0.iter().map(|px| u64::from(px.pixels())).sum();
+        window > 0 && covered * 4 >= window * 3
+    }
+
     /// The areas that cover `areas`: those that overlap become one around
     /// them, which may overlap more. Swept top to bottom, so an area is
     /// only compared with those that start above its bottom edge, not with
@@ -817,6 +830,15 @@ mod tests {
             .iter()
             .map(|s| matches!(s.shape, Shape::Callback(_)))
             .collect()
+    }
+
+    #[test]
+    fn areas_that_leave_little_of_the_window_out_draw_it_whole() {
+        let most = Damage(vec![Px([0, 0, 100, 60]), Px([0, 60, 50, 100])]);
+        assert!(most.mostly([100, 100]));
+        let some = Damage(vec![Px([0, 0, 100, 60]), Px([0, 60, 30, 100])]);
+        assert!(!some.mostly([100, 100]));
+        assert!(!Damage::default().mostly([0, 0]));
     }
 
     fn disjoint(damage: &Damage) -> bool {
