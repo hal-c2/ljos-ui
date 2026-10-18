@@ -219,6 +219,10 @@ pub struct Run {
     pub peak_memory: Option<u64>,
     pub settled: Option<Settled>,
     pub idle: Option<Span>,
+    /// Memory again once the idle span is over: what startup left behind
+    /// that idling gives back, or what grows while nothing happens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idled: Option<Settled>,
     pub load: Option<Span>,
     /// What drove it under load.
     #[serde(default)]
@@ -883,6 +887,7 @@ fn run_once(
         peak_memory: w.cg.peak().or(w.peak),
         settled: None,
         idle: None,
+        idled: None,
         load: None,
         gesture: phases.gesture,
         install: None,
@@ -890,22 +895,28 @@ fn run_once(
     };
 
     if w.exited.is_none() && w.wait(phases.settle) {
-        let resident = phases.detail.then(|| procfs::resident(pid).ok()).flatten();
-        out.settled = Some(Settled {
-            memory_current: w.cg.current(),
-            memory_peak: w.cg.peak(),
-            anon: w.cg.stat("anon"),
-            file: w.cg.stat("file"),
-            kernel: w.cg.stat("kernel"),
-            resident,
-            threads: procfs::threads(pid),
-        });
+        let memory = |w: &Watch<'_>| {
+            let resident = phases.detail.then(|| procfs::resident(pid).ok()).flatten();
+            Settled {
+                memory_current: w.cg.current(),
+                memory_peak: w.cg.peak(),
+                anon: w.cg.stat("anon"),
+                file: w.cg.stat("file"),
+                kernel: w.cg.stat("kernel"),
+                resident,
+                threads: procfs::threads(pid),
+            }
+        };
+        out.settled = Some(memory(&w));
         let rect = match (&setup.sway, shown) {
             (Some(sway), Some(_)) => sway.window_rect(pid).ok().flatten(),
             _ => None,
         };
         if !phases.idle.is_zero() {
             out.idle = span(setup, &mut w, pid, phases.idle, phases.gesture, None, rect);
+            if w.exited.is_none() {
+                out.idled = Some(memory(&w));
+            }
         }
         if !phases.load.is_zero() && w.exited.is_none() {
             out.load = span(

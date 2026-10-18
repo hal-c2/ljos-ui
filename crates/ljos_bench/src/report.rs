@@ -167,6 +167,20 @@ const METRICS: &[Metric] = &[
         },
     },
     Metric {
+        title: "Memory after idling (MiB, cgroup memory.current)",
+        value: |r| r.idled.as_ref()?.memory_current.map(|b| b as f64 / MIB),
+    },
+    Metric {
+        title: "PSS after idling (MiB, all pages)",
+        value: |r| {
+            r.idled
+                .as_ref()?
+                .resident
+                .as_ref()
+                .map(|p| p.pss as f64 / MIB)
+        },
+    },
+    Metric {
         title: "Idle CPU (% of one core)",
         value: |r| r.idle.as_ref().map(|s| s.cpu_percent),
     },
