@@ -1061,72 +1061,74 @@ fn count_compared() {
 /// were compared with the last picture (a callback is never the same as
 /// another).
 pub(crate) fn fill_rects(shapes: &mut Vec<ClippedShape>, pixels_per_point: f32) {
+    // Made again in order rather than changed in place: a quad's place
+    // set to nothing and then taken out was a drop and a move more for
+    // each of two hundred bars.
+    let all = std::mem::take(shapes);
+    shapes.reserve(all.len());
     // The quads since something else came between them, all in the same
     // clip rectangle: they become one mesh, made at its size once the run
     // ends (grown a quad at a time, two hundred bars were a hundred
     // reallocations a frame), in the first one's place.
     // Room for every shape once: grown as runs lengthened, it was seven
     // allocations a frame.
-    let mut run: Vec<(usize, egui::Rect, egui::Color32)> = Vec::with_capacity(shapes.len());
-    let mut joined = false;
-    for i in 0..shapes.len() {
-        let fill = match &shapes[i].shape {
+    let mut run: Vec<(egui::Rect, egui::Color32)> = Vec::with_capacity(all.len());
+    let mut run_clip = egui::Rect::NOTHING;
+    for cs in all {
+        let fill = match &cs.shape {
             Shape::Rect(rect) => clearable(rect, pixels_per_point).map(|color| (rect.rect, color)),
             _ => None,
         };
         let Some((r, color)) = fill else {
-            joined |= quads_into_mesh(shapes, &mut run);
+            quads_into_mesh(shapes, &mut run, run_clip);
+            shapes.push(cs);
             continue;
         };
         if r.area() * pixels_per_point * pixels_per_point < CLEARED as f32 {
-            if run
-                .first()
-                .is_some_and(|&(j, ..)| shapes[j].clip_rect != shapes[i].clip_rect)
-            {
-                joined |= quads_into_mesh(shapes, &mut run);
+            if !run.is_empty() && run_clip != cs.clip_rect {
+                quads_into_mesh(shapes, &mut run, run_clip);
             }
-            run.push((i, r, color));
+            run_clip = cs.clip_rect;
+            run.push((r, color));
             continue;
         }
-        joined |= quads_into_mesh(shapes, &mut run);
+        quads_into_mesh(shapes, &mut run, run_clip);
         let color = color.to_normalized_gamma_f32();
         let clear = egui_glow::CallbackFn::new(move |info, painter| {
             clear_in(&info, painter.gl(), color);
         });
-        shapes[i].shape = Shape::Callback(PaintCallback {
-            rect: r,
-            callback: Arc::new(clear),
+        shapes.push(ClippedShape {
+            clip_rect: cs.clip_rect,
+            shape: Shape::Callback(PaintCallback {
+                rect: r,
+                callback: Arc::new(clear),
+            }),
         });
     }
-    joined |= quads_into_mesh(shapes, &mut run);
-    // The places the others of each run were in: the tessellator costs
-    // each shape a few hundred instructions even when it draws nothing,
-    // and two hundred bars left a hundred and ninety-nine of them.
-    if joined {
-        shapes.retain(|s| !matches!(s.shape, Shape::Noop));
-    }
+    quads_into_mesh(shapes, &mut run, run_clip);
 }
 
-/// Makes the quads of `run` one mesh in the first one's place, and leaves
-/// `run` empty. Says whether that left places of others empty.
+/// Adds the quads of `run`, all in `clip_rect`, to `shapes` as one mesh,
+/// and leaves `run` empty.
 fn quads_into_mesh(
-    shapes: &mut [ClippedShape],
-    run: &mut Vec<(usize, egui::Rect, egui::Color32)>,
-) -> bool {
-    let Some(&(first, ..)) = run.first() else {
-        return false;
-    };
+    shapes: &mut Vec<ClippedShape>,
+    run: &mut Vec<(egui::Rect, egui::Color32)>,
+    clip_rect: egui::Rect,
+) {
+    if run.is_empty() {
+        return;
+    }
     let mut mesh = egui::Mesh::default();
     mesh.reserve_vertices(4 * run.len());
     mesh.reserve_triangles(2 * run.len());
-    for &(i, r, color) in run.iter() {
+    for &(r, color) in run.iter() {
         mesh.add_colored_rect(r, color);
-        shapes[i].shape = Shape::Noop;
     }
-    shapes[first].shape = Shape::mesh(mesh);
-    let joined = run.len() > 1;
+    shapes.push(ClippedShape {
+        clip_rect,
+        shape: Shape::mesh(mesh),
+    });
     run.clear();
-    joined
 }
 
 /// The colour of `rect` when a clear draws the same pixels it does.
