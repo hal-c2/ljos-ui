@@ -124,6 +124,7 @@ type Control<'a> = WinitControl<'a, ShellEvent>;
 /// which is what wakes it.
 fn new_context(key: u64, proxy: &Proxy) -> egui::Context {
     let ctx = egui::Context::default();
+    ctx.set_fonts(ljos_egui::font_definitions());
     // A second pass when a widget asks to be laid out again, as egui's
     // own hosts allow.
     ctx.options_mut(|o| o.max_passes = NonZeroUsize::new(2).unwrap_or(NonZeroUsize::MIN));

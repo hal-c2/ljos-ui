@@ -14,6 +14,7 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_render = { path = "../ljos_render", features = ["b0"] }
 ljos_runtime = { path = "../ljos_runtime" }
+ljos_text = { path = "../ljos_text" }
 egui.workspace = true
 thiserror.workspace = true
 

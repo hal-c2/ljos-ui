@@ -11,6 +11,12 @@ pub const BUNDLED_FAMILY: &str = "Liberation Sans";
 static REGULAR: &[u8] = include_bytes!("../fonts/LiberationSans-Regular.ttf");
 static BOLD: &[u8] = include_bytes!("../fonts/LiberationSans-Bold.ttf");
 
+/// The regular face of [`BUNDLED_FAMILY`], for a host that draws text of
+/// its own and should not carry another font for it.
+pub fn bundled_regular() -> &'static [u8] {
+    REGULAR
+}
+
 /// A font file could not be used.
 #[derive(Debug, thiserror::Error)]
 pub enum FontError {
