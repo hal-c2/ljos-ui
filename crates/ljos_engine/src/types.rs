@@ -484,6 +484,12 @@ macro_rules! qml_value {
                 $to
             }
             fn from_value(v: &Value) -> Result<Self, ConvertError> {
+                // Nearly always the tag's own variant already, which
+                // coercing would only copy: a field set after the engine
+                // coerced the write.
+                if let $pat = v.clone() {
+                    return Ok($from);
+                }
                 match Self::type_tag().coerce(v)? {
                     $pat => Ok($from),
                     _ => unreachable!("coerce returns the tag's own variant"),
