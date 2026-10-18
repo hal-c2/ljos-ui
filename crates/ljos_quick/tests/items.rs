@@ -301,3 +301,44 @@ fn a_square_rectangle_binds_no_corners() {
     assert_eq!(e.read_by_name(r, "topLeftRadius"), Value::Real(3.0));
     assert_eq!(e.read_by_name(r, "antialiasing"), Value::Bool(true));
 }
+
+/// Siblings destroyed in one pass of deferred deletes (a board cleared for
+/// a new game) leave the others where they were, in every list of the
+/// parent's.
+#[test]
+fn siblings_destroyed_together_leave_the_rest_in_order() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+    property var made: []
+    Component { id: c; Item {} }
+    function fill() {
+        for (var i = 0; i < 12; i++)
+            made.push(c.createObject(this, { objectName: "b" + i }))
+    }
+    function clearSome() {
+        for (var i = 0; i < 12; i++)
+            if (i % 3 != 1) made[i].destroy()
+    }
+}
+"#,
+    );
+    let names = |ids: Vec<ljos_engine::ObjectId>| -> Vec<String> {
+        ids.into_iter()
+            .filter_map(|o| match get(&e, o, "objectName") {
+                Value::String(s) if !s.is_empty() => Some(s.to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+    e.invoke_by_name(root, "fill", &[]).unwrap();
+    e.process_deferred_deletes();
+    e.invoke_by_name(root, "clearSome", &[]).unwrap();
+    e.process_deferred_deletes();
+    let left = ["b1", "b4", "b7", "b10"];
+    assert_eq!(names(list(&e, root, "children")), left);
+    assert_eq!(names(e.visual_children(root)), left);
+    assert_eq!(names(e.children(root)), left);
+}

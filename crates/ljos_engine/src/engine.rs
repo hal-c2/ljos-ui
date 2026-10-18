@@ -755,32 +755,25 @@ impl Engine {
                         s.node_keys.remove(*n);
                     }
                 }
-                headers.push(h);
+                headers.push((*id, h));
             }
-            if let Some(h) = headers.last() {
+            if let Some((_, h)) = headers.last() {
                 for p in [h.owner, h.visual_parent].into_iter().flatten() {
                     if s.objects.contains_key(p) && !holders.contains(&p) {
                         holders.push(p);
                     }
                 }
             }
-            // Unlink survivors from the dead.
-            for h in &headers {
+            // Unlink survivors from the dead. A survivor lists only the dead
+            // it holds directly, each a header here, so each is taken out by
+            // itself: a holder of many siblings destroyed one by one (a
+            // board cleared for a new game) is not scanned whole for each.
+            for (id, h) in &headers {
                 if let Some(o) = h.owner.and_then(|o| s.objects.get_mut(o)) {
-                    o.children.retain(|c| *c != obj);
+                    take_out(&mut o.children, *id);
                 }
-                // The dead are out of the store: one look per child, where
-                // `order` is the whole subtree.
-                if let Some(p) = h.visual_parent
-                    && let Some(mut kids) = s
-                        .objects
-                        .get_mut(p)
-                        .map(|p| std::mem::take(&mut p.visual_children))
-                {
-                    kids.retain(|c| s.objects.contains_key(*c));
-                    if let Some(p) = s.objects.get_mut(p) {
-                        p.visual_children = kids;
-                    }
+                if let Some(p) = h.visual_parent.and_then(|p| s.objects.get_mut(p)) {
+                    take_out(&mut p.visual_children, *id);
                 }
                 for c in &h.visual_children {
                     if let Some(ch) = s.objects.get_mut(*c) {
@@ -806,7 +799,7 @@ impl Engine {
             js.forget(&order);
         }
         self.inner.graph.batch(|| {
-            for h in &headers {
+            for (_, h) in &headers {
                 if let Some(scope) = h.scope {
                     let _ = self.inner.graph.dispose_scope(scope);
                 }
@@ -833,7 +826,7 @@ impl Engine {
                 }
             }
         });
-        for h in &headers {
+        for (_, h) in &headers {
             if let Some(ext) = &h.ext {
                 for c in &ext.contexts {
                     self.destroy_context(*c);
@@ -873,7 +866,7 @@ impl Engine {
             };
             // The dead are out of the store by now: asking it is one look
             // per entry, where the destroyed subtree is many.
-            let dead: SmallVec<[ObjectId; 4]> = {
+            let mut dead: SmallVec<[ObjectId; 4]> = {
                 let store = self.inner.store.borrow();
                 l.iter()
                     .filter_map(Value::as_object)
@@ -883,10 +876,17 @@ impl Engine {
             if dead.is_empty() {
                 continue;
             }
+            // A pass of deferred deletes may leave hundreds dead in one list
+            // (a board cleared): each entry is looked up, not compared with
+            // every one of them.
+            dead.sort_unstable();
             // The read's share goes first, so the edit is made in place.
             drop(l);
             let _ = self.list_edit(holder, p, &|items| {
-                items.retain(|v| v.as_object().is_none_or(|o| !dead.contains(&o)));
+                items.retain(|v| {
+                    v.as_object()
+                        .is_none_or(|o| dead.binary_search(&o).is_err())
+                });
             });
         }
     }
@@ -3209,5 +3209,12 @@ fn wrong_type(have: &Atom, expected: &MetaObject) -> EngineError {
     EngineError::WrongType {
         ty: have.to_string(),
         expected: expected.name.to_string(),
+    }
+}
+
+/// Takes the one `id` out of `list`, keeping the order of the rest.
+fn take_out(list: &mut Vec<ObjectId>, id: ObjectId) {
+    if let Some(i) = list.iter().position(|c| *c == id) {
+        list.remove(i);
     }
 }
