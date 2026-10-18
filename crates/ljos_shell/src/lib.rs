@@ -43,6 +43,7 @@ mod repaint;
 mod screen_reader;
 mod settings;
 mod surface;
+mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
 mod test_bus;
 mod windows;
@@ -488,6 +489,14 @@ pub fn run<M: Send + 'static>(
 ) -> Result<(), ShellError> {
     large_buffers_from_the_system();
     desktop::run(config, setup)
+}
+
+/// Starts reading the system's fonts on a thread of their own, so that
+/// what a program does before [`run`], such as loading or compiling its
+/// QML, runs meanwhile. [`run`] starts it itself when it has not been
+/// started, and with [`ShellConfig::system_fonts`] off does not wait for it.
+pub fn read_system_fonts_early() {
+    system_fonts::start();
 }
 
 /// Buffers of a mebibyte or more (decoded pictures and the scratch they

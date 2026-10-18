@@ -1821,9 +1821,18 @@ pub(crate) fn run<M: Send + 'static>(
     let painter_choice = surface::Choice::from_env(std::env::var("LJOS_PAINTER").ok().as_deref());
     let starting = Starting::start(host.display_handle(), painter_choice);
     // Before `setup`: bindings may measure text while the root is being
-    // built.
-    if config.system_fonts {
-        ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+    // built. They wait for the fonts; making the engine and registering
+    // its types do not.
+    match config
+        .system_fonts
+        .then(crate::system_fonts::take)
+        .flatten()
+    {
+        Some(reading) => ljos_quick::set_text_engine_later(reading),
+        None if config.system_fonts => {
+            ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+        }
+        None => crate::system_fonts::forget(),
     }
     // Before the engine is built: `font` defaults to it everywhere.
     if let Some(font) = desktop_font {

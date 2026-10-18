@@ -150,7 +150,7 @@ pub use system_prefs::{
 };
 pub use text::{
     DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, font_families, set_text_engine,
-    shown_text_style, text_engine, text_style,
+    set_text_engine_later, shown_text_style, text_engine, text_style,
 };
 pub use text::{RichHandle, SelectionScope};
 pub use text_input::{

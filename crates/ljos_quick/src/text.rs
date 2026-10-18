@@ -22,6 +22,7 @@ pub use scope::SelectionScope;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use ljos_engine::{
     Atom, Color, Cx, Engine, EngineError, Font, ObjectId, PropIndex, QmlObject, Reset, Url, Value,
@@ -46,6 +47,8 @@ thread_local! {
     // One per UI thread, which is one per application: scenes, `FontMetrics`
     // and `TextMetrics` have to agree on fonts and share the caches.
     static ENGINE: RefCell<Option<SharedTextEngine>> = const { RefCell::new(None) };
+    // One being made on another thread, which the first use waits for.
+    static COMING: RefCell<Option<JoinHandle<TextEngine>>> = const { RefCell::new(None) };
 }
 
 /// The UI thread's text engine. Until [`set_text_engine`] installs another it
@@ -55,6 +58,13 @@ thread_local! {
 /// Do not keep it borrowed while reading or writing QML properties: a binding
 /// that runs then may measure text itself.
 pub fn text_engine() -> SharedTextEngine {
+    if let Some(coming) = COMING.with(|c| c.borrow_mut().take()) {
+        // A thread that panicked made none; the same engine is made here.
+        let engine = coming
+            .join()
+            .unwrap_or_else(|_| TextEngine::with_system_fonts());
+        return set_text_engine(engine);
+    }
     ENGINE.with(|slot| {
         Rc::clone(
             slot.borrow_mut()
@@ -63,22 +73,32 @@ pub fn text_engine() -> SharedTextEngine {
     })
 }
 
+/// Makes `engine` the UI thread's text engine, for example one made by
+/// [`TextEngine::with_system_fonts`]. A scene picks it up on its next frame
+/// and lays its text out again; install it before the first frame, or call
+/// [`crate::QuickScene::refresh_text`] to ask for that frame.
+pub fn set_text_engine(engine: TextEngine) -> SharedTextEngine {
+    COMING.with(|c| c.borrow_mut().take());
+    let shared = Rc::new(RefCell::new(engine));
+    ENGINE.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&shared)));
+    shared
+}
+
+/// As [`set_text_engine`], with the engine `making` makes on another
+/// thread: the first use of the text engine on this thread waits for it,
+/// so what comes before that use runs while the system's fonts are read.
+/// One that panicked is made again with [`TextEngine::with_system_fonts`].
+pub fn set_text_engine_later(making: JoinHandle<TextEngine>) {
+    ENGINE.with(|slot| *slot.borrow_mut() = None);
+    COMING.with(|c| *c.borrow_mut() = Some(making));
+}
+
 /// Every font family the UI thread's text engine can lay text out with,
 /// sorted, once each: what `Qt.fontFamilies()` answers. With system fonts
 /// (the desktop shell's default) that is the bundled families, the ones
 /// `FontLoader` added and the system's; without, the bundled ones only.
 pub fn font_families() -> Vec<String> {
     text_engine().borrow_mut().family_names()
-}
-
-/// Makes `engine` the UI thread's text engine, for example one made by
-/// [`TextEngine::with_system_fonts`]. A scene picks it up on its next frame
-/// and lays its text out again; install it before the first frame, or call
-/// [`crate::QuickScene::refresh_text`] to ask for that frame.
-pub fn set_text_engine(engine: TextEngine) -> SharedTextEngine {
-    let shared = Rc::new(RefCell::new(engine));
-    ENGINE.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&shared)));
-    shared
 }
 
 /// `Text` (QtQuick): plain text, the tags of `StyledText`, the HTML subset

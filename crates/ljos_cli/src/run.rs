@@ -318,6 +318,8 @@ impl Run {
     }
 
     pub fn run(self) -> anyhow::Result<()> {
+        // While the project is compiled.
+        ljos_shell::read_system_fonts_early();
         let (dir, key) = match &self.project {
             Some(project) => entry_in(&self.file, project)?,
             None => entry(&self.file)?,
