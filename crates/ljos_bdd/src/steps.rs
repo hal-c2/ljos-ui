@@ -1621,6 +1621,11 @@ fn asked_to_quit(w: &mut LjosWorld, not: String) -> StepResult {
     })
 }
 
+#[when(regex = r"^the window shows its first frame$")]
+fn first_frame(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.first_frame())
+}
+
 #[then(regex = r#"^no picture is kept for "([^"]+)" yet$"#)]
 fn no_picture_kept(w: &mut LjosWorld, object: String) -> StepResult {
     w.each(|b| match b.kept_picture(&object)? {

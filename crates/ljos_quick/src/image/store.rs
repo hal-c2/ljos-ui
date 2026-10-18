@@ -23,7 +23,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_platform::{Fetcher, Platform, reason_phrase};
@@ -297,6 +297,12 @@ struct State {
     held: bool,
     /// Whether jobs wait for [`ImageStore::frame_drawn`] to start.
     after_frame: bool,
+    /// Decodes started since the last [`ImageStore::wait_for_frame`] for
+    /// pictures Qt would have decoded on the spot.
+    fresh: HashSet<ImageKey>,
+    /// Large local pictures whose decode waits for the frame to be about
+    /// to be drawn, so that it is at the size the item is laid out at.
+    deferred: Vec<(ObjectId, u64)>,
     /// The URLs whose last decode was a drawing, which is made again at
     /// each display scale. Outlives the cache, which may drop the pixels.
     vectors: HashSet<String>,
@@ -376,6 +382,8 @@ impl Default for ImageStore {
                 decodes: 0,
                 held: false,
                 after_frame: false,
+                fresh: HashSet::new(),
+                deferred: Vec::new(),
                 vectors: HashSet::new(),
                 scales: HashMap::new(),
                 sides: HashMap::new(),
@@ -670,6 +678,7 @@ impl ImageStore {
     /// as may run at once; the rest start as those come back. The host
     /// calls it after each frame it draws.
     pub fn frame_drawn(&self, engine: &Engine) {
+        self.request_deferred(engine);
         loop {
             let next = {
                 let mut s = self.state.borrow_mut();
@@ -695,10 +704,87 @@ impl ImageStore {
         self.deliver_now(engine)
     }
 
+    /// How long a desktop window's first frame waits for its pictures
+    /// ([`ImageStore::wait_for_frame`]).
+    pub const FIRST_FRAME_WAIT: Duration = Duration::from_millis(150);
+
+    /// How long a later frame waits for the pictures a source change
+    /// started, less than the first: the window is up and answering.
+    pub const LATER_FRAME_WAIT: Duration = Duration::from_millis(50);
+
+    /// Waits at most `budget` for the decodes started since the last call
+    /// for pictures Qt decodes on the spot, delivering each as it
+    /// comes, held or not, and returns how many were delivered. A host
+    /// calls it before it draws a frame, so that a window does not open
+    /// blank where Qt would show the picture. It sleeps until a result
+    /// arrives or the time is up: nothing polls.
+    pub fn wait_for_frame(&self, engine: &Engine, budget: Duration) -> usize {
+        let deadline = Instant::now() + budget;
+        self.request_deferred(engine);
+        let mut delivered = 0;
+        loop {
+            let seen = self.signal.count();
+            delivered += self.deliver_now(engine);
+            {
+                let mut s = self.state.borrow_mut();
+                let State { fresh, jobs, .. } = &mut *s;
+                fresh.retain(|key| jobs.contains_key(key));
+                if fresh.is_empty() {
+                    break;
+                }
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            let sent = self
+                .signal
+                .sent
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            drop(
+                self.signal
+                    .arrived
+                    .wait_timeout_while(sent, left, |n| *n == seen)
+                    .unwrap_or_else(PoisonError::into_inner),
+            );
+        }
+        // What has not come by now fills in later, as any other.
+        self.state.borrow_mut().fresh.clear();
+        delivered
+    }
+
+    /// Whether large pictures wait to be asked for until the frame is about
+    /// to be drawn: a host should lay its scene out before
+    /// [`ImageStore::wait_for_frame`], so that they are decoded at the
+    /// size they are drawn.
+    pub fn has_deferred(&self) -> bool {
+        !self.state.borrow().deferred.is_empty()
+    }
+
+    pub(crate) fn defers_asides(&self) -> bool {
+        self.state.borrow().after_frame
+    }
+
+    pub(crate) fn defer_aside(&self, engine: &Engine, item: ObjectId, generation: u64) {
+        self.state.borrow_mut().deferred.push((item, generation));
+        engine.request_wake();
+    }
+
+    fn request_deferred(&self, engine: &Engine) {
+        let deferred = std::mem::take(&mut self.state.borrow_mut().deferred);
+        for (item, generation) in deferred {
+            if engine.is_alive(item) {
+                super::request_aside(engine, item, generation);
+            }
+        }
+    }
+
     /// Waits until every background decode has come back and delivers
     /// them, held or not. For tests and harnesses: a UI thread that must
     /// stay responsive never calls it.
     pub fn finish(&self, engine: &Engine) {
+        self.request_deferred(engine);
         loop {
             let seen = self.signal.count();
             self.frame_drawn(engine);
@@ -1020,6 +1106,18 @@ impl ImageStore {
     /// a later [`ImageStore::deliver`]. Several waiters for one key share
     /// one decode.
     pub(crate) fn request(&self, engine: &Engine, key: ImageKey, waiter: Waiter) {
+        self.request_as(engine, key, waiter, false);
+    }
+
+    /// As [`Self::request`], for a picture Qt decodes on the spot: it
+    /// starts at once, before the frame is drawn, as long as fewer than
+    /// [`MAX_IN_FLIGHT`] are under way, and that frame may wait for it
+    /// ([`ImageStore::wait_for_frame`]).
+    pub(crate) fn request_for_frame(&self, engine: &Engine, key: ImageKey, waiter: Waiter) {
+        self.request_as(engine, key, waiter, true);
+    }
+
+    fn request_as(&self, engine: &Engine, key: ImageKey, waiter: Waiter, for_frame: bool) {
         let (start, after_frame) = {
             let mut s = self.state.borrow_mut();
             if let Some(waiters) = s.jobs.get_mut(&key) {
@@ -1027,7 +1125,10 @@ impl ImageStore {
                 return;
             }
             s.jobs.insert(key.clone(), vec![waiter]);
-            let start = !s.after_frame && s.in_flight < MAX_IN_FLIGHT;
+            let start = (for_frame || !s.after_frame) && s.in_flight < MAX_IN_FLIGHT;
+            if start && for_frame {
+                s.fresh.insert(key.clone());
+            }
             if !start {
                 s.queue.push_back(key.clone());
             }

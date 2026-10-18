@@ -554,6 +554,15 @@ pub trait Backend: fmt::Debug {
             what: "seeing a request to quit",
         })
     }
+    /// Shows the first frame as a desktop window does, which waits a short
+    /// while for the large pictures it started to decode. The oracle
+    /// decodes them on the spot and has no such frame.
+    fn first_frame(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "showing a first frame that waits for its pictures",
+        })
+    }
     /// The size in pixels of the picture kept for the image `object`, None
     /// while none is. The oracle does not say what it keeps.
     fn kept_picture(&mut self, _object: &str) -> Result<Option<(u32, u32)>> {

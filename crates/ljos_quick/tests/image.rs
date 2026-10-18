@@ -1650,6 +1650,42 @@ Item {
 }
 
 #[test]
+fn a_frame_that_waits_has_the_large_picture_even_when_loads_start_after_it() {
+    let (e, store) = pictures();
+    store.set_start_after_frame(true);
+    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; anchors.fill: parent; source: "file:///big.png" }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    // Qt would decode it on the spot: it starts before the frame.
+    assert_eq!(
+        store.wait_for_frame(&e, std::time::Duration::from_secs(30)),
+        1
+    );
+    frame(&mut s, &e);
+    let image = painted(&s, picture).unwrap();
+    // Decoded at the size it is laid out at, not whole.
+    assert_eq!((image.width(), image.height()), (224, 112));
+    assert_eq!(image.pixel(10, 10), BLUE);
+    // The next frame has nothing to wait for.
+    let t = std::time::Instant::now();
+    assert_eq!(
+        store.wait_for_frame(&e, std::time::Duration::from_secs(30)),
+        0
+    );
+    assert!(t.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[test]
 fn a_large_picture_whose_body_is_broken_fails_once_it_is_decoded() {
     let (e, store) = pictures();
     // A whole header, then rows cut short.

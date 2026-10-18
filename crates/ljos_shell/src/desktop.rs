@@ -1101,7 +1101,23 @@ impl<M: Send + 'static> Desktop<M> {
     /// cannot be seen, or that the root does not have: its scene runs all
     /// the same. Then the pictures the pass asked for start loading,
     /// drawn or not, so that none waits for a frame that never comes.
+    /// A painted pass first waits a moment for the large pictures whose
+    /// decode is under way, which Qt would show in that frame.
     fn pass(&mut self, host: &mut Control<'_>, i: usize, paint: bool) {
+        if paint {
+            let engine = Rc::clone(self.app.engine());
+            let wait = if self.drawn_once {
+                ljos_quick::ImageStore::LATER_FRAME_WAIT
+            } else {
+                ljos_quick::ImageStore::FIRST_FRAME_WAIT
+            };
+            let images = ljos_quick::ImageStore::of(&engine);
+            if images.has_deferred() {
+                // Laid out first, so that they decode at the size drawn.
+                self.app.view_mut().scene_mut().lay_out(&engine);
+            }
+            images.wait_for_frame(&engine, wait);
+        }
         self.run_pass(host, i, paint);
         let engine = self.app.engine();
         ljos_quick::ImageStore::of(engine).frame_drawn(engine);

@@ -658,7 +658,9 @@ fn announce(e: &Engine, me: ObjectId, natural: (u32, u32), asked: bool) {
 /// decoded in the background, at the size the item draws it once its
 /// bindings have followed that size, and painted when they come, so that
 /// many large pictures do not hold the user interface up while they
-/// decode. Qt decodes them on the spot.
+/// decode. Qt decodes them on the spot. A host whose loads start after
+/// the frame asks for it just before the frame, once the item is laid
+/// out ([`request_aside`]).
 fn decode_aside(e: &Engine, me: ObjectId, key: ImageKey, natural: (u32, u32), generation: u64) {
     let asked = with_run(e, me, |r| {
         r.frames = None;
@@ -676,6 +678,25 @@ fn decode_aside(e: &Engine, me: ObjectId, key: ImageKey, natural: (u32, u32), ge
         r.requested.is_some()
     }) == Some(true);
     announce(e, me, natural, asked);
+    let store = ImageStore::of(e);
+    if store.defers_asides() {
+        store.defer_aside(e, me, generation);
+        return;
+    }
+    request_aside(e, me, generation);
+}
+
+/// Asks for the pixels [`decode_aside`] put off, at the size `me` is
+/// drawn now, unless it has loaded something else since.
+pub(super) fn request_aside(e: &Engine, me: ObjectId, generation: u64) {
+    let Some((key, natural)) = with_run(e, me, |r| {
+        (r.generation == generation && r.aside)
+            .then(|| r.key.clone().map(|k| (k, r.natural)))
+            .flatten()
+    })
+    .flatten() else {
+        return;
+    };
     let store = ImageStore::of(e);
     let limit = e.untrack(|| {
         let sized = e.read(me, Item::WIDTH.index).to_number() > 0.0
@@ -699,7 +720,7 @@ fn decode_aside(e: &Engine, me: ObjectId, key: ImageKey, natural: (u32, u32), ge
         _ => key,
     };
     with_run(e, me, |r| r.key = Some(key.clone()));
-    store.request(
+    store.request_for_frame(
         e,
         key,
         Waiter::Load {

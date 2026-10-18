@@ -1745,6 +1745,13 @@ impl Backend for LjosBackend {
         Ok(self.live()?.engine.quit_requested())
     }
 
+    fn first_frame(&mut self) -> Result<()> {
+        let live = self.live()?;
+        ljos_quick::ImageStore::of(&live.engine)
+            .wait_for_frame(&live.engine, ljos_quick::ImageStore::FIRST_FRAME_WAIT);
+        live.settle()
+    }
+
     fn kept_picture(&mut self, object: &str) -> Result<Option<(u32, u32)>> {
         let live = self.live()?;
         let obj = live.find(object)?;
