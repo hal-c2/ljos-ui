@@ -123,6 +123,29 @@ impl Engine {
         })
     }
 
+    /// A short name for `obj` that a person can find it by: its type and
+    /// `objectName` (`Item "content"`), else its type and `id`
+    /// (`Timer#tick`), else its type and where it is written
+    /// (`Timer (Main.qml:12)`). `None` for a dead object.
+    pub fn label_of(&self, obj: ObjectId) -> Option<String> {
+        let report = self.inspect_object(obj)?;
+        let ty = report.types.first().map_or("object", |t| t.as_str());
+        let object_name = self
+            .untrack(|| self.read_by_name(obj, "objectName"))
+            .to_js_string()
+            .to_string();
+        Some(if !object_name.is_empty() && object_name != "undefined" {
+            format!("{ty} \"{object_name}\"")
+        } else if let Some(id) = &report.id {
+            format!("{ty}#{id}")
+        } else if let Some(at) = &report.declared_at {
+            let file = at.file.rsplit('/').next().unwrap_or(&at.file);
+            format!("{ty} ({file}:{})", at.line)
+        } else {
+            ty.to_owned()
+        })
+    }
+
     /// The `id` each of `objs` was given where it is declared, in the same
     /// order. One pass over the loaded files however many objects are
     /// asked for, which is what a snapshot of the whole tree needs.

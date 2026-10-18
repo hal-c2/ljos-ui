@@ -527,6 +527,13 @@ impl<Cx> SupervisorTree<Cx> {
         self.inner.borrow().nodes.get(&sup).is_some_and(|n| n.down)
     }
 
+    /// How `sup` restarts its children and how often it may.
+    pub fn policy(&self, sup: SupId) -> Option<(Strategy, Intensity)> {
+        let inner = self.inner.borrow();
+        let n = inner.nodes.get(&sup)?;
+        Some((n.policy.strategy(), n.policy.intensity()))
+    }
+
     /// `sup`'s children in start order; empty for an unknown supervisor.
     pub fn children(&self, sup: SupId) -> Vec<ChildInfo> {
         let inner = self.inner.borrow();

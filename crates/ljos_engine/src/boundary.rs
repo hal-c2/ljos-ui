@@ -38,7 +38,7 @@ use ljos_runtime::{
 };
 
 use crate::engine::Engine;
-use crate::fault::FaultReport;
+use crate::fault::{FaultReport, TakenBy};
 use crate::ids::ObjectId;
 use crate::meta::MetaObject;
 use crate::object::{ObjectFlags, QmlType};
@@ -117,7 +117,7 @@ impl Boundaries {
 /// What became of a delivered fault.
 pub(crate) enum Tripped {
     /// A boundary took it, or it needs no one.
-    Handled,
+    Handled(TakenBy),
     /// No boundary took it: it is the application's.
     Unhandled(Box<FaultReport>),
 }
@@ -315,14 +315,14 @@ impl Engine {
         let unhandled = || {
             if exception {
                 // Logged, and nobody asked for more.
-                Tripped::Handled
+                Tripped::Handled(TakenBy::Log)
             } else {
                 Tripped::Unhandled(Box::new(report.clone()))
             }
         };
         // The subtree it happened in was discarded for an earlier fault.
         if report.target.is_none() && report.origin.is_some_and(|o| self.doomed(o)) {
-            return Tripped::Handled;
+            return Tripped::Handled(TakenBy::Discarded);
         }
         let mut chain: Vec<(ObjectId, Rc<dyn Boundary>)> = Vec::new();
         for o in report
@@ -360,19 +360,27 @@ impl Engine {
             .borrow_mut()
             .take()
             .unwrap_or_else(|| report.clone());
+        let by = |f: &dyn Fn(&Node) -> bool| {
+            b.nodes.borrow().iter().find(|(_, n)| f(n)).map(|(o, _)| *o)
+        };
         let handled = match outcome {
-            Ok(Outcome::Restarted { .. } | Outcome::Queued) => true,
+            Ok(Outcome::Restarted { by: sup, .. }) => Some(by(&|n| n.sup == sup).unwrap_or(ids[0])),
+            // Handled after the exit being handled now: by the nearest
+            // boundary, unless that one gives up then.
+            Ok(Outcome::Queued) => Some(ids[0]),
             // Left stopped at a boundary's content (a Loader's): that
             // boundary handled it. Left stopped at a boundary's own
             // supervisor: the outermost boundary gave up.
-            Ok(Outcome::Stopped { child }) => b.nodes.borrow().values().any(|n| n.content == child),
-            Ok(Outcome::GaveUp { .. }) | Err(_) => false,
+            Ok(Outcome::Stopped { child }) => by(&|n| n.content == child),
+            Ok(Outcome::GaveUp { .. }) | Err(_) => None,
         };
         self.sweep_boundary_nodes();
-        if handled {
-            Tripped::Handled
-        } else {
-            Tripped::Unhandled(Box::new(last))
+        match handled {
+            Some(object) => Tripped::Handled(TakenBy::Boundary {
+                object,
+                name: self.label_of(object).unwrap_or_default(),
+            }),
+            None => Tripped::Unhandled(Box::new(last)),
         }
     }
 
@@ -409,6 +417,56 @@ impl Engine {
             (Some(sup), Some((tree, _))) => tree.recent_restarts(sup),
             _ => 0,
         }
+    }
+
+    /// The supervisor tree, each supervisor before what it supervises,
+    /// for tools. A boundary is in it from its first fault until it gives
+    /// up or goes; before any, the tree has the standard supervisors.
+    pub fn supervisors(&self) -> Vec<SupervisorInfo> {
+        let b = &self.inner.faults.boundaries;
+        let (tree, _) = b.tree();
+        let of: HashMap<SupId, (ObjectId, ChildId)> = b
+            .nodes
+            .borrow()
+            .iter()
+            .map(|(o, n)| (n.sup, (*o, n.content)))
+            .collect();
+        let mut out = Vec::new();
+        let mut stack = vec![(tree.root(), 0)];
+        while let Some((sup, depth)) = stack.pop() {
+            let Some((strategy, intensity)) = tree.policy(sup) else {
+                continue;
+            };
+            let children = tree.children(sup);
+            let boundary = of.get(&sup).copied();
+            let content = boundary.and_then(|(_, content)| {
+                children
+                    .iter()
+                    .find(|c| c.id == content)
+                    .map(|c| (c.restart, c.running))
+            });
+            out.push(SupervisorInfo {
+                depth,
+                name: tree.name(sup).map(|n| n.to_string()).unwrap_or_default(),
+                boundary: boundary.map(|(o, _)| o),
+                strategy,
+                intensity,
+                restarts: tree.recent_restarts(sup),
+                down: tree.is_down(sup),
+                content,
+            });
+            // Pushed last first, so that they come out in start order; a
+            // boundary inside another's content is under that content.
+            let mut below = Vec::new();
+            for c in &children {
+                match c.supervisor {
+                    Some(s) => below.push(s),
+                    None => below.extend(tree.linked(c.id)),
+                }
+            }
+            stack.extend(below.into_iter().rev().map(|s| (s, depth + 1)));
+        }
+        out
     }
 
     /// The supervisor tree as text, for tools; `None` before the first
@@ -554,6 +612,26 @@ impl Engine {
             }
         }
     }
+}
+
+/// One supervisor of [`Engine::supervisors`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SupervisorInfo {
+    /// 0 for the root.
+    pub depth: usize,
+    /// The tree's name for it: `app`, `ui`, `services`, `plugins`, or
+    /// `boundary …` for a boundary's.
+    pub name: String,
+    /// The boundary it supervises the content of.
+    pub boundary: Option<ObjectId>,
+    pub strategy: Strategy,
+    pub intensity: Intensity,
+    /// Restarts it counts inside its window, as of its last fault.
+    pub restarts: usize,
+    /// It gave up and nothing restarted it.
+    pub down: bool,
+    /// For a boundary: how its content restarts, and whether it runs.
+    pub content: Option<(Restart, bool)>,
 }
 
 struct Kept {

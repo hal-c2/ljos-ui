@@ -282,7 +282,7 @@
     "read_only": true
   },
   {
-    "description": "What does work, like Erlang's observer: threads with state, CPU time and wakeups; Timers, animations, scheduler owners; and the mailboxes reaching the UI thread (depth, capacity, age, sent, refused as busy), shown even when it is stuck. `kind` keeps one; `peek` names front messages' kinds.",
+    "description": "What does work, like Erlang's observer: threads (state, CPU time, wakeups), Timers, animations, scheduler owners, the supervision tree, the last faults and what took each, and the mailboxes to the UI thread (depth, age, refused), shown even when it is stuck. `kind` keeps one.",
     "input_schema": {
       "$defs": {
         "ProcessKind": {
@@ -311,6 +311,16 @@
               "const": "mailbox",
               "description": "The bounded inboxes threads reach the UI thread through. Read\nwithout the UI thread, so a stuck one still shows its inbox.",
               "type": "string"
+            },
+            {
+              "const": "supervisor",
+              "description": "The supervision tree: the standard supervisors and each boundary\nthat has had a fault, under the one around it.",
+              "type": "string"
+            },
+            {
+              "const": "fault",
+              "description": "The last faults (at most 32), in `faults`: where each happened and\nwhat took it.",
+              "type": "string"
             }
           ]
         }
@@ -326,7 +336,7 @@
               "type": "null"
             }
           ],
-          "description": "List only this kind: `thread`, `timer`, `animation`, `owner` or\n`mailbox`."
+          "description": "List only this kind: `thread`, `timer`, `animation`, `owner`,\n`mailbox`, `supervisor` or `fault`."
         },
         "mailbox": {
           "default": null,

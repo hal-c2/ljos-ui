@@ -23,10 +23,9 @@ use super::surface::DevReq;
 use crate::top::{FrameStats, owner_name};
 
 pub const PROCESSES: &str = "\
-What does work, like Erlang's observer: threads with state, CPU time and wakeups; Timers, \
-animations, scheduler owners; and the mailboxes reaching the UI thread (depth, capacity, age, \
-sent, refused as busy), shown even when it is stuck. `kind` keeps one; `peek` names front \
-messages' kinds.";
+What does work, like Erlang's observer: threads (state, CPU time, wakeups), Timers, animations, \
+scheduler owners, the supervision tree, the last faults and what took each, and the mailboxes \
+to the UI thread (depth, age, refused), shown even when it is stuck. `kind` keeps one.";
 
 /// The most front messages `app_processes` names per inbox.
 pub const MAX_PEEK: usize = 20;
@@ -46,13 +45,19 @@ pub enum ProcessKind {
     /// The bounded inboxes threads reach the UI thread through. Read
     /// without the UI thread, so a stuck one still shows its inbox.
     Mailbox,
+    /// The supervision tree: the standard supervisors and each boundary
+    /// that has had a fault, under the one around it.
+    Supervisor,
+    /// The last faults (at most 32), in `faults`: where each happened and
+    /// what took it.
+    Fault,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessesArgs {
-    /// List only this kind: `thread`, `timer`, `animation`, `owner` or
-    /// `mailbox`.
+    /// List only this kind: `thread`, `timer`, `animation`, `owner`,
+    /// `mailbox`, `supervisor` or `fault`.
     #[serde(default)]
     pub kind: Option<ProcessKind>,
     /// List only the mailboxes of this name (`application`, `platform`,
@@ -345,35 +350,22 @@ fn threads() -> Vec<Thread> {
 /// `Timer#tick`, `NumberAnimation "fade"`, `Timer (Clock.qml:42)`: what
 /// to call an object, and a target any tool takes for it.
 pub(crate) fn label(engine: &Engine, obj: ObjectId) -> (String, Option<String>) {
-    let report = engine.inspect_object(obj);
-    let ty = report
-        .as_ref()
-        .and_then(|r| r.types.first().cloned())
-        .unwrap_or_else(|| "object".to_owned());
-    let place = report.as_ref().and_then(|r| r.declared_at.clone());
-    let id = report.and_then(|r| r.id);
+    let Some(name) = engine.label_of(obj) else {
+        return ("object".to_owned(), Some(super::objects::handle(obj)));
+    };
     let object_name = engine
         .untrack(|| engine.read_by_name(obj, "objectName"))
         .to_js_string()
         .to_string();
-    if !object_name.is_empty() && object_name != "undefined" {
-        (
-            format!("{ty} \"{object_name}\""),
-            Some(format!("#{object_name}")),
-        )
-    } else if let Some(id) = id {
-        (format!("{ty}#{id}"), Some(format!("id={id}")))
-    } else if let Some(at) = place {
-        // Several Timers without a name are told apart by where they are
-        // written.
-        let file = at.file.rsplit('/').next().unwrap_or(&at.file);
-        (
-            format!("{ty} ({file}:{})", at.line),
-            Some(super::objects::handle(obj)),
-        )
+    let locator = if !object_name.is_empty() && object_name != "undefined" {
+        format!("#{object_name}")
     } else {
-        (ty, Some(super::objects::handle(obj)))
-    }
+        match engine.inspect_object(obj).and_then(|r| r.id) {
+            Some(id) => format!("id={id}"),
+            None => super::objects::handle(obj),
+        }
+    };
+    (name, Some(locator))
 }
 
 /// Bytes of the process: its address space, what is resident, and of
@@ -558,10 +550,31 @@ pub(crate) fn processes(
             let _ = writeln!(text, "owner {name}, {:.2} ms", time.as_secs_f64() * 1000.0);
         }
     }
-    if rows.is_empty() && !args.wants_mailboxes() {
+    if wants(ProcessKind::Supervisor) {
+        for s in engine.supervisors() {
+            let row = supervisor_row(engine, &s);
+            let _ = writeln!(
+                text,
+                "{}supervisor {} ({}, {} / {} ms, {} used{})",
+                "  ".repeat(s.depth),
+                row["name"].as_str().unwrap_or_default(),
+                row["strategy"].as_str().unwrap_or_default(),
+                s.intensity.max_restarts,
+                s.intensity.within.as_millis(),
+                s.restarts,
+                if s.down { ", down" } else { "" }
+            );
+            rows.push(row);
+        }
+    }
+    let faults = wants(ProcessKind::Fault).then(|| fault_rows(engine, &mut text));
+    if rows.is_empty() && !args.wants_mailboxes() && faults.is_none() {
         text.push_str("nothing of that kind is running\n");
     }
     let mut value = json!({ "processes": rows });
+    if let Some(faults) = faults {
+        value["faults"] = Value::Array(faults);
+    }
     if wants(ProcessKind::Thread) {
         let process = process_block(thread_count);
         if let Some(rss) = process["rss_bytes"].as_u64() {
@@ -576,6 +589,97 @@ pub(crate) fn processes(
         value["process"] = process;
     }
     ToolReply::from(value).with_text(text.trim_end().to_owned())
+}
+
+fn snake(s: impl std::fmt::Debug) -> String {
+    let mut out = String::new();
+    for (i, c) in format!("{s:?}").chars().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 {
+            out.push('_');
+        }
+        out.push(c.to_ascii_lowercase());
+    }
+    out
+}
+
+/// One supervisor of the tree. A boundary's is called by its boundary.
+fn supervisor_row(engine: &Engine, s: &ljos_engine::SupervisorInfo) -> Value {
+    let mut row = json!({
+        "kind": "supervisor",
+        "name": s.name,
+        "depth": s.depth,
+        "strategy": snake(s.strategy),
+        "max_restarts": s.intensity.max_restarts,
+        "within_ms": u64::try_from(s.intensity.within.as_millis()).unwrap_or(u64::MAX),
+        "restarts": s.restarts,
+        "state": if s.down { "down" } else { "running" },
+    });
+    if let Some(b) = s.boundary {
+        let (name, locator) = label(engine, b);
+        row["name"] = json!(name);
+        row["handle"] = json!(super::objects::handle(b));
+        row["locator"] = json!(locator);
+    }
+    if let Some((restart, running)) = s.content {
+        row["content"] = json!(if running { "running" } else { "stopped" });
+        row["content_restart"] = json!(snake(restart));
+    }
+    row
+}
+
+/// The faults on record, the oldest first, and a line for each.
+fn fault_rows(engine: &Engine, text: &mut String) -> Vec<Value> {
+    use ljos_engine::TakenBy;
+    let faults = engine.faults();
+    let mut rows = Vec::with_capacity(faults.len());
+    for f in &faults {
+        let alive = |o: ObjectId| engine.is_alive(o).then(|| super::objects::handle(o));
+        let (taken_by, taken_handle) = match &f.taken_by {
+            TakenBy::Waiting => ("waiting".to_owned(), None),
+            TakenBy::Log => ("log".to_owned(), None),
+            TakenBy::Application => ("application".to_owned(), None),
+            TakenBy::Discarded => ("discarded".to_owned(), None),
+            TakenBy::Boundary { object, name } => (name.clone(), alive(*object)),
+        };
+        let origin_handle = f.origin.and_then(alive);
+        let stack: Vec<Value> = f
+            .stack
+            .iter()
+            .map(|s| json!({ "function": s.function, "file": s.file, "line": s.line }))
+            .collect();
+        let now = engine.now();
+        rows.push(json!({
+            "seq": f.seq,
+            "fault": f.kind(),
+            "message": f.message(),
+            "file": f.file,
+            "line": f.line,
+            "at_ms": f.at.as_micros() / 1000,
+            "ago_ms": u64::try_from(now.saturating_since(f.at).as_millis()).unwrap_or(u64::MAX),
+            // What it was called then: it may have gone with the content
+            // the fault stopped, and then it has no handle.
+            "origin": f.origin_name,
+            "origin_handle": origin_handle,
+            "origin_gone": f.origin.is_some() && origin_handle.is_none(),
+            "taken_by": taken_by,
+            "taken_by_handle": taken_handle,
+            "stack": stack,
+        }));
+        let file = f.file.as_deref().map(|p| p.rsplit('/').next().unwrap_or(p));
+        let _ = writeln!(
+            text,
+            "fault {} {} at {}:{}: {}, taken by {taken_by}",
+            f.seq,
+            f.kind(),
+            file.unwrap_or("?"),
+            f.line,
+            f.message()
+        );
+    }
+    if faults.is_empty() {
+        text.push_str("no faults\n");
+    }
+    rows
 }
 
 #[cfg(test)]

@@ -103,7 +103,7 @@ mod value_faces;
 mod value_types;
 
 pub use atom::Atom;
-pub use boundary::{APPLICATION_PROC, Boundary, BoundaryConfig, SubtreeSnapshot};
+pub use boundary::{APPLICATION_PROC, Boundary, BoundaryConfig, SubtreeSnapshot, SupervisorInfo};
 pub use builtins::QtObject;
 pub use chooser::{DelegateChoice, DelegateChooser};
 pub use context::Context;
@@ -114,7 +114,7 @@ pub use describe::{QtNamespaceEnum, VALUE_TYPES, ValueType, qt_namespace};
 pub use devtools::{BindingGraph, DependencyReport, EvalJson, MAX_EVAL_TIME};
 pub use engine::{Engine, OverrideContent, ParentListener};
 pub use error::{EngineError, JsError};
-pub use fault::{FaultReport, StackFrame, fault_kind};
+pub use fault::{FaultReport, StackFrame, TakenBy, fault_kind};
 pub use foreign::{ForeignBinding, ForeignKeeper, ForeignMember, ForeignValue};
 pub use hooks::{Interception, Interceptor};
 pub use ids::{ConnectionId, ContextId, MethodIndex, ObjectId, PropIndex, PropKey, SignalIndex};

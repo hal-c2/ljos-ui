@@ -68,6 +68,9 @@ pub struct FaultReport {
     /// The object whose code was running: the object a handler or a
     /// binding belongs to, the receiver of a native method.
     pub origin: Option<ObjectId>,
+    /// What `origin` was called when the fault happened
+    /// ([`Engine::label_of`]): a boundary may destroy it for the fault.
+    pub origin_name: Option<String>,
     /// The QML file the fault belongs to: where a JS exception was thrown,
     /// else where `origin` is declared.
     pub file: Option<String>,
@@ -78,6 +81,11 @@ pub struct FaultReport {
     pub stack: Vec<StackFrame>,
     /// On the engine's clock.
     pub at: Time,
+    /// Counts the faults reported, from 1: the history keeps the last 32,
+    /// and this says how many came before them.
+    pub seq: u64,
+    /// What took the fault, once it was delivered.
+    pub taken_by: TakenBy,
     /// The boundaries around `origin` when the fault happened, the nearest
     /// first. Taken then, because by the time the fault is delivered the
     /// object may have left the tree.
@@ -117,6 +125,24 @@ pub fn fault_kind(fault: &Fault) -> &'static str {
     }
 }
 
+/// What took a fault: what the inspector says of each one it lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TakenBy {
+    /// Not delivered yet: it is delivered between turns.
+    Waiting,
+    /// Nobody: a JS exception no boundary asked for, which is logged, as
+    /// in Qt.
+    Log,
+    /// The boundary that stopped or restarted its content for it. When a
+    /// boundary gave up, the one around it that took the fault. `name` is
+    /// what it was called then ([`Engine::label_of`]).
+    Boundary { object: ObjectId, name: String },
+    /// No boundary took it ([`Engine::application_fault`]).
+    Application,
+    /// It happened in a subtree already discarded for an earlier fault.
+    Discarded,
+}
+
 type FaultHandler = Rc<dyn Fn(&Engine, &FaultReport)>;
 
 #[derive(Default)]
@@ -130,6 +156,8 @@ pub(crate) struct FaultState {
     delivering: Cell<bool>,
     application: RefCell<Option<FaultReport>>,
     history: RefCell<VecDeque<FaultReport>>,
+    /// Faults reported so far.
+    filed: Cell<u64>,
     handler: RefCell<Option<FaultHandler>>,
     /// Set by the JS bridge for the QML function it is about to call: an
     /// exception in it is the calling script's to catch.
@@ -210,6 +238,9 @@ impl Engine {
             at: self.now(),
             boundaries: self.boundaries_around(origin),
             target: None,
+            seq: 0,
+            origin_name: origin.and_then(|o| self.label_of(o)),
+            taken_by: TakenBy::Waiting,
         });
     }
 
@@ -228,6 +259,9 @@ impl Engine {
             at: self.now(),
             boundaries: self.boundaries_around(Some(boundary)),
             target: Some(boundary),
+            seq: 0,
+            origin_name: self.label_of(boundary),
+            taken_by: TakenBy::Waiting,
         });
     }
 
@@ -292,6 +326,9 @@ impl Engine {
                     at: self.now(),
                     boundaries: self.boundaries_around(origin),
                     target: None,
+                    seq: 0,
+                    origin_name: origin.and_then(|o| self.label_of(o)),
+                    taken_by: TakenBy::Waiting,
                 });
             }
             JsFault::Panic { message, .. } => {
@@ -310,13 +347,25 @@ impl Engine {
                     at: self.now(),
                     boundaries: self.boundaries_around(origin),
                     target: None,
+                    seq: 0,
+                    origin_name: origin.and_then(|o| self.label_of(o)),
+                    taken_by: TakenBy::Waiting,
                 });
             }
         }
     }
 
-    fn file_fault(&self, report: FaultReport) {
+    fn file_fault(&self, mut report: FaultReport) {
         let state = &self.inner.faults;
+        state.filed.set(state.filed.get() + 1);
+        report.seq = state.filed.get();
+        // An exception is only somebody's fault inside a boundary that
+        // asked for exceptions; without any boundary around it there is
+        // nothing to deliver and no reason to wake the host.
+        let logged = matches!(report.fault, Fault::JsException(_)) && report.boundaries.is_empty();
+        if logged {
+            report.taken_by = TakenBy::Log;
+        }
         {
             let mut history = state.history.borrow_mut();
             if history.len() == MAX_HISTORY {
@@ -324,14 +373,19 @@ impl Engine {
             }
             history.push_back(report.clone());
         }
-        // An exception is only somebody's fault inside a boundary that
-        // asked for exceptions; without any boundary around it there is
-        // nothing to deliver and no reason to wake the host.
-        if matches!(report.fault, Fault::JsException(_)) && report.boundaries.is_empty() {
+        if logged {
             return;
         }
         state.queue.borrow_mut().push_back(report);
         self.wake_host();
+    }
+
+    /// Writes down in the history what took fault `seq`.
+    fn taken(&self, seq: u64, by: TakenBy) {
+        let mut history = self.inner.faults.history.borrow_mut();
+        if let Some(r) = history.iter_mut().rev().find(|r| r.seq == seq) {
+            r.taken_by = by;
+        }
     }
 
     /// The URL and line `obj` is declared at.
@@ -407,9 +461,13 @@ impl Engine {
             n += 1;
             // A boundary that panics while it restarts must not leave the
             // queue stuck.
+            let seq = report.seq;
             let delivered = catch_unwind(AssertUnwindSafe(|| self.trip_boundary(&report)));
             let unhandled = match delivered {
-                Ok(crate::boundary::Tripped::Handled) => None,
+                Ok(crate::boundary::Tripped::Handled(by)) => {
+                    self.taken(seq, by);
+                    None
+                }
                 Ok(crate::boundary::Tripped::Unhandled(r)) => Some(*r),
                 Err(payload) => {
                     state.unwound.take();
@@ -419,6 +477,7 @@ impl Engine {
                 }
             };
             if let Some(r) = unhandled {
+                self.taken(seq, TakenBy::Application);
                 self.set_application_fault(r);
             }
         }
