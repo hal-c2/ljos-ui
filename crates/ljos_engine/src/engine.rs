@@ -235,6 +235,10 @@ impl Engine {
     pub fn new() -> Self {
         let graph = Graph::with_options(Options {
             equals: Value::change_equals,
+            // Qt runs a handler that writes its own property again inside
+            // itself until its script stack runs out, 835 runs deep on Qt
+            // 6.11; a cycle that ends there ends here too.
+            max_reruns_per_flush: 1000,
             ..Options::default()
         });
         let mut contexts = SlotMap::with_key();
@@ -353,7 +357,22 @@ impl Engine {
             Diagnostic::BindingLoop { node, .. } | Diagnostic::RerunLimit { node, .. } => *node,
         };
         let key = self.inner.store.borrow().node_keys.get(node).copied();
-        let what = key.map(|k| self.describe(k.object, k.prop));
+        // A handler is an effect with no property of its own: it is named
+        // by the property whose change runs it.
+        let watched = || {
+            let store = self.inner.store.borrow();
+            let sources = self.inner.graph.sources(node);
+            sources
+                .iter()
+                .find_map(|s| store.node_keys.get(*s).copied())
+        };
+        let what = match (d, key) {
+            (_, Some(k)) => Some(self.describe(k.object, k.prop)),
+            (Diagnostic::RerunLimit { .. }, None) => {
+                watched().map(|k| self.describe(k.object, k.prop))
+            }
+            (Diagnostic::BindingLoop { .. }, None) => None,
+        };
         let msg = match (d, what) {
             (Diagnostic::BindingLoop { .. }, Some(_)) => {
                 let k = key.expect("described");
