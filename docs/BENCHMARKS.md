@@ -2429,3 +2429,65 @@ animations, an Image, two emitters with their shapes and directions, and two Sta
 What is left of a block is the per-object work of creation: binding setup, property writes,
 completion, `Item` init with its two watches, and about 400 allocations. The Image's completion
 (about 39 k Ir) is the image store's.
+
+### Frames that change, frame pacing and the lag left against Qt (2026-10-18)
+
+`BENCH_PROFILE=dist BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench calqlatr clocks samegame
+todolist rssnews --profile desktop --settle 3 --idle 4 --load 5`: Ljós's `dist` binary at 91d5d9ef
+against `qml6` 6.11.2 with the Basic style, at equal window sizes, medians of 3 runs. Other work
+kept the machine's load average at 12.5–50.4, so the timings are noisier than the last section's.
+
+| | Before (11ef7c78): Ljós | Qt | After: Ljós | Qt |
+|---|---:|---:|---:|---:|
+| samegame idle, 95th percentile frame interval | 32 ms | 16 ms | 16.1 ms | 16.1 ms |
+| samegame idle, slowest frame interval | 488 ms | 481 ms | 485 ms | 483 ms |
+| samegame idle, frames that changed a second | 37.5 | 44.0 | 46.5 | 43.7 |
+| calqlatr driven, 95th percentile frame interval | 16.1 ms | 32.3 ms | 16.1 ms | 32.1 ms |
+| rssnews driven, 95th percentile frame interval | 32.2 ms | 32.3 ms | 16.2 ms | 32.4 ms |
+| rssnews idle CPU | ×1.45 of Qt | | 0.02 % | 0.00 % |
+
+The "before" lag rows are a release run that already counts frames by their pixels.
+
+| Ljós/Qt, geometric mean | Last section | This run |
+|---|---:|---:|
+| first frame | ×0.23 | ×0.22 |
+| CPU to first frame | ×0.56 | ×0.54 |
+| first frame that answers input | ×0.28 | ×0.26 |
+| peak memory while starting | ×0.57 | ×0.55 |
+| settled memory (cgroup) | ×0.50 | ×0.40 |
+| settled PSS | ×0.60 | ×0.49 |
+| idle CPU (clocks, samegame) | ×0.55 | ×0.32 |
+| CPU while driven | ×0.38 | ×0.42 |
+| frames shown while driven | | ×1.04 |
+
+- **Frames are counted by their pixels.** The bench counted every frame the compositor was sent.
+  Qt sends frames that show what the last one did (samegame: 62 a second sent, 43.7 that changed),
+  so the counts and intervals favoured it. The "286 ms against 16 ms" slowest interval was such
+  a count: counted by pixels, both pause for the logo's 500 ms `PauseAnimation`.
+- **Frames kept the display's pace.** A drawn pass held the next a frame after it began. Two
+  things added a refresh one time in thirty:
+  - Late wake-ups added up, and Ljós's passes came 16.9 ms apart.
+  - The sandbox's headless output says it has no refresh rate. It draws at about 62 Hz, and Ljós
+    held each pass a 60 Hz frame.
+
+  Ljós now keeps the last pass's beat when a pass begins less than half a frame late. A display
+  that does not say its rate holds a pass three quarters of a 60 Hz frame, and the platform's
+  frame callback paces the rest.
+- **calqlatr and rssnews driven.** calqlatr's 48 ms was the old count; counted by pixels it was
+  already 16 ms. rssnews's 32 ms was the pacing above, and it is now at 16 ms. Qt's are 32 ms:
+  more of its changed frames come two refreshes apart. The waits for each click are the same in
+  both runtimes (rssnews's median is 42.5 ms against 42.6).
+- **rssnews idle CPU** was no wake-up. The per-thread split showed the 1.45 was picture fetching
+  that had not finished in a one-second settle: about 146 ms of Ljós's fetch threads against
+  Qt's 147 ms pixmap reader and 66 ms network thread. Settled for 3 s, both idle at about zero.
+- **samegame's 95th percentile input-to-frame latency** (193 ms against 15.9) is the click
+  grid's phase, not lag. The first clicks hit no control, so their wait is for the logo's next
+  frame. Ljós starts 240 ms sooner than Qt, so 7 s later its logo is 1.07 s into the 3 s cycle,
+  inside the pause, with 433 ms of it left: its first two waits are 433 and 193 ms in every run
+  that lands there. Qt's land there in other runs (158–268 ms at its fourth click).
+- **The text cursor** between pixels is now drawn solid over both columns its 1 px rectangle
+  touches, as qml6 draws it. It was a grey blend. See `features/text-input/cursor-pixels.feature`.
+
+**What is left.** Driven, samegame changes 57.9 frames a second against Qt's 61.8, with the same
+95th percentile and slowest intervals. Activation on a seat without a keyboard has no runner to
+check it yet (`features/window/activation-without-keyboard.feature` stays `@blocked`).
