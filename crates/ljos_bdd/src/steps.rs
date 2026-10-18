@@ -2361,6 +2361,11 @@ fn inspected_property_value(w: &mut LjosWorld, name: String, text: String) -> St
     })
 }
 
+#[then(regex = r#"^the inspected property "([^"]+)" has the number (-?\d+)$"#)]
+fn inspected_property_number(w: &mut LjosWorld, name: String, n: i64) -> StepResult {
+    inspector_seen(w, |s| s.property_says(&name, "number", &Value::from(n)))
+}
+
 #[then(regex = r#"^the inspected property "([^"]+)" has a value that matches "(.*)"$"#)]
 fn inspected_property_value_matches(w: &mut LjosWorld, name: String, re: String) -> StepResult {
     inspector_seen(w, |s| s.property_matches(&name, &unquoted(&re)))

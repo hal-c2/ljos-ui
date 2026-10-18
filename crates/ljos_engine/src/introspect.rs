@@ -80,6 +80,9 @@ pub struct PropertyReport {
     pub ty: String,
     /// `None` when reading it failed.
     pub value: Option<Value>,
+    /// For an enum, the value as QML writes it: `Text.AlignHCenter`. See
+    /// [`MetaObject::key_text`](crate::meta::MetaObject::key_text).
+    pub key: Option<String>,
     pub provenance: Provenance,
     /// For a bound property whose binding was written in a file.
     pub tier: Option<BindingTier>,
@@ -166,6 +169,7 @@ impl Engine {
                 continue;
             }
             let value = self.untrack(|| self.try_read(obj, prop).ok());
+            let key = value.as_ref().and_then(|v| meta.key_text(&info.ty, v));
             let provenance = self.provenance(obj, prop).unwrap_or(Provenance::Default);
             let loc = self.binding_location(obj, prop);
             let (tier, expression) = match (&loc, self.is_bound(obj, prop)) {
@@ -176,6 +180,7 @@ impl Engine {
                 name: info.name.to_string(),
                 ty: info.ty.name(),
                 value,
+                key,
                 provenance,
                 tier,
                 written_at: loc.as_ref().map(SourcePlace::of),
@@ -185,6 +190,14 @@ impl Engine {
             });
         }
         out
+    }
+
+    /// `v`, a value of the property `prop` of `obj`, as QML writes it when
+    /// the property holds an enum: `Text.AlignHCenter`. See
+    /// [`MetaObject::key_text`](crate::meta::MetaObject::key_text).
+    pub fn key_text(&self, obj: ObjectId, prop: PropIndex, v: &Value) -> Option<String> {
+        let meta = self.meta_of(obj)?;
+        meta.key_text(&meta.property(prop)?.ty, v)
     }
 
     /// Where the JS that is running right now was written: the innermost

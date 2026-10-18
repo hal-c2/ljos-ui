@@ -296,3 +296,36 @@ fn an_enum_of_the_qt_namespace_is_named_with_qt_in_front() {
         Ok(Value::Int(5))
     );
 }
+
+#[test]
+fn a_value_is_written_as_the_key_it_is() {
+    let m = Tile::static_meta();
+    let key = |ty: TypeTag, n: i32| m.key_text(&ty, &Value::Int(n));
+    // The type that declares it names it, inherited or not.
+    assert_eq!(
+        key(TypeTag::Enum("Mode".into()), 4).as_deref(),
+        Some("Tile.Striped")
+    );
+    assert_eq!(
+        key(TypeTag::Enum("Corner".into()), 2).as_deref(),
+        Some("Shape.BottomLeft")
+    );
+    assert_eq!(key(TypeTag::Enum("Mode".into()), 3), None, "no key");
+    assert_eq!(key(TypeTag::Int, 4), None);
+    let buttons = || TypeTag::Flags("Qt.MouseButtons".into());
+    assert_eq!(key(buttons(), 1).as_deref(), Some("Qt.LeftButton"));
+    assert_eq!(
+        key(buttons(), 5).as_deref(),
+        Some("Qt.LeftButton | Qt.MiddleButton")
+    );
+    // Of two keys with one number, the first declared.
+    assert_eq!(key(buttons(), 8).as_deref(), Some("Qt.BackButton"));
+    assert_eq!(key(buttons(), 0).as_deref(), Some("Qt.NoButton"));
+    // A combination is no key of an enum that is not flags.
+    assert_eq!(key(TypeTag::Enum("Qt.MouseButtons".into()), 3), None);
+    let align = TypeTag::Flags("Qt.Alignment".into());
+    assert_eq!(
+        key(align, 0x81).as_deref(),
+        Some("Qt.AlignLeft | Qt.AlignVCenter")
+    );
+}

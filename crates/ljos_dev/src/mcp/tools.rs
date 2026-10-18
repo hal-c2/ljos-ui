@@ -610,8 +610,16 @@ impl Look<'_> {
                 Provenance::Host => "host",
             };
             let mut held = None;
+            // An enum is shown by its key, as it is written in QML, and its
+            // number is kept beside it.
+            let number = p.key.as_ref().and(p.value.as_ref()).and_then(|v| match v {
+                QmlValue::Int(i) => Some(*i),
+                QmlValue::Enum(e) => Some(e.value),
+                _ => None,
+            });
             let value = match &p.value {
                 None => Value::Null,
+                Some(_) if p.key.is_some() => json!(p.key),
                 Some(v) => {
                     let seen = super::values::shown(engine, v);
                     let text = seen.text;
@@ -630,6 +638,9 @@ impl Look<'_> {
             row.insert("name".into(), json!(p.name));
             row.insert("type".into(), json!(p.ty));
             row.insert("value".into(), value.clone());
+            if let Some(n) = number {
+                row.insert("number".into(), json!(n));
+            }
             row.insert("provenance".into(), json!(provenance));
             if let Some((handle, items)) = held {
                 if let Some(h) = handle {
@@ -651,7 +662,7 @@ impl Look<'_> {
                 row.insert("binding_kept".into(), json!(true));
             }
             let mut line = format!(
-                "  {}: {} = {}  ({provenance}",
+                "  {}: {} = {}",
                 p.name,
                 p.ty,
                 match &value {
@@ -659,6 +670,10 @@ impl Look<'_> {
                     _ => "(no value)",
                 }
             );
+            if let Some(n) = number {
+                let _ = write!(line, " ({n})");
+            }
+            let _ = write!(line, "  ({provenance}");
             if let Some(tier) = p.tier {
                 row.insert("tier".into(), json!(tier.as_str()));
                 let _ = write!(line, ", tier {}", tier.as_str());

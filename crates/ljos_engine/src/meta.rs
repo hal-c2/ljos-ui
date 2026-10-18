@@ -632,20 +632,75 @@ impl MetaObject {
         if let Some(of_qt) = name.strip_prefix("Qt.") {
             return format!("Qt::{of_qt}");
         }
+        match self.enum_owner(name) {
+            Some(owner) => format!("{owner}::{name}"),
+            None => name.to_owned(),
+        }
+    }
+
+    /// The type that declares the enum `name` of this type or of one of
+    /// its groups.
+    fn enum_owner(&self, name: &str) -> Option<&str> {
         let has = |m: &MetaObject| m.enums.iter().any(|e| e.name == name);
         // Enums are inherited, so the last type of the chain to have it is
         // where it was declared.
         if let Some(owner) = self.chain().filter(|m| has(m)).last() {
-            return format!("{}::{name}", owner.name);
+            return Some(&*owner.name);
         }
-        let of_group = self.properties.iter().find_map(|p| match p.access {
-            PropertyAccess::Group { meta, .. } if has(meta) => Some(meta),
+        self.properties.iter().find_map(|p| match p.access {
+            PropertyAccess::Group { meta, .. } if has(meta) => Some(&*meta.name),
             _ => None,
-        });
-        match of_group {
-            Some(group) => format!("{}::{name}", group.name),
-            None => name.to_owned(),
+        })
+    }
+
+    /// `v`, held by a property of this type declared with `ty`, as QML
+    /// writes it: `Text.AlignHCenter`, or for flags the keys it combines,
+    /// `Qt.LeftButton | Qt.RightButton`. `None` when `ty` is no enum, or
+    /// when no key, nor keys combined, make the number.
+    pub fn key_text(&self, ty: &TypeTag, v: &Value) -> Option<String> {
+        let (name, flags) = match ty {
+            TypeTag::Enum(name) => (name, false),
+            TypeTag::Flags(name) => (name, true),
+            _ => return None,
+        };
+        let n = match v {
+            Value::Int(i) => *i,
+            Value::Enum(e) => e.value,
+            _ => return None,
+        };
+        let (owner, keys): (&str, Vec<(&str, i64)>) = match name.strip_prefix("Qt.") {
+            Some(of_qt) => {
+                let found = crate::qt_enums::qt_enum(of_qt)?;
+                ("Qt", found.keys.to_vec())
+            }
+            None => {
+                let found = self.held_enumeration(name)?;
+                let keys = found.keys.iter().map(|(k, n)| (&**k, *n)).collect();
+                (self.enum_owner(name)?, keys)
+            }
+        };
+        // Keys are 32-bit in QML; a Qt key with the top bit set is kept
+        // negative.
+        let bits = |n: i64| n as i32 as u32;
+        // Of two keys with one number (`BackButton`, `XButton1`) the one
+        // declared first is the name.
+        if let Some((key, _)) = keys.iter().find(|(_, k)| bits(*k) == n as u32) {
+            return Some(format!("{owner}.{key}"));
         }
+        if !flags || n == 0 {
+            return None;
+        }
+        let want = n as u32;
+        let mut have = 0u32;
+        let mut parts = Vec::new();
+        for (key, k) in &keys {
+            let k = bits(*k);
+            if k != 0 && k & want == k && k & have == 0 {
+                have |= k;
+                parts.push(format!("{owner}.{key}"));
+            }
+        }
+        (have == want).then(|| parts.join(" | "))
     }
 }
 

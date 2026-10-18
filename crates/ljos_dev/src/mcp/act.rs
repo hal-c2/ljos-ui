@@ -15,7 +15,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use ljos_engine::{
-    Engine, EngineError, ObjectId, OverrideContent, PropIndex, RestoreMode, Value as QmlValue,
+    Engine, EngineError, ObjectId, OverrideContent, PropIndex, RestoreMode, TypeTag,
+    Value as QmlValue,
 };
 use ljos_mcp_core::{ErrorCode, RefTable, SurfaceError, ToolReply, delta};
 use ljos_quick::keys::key;
@@ -216,6 +217,35 @@ fn engine_error(what: &str, e: EngineError) -> SurfaceError {
 }
 
 // ----- values ----------------------------------------------------------------
+
+/// Text given for a property that holds an enum, as an agent reads it back:
+/// `Text.AlignRight`, `AlignRight`, `Qt.LeftButton | Qt.RightButton`, or a
+/// number. The engine takes a key without its type, as a QML string
+/// assignment does, so the type in front is dropped here, and a number
+/// written as text is the number.
+fn enum_input(engine: &Engine, obj: ObjectId, prop: PropIndex, v: QmlValue) -> QmlValue {
+    let QmlValue::String(text) = &v else {
+        return v;
+    };
+    let is_enum = engine.meta_of(obj).is_some_and(|m| {
+        m.property(prop)
+            .is_some_and(|p| matches!(p.ty, TypeTag::Enum(_) | TypeTag::Flags(_)))
+    });
+    if !is_enum {
+        return v;
+    }
+    if let Ok(n) = text.trim().parse::<i32>() {
+        return QmlValue::Int(n);
+    }
+    let keys: Vec<&str> = text
+        .split('|')
+        .map(|part| {
+            let part = part.trim();
+            part.rsplit_once('.').map_or(part, |(_, key)| key)
+        })
+        .collect();
+    QmlValue::string(keys.join("|").as_str())
+}
 
 /// A JSON value as the engine holds one: a whole number that fits is an
 /// `int`, an array a list, and an object made by JS so that it is one.
@@ -803,7 +833,12 @@ impl Hands<'_> {
         }
         let value = match &a.binding {
             Some(_) => QmlValue::Undefined,
-            None => to_qml(engine, a.value.as_ref().unwrap_or(&Value::Null))?,
+            None => enum_input(
+                engine,
+                obj,
+                prop,
+                to_qml(engine, a.value.as_ref().unwrap_or(&Value::Null))?,
+            ),
         };
         let previous = engine.read_by_name(obj, &a.property);
         let earlier = self.edits.take(obj, &a.property);
@@ -879,7 +914,11 @@ impl Hands<'_> {
             (true, None) => format!("covered the binding of `{}` of `{}`", a.property, a.target),
             (false, None) => format!("assigned `{}` of `{}`", a.property, a.target),
         };
-        Ok(Done::new(done)
+        let mut done = Done::new(done);
+        if let Some(key) = engine.key_text(obj, prop, &now).filter(|_| !hidden) {
+            done = done.with("key", json!(key));
+        }
+        Ok(done
             .with("property", json!(a.property))
             .with("value", show(&now))
             .with("previous", show(&previous))

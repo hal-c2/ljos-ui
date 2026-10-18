@@ -65,6 +65,8 @@ struct Event {
     name: String,
     /// The new value of a change, the arguments of a signal.
     values: Vec<Value>,
+    /// The new value of an enum as QML writes it: `Text.AlignRight`.
+    key: Option<String>,
 }
 
 /// What was written down, shared by every sink the inspector made.
@@ -108,6 +110,7 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
             return;
         };
         let meta = engine.meta_of(obj);
+        let mut key = None;
         let (kind, name, values): (_, String, Vec<Value>) = match what {
             Traced::Signal { signal, args } => (
                 "signal",
@@ -118,13 +121,16 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
                     .map(|a| super::act::to_json(engine, a, 0))
                     .collect(),
             ),
-            Traced::Change { prop, value } => (
-                "change",
-                meta.as_ref()
-                    .and_then(|m| m.property(prop))
-                    .map_or_else(|| format!("#{}", prop.0), |p| p.name.to_string()),
-                vec![super::act::to_json(engine, value, 0)],
-            ),
+            Traced::Change { prop, value } => {
+                key = engine.key_text(obj, prop, value);
+                (
+                    "change",
+                    meta.as_ref()
+                        .and_then(|m| m.property(prop))
+                        .map_or_else(|| format!("#{}", prop.0), |p| p.name.to_string()),
+                    vec![super::act::to_json(engine, value, 0)],
+                )
+            }
             Traced::Destroyed => ("destroyed", String::new(), Vec::new()),
         };
         let mut log = log.borrow_mut();
@@ -145,6 +151,7 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
             kind,
             name,
             values,
+            key: key.filter(|_| !masked),
         };
         log.push(event);
     })
@@ -223,10 +230,17 @@ pub(crate) fn trace(
                 "change" => {
                     v["name"] = json!(e.name);
                     v["value"] = e.values.first().cloned().unwrap_or(Value::Null);
+                    let shown = match &e.key {
+                        Some(key) => {
+                            v["key"] = json!(key);
+                            format!("{key} ({})", v["value"])
+                        }
+                        None => v["value"].to_string(),
+                    };
                     let _ = writeln!(
                         text,
-                        "{:>4} {ms:>10.1} ms  {} .{} = {}",
-                        e.seq, e.label, e.name, v["value"]
+                        "{:>4} {ms:>10.1} ms  {} .{} = {shown}",
+                        e.seq, e.label, e.name
                     );
                 }
                 "signal" => {
