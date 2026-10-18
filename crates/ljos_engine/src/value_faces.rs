@@ -231,22 +231,53 @@ pub(crate) const FACES: &str = r##"
     return trim(v.toFixed(5 - exp));
   };
 
-  // One object per distinct value that something still holds.
+  // One object per distinct value that something still holds, found by
+  // its fields one after another in maps of maps. A number is its own key:
+  // writing it out to look it up cost more than the rest of making a
+  // point. A map a font holds is keyed by what it holds: two fonts with
+  // the same features are one value, and two with different ones are two.
+  const keyOf = (v) => (typeof v === "object" && v !== null ? JSON.stringify(v) : v);
   const interned = (build) => {
     const live = new Map();
+    let size = 0;
     let sweepAt = 256;
+    // Drops what nothing holds any more; how many are left.
+    const sweep = (level, depth) => {
+      let left = 0;
+      for (const [k, v] of level) {
+        const n = depth === 0 ? (v.deref() === undefined ? 0 : 1) : sweep(v, depth - 1);
+        if (n === 0) level.delete(k);
+        left += n;
+      }
+      return left;
+    };
     return (vals) => {
-      const key = vals.join("\u0000");
-      const ref = live.get(key);
+      const last = vals.length - 1;
+      let level = live;
+      for (let i = 0; i < last; ++i) {
+        const v = vals[i];
+        const key = typeof v === "object" ? keyOf(v) : v;
+        let next = level.get(key);
+        if (next === undefined) {
+          next = new Map();
+          level.set(key, next);
+        }
+        level = next;
+      }
+      const v = vals[last];
+      const key = typeof v === "object" ? keyOf(v) : v;
+      const ref = level.get(key);
       if (ref !== undefined) {
         const known = ref.deref();
         if (known !== undefined) return known;
+      } else {
+        size += 1;
       }
       const made = Object.freeze(build(vals));
-      live.set(key, new WeakRef(made));
-      if (live.size >= sweepAt) {
-        for (const [k, w] of live) if (w.deref() === undefined) live.delete(k);
-        sweepAt = Math.max(256, live.size * 2);
+      level.set(key, new WeakRef(made));
+      if (size >= sweepAt) {
+        size = sweep(live, last);
+        sweepAt = Math.max(256, size * 2);
       }
       return made;
     };
@@ -257,12 +288,19 @@ pub(crate) const FACES: &str = r##"
   // Qt lists them.
   const kind = (fields, read, fill, text) => {
     const proto = {};
-    const intern = interned((vals) => {
-      const o = Object.create(proto);
-      fill(o, vals);
-      return o;
-    });
-    const make = (...vals) => intern(fields.map((_, i) => read[i](vals[i])));
+    // Made by `new`, every value of a kind shares one shape, which
+    // `Object.create` and a fill do not give.
+    function Made(vals) { fill(this, vals); }
+    Made.prototype = proto;
+    const intern = interned((vals) => new Made(vals));
+    // From a list or `arguments`: spreading them costs as much as the
+    // rest of making a point.
+    const of = (vals) => {
+      const got = [];
+      for (let i = 0; i < fields.length; ++i) got.push(read[i](vals[i]));
+      return intern(got);
+    };
+    const make = (...vals) => of(vals);
     hide(proto, "toString", function toString() { return text(this); });
     // This value with one member changed; `undefined` when it has no such
     // member to write, which a script cannot tell from a write that worked.
@@ -271,16 +309,18 @@ pub(crate) const FACES: &str = r##"
       if (i < 0) return undefined;
       const vals = fields.map((f) => this[f]);
       vals[i] = value;
-      return make(...vals);
+      return of(vals);
     });
-    return { make, proto, fields };
+    return { make, of, proto, fields };
   };
 
   // Adding zero makes the one zero there is of the two JS has: they print
   // alike and would otherwise be two values that look the same.
   const double = (v) => Number(v) + 0;
   const single = (v) => f32(Number(v)) + 0;
-  const plain = (fields) => (o, vals) => { fields.forEach((f, i) => { o[f] = vals[i]; }); };
+  const plain = (fields) => (o, vals) => {
+    for (let i = 0; i < fields.length; ++i) o[fields[i]] = vals[i];
+  };
   const named = (name, fields) => (o) => name + "(" + fields.map((f) => g6(o[f])).join(", ") + ")";
   const numeric = (name, fields, read) =>
     kind(fields, fields.map(() => read), plain(fields), named(name, fields));
@@ -493,7 +533,7 @@ pub(crate) const FACES: &str = r##"
     return function () {
       if (arguments.length < n) throw new Error("Insufficient arguments");
       if (arguments.length > n) throw new Error("Too many arguments");
-      return face.make(...arguments);
+      return face.of(arguments);
     };
   };
 

@@ -37,15 +37,16 @@ Feature: Value types in JavaScript
       And the property "found" of "root" is 1
 
       Examples:
-        | type       | made                         | different                    |
-        | point      | Qt.point(1, 2)               | Qt.point(1, 3)               |
-        | size       | Qt.size(3, 4)                | Qt.size(4, 4)                |
-        | rect       | Qt.rect(1, 2, 3, 4)          | Qt.rect(1, 2, 3, 5)          |
-        | vector2d   | Qt.vector2d(1, 2)            | Qt.vector2d(2, 2)            |
-        | vector3d   | Qt.vector3d(1, 2, 3)         | Qt.vector3d(1, 2, 4)         |
-        | vector4d   | Qt.vector4d(1, 2, 3, 4)      | Qt.vector4d(0, 2, 3, 4)      |
-        | quaternion | Qt.quaternion(1, 2, 3, 4)    | Qt.quaternion(1, 2, 3, 5)    |
-        | font       | Qt.font({ family: "Arial" }) | Qt.font({ family: "Times" }) |
+        | type               | made                                                  | different                                             |
+        | point              | Qt.point(1, 2)                                        | Qt.point(1, 3)                                        |
+        | size               | Qt.size(3, 4)                                         | Qt.size(4, 4)                                         |
+        | rect               | Qt.rect(1, 2, 3, 4)                                   | Qt.rect(1, 2, 3, 5)                                   |
+        | vector2d           | Qt.vector2d(1, 2)                                     | Qt.vector2d(2, 2)                                     |
+        | vector3d           | Qt.vector3d(1, 2, 3)                                  | Qt.vector3d(1, 2, 4)                                  |
+        | vector4d           | Qt.vector4d(1, 2, 3, 4)                               | Qt.vector4d(0, 2, 3, 4)                               |
+        | quaternion         | Qt.quaternion(1, 2, 3, 4)                             | Qt.quaternion(1, 2, 3, 5)                             |
+        | font               | Qt.font({ family: "Arial" })                          | Qt.font({ family: "Times" })                          |
+        | font with features | Qt.font({ family: "Arial", features: { "liga": 0 } }) | Qt.font({ family: "Arial", features: { "kern": 0 } }) |
 
     Scenario: A value read from a property is equal to one made the same way
       Given the QML:
