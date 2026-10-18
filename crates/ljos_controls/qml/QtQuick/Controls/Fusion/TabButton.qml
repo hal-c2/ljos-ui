@@ -31,8 +31,9 @@ T.TabButton {
         }
     }
 
-    // DECISION: the shading of a tab is Ljós's own; Qt reports only its
-    // frame. The current one is lighter at the top, like a raised button.
+    // DECISION: the shades are fitted to what qml6 shows for the default
+    // palette. The current tab is light; the others are darker, more so
+    // towards the bottom.
     background: Component {
         Rectangle {
             y: control.checked ? 0 : 2
@@ -42,13 +43,18 @@ T.TabButton {
             gradient: Gradient {
                 GradientStop {
                     position: 0
-                    color: control.checked ? Qt.lighter(control.palette.window, 1.1)
-                                           : Qt.darker(control.palette.window, 1.02)
+                    color: control.checked ? Qt.lighter(control.palette.window, 1.05)
+                                           : Qt.darker(control.palette.window, 1.07)
+                }
+                GradientStop {
+                    position: control.checked ? 0 : 0.85
+                    color: control.checked ? Qt.lighter(control.palette.window, 1.05)
+                                           : Qt.darker(control.palette.window, 1.07)
                 }
                 GradientStop {
                     position: 1
-                    color: control.checked ? control.palette.window
-                                           : Qt.darker(control.palette.window, control.down ? 1.1 : 1.05)
+                    color: control.checked ? Qt.lighter(control.palette.window, 1.01)
+                                           : Qt.darker(control.palette.window, 1.15)
                 }
             }
         }

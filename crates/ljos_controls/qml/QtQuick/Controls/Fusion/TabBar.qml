@@ -34,10 +34,17 @@ T.TabBar {
         }
     }
 
-    // The tabs are what is drawn; behind them is nothing.
+    // The tabs stand on a line along the bottom of the bar.
     background: Component {
         Item {
             implicitHeight: 21
+
+            Rectangle {
+                y: parent.height - 1
+                width: parent.width
+                height: 1
+                color: Qt.darker(control.palette.window, 1.4)
+            }
         }
     }
 }
