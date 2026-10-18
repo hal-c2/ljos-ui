@@ -119,10 +119,12 @@ enum Kind<V> {
     /// The closure is `None` only while it runs.
     Effect(Option<EffectFn<V>>),
     /// [`Graph::effect_told`]: `run` as an effect's closure, `told` for
-    /// a change once it has run.
+    /// a change once it has run. `due` while it waits in `Inner::told`;
+    /// kept here, where the kind has room, so a node is no wider.
     Told {
         run: Option<EffectFn<V>>,
         told: Rc<dyn Fn()>,
+        due: bool,
     },
 }
 
@@ -145,8 +147,6 @@ struct Node<V> {
     queued_level: u32,
     /// Parked on a frozen scope until thaw.
     deferred: bool,
-    /// A [`Kind::Told`] waiting in `Inner::told`.
-    told_due: bool,
     /// On the current check-walk stack; meeting it again is a cycle.
     walking: bool,
     /// Read itself in the run that is in progress.
@@ -880,6 +880,7 @@ impl<V: Clone + 'static> Graph<V> {
                 Kind::Told {
                     run: Some(Box::new(run)),
                     told: Rc::new(told),
+                    due: false,
                 },
                 None,
                 NodeState::Dirty,
@@ -1901,9 +1902,11 @@ impl<V: Clone + 'static> Graph<V> {
                 let Some(node) = i.nodes.get_mut(n) else {
                     continue;
                 };
-                node.told_due = false;
-                match &node.kind {
-                    Kind::Told { told, .. } => Rc::clone(told),
+                match &mut node.kind {
+                    Kind::Told { told, due, .. } => {
+                        *due = false;
+                        Rc::clone(told)
+                    }
                     _ => continue,
                 }
             };
@@ -2375,7 +2378,6 @@ impl<V: Clone + 'static> Inner<V> {
             queued: false,
             queued_level: 0,
             deferred: false,
-            told_due: false,
             walking: false,
             self_read: false,
             cyclic: false,
@@ -2671,7 +2673,7 @@ impl<V: Clone + 'static> Inner<V> {
                 }
                 continue;
             }
-            if let Kind::Told { .. } = node.kind
+            if let Kind::Told { due, .. } = &mut node.kind
                 && node.state == NodeState::Clean
                 && node.done_stamp != 0
                 && from_stamp != ALWAYS_STALE
@@ -2682,7 +2684,7 @@ impl<V: Clone + 'static> Inner<V> {
                 // A binding's result comes after the mark that made it
                 // dirty, which told it already: the owner reading it is
                 // what brought the result.
-                if self.wave_origin.is_none() && !std::mem::replace(&mut node.told_due, true) {
+                if self.wave_origin.is_none() && !std::mem::replace(due, true) {
                     self.told.push(m);
                 }
                 continue;
