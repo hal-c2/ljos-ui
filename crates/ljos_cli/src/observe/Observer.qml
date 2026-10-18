@@ -2521,6 +2521,16 @@ ApplicationWindow {
                         window.ask("app_trace", a, "trace")
                     }
 
+                    // Traced again, with or without its bindings: what was
+                    // written down stays.
+                    function follow(handle, bindings) {
+                        var a = args()
+                        a.target = handle
+                        a.bindings = bindings
+                        a.holder = window.holder
+                        window.ask("app_trace", a, "trace")
+                    }
+
                     function add(s) {
                         tracing = s.tracing
                         dropped = s.dropped
@@ -2545,22 +2555,31 @@ ApplicationWindow {
                         function said(v) {
                             return typeof v === "string" ? JSON.stringify(v) : window.shown(v)
                         }
+                        // A binding says what woke it and what it cost;
+                        // one that gave what it had ran for nothing.
+                        function woke(e) {
+                            var by = e.cause.map(function(c) { return c.object + "." + c.property })
+                            return "← " + (by.length > 0 ? by.join(", ") : "?") + "  ·  " + e.us + " µs"
+                                   + (e.same ? "  ·  gave the value it had" : "")
+                        }
                         var what = e.kind === "change" ? (e.key ? e.key + " (" + e.value + ")" : said(e.value))
                                  : e.kind === "signal" ? "(" + e.args.map(said).join(", ") + ")"
+                                 : e.kind === "binding" ? woke(e)
                                  : ""
                         traceLines.append({
                             seq: e.seq,
                             at: (e.at_us / 1000000).toFixed(3) + " s",
                             object: e.object,
-                            kind: e.kind,
+                            kind: e.kind === "binding" && e.same ? "same value" : e.kind,
                             name: e.name || "",
                             what: what
                         })
                     }
 
                     function tone(kind) {
-                        return kind === "destroyed" ? theme.bad
-                             : kind === "signal" ? theme.warn : theme.accent
+                        return kind === "destroyed" || kind === "same value" ? theme.bad
+                             : kind === "signal" ? theme.warn
+                             : kind === "binding" ? theme.violet : theme.accent
                     }
 
                     ListModel { id: traceLines }
@@ -2600,7 +2619,8 @@ ApplicationWindow {
                         spacing: 6
                         Text {
                             visible: trace.tracing.length === 0
-                            text: "Nothing is traced. Pick an object on the Objects page and press Trace."
+                            text: "Nothing is traced. Pick an object on the Objects page and press Trace; "
+                                  + "a traced object's bindings are followed with + bindings."
                             color: theme.subtle
                         }
                         Repeater {
@@ -2622,6 +2642,24 @@ ApplicationWindow {
                                         text: chip.modelData.name
                                         color: theme.accent
                                         font.pixelSize: 12
+                                    }
+                                    // Its bindings' runs: what woke each,
+                                    // what it cost, whether it was for
+                                    // nothing. Off, they cost nothing.
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: chip.modelData.bindings ? "− bindings" : "+ bindings"
+                                        color: chip.modelData.bindings ? theme.violet : theme.subtle
+                                        font.pixelSize: 12
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            anchors.margins: -4
+                                            Accessible.role: Accessible.Button
+                                            Accessible.name: (chip.modelData.bindings ? "Stop following the bindings of "
+                                                                                      : "Follow the bindings of ")
+                                                             + chip.modelData.name
+                                            onClicked: trace.follow(chip.modelData.handle, !chip.modelData.bindings)
+                                        }
                                     }
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
