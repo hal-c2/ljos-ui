@@ -10,7 +10,7 @@ use std::sync::Arc;
 use common::*;
 use ljos_engine::{ObjectId, Value};
 use ljos_quick::QuickScene;
-use ljos_render::{DrawOp, ImageHandle, ShaderOp};
+use ljos_render::{DrawOp, ImageHandle};
 
 fn ops(s: &QuickScene, item: ObjectId) -> Vec<DrawOp> {
     s.node_of(item)
@@ -32,7 +32,8 @@ fn painted(s: &QuickScene, item: ObjectId) -> ImageHandle {
 }
 
 /// The program `item` runs.
-fn shader(s: &QuickScene, item: ObjectId) -> Arc<ShaderOp> {
+#[cfg(feature = "shader-compile")]
+fn shader(s: &QuickScene, item: ObjectId) -> Arc<ljos_render::ShaderOp> {
     ops(s, item)
         .into_iter()
         .find_map(|op| match op {
@@ -138,6 +139,8 @@ fn the_picture_is_taken_in_device_pixels() {
     assert_eq!((p.width(), p.height()), (10, 10));
 }
 
+// It compiles its own GLSL, which a build without `shader-compile` cannot.
+#[cfg(feature = "shader-compile")]
 #[test]
 fn a_custom_shader_is_told_how_to_sample_the_picture() {
     let dir = std::env::temp_dir().join(format!("ljos-shader-source-{}", std::process::id()));
