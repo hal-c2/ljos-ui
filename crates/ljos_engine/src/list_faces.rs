@@ -19,9 +19,10 @@
 //! `children[i]` costs a copy of an array, not a wrapper for every entry.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 
 use ljos_js::rquickjs;
 use ljos_js::{HostError, HostFn, JsRef, JsValue, Scope};
@@ -39,13 +40,13 @@ use crate::value::Value;
 /// The faces given out, by property and by the reference a script holds.
 #[derive(Default)]
 pub(crate) struct ListFaces {
-    by_prop: RefCell<HashMap<(ObjectId, PropIndex), Face>>,
+    by_prop: RefCell<FxHashMap<(ObjectId, PropIndex), Face>>,
     /// [`JsRef::id`] of a face to its property. The table above holds the
     /// reference, so the id stays that face's.
-    by_ref: RefCell<HashMap<u64, (ObjectId, PropIndex)>>,
+    by_ref: RefCell<FxHashMap<u64, (ObjectId, PropIndex)>>,
     /// The array last made of a native list of objects, by property, with
     /// the list it was made of. Held, not only compared, as in [`Face`].
-    natives: RefCell<HashMap<(ObjectId, PropIndex), (Value, JsRef)>>,
+    natives: RefCell<FxHashMap<(ObjectId, PropIndex), (Value, JsRef)>>,
     /// How many arrays have been made into `natives`.
     native_builds: Cell<u64>,
 }
@@ -340,15 +341,7 @@ impl Engine {
         let Value::List(items) = list else {
             return None;
         };
-        // An entry that is not an object may be made a JS object of its
-        // own, which a copy would share.
-        if items.is_empty()
-            || !items
-                .iter()
-                .all(|i| matches!(i, Value::Object(_) | Value::Null))
-        {
-            return None;
-        }
+        // A list kept is one whose entries were all looked at when it was.
         let kept = js
             .lists
             .natives
@@ -358,6 +351,16 @@ impl Engine {
                 Value::List(a) if Arc::ptr_eq(a, items) => Some(r.clone()),
                 _ => None,
             });
+        // An entry that is not an object may be made a JS object of its
+        // own, which a copy would share.
+        if kept.is_none()
+            && (items.is_empty()
+                || !items
+                    .iter()
+                    .all(|i| matches!(i, Value::Object(_) | Value::Null)))
+        {
+            return None;
+        }
         Some((|| {
             let array = match kept {
                 Some(r) => r,
