@@ -1044,3 +1044,47 @@ included. "Before" is d02fb90. samegame's boards are random, so it is given for 
   drawn. The areas stay 64 × 64.
 - The load average was 69–81 during the GPU runs and 12–20 during the llvmpipe ones. Callgrind
   counts instructions, so the figures do not follow it.
+
+### The first frame of a single large picture (2026-10-18)
+
+Two files show one 4032 × 3024 picture (smooth gradients with noise, generated with seed 16)
+with `anchors.fill` and `PreserveAspectFit` in a 1024 × 768 window: `big-jpg` a 4.3 MB baseline
+JPEG (quality 90) and `big-png` a 28 MB PNG. photosurface is as above, without a folder until its
+slides end. The profile is `desktop` with `--repeat 5 --settle 1 --idle 1 --load 1`; each cell is
+the median of 5 runs. The build is release (lto thin) on dc94ab4, with and without the wait. Qt is
+6.11.2. The machine's load average was 9 to 30, from other work, while they ran.
+
+| App | Ljós before | Ljós after | Qt |
+|---|---:|---:|---:|
+| big-jpg first frame (ms) | 197 | 250 | 293 |
+| big-png first frame (ms) | 187 | 289 | 584 |
+| photosurface first frame (ms) | 265 | 257 | 311 |
+| big-jpg CPU to first frame (ms) | 166 | 265 | 261 |
+| big-png CPU to first frame (ms) | 167 | 287 | 432 |
+| big-jpg peak while starting (MiB) | 70.2 | 76.5 | 199 |
+| big-png peak while starting (MiB) | 74.7 | 84.5 | 200 |
+| Settled, each (MiB, cgroup) | 71 | 70 | 202 |
+
+Before, the first frame came without the picture and the picture a frame or so later. After, the
+first frame has it, as Qt's has. The window waited 47 ms for the JPEG and 55 ms for the PNG in a
+run with a log. photosurface asks for no large picture before its first frame and does not change.
+
+- **The frame waits for the decodes it started.** The shell lays the scene out, asks for the
+  large local pictures that wait for that, and waits for their decodes, at most 150 ms for the
+  first frame and 50 ms for a later one. It sleeps on the store's condition variable, which each
+  result wakes. `features/items/image-decoded-aside.feature` ("The first frame waits a moment
+  for a large picture") and a test in `ljos_quick/tests/image.rs`.
+- **Asked for once laid out.** A first try asked for the pixels when the source was set, before
+  the item had its size or the scene had told the store its view. That decoded the whole picture
+  for a moment, and the peak while starting rose to 120 MiB (JPEG) and 143 MiB (PNG). Asked for
+  once laid out, the JPEG is decoded smaller by `jpeg-decoder`.
+
+**DECISIONs.**
+- 150 ms for the first frame: about three times what one 12 MPx picture takes here. A window
+  whose pictures take longer opens without them, as before, and does not wait for them all.
+- 50 ms for a later frame, the first after a source is set: the window is up and answers, so
+  it waits less. Only decodes started since the last painted pass are waited for, so a folder of
+  pictures holds up one frame, not every one.
+- Only a large local picture loaded on the spot in Qt (no `asynchronous`, no `sourceSize`) is
+  waited for. An `asynchronous` or network picture comes later in Qt too.
+
