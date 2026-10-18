@@ -708,3 +708,42 @@ ListView {
     assert_eq!(num(&e, root, "contentY"), 13.0 * 20.0 - 100.0);
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
+
+#[test]
+fn going_where_the_view_already_is_lays_the_rows_out_once() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+ListView {
+  width: 200; height: 100
+  model: ListModel { id: m }
+  delegate: Item { objectName: "r" + index; width: 200; height: 20 }
+  function add() { m.append({ v: 1 }); positionViewAtEnd() }
+}
+"##,
+    );
+    let mut s = settled(&e, root);
+    let passes = |e: &Engine, f: &str| {
+        let before = view_layout_passes(e, root);
+        e.invoke_by_name(root, f, &[]).unwrap();
+        view_layout_passes(e, root) - before
+    };
+    e.invoke_by_name(root, "add", &[]).unwrap();
+    // Rows that do not fill the view: the end is where the view is. The
+    // model's change lays the new row out, and going to the end lays
+    // them out where the view stays, once.
+    let adds: Vec<u64> = (0..3).map(|_| passes(&e, "add")).collect();
+    let end = passes(&e, "positionViewAtEnd");
+    assert_eq!((adds, end), (vec![2; 3], 1));
+    assert_eq!(rows(&e, root).len(), 4);
+    // Rows that fill it, with the view at the end already.
+    for _ in 0..8 {
+        e.invoke_by_name(root, "add", &[]).unwrap();
+    }
+    settle(&mut s, &e, 1000);
+    assert_eq!(num(&e, root, "contentY"), 12.0 * 20.0 - 100.0);
+    assert_eq!(passes(&e, "positionViewAtEnd"), 1);
+    assert_eq!(num(&e, root, "contentY"), 12.0 * 20.0 - 100.0);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}

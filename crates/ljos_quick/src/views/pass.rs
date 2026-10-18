@@ -238,15 +238,8 @@ pub(crate) fn read_inputs(e: &Engine, view: ObjectId, st: &ViewState) {
 pub(crate) fn read_sizes(e: &Engine, view: ObjectId, st: &ViewState) {
     let g = e.untrack(|| read_geo(e, view, st));
     let size = size_prop(g.main);
-    let mut items: Vec<ObjectId> = Vec::new();
-    if !g.grid {
-        items.extend(st.placed.borrow().iter().map(|p| p.1));
-        items.extend(st.sections.borrow().values().map(|s| s.1));
-    }
-    for extra in [st.header.get(), st.footer.get()] {
-        items.extend(extra.map(|x| x.1));
-    }
-    for o in items {
+    let items = sized_items(st, g.grid);
+    for &o in &items {
         if e.is_alive(o) {
             let _ = e.read(o, size);
         }
@@ -256,6 +249,21 @@ pub(crate) fn read_sizes(e: &Engine, view: ObjectId, st: &ViewState) {
         let _ = e.read(c, Item::WIDTH.index);
         let _ = e.read(c, Item::HEIGHT.index);
     }
+    *st.sized.borrow_mut() = items;
+}
+
+/// The items whose lengths [`read_sizes`] reads, the current row last.
+pub(crate) fn sized_items(st: &ViewState, grid: bool) -> Vec<ObjectId> {
+    let mut items: Vec<ObjectId> = Vec::new();
+    if !grid {
+        items.extend(st.placed.borrow().iter().map(|p| p.1));
+        items.extend(st.sections.borrow().values().map(|s| s.1));
+    }
+    for extra in [st.header.get(), st.footer.get()] {
+        items.extend(extra.map(|x| x.1));
+    }
+    items.extend(st.current.get());
+    items
 }
 
 /// Makes an item of `component` that is the view's and not a row.

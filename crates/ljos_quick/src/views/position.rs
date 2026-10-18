@@ -64,22 +64,28 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
         return;
     };
     let mut moved = st.passes.get();
+    // Whether the rows were laid out where the view already was, as the
+    // layout effect last laid them out.
+    let mut stayed = false;
     e.untrack(|| {
         let g = pass::read_geo(e, view, &st);
         let dir = flickable::dir(g.main);
         let line = g.line_of(row);
-        let v0 = g.viewport(pass::rd(e, view, dir.position));
+        let p0 = pass::rd(e, view, dir.position);
+        let v0 = g.viewport(p0);
         let known = |measured: bool| {
             let slots = st.slots.borrow();
             let found = slots.iter().find(|s| s.line == line)?;
             (found.measured || !measured).then_some((found.pos, found.size))
         };
+        let mut guessed = false;
         let span = if g.grid {
             Some((line as f64 * g.cell_main, g.cell_main))
         } else {
             known(true)
         };
         let span = span.or_else(|| {
+            guessed = true;
             // The first row starts the content, wherever the view was;
             // another is where rows of the average length put it.
             let guess = if line == 0 {
@@ -99,11 +105,20 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
         let Some(to) = to.or(edge.map(|_| v0)) else {
             return;
         };
+        // Where the view goes if the content keeps its length: the rows
+        // are laid out for what it will show, not for a place past the
+        // ends of the content it cannot go to.
+        let place = |b: &flickable::AxisState| match edge {
+            Some(end) => edge_of(&g, (b.min, b.max), end),
+            None => g.content_position(to).clamp(b.min.min(b.max), b.max),
+        };
+        let b0 = flickable::bounds(e, view, g.main);
+        let lay_at = g.viewport(place(&b0));
         st.positioned.set(true);
         // Where it was told to go is where it stays.
         st.follow.set(false);
         st.laid.set(None);
-        pass::pass(e, view, &st, Some(to));
+        pass::pass(e, view, &st, Some(lay_at));
         moved = st.passes.get();
         let laid = st.laid.take();
         e.batch(|| {
@@ -112,18 +127,27 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
                 put(e, view, dir.content, Value::Real(length));
             }
             let b = flickable::bounds(e, view, g.main);
-            let at = match edge {
-                Some(end) => edge_of(&g, (b.min, b.max), end),
-                None => g.content_position(to).clamp(b.min.min(b.max), b.max),
-            };
+            let at = place(&b);
+            stayed = !guessed && at == p0 && g.viewport(at) == lay_at;
             st.bounds.set((b.min, b.max, 0.0));
             flickable::scroll_to(e, view, g.main, at);
         });
     });
     // What is shown now has its delegates when this returns. The layout
-    // effect has laid them out again if the view moved; if it did not,
-    // it is run for the delegates the pass made.
-    if state_of(e, view).is_none_or(|st| st.passes.get() == moved) {
+    // effect has laid them out again if the view moved. If it did not,
+    // it is run for the delegates the pass made, unless the pass laid
+    // out the same ones where the effect last did: it would do the same
+    // again.
+    let Some(st) = state_of(e, view) else {
+        return;
+    };
+    if st.passes.get() != moved {
+        return;
+    }
+    let same = stayed
+        && st.pending.borrow().is_none()
+        && *st.sized.borrow() == pass::sized_items(&st, st.grid.get());
+    if !same {
         pass::refresh(e, view);
     }
 }

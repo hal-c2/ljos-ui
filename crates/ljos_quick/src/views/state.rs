@@ -271,6 +271,9 @@ pub(crate) struct ViewState {
     pub follow: Cell<bool>,
     /// The view has been put at its beginning.
     pub positioned: Cell<bool>,
+    /// The items the layout effect read the lengths of when it last ran:
+    /// a pass that leaves the same ones needs no run of it to watch them.
+    pub sized: RefCell<Vec<ObjectId>>,
     /// What the view this one replaced at a reload knew about its current
     /// row, for the first pass to take instead of what the carried
     /// `currentIndex` would say.
@@ -377,6 +380,7 @@ impl Default for ViewState {
             current_span: Cell::new(None),
             follow: Cell::new(false),
             positioned: Cell::new(false),
+            sized: RefCell::default(),
             carried: Cell::new(None),
             carried_anchor: Cell::new(None),
             last_main: Cell::new(None),
