@@ -6,7 +6,8 @@
 //! the same every time. A [`NumberSlot`] keeps what that look found; a
 //! write through it does only what can change from one frame to the next,
 //! and says when the slot no longer fits, so the caller writes the generic
-//! way instead.
+//! way instead. A binding's value of such a property is stored through one
+//! as well.
 
 use std::any::TypeId;
 
@@ -15,7 +16,7 @@ use ljos_reactive::NodeId;
 use crate::engine::Engine;
 use crate::ids::{ObjectId, PropIndex};
 use crate::meta::{PropertyAccess, PropertyFlags, Setter};
-use crate::object::QmlObject;
+use crate::object::{ObjectHeader, QmlObject};
 use crate::types::TypeTag;
 use crate::value::Value;
 
@@ -114,20 +115,53 @@ impl Engine {
         };
         let mut store = self.inner.store.borrow_mut();
         if let Some(h) = store.objects.get_mut(slot.obj) {
-            match slot.field {
-                Field::Native { depth, set } => {
-                    if let Some(o) = nth_base(&mut *h.native, depth) {
-                        let _ = set(o, &cur);
-                    }
+            slot.store(h, &cur);
+        }
+        Ok(())
+    }
+
+    /// Stores a binding's value `v`, already the slot's own kind of number
+    /// ([`NumberSlot::number`]), in the field, as [`Engine::store_value`]
+    /// would. False, with nothing stored, when the slot does not fit any
+    /// more.
+    pub(crate) fn store_number(&self, slot: &NumberSlot, v: &Value) -> bool {
+        let mut store = self.inner.store.borrow_mut();
+        let Some(h) = store.objects.get_mut(slot.obj) else {
+            return false;
+        };
+        if h.node(slot.prop) != Some(slot.node) || h.makes_on_read(slot.prop) {
+            return false;
+        }
+        slot.store(h, v);
+        true
+    }
+}
+
+impl NumberSlot {
+    /// `v` as the property takes it when it is a number that coercing
+    /// would only widen; `None` for anything else, which the generic path
+    /// converts.
+    pub(crate) fn number(&self, v: &Value) -> Option<Value> {
+        match (self.int, v) {
+            (false, Value::Real(_)) | (true, Value::Int(_)) => Some(v.clone()),
+            (false, Value::Int(i)) => Some(Value::Real(f64::from(*i))),
+            _ => None,
+        }
+    }
+
+    fn store(&self, h: &mut ObjectHeader, v: &Value) {
+        match self.field {
+            Field::Native { depth, set } => {
+                if let Some(o) = nth_base(&mut *h.native, depth) {
+                    let _ = set(o, v);
                 }
-                Field::Dynamic(i) => {
-                    if let Some(s) = h.dynamic.get_mut(i as usize) {
-                        *s = cur;
-                    }
+            }
+            Field::Dynamic(i) => {
+                if let Some(s) = h.dynamic.get_mut(i as usize) {
+                    *s = v.clone();
                 }
             }
         }
-        Ok(())
     }
 }
 

@@ -2032,6 +2032,11 @@ impl Engine {
     ) -> impl FnMut(&Graph<Value>) -> Value + 'static {
         let weak = Rc::downgrade(&self.inner);
         let reset = self.reset_of(obj, prop);
+        // Where a number property's field is, found at the first run: a
+        // number it gives then goes straight into it, as an animation's
+        // steps do. It is looked for again whenever it stops fitting.
+        let mut slot: Option<crate::NumberSlot> = None;
+        let mut sought = false;
         move |_g| {
             let Some(inner) = weak.upgrade() else {
                 return last.clone();
@@ -2060,6 +2065,25 @@ impl Engine {
                 }
                 _ => v,
             };
+            if !sought {
+                sought = true;
+                slot = engine.number_slot(obj, prop);
+            }
+            // A number needs none of the conversions and has no filter.
+            if let Some(s) = slot
+                && let Some(n) = s.number(&v)
+            {
+                last = n;
+                if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
+                    return shown;
+                }
+                if !engine.store_number(&s, &last) {
+                    slot = None;
+                    sought = false;
+                    engine.store_value(obj, prop, &last);
+                }
+                return last.clone();
+            }
             let v = engine.for_slot(obj, prop, v);
             let coerced = {
                 let store = engine.inner.store.borrow();

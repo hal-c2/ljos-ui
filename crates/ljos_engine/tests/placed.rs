@@ -292,3 +292,43 @@ Item {
     assert_eq!(e.with::<Item, _>(child, |i| i.x).unwrap(), 7.5);
     assert_eq!(h.num(child, "x"), 7.5);
 }
+
+#[test]
+fn a_binding_s_numbers_go_into_the_native_field_as_the_generic_store_puts_them() {
+    let h = engine();
+    let e = &h.engine;
+    let root = h.load(
+        r#"import QtQuick
+Item {
+    property real r: 1.5
+    property int i: 2
+    property var label: "a"
+    Item { objectName: "child"; x: r * 2; y: i; width: r; height: label }
+}"#,
+    );
+    let child = h.find(root, "child");
+    // Bindings run when read; the field has a binding's value after that.
+    let field = |f: fn(&Item) -> f64| {
+        e.refresh_fields(child);
+        e.with::<Item, _>(child, f).unwrap()
+    };
+    assert_eq!(field(|c| c.x), 3.0);
+    // An int widens into a real field.
+    assert_eq!(h.get(child, "y"), Value::Real(2.0));
+    assert_eq!(field(|c| c.y), 2.0);
+    h.set(root, "r", Value::Real(4.0));
+    h.set(root, "i", Value::Int(-3));
+    assert_eq!(field(|c| c.x), 8.0);
+    assert_eq!(field(|c| c.y), -3.0);
+    assert_eq!(h.num(child, "width"), 4.0);
+    // What is not a number is converted the generic way, before and after.
+    h.set(root, "label", Value::String("7".into()));
+    assert_eq!(field(|c| c.height), 7.0);
+    h.set(root, "label", Value::Real(1.25));
+    assert_eq!(field(|c| c.height), 1.25);
+    // An interceptor still sees each value and keeps the field from it.
+    let seen = intercept(&h, child);
+    h.set(root, "r", Value::Real(6.0));
+    assert_eq!(field(|c| c.width), 4.0);
+    assert_eq!(seen.borrow().last().map(|s| s.0), Some(6.0));
+}
