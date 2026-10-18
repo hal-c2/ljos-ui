@@ -69,7 +69,12 @@ pub struct Item {
     /// Children and resources together, in the order they were added.
     /// Appending sorts: an `Item` becomes a visual child, anything else a
     /// resource, as Qt documents for the default property.
-    #[qml(notify, list, append = crate::tree::item_data_append)]
+    #[qml(
+        notify,
+        list,
+        append = crate::tree::item_data_append,
+        insert = crate::tree::item_data_insert
+    )]
     pub data: QmlList,
     #[qml(notify, list)]
     pub children: QmlList,

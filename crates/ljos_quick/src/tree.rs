@@ -26,6 +26,30 @@ pub(crate) fn item_data_append(cx: &Cx, child: ObjectId) -> Result<(), EngineErr
     }
 }
 
+/// The `Item.data` insert hook: [`item_data_append`], with `child` right
+/// before `anchor` in the lists it goes to, or at their end when `anchor`
+/// is not in them.
+pub(crate) fn item_data_insert(
+    cx: &Cx,
+    child: ObjectId,
+    anchor: ObjectId,
+) -> Result<(), EngineError> {
+    let e = cx.engine;
+    if is_item(e, child) {
+        crate::loader::note_child(e, cx.this, child);
+        set_parent_item_before(e, child, cx.this, anchor).map(drop)
+    } else {
+        e.batch(|| {
+            for p in [Item::RESOURCES.index, Item::DATA.index] {
+                if !e.list_insert_before(cx.this, p, child, anchor)? {
+                    push_unique(e, cx.this, p, child)?;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
 /// What QML's default property does with a declared child: appends it to
 /// `parent`'s `data`.
 pub fn add_data(engine: &Engine, parent: ObjectId, child: ObjectId) -> Result<(), EngineError> {

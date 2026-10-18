@@ -131,9 +131,9 @@ pub use loader::{ComponentSource, MapSource, encoded_url, file_url, url_path};
 pub use log::{LogEntry, LogLevel};
 pub use meta::{
     AttachedTypeId, CompleteThunk, Declared, EnumInfo, Getter, GroupGet, GroupGetMut, ImplInfo,
-    ListAppend, ListField, MetaBuilder, MetaObject, MetaRef, MethodDecl, MethodInfo, MethodThunk,
-    Prop, PropertyAccess, PropertyFlags, PropertyInfo, QmlImplInfo, Reset, ResetApply, ResetValue,
-    Setter, SignalDecl, SignalInfo, WriteFilter,
+    ListAppend, ListField, ListInsert, MetaBuilder, MetaObject, MetaRef, MethodDecl, MethodInfo,
+    MethodThunk, Prop, PropertyAccess, PropertyFlags, PropertyInfo, QmlImplInfo, Reset, ResetApply,
+    ResetValue, Setter, SignalDecl, SignalInfo, WriteFilter,
 };
 pub use model::{DelegateGone, DelegateMade, DelegateRows, DelegateSource, ObjectRows};
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};

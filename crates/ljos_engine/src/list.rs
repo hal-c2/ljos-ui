@@ -137,6 +137,54 @@ impl Engine {
         }
     }
 
+    /// Puts `item` right before `anchor` in the list property `prop` of
+    /// `obj`, through the property's insert hook if it has one, or at the
+    /// end when `anchor` is not in the list. `false`, and nothing done,
+    /// when the property's appends go through a hook that has no insert
+    /// hook beside it, or it is not a list.
+    pub fn list_insert(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        item: ObjectId,
+        anchor: ObjectId,
+    ) -> Result<bool, EngineError> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let hooks = {
+            let store = self.inner.store.borrow();
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
+            h.meta
+                .property(prop)
+                .filter(|p| p.is_list())
+                .map(|p| (p.list_append, p.list_insert))
+        };
+        match hooks {
+            Some((_, Some(f))) => f(&Cx::new(self, obj), item, anchor).map(|()| true),
+            Some((None, None)) => {
+                if !self.list_insert_before(obj, prop, item, anchor)? {
+                    self.list_push(obj, prop, item)?;
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Whether [`Engine::list_insert`] can put an item of the list property
+    /// `prop` of `obj` before another.
+    pub fn list_takes_insert(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let store = self.inner.store.borrow();
+        store
+            .objects
+            .get(obj)
+            .and_then(|h| h.meta.property(prop))
+            .is_some_and(|p| p.is_list() && (p.list_insert.is_some() || p.list_append.is_none()))
+    }
+
     /// Appends without the hook: what a hook calls to store the item in
     /// the list it routes to. The list is changed where it is, so the cost
     /// does not grow with its length.

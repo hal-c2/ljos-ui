@@ -143,6 +143,11 @@ pub type CompleteThunk = fn(&Cx<'_>) -> Result<(), EngineError>;
 /// Intercepts appends to a list property (`Item.data` sorts children into
 /// `children` and `resources`). `cx.this` is the list's object.
 pub type ListAppend = fn(&Cx<'_>, crate::ids::ObjectId) -> Result<(), EngineError>;
+/// Puts an item right before another (`anchor`) in a list property whose
+/// appends go through a [`ListAppend`], or at the end when `anchor` is not
+/// in the list. `cx.this` is the list's object.
+pub type ListInsert =
+    fn(&Cx<'_>, crate::ids::ObjectId, crate::ids::ObjectId) -> Result<(), EngineError>;
 /// Gets a native list field from the struct that declares it, to change it
 /// where it is: an append then costs the same however long the list is.
 pub type ListField = fn(&mut dyn QmlObject) -> &mut crate::list::QmlList;
@@ -255,6 +260,9 @@ pub struct PropertyInfo {
     pub access: PropertyAccess,
     /// For a list property, the hook appends go through.
     pub list_append: Option<ListAppend>,
+    /// For a list property with an append hook, the hook that puts an
+    /// item before another, if the type has one.
+    pub list_insert: Option<ListInsert>,
     /// For a native list property, the field itself.
     pub list_field: Option<ListField>,
     /// How `undefined` takes the property back, if it can be.
@@ -839,6 +847,7 @@ impl MetaBuilder {
             notify,
             access,
             list_append: None,
+            list_insert: None,
             list_field: None,
             reset: None,
             holds: None,
@@ -977,6 +986,15 @@ impl MetaBuilder {
     pub fn list_append(mut self, f: ListAppend) -> Self {
         if let Some(p) = self.last_property() {
             p.list_append = Some(f);
+        }
+        self
+    }
+
+    /// Routes inserts before an item of the property just added through
+    /// `f` ([`Engine::list_insert`](crate::Engine::list_insert)).
+    pub fn list_insert(mut self, f: ListInsert) -> Self {
+        if let Some(p) = self.last_property() {
+            p.list_insert = Some(f);
         }
         self
     }

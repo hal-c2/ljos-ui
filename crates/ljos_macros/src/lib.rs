@@ -38,7 +38,9 @@
 //! pointer and not for the group), `list` (a QML `list<T>` property, on a
 //! `QmlList` field), `append = path` (with `list`: a
 //! `fn(&Cx, ObjectId) -> Result<(), EngineError>` every append goes
-//! through), `skip`, `rename = "name"`, `enumeration = "Name"` (on an `i32`
+//! through), `insert = path` (with `append`: a
+//! `fn(&Cx, ObjectId, ObjectId) -> Result<(), EngineError>` that puts an
+//! item before another), `skip`, `rename = "name"`, `enumeration = "Name"` (on an `i32`
 //! field: the property holds a key of that enum of the type, one of those
 //! `enums` lists or an inherited one; QML may then give the key by name, and
 //! what is neither a key's name nor a number is refused; `"Qt.Name"` is an
@@ -274,6 +276,7 @@ struct FieldAttrs {
     lazy: bool,
     list: bool,
     append: Option<syn::Path>,
+    insert: Option<syn::Path>,
     skip: bool,
     rename: Option<String>,
     enumeration: Option<String>,
@@ -363,6 +366,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.list = true;
             } else if p.is_ident("append") {
                 f.append = Some(m.value()?.parse::<syn::Path>()?);
+            } else if p.is_ident("insert") {
+                f.insert = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("skip") {
                 f.skip = true;
             } else if p.is_ident("rename") {
@@ -387,7 +392,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, skip, rename, enumeration, flags, reset, object, holds, write",
+                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, skip, rename, enumeration, flags, reset, object, holds, write",
                 ));
             }
             Ok(())
@@ -510,6 +515,12 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             return Err(Error::new(
                 ident.span(),
                 "`append` needs `list`: only a list property has appends",
+            ));
+        }
+        if a.insert.is_some() && a.append.is_none() {
+            return Err(Error::new(
+                ident.span(),
+                "`insert` needs `append`: a list without an append hook is inserted into as it is",
             ));
         }
         let flags = quote!(#e::PropertyFlags::empty() #(.union(#flags))*);
@@ -638,6 +649,9 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         });
         if let Some(append) = &a.append {
             builder.push(quote!(.list_append(#append)));
+        }
+        if let Some(insert) = &a.insert {
+            builder.push(quote!(.list_insert(#insert)));
         }
         if let Some(holds) = &a.holds {
             builder.push(quote!(.holds(#holds)));
