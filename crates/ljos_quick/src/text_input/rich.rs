@@ -14,9 +14,10 @@
 //! ([`written_out`], made on read by `base::publish`); only while
 //! something observes `text` is it written out at each change.
 //!
-//! Paragraph margins, indents and list markers are laid out as a rich
-//! `Text` lays them out ([`edit_blocks`]). What is read-only here: tables
-//! are read as their cells' text and are not written back as tables. The
+//! Paragraph margins, indents, list markers and tables are laid out as a
+//! rich `Text` lays them out ([`edit_blocks`]); a table's rows stay its
+//! lines, so a row with a cell that wraps is left as plain lines. Tables
+//! are not written back as tables but as a paragraph per row. The
 //! background colours of a part of the text and of a paragraph are
 //! painted as a rich `Text` paints them, and a paragraph's is written back.
 
@@ -29,7 +30,7 @@ use ljos_text::rich::{
     BlockFormat, CharFormat, DocFont, HAlign, ImageFormat, OBJECT, ParseOptions, RichText,
     TextFormat, might_be_rich,
 };
-use ljos_text::{BUNDLED_FAMILY, EditBlock, utf16_to_byte};
+use ljos_text::{BUNDLED_FAMILY, EditBlock, EditTable, utf16_to_byte};
 
 use super::base::{SharedState, State, TextEditor};
 use super::edit::TextEdit;
@@ -682,19 +683,33 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
             && b.indent_right == 0.0
             && b.marker.is_none()
             && block_background(b).is_none()
+            && b.table.is_none()
     };
     if blocks.iter().all(|b| plain(b)) {
         return None;
     }
+    let mut row = 0;
     Some(
         blocks
             .iter()
-            .map(|b| EditBlock {
-                margin_top: f64::from(b.margin_top),
-                margin_bottom: f64::from(b.margin_bottom),
-                indent: f64::from(b.indent),
-                indent_right: f64::from(b.indent_right),
-                marker: b.marker.clone(),
+            .enumerate()
+            .map(|(i, b)| {
+                // The rows of one table share their format.
+                let same_table = i > 0 && Arc::ptr_eq(&blocks[i - 1], b);
+                row = if same_table { row + 1 } else { 0 };
+                EditBlock {
+                    margin_top: f64::from(b.margin_top),
+                    margin_bottom: f64::from(b.margin_bottom),
+                    indent: f64::from(b.indent),
+                    indent_right: f64::from(b.indent_right),
+                    marker: b.marker.clone(),
+                    table: b.table.map(|t| EditTable {
+                        row,
+                        border: f64::from(t.border),
+                        spacing: f64::from(t.spacing),
+                        padding: f64::from(t.padding),
+                    }),
+                }
             })
             .collect(),
     )

@@ -1,5 +1,6 @@
 //! What an editor paints: the backgrounds of rich text's paragraphs and
-//! parts, those a program highlighted stretches with, the selection behind the text, the text in the colours a program
+//! parts, those a program highlighted stretches with, the selection behind
+//! the text, the frames of tables, the text in the colours a program
 //! gave it with the selected part in its own colour, a line under what an
 //! input method is composing, and the cursor.
 //!
@@ -247,6 +248,12 @@ impl EditorPaint {
                 kurbo::Rect::new(x + r.x0, top + r.y0, x + r.x1, top + r.y1),
                 self.selection_color,
             );
+        }
+        // The frames of tables, in the text's colour as a rich `Text` draws
+        // them.
+        for (line, rule) in &layout.rules {
+            let shift = kurbo::Vec2::new(self.line_x(*line), top);
+            out.fill_rect(*rule + shift, self.color);
         }
         for (index, line) in layout.lines.iter().enumerate() {
             let x = self.line_x(index);

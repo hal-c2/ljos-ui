@@ -48,6 +48,7 @@ pub use doc::{
 };
 pub use editing::{
     BlockFormat, CharFormat, DocFont, ImageFormat, LINE_BREAK, OBJECT, PARAGRAPH, RichText,
+    TableFormat,
 };
 pub use select::SelectionScope;
 

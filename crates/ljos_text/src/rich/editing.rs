@@ -18,8 +18,9 @@
 //!
 //! The text is written back out the way Qt writes it: [`RichText::html`]
 //! as Qt's HTML document, [`RichText::markdown`] as its Markdown. Tables
-//! are read as their cells' text, a paragraph per row, and are not written
-//! back as tables.
+//! are read as their cells' text, a paragraph per row with its cells apart
+//! by tabs, with the [`TableFormat`] an editor lays them out by, and are not
+//! written back as tables.
 
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -86,6 +87,17 @@ pub struct BlockFormat {
     /// The colour behind the paragraph, as written.
     pub background: Option<Arc<str>>,
     pub align: Option<HAlign>,
+    /// The paragraph is a row of a table: its cells are set apart by tabs.
+    /// The rows of one table share their format.
+    pub table: Option<TableFormat>,
+}
+
+/// How the cells of a table stand apart (see [`super::Table`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TableFormat {
+    pub border: f32,
+    pub spacing: f32,
+    pub padding: f32,
 }
 
 impl Default for BlockFormat {
@@ -99,6 +111,7 @@ impl Default for BlockFormat {
             marker: None,
             background: None,
             align: None,
+            table: None,
         }
     }
 }
@@ -114,6 +127,11 @@ impl BlockFormat {
             marker: block.marker.clone(),
             background: block.background.clone(),
             align: block.align,
+            table: block.table.as_ref().map(|t| TableFormat {
+                border: t.border,
+                spacing: t.spacing,
+                padding: t.padding,
+            }),
         }
     }
 

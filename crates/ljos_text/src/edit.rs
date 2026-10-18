@@ -108,6 +108,24 @@ pub struct EditBlock {
     pub indent_right: f64,
     /// The bullet or number of a list item, drawn in the indent.
     pub marker: Option<std::sync::Arc<str>>,
+    /// The paragraph is a row of a table, its cells set apart by tabs.
+    pub table: Option<EditTable>,
+}
+
+/// How a row of a table stands among the others, as a rich `Text` sets
+/// its tables (`ljos_text::rich`): its cells in columns as wide as their
+/// widest text, apart by the spacing and each cell's frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EditTable {
+    /// Which row of its table the paragraph is; 0 starts a table.
+    pub row: usize,
+    /// Width of the frame around the table; any gives every cell a frame
+    /// of one pixel too.
+    pub border: f64,
+    /// Space between cells, and between them and the frame.
+    pub spacing: f64,
+    /// Space between a cell's frame and its text.
+    pub padding: f64,
 }
 
 /// Where a paragraph of an [`EditLayout`] laid out from [`EditBlock`]s is.
@@ -143,6 +161,10 @@ pub struct EditLayout {
     /// The paragraphs, when the text was laid out from [`EditBlock`]s;
     /// empty otherwise.
     pub blocks: Vec<PlacedBlock>,
+    /// The frames of tables, one pixel wide or the border's width: each
+    /// with the line whose left edge its x counts from (the table's first
+    /// row), y from the layout's top.
+    pub rules: Vec<(usize, Rect)>,
 }
 
 impl EditLayout {
