@@ -301,9 +301,7 @@ impl Engine {
                 }
             }
         }
-        // The instances objects are added to or removed from, in the order
-        // they were made: one used as the type of an object comes after
-        // the instance of that object.
+        // The instances objects are added to or removed from.
         let mut growing: Vec<(Rc<Instance>, usize)> = Vec::new();
         for inst in &instances {
             let Some(c) = changed.iter().position(|c| Rc::ptr_eq(&inst.file, &c.old)) else {
@@ -354,12 +352,13 @@ impl Engine {
 
         let mut memo: HashMap<*const Instance, Rc<Instance>> = HashMap::default();
         // Each instance is made again around the objects that stay, the
-        // ones used as types first, so that their users hold them.
+        // ones used as types and the ones a row is made in first, so that
+        // the instances that hold them hold the new ones.
         let mut grown: Vec<Grown> = Vec::new();
         let errors = self.open_creation();
         let mut failed = false;
-        for (inst, c) in growing.iter().rev() {
-            let c = &changed[*c];
+        for (inst, c) in grow_order(&growing) {
+            let c = &changed[c];
             let Some(file) = files.get(&Rc::as_ptr(&c.old)) else {
                 continue;
             };
@@ -656,9 +655,8 @@ impl Engine {
     }
 
     /// Whether objects can be added to `inst` and removed from it where it
-    /// stands: it is of the tree a reload tracks, and not made from a
-    /// `Component` written in a file (a view's rows, a `Loader`'s
-    /// `sourceComponent`), which are made again with all their kind.
+    /// stands: it is of the tree a reload tracks. A row of a view, or what
+    /// a `Loader` made from its `sourceComponent`, is tracked by itself.
     fn in_place_grows(
         &self,
         inst: &Rc<Instance>,
@@ -666,14 +664,8 @@ impl Engine {
         users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
     ) -> bool {
         let mut cur = inst.clone();
-        loop {
-            if cur.outer.is_some() {
-                return false;
-            }
-            match users.get(&Rc::as_ptr(&cur)) {
-                Some((user, _)) => cur = user.clone(),
-                None => break,
-            }
+        while let Some((user, _)) = users.get(&Rc::as_ptr(&cur)) {
+            cur = user.clone();
         }
         // One made from a file's address (a page a `StackView` pushed) is
         // made once, as a root is, and the next one is made from the file
@@ -724,7 +716,7 @@ impl Engine {
             file.clone(),
             old.comp,
             RootSpec::Existing(old.objects[0]),
-            old.outer.clone(),
+            old.outer.as_ref().map(|o| renew(o, files, memo)),
             old.context,
         );
         frame.given = m
@@ -1051,6 +1043,38 @@ impl Engine {
             found
         }
     }
+}
+
+/// `growing` in the order it is grown in: an instance after those it
+/// holds, by `inner` (one used as a type) or by `outer` (the instance a
+/// row is made in), however deep.
+fn grow_order(growing: &[(Rc<Instance>, usize)]) -> Vec<(&Rc<Instance>, usize)> {
+    fn visit<'a>(
+        inst: &Rc<Instance>,
+        at: &HashMap<*const Instance, (&'a Rc<Instance>, usize)>,
+        seen: &mut rustc_hash::FxHashSet<*const Instance>,
+        out: &mut Vec<(&'a Rc<Instance>, usize)>,
+    ) {
+        if !seen.insert(Rc::as_ptr(inst)) {
+            return;
+        }
+        for held in inst.outer.iter().chain(inst.inner.iter().flatten()) {
+            visit(held, at, seen, out);
+        }
+        if let Some(&g) = at.get(&Rc::as_ptr(inst)) {
+            out.push(g);
+        }
+    }
+    let at: HashMap<*const Instance, (&Rc<Instance>, usize)> = growing
+        .iter()
+        .map(|(i, c)| (Rc::as_ptr(i), (i, *c)))
+        .collect();
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut out = Vec::with_capacity(growing.len());
+    for (inst, _) in growing {
+        visit(inst, &at, &mut seen, &mut out);
+    }
+    out
 }
 
 /// `inst` with the files of `files` for theirs, and so its outer and

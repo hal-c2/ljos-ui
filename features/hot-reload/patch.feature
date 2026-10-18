@@ -907,8 +907,7 @@ Feature: What a reload changes
   Rule: A page a StackView pushed from a file has objects added where it stands
 
     The page is made once from its file, as a root is, so it grows in
-    place too. Pages made from a `Component` written in another file, and
-    the rows of a view, are made again.
+    place too.
 
     Background:
       Given the file "Page.qml":
@@ -963,11 +962,243 @@ Feature: What a reload changes
       And the property "running" of "slide" is true
       And the property "x" of "page" is at least 40
 
+  Rule: The rows of a view, a Repeater or a Loader's component have objects added where they stand
+
+    An object added to a delegate, or removed from it, is added to or
+    removed from every row there is, in place; the rows made later are
+    made from the delegate as the file now writes it. A row goes on as it
+    was, an animation half way too, and so does the object a `Loader`
+    made from a component written inline.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          Repeater {
+            id: rows; objectName: "rows"
+            model: things
+            Rectangle {
+              objectName: "cell" + name; width: 10; height: 10
+              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+              Item { objectName: "spare" + name }
+              function go() { slide.start() }
+            }
+          }
+          ListView {
+            id: view; objectName: "view"; width: 50; height: 100
+            model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { shift.start() }
+            }
+          }
+          Loader {
+            id: loader; objectName: "loader"
+            sourceComponent: Rectangle {
+              objectName: "inside"; width: 10; height: 10
+              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { glide.start() }
+            }
+          }
+          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: An object added to a delegate is in every row, and the rows go on as they were
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          Repeater {
+            id: rows; objectName: "rows"
+            model: things
+            Rectangle {
+              objectName: "cell" + name; width: 10; height: 10
+              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+              Item { objectName: "spare" + name }
+              Text { objectName: "label" + name; text: "row " + name }
+              function go() { slide.start() }
+            }
+          }
+          ListView {
+            id: view; objectName: "view"; width: 50; height: 100
+            model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
+              Text { objectName: "tag" + name; text: "line " + name }
+              function go() { shift.start() }
+            }
+          }
+          Loader {
+            id: loader; objectName: "loader"
+            sourceComponent: Rectangle {
+              objectName: "inside"; width: 10; height: 10
+              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { glide.start() }
+            }
+          }
+          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      And a reload happens
+      Then the property "text" of "labela" is "row a"
+      And the property "text" of "labelb" is "row b"
+      And the property "x" of "cella" is at least 40
+      And the property "x" of "cellb" is at least 40
+      And the property "text" of "tagb" is "line b"
+      And the property "x" of "linea" is at least 40
+      When the method "more" of "root" is called
+      Then the property "text" of "labelc" is "row c"
+      And the property "text" of "tagc" is "line c"
+
+    Scenario: An object removed from a delegate is gone from every row
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          Repeater {
+            id: rows; objectName: "rows"
+            model: things
+            Rectangle {
+              objectName: "cell" + name; width: 10; height: 10
+              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { slide.start() }
+            }
+          }
+          ListView {
+            id: view; objectName: "view"; width: 50; height: 100
+            model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { shift.start() }
+            }
+          }
+          Loader {
+            id: loader; objectName: "loader"
+            sourceComponent: Rectangle {
+              objectName: "inside"; width: 10; height: 10
+              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { glide.start() }
+            }
+          }
+          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      And a reload happens
+      Then the object "sparea" does not exist
+      And the object "spareb" does not exist
+      And the property "x" of "cella" is at least 40
+      When the method "more" of "root" is called
+      Then the object "cellc" exists
+      And the object "sparec" does not exist
+
+    Scenario: A property edited and an object added in a delegate in one change
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          Repeater {
+            id: rows; objectName: "rows"
+            model: things
+            Rectangle {
+              objectName: "cell" + name; width: 30; height: 10
+              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+              Item { objectName: "spare" + name }
+              Text { objectName: "label" + name; text: "row " + name }
+              function go() { slide.start() }
+            }
+          }
+          ListView {
+            id: view; objectName: "view"; width: 50; height: 100
+            model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { shift.start() }
+            }
+          }
+          Loader {
+            id: loader; objectName: "loader"
+            sourceComponent: Rectangle {
+              objectName: "inside"; width: 10; height: 10
+              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { glide.start() }
+            }
+          }
+          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "cella" is 30
+      And the property "text" of "labelb" is "row b"
+      And the property "x" of "cellb" is at least 40
+
+    Scenario: An object added to a Loader's inline component is there and the object goes on as it was
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          Repeater {
+            id: rows; objectName: "rows"
+            model: things
+            Rectangle {
+              objectName: "cell" + name; width: 10; height: 10
+              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+              Item { objectName: "spare" + name }
+              function go() { slide.start() }
+            }
+          }
+          ListView {
+            id: view; objectName: "view"; width: 50; height: 100
+            model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
+              function go() { shift.start() }
+            }
+          }
+          Loader {
+            id: loader; objectName: "loader"
+            sourceComponent: Rectangle {
+              objectName: "inside"; width: 10; height: 10
+              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
+              Text { objectName: "note"; text: "inside" }
+              function go() { glide.start() }
+            }
+          }
+          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      And a reload happens
+      Then the property "text" of "note" is "inside"
+      And the property "x" of "inside" is at least 40
+      And the property "x" of "cella" is at least 40
+
   Rule: Other changes to objects make them again, as the file now writes them
 
-    An object moved, given another type or another id, or added in a
-    delegate, a Repeater's or a view's, is there as the file writes it
-    once the reload is through.
+    An object moved, or given another type or another id, is there as the
+    file writes it once the reload is through.
 
     Background:
       Given the QML:
@@ -1026,27 +1257,3 @@ Feature: What a reload changes
         """
       And a reload happens
       Then the property "tag" of "root" is "b"
-
-    Scenario: An object added in a Repeater's delegate is in every row
-      When the file "Scenario.qml" is changed to:
-        """qml
-        import QtQuick
-        Column {
-          id: root; objectName: "root"
-          property string last: ""
-          property string tag: a.objectName
-          Text { id: a; objectName: "a"; text: "a" }
-          Text { objectName: "b"; text: "b" }
-          Repeater {
-            model: 2
-            Item {
-              objectName: "row" + index
-              Text { objectName: "label" + index; text: "row " + index }
-            }
-          }
-          function probe() { last = children[0].objectName }
-        }
-        """
-      And a reload happens
-      Then the property "text" of "label0" is "row 0"
-      And the property "text" of "label1" is "row 1"
