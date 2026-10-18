@@ -583,9 +583,17 @@ impl Tree {
     /// lists such an item without the states that say it is shown; an
     /// AccessKit node says so by being hidden. One partly inside, or
     /// inside the window but outside the clip of its view, is on screen.
+    /// So is all inside a node that is off screen, whatever reaches into
+    /// the window: AccessKit leaves out what is under a hidden node.
     pub fn off_screen(&self, key: NodeKey) -> bool {
-        self.get(key)
-            .is_some_and(|d| lies_outside(d.bounds, self.viewport))
+        let mut at = Some(key);
+        while let Some(slot) = at.and_then(|k| self.slots.get(&k)) {
+            if lies_outside(slot.data.bounds, self.viewport) {
+                return true;
+            }
+            at = slot.parent;
+        }
+        false
     }
 
     /// Moves the node without touching the rest of its data.
@@ -1329,6 +1337,19 @@ mod tests {
         assert!(t.off_screen(B));
         t.set_bounds(B, Bounds::new(-10.0, -10.0, -10.0, -10.0));
         assert!(!t.off_screen(B));
+    }
+
+    #[test]
+    fn what_is_inside_a_node_off_screen_is_off_screen() {
+        let mut t = sample();
+        t.set_viewport(Bounds::new(0.0, 0.0, 400.0, 400.0));
+        t.set_bounds(A, Bounds::new(-100.0, 0.0, -20.0, 30.0));
+        // It reaches into the window from a parent outside it.
+        t.set_bounds(B, Bounds::new(20.0, 0.0, 80.0, 30.0));
+        assert!(t.off_screen(A));
+        assert!(t.off_screen(B));
+        t.set_bounds(A, Bounds::new(-100.0, 0.0, 20.0, 30.0));
+        assert!(!t.off_screen(B), "the parent is partly inside");
     }
 
     fn applied(data: &NodeData) -> Node {

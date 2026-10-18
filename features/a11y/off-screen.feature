@@ -11,23 +11,22 @@
 Feature: What lies outside the window is off screen
   An item that is exposed but lies wholly outside the window, such as a
   row a view made ahead of scrolling or kept for later, is off screen: an
-  assistive technology does not read it as shown. What is partly inside
-  the window, or inside it but outside its view's clip, is on screen.
+  assistive technology does not read it as shown, nor anything inside it.
+  What is partly inside the window, or inside it but outside its view's
+  clip, is on screen.
 
   Background:
     Given the QML:
       """qml
       import QtQuick
       Item {
-        objectName: "root"
         width: 400; height: 400
+        Rectangle { x: -100; width: 80; height: 30; Accessible.role: Accessible.Button; Accessible.name: "Left" }
+        Rectangle { x: 390; width: 80; height: 30; Accessible.role: Accessible.Button; Accessible.name: "Edge" }
         Rectangle {
-          x: -100; width: 80; height: 30
-          Accessible.role: Accessible.Button; Accessible.name: "Left"
-        }
-        Rectangle {
-          x: 390; width: 80; height: 30
-          Accessible.role: Accessible.Button; Accessible.name: "Edge"
+          x: -100; y: 250; width: 80; height: 30
+          Accessible.role: Accessible.Pane; Accessible.name: "Drawer"
+          Rectangle { x: 120; width: 60; height: 30; Accessible.role: Accessible.Button; Accessible.name: "Reach" }
         }
         ListView {
           objectName: "list"
@@ -50,6 +49,11 @@ Feature: What lies outside the window is off screen
 
   Scenario: An item partly inside the window is on screen
     Then the "button" named "Edge" is not off screen
+
+  # A screen reader is told nothing under a node that is not shown.
+  Scenario: What reaches into the window from a parent outside it is off screen
+    Then the "button" named "Reach" is inside the "pane" named "Drawer"
+    And the "button" named "Reach" is off screen
 
   Scenario: The rows a view shows are on screen
     Then the "listitem" named "row 15" is not off screen
