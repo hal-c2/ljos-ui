@@ -1369,3 +1369,28 @@ every build, and in Qt: drag and wheel on it showed no difference the wait made.
 - **Scrolling `surface` shows 30–39 frames a second**, at 32 ms intervals, where Qt shows 45 at
   16 ms. That is the same with or without the wait, so it is the cost of a frame of 472 rotated
   pictures, not the wait. It was not looked into here.
+
+### What PDF documents cost every application (2026-10-18)
+
+`hayro`, which draws PDF pages, brings `brotli`, a third `skrifa` and `read-fonts` (0.46, 0.43)
+and `fearless_simd` 1.1. The two `vello_cpu` versions (0.1, 0.3) come from other crates and stay
+without it. Release (lto thin) `ljos` on 8c0e5e1 with and without it:
+
+| | with hayro | without |
+|---|---:|---:|
+| Stripped binary (MB) | 89.5 | 84.0 |
+| Max RSS of `ljos render` of a Label and a Button (MiB, median of 6) | 42.5 | 41.2 |
+| Settled anonymous PSS of the same, windowed (MiB, `ljos bench`) | 50.4 | 50.0 |
+
+- **PDF is a feature.** `pdf` on `ljos_quick` and on the `ljos` facade is off by default; the
+  `ljos` runner and the feature runner turn it on. Without it a PDF source is Error, with
+  "Error decoding: <url>: Unsupported image format". Qt 6.11.2 gives that when run (qml6,
+  offscreen) with a plugin directory that lacks `libqpdf.so`. A test in
+  `ljos_quick/src/image/decode.rs` covers each build; `features/items/image-pdf.feature` covers
+  the runner.
+
+**DECISIONs.**
+- Off by default: 6.6 % of the binary for a format few applications show. An application that
+  shows PDFs turns it on, as it would install Qt's plugin.
+- The windowed bench's peak and cgroup figures were not used: the load average went from 22 to
+  84 while it ran, and the runs varied from 58 to 147 MiB.

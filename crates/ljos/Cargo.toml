@@ -95,6 +95,10 @@ dev-qml = ["dep:ljos_compiler", "dep:qml_front"]
 # (`ljos::types`), into a pack the program embeds with
 # `ljos::include_qml!`. The program's own `ljos` leaves it off.
 build = ["dep:ljos_compiler", "dep:qml_front"]
+# PDF documents in an Image, a page at a time (hayro, with a rasteriser
+# and font readers of its own). Off by default: without it a PDF source is
+# an unsupported format, as in a Qt without its PDF plugin.
+pdf = ["ljos_quick/pdf"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG
 # on a virtual clock, for screenshot tests and documentation.
 render = []

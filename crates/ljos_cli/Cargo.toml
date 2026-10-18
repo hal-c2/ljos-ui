@@ -33,7 +33,8 @@ ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "ren
 ljos_controls = { path = "../ljos_controls" }
 # QtQuick.LocalStorage, which `ljos render` and `ljos run` offer.
 ljos_localstorage = { path = "../ljos_localstorage" }
-ljos_quick = { path = "../ljos_quick" }
+# The runner shows every format an Image reads, PDF documents too.
+ljos_quick = { path = "../ljos_quick", features = ["pdf"] }
 # `ljos shaders`: `.ljsh` artifacts made at build time.
 ljos_shader = { path = "../ljos_shader", features = ["compile"] }
 ljos_media = { path = "../ljos_media" }

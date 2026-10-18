@@ -51,7 +51,7 @@ ljos_engine = { path = "../ljos_engine" }
 ljos = { path = "../ljos", default-features = false, features = ["dev-qml"] }
 # `.ts` catalogues of scenarios, read as a development build reads them.
 ljos_i18n = { path = "../ljos_i18n" }
-ljos_quick = { path = "../ljos_quick" }
+ljos_quick = { path = "../ljos_quick", features = ["pdf"] }
 # Opt-in modules scenarios may import (QtQml.XmlListModel,
 # Qt.labs.folderlistmodel, QtMultimedia).
 ljos_xml = { path = "../ljos_xml" }

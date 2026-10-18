@@ -361,6 +361,9 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
 
 /// Decodes `bytes` of `url`, then scales and clips them to `request`.
 pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Loaded, LoadError> {
+    // Without the `pdf` feature a document is a format there is no reader
+    // for, as in a Qt without its PDF plugin.
+    #[cfg(feature = "pdf")]
     if is_pdf(bytes) {
         return draw_pdf(url, bytes, request);
     }
@@ -1012,6 +1015,7 @@ fn draw_svg(url: &str, bytes: &[u8], request: Request) -> Result<ImageHandle, Lo
 
 /// Whether `bytes` are a PDF document, by its header, which readers look
 /// for in the first kilobyte.
+#[cfg(feature = "pdf")]
 fn is_pdf(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(1024)]
         .windows(5)
@@ -1022,6 +1026,7 @@ fn is_pdf(bytes: &[u8]) -> bool {
 /// has no such page, as a drawing: a page is as large as its crop box in
 /// points (Qt 6.11.2, measured on qml6), made at the size `request` asks
 /// for in device pixels, over nothing.
+#[cfg(feature = "pdf")]
 fn draw_pdf(url: &str, bytes: &[u8], request: Request) -> Result<Loaded, LoadError> {
     use hayro::hayro_interpret::util::TransformExt as _;
     use hayro::vello_cpu;
@@ -1535,6 +1540,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "pdf")]
     fn a_pdf_page_is_drawn_at_its_size_in_points_over_nothing() {
         let bytes = pdf(&[(40, 20), (10, 30)]);
         let first = load_bytes("a.pdf", &bytes, Request::default()).unwrap();
@@ -1553,6 +1559,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "pdf")]
     fn a_pdf_page_there_is_not_is_the_first_and_a_size_asked_keeps_its_shape() {
         let bytes = pdf(&[(40, 20)]);
         let missing = Request {
@@ -1570,9 +1577,20 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "pdf")]
     fn a_broken_pdf_is_an_error() {
         let err = load_bytes("a.pdf", b"%PDF-1.4\nnothing", Request::default()).unwrap_err();
         assert!(matches!(err, LoadError::Decode { .. }), "{err:?}");
+    }
+
+    #[test]
+    #[cfg(not(feature = "pdf"))]
+    fn without_the_pdf_feature_a_document_is_an_unsupported_format() {
+        let err = load_bytes("file:///a.pdf", &pdf(&[(40, 20)]), Request::default()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error decoding: file:///a.pdf: Unsupported image format"
+        );
     }
 
     /// A 3 by 2 GIF of one colour a frame, each frame `delay` hundredths.

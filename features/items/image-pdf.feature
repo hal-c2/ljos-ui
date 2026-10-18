@@ -14,7 +14,9 @@ Feature: PDF documents in an Image
   how many pages it has and "currentFrame" the page shown, the first
   unless another is asked. A page is drawn at its own size in points, or
   at the size "sourceSize" asks, over nothing, so that what is behind the
-  Image shows around what the page paints.
+  Image shows around what the page paints. This needs the "pdf" feature,
+  which the ljos runner has: without it a PDF is an unsupported format,
+  as in a Qt without its PDF plugin.
 
   Background:
     Given a PDF file "pages.pdf" of pages "300 by 200, 150 by 400, 100.6 by 50.4" painted "#ff0000"

@@ -14,6 +14,10 @@ default = ["shader-compile"]
 # Without it only the `.ljsh` files `ljos shaders` makes are read, which is
 # what a shipped application wants.
 shader-compile = ["ljos_shader/compile"]
+# An Image shows the pages of a PDF document, drawn by hayro, which brings
+# a rasteriser and font readers of its own. Off, a PDF source is an
+# unsupported format, as in a Qt without its PDF plugin.
+pdf = ["dep:hayro"]
 
 [dependencies]
 ljos_a11y = { path = "../ljos_a11y" }
@@ -44,7 +48,8 @@ thiserror.workspace = true
 zune-jpeg.workspace = true
 jpeg-decoder.workspace = true
 resvg.workspace = true
-hayro.workspace = true
+# PDF documents in an Image (`pdf`).
+hayro = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Tests compile QML strings; the crate itself never links the parser.
