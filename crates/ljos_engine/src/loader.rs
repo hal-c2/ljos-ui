@@ -180,6 +180,42 @@ pub(crate) fn join_url(base: &str, rel: &str) -> String {
             None => ("", base),
         },
     };
+    let dir = path.rfind('/').map_or("", |i| &path[..=i]);
+    // Mostly a plain name beside a document whose address is plain: put
+    // together as it is, without taking either apart (an image's source,
+    // for each of hundreds of items made).
+    let rooted = !root.is_empty() || dir.starts_with('/');
+    if is_plain(rel) && !rel.starts_with('/') && is_plain(dir) && (dir.starts_with('/') || !rooted)
+    {
+        let mut out = String::with_capacity(root.len() + dir.len() + rel.len());
+        out.push_str(root);
+        out.push_str(dir);
+        out.push_str(rel);
+        return out;
+    }
+    normalised_join(root, path, rel)
+}
+
+/// Whether `path` has no segment that names where it is or its parent,
+/// and no empty one but at either end.
+fn is_plain(path: &str) -> bool {
+    let b = path.as_bytes();
+    let mut start = 0;
+    for i in 0..=b.len() {
+        if i == b.len() || b[i] == b'/' {
+            let seg = &b[start..i];
+            let inner = start > 0 && i < b.len();
+            if seg == b"." || seg == b".." || (seg.is_empty() && inner) {
+                return false;
+            }
+            start = i + 1;
+        }
+    }
+    true
+}
+
+/// [`join_url`] of `rel` at the `path` below `root`, segment by segment.
+fn normalised_join(root: &str, path: &str, rel: &str) -> String {
     let joined = if rel.starts_with('/') {
         rel.to_owned()
     } else {
@@ -905,6 +941,55 @@ mod tests {
             ("Main.qml", ".", ""),
         ] {
             assert_eq!(join_url(base, rel), want, "{rel} at {base}");
+        }
+    }
+
+    #[test]
+    fn a_plain_name_is_joined_as_segment_by_segment() {
+        let bases = [
+            "file:///a/Main.qml",
+            "file:///Main.qml",
+            "file:///a/./b/Main.qml",
+            "file:///a//Main.qml",
+            "file://host",
+            "qrc:/app/Main.qml",
+            "qrc:app/Main.qml",
+            "https://host/a/../Main.qml",
+            "sub/Panel.qml",
+            "/abs/Panel.qml",
+            "Main.qml",
+            "",
+        ];
+        let rels = [
+            "gfx/red.png",
+            "red.png",
+            "sub/",
+            "./red.png",
+            "../red.png",
+            "a//b.png",
+            "/red.png",
+            ".",
+            "..",
+            "",
+        ];
+        for base in bases {
+            for rel in rels {
+                let (root, path) = match base.find("://") {
+                    Some(i) => {
+                        let rest = &base[i + 3..];
+                        base.split_at(i + 3 + rest.find('/').unwrap_or(rest.len()))
+                    }
+                    None => match base.find(':') {
+                        Some(i) => base.split_at(i + 1),
+                        None => ("", base),
+                    },
+                };
+                assert_eq!(
+                    join_url(base, rel),
+                    normalised_join(root, path, rel),
+                    "{rel} at {base}"
+                );
+            }
         }
     }
 
