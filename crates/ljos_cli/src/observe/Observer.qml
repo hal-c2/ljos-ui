@@ -126,6 +126,10 @@ ApplicationWindow {
             objects.showPicture(ok, r)
         else if (route === "edited")
             objects.edited(ok, r)
+        else if (route === "supervisors" && ok)
+            supervision.showTree(s.processes)
+        else if (route === "faults" && ok)
+            supervision.showFaults(s.faults)
         else if (route === "logs" && ok)
             logs.add(s)
         else if (route === "trace" && ok)
@@ -161,7 +165,8 @@ ApplicationWindow {
     }
 
     // The page shown.
-    readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace"]
+    readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace",
+                                   "Supervision"]
     property int page: 0
     onPageChanged: watcher.start()
 
@@ -175,6 +180,9 @@ ApplicationWindow {
         else if (page === 3 && (all || changed.indexOf("paints") >= 0 || changed.indexOf("items") >= 0
                                 || changed.indexOf("reloads") >= 0))
             objects.load(all || changed.indexOf("reloads") >= 0)
+        // Every fault is logged, so a new one is a new log line.
+        else if (page === 6 && (all || changed.indexOf("logs") >= 0))
+            supervision.load()
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
         if (all || changed.indexOf("traces") >= 0)
@@ -2684,6 +2692,333 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             visible: traceLines.count === 0
                             text: "Nothing written down yet"
+                            color: theme.subtle
+                        }
+                    }
+                }
+
+                // ----- Supervision -------------------------------------
+                // Erlang's observer shows an application's supervisors:
+                // here the boundaries that have had a fault, each under
+                // the one around it, and the faults each took.
+                ColumnLayout {
+                    id: supervision
+                    spacing: 10
+                    // Row by row, as the mailboxes are: a row whose
+                    // values are the same is left alone.
+                    ListModel { id: supRows }
+                    ListModel { id: faultRows }
+                    property var held: []
+                    property var heldFaults: []
+                    // The fault whose stack is shown, by its number.
+                    property int opened: -1
+
+                    function load() {
+                        window.ask("app_processes", { kind: "supervisor" }, "supervisors")
+                        window.ask("app_processes", { kind: "fault" }, "faults")
+                    }
+
+                    function into(model, h, rows) {
+                        for (var i = 0; i < rows.length; ++i) {
+                            if (i >= h.length) {
+                                model.append(rows[i])
+                                h.push(rows[i])
+                            } else if (processes.differs(h[i], rows[i])) {
+                                model.set(i, rows[i])
+                                h[i] = rows[i]
+                            }
+                        }
+                        if (h.length > rows.length) {
+                            model.remove(rows.length, h.length - rows.length)
+                            h.splice(rows.length, h.length - rows.length)
+                        }
+                        return h
+                    }
+
+                    function showTree(list) {
+                        held = into(supRows, held, list.map(flatSupervisor))
+                    }
+
+                    // The newest fault first.
+                    function showFaults(list) {
+                        heldFaults = into(faultRows, heldFaults, list.slice().reverse().map(flatFault))
+                    }
+
+                    function flatSupervisor(s) {
+                        return {
+                            depth: s.depth,
+                            name: s.name,
+                            strategy: s.strategy.replace(/_/g, " "),
+                            used: s.restarts + " of " + s.max_restarts + " in " + window.ms(s.within_ms * 1000),
+                            status: s.state,
+                            content: s.content === undefined ? ""
+                                : s.content + (s.content_restart ? " · " + s.content_restart : ""),
+                            handle: s.handle === undefined ? "" : s.handle
+                        }
+                    }
+
+                    function flatFault(f) {
+                        var file = f.file ? f.file.substring(f.file.lastIndexOf("/") + 1) : ""
+                        return {
+                            seq: f.seq,
+                            fault: f.fault,
+                            message: f.message,
+                            place: file === "" ? "" : file + ":" + f.line,
+                            at: "at " + window.ms(f.at_ms * 1000),
+                            origin: f.origin === null || f.origin === undefined ? ""
+                                : f.origin + (f.origin_gone ? " (gone)" : ""),
+                            originHandle: f.origin_handle ? f.origin_handle : "",
+                            takenBy: f.taken_by,
+                            takenHandle: f.taken_by_handle ? f.taken_by_handle : "",
+                            stack: f.stack.map(function(s) {
+                                var at = s.file ? s.file.substring(s.file.lastIndexOf("/") + 1) + ":" + s.line : ""
+                                return (s.function || "(anonymous)") + "  " + at
+                            }).join("\n"),
+                            depth: f.stack.length
+                        }
+                    }
+
+                    // To the Objects page, with the object picked.
+                    function show(handle, name) {
+                        window.page = 3
+                        objects.load(true)
+                        objects.pick(handle, name)
+                    }
+
+                    RowLayout {
+                        Text { text: "Supervision"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Layout.leftMargin: 12
+                            text: "a boundary is shown once it has had a fault · the last 32 faults"
+                            color: theme.subtle
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        // Up to ten rows; more scroll. A height taken from
+                        // the page's would lay the page out again.
+                        Layout.preferredHeight: 33 + Math.min(10, Math.max(1, supRows.count)) * 30
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+                        Row {
+                            x: 8
+                            height: 32
+                            Repeater {
+                                model: ["Supervisor", "Strategy", "Restarts used", "State", "Content"]
+                                delegate: Text {
+                                    required property string modelData
+                                    required property int index
+                                    width: [Math.max(160, supervision.width - 560), 120, 170, 110, 160][index]
+                                    height: 32
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: modelData
+                                    color: theme.subtle
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                            }
+                        }
+                        Rectangle { y: 32; width: parent.width; height: 1; color: theme.rule }
+                        ListView {
+                            anchors.fill: parent
+                            anchors.topMargin: 33
+                            clip: true
+                            model: window.page === 6 ? supRows : null
+                            ScrollBar.vertical: ScrollBar {}
+                            delegate: Rectangle {
+                                id: srow
+                                required property int index
+                                required property int depth
+                                required property string name
+                                required property string strategy
+                                required property string used
+                                required property string status
+                                required property string content
+                                required property string handle
+                                width: ListView.view.width
+                                height: 30
+                                color: supHover.containsMouse ? theme.accentSoft
+                                     : index % 2 ? theme.cardAlt : "transparent"
+                                Row {
+                                    x: 8
+                                    height: parent.height
+                                    Text {
+                                        width: Math.max(160, supervision.width - 560); height: parent.height
+                                        verticalAlignment: Text.AlignVCenter
+                                        leftPadding: srow.depth * 18
+                                        text: srow.name
+                                        color: srow.handle !== "" ? theme.accent : theme.text
+                                        elide: Text.ElideMiddle
+                                    }
+                                    Text {
+                                        width: 120; height: parent.height
+                                        verticalAlignment: Text.AlignVCenter
+                                        text: srow.strategy
+                                        color: theme.subtle
+                                    }
+                                    Text {
+                                        width: 170; height: parent.height
+                                        verticalAlignment: Text.AlignVCenter
+                                        text: srow.used
+                                        color: theme.text
+                                        font.family: theme.mono
+                                    }
+                                    Item {
+                                        width: 110; height: parent.height
+                                        Rectangle {
+                                            id: supDot
+                                            width: 8; height: 8; radius: 4
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: srow.status === "down" ? theme.bad : theme.good
+                                        }
+                                        Text {
+                                            anchors.left: supDot.right
+                                            anchors.leftMargin: 7
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: srow.status
+                                            color: theme.text
+                                        }
+                                    }
+                                    Text {
+                                        width: 160; height: parent.height
+                                        verticalAlignment: Text.AlignVCenter
+                                        text: srow.content
+                                        color: srow.content.indexOf("stopped") === 0 ? theme.bad : theme.subtle
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                                MouseArea {
+                                    id: supHover
+                                    anchors.fill: parent
+                                    hoverEnabled: srow.handle !== ""
+                                    enabled: srow.handle !== ""
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: srow.name
+                                    onClicked: supervision.show(srow.handle, srow.name)
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+                        ListView {
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            clip: true
+                            spacing: 2
+                            model: window.page === 6 ? faultRows : null
+                            ScrollBar.vertical: ScrollBar {}
+                            delegate: Rectangle {
+                                id: frow
+                                required property int index
+                                required property int seq
+                                required property string fault
+                                required property string message
+                                required property string place
+                                required property string at
+                                required property string origin
+                                required property string originHandle
+                                required property string takenBy
+                                required property string takenHandle
+                                required property string stack
+                                required property int depth
+                                readonly property bool open: supervision.opened === seq
+                                width: ListView.view.width
+                                height: 52 + (open ? stackText.implicitHeight + 6 : 0)
+                                radius: 6
+                                color: index % 2 ? theme.cardAlt : "transparent"
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: frow.depth > 0
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: frow.fault + ": " + frow.message
+                                    onClicked: supervision.opened = frow.open ? -1 : frow.seq
+                                }
+                                Column {
+                                    x: 8
+                                    y: 5
+                                    width: parent.width - 16
+                                    spacing: 3
+                                    Row {
+                                        spacing: 10
+                                        Text {
+                                            text: frow.fault
+                                            color: frow.takenBy === "log" ? theme.warn : theme.bad
+                                            font.bold: true
+                                        }
+                                        Text {
+                                            width: frow.width - 300
+                                            text: frow.message
+                                            color: theme.text
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                    Row {
+                                        spacing: 14
+                                        Text { text: frow.at; color: theme.subtle; font.family: theme.mono; font.pixelSize: 12 }
+                                        Text { text: frow.place; color: theme.subtle; font.family: theme.mono; font.pixelSize: 12 }
+                                        Text {
+                                            text: frow.origin === "" ? "" : "in " + frow.origin
+                                            color: frow.originHandle !== "" ? theme.accent : theme.subtle
+                                            font.pixelSize: 12
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                visible: frow.originHandle !== ""
+                                                Accessible.role: Accessible.Link
+                                                Accessible.name: frow.origin
+                                                onClicked: supervision.show(frow.originHandle, frow.origin)
+                                            }
+                                        }
+                                        Text {
+                                            text: "taken by " + frow.takenBy
+                                            color: frow.takenHandle !== "" ? theme.accent : theme.subtle
+                                            font.pixelSize: 12
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                visible: frow.takenHandle !== ""
+                                                Accessible.role: Accessible.Link
+                                                Accessible.name: frow.takenBy
+                                                onClicked: supervision.show(frow.takenHandle, frow.takenBy)
+                                            }
+                                        }
+                                        Text {
+                                            visible: frow.depth > 0
+                                            text: (frow.open ? "▾ " : "▸ ") + frow.depth + (frow.depth === 1 ? " frame" : " frames")
+                                            color: theme.subtle
+                                            font.pixelSize: 12
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                Accessible.role: Accessible.Button
+                                                Accessible.name: (frow.open ? "Hide the stack of fault " : "Show the stack of fault ") + frow.seq
+                                                onClicked: supervision.opened = frow.open ? -1 : frow.seq
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        id: stackText
+                                        visible: frow.open
+                                        leftPadding: 12
+                                        text: frow.stack
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: faultRows.count === 0
+                            text: "No faults"
                             color: theme.subtle
                         }
                     }

@@ -80,8 +80,9 @@ enum Command {
     /// limit asked for.
     Bench(Box<bench::Bench>),
     /// Open a window on a running application, as Erlang's observer
-    /// opens one on a node: its processes, its mailboxes and its objects,
-    /// with their properties for editing and a picture of the one picked.
+    /// opens one on a node: its processes, its mailboxes, its objects
+    /// with their properties for editing and a picture of the one picked,
+    /// and its supervision tree with the faults it took.
     /// The application is one started with `ljos run --mcp`.
     Observe(observe::Observe),
     /// Serve a running application's inspector on stdio, for an MCP
