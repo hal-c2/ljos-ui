@@ -2620,3 +2620,74 @@ load average of 33–51.
   runtime. The bench's pointer now moves first, waits for the compositor, then presses. The same
   pointer drives the `@desktop` scenarios, and
   `features/window/activation-without-keyboard.feature` now runs and passes on the desktop sandbox.
+
+### The whole gallery against qml6 (2026-10-18)
+
+Every corpus example that runs on both runtimes (28), benched in turn, four to a `mise run bench`
+call: `BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench <ids> --profile desktop --settle 3
+--idle 5 --load 10`. Ljós is the release build at 77414def; Qt is `qml6` 6.11.2 with
+`QT_QUICK_CONTROLS_STYLE=Basic`. Both run as Wayland clients of the sandbox's headless sway
+(pixman), on an AMD Ryzen AI MAX+ 395 (32 threads), at a load average of 4.8–119.6: other work
+shared the machine throughout. The load drives each app with the controls `mise run gallery:drive`
+clicked there (the `clicks` column: how many points; 25 is the 5×5 grid, used where it found fewer
+than three). Each cell is the median of three runs, with Qt's in brackets. Lag is input-to-frame
+latency; "—" means no click changed a frame, so there was nothing to time.
+
+A cell is in bold when Ljós loses by more than the run-to-run spread seen at this load: first
+frame and memory when it is higher at all; idle CPU by more than 0.1 % of a core; driven CPU by
+more than 10 % + 0.5 % of a core; lag p50 by more than 25 % + 4 ms, lag p95 by more than 25 % + 8 ms.
+
+| example | first frame ms (Qt) | settled MiB (Qt) | idle CPU % (Qt) | driven CPU % (Qt) | lag p50 ms (Qt) | lag p95 ms (Qt) | clicks |
+|---|---:|---:|---:|---:|---:|---:|---|
+| calqlatr | 212 (330) | 55.0 (103) | 0.00 (0.00) | 2.1 (6.7) | 1.9 (18.1) | 583 (583) | 19 |
+| clocks | 58.4 (264) | 49.8 (112) | 4.6 (19.9) | 4.6 (19.9) | 8.9 (8.6) | 15.5 (16.1) | 25 |
+| hangman | 57.5 (308) | 44.8 (97.6) | 0.00 (0.00) | 0.22 (0.08) | — (—) | — (—) | 25 |
+| maroon | 75.5 (450) | 75.0 (225) | 27.3 (67.1) | 39.1 (71.3) | 8.4 (8.5) | 14.2 (14.8) | 25 |
+| rssnews | 68.1 (545) | 74.7 (861) | 0.01 (0.00) | 2.3 (10.9) | 512 (515) | 1923 (1924) | 25 |
+| samegame | 65.5 (310) | 53.2 (116) | 5.7 (26.0) | 60.1 (180) | 8.7 (10.8) | 378 (300) | 25 |
+| thermostat | 108 (397) | 98.2 (164) | 0.00 (0.00) | 2.3 (5.9) | — (—) | — (—) | 25 |
+| todolist | 92.1 (354) | 65.2 (122) | 0.00 (0.00) | 2.1 (1.6) | 2572 (2572) | 2722 (2573) | 4 |
+| photosurface | **359 (314)** | 63.6 (119) | **13.2 (5.8)** | 2.3 (6.6) | **859 (550)** | 3667 (3758) | 25 |
+| alarms | 77.5 (319) | 54.4 (107) | 0.00 (0.00) | 0.35 (7.0) | 1.0 (2.1) | 47.1 (34.2) | 8 |
+| snippet-borderimage-defaults | 59.6 (280) | 41.6 (98.9) | 0.00 (0.00) | 0.30 (0.07) | — (—) | — (—) | 25 |
+| snippet-vertical-positioner-transition | 173 (269) | 40.8 (92.0) | 0.00 (0.00) | 0.26 (0.11) | 40.7 (40.8) | 40.7 (40.8) | 25 |
+| snippet-flow-diagram | 71.3 (293) | 45.5 (101) | 0.00 (0.00) | 0.32 (0.08) | — (—) | — (—) | 25 |
+| snippet-focus-column | 62.3 (272) | 40.7 (94.3) | 0.00 (0.00) | 0.36 (0.09) | — (—) | — (—) | 25 |
+| snippet-focus-scopes | 59.4 (294) | 42.7 (103) | 0.00 (0.33) | 0.52 (0.43) | 192 (213) | 458 (456) | 25 |
+| snippet-rectangle-smooth | 59.8 (478) | 41.7 (98.0) | 0.00 (0.00) | 0.46 (0.09) | — (—) | — (—) | 25 |
+| snippet-texteditor | 165 (363) | 38.7 (173) | 0.00 (0.20) | 0.78 (0.70) | 206 (256) | 488 (461) | 25 |
+| snippet-text-lines | 203 (437) | 41.1 (122) | 0.00 (0.00) | 0.38 (0.10) | — (—) | — (—) | 25 |
+| snippet-components-application | 293 (439) | 41.2 (162) | 0.00 (0.00) | 0.46 (0.08) | — (—) | — (—) | 25 |
+| snippet-properties-application | 85.8 (377) | 50.9 (119) | 0.00 (0.00) | 0.25 (0.08) | — (—) | — (—) | 25 |
+| snippet-alias-application | 57.1 (278) | 42.2 (105) | 0.00 (0.00) | 0.40 (0.08) | — (—) | — (—) | 25 |
+| snippet-property-signals | 53.0 (559) | 44.1 (129) | 0.00 (0.00) | 0.27 (0.09) | — (—) | — (—) | 25 |
+| snippet-signals-basic | 147 (263) | 37.3 (96.0) | 0.00 (0.00) | 0.41 (0.10) | — (—) | — (—) | 25 |
+| snippet-signals-parameters | 55.0 (412) | 38.1 (95.0) | 0.00 (0.00) | 0.36 (0.13) | — (—) | — (—) | 25 |
+| snippet-signals-no-parameters | 47.9 (248) | 37.4 (96.1) | 0.00 (0.00) | 0.42 (0.14) | — (—) | — (—) | 25 |
+| snippet-signals-connectslots | 50.3 (270) | 38.4 (96.5) | 0.00 (0.00) | 0.35 (0.11) | — (—) | — (—) | 25 |
+| snippet-signals-connectdynamic | 290 (314) | 57.2 (95.0) | 0.00 (0.00) | 0.55 (0.14) | — (—) | — (—) | 25 |
+| snippet-methods-app | 165 (455) | 40.7 (105) | 0.00 (0.00) | 0.51 (0.13) | — (—) | — (—) | 25 |
+
+Ljós starts sooner and settles in less memory than qml6 in every example but one first frame.
+Where it loses:
+
+| example | loss | cause | owner |
+|---|---|---|---|
+| photosurface | first frame 359 against 314 ms; idle CPU 13.2 against 5.8 %; lag p50 859 against 550 ms | It is never idle: both runtimes keep animating the welcome PDF's slide show over a shader backdrop. Ljós draws that at about 4.4 frames a second on llvmpipe's raster threads, Qt at 6. The PDF page and the backdrop are rasterised on the CPU in Ljós's render path; the first frame, 45 ms later, is likely the same cost. | render |
+| the static snippets (16 of them) | driven CPU 0.22–0.55 against 0.07–0.14 % of a core: inside the bold margin, but lost in every one | Per click the main thread runs about eight UI passes where qml6 wakes about three times (likely move, press and release, each followed by the extra pass egui asks for after input): 204 passes for 25 clicks under callgrind, about 74 000 instructions each. That is about 0.6 M instructions a click, yet 1–2 ms of main-thread user time at this load, most likely because each pass after a sleep runs with cold caches on a busy machine. Fewer passes per input that changes nothing, not cheaper ones, would close it. | shell pacing |
+| samegame | lag p95 378 against 300 ms (inside the margin) | Its slowest clicks land in the logo's pause before the next animated frame, as in the section above: the wait is the animation's, in both runtimes. It varies with where in the pause a click lands, which is why it is inside the spread. | engine (animation timing) |
+| alarms | lag p95 47.1 against 34.2 ms (inside the margin) | Eight clicks on the alarm list and its dialog; not investigated further, as it is inside the spread. The dialog's controls are the likeliest place. | controls |
+| snippet-texteditor | lag p95 488 against 461 ms (inside the margin) | The medians favour Ljós (206 against 256 ms) and the 95th percentile is 6 % worse; not investigated further, as it is inside the spread. | text |
+| todolist | driven CPU 2.1 against 1.6 %; lag p95 2 722 against 2 573 ms (inside the margins) | Four clicks; each waits for the next unrelated frame in both runtimes, so the lag is the frame's pace, not the click's. The CPU is the same per-click passes as the snippets. | shell pacing |
+
+Many lag cells are equal in both runtimes (rssnews, todolist, the focus snippets): a click that
+changes nothing on screen is timed to the next frame something else draws, which is the same in
+both.
+
+- **DECISION: only the desktop profile, three runs each.** Twenty-eight examples at three profiles
+  would not finish inside the bench's time on a shared machine, and the desktop profile is the one
+  the comparison with Qt is about.
+- **DECISION: the per-click passes are left for now.** Skipping egui's pass after an input that
+  changed nothing needs egui to say what it would have drawn, which is a change to how the shell
+  paces egui and not something to fold into a benchmark batch. The bench now reports each window's
+  CPU by thread name, so the next change can be measured on the main thread alone.
