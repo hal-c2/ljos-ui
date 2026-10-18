@@ -109,8 +109,10 @@ pub(crate) struct GlyphAtlas {
     /// Bumped whenever texture coordinates handed out earlier stop being valid.
     generation: u64,
     texture: Option<TextureHandle>,
-    /// Rows `[y0, y1)` changed since the last upload.
-    dirty: Option<(usize, usize)>,
+    /// Texels `[x0, y0, x1, y1)` changed since the last upload, one box a
+    /// shelf: only they travel, so a painter that keeps what it drew
+    /// knows the glyphs already shown were not touched.
+    dirty: Vec<[usize; 4]>,
     outlines: OutlineCache,
     scratch: Option<RenderContext>,
     resources: Resources,
@@ -135,7 +137,7 @@ impl Default for GlyphAtlas {
             slots: FxHashMap::default(),
             generation: 0,
             texture: None,
-            dirty: None,
+            dirty: Vec::new(),
             outlines: OutlineCache::default(),
             scratch: None,
             resources: Resources::new(),
@@ -201,7 +203,7 @@ impl GlyphAtlas {
         self.alpha.clear();
         self.alpha.resize(self.side * self.side, 0);
         self.generation += 1;
-        self.dirty = Some((0, self.side));
+        self.dirty = vec![[0, 0, self.side, self.side]];
         if let Some((x, y)) = self.allocate(WHITE_BLOCK, WHITE_BLOCK) {
             for row in y..y + WHITE_BLOCK {
                 self.alpha[row * self.side + x..row * self.side + x + WHITE_BLOCK].fill(255);
@@ -261,7 +263,7 @@ impl GlyphAtlas {
         self.side = side;
         // Normalised texture coordinates depend on the side.
         self.generation += 1;
-        self.dirty = Some((0, side));
+        self.dirty = vec![[0, 0, side, side]];
         true
     }
 
@@ -349,10 +351,15 @@ impl GlyphAtlas {
                 self.alpha[dst + col] = rgba[(row * w + col) * 4 + 3];
             }
         }
-        self.dirty = Some(match self.dirty {
-            Some((a, b)) => (a.min(y), b.max(y + h)),
-            None => (y, y + h),
-        });
+        // A shelf fills from left to right, so what a frame adds to one
+        // is one box.
+        let sent = |d: &[usize; 4]| d[0] <= x && d[1] <= y && x + w <= d[2] && y + h <= d[3];
+        if !self.dirty.iter().any(sent) {
+            match self.dirty.iter_mut().find(|d| d[1] == y) {
+                Some(d) => *d = [d[0].min(x), y, d[2].max(x + w), d[3].max(y + h)],
+                None => self.dirty.push([x, y, x + w, y + h]),
+            }
+        }
         self.rasterised += 1;
 
         let slot = Slot {
@@ -367,16 +374,16 @@ impl GlyphAtlas {
         Ok(slot)
     }
 
-    fn image(&self, rows: (usize, usize)) -> ColorImage {
-        let pixels = self.alpha[rows.0 * self.side..rows.1 * self.side]
-            .iter()
+    fn image(&self, [x0, y0, x1, y1]: [usize; 4]) -> ColorImage {
+        let pixels = (y0..y1)
+            .flat_map(|y| &self.alpha[y * self.side + x0..y * self.side + x1])
             .map(|a| Color32::from_rgba_premultiplied(*a, *a, *a, *a))
             .collect();
-        ColorImage::new([self.side, rows.1 - rows.0], pixels)
+        ColorImage::new([x1 - x0, y1 - y0], pixels)
     }
 
-    /// Send what changed to egui. Only the rows touched since the last call
-    /// travel, unless the atlas grew.
+    /// Send what changed to egui. Only the glyphs filled since the last
+    /// call travel, unless the atlas grew.
     pub(crate) fn upload(&mut self, ctx: &Context) {
         // Linear, so glyphs on a rotated or scaled item are resampled smoothly;
         // upright text is drawn texel on pixel and comes out unchanged.
@@ -386,13 +393,15 @@ impl GlyphAtlas {
             .as_ref()
             .is_none_or(|t| t.size() != [self.side, self.side]);
         if stale {
-            let image = self.image((0, self.side));
+            let image = self.image([0, 0, self.side, self.side]);
             self.texture = Some(crate::b0::upload(ctx, "ljos_glyph_atlas", image, options));
-            self.dirty = None;
-        } else if let Some(rows) = self.dirty.take() {
-            let image = self.image(rows);
-            if let Some(t) = &mut self.texture {
-                t.set_partial([0, rows.0], image, options);
+            self.dirty.clear();
+        } else {
+            for d in std::mem::take(&mut self.dirty) {
+                let image = self.image(d);
+                if let Some(t) = &mut self.texture {
+                    t.set_partial([d[0], d[1]], image, options);
+                }
             }
         }
     }

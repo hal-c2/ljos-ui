@@ -545,6 +545,51 @@ mod b0 {
     }
 
     #[test]
+    fn b0_hands_over_only_the_glyphs_it_fills() {
+        let mut s = line();
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        let (first, _) = frame(&mut s, &mut be, &ctx, 1.0);
+        let Shape::Mesh(shown) = &first[0].shape else {
+            panic!("glyphs are meshes")
+        };
+        let side = be.glyph_atlas().side as f32;
+        // The texels of the glyphs already shown.
+        let boxes: Vec<_> = shown
+            .vertices
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|q| (q[0].uv.to_vec2() * side, q[2].uv.to_vec2() * side))
+            .collect();
+
+        let n = s.node(None, 0.0, 30.0, 150.0, 30.0);
+        s.paint(n, |b| {
+            b.glyphs(
+                Arc::new(run("xyz", 20.0, 0.0)),
+                Vec2::new(6.0, 21.0),
+                Rgba::BLACK,
+                Decorations::default(),
+            );
+        });
+        let mut out = ctx.run_ui(Default::default(), |_| {
+            encode(&mut s, &mut be, Some(&ctx), 1.0);
+        });
+        let delta = std::mem::take(&mut out.textures_delta.set).remove(&shown.texture_id);
+        let delta = delta.expect("the new glyphs are handed over");
+        for d in &delta {
+            let [x, y] = d.pos.expect("a part of the atlas, not all of it");
+            let [w, h] = d.image.size();
+            assert!(w < side as usize, "{w} texels wide: whole rows");
+            let (x0, y0, x1, y1) = (x as f32, y as f32, (x + w) as f32, (y + h) as f32);
+            for (min, max) in &boxes {
+                let apart = max.x <= x0 || x1 <= min.x || max.y <= y0 || y1 <= min.y;
+                assert!(apart, "{:?} handed over again", (min, max));
+            }
+        }
+    }
+
+    #[test]
     fn b0_does_not_fill_clipped_glyphs() {
         // A long line in a narrow clip: only the glyphs near the clip are filled.
         let text = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
