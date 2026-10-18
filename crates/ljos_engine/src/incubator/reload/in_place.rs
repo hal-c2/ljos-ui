@@ -1473,9 +1473,8 @@ fn match_objects(
     }
     // Siblings in another order: the most of them that keep theirs stay,
     // the others are made again with all that is in them.
-    for od in &n.objects {
-        let kept: Vec<(usize, usize)> = od
-            .children
+    for values in n.objects.iter().flat_map(lists) {
+        let kept: Vec<(usize, usize)> = values
             .iter()
             .filter_map(|v| match v {
                 ObjectValue::Object(k) => to_old[k.index()].map(|i| (k.index(), i)),
@@ -1531,6 +1530,18 @@ fn match_objects(
         to_old,
         carry,
     })
+}
+
+/// The lists of objects `od` holds in order: its children, and each list
+/// given to a member.
+fn lists(od: &ObjectDef) -> impl Iterator<Item = &[ObjectValue]> {
+    let listed = od
+        .members
+        .objects
+        .iter()
+        .filter(|oa| oa.is_list)
+        .map(|oa| oa.values.as_slice());
+    std::iter::once(od.children.as_slice()).chain(listed)
 }
 
 /// Which of `seq` make up a longest rising run of it, in its order.
@@ -1649,6 +1660,11 @@ fn renumber(od: &mut ObjectDef, comp: usize, objects: &[Objects]) {
                 if let ObjectValue::Object(i) = v {
                     *i = to(comp, *i).unwrap_or(gone);
                 }
+            }
+            // A list goes on without what was removed from it, as the
+            // children do.
+            if oa.is_list {
+                oa.values.retain(|v| *v != ObjectValue::Object(gone));
             }
         }
     };

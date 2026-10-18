@@ -1759,6 +1759,259 @@ Feature: What a reload changes
       Then the property "order" of "root" is "one,mid,two"
       And the property "x" of "box" is at least 40
 
+  Rule: An object removed from a list given to a member, or moved in it, goes in place
+
+    A State or a Transition taken out of a list given to states or
+    transitions leaves it, and one put in another place there is made again
+    at its new place. The rest goes on as it was, an animation half way
+    too.
+
+    Scenario: A state removed from a list given to states leaves it
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          states: [
+            State { name: "one"; objectName: "one"; PropertyChanges { target: root; width: 11 } },
+            State { name: "mid"; objectName: "mid"; PropertyChanges { target: root; width: 22 } },
+            State { name: "two"; objectName: "two"; PropertyChanges { target: root; width: 33 } },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < states.length; i++) r.push(states[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          states: [
+            State { name: "one"; objectName: "one"; PropertyChanges { target: root; width: 11 } },
+            State { name: "two"; objectName: "two"; PropertyChanges { target: root; width: 33 } },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < states.length; i++) r.push(states[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "one,two"
+      And the property "x" of "box" is at least 40
+      When the property "state" of "root" is set to "two"
+      Then the property "width" of "root" is 33
+
+    Scenario: States in another order are in that order and still apply
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          states: [
+            State { name: "one"; objectName: "one"; PropertyChanges { target: root; width: 11 } },
+            State { name: "two"; objectName: "two"; PropertyChanges { target: root; width: 33 } },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < states.length; i++) r.push(states[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          states: [
+            State { name: "two"; objectName: "two"; PropertyChanges { target: root; width: 33 } },
+            State { name: "one"; objectName: "one"; PropertyChanges { target: root; width: 11 } },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < states.length; i++) r.push(states[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "two,one"
+      And the property "x" of "box" is at least 40
+      When the property "state" of "root" is set to "one"
+      Then the property "width" of "root" is 11
+
+    Scenario: A transition removed from a list given to transitions leaves it
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          transitions: [
+            Transition { objectName: "one"; to: "a" },
+            Transition { objectName: "mid"; to: "m" },
+            Transition { objectName: "two"; to: "b" },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < transitions.length; i++) r.push(transitions[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          transitions: [
+            Transition { objectName: "one"; to: "a" },
+            Transition { objectName: "two"; to: "b" },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < transitions.length; i++) r.push(transitions[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "one,two"
+      And the property "x" of "box" is at least 40
+
+    Scenario: Transitions in another order are in that order
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          transitions: [
+            Transition { objectName: "one"; to: "a" },
+            Transition { objectName: "mid"; to: "m" },
+            Transition { objectName: "two"; to: "b" },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < transitions.length; i++) r.push(transitions[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          transitions: [
+            Transition { objectName: "two"; to: "b" },
+            Transition { objectName: "one"; to: "a" },
+            Transition { objectName: "mid"; to: "m" },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < transitions.length; i++) r.push(transitions[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "two,one,mid"
+      And the property "x" of "box" is at least 40
+
+
+  Rule: An id given to another object names it, and the rest goes on
+
+    Bindings that name the id name the object that has it now. The objects
+    the id moved between are made again; the others go on as they were, an
+    animation half way too.
+
+    Scenario: An id given to a sibling names the sibling
+      Given the QML:
+        """qml
+        import QtQuick
+        Column {
+          id: root; objectName: "root"
+          property string tag: a.objectName
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Text { id: a; objectName: "a"; text: "a" }
+          Text { objectName: "b"; text: "b" }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Column {
+          id: root; objectName: "root"
+          property string tag: a.objectName
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "a"; text: "a" }
+          Text { id: a; objectName: "b"; text: "b" }
+        }
+        """
+      And a reload happens
+      Then the property "tag" of "root" is "b"
+      And the property "text" of "a" is "a"
+      And the property "x" of "box" is at least 40
+
   Rule: Other changes to objects make them again, as the file now writes them
 
     An object moved, or given another type or another id, is there as the
