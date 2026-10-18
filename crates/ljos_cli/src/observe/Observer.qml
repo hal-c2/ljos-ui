@@ -70,6 +70,19 @@ ApplicationWindow {
         return JSON.stringify(v)
     }
 
+    // What a refusal says, without the JSON it came in.
+    function refusal(result) {
+        var text = String(result)
+        try {
+            var r = JSON.parse(text)
+            var e = r && r.error ? r.error : r
+            if (e && typeof e.message === "string")
+                return e.message
+        } catch (err) {
+        }
+        return text
+    }
+
     // ----- Asking -----------------------------------------------------
 
     // What each answer still awaited is for, by serial: the name of a
@@ -128,8 +141,10 @@ ApplicationWindow {
                     objects.turnedAway(parseInt(route.substring(route.indexOf(":") + 1)))
                 return
             }
-            if (route !== "watch")
-                status.text = ok ? "" : tool + ": " + result
+            // A picture that cannot be taken is said where the picture
+            // would be.
+            if (route !== "watch" && route !== "picture")
+                status.text = ok ? "" : tool + ": " + window.refusal(result)
             window.answered(route || "", ok, ok ? JSON.parse(result) : result)
         }
     }
@@ -304,6 +319,8 @@ ApplicationWindow {
                             id: hover
                             anchors.fill: parent
                             hoverEnabled: true
+                            Accessible.role: Accessible.PageTab
+                            Accessible.name: modelData
                             onClicked: {
                                 window.page = index
                                 window.refresh()
@@ -821,6 +838,8 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     hoverEnabled: prow.pickable
                                     enabled: prow.pickable
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: prow.modelData.name || ""
                                     onClicked: {
                                         window.page = 3
                                         objects.load(true)
@@ -1152,7 +1171,7 @@ ApplicationWindow {
                         var going = partCursor !== ""
                         partCursor = ""
                         if (!ok) {
-                            status.text = r
+                            status.text = window.refusal(r)
                             // A row that cannot be opened is not opened
                             // again.
                             if (opening !== "") {
@@ -1244,7 +1263,7 @@ ApplicationWindow {
                         if (!ok) {
                             props = []
                             propRows = 0
-                            head = r
+                            head = window.refusal(r)
                             where = ""
                             picture = ""
                             pictureNote = ""
@@ -1268,7 +1287,7 @@ ApplicationWindow {
                     }
 
                     function showPicture(ok, r) {
-                        pictureNote = ok ? "" : r
+                        pictureNote = ok ? "" : window.refusal(r)
                         if (!ok) {
                             picture = ""
                             return
@@ -1278,8 +1297,7 @@ ApplicationWindow {
                                 picture = "data:" + r.content[i].mimeType + ";base64," + r.content[i].data
                     }
 
-                    // A value as a field shows it: a real to as many
-                    // places as can be told apart on screen.
+                    // A value as a field shows it.
                     function valueText(v) {
                         return window.shown(v)
                     }
@@ -1417,6 +1435,8 @@ ApplicationWindow {
                                     id: nodeHover
                                     anchors.fill: parent
                                     hoverEnabled: true
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: node.modelData.type + (node.modelData.id ? "#" + node.modelData.id : "")
                                     onClicked: objects.pick(node.modelData.handle,
                                                             node.modelData.type + (node.modelData.id ? "#" + node.modelData.id : ""))
                                 }
@@ -1601,6 +1621,11 @@ ApplicationWindow {
                                                                        || (prop.boolean && !prop.fixed))
                                             hoverEnabled: enabled
                                             cursorShape: prop.editable ? Qt.IBeamCursor : Qt.PointingHandCursor
+                                            // The check below speaks for a true or false value.
+                                            Accessible.ignored: prop.boolean
+                                            Accessible.role: Accessible.Button
+                                            Accessible.name: prop.modelData.name || ""
+                                            Accessible.description: objects.valueText(prop.modelData.value)
                                             onClicked: {
                                                 if (prop.modelData.handle !== undefined)
                                                     objects.pick(prop.modelData.handle, prop.modelData.value)
@@ -1723,6 +1748,8 @@ ApplicationWindow {
                                                 enabled: prop.edited
                                                 hoverEnabled: enabled
                                                 cursorShape: Qt.PointingHandCursor
+                                                Accessible.role: Accessible.Button
+                                                Accessible.name: "Revert " + (prop.modelData.name || "")
                                                 onClicked: objects.revert(prop.modelData.name)
                                             }
                                         }
@@ -1784,6 +1811,7 @@ ApplicationWindow {
                         Image {
                             id: shotA
                             property string asked: ""
+                            Accessible.name: "The picked object as drawn"
                             anchors.centerIn: parent
                             z: frame.front === 0 ? 1 : 0
                             opacity: frame.front === 0 ? 1 : 0
@@ -1795,6 +1823,7 @@ ApplicationWindow {
                         Image {
                             id: shotB
                             property string asked: ""
+                            Accessible.name: "The picked object as drawn"
                             anchors.centerIn: parent
                             z: frame.front === 1 ? 1 : 0
                             opacity: frame.front === 1 ? 1 : 0
@@ -1868,10 +1897,14 @@ ApplicationWindow {
                     function put(e) {
                         if (!matches(e))
                             return
+                        // A QML warning starts with the full URL of where it
+                        // happened, which pushed what happened out of the row;
+                        // the last column already says where.
+                        var at = e.file ? /^\S+:\d+(:\d+)?: /.exec(e.message) : null
                         shownLines.append({
                             level: e.level,
                             category: e.category || "",
-                            message: e.message,
+                            message: at ? e.message.slice(at[0].length) : e.message,
                             where: e.file ? e.file.split("/").pop() + ":" + e.line : ""
                         })
                     }
