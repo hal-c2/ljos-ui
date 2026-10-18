@@ -88,6 +88,33 @@ Item {
 }
 
 #[test]
+fn a_property_typed_through_an_import_namespace_holds_an_object() {
+    let h = engine();
+    h.files(&[
+        (
+            "Holder",
+            r#"import QtQuick as Q
+Q.Item { property Q.Item target }
+"#,
+        ),
+        (
+            "Main",
+            r#"import QtQuick
+Item {
+  Item { id: other; objectName: "other" }
+  Holder { id: holder; target: other }
+  property bool held: holder.target === other
+}
+"#,
+        ),
+    ]);
+    let root = h.engine.create_from_url("Main", None, vec![]).unwrap();
+    assert!(matches!(h.get(root, "held"), Value::Bool(true)));
+    let log = h.log();
+    assert!(!log.iter().any(|l| l.contains("Unable to assign")), "{log:?}");
+}
+
+#[test]
 fn ids_of_a_file_component_are_private_to_it() {
     let h = engine();
     h.files(&[

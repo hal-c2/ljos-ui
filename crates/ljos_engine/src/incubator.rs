@@ -1081,6 +1081,12 @@ impl Engine {
                 _ => Declared::Object,
             };
             let own_enums: Vec<&str> = od.enums.iter().map(|e| e.name.as_str()).collect();
+            let aliases: Vec<&str> = file
+                .ir
+                .imports
+                .iter()
+                .filter_map(|i| i.alias.as_deref())
+                .collect();
             let mut b = MetaBuilder::new(&name).base(base).declared(declared);
             for e in &od.enums {
                 let keys: Vec<(&str, i64)> = e.keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
@@ -1105,7 +1111,7 @@ impl Engine {
                             .unwrap_or(&p.ty);
                     TypeTag::List(Some(Atom::intern(inner)))
                 } else {
-                    property_type(&p.ty, &own_enums)
+                    property_type(&p.ty, &own_enums, &aliases)
                 };
                 if p.is_default {
                     flags |= PropertyFlags::DEFAULT;
@@ -1130,7 +1136,7 @@ impl Engine {
                         (
                             Atom::new(&p.name),
                             p.ty.as_deref()
-                                .map_or(TypeTag::Var, |t| property_type(t, &own_enums)),
+                                .map_or(TypeTag::Var, |t| property_type(t, &own_enums, &aliases)),
                         )
                     })
                     .collect();
@@ -2688,8 +2694,16 @@ fn is_component_attached(ty: &TypeRef) -> bool {
     matches!(ty, TypeRef::Native { module, name } if name == "Component" && (module == "QML" || module == "QtQml"))
 }
 
-/// A QML property type: enum types are ints.
-fn property_type(ty: &str, own_enums: &[&str]) -> TypeTag {
+/// A QML property type: enum types are ints. `T.Control`, where `T` is an
+/// import's alias, is an object type; a qualified enum has a type between
+/// the alias and its name.
+fn property_type(ty: &str, own_enums: &[&str], aliases: &[&str]) -> TypeTag {
+    if let Some((alias, name)) = ty.split_once('.')
+        && aliases.contains(&alias)
+        && !name.contains('.')
+    {
+        return TypeTag::parse(name);
+    }
     if ty.contains('.') || own_enums.contains(&ty) {
         return TypeTag::Int;
     }
