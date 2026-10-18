@@ -12,7 +12,9 @@ Feature: An object is named by its id when nothing has that object name
   no object has the object name, `#name` names the object whose QML `id` it
   is, as `#` names an element by its id on the web, and an agent is not
   made to look up the window's handle first. What has the object name goes
-  on being the one named.
+  on being the one named. An id a delegate is written with is the id of
+  each of its copies; the outline lists none of them, so a refusal lists
+  their handles, which name each one.
 
   Background:
     Given the QML:
@@ -26,6 +28,7 @@ Feature: An object is named by its id when nothing has that object name
         property int count: 0
         Button { objectName: "more"; text: "More"; onClicked: app.count += 1 }
         Item { id: more; property int n: 1 }
+        Repeater { model: 3; Item { id: cell; property int n: index } }
       }
       """
     And the inspector is connected with the capabilities "inspect, input, mutate"
@@ -64,3 +67,9 @@ Feature: An object is named by its id when nothing has that object name
   Scenario: A name that is neither an object name nor an id is refused
     When the agent inspects "#nobody"
     Then the agent is refused with "not_found"
+
+  Scenario: An id that each copy of a delegate has is refused with their handles
+    When the agent inspects "#cell"
+    Then the agent is refused with "ambiguous"
+    And the refusal names 3 candidates
+    And the refusal mentions "@"

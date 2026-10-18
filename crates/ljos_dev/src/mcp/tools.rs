@@ -247,16 +247,7 @@ impl Look<'_> {
                         }),
                     None => Err(no_match(what)),
                 },
-                many => Err(SurfaceError::new(
-                    ErrorCode::Ambiguous,
-                    format!(
-                        "`{what}` names {} objects and none of them is in the outline, so they \
-                         cannot be told apart here. Give the one you mean an `objectName` of \
-                         its own",
-                        many.len()
-                    ),
-                )
-                .with_details(json!({ "count": many.len(), "candidates": [] }))),
+                many => Err(self.ambiguous_unlisted(what, tool, many)),
             },
             many => Err(self.ambiguous(what, tool, many)),
         }
@@ -286,6 +277,29 @@ impl Look<'_> {
                 .collect());
         }
         Ok(Vec::new())
+    }
+
+    /// The outline lists none of `found` (the copies of a delegate, as a
+    /// rule), so their handles are the references.
+    fn ambiguous_unlisted(&self, what: &str, tool: &str, found: &[ObjectId]) -> SurfaceError {
+        let mut message = format!(
+            "`{what}` names {} objects the outline does not list and `{tool}` needs exactly \
+             one. Candidates:",
+            found.len()
+        );
+        let mut candidates = Vec::new();
+        for &obj in found.iter().take(MAX_CANDIDATES) {
+            let reference = super::objects::handle(obj);
+            let line = super::observe::label(self.engine, obj).0;
+            let _ = write!(message, "\n  {reference}  {line}");
+            candidates.push(json!({ "ref": reference, "line": line }));
+        }
+        if found.len() > MAX_CANDIDATES {
+            let _ = write!(message, "\n  … and {} more", found.len() - MAX_CANDIDATES);
+        }
+        message.push_str("\nUse one of the handles, or `app_objects` to see where each one is");
+        SurfaceError::new(ErrorCode::Ambiguous, message)
+            .with_details(json!({ "count": found.len(), "candidates": candidates }))
     }
 
     fn ambiguous(&mut self, what: &str, tool: &str, found: &[usize]) -> SurfaceError {
