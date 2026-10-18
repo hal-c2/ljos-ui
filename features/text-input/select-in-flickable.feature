@@ -155,11 +155,10 @@ Feature: Selecting by mouse inside a Flickable
         """
 
     Scenario: A drag down a selecting TextArea selects and the view stays
-      When the user presses the pointer at 10, 10
+      When the user presses the pointer at 20, 10
       And the user moves the pointer to 40, 30
       And the user moves the pointer to 30, 40
       And the user moves the pointer to 30, 45
       And the user releases the pointer at 30, 45
       Then the property "contentItem.contentY" of "view" is 0
-      And the property "selectionStart" of "area" is 0
-      And the property "selectionEnd" of "area" is at least 20
+      And the property "selectedText" of "area" is "ne one\nline two\nline"
