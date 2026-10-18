@@ -1265,3 +1265,57 @@ On llvmpipe the EGL start is now the critical path. The main thread's work overl
 the critical path is the main thread's own work. Next: register the Controls types only when a
 module imports them, and make the root object in less time. On the font side, fontconfig's own
 scan inside fontique is the rest.
+
+### photosurface's rows from FolderListModel (2026-10-18)
+
+The folder is a copy of 472 screenshots (PNG, 79 MB) on the data drive. Both apps run in the
+`desktop:cua` sandbox (sway, X11, llvmpipe). Ljós is a release build, and Qt 6.11.2 runs with
+`QT_QUICK_CONTROLS_STYLE=Basic`. Times are in ms from starting the process, three runs after a
+first, cold one.
+
+**The listing alone.** A FolderListModel with `nameFilters: ["*.png"]` and no view: the time from
+the root's completion to `status` Ready with 472 rows.
+
+| | Ljós | Qt |
+|---|---:|---:|
+| Ready, on the sandbox's display | 13–31 | 17–22 |
+| Ready, Qt's `offscreen` platform | | 1–2 |
+
+Ljós's own work is about 2 ms. Reading the folder on its thread takes 0.75 ms warm (8 ms cold),
+and the rows take 1.1 ms on the user interface thread, most of it making a `Date` for each row. The
+reply then waits about 10 ms while the user interface thread makes the window. Each file is
+stat'ed once, as in Qt; before, `showOnlyReadable` stat'ed it again.
+
+**The whole app.** photosurface, with the welcome slides taken out of a copy and the folder set at
+completion.
+
+| | Ljós | Qt |
+|---|---:|---:|
+| Window mapped | 398–417 | 117–220 |
+| Rows (the Repeater has 472 delegates) | 217–235 | 2201–2356 |
+| Settled (no CPU for 1 s) | 2909–3239 | 2490–2706 |
+| CPU until settled (s) | 26.6–29.2 | 2.9–3.2 |
+| of it llvmpipe (s) | 22.5–24.9 | 0.38 |
+| Peak RSS (MiB) | 385–400 | 3370–3390 |
+
+- **Rows are ten times sooner.** Qt decodes each picture on the user interface thread while it
+  makes the delegate, so its rows take 2.2 s. Ljós reads a large picture's header and decodes it
+  aside (the section above).
+- **The window maps later.** Ljós compiles from source before its first frame, as in the sections
+  above. Qt maps a window before its rows come.
+- **The CPU goes into drawing, not decoding.** The decoders spend about 3.8 s, but Ljós draws 100
+  frames between its first frame and settling, one as each batch of pictures arrives. On llvmpipe
+  each frame costs about 0.2 s of CPU across its threads. The full-window gneiss `ShaderEffect`,
+  which does not change, is drawn again each frame: without it, llvmpipe spends 8 s instead of
+  22.5 s.
+
+**DECISIONs.**
+
+- The rows' `Date`s are still made when the rows arrive, through the script engine, as every
+  `Date` in Ljós is. That takes about 1 ms for 472 rows.
+
+**What is left.**
+
+- **Drawing as pictures arrive.** At most about 10 frames a second while pictures stream in, and
+  a static `ShaderEffect` kept as a texture between frames, would bring Ljós's CPU near Qt's on a
+  software renderer. Pacing picture arrivals belongs to the image store (`ljos_quick/src/image`).

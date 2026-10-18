@@ -399,6 +399,8 @@ struct Found {
     /// Milliseconds since the UNIX epoch.
     modified: f64,
     accessed: f64,
+    /// The owner's read bit.
+    readable: bool,
 }
 
 /// Starts (or restarts) listing the model's folder. The rows land in
@@ -521,13 +523,13 @@ fn list(dir: &Path, opts: &Options) -> Vec<Found> {
         if !opts.hidden && name.starts_with('.') {
             continue;
         }
-        let path = entry.path();
-        if opts.only_readable && !readable(&path) {
-            continue;
-        }
-        let Some(f) = describe(path, name) else {
+        // One stat a file, as Qt's listing makes.
+        let Some(f) = describe(entry.path(), name) else {
             continue;
         };
+        if opts.only_readable && !f.readable {
+            continue;
+        }
         let shown = if f.is_dir {
             opts.show_dirs
         } else {
@@ -560,18 +562,19 @@ fn describe(path: PathBuf, name: String) -> Option<Found> {
         size: meta.len(),
         modified: ms(meta.modified()),
         accessed: ms(meta.accessed()),
+        readable: readable(&meta),
     })
 }
 
 #[cfg(unix)]
-fn readable(path: &Path) -> bool {
+fn readable(meta: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o400 != 0)
+    meta.permissions().mode() & 0o400 != 0
 }
 
 #[cfg(not(unix))]
-fn readable(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok()
+fn readable(_meta: &std::fs::Metadata) -> bool {
+    true
 }
 
 fn sort(found: &mut [Found], opts: &Options) {
