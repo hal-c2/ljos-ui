@@ -684,3 +684,65 @@ not change.
 Over 20 reloads, RSS stayed within 1.3 MB on samegame, thermostat and todolist. calqlatr's grew
 by 11.8 MB in two steps in one run and stayed flat in the next. Idle CPU after the reloads was 0 % on every app except the ones that animate
 themselves (clocks' timer, maroon's scene).
+
+### A write's cascade, a turning transform and the script crossing (2026-10-18)
+
+Measured as in the section before: callgrind over the egui passes, the 1200-frame run less the
+600-frame run, divided by 600. samegame's boards are random, so it is given for each write rather
+than for each frame.
+
+| Instructions | Before | After |
+|---|---:|---:|
+| clocks: a frame | 221 k | 189 k |
+| clocks: the geometry effect's reruns, a frame | 48.7 k | 0 |
+| clocks: the transform list's reruns, a frame | — | 19.1 k |
+| clocks: finding an object's script wrapper | 335 | 195 |
+| animations: a frame | 1 158 k | 1 159 k |
+| samegame: a property set from a script | 28.1 k | 24.0 k |
+| samegame: a write a Behavior takes | 23.6 k | 18.3 k |
+| samegame: starting the Behavior's animation | 16.8 k | 12.6 k |
+
+- **A Behavior's write** stopped the run it replaced by sweeping every running animation. A
+  stopped run is now marked, and the next tick, wake or count sweeps once. The timeline reads a
+  `PropertyAnimation`'s targets, ends and duration, and a spring's or smoothed animation's
+  parameters, by index instead of by name. The plan is built twice for each write.
+- **A turning transform.** A `Rotation` or `Scale` in `transform` that moved reran the item's
+  whole geometry effect. An item whose transform list is not empty now has an effect of its own for
+  the list, made when the list fills and dropped when it empties. Every other item has no new
+  effect. The item's own `rotation` and `scale` stay in the geometry effect. The effect run count
+  is the same (7.3 a frame in clocks), but each run reads the list alone: about 2.6 k instead of
+  6.7 k.
+- **The script crossing.** Every value a script reads, and every call into it, finds its object's
+  wrapper by id, and the maps hashed that id with SipHash. They use Fx now. Past that, the glue of
+  a crossing is small: about 500 instructions for a property read and 2 k for a set before the
+  write. What a handler costs is the cascade it sets off.
+
+**CPU, as % of one core.** Desktop profile, medians of 3. "Before" is 389f819, run straight after
+"after" so that both met the same load. Qt's figure is in parentheses.
+
+| GPU (`renderD128`) | Idle, before | Idle, after | Clicked, before | Clicked, after |
+|---|---:|---:|---:|---:|
+| animations | 2.6 (1.8) | 2.7 (1.5) | 4.0 (1.9) | 2.9 (1.6) |
+| clocks | 3.9 (2.1) | 1.9 (1.9) | 2.2 (2.0) | 2.0 (1.8) |
+| samegame | 1.9 (2.9) | 1.6 (2.0) | 8.0 (5.8) | 9.8 (3.7) |
+
+| llvmpipe (sway on pixman) | Idle, before | Idle, after | Clicked, before | Clicked, after |
+|---|---:|---:|---:|---:|
+| animations | 13.7 (22.5) | 16.3 (22.2) | 12.8 (22.1) | 16.7 (22.9) |
+| clocks | 10.7 (—) | 8.2 (20.6) | 11.2 (—) | 8.0 (21.5) |
+| samegame | 7.9 (27.2) | 7.8 (25.9) | 89.2 (222.8) | 89.5 (241.1) |
+
+The machine was not quiet. The load average was 2–91 on the GPU and 14–112 on llvmpipe, and it
+moved by tens within a set. The bench refused Qt's clocks run before the change: its cgroup held
+other processes. These differences are within the noise. The instruction counts above are the
+measure.
+
+**What is left.**
+
+- **An effect rerun** still costs about 1.4 k instructions in the graph's bookkeeping: the heap
+  pop, the guard and the edge diff. That path already skips the diff when the sources are the
+  same.
+- **A spring's plan** (`Track::plan`, about 3.4 k a write) simulates the spring to find when it
+  settles, which a write to a property with a `SpringAnimation` Behavior needs.
+- **samegame on a GPU** is still most of all render compose and encode, with texture keys hashed
+  by SipHash. That is renderer work.
