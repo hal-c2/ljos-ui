@@ -1918,13 +1918,27 @@ const PRELUDE: &str = r##"
   // so `instanceof Date` and the methods hold. A Proxy did that too, but
   // a trap per `new Date` and per `Date.now` read cost a clock's tick
   // more than the rest of it.
-  // Whether the clock is pinned: the engine sets it, so that a Date of
-  // the machine's time costs no call out.
-  const wall = { pinned: false };
-  Object.defineProperty(g, "__ljos_wallClock", { value: wall });
+  // Whether the clock is pinned: the engine sets it. Unpinned, the global
+  // `Date` is the engine's own, so a Date of the machine's time goes
+  // through no function in front of it; pinning puts the one below in
+  // its place, unless a script has put its own there.
   const hostNow = g.__ljos_wallNow;
-  const wallNow = () => (wall.pinned ? hostNow() : undefined);
   const RealDate = g.Date;
+  let pinned = false;
+  const wall = {
+    get pinned() { return pinned; },
+    set pinned(on) {
+      pinned = !!on;
+      const [from, to] = pinned ? [RealDate, Date] : [Date, RealDate];
+      if (g.Date === from) g.Date = to;
+      Object.defineProperty(RealDate.prototype, "constructor", {
+        value: to, writable: true, configurable: true,
+      });
+    },
+  };
+  Object.defineProperty(g, "__ljos_wallClock", { value: wall });
+  // A script may keep the wrapper after the clock is unpinned again.
+  const wallNow = () => (pinned ? hostNow() : undefined);
   const Date = function Date(year, month) {
     if (new.target === undefined) {
       const ms = wallNow();
@@ -1936,7 +1950,7 @@ const PRELUDE: &str = r##"
     }
     switch (arguments.length) {
       case 0: {
-        if (!wall.pinned) return new RealDate();
+        if (!pinned) return new RealDate();
         const ms = hostNow();
         return ms === undefined ? new RealDate() : new RealDate(ms);
       }
@@ -1951,9 +1965,6 @@ const PRELUDE: &str = r##"
   }
   Object.defineProperty(Date, "length", { value: 7, configurable: true });
   Object.defineProperty(Date, "prototype", { value: RealDate.prototype });
-  Object.defineProperty(RealDate.prototype, "constructor", {
-    value: Date, writable: true, configurable: true,
-  });
   const realNow = RealDate.now;
   Object.defineProperty(Date, "now", {
     value: function now() {
@@ -1962,7 +1973,6 @@ const PRELUDE: &str = r##"
     },
     writable: true, configurable: true,
   });
-  Object.defineProperty(g, "Date", { value: Date, writable: true, configurable: true });
 
   // A grouped property (`rect.border`): accessors over the flat
   // `border.width` names.

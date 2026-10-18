@@ -354,3 +354,32 @@ fn an_unpinned_wall_clock_is_the_systems() {
     h.engine.set_wall_clock_origin(None);
     assert_eq!(h.engine.wall_clock_ms(), None);
 }
+
+/// Only a pinned clock puts a function in front of the engine's `Date`:
+/// an application on the machine's clock pays nothing for `new Date`.
+#[test]
+fn an_unpinned_wall_clock_puts_nothing_in_front_of_date() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  function source() { return Date.toString() }
+  function pinned() { return new Date().getTime() }
+}
+"#,
+    );
+    let native = |h: &support::Harness| match h.engine.invoke_by_name(root, "source", &[]).unwrap()
+    {
+        Value::String(s) => s.contains("[native code]"),
+        v => panic!("{v:?} {:?}", h.warnings()),
+    };
+    assert!(native(&h));
+    h.engine.set_wall_clock_origin(Some(1_791_741_429_000.0));
+    assert!(!native(&h));
+    assert_eq!(
+        h.engine.invoke_by_name(root, "pinned", &[]).unwrap(),
+        Value::from(1_791_741_429_000.0)
+    );
+    h.engine.set_wall_clock_origin(None);
+    assert!(native(&h));
+}
