@@ -762,6 +762,104 @@ What is left:
   qml6, and the warnings are gone.
 
 
+### Hot reload: handlers, functions and moved lines in place (2026-10-18, evening)
+
+A file that keeps its shape now takes more edits in place, as well as values and bindings:
+
+- a handler body (`onClicked: …`);
+- a function body;
+- a value turned into a binding, or the reverse;
+- an edit that moves lines, such as a line break, a comment or a member added on a line of its
+  own.
+
+Every handler, function and binding runs through a slot that holds its file and expression. A
+reload in place points each slot at the new file. Objects and bindings kept over moved lines are
+told their new line, so a later warning gives the line the file has now. These edits still take
+the full path:
+
+- an object added, removed, moved or retyped;
+- a member removed;
+- a signal, an enum, or a function's parameters changed;
+- a member added over a property another layer overrides (a StackView page's `width`);
+- any edit while a file with `pragma LjosReload: reset` is live.
+
+Measured with `reload_profile`, as in the section before. It now registers `QtQml.XmlListModel`,
+so rssnews loads; before, every rssnews reload failed with the module not installed. The
+"before" column is the path the rules of the section before give; it was not measured again.
+Two saves per row for clocks, maroon, rssnews and todolist, and six for thermostat and samegame
+(control page opened, game started). The load average was 15–40 for clocks, maroon, rssnews and
+todolist, and 6–8 for thermostat and samegame.
+
+| App, edit | Path before → now | Shown | Kept, new |
+|---|---|---:|---:|
+| clocks, a colour in `Clock.qml` | in place → in place | 16.6–17.5 ms | 85, 0 |
+| clocks, a function body | full → in place | 17.0 ms (outliers at load 39) | 85, 0 |
+| clocks, a handler body | full → in place | 16.3–17.2 ms | 85, 0 |
+| clocks, a line break | full → in place | 16.3–17.4 ms | 85, 0 |
+| clocks, an object added | full → full | 20.5–22.4 ms | 85, 4 |
+| maroon, `x` in `Main.qml` | in place → in place | 19.7–19.8 ms | 158, 0 |
+| maroon, a binding in a delegate | in place → in place | 19.9–20.2 ms | 158, 0 |
+| maroon, a `Timer` handler | full → in place | 19.7–20.7 ms | 158, 0 |
+| maroon, a line break | full → in place | 20.7–20.8 ms | 158, 0 |
+| maroon, an object added | full → full | 24.5–25.4 ms (apply 3.7 ms) | 158, 1 |
+| rssnews, a colour in `Main.qml` | failed → in place | 17.7–18.5 ms | 80, 0 |
+| rssnews, a handler body | failed → in place | 18.2–18.3 ms | 80, 0 |
+| rssnews, a line break | failed → in place | 20.5 ms | 80, 0 |
+| rssnews, an object added | failed → full | 46–124 ms (apply 10–20 ms) | 70, 1 |
+| todolist, a text in `HomePageForm.ui.qml` | in place → in place | 23.0–23.1 ms | 481, 0 |
+| todolist, a function body in `TasksListsView.qml` | full → in place | 23.2–23.8 ms | 481, 0 |
+| todolist, a line break | full → in place | 23.7–23.8 ms | 481, 0 |
+| todolist, an object added | full → full | 51–57 ms (apply 23–27 ms) | 455, 6–7 |
+| thermostat, a text in `ThermostatViewForm.ui.qml` | in place → in place | 32.5–34.4 ms | 4 914, 0 |
+| thermostat, an object added there | full → full | 201–259 ms; the first save 1 028 ms | 4 902, 1 |
+| samegame, a text in `Main.qml` | in place → in place | 22.2–23.0 ms | 8 620, 0 |
+| samegame, an object added there | full → full | 99–127 ms | 8 620, 1 |
+
+todolist warns at every load that four icons cannot be opened. They are given as
+`"images/…"` through an alias to an `Image` in `imports/CustomControls`, and resolved against
+that file. qml6 does the same for the same layout. The warnings come at start-up too, so they are
+not caused by a reload.
+
+**Why the full path is not under 100 ms yet.** The steps of thermostat's full path, at load 6:
+
+- make: 88–128 ms;
+- destroy: 40–53 ms;
+- swap: 21–28 ms;
+- snapshot: 4 ms.
+
+Keeping the unchanged subtrees of a remade file would save the make and destroy of everything
+but the edited object. That needs one of two things the engine cannot do now. It could make part
+of a component into an instance that already exists. Or it could move nested instances from the
+old instance of the file to the new one. A binding, an id or a handler of a kept subtree can name
+any object of its file, so each one would be pointed at the new file. Both changes touch every
+part of instantiation, so the work went where the edits are made most: edits that keep a file's
+shape, now including moved lines, go in place at 16–35 ms. An edit that adds, removes or moves
+an object is still the full path.
+
+samegame's full path is spread differently, at load 6–7:
+
+- objects made by scripts again: 26–37 ms;
+- destroy: 21–29 ms;
+- swap: 20–25 ms;
+- make: 2–5 ms.
+
+Its 8 000 blocks are made by `createObject`, not declared, so keeping declared subtrees would not
+help it.
+
+**samegame's apply over 16 reloads**, at load 6.5:
+
+| Reload | Apply |
+|---|---:|
+| 0 | 74 ms |
+| 1–3 | 83–87 ms |
+| 4–15 | 92–101 ms, with no rise after the 5th |
+
+The step that grows is the scripted one: 26 ms at first, 35–37 ms from the 5th reload. RSS went
+from 95 MB before the first reload to 133 MB after it, then stayed at 138–142 MB. So the rise
+reaches a plateau after about five reloads and does not keep growing. Why the first full reload
+is the cheapest was not found.
+
+
 ### A write's cascade, a turning transform and the script crossing (2026-10-18)
 
 Measured as in the section before: callgrind over the egui passes, the 1200-frame run less the
