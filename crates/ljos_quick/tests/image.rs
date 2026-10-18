@@ -1581,12 +1581,47 @@ Item {
     // What QML sees is the picture's own size.
     assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
     assert_eq!(source_size(&e, picture), (2048.0, 1024.0));
+    // Its pixels are decoded on another thread.
+    assert!(painted(&s, picture).is_none());
+    store.finish(&e);
+    frame(&mut s, &e);
     // What is kept is enough for the view, 200 long rounded up to a
     // quarter octave.
     let image = painted(&s, picture).unwrap();
     assert_eq!((image.width(), image.height()), (224, 112));
     assert_eq!(image.pixel(10, 10), BLUE);
     assert_eq!(store.bytes(), 224 * 112 * 4);
+}
+
+#[test]
+fn a_large_picture_whose_body_is_broken_fails_once_it_is_decoded() {
+    let (e, store) = pictures();
+    // A whole header, then rows cut short.
+    let mut bytes = png(1024, 768, BLUE);
+    bytes.truncate(bytes.len() / 2);
+    store.register_resource("file:///cut.png", bytes);
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; width: 200; height: 100; source: "cut.png" }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    // Its header is all that is read at first.
+    assert_eq!(status(&e, picture), image_status::READY);
+    assert_eq!(implicit(&e, picture), (1024.0, 768.0));
+    store.finish(&e);
+    assert_eq!(status(&e, picture), image_status::ERROR);
+    assert_eq!(
+        warnings(&e),
+        [
+            "file:///Main.qml:5:5: QML Image: Error decoding: file:///cut.png: unexpected end of file"
+        ]
+    );
 }
 
 #[test]
@@ -1607,6 +1642,7 @@ Item {
     let mut s = scene(&e, root, 200.0, 100.0);
     frame(&mut s, &e);
     set(&e, picture, "source", Value::Url("file:///big.png".into()));
+    store.finish(&e);
     frame(&mut s, &e);
     assert_eq!(painted(&s, picture).unwrap().width(), 224);
     // Four times as wide on screen needs four times the pixels.
@@ -1626,8 +1662,7 @@ Item {
 #[test]
 fn a_picture_drawn_much_smaller_than_it_is_kept_is_kept_smaller() {
     let (e, store) = pictures();
-    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
-    // Loaded before any scene says how large it is: kept whole.
+    store.register_resource("file:///big.png", png(500, 250, BLUE));
     let root = load(
         &e,
         r#"
@@ -1640,14 +1675,16 @@ Item {
 "#,
     );
     let picture = find(&e, root, "picture");
-    assert_eq!(store.bytes(), 2048 * 1024 * 4);
+    // Small enough to be decoded on the spot, before any scene says how
+    // large it is drawn: kept whole.
+    assert_eq!(store.bytes(), 500 * 250 * 4);
     let mut s = scene(&e, root, 400.0, 300.0);
     frame(&mut s, &e);
     let image = painted(&s, picture).unwrap();
     assert_eq!((image.width(), image.height()), (112, 56));
     assert_eq!(image.pixel(5, 5), BLUE);
-    assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
-    assert_eq!(source_size(&e, picture), (2048.0, 1024.0));
+    assert_eq!(implicit(&e, picture), (500.0, 250.0));
+    assert_eq!(source_size(&e, picture), (500.0, 250.0));
     // The whole picture is no longer kept, and nothing was read again.
     assert_eq!(store.bytes(), 112 * 56 * 4);
     assert_eq!(store.decodes(), 1);
@@ -1657,7 +1694,7 @@ Item {
     let other = find(&e, root, "other");
     set(&e, other, "source", Value::Url("big.png".into()));
     assert_eq!(status(&e, other), image_status::READY);
-    assert_eq!(implicit(&e, other), (2048.0, 1024.0));
+    assert_eq!(implicit(&e, other), (500.0, 250.0));
     frame(&mut s, &e);
     let image = painted(&s, other).unwrap();
     assert_eq!((image.width(), image.height()), (448, 224));
@@ -1696,6 +1733,7 @@ Item {
     frame(&mut s, &e);
     set(&e, picture, "source", Value::Url("file:///big.png".into()));
     frame(&mut s, &e);
+    store.finish(&e);
     // Never painted, it keeps what its size needs, not the view's 448.
     assert_eq!(store.bytes(), 112 * 56 * 4);
     assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
@@ -1741,6 +1779,7 @@ Item {
         let before = store.bytes();
         set(&e, item, "source", Value::Url("file:///big.png".into()));
         frame(&mut s, &e);
+        store.finish(&e);
         let kept = store.bytes() - before;
         set(&e, item, "source", Value::from(""));
         store.trim(MemoryPressure::Critical);
@@ -1829,6 +1868,7 @@ Item {
     let picture = find(&e, root, "picture");
     set(&e, picture, "source", Value::Url("file:///big.png".into()));
     frame(&mut s, &e);
+    store.finish(&e);
     // With no size it draws nothing yet, and is kept as the view needs.
     assert_eq!(store.bytes(), 448 * 224 * 4);
     // A row laid out later, never painted: kept as drawn, 100 by 50.

@@ -848,8 +848,16 @@ pub(crate) fn has_no_suffix(name: &str) -> bool {
 /// Only files count, and the suffix is matched as written: `logo.SVG` is
 /// not found for `logo`.
 fn read_file(path: &std::path::Path) -> Option<Vec<u8>> {
-    if let Ok(bytes) = std::fs::read(path) {
-        return Some(bytes);
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    open_file(path)?.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// The file [`read_file`] reads.
+fn open_file(path: &std::path::Path) -> Option<std::fs::File> {
+    if path.is_file() {
+        return std::fs::File::open(path).ok();
     }
     if !has_no_suffix(&path.to_string_lossy()) || path.exists() {
         return None;
@@ -861,10 +869,39 @@ fn read_file(path: &std::path::Path) -> Option<Vec<u8>> {
         let candidate = std::path::PathBuf::from(name);
         candidate
             .is_file()
-            .then(|| std::fs::read(&candidate).ok())
+            .then(|| std::fs::File::open(&candidate).ok())
             .flatten()
     })
 }
+
+/// The size the header of what `origin` holds or names says, reading no
+/// more of a file than its first bytes: a JPEG's size can come after a
+/// thumbnail in its metadata, so up to [`HEADER_READ`] of them.
+pub(crate) fn header_size(origin: &Origin) -> Option<(u32, u32)> {
+    use std::io::Read;
+    match origin {
+        Origin::Bytes(bytes) if !is_svg(bytes) => dimensions(bytes),
+        Origin::File(path) => {
+            let mut file = open_file(path)?;
+            let mut bytes = Vec::new();
+            for want in [4096, HEADER_READ] {
+                let have = bytes.len() as u64;
+                (&mut file).take(want - have).read_to_end(&mut bytes).ok()?;
+                if let Some(size) = dimensions(&bytes) {
+                    return Some(size);
+                }
+                if (bytes.len() as u64) < want {
+                    return None;
+                }
+            }
+            None
+        }
+        Origin::Bytes(_) | Origin::Remote => None,
+    }
+}
+
+/// How much of a file [`header_size`] reads at most.
+const HEADER_READ: u64 = 128 * 1024;
 
 fn too_large(url: &str) -> LoadError {
     LoadError::decode(url, "the picture is too large")

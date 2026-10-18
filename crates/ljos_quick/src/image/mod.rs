@@ -204,6 +204,9 @@ struct Run {
     reshowing: bool,
     /// The dropped pixels could not be loaded again; do not keep trying.
     lost: bool,
+    /// The pixels are decoded in the background, the first time and each
+    /// time they are made again ([`decode_aside`]).
+    aside: bool,
     /// Sharper pixels than those of `key` and what was asked for them: a
     /// drawing made at the display's scale, or a picture kept smaller for
     /// its `limit` that is drawn larger or read whole. Like `held`: for
@@ -477,6 +480,7 @@ fn reload(e: &Engine, me: ObjectId) {
     }
     let started = with_run(e, me, |r| {
         r.completed.then(|| {
+            r.aside = false;
             r.generation += 1;
             r.generation
         })
@@ -512,6 +516,18 @@ fn reload(e: &Engine, me: ObjectId) {
         return;
     }
     if is_local(&key.url) && !asynchronous {
+        let plain = key.request.width == 0
+            && key.request.height == 0
+            && key.request.clip.is_none()
+            && !key.request.animated;
+        if cache
+            && plain
+            && let Some(natural) = store.header_size(&key)
+            && u64::from(natural.0) * u64::from(natural.1) > ASIDE_PIXELS
+        {
+            decode_aside(e, me, key, natural, generation);
+            return;
+        }
         let loaded = if key.request.animated {
             store.decode_now(&key).map(|l| {
                 (
@@ -571,9 +587,13 @@ fn is_local(url: &str) -> bool {
 }
 
 /// Whether pixels of `url` the store dropped are made again in the
-/// background: always for a network source, which is never waited for.
-fn in_background(e: &Engine, me: ObjectId, url: &str) -> bool {
+/// background: always for a network source, which is never waited for,
+/// and for a picture whose pixels came that way the first time when they
+/// are painted `on_screen`. Whatever else reads them (a `Canvas`, an
+/// effect) has them at once, as from a picture loaded on the spot.
+fn in_background(e: &Engine, me: ObjectId, url: &str, on_screen: bool) -> bool {
     matches!(decode::scheme(url).as_deref(), Some("http" | "https"))
+        || (on_screen && with_run(e, me, |r| r.aside) == Some(true))
         || e.untrack(|| e.read(me, ImageBase::ASYNCHRONOUS.index).to_boolean())
 }
 
@@ -602,6 +622,14 @@ fn finish(
         r.sharpening = None;
         r.requested.is_some()
     }) == Some(true);
+    announce(e, me, natural, asked);
+    // After the batch: the item's size may follow the picture's.
+    fit_unpainted(e, me);
+}
+
+/// The item says it is Ready with a picture of `natural` size; `asked`
+/// is whether the author set `sourceSize`, which then stays as set.
+fn announce(e: &Engine, me: ObjectId, natural: (u32, u32), asked: bool) {
     let (w, h) = (f64::from(natural.0), f64::from(natural.1));
     // In the order Qt announces them; a handler of any of them sees the
     // others already in place.
@@ -622,9 +650,69 @@ fn finish(
             report_size(e, me, w, h);
         }
     });
-    // After the batch: the item's size may follow the picture's.
-    fit_unpainted(e, me);
 }
+
+/// Shows `key`, a local picture of `natural` size as its header says, as
+/// a load on the spot does: Ready, with its size, at once. Its pixels are
+/// decoded in the background, at the size the item draws it once its
+/// bindings have followed that size, and painted when they come, so that
+/// many large pictures do not hold the user interface up while they
+/// decode. Qt decodes them on the spot.
+fn decode_aside(e: &Engine, me: ObjectId, key: ImageKey, natural: (u32, u32), generation: u64) {
+    let asked = with_run(e, me, |r| {
+        r.frames = None;
+        r.frame = 0;
+        r.key = Some(key.clone());
+        r.natural = natural;
+        r.held = None;
+        r.pinned = false;
+        // Nothing to ask for when it is painted: it is on its way.
+        r.reshowing = true;
+        r.lost = false;
+        r.sharp = None;
+        r.sharpening = None;
+        r.aside = true;
+        r.requested.is_some()
+    }) == Some(true);
+    announce(e, me, natural, asked);
+    let store = ImageStore::of(e);
+    let limit = e.untrack(|| {
+        let sized = e.read(me, Item::WIDTH.index).to_number() > 0.0
+            && e.read(me, Item::HEIGHT.index).to_number() > 0.0;
+        sized.then(|| wanted_limit(e, me, natural, store.device_scale(e)))
+    });
+    let longest = |(w, h): (u32, u32)| w.max(h);
+    let key = match limit {
+        Some(limit)
+            if longest(decode::kept_size(natural, limit))
+                < longest(decode::kept_size(natural, key.request.limit)) =>
+        {
+            ImageKey {
+                request: Request {
+                    limit,
+                    ..key.request
+                },
+                url: key.url,
+            }
+        }
+        _ => key,
+    };
+    with_run(e, me, |r| r.key = Some(key.clone()));
+    store.request(
+        e,
+        key,
+        Waiter::Load {
+            item: me,
+            generation,
+            cache: true,
+        },
+    );
+}
+
+/// A local picture with more pixels than this has them decoded in the
+/// background ([`decode_aside`]); a smaller one takes less time to decode
+/// than a frame and is decoded on the spot, so that it is in the first.
+const ASIDE_PIXELS: u64 = 512 * 512;
 
 /// The item shows nothing: its source is empty (`Null`) or failed
 /// (`Error`).
@@ -774,8 +862,9 @@ fn lost(e: &Engine, err: &LoadError) {
 /// The pixels the item shows, for the scene's paint effect: reading them
 /// makes the effect run again when they change. Pixels the store dropped
 /// are decoded again, on the spot for a synchronous item and in the
-/// background (painting nothing meanwhile) for an asynchronous one.
-fn pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
+/// background (painting nothing meanwhile) for an asynchronous one, or
+/// one decoded aside that is painted `on_screen`.
+fn pixels(e: &Engine, me: ObjectId, on_screen: bool) -> Option<ImageHandle> {
     follow(e, me);
     let frame = with_run(e, me, |r| {
         let frames = r.frames.as_ref()?;
@@ -813,7 +902,7 @@ fn pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
     if lost_before {
         return None;
     }
-    if in_background(e, me, &key.url) {
+    if in_background(e, me, &key.url, on_screen) {
         let ask = with_run(e, me, |r| !std::mem::replace(&mut r.reshowing, true)) == Some(true);
         if ask {
             store.request(e, key, Waiter::Reshow { item: me });
@@ -897,7 +986,7 @@ fn sharp_pixels(e: &Engine, me: ObjectId, on_screen: bool) -> Option<ImageHandle
     if asked {
         return None;
     }
-    if in_background(e, me, &want.url) {
+    if in_background(e, me, &want.url, on_screen) {
         with_run(e, me, |r| r.sharpening = Some(request));
         store.request(e, want, Waiter::Sharpen { item: me });
         return None;
@@ -937,7 +1026,7 @@ fn shrunk(
     if settled || key.request.animated {
         return None;
     }
-    let source = pixels(e, me)?;
+    let source = pixels(e, me, true)?;
     // Painting may have found them kept for another limit.
     let key = with_run(e, me, |r| r.key.clone()).flatten()?;
     Some(shrink_kept(e, me, &key, natural, limit, source, pinned))
@@ -1075,7 +1164,7 @@ fn fit_unpainted(e: &Engine, me: ObjectId) {
 
 /// The `limit` a picture of `natural` size needs to be as sharp as the
 /// item draws it, at `device` pixels per logical pixel (tracked: it
-/// follows the item's size, fill mode and scale).
+/// follows the item's size, fill mode and scale, and its parents' scale).
 fn wanted_limit(e: &Engine, me: ObjectId, natural: (u32, u32), device: f32) -> u32 {
     let area = kurbo::Size::new(
         e.read(me, Item::WIDTH.index).to_number(),
@@ -1088,16 +1177,26 @@ fn wanted_limit(e: &Engine, me: ObjectId, natural: (u32, u32), device: f32) -> u
         }
         _ => picture,
     };
-    let scale = e.read(me, Item::SCALE.index).to_number().abs();
-    let scale = if scale.is_finite() && scale > 0.0 {
-        scale
-    } else {
-        1.0
-    };
     let factor = (shown.width / picture.width).max(shown.height / picture.height)
         * f64::from(device)
-        * scale;
+        * drawn_scale(e, me);
     decode::step_up(picture.width.max(picture.height) * factor)
+}
+
+/// How much larger than its own size `me` is drawn: its `scale` and that
+/// of each item it is in (tracked). A picture shown in a thumbnail that
+/// is a scaled-down item is drawn that much smaller.
+fn drawn_scale(e: &Engine, me: ObjectId) -> f64 {
+    let mut scale = 1.0;
+    let mut at = Some(me);
+    while let Some(item) = at.filter(|&i| is_a::<Item>(e, i)) {
+        let s = e.read(item, Item::SCALE.index).to_number().abs();
+        if s.is_finite() && s > 0.0 {
+            scale *= s;
+        }
+        at = e.visual_parent(item);
+    }
+    scale
 }
 
 /// The scene stopped painting `me` (hidden, scrolled away): pixels kept
@@ -1199,7 +1298,7 @@ impl ImagePaint {
             .then(|| sharp_pixels(e, obj, on_screen))
             .flatten();
         let image = sharp
-            .or_else(|| pixels(e, obj))
+            .or_else(|| pixels(e, obj, on_screen))
             .map(|image| tint::tinted(e, obj, image));
         let logical = match &image {
             Some(image) => with_run(e, obj, |r| r.natural)

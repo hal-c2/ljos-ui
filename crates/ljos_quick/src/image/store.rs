@@ -933,6 +933,13 @@ impl ImageStore {
         Ok(picture)
     }
 
+    /// The size of the picture at `key`'s URL as its header says, read on
+    /// this thread with nothing decoded. None for what has no such header
+    /// (a drawing) or cannot be read.
+    pub(crate) fn header_size(&self, key: &ImageKey) -> Option<(u32, u32)> {
+        decode::header_size(&self.locate(key).ok()?)
+    }
+
     /// Reads and decodes `key` on this thread, every frame of it when the
     /// request is `animated`, past the cache (which keeps single pictures).
     pub(crate) fn decode_now(&self, key: &ImageKey) -> Result<decode::Loaded, LoadError> {
