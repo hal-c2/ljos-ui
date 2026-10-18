@@ -362,8 +362,13 @@ fn init_button(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     engine.watch(obj, AbstractButton::CHECKED.index, move |e, v| {
         checked_changed(e, obj, v.to_boolean());
     })?;
-    if engine.untrack(|| flag(engine, obj, AbstractButton::CHECKED.index)) {
-        checked_changed(engine, obj, true);
+    // A group learns of a button made checked; the buttons beside one do
+    // not: each written `checked: true` stays so (as qml6 has it).
+    if engine.untrack(|| flag(engine, obj, AbstractButton::CHECKED.index))
+        && let Some(g) = state_of(engine, obj).and_then(|s| s.group.get())
+        && engine.is_alive(g)
+    {
+        group::button_toggled(engine, g, obj, true);
     }
 
     let action = engine.untrack(|| object(engine, obj, AbstractButton::ACTION.index));
@@ -396,7 +401,8 @@ fn checked_changed(engine: &Engine, obj: ObjectId, on: bool) {
     if !on || !engine.untrack(|| flag(engine, obj, AbstractButton::AUTO_EXCLUSIVE.index)) {
         return;
     }
-    // Exclusive among the buttons with the same parent item.
+    // Exclusive among the buttons with the same parent item. Of several
+    // checked there, made so, the first is the one that goes off.
     let Some(parent) = engine.untrack(|| engine.visual_parent(obj)) else {
         return;
     };
@@ -411,6 +417,7 @@ fn checked_changed(engine: &Engine, obj: ObjectId, on: bool) {
         let in_group = state_of(engine, other).is_some_and(|s| s.group.get().is_some());
         if exclusive_and_on && !in_group {
             check(engine, "autoExclusive", set_checked(engine, other, false));
+            return;
         }
     }
 }
