@@ -568,6 +568,7 @@ impl Look<'_> {
 
         let mut defaults = 0usize;
         let mut rows: Vec<(Value, String)> = Vec::new();
+        let mut sources = Sources::default();
         for p in &properties {
             if p.provenance == Provenance::Default && !args.all {
                 defaults += 1;
@@ -611,8 +612,10 @@ impl Look<'_> {
                 }
             }
             let covered = edits.covers(obj, &p.name);
-            let by_devtools =
-                covered || (p.provenance == Provenance::Assigned && edits.contains(obj, &p.name));
+            let own = edits.expression(obj, &p.name);
+            let by_devtools = covered
+                || (p.provenance == Provenance::Assigned && edits.contains(obj, &p.name))
+                || (p.provenance == Provenance::Bound && own.is_some());
             if by_devtools {
                 row.insert("assigned_by".into(), json!("devtools"));
             }
@@ -636,6 +639,20 @@ impl Look<'_> {
                 row.insert("file".into(), json!(at.file));
                 row.insert("line".into(), json!(at.line));
                 let _ = write!(line, ", line {}", at.line);
+            }
+            let expression = match own {
+                Some(own) => Some(own.to_owned()),
+                None if by_devtools => None,
+                None => p
+                    .written_at
+                    .as_ref()
+                    .zip(p.expression.clone())
+                    .and_then(|(at, bytes)| sources.text(&at.file, bytes)),
+            };
+            if let Some(expression) = expression {
+                let expression = clip(&expression, MAX_VALUE_CHARS);
+                let _ = write!(line, ", `{expression}`");
+                row.insert("expression".into(), json!(expression));
             }
             if by_devtools {
                 line.push_str(", by devtools");
@@ -1204,9 +1221,53 @@ pub(crate) fn metrics(
     ToolReply::from(value).with_text(text)
 }
 
+/// The QML files a binding's text is read from, each read once an answer.
+/// A file that cannot be read (an application shipped without its
+/// sources, a file kept in memory) gives no text.
+#[derive(Default)]
+struct Sources {
+    files: std::collections::HashMap<String, Option<String>>,
+}
+
+impl Sources {
+    /// A file larger than this is not read for the text of one binding.
+    const MOST: u64 = 4 << 20;
+
+    fn text(&mut self, url: &str, bytes: std::ops::Range<u32>) -> Option<String> {
+        let file = self.files.entry(url.to_owned()).or_insert_with(|| {
+            let path = ljos_engine::url_path(url)?;
+            if std::fs::metadata(&path).ok()?.len() > Self::MOST {
+                return None;
+            }
+            std::fs::read_to_string(path).ok()
+        });
+        let text = file
+            .as_deref()?
+            .get(bytes.start as usize..bytes.end as usize)?;
+        Some(text.trim().to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bindings_text_is_read_from_the_file_it_was_written_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Main.qml");
+        std::fs::write(&path, "Item { width: parent.width / 2 }").unwrap();
+        let url = ljos_engine::file_url(&path);
+        let mut sources = Sources::default();
+        assert_eq!(
+            sources.text(&url, 14..30).as_deref(),
+            Some("parent.width / 2")
+        );
+        // Bytes that are not in the file, or a file that is not there, give
+        // no text rather than a wrong one.
+        assert_eq!(sources.text(&url, 14..300), None);
+        assert_eq!(sources.text("Scenario.qml", 0..4), None);
+    }
 
     #[test]
     fn whole_numbers_are_integers() {

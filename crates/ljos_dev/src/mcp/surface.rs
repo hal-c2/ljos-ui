@@ -277,17 +277,31 @@ impl McpSurface for InspectorSurface {
                 // a watch never wakes it.
                 return Ok(super::watch::watch(&self.changes, a).await);
             }
-            if let Kind::Act(Act::Batch(steps)) = &kind {
-                // Everything a batch will do is allowed before any of it is.
-                for (i, (tool, act)) in steps.iter().enumerate() {
-                    if !ctx.caps.contains(act.needs()) {
+            match &kind {
+                Kind::Act(Act::Batch(steps)) => {
+                    // Everything a batch will do is allowed before any of it is.
+                    for (i, (tool, act)) in steps.iter().enumerate() {
+                        if let Some(&needs) = act.needs().iter().find(|&&c| !ctx.caps.contains(c)) {
+                            return Err(refusal(
+                                &format!("step {i} of the batch (`{tool}`)"),
+                                needs,
+                                ctx.caps,
+                            ));
+                        }
+                    }
+                }
+                // What the arguments ask for may need more than the tool
+                // does: a binding is script.
+                Kind::Act(act) => {
+                    if let Some(&needs) = act.needs().iter().find(|&&c| !ctx.caps.contains(c)) {
                         return Err(refusal(
-                            &format!("step {i} of the batch (`{tool}`)"),
-                            act.needs(),
+                            &format!("tool `{name}` with these arguments"),
+                            needs,
                             ctx.caps,
                         ));
                     }
                 }
+                _ => {}
             }
             let mut waited = None;
             if let Kind::Status(a) = &kind

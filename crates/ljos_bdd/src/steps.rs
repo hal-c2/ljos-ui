@@ -2326,6 +2326,13 @@ fn inspected_property_tier(w: &mut LjosWorld, name: String, tier: String) -> Ste
     })
 }
 
+#[then(regex = r#"^the inspected property "([^"]+)" is bound to the expression "(.*)"$"#)]
+fn inspected_property_expression(w: &mut LjosWorld, name: String, text: String) -> StepResult {
+    inspector_seen(w, |s| {
+        s.property_says(&name, "expression", &Value::from(unquoted(&text)))
+    })
+}
+
 #[then("the socket can be used by its owner alone")]
 fn socket_private(w: &mut LjosWorld) -> StepResult {
     inspector_seen(w, Seen::socket_private)

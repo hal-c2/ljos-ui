@@ -85,6 +85,9 @@ pub struct PropertyReport {
     pub tier: Option<BindingTier>,
     /// Where the binding was written.
     pub written_at: Option<SourcePlace>,
+    /// The bytes of the binding's expression in the file it was written
+    /// in, for a tool that shows its text.
+    pub expression: Option<std::ops::Range<u32>>,
     pub read_only: bool,
     pub is_list: bool,
 }
@@ -165,9 +168,9 @@ impl Engine {
             let value = self.untrack(|| self.try_read(obj, prop).ok());
             let provenance = self.provenance(obj, prop).unwrap_or(Provenance::Default);
             let loc = self.binding_location(obj, prop);
-            let tier = match (&loc, self.is_bound(obj, prop)) {
-                (Some(l), true) => self.tier_at(l),
-                _ => None,
+            let (tier, expression) = match (&loc, self.is_bound(obj, prop)) {
+                (Some(l), true) => self.binding_written_at(l).unzip(),
+                _ => (None, None),
             };
             out.push(PropertyReport {
                 name: info.name.to_string(),
@@ -176,6 +179,7 @@ impl Engine {
                 provenance,
                 tier,
                 written_at: loc.as_ref().map(SourcePlace::of),
+                expression,
                 read_only: info.is_readonly(),
                 is_list: info.is_list(),
             });
@@ -265,9 +269,10 @@ impl Engine {
         None
     }
 
-    /// The tier the binding written at `at` was compiled for. A tier-1
-    /// program that gave up at run time still counts as tier 1 here.
-    fn tier_at(&self, at: &Location) -> Option<BindingTier> {
+    /// The tier the binding written at `at` was compiled for, and the bytes
+    /// of its expression. A tier-1 program that gave up at run time still
+    /// counts as tier 1 here.
+    fn binding_written_at(&self, at: &Location) -> Option<(BindingTier, std::ops::Range<u32>)> {
         let loader = self.inner.loader.borrow();
         for file in loader.files.values() {
             if file.url != at.url {
@@ -282,15 +287,14 @@ impl Engine {
                 continue;
             };
             let b = file.ir.expr(pb.expr);
-            return Some(
-                if matches!(file.tier0.get(b.js_fn.index()), Some(Some(_))) {
-                    BindingTier::Tier0
-                } else if b.tier1.is_some() && self.tier1() {
-                    BindingTier::Tier1
-                } else {
-                    BindingTier::Js
-                },
-            );
+            let tier = if matches!(file.tier0.get(b.js_fn.index()), Some(Some(_))) {
+                BindingTier::Tier0
+            } else if b.tier1.is_some() && self.tier1() {
+                BindingTier::Tier1
+            } else {
+                BindingTier::Js
+            };
+            return Some((tier, b.span.start..b.span.end));
         }
         None
     }

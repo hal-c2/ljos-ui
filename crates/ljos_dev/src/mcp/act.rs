@@ -788,28 +788,70 @@ impl Hands<'_> {
         if a.revert {
             return self.revert_property(obj, prop, a);
         }
-        let value = to_qml(engine, a.value.as_ref().unwrap_or(&Value::Null))?;
+        if let Some(source) = &a.binding {
+            self.may_run_script_in(obj, &a.target)?;
+            // Refused before anything is taken down, so that an expression
+            // that does not compile changes nothing.
+            engine
+                .check_expression(source)
+                .map_err(|e| SurfaceError::invalid_argument(format!("`binding` {e}")))?;
+        }
+        let value = match &a.binding {
+            Some(_) => QmlValue::Undefined,
+            None => to_qml(engine, a.value.as_ref().unwrap_or(&Value::Null))?,
+        };
         let previous = engine.read_by_name(obj, &a.property);
         let earlier = self.edits.take(obj, &a.property);
         let had = earlier.is_some();
         let mut cover = earlier.as_ref().and_then(|e| e.cover);
-        let wrote = if cover.is_none() && a.keep_binding && engine.is_bound(obj, prop) {
-            engine
+        let wrote = match &a.binding {
+            Some(source) => {
+                let covering = cover.is_some() || (a.keep_binding && engine.is_bound(obj, prop));
+                if covering {
+                    // The binding takes the place of the layer devtools put
+                    // there before, so that a revert still goes under both.
+                    let old = cover.take();
+                    let gone = old.map_or(Ok(()), |id| {
+                        engine.remove_override(obj, prop, id, RestoreMode::BindingOrValue)
+                    });
+                    gone.and_then(|()| engine.cover_with_expression(obj, prop, source))
+                        .map(|id| cover = Some(id))
+                } else {
+                    engine.bind_expression(obj, prop, source)
+                }
+            }
+            None if cover.is_none() && a.keep_binding && engine.is_bound(obj, prop) => engine
                 .push_override(obj, prop, OverrideContent::Value(value))
-                .map(|id| cover = Some(id))
-        } else {
+                .map(|id| cover = Some(id)),
             // With a cover in place this writes the cover, which is the
             // top layer: the binding under it stays.
-            engine.write_by_name(obj, &a.property, value)
+            None => engine.write_by_name(obj, &a.property, value),
         };
         let before = earlier.map_or_else(|| previous.clone(), |e| e.before);
+        let expression = a.binding.clone();
         if let Err(e) = wrote {
             if had {
-                self.edits.put(obj, &a.property, Edit { before, cover });
+                self.edits.put(
+                    obj,
+                    &a.property,
+                    Edit {
+                        before,
+                        cover,
+                        expression: None,
+                    },
+                );
             }
             return Err(engine_error(&a.target, e));
         }
-        self.edits.put(obj, &a.property, Edit { before, cover });
+        self.edits.put(
+            obj,
+            &a.property,
+            Edit {
+                before,
+                cover,
+                expression,
+            },
+        );
         let now = engine.read_by_name(obj, &a.property);
         // What is typed into a field that hides it is not said back.
         let hidden = TYPED.contains(&a.property.as_str())
@@ -821,15 +863,22 @@ impl Hands<'_> {
                 to_json(engine, v, 0)
             }
         };
-        let done = if cover.is_some() {
-            format!("covered the binding of `{}` of `{}`", a.property, a.target)
-        } else {
-            format!("assigned `{}` of `{}`", a.property, a.target)
+        let done = match (cover.is_some(), &a.binding) {
+            (true, Some(source)) => format!(
+                "covered the binding of `{}` of `{}` with `{source}`",
+                a.property, a.target
+            ),
+            (false, Some(source)) => {
+                format!("bound `{}` of `{}` to `{source}`", a.property, a.target)
+            }
+            (true, None) => format!("covered the binding of `{}` of `{}`", a.property, a.target),
+            (false, None) => format!("assigned `{}` of `{}`", a.property, a.target),
         };
         Ok(Done::new(done)
             .with("property", json!(a.property))
             .with("value", show(&now))
             .with("previous", show(&previous))
+            .with("bound", json!(engine.is_bound(obj, prop)))
             .with("binding_kept", json!(cover.is_some())))
     }
 
@@ -932,28 +981,42 @@ impl Hands<'_> {
         )))
     }
 
-    fn eval(&mut self, a: &EvalArgs) -> Result<Done, SurfaceError> {
+    /// Refuses script run in `obj` that could read around the mask: in a
+    /// field that hides its text, or anywhere when every value is masked.
+    fn may_run_script_in(&self, obj: ObjectId, what: &str) -> Result<(), SurfaceError> {
         if self.redact_all {
+            return Err(Self::masked_everywhere());
+        }
+        if capture::is_secret(self.engine, obj, self.redact_all) {
             return Err(SurfaceError::new(
                 ErrorCode::CapabilityDenied,
-                "`app_eval` is refused while this inspector masks every editable value \
-                 (`--mcp-redact`): a script reads values around the mask, and cannot be held to \
-                 it. Start without `--mcp-redact` to run script",
+                format!(
+                    "`{what}` hides its text (`echoMode`), and a script run in it reads \
+                     the text around the mask. Run the script in another object"
+                ),
             ));
+        }
+        Ok(())
+    }
+
+    fn masked_everywhere() -> SurfaceError {
+        SurfaceError::new(
+            ErrorCode::CapabilityDenied,
+            "script is refused while this inspector masks every editable value \
+             (`--mcp-redact`): a script reads values around the mask, and cannot be held to \
+             it. Start without `--mcp-redact` to run script",
+        )
+    }
+
+    fn eval(&mut self, a: &EvalArgs) -> Result<Done, SurfaceError> {
+        if self.redact_all {
+            return Err(Self::masked_everywhere());
         }
         let this = match &a.target {
             None => None,
             Some(what) => {
                 let obj = self.object(what, "app_eval")?;
-                if capture::is_secret(self.engine, obj, self.redact_all) {
-                    return Err(SurfaceError::new(
-                        ErrorCode::CapabilityDenied,
-                        format!(
-                            "`{what}` hides its text (`echoMode`), and a script run in it reads \
-                             the text around the mask. Run the script in another object"
-                        ),
-                    ));
-                }
+                self.may_run_script_in(obj, what)?;
                 Some(obj)
             }
         };

@@ -186,6 +186,9 @@ impl std::fmt::Debug for Engine {
 pub enum OverrideContent {
     Value(Value),
     Binding(Box<dyn FnMut(&Engine) -> Value>),
+    /// A binding that can fail (a JS exception): `None` keeps the last
+    /// value, as Qt does.
+    FallibleBinding(BindingFn),
 }
 
 impl std::fmt::Debug for OverrideContent {
@@ -193,6 +196,7 @@ impl std::fmt::Debug for OverrideContent {
         match self {
             OverrideContent::Value(v) => f.debug_tuple("Value").field(v).finish(),
             OverrideContent::Binding(_) => f.write_str("Binding(..)"),
+            OverrideContent::FallibleBinding(_) => f.write_str("FallibleBinding(..)"),
         }
     }
 }
@@ -2174,6 +2178,10 @@ impl Engine {
                 let f: BindingFn = Box::new(move |e| Some(f(e)));
                 // An override's first value is put in place like a value
                 // override is: no interceptor sees it.
+                OverrideValue::binding(self.binding_wrapper(obj, prop, ty, last, f, Free::First))
+            }
+            OverrideContent::FallibleBinding(f) => {
+                let last = g.untrack(|| g.try_get(n)).unwrap_or_default();
                 OverrideValue::binding(self.binding_wrapper(obj, prop, ty, last, f, Free::First))
             }
         };

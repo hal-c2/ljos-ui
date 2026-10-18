@@ -4,7 +4,8 @@
 //! An edit is an assignment, as a script makes one, which replaces a
 //! binding for good; or, with `keep_binding`, an override layer on top of
 //! the binding, as `Binding {}` makes one, which leaves the binding where
-//! it was. Either way the value from before the first edit is kept: a
+//! it was. A binding devtools makes from an expression is either kind too.
+//! Either way the value from before the first edit is kept: a
 //! revert removes the layer and the binding under it comes back, or puts
 //! that value back.
 
@@ -19,6 +20,9 @@ pub(crate) struct Edit {
     pub(crate) before: QmlValue,
     /// The layer that covers its binding, for an edit that kept it.
     pub(crate) cover: Option<OverrideId>,
+    /// The expression devtools bound it to, while that binding is what the
+    /// edit put there.
+    pub(crate) expression: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -36,6 +40,13 @@ impl Edits {
         self.by_property
             .get(&(obj, property.to_owned()))
             .is_some_and(|e| e.cover.is_some())
+    }
+
+    /// The expression devtools bound the property to.
+    pub(crate) fn expression(&self, obj: ObjectId, property: &str) -> Option<&str> {
+        self.by_property
+            .get(&(obj, property.to_owned()))
+            .and_then(|e| e.expression.as_deref())
     }
 
     pub(crate) fn take(&mut self, obj: ObjectId, property: &str) -> Option<Edit> {

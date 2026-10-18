@@ -320,6 +320,7 @@ into the answer's structured content.
 | `Then the inspected property "p" is "provenance"` | `"assigned"`, `"bound"`, `"animated"`, `"host"` or `"default"` |
 | `Then the inspected property "p" is assigned by "devtools"` / `is not assigned by "devtools"` | who assigned a property that was assigned: the agent, through `app_set_property` |
 | `Then the inspected property "p" has the value "text"` / `was written at line N` / `is bound at tier T` | the tier is `0`, `1` or `js` |
+| `Then the inspected property "p" is bound to the expression "text"` | the text of its binding, as written or as an agent bound it |
 | `Then the answer has no inspected property "p"` | |
 | `Then the agent is refused with "code"` | the error code of 19.4: `"not_found"`, `"ambiguous"`, `"stale_ref"`, `"invalid_argument"`, `"capability_denied"`, … |
 | `Then the agent is told the reference is stale` | refused with `"stale_ref"` |

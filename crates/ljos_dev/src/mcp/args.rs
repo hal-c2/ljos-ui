@@ -123,9 +123,9 @@ tools (at most 32). They run in order and stop at the first failure. One differe
 is given at the end; each step says what it cost. Every step's capability is needed up front.";
 
 pub const SET_PROPERTY: &str = "\
-Assign `value` to `property` of `target` as a script would, replacing a binding; `keep_binding` \
-covers it instead. Recorded as devtools' (`app_inspect`). `revert` takes the edit back: the \
-binding, or the value before. Answers with the value now, the previous one and what changed.";
+Assign `value` to `property` of `target` as a script would, or bind it to the JS expression \
+`binding` (needs eval too), replacing a binding; `keep_binding` covers it instead. `revert` takes \
+the edit back. Recorded as devtools' (`app_inspect`). Answers with the value now and before.";
 
 pub const INVOKE: &str = "\
 Call the method `name` of `target` with `args`, or send the signal of that name so its handlers \
@@ -406,6 +406,11 @@ pub struct SetPropertyArgs {
     /// object for a `var` property. Not with `revert`.
     #[serde(default, deserialize_with = "present")]
     pub value: Option<Value>,
+    /// A JavaScript expression to bind the property to, naming the
+    /// object's properties bare: worked out again whenever what it read
+    /// changes. Not with `value` or `revert`.
+    #[serde(default)]
+    pub binding: Option<String>,
     /// Cover a binding instead of replacing it, so that `revert` can bring
     /// it back.
     #[serde(default)]
@@ -571,12 +576,14 @@ pub enum Act {
 }
 
 impl Act {
-    /// The capability the tool needs.
-    pub fn needs(&self) -> Cap {
+    /// The capabilities the tool needs, as it is asked: a binding is
+    /// script, so it needs `eval` besides `mutate`.
+    pub fn needs(&self) -> &'static [Cap] {
         match self {
-            Act::SetProperty(_) | Act::Invoke(_) | Act::Reload => Cap::Mutate,
-            Act::Eval(_) => Cap::Eval,
-            _ => Cap::Input,
+            Act::SetProperty(a) if a.binding.is_some() => &[Cap::Mutate, Cap::Eval],
+            Act::SetProperty(_) | Act::Invoke(_) | Act::Reload => &[Cap::Mutate],
+            Act::Eval(_) => &[Cap::Eval],
+            _ => &[Cap::Input],
         }
     }
 }
@@ -810,15 +817,28 @@ fn parse_act(tool: &'static str, args: Value) -> Result<Act, SurfaceError> {
         }
         "app_set_property" => {
             let a: SetPropertyArgs = read(tool, args)?;
-            match (&a.value, a.revert) {
-                (Some(_), true) => {
+            match (&a.value, &a.binding, a.revert) {
+                (Some(_), Some(_), _) => {
+                    return Err(bad(tool, "give `value` or `binding`, not both"));
+                }
+                (Some(_), _, true) | (_, Some(_), true) => {
                     return Err(bad(
                         tool,
-                        "`revert` takes back an edit and sets no value; give `value` or `revert`",
+                        "`revert` takes back an edit and sets nothing; give `value`, `binding` \
+                         or `revert`",
                     ));
                 }
-                (None, false) => return Err(bad(tool, "missing field `value`")),
+                (None, None, false) => return Err(bad(tool, "missing field `value`")),
                 _ => {}
+            }
+            if a.binding
+                .as_ref()
+                .is_some_and(|b| b.len() > MAX_SCRIPT_BYTES)
+            {
+                return Err(bad(
+                    tool,
+                    format!("`binding` is at most {MAX_SCRIPT_BYTES} bytes"),
+                ));
             }
             Act::SetProperty(a)
         }

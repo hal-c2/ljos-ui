@@ -114,6 +114,27 @@ Feature: What the inspector lets an agent do
       And the refusal mentions "eval"
       And the refusal mentions "--mcp=inspect,input,mutate,eval"
 
+    # A binding is script that runs again whenever what it read changes.
+    Scenario: A binding to an expression needs eval as well as mutate
+      Given the inspector is connected with the capabilities "inspect, mutate"
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "taps", "binding": "5"}
+        """
+      Then the agent is refused with "capability_denied"
+      And the refusal mentions "eval"
+      And the property "taps" of "root" is 0
+
+    Scenario: A batch that binds needs eval before it starts
+      Given the inspector is connected with the capabilities "inspect, input, mutate"
+      When the agent calls the tool "app_batch" with:
+        """json
+        {"steps": [{"tool": "app_set_property", "args": {"target": "#root", "property": "taps", "binding": "5"}}]}
+        """
+      Then the agent is refused with "capability_denied"
+      And the refusal mentions "eval"
+      And the property "taps" of "root" is 0
+
     Scenario: Input does not grant mutate
       Given the inspector is connected with the capabilities "inspect, input"
       When the agent calls the tool "app_set_property" with:

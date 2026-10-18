@@ -873,10 +873,18 @@
     "read_only": false
   },
   {
-    "description": "Assign `value` to `property` of `target` as a script would, replacing a binding; `keep_binding` covers it instead. Recorded as devtools' (`app_inspect`). `revert` takes the edit back: the binding, or the value before. Answers with the value now, the previous one and what changed.",
+    "description": "Assign `value` to `property` of `target` as a script would, or bind it to the JS expression `binding` (needs eval too), replacing a binding; `keep_binding` covers it instead. `revert` takes the edit back. Recorded as devtools' (`app_inspect`). Answers with the value now and before.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
+        "binding": {
+          "default": null,
+          "description": "A JavaScript expression to bind the property to, naming the\nobject's properties bare: worked out again whenever what it read\nchanges. Not with `value` or `revert`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "keep_binding": {
           "default": false,
           "description": "Cover a binding instead of replacing it, so that `revert` can bring\nit back.",

@@ -7,13 +7,16 @@
 
 use std::time::Duration;
 
-use ljos_js::{Slice, rquickjs};
+use ljos_js::{JsRef, JsValue, Slice, rquickjs};
+use ljos_reactive::OverrideId;
 
-use crate::engine::Engine;
+use crate::engine::{Engine, OverrideContent};
 use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
 use crate::introspect::BindingTier;
 use crate::js::obj_to_u64;
+use crate::types::TypeTag;
+use crate::value::Value;
 
 /// The script a devtools evaluation runs inside. It is sloppy-mode code on
 /// purpose: `with (this)` lets the source name the properties of the object
@@ -74,6 +77,19 @@ const RUNNER: &str = r#"(function (self, src, depthMax, itemsMax, charsMax, node
   }
   var value = ser(result, 0);
   return JSON.stringify({ value: value, truncated: cut });
+})"#;
+
+/// Makes the function of a binding an agent writes: `this` is the object,
+/// and `with` names its properties bare, as in a binding written in it.
+/// The newline lets the expression end in a `//` comment. What does not
+/// compile comes back as the text of the error, not thrown, so that it is
+/// told to the agent and not logged as the application's.
+const MAKER: &str = r#"(function (src) {
+  try {
+    return (0, eval)('(function () { with (this) { return (' + src + '\n); } })');
+  } catch (e) {
+    return String((e && e.name) || 'Error') + ': ' + String(e && e.message);
+  }
 })"#;
 
 /// The most a devtools script may be allowed to take.
@@ -151,6 +167,89 @@ impl Engine {
                     Ok(out)
                 })
                 .map_err(|e| EngineError::Js(e.to_string()))
+        })
+    }
+
+    /// Binds `prop` of `obj` to the JavaScript expression `source`, in place
+    /// of what it held, as `Qt.binding` would: the expression names the
+    /// object's properties bare, its reads are tracked, and a run that
+    /// throws keeps the last value. A source that does not compile is an
+    /// error and changes nothing.
+    pub fn bind_expression(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        source: &str,
+    ) -> Result<(), EngineError> {
+        let f = self.expression_binding(obj, prop, source)?;
+        let (target, target_prop) = self.redirect(obj, prop);
+        self.bind_fallible_checked(target, target_prop, f)
+    }
+
+    /// [`Engine::bind_expression`] as an override over what `prop` holds,
+    /// so that removing it brings that back.
+    pub fn cover_with_expression(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        source: &str,
+    ) -> Result<OverrideId, EngineError> {
+        let f = self.expression_binding(obj, prop, source)?;
+        self.push_override(obj, prop, OverrideContent::FallibleBinding(Box::new(f)))
+    }
+
+    /// Whether `source` compiles as the expression of a binding: the
+    /// error says why not.
+    pub fn check_expression(&self, source: &str) -> Result<(), EngineError> {
+        self.compile_expression(source).map(drop)
+    }
+
+    fn compile_expression(&self, source: &str) -> Result<JsRef, EngineError> {
+        let js = self.js()?;
+        let slice = Slice {
+            soft: MAX_EVAL_TIME,
+            hard: MAX_EVAL_TIME,
+        };
+        let made = self.untrack(|| {
+            js.host.enter("devtools binding", slice, |s| {
+                let ctx = s.ctx();
+                let mut opts = rquickjs::context::EvalOptions::default();
+                opts.strict = false;
+                let maker: rquickjs::Function = ctx.eval_with_options(MAKER, opts)?;
+                let made: rquickjs::Value = maker.call((source,))?;
+                Ok(match made.as_string() {
+                    Some(why) => Err(why.to_string()?),
+                    None => Ok(s.keep(made)),
+                })
+            })
+        });
+        match made {
+            Ok(Ok(f)) => Ok(f),
+            Ok(Err(why)) => Err(EngineError::Js(why)),
+            Err(e) => Err(EngineError::Js(e.to_string())),
+        }
+    }
+
+    fn expression_binding(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        source: &str,
+    ) -> Result<impl FnMut(&Engine) -> Option<Value> + 'static, EngineError> {
+        let f = self.compile_expression(source)?;
+        let (target, target_prop) = self.redirect(obj, prop);
+        let hint = self
+            .meta_of(target)
+            .and_then(|m| m.property(target_prop).map(|i| i.ty.clone()))
+            .unwrap_or(TypeTag::Var);
+        // The object the agent named: an alias is read through, but the
+        // names are the ones of the object it is written in.
+        let this = JsValue::Object(obj_to_u64(obj));
+        Ok(move |e: &Engine| {
+            e.run_js("devtools binding", |s| {
+                let out = s.call_ref(&f, &this, &[])?;
+                Ok(e.js_to_value(s, out, &hint))
+            })
         })
     }
 
