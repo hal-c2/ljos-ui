@@ -2284,3 +2284,60 @@ Feature: What a reload changes
       And a reload happens
       And 100 milliseconds pass
       Then the property "n" of "root" is 0
+
+  Rule: What a script gave an object moved in place goes on through the reloads after
+
+    The object made again for a moved one has what a script assigned to
+    the old one, and a later reload that cannot go in place carries it
+    as it carries what a script gave any object.
+
+    Scenario: An object moved in place keeps the parent a script gave it through the next reload
+      Given the file "Pack.qml":
+        """qml
+        import QtQuick
+        Item {
+          id: container; objectName: "pack"
+          property Item area
+          property string where: stack.parent ? stack.parent.objectName : ""
+          onAreaChanged: stack.parent = area
+          Item { id: stack; objectName: "stack" }
+          Item { objectName: "holder" }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Item { id: area; objectName: "area"; property int n: children.length }
+          Loader { source: "Pack.qml"; onItemChanged: item.area = area }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "where" of "pack" is "area"
+      When the file "Pack.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: container; objectName: "pack"
+          property Item area
+          property string where: stack.parent ? stack.parent.objectName : ""
+          onAreaChanged: stack.parent = area
+          Item { objectName: "holder"; Item { id: stack; objectName: "stack" } }
+        }
+        """
+      And a reload happens
+      Then the property "where" of "pack" is "area"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int extra: 1
+          Item { id: area; objectName: "area"; property int n: children.length }
+          Loader { source: "Pack.qml"; onItemChanged: item.area = area }
+        }
+        """
+      And a reload happens
+      Then the property "where" of "pack" is "area"
+      And the property "n" of "area" is 1

@@ -426,7 +426,7 @@ impl Engine {
                 }
             }
         });
-        self.in_place_carry(&grown);
+        let assigned = self.in_place_carry(&grown);
         for g in &grown {
             for &o in &g.gone {
                 if self.is_alive(o) {
@@ -568,6 +568,13 @@ impl Engine {
         }
         for top in &tops {
             self.reload_repath(top);
+        }
+        // What a script gave the old object is the new one's to carry
+        // through the next reload, now that it has a path to be found by.
+        for (obj, name) in assigned {
+            if let Ok(p) = self.property_index(obj, &name) {
+                self.reload_note_assigned(obj, p);
+            }
         }
         phases.mark("grown");
 
@@ -1121,11 +1128,13 @@ impl Engine {
     }
 
     /// Gives each moved object's new one what scripts and its state gave
-    /// the old one, before the old one goes.
-    fn in_place_carry(&self, grown: &[Grown]) {
+    /// the old one, before the old one goes. Says which properties of the
+    /// new ones a script gave.
+    fn in_place_carry(&self, grown: &[Grown]) -> Vec<(ObjectId, String)> {
         let st = &self.inner.reload;
+        let mut assigned = Vec::new();
         if grown.iter().all(|g| g.carry.is_empty()) {
-            return;
+            return assigned;
         }
         let state_props = st.state_props.borrow().clone();
         let migrators = st.migrators.borrow().clone();
@@ -1138,12 +1147,20 @@ impl Engine {
                     continue;
                 }
                 if let Some(taken) = self.reload_take(from, &state_props, &migrators) {
+                    assigned.extend(
+                        taken
+                            .values
+                            .iter()
+                            .filter(|c| c.script)
+                            .map(|c| (to, c.name.to_string())),
+                    );
                     self.reload_give(to, taken, &Default::default(), &migrators);
                 }
             }
         });
         st.muting.set(was_muting.0);
         st.muted_all.set(was_muting.1);
+        assigned
     }
 
     /// Runs the bindings of `obj` again, keeping where each came from.
