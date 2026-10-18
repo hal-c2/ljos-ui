@@ -98,6 +98,29 @@ impl LastPicture {
         }
     }
 
+    /// [`LastPicture::change`] for a painter that draws the window whole
+    /// whatever changed: only whether something did, so it stops at the
+    /// first shape that differs and works out no areas.
+    pub(crate) fn differs(
+        &self,
+        shapes: &[ClippedShape],
+        pixels_per_point: f32,
+        clear: egui::Color32,
+    ) -> Change {
+        let Some(shown) = &self.shown else {
+            return Change::All;
+        };
+        let same = shown.pixels_per_point == pixels_per_point
+            && shown.clear == clear
+            && shown.shapes.len() == shapes.len()
+            && shown
+                .shapes
+                .iter()
+                .zip(shapes)
+                .all(|(a, b)| same_clipped(a, b));
+        if same { Change::None } else { Change::All }
+    }
+
     /// The window now shows `shapes`.
     pub(crate) fn keep(
         &mut self,
@@ -654,6 +677,25 @@ mod tests {
             change(&before, &now),
             Change::Area(vec![at(20.0), at(25.0)])
         );
+    }
+
+    #[test]
+    fn a_painter_that_draws_whole_is_told_only_whether_something_changed() {
+        let before = [rect(0.0), rect(20.0)];
+        let mut last = LastPicture::default();
+        assert_eq!(last.differs(&before, 1.0, Color32::WHITE), Change::All);
+        last.keep(&before, 1.0, Color32::WHITE);
+        assert_eq!(last.differs(&before, 1.0, Color32::WHITE), Change::None);
+        for now in [&[rect(0.0), rect(25.0)][..], &[rect(0.0)], &before[..]] {
+            let whole = if now == &before[..] {
+                Change::None
+            } else {
+                Change::All
+            };
+            assert_eq!(last.differs(now, 1.0, Color32::WHITE), whole);
+        }
+        assert_eq!(last.differs(&before, 2.0, Color32::WHITE), Change::All);
+        assert_eq!(last.differs(&before, 1.0, Color32::BLACK), Change::All);
     }
 
     #[test]

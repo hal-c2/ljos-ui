@@ -195,6 +195,17 @@ impl Painter {
         let _ = (shapes, pixels_per_point);
     }
 
+    /// Whether [`Painter::frame`] uses where a picture changes, or only
+    /// whether it does (`LastPicture::differs`): egui-wgpu draws every
+    /// frame whole.
+    pub(crate) fn wants_areas(&self) -> bool {
+        match self {
+            Painter::Wgpu(_) => false,
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => painter.wants_areas(),
+        }
+    }
+
     /// What of a picture that makes `change` is drawn, with the pictures
     /// `pending` hands over.
     pub(crate) fn frame(

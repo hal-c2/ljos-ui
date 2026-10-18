@@ -54,6 +54,14 @@ const GRID: u32 = 4;
 /// Past this many areas a frame goes to the grid without joining them.
 const JOINED: usize = 4 * AREAS;
 
+/// On a device, how many frames after one that changed most of the
+/// window are drawn whole without working out where they change. Two
+/// hundred moving bars spent a seventh of each frame finding the areas
+/// that were then not used; drawing a frame whole that would have been
+/// drawn in part costs a device next to nothing, and a run of half a
+/// second notices soon enough when the change has become small.
+const WHOLE_RUN: u32 = 30;
+
 /// Areas of at least this many pixels are cleared to the background;
 /// smaller ones are drawn together as one mesh.
 const CLEARED: u32 = 64 * 64;
@@ -219,6 +227,9 @@ struct GlWindow {
     scroll: Option<(Px, [i32; 2])>,
     /// The clip whose pixels the frame keeps once drawn, from now on.
     keep: Option<Px>,
+    /// How many more frames are drawn whole without working out where
+    /// they change ([`WHOLE_RUN`]).
+    whole_for: u32,
     // The surface draws into the window: it stays while the surface does.
     _window: Arc<Window>,
 }
@@ -313,6 +324,7 @@ impl GlPainter {
             kept: None,
             scroll: None,
             keep: None,
+            whole_for: 0,
             _window: Arc::clone(window),
         });
         Ok(())
@@ -341,7 +353,14 @@ impl GlPainter {
             if let Some(kept) = &mut window.kept {
                 kept.drawn = false;
             }
+            window.whole_for = 0;
         }
+    }
+
+    /// Whether [`GlPainter::frame`] would use the areas a picture changes
+    /// in: not while it draws a run of frames whole.
+    pub(crate) fn wants_areas(&self) -> bool {
+        self.window.as_ref().is_none_or(|gw| gw.whole_for == 0)
     }
 
     /// What of a picture that makes `change` is drawn. The buffer drawn
@@ -371,7 +390,11 @@ impl GlPainter {
         // What this frame changes, and the clip whose pixels it moves.
         let (now, scroll) = match change {
             _ if replaced => (None, None),
-            Change::None => return Frame::Nothing,
+            Change::None => {
+                // What changes next may be small.
+                gw.whole_for = 0;
+                return Frame::Nothing;
+            }
             Change::Area(areas) => (Some(px(areas)), None),
             Change::Scroll(s) if self.blits => {
                 let rect = Px::around(s.rect, pixels_per_point, gw.px);
@@ -403,7 +426,14 @@ impl GlPainter {
         // much: drawn whole, then and in the frames that redraw it.
         // The clip a scroll moves is copied, not drawn, so it is left out.
         let software = self.gl.software;
-        let now = now.map(Damage::of).filter(|d| !d.mostly(gw.px, software));
+        gw.whole_for = gw.whole_for.saturating_sub(1);
+        let now = now.map(Damage::of).filter(|d| {
+            let whole = d.mostly(gw.px, software);
+            if whole && !software {
+                gw.whole_for = WHOLE_RUN;
+            }
+            !whole
+        });
         // Asked before the context is current with the surface: EGL
         // answers for the surface either way.
         let age = gw.surface.buffer_age() as usize;

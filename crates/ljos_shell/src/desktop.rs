@@ -1311,7 +1311,11 @@ impl<M: Send + 'static> Desktop<M> {
         let clear = view.backdrop().unwrap_or(slot.clear);
         let wake = view.wakes_in();
         let now = Instant::now();
-        let change = slot.shown.change(&shapes, pixels_per_point, clear);
+        let change = if painter.wants_areas() {
+            slot.shown.change(&shapes, pixels_per_point, clear)
+        } else {
+            slot.shown.differs(&shapes, pixels_per_point, clear)
+        };
         let frame = painter.frame(change, &slot.pending, pixels_per_point);
         #[cfg(feature = "mcp")]
         let mut meter =
