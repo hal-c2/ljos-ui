@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use rquickjs::{Array, Function, Persistent, Value, function::Args};
+use rquickjs::{Array, Function, Value, qjs};
 
 use super::Scope;
 use crate::{FnId, JsArg, JsValue};
@@ -31,88 +31,107 @@ pub struct DirectCall {
     pub takes: Vec<String>,
 }
 
-/// The JS that makes a direct method of one shape: the function, `this`,
-/// the retelling, then one value per parameter (two for a read whose name
-/// is no identifier). Called with no more arguments than it `takes`, it
-/// passes them as they are; with more, as a list.
-fn shape_source(params: &[DirectParam], takes: usize) -> String {
-    let mut given = String::from("f,t,r");
-    // What is read is read into a local first, once: a retelling is told
-    // the values the function had.
-    let mut reads = Vec::new();
-    let mut list = Vec::new();
-    for (i, p) in params.iter().enumerate() {
-        match p {
-            DirectParam::Value(_) => {
-                given.push_str(&format!(",q{i}"));
-                list.push(format!("q{i}"));
-                continue;
+/// Slots of a direct method's data before its parameters: the function,
+/// `this`, the retelling, how many parameters and how many the caller's
+/// arguments are padded to. Each parameter then takes two: the value, or
+/// the object a property is read from, and the property's name
+/// (`undefined` for a value).
+const FUNC: usize = 0;
+const THIS: usize = 1;
+const RETELL: usize = 2;
+const PARAMS: usize = 3;
+const TAKES: usize = 4;
+const HEAD: usize = 5;
+
+/// A direct method's call: QuickJS calls it with what
+/// [`Scope::direct_method`] gave it as its data. A plain C function, not
+/// a script one, which would make an `arguments` object and a frame of its
+/// own on every call to pass them on.
+unsafe extern "C" fn raw_direct(
+    ctx: *mut qjs::JSContext,
+    _this: qjs::JSValue,
+    argc: std::ffi::c_int,
+    argv: *mut qjs::JSValue,
+    _magic: std::ffi::c_int,
+    data: *mut qjs::JSValue,
+) -> qjs::JSValue {
+    // SAFETY: QuickJS calls it on a live context with the data it was made
+    // with, and `argv` padded to `takes` (the function's length).
+    unsafe {
+        let slot = |i: usize| *data.add(i);
+        let n = qjs::JS_VALUE_GET_INT(slot(PARAMS)) as usize;
+        let takes = qjs::JS_VALUE_GET_INT(slot(TAKES)) as usize;
+        let argc = usize::try_from(argc).unwrap_or(0);
+        // Called with fewer than it takes, it passes as many as it takes,
+        // as a function declared with them would.
+        let given = argc.max(takes);
+        let mut args = Vec::with_capacity(n + given);
+        for i in 0..n {
+            let (v, name) = (slot(HEAD + 2 * i), slot(HEAD + 2 * i + 1));
+            let got = if qjs::JS_IsUndefined(name) {
+                qjs::JS_DupValue(ctx, v)
+            } else {
+                let atom = qjs::JS_ValueToAtom(ctx, name);
+                if atom == qjs::JS_ATOM_NULL {
+                    qjs::JS_EXCEPTION
+                } else {
+                    let got = qjs::JS_GetProperty(ctx, v, atom);
+                    qjs::JS_FreeAtom(ctx, atom);
+                    got
+                }
+            };
+            if qjs::JS_IsException(got) {
+                free_all(ctx, &args);
+                return got;
             }
-            DirectParam::Read(_, name) if is_identifier(name) => {
-                given.push_str(&format!(",q{i}"));
-                reads.push(format!("x{i}=q{i}.{name}"));
-            }
-            DirectParam::Read(..) => {
-                given.push_str(&format!(",q{i},n{i}"));
-                reads.push(format!("x{i}=q{i}[n{i}]"));
-            }
+            args.push(got);
         }
-        list.push(format!("x{i}"));
+        for j in 0..given {
+            args.push(qjs::JS_DupValue(ctx, *argv.add(j)));
+        }
+        let ret = qjs::JS_Call(
+            ctx,
+            slot(FUNC),
+            slot(THIS),
+            args.len() as std::ffi::c_int,
+            args.as_mut_ptr(),
+        );
+        if !qjs::JS_IsException(ret) {
+            free_all(ctx, &args);
+            return ret;
+        }
+        let thrown = qjs::JS_GetException(ctx);
+        // An interrupt is no script's to catch, nor to retell.
+        if qjs::JS_IsUncatchableError(thrown) {
+            free_all(ctx, &args);
+            return qjs::JS_Throw(ctx, thrown);
+        }
+        // The retelling is told what the caller gave, unpadded; it takes
+        // the references the call was given.
+        free_all(ctx, &args[n + argc..]);
+        args.truncate(n + argc);
+        let given = qjs::JS_NewArrayFrom(ctx, args.len() as std::ffi::c_int, args.as_ptr());
+        if qjs::JS_IsException(given) {
+            qjs::JS_FreeValue(ctx, thrown);
+            return given;
+        }
+        let mut told_with = [thrown, given];
+        let told = qjs::JS_Call(ctx, slot(RETELL), qjs::JS_UNDEFINED, 2, told_with.as_mut_ptr());
+        free_all(ctx, &told_with);
+        if qjs::JS_IsException(told) {
+            return told;
+        }
+        qjs::JS_Throw(ctx, told)
     }
-    let reads = if reads.is_empty() {
-        String::new()
-    } else {
-        format!("var {};", reads.join(","))
-    };
-    let list = list.join(",");
-    let args = (0..takes)
-        .map(|i| format!("a{i}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let all = [list.as_str(), args.as_str()]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(",");
-    let call = if all.is_empty() {
-        "f.call(t)".to_owned()
-    } else {
-        format!("f.call(t,{all})")
-    };
-    format!(
-        "(function({given}){{return function({args}){{{reads}\
-         if(arguments.length>{takes}){{var p=[{list}];\
-         for(var i=0;i<arguments.length;i++)p.push(arguments[i]);\
-         try{{return f.apply(t,p)}}catch(e){{throw r(e,p)}}}}\
-         try{{return {call}}}catch(e){{\
-         throw r(e,[{list}].concat(Array.prototype.slice.call(arguments)))}}}}}})"
-    )
 }
 
-fn shape_key(params: &[DirectParam], takes: usize) -> String {
-    let mut key = format!("{takes}\u{0}");
-    for p in params {
-        match p {
-            DirectParam::Value(_) => key.push('v'),
-            DirectParam::Read(_, name) if is_identifier(name) => {
-                key.push('.');
-                key.push_str(name);
-            }
-            DirectParam::Read(..) => key.push('['),
-        }
-        key.push('\u{0}');
+/// # Safety
+/// Each of `vs` holds a reference of its own.
+unsafe fn free_all(ctx: *mut qjs::JSContext, vs: &[qjs::JSValue]) {
+    for v in vs {
+        // SAFETY: as the caller's.
+        unsafe { qjs::JS_FreeValue(ctx, *v) };
     }
-    key
-}
-
-/// Written into the source as it is: ASCII only, and no reserved word
-/// cares after a dot.
-fn is_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
 impl<'js> Scope<'js> {
@@ -120,10 +139,8 @@ impl<'js> Scope<'js> {
     /// it for a method, in script alone: the parameters read as the call
     /// starts, what it throws the caller's to catch, worded as
     /// [`Scope::retell_failed_call`] words it, and what it gives back
-    /// given back as it is. The functions of one shape of parameters share
-    /// what makes them, compiled once.
+    /// given back as it is.
     pub fn direct_method(&self, call: DirectCall, name: &str) -> rquickjs::Result<Function<'js>> {
-        let make = self.direct_shape(&call.params, call.takes.len())?;
         let func = {
             let fns = self.state.fns.borrow();
             fns.get(call.func).map(|e| e.func.clone())
@@ -134,43 +151,49 @@ impl<'js> Scope<'js> {
                 "stale function handle",
             ));
         };
-        let func = func.restore(&self.ctx)?;
-        let this = self.to_value(&call.this)?;
-        let mut a = Args::new(self.ctx.clone(), 3 + 2 * call.params.len());
-        a.push_arg(func)?;
-        a.push_arg(this)?;
-        a.push_arg(self.retelling(&call)?)?;
+        let count = |n: usize| {
+            i32::try_from(n).map_err(|_| {
+                rquickjs::Exception::throw_range(&self.ctx, "too many parameters")
+            })
+        };
+        let (params, takes) = (count(call.params.len())?, count(call.takes.len())?);
+        let mut data: Vec<Value<'js>> = Vec::with_capacity(HEAD + 2 * call.params.len());
+        data.push(func.restore(&self.ctx)?.into_value());
+        data.push(self.to_value(&call.this)?);
+        data.push(self.retelling(&call)?.into_value());
+        data.push(Value::new_int(self.ctx.clone(), params));
+        data.push(Value::new_int(self.ctx.clone(), takes));
         for p in &call.params {
             match p {
-                DirectParam::Value(v) => a.push_arg(self.to_value(v)?)?,
+                DirectParam::Value(v) => {
+                    data.push(self.to_value(v)?);
+                    data.push(Value::new_undefined(self.ctx.clone()));
+                }
                 DirectParam::Read(o, name) => {
-                    a.push_arg(self.to_value(o)?)?;
-                    if !is_identifier(name) {
-                        a.push_arg(name.as_str())?;
-                    }
+                    data.push(self.to_value(o)?);
+                    data.push(rquickjs::String::from_str(self.ctx.clone(), name)?.into_value());
                 }
             }
         }
-        let made: Function<'js> = make.call_arg(a)?;
+        let mut raw: Vec<qjs::JSValue> = data.iter().map(Value::as_raw).collect();
+        // SAFETY: the context is entered; QuickJS takes references of its
+        // own to the data, which `data` still holds while it does.
+        let made = unsafe {
+            let f = qjs::JS_NewCFunctionData(
+                self.ctx.as_raw().as_ptr(),
+                Some(raw_direct),
+                takes,
+                0,
+                count(raw.len())?,
+                raw.as_mut_ptr(),
+            );
+            if qjs::JS_IsException(f) {
+                return Err(rquickjs::Error::Exception);
+            }
+            Value::from_raw(self.ctx.clone(), f)
+        };
+        let made = Function::from_value(made)?;
         made.with_name(name)
-    }
-
-    fn direct_shape(
-        &self,
-        params: &[DirectParam],
-        takes: usize,
-    ) -> rquickjs::Result<Function<'js>> {
-        let key = shape_key(params, takes);
-        let cached = self.state.direct.borrow().get(&key).cloned();
-        if let Some(make) = cached {
-            return make.restore(&self.ctx);
-        }
-        let make: Function<'js> = self.ctx.eval(shape_source(params, takes))?;
-        self.state
-            .direct
-            .borrow_mut()
-            .insert(key, Persistent::save(&self.ctx, make.clone()));
-        Ok(make)
     }
 
     /// What a direct method that threw throws: the same error, worded
@@ -204,25 +227,5 @@ impl<'js> Scope<'js> {
                 thrown
             },
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_read_by_name_is_written_into_the_shape_only_when_it_is_an_identifier() {
-        let params = [
-            DirectParam::Value(JsValue::Undefined),
-            DirectParam::Read(JsValue::Undefined, "display".into()),
-            DirectParam::Read(JsValue::Undefined, "font.bold".into()),
-        ];
-        let src = shape_source(&params, 1);
-        assert!(src.contains("(function(f,t,r,q0,q1,q2,n2)"), "{src}");
-        assert!(src.contains("var x1=q1.display,x2=q2[n2];"), "{src}");
-        assert!(src.contains("var p=[q0,x1,x2]"), "{src}");
-        assert!(src.contains("f.call(t,q0,x1,x2,a0)"), "{src}");
-        assert_eq!(shape_key(&params, 1), "1\u{0}v\u{0}.display\u{0}[\u{0}");
     }
 }

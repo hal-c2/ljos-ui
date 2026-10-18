@@ -94,9 +94,6 @@ pub(crate) struct HostState {
     color: RefCell<Option<ColorFace>>,
     /// Indexed by [`ValueKind`].
     kinds: RefCell<Vec<KindFace>>,
-    /// What makes a direct method, by the shape of its parameters
-    /// (direct.rs).
-    direct: RefCell<FxHashMap<String, Persistent<Function<'static>>>>,
     /// A panic in a raw accessor ([`raw_accessor`]), which cannot unwind
     /// through QuickJS: kept until the dispatch is back in Rust.
     panicked: RefCell<Option<Box<dyn Any + Send>>>,
@@ -1184,7 +1181,6 @@ impl Drop for JsHost {
         self.state.color.borrow_mut().take();
         self.state.owned_face.borrow_mut().take();
         self.state.kinds.borrow_mut().clear();
-        self.state.direct.borrow_mut().clear();
         self.state.globals.borrow_mut().clear();
     }
 }
@@ -1260,7 +1256,6 @@ impl JsHost {
             handle_release: Arc::default(),
             color: RefCell::default(),
             kinds: RefCell::default(),
-            direct: RefCell::default(),
             panicked: RefCell::default(),
             globals: RefCell::default(),
             wrapper_class,
