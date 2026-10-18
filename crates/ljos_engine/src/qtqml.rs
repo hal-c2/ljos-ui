@@ -1030,7 +1030,13 @@ impl Engine {
     }
 
     pub(crate) fn wake_host(&self) {
-        let wake = self.inner.timers.borrow().wake.clone();
+        // Busy timers are a turn under way, which looks at what is due.
+        let wake = self
+            .inner
+            .timers
+            .try_borrow()
+            .ok()
+            .and_then(|t| t.wake.clone());
         if let Some(w) = wake {
             w();
         }

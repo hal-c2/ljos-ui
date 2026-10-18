@@ -2927,6 +2927,36 @@ Feature: What a reload changes
       And the property "taps" of "row-b" is 4
       And the property "x" of "box" is at least 40
 
+    Scenario: An element removed takes the model it holds with it
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; property var held: null
+          ListModel { id: fruit
+            ListElement { name: "a"; parts: [ ListElement { p: 1 }, ListElement { p: 2 } ] }
+            ListElement { name: "b"; parts: [ ListElement { p: 3 } ] }
+          }
+          function hold() { held = fruit.get(0).parts }
+        }
+        """
+      And a reload happens
+      And the method "hold" of "root" is called
+      Then the property "held" of "root" is not null
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; property var held: null
+          ListModel { id: fruit
+            ListElement { name: "b"; parts: [ ListElement { p: 3 } ] }
+          }
+          function hold() { held = fruit.get(0).parts }
+        }
+        """
+      And a reload happens
+      Then the property "held" of "root" is null
+
   Rule: A property renamed goes in place when no other file reads or sets either name
 
     The property is given what the file now gives it, as a new object

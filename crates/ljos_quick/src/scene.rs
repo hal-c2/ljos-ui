@@ -327,6 +327,25 @@ fn mark(shared: &SharedRc, f: impl FnOnce(&mut Shared)) {
     }
 }
 
+/// [`mark`] for the engine's wake, which may come while the scene itself
+/// is at work (an object destroyed): then the frame under way sees what
+/// is due.
+fn wake(shared: &SharedRc) {
+    let waker = {
+        let Ok(mut s) = shared.try_borrow_mut() else {
+            return;
+        };
+        if std::mem::replace(&mut s.dirty, true) {
+            None
+        } else {
+            s.waker.clone()
+        }
+    };
+    if let Some(w) = waker {
+        w();
+    }
+}
+
 /// The override layers that make `visible`/`enabled` read false under a
 /// hidden or disabled ancestor.
 #[derive(Debug, Default)]
@@ -587,7 +606,7 @@ impl QuickScene {
         let shared = Rc::downgrade(&self.shared);
         engine.set_timer_wake(move || {
             if let Some(s) = shared.upgrade() {
-                mark(&s, |_| {});
+                wake(&s);
             }
         });
         Ok(())
@@ -617,7 +636,7 @@ impl QuickScene {
         let shared = Rc::downgrade(&self.shared);
         engine.set_timer_wake(move || {
             if let Some(s) = shared.upgrade() {
-                mark(&s, |_| {});
+                wake(&s);
             }
         });
     }
@@ -916,6 +935,7 @@ impl QuickScene {
             next_wake: if pending
                 || incubating
                 || engine.has_due_calls()
+                || engine.has_deferred_deletes()
                 || engine.has_pending_faults()
                 || crate::focus::tree::pending(engine)
             {

@@ -651,11 +651,22 @@ impl Engine {
         };
         if !h.flags.contains(ObjectFlags::PENDING_DELETE) {
             h.flags |= ObjectFlags::PENDING_DELETE;
+            let first = store.deferred.is_empty();
             store.deferred.push(obj);
             drop(store);
             self.reload_doomed();
+            // Nothing else may change: the host is woken for the turn
+            // that deletes it.
+            if first {
+                self.wake_host();
+            }
         }
         true
+    }
+
+    /// Whether objects wait for [`Engine::process_deferred_deletes`].
+    pub fn has_deferred_deletes(&self) -> bool {
+        !self.inner.store.borrow().deferred.is_empty()
     }
 
     /// Destroys everything scheduled by [`Engine::destroy`]. Returns how

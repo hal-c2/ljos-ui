@@ -1179,3 +1179,72 @@ fn a_component_and_list_elements_made_again_are_not_new() {
     assert_ne!(done.roots[0].0, done.roots[0].1, "made again");
     assert_eq!(done.fresh, 0);
 }
+
+const NESTED: &str = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+  ListModel {
+    id: lm
+    objectName: "lm"
+    ListElement { name: "a"; days: [ ListElement { d: 0 }, ListElement { d: 1 } ] }
+    ListElement { name: "b"; days: [ ListElement { d: 2 } ] }
+  }
+}
+"#;
+
+#[test]
+fn a_row_removed_from_the_file_takes_its_nested_model_with_it() {
+    let mut r = rig(&[("Main", NESTED)]);
+    let lists = |r: &Rig| {
+        let lm = r.find("lm");
+        r.h.engine.process_deferred_deletes();
+        r.h.engine
+            .children(lm)
+            .into_iter()
+            .filter(|c| r.h.engine.is_alive(*c))
+            .count()
+    };
+    assert_eq!(lists(&r), 2);
+    let edited = NESTED.replace(
+        "ListElement { name: \"a\"; days: [ ListElement { d: 0 }, ListElement { d: 1 } ] }\n",
+        "",
+    );
+    r.edit("Main", &edited).unwrap();
+    assert_eq!(r.num("lm", "count"), 1.0);
+    assert_eq!(lists(&r), 1);
+}
+
+const MODEL_FILE: &str = r#"import QtQuick
+ListModel {
+  ListElement { name: "a"; days: [ ListElement { d: 0 }, ListElement { d: 1 } ] }
+  ListElement { name: "b"; days: [ ListElement { d: 2 } ] }
+}
+"#;
+
+#[test]
+fn a_row_removed_from_a_model_file_takes_its_nested_model_with_it() {
+    let main = "import QtQuick\nItem {\n  objectName: \"root\"\n  Rows { objectName: \"lm\" }\n  Other {}\n}\n";
+    let other = "import QtQuick\nItem {\n  property int a: 1\n}\n";
+    let mut r = rig(&[("Main", main), ("Rows", MODEL_FILE), ("Other", other)]);
+    let lists = |r: &Rig| {
+        let lm = r.find("lm");
+        r.h.engine.process_deferred_deletes();
+        r.h.engine
+            .children(lm)
+            .into_iter()
+            .filter(|c| r.h.engine.is_alive(*c))
+            .count()
+    };
+    assert_eq!(lists(&r), 2);
+    // Made again first, as after an edit of what uses it.
+    r.edit("Other", &remade(other)).unwrap();
+    assert_eq!(lists(&r), 2);
+    let edited = MODEL_FILE.replace(
+        "ListElement { name: \"a\"; days: [ ListElement { d: 0 }, ListElement { d: 1 } ] }\n",
+        "",
+    );
+    r.edit("Rows", &edited).unwrap();
+    assert_eq!(r.num("lm", "count"), 1.0);
+    assert_eq!(lists(&r), 1);
+}

@@ -341,3 +341,19 @@ Item {
     assert_eq!(names(e.visual_children(root)), left);
     assert_eq!(names(e.children(root)), left);
 }
+
+#[test]
+fn an_object_destroyed_while_the_scene_rests_goes_at_the_next_frame() {
+    let e = engine();
+    let root = make::<Item>(&e, None);
+    let child = make::<Item>(&e, Some(root));
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    assert!(!s.needs_frame());
+    // Nothing else changes: the delete alone asks for the frame that does it.
+    e.destroy(child);
+    assert!(s.needs_frame(), "a deferred delete asks for a frame");
+    frame(&mut s, &e);
+    assert!(!e.is_alive(child));
+    assert!(!s.needs_frame());
+}
