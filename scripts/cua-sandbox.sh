@@ -289,6 +289,10 @@ call() {
   # A pointer tool shows the agent cursor again. Its overlay lets clicks through, and hiding it
   # here would unmap a window: X11 hands the focus away and back, and an app closes its popups
   # on losing it, so a popup a click opened would be gone by the screenshot after it.
+  # The driver ends an idle session and then refuses its name; starting it again is a no-op
+  # while it lives.
+  "${sandbox_env[@]}" cua-driver call --socket "$run/cua.sock" start_session \
+    "{\"session\":\"$session\"}" > /dev/null
   exec "${sandbox_env[@]}" cua-driver call --socket "$run/cua.sock" "$tool" "$json"
 }
 
