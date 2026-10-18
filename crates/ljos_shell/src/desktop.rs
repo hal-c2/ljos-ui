@@ -659,6 +659,44 @@ struct Desktop<M> {
     heap_trim: Option<Instant>,
     /// Pictures were loading in the background at the last settle.
     loading: bool,
+    /// When what the scripts left behind is next looked at.
+    collect: AfterRest,
+}
+
+/// Something to do once the loop has rested for a while after it last
+/// settled, and once a rest. The wheel turning settles the loop at every
+/// notch, with a rest between each and the next that the loop cannot
+/// foresee: something done at the start of every rest is done at every
+/// notch.
+#[derive(Debug, Default)]
+struct AfterRest {
+    due: Option<Instant>,
+}
+
+impl AfterRest {
+    /// The loop settled at `now`, with more to do before `rest` is over
+    /// when `busy`. True when the rest it waited for is over.
+    fn settled(&mut self, busy: bool, now: Instant, rest: Duration) -> bool {
+        match self.due {
+            _ if busy => {
+                self.due = None;
+                false
+            }
+            Some(t) if t <= now => {
+                self.due = None;
+                true
+            }
+            // Something came during the rest: it starts over.
+            _ => {
+                self.due = Some(now + rest);
+                false
+            }
+        }
+    }
+
+    fn next(&self) -> Option<Instant> {
+        self.due
+    }
 }
 
 impl<M> std::fmt::Debug for Desktop<M> {
@@ -709,6 +747,7 @@ impl<M: Send + 'static> Desktop<M> {
             began: Instant::now(),
             scripts_prepared: false,
             heap_trim: None,
+            collect: AfterRest::default(),
             loading: false,
         }
     }
@@ -1896,7 +1935,7 @@ impl<M: Send + 'static> Desktop<M> {
         }
         self.trim_heap_when_done(&engine);
         self.collect_scripts_when_resting(&engine);
-        let mut next = self.next_wake();
+        let mut next = earlier(self.next_wake(), self.collect.next());
         if self.unsettled() {
             // Applying what the windows want keeps changing what they
             // want. Not in a spin: at the pace of the display.
@@ -1932,14 +1971,16 @@ impl<M: Send + 'static> Desktop<M> {
 
     /// QuickJS collects by itself only after the heap grew by megabytes,
     /// and an application that then rests keeps all of it. What a burst
-    /// of work left behind is collected when the loop is about to rest
-    /// instead, and only once it grew: resting again costs nothing.
-    fn collect_scripts_when_resting(&self, engine: &Engine) {
-        let soon = Instant::now() + REST_BEFORE_COLLECTING;
-        if self.unsettled() || self.next_wake().is_some_and(|t| t < soon) {
-            return;
+    /// of work left behind is collected once the loop has rested a while
+    /// instead, and only once it grew. Telling whether it grew walks the
+    /// whole script heap, so it is not done at every rest of a scroll.
+    fn collect_scripts_when_resting(&mut self, engine: &Engine) {
+        let now = Instant::now();
+        let soon = now + REST_BEFORE_COLLECTING;
+        let busy = self.unsettled() || self.next_wake().is_some_and(|t| t < soon);
+        if self.collect.settled(busy, now, REST_BEFORE_COLLECTING) {
+            engine.collect_if_idle();
         }
-        engine.collect_if_idle();
     }
 
     /// The loop ends. What draws goes while the display is still there.
@@ -2086,6 +2127,28 @@ mod tests {
         assert_ne!(tree_id(0), TreeId::ROOT);
         assert_ne!(tree_id(0), tree_id(1));
         assert_ne!(tree_id(1), tree_id(2));
+    }
+
+    /// The wheel settles the loop every notch, resting between: the
+    /// scripts' heap is looked at once, a rest after the last notch.
+    #[test]
+    fn a_turning_wheel_looks_at_the_scripts_once_it_stops() {
+        let rest = Duration::from_millis(100);
+        let t = Instant::now();
+        let at = |ms| t + Duration::from_millis(ms);
+        let mut collect = AfterRest::default();
+        let mut looked = 0;
+        for notch in 0..20 {
+            // The notch's scroll, and the rest after it.
+            assert!(!collect.settled(true, at(notch * 40), rest));
+            looked += u32::from(collect.settled(false, at(notch * 40 + 16), rest));
+            assert!(collect.next().is_some());
+        }
+        assert_eq!(looked, 0, "not during the scroll");
+        let due = collect.next().unwrap();
+        assert_eq!(due, at(19 * 40 + 16) + rest);
+        assert!(collect.settled(false, due, rest));
+        assert_eq!(collect.next(), None, "and then the loop sleeps");
     }
 
     #[test]
