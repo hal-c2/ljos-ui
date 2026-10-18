@@ -439,19 +439,26 @@ fn shift(a: &Shape, b: &Shape, ppp: f32) -> Option<egui::Vec2> {
 fn moved_by(a: &Shape, b: &Shape, by: egui::Vec2) -> bool {
     match (a, b) {
         (Shape::Mesh(a), Shape::Mesh(b)) => {
+            // Most pairs looked at are not the same shape: the cheap
+            // differences first, the indices last.
             a.texture_id == b.texture_id
-                && a.indices == b.indices
                 && a.vertices.len() == b.vertices.len()
+                && a.indices.len() == b.indices.len()
                 && a.vertices.iter().zip(&b.vertices).all(|(u, v)| {
                     u.color == v.color
                         && u.uv == v.uv
                         && (v.pos - u.pos - by).abs().max_elem() < 1e-3
                 })
+                && a.indices == b.indices
         }
         (Shape::Vec(a), Shape::Vec(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| moved_by(a, b, by))
         }
         (Shape::Callback(_), _) | (_, Shape::Callback(_)) => false,
+        // Moved, a shape is still its kind; and moving a copy of a mesh
+        // copies its vertices.
+        (Shape::Mesh(_), _) | (_, Shape::Mesh(_)) => false,
+        (a, b) if std::mem::discriminant(a) != std::mem::discriminant(b) => false,
         (a, b) => {
             let mut a = a.clone();
             a.translate(by);
@@ -821,6 +828,25 @@ mod tests {
             1,
             "equal meshes, shared or not, are no change"
         );
+    }
+
+    #[test]
+    fn a_shape_of_another_kind_never_moved() {
+        let mut m = Mesh::default();
+        m.add_colored_rect(
+            Rect::from_min_size(Pos2::ZERO, vec2(10.0, 10.0)),
+            Color32::RED,
+        );
+        let m = Shape::Mesh(Arc::new(m));
+        let r = rect(5.0).shape;
+        let by = vec2(5.0, 0.0);
+        assert!(!moved_by(&m, &r, by));
+        assert!(!moved_by(&r, &m, by));
+        assert!(!moved_by(&r, &Shape::Noop, by));
+        assert!(moved_by(&rect(0.0).shape, &r, by));
+        let mut moved = m.clone();
+        moved.translate(by);
+        assert!(moved_by(&m, &moved, by));
     }
 
     fn shader(paint: &Arc<ShaderPaint>) -> ClippedShape {
