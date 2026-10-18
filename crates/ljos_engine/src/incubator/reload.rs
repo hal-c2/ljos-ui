@@ -123,7 +123,7 @@ pub trait Migrate: QmlType {
 type SnapshotFn = dyn Fn(&Engine, ObjectId) -> Option<Box<dyn Any>>;
 type MigrateFn = dyn Fn(&Engine, ObjectId, Box<dyn Any>) -> Result<(), String>;
 
-struct Migrator {
+pub(super) struct Migrator {
     meta: &'static MetaObject,
     snapshot: Box<SnapshotFn>,
     migrate: Box<MigrateFn>,
@@ -227,6 +227,13 @@ struct Carried {
     value: Value,
     /// Assigned by a script, which outranks a binding of the new file.
     script: bool,
+}
+
+/// What a reload carries from an object to the one that goes on for it.
+pub(super) struct Taken {
+    values: Vec<Carried>,
+    /// (index of the migrator, its state).
+    native: Vec<(usize, Box<dyn Any>)>,
 }
 
 struct Snap {
@@ -1072,44 +1079,10 @@ impl Engine {
             if st.by_path.borrow().get(&path).is_some_and(|o| *o != obj) {
                 continue;
             }
-            let Some(meta) = self.meta_of(obj) else {
+            let Some(Taken { values, native }) = self.reload_take(obj, &state_props, &migrators)
+            else {
                 continue;
             };
-            let mut values: Vec<Carried> = Vec::new();
-            let assigned = st.assigned.borrow().get(&obj).cloned().unwrap_or_default();
-            for prop in assigned {
-                if let Some(c) = self.reload_carry(obj, &meta, prop, true) {
-                    values.push(c);
-                }
-            }
-            for (ty, name) in &state_props {
-                if !(ty.is_empty() || meta.inherits_name(ty)) {
-                    continue;
-                }
-                let Some(prop) = meta.property_index(name) else {
-                    continue;
-                };
-                if values.iter().any(|c| c.name == name.as_str()) {
-                    continue;
-                }
-                if self
-                    .provenance(obj, prop)
-                    .is_none_or(|p| p == Provenance::Default)
-                {
-                    continue;
-                }
-                if let Some(c) = self.reload_carry(obj, &meta, prop, false) {
-                    values.push(c);
-                }
-            }
-            let mut native = Vec::new();
-            for (i, m) in migrators.iter().enumerate() {
-                if meta.inherits(m.meta)
-                    && let Some(state) = (m.snapshot)(self, obj)
-                {
-                    native.push((i, state));
-                }
-            }
             pending.snaps.insert(
                 path,
                 Snap {
@@ -1122,6 +1095,55 @@ impl Engine {
             );
         }
         pending
+    }
+
+    /// What `obj` holds that a reload carries to the object that goes on
+    /// for it: what scripts assigned, the registered state properties
+    /// that left their default, and what its migrators keep.
+    pub(super) fn reload_take(
+        &self,
+        obj: ObjectId,
+        state_props: &[(String, String)],
+        migrators: &[Rc<Migrator>],
+    ) -> Option<Taken> {
+        let st = &self.inner.reload;
+        let meta = self.meta_of(obj)?;
+        let mut values: Vec<Carried> = Vec::new();
+        let assigned = st.assigned.borrow().get(&obj).cloned().unwrap_or_default();
+        for prop in assigned {
+            if let Some(c) = self.reload_carry(obj, &meta, prop, true) {
+                values.push(c);
+            }
+        }
+        for (ty, name) in state_props {
+            if !(ty.is_empty() || meta.inherits_name(ty)) {
+                continue;
+            }
+            let Some(prop) = meta.property_index(name) else {
+                continue;
+            };
+            if values.iter().any(|c| c.name == name.as_str()) {
+                continue;
+            }
+            if self
+                .provenance(obj, prop)
+                .is_none_or(|p| p == Provenance::Default)
+            {
+                continue;
+            }
+            if let Some(c) = self.reload_carry(obj, &meta, prop, false) {
+                values.push(c);
+            }
+        }
+        let mut native = Vec::new();
+        for (i, m) in migrators.iter().enumerate() {
+            if meta.inherits(m.meta)
+                && let Some(state) = (m.snapshot)(self, obj)
+            {
+                native.push((i, state));
+            }
+        }
+        Some(Taken { values, native })
     }
 
     fn reload_carry(
@@ -1670,57 +1692,15 @@ impl Engine {
                 if !self.is_alive(obj) {
                     continue;
                 }
-                let mut ok = true;
-                if !inside_edited.contains(&obj) {
-                    for (i, state) in native {
-                        let Some(m) = migrators.get(i) else { continue };
-                        if let Err(why) = (m.migrate)(self, obj, state) {
-                            self.warn(format!(
-                                "{}reload: {} is made anew, its state could not be carried: {why}",
-                                self.location_of(obj).unwrap_or_default(),
-                                m.meta.name
-                            ));
-                            ok = false;
-                        }
-                    }
-                }
-                if !ok {
+                let native = if inside_edited.contains(&obj) {
+                    Vec::new()
+                } else {
+                    native
+                };
+                if self.reload_give(obj, Taken { values, native }, &skip, &migrators) {
+                    kept.insert(obj);
+                } else {
                     failed.push(obj);
-                    continue;
-                }
-                kept.insert(obj);
-                for mut c in values {
-                    if holds_object(&c.value) {
-                        let Some(v) = self.reload_translate(c.value) else {
-                            continue;
-                        };
-                        c.value = v;
-                    }
-                    let Ok(p) = self.property_index(obj, &c.name) else {
-                        continue;
-                    };
-                    let (to, tp) = self.redirect(obj, p);
-                    let same = self.meta_of(to).is_some_and(|m| {
-                        m.property(tp).is_some_and(|i| {
-                            i.ty == c.ty
-                                && !i.is_readonly()
-                                && !i.is_alias()
-                                && !i.flags.contains(PropertyFlags::GROUP)
-                        })
-                    });
-                    if !same || skip.contains(&(to, tp)) {
-                        continue;
-                    }
-                    if !c.script && self.is_bound(to, tp) {
-                        continue;
-                    }
-                    if self
-                        .write_internal(to, tp, c.value, WriteKind::Imperative)
-                        .is_ok()
-                        && c.script
-                    {
-                        self.reload_note_assigned(to, tp);
-                    }
                 }
             }
         });
@@ -1751,6 +1731,69 @@ impl Engine {
             }
         }
         kept
+    }
+}
+
+impl Engine {
+    /// Gives `obj` what [`Engine::reload_take`] took from the object it
+    /// goes on for, but the properties of `skip`, which the file gives
+    /// anew. `false`, with nothing written, when a migrator refused.
+    pub(super) fn reload_give(
+        &self,
+        obj: ObjectId,
+        taken: Taken,
+        skip: &HashSet<(ObjectId, PropIndex)>,
+        migrators: &[Rc<Migrator>],
+    ) -> bool {
+        let mut ok = true;
+        for (i, state) in taken.native {
+            let Some(m) = migrators.get(i) else { continue };
+            if let Err(why) = (m.migrate)(self, obj, state) {
+                self.warn(format!(
+                    "{}reload: {} is made anew, its state could not be carried: {why}",
+                    self.location_of(obj).unwrap_or_default(),
+                    m.meta.name
+                ));
+                ok = false;
+            }
+        }
+        if !ok {
+            return false;
+        }
+        for mut c in taken.values {
+            if holds_object(&c.value) {
+                let Some(v) = self.reload_translate(c.value) else {
+                    continue;
+                };
+                c.value = v;
+            }
+            let Ok(p) = self.property_index(obj, &c.name) else {
+                continue;
+            };
+            let (to, tp) = self.redirect(obj, p);
+            let same = self.meta_of(to).is_some_and(|m| {
+                m.property(tp).is_some_and(|i| {
+                    i.ty == c.ty
+                        && !i.is_readonly()
+                        && !i.is_alias()
+                        && !i.flags.contains(PropertyFlags::GROUP)
+                })
+            });
+            if !same || skip.contains(&(to, tp)) {
+                continue;
+            }
+            if !c.script && self.is_bound(to, tp) {
+                continue;
+            }
+            if self
+                .write_internal(to, tp, c.value, WriteKind::Imperative)
+                .is_ok()
+                && c.script
+            {
+                self.reload_note_assigned(to, tp);
+            }
+        }
+        true
     }
 }
 

@@ -1160,6 +1160,137 @@ Feature: What a reload changes
       Then the property "text" of "note" is "inside"
       And the property "x" of "inside" is at least 40
 
+  Rule: An object moved or given another type is made again where the file puts it, and only that object
+
+    An object put in another order among its siblings, under another
+    parent, or given another type is destroyed and made again as the file
+    now writes it, at its new place; a binding that names it by its id
+    names the new object. Every other object goes on as it was, an
+    animation half way too.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string order: ""
+          property string tag: one.objectName
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Text { id: one; objectName: "one"; text: "one" }
+            Text { objectName: "two"; text: "two" }
+          }
+          Item { id: side; objectName: "side" }
+          function probe() {
+            var r = []
+            for (var i = 0; i < list.children.length; i++) r.push(list.children[i].objectName)
+            order = r.join(",") + "|" + side.children.length
+          }
+        }
+        """
+      When 500 milliseconds pass
+
+    Scenario: Siblings put in another order are in that order
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string order: ""
+          property string tag: one.objectName
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Text { objectName: "two"; text: "two" }
+            Text { id: one; objectName: "one"; text: "one" }
+          }
+          Item { id: side; objectName: "side" }
+          function probe() {
+            var r = []
+            for (var i = 0; i < list.children.length; i++) r.push(list.children[i].objectName)
+            order = r.join(",") + "|" + side.children.length
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "two,one|0"
+      And the property "tag" of "root" is "one"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object moved under another parent is there
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string order: ""
+          property string tag: one.objectName
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Text { objectName: "two"; text: "two" }
+          }
+          Item {
+            id: side; objectName: "side"
+              Text { id: one; objectName: "one"; text: "one" }
+          }
+          function probe() {
+            var r = []
+            for (var i = 0; i < list.children.length; i++) r.push(list.children[i].objectName)
+            order = r.join(",") + "|" + side.children.length
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "two|1"
+      And the property "text" of "one" is "one"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object given another type is of that type, and its id names it
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string order: ""
+          property string tag: one.objectName
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Rectangle { id: one; objectName: "uno"; width: 7; height: 7 }
+            Text { objectName: "two"; text: "two" }
+          }
+          Item { id: side; objectName: "side" }
+          function probe() {
+            var r = []
+            for (var i = 0; i < list.children.length; i++) r.push(list.children[i].objectName)
+            order = r.join(",") + "|" + side.children.length
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "width" of "uno" is 7
+      And the property "tag" of "root" is "uno"
+      And the property "order" of "root" is "uno,two|0"
+      And the property "x" of "box" is at least 40
+
   Rule: Other changes to objects make them again, as the file now writes them
 
     An object moved, or given another type or another id, is there as the

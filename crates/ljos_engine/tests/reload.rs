@@ -168,7 +168,10 @@ Item {
 "#;
     let done = r.edit("Main", moved).unwrap();
     assert_eq!(r.num("box", "taps"), 1.0);
-    assert_eq!((done.kept, done.fresh, done.remounted), (2, 1, 0));
+    // In place: the root stays, the new Item and the box are made, and
+    // the box goes on with what the old one was given.
+    assert_eq!(done.roots[0].0, done.roots[0].1);
+    assert_eq!((done.kept, done.fresh, done.remounted), (1, 2, 0));
 }
 
 #[test]
@@ -200,7 +203,8 @@ Item {
         .unwrap();
     assert_eq!(r.num("outer", "taps"), 0.0);
     assert_eq!(r.num("inner", "taps"), 0.0);
-    assert_eq!((done.kept, done.remounted), (1, 2));
+    // In place: the root stays, the two below it are made.
+    assert_eq!((done.kept, done.fresh, done.remounted), (1, 2, 0));
 }
 
 #[test]

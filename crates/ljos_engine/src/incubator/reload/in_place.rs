@@ -116,6 +116,9 @@ struct Objects {
     to_new: Vec<Option<usize>>,
     /// Per new object, its index in the old file; `None` when added.
     to_old: Vec<Option<usize>>,
+    /// (old, new): one of the same key and type made again elsewhere,
+    /// which goes on with what the old one was given.
+    carry: Vec<(usize, usize)>,
 }
 
 impl Objects {
@@ -158,6 +161,8 @@ struct Grown {
     gone: Vec<ObjectId>,
     /// An id came or went: what the others bind to may have.
     ids: bool,
+    /// (old, new): a moved object and the one made for it.
+    carry: Vec<(ObjectId, ObjectId)>,
 }
 
 /// (line, column) of the old file to (line, column) of the new.
@@ -417,6 +422,7 @@ impl Engine {
                 }
             }
         });
+        self.in_place_carry(&grown);
         for g in &grown {
             for &o in &g.gone {
                 if self.is_alive(o) {
@@ -425,16 +431,6 @@ impl Engine {
                 }
             }
         }
-        // A binding that names an id that came or went.
-        self.batch(|| {
-            for g in grown.iter().filter(|g| g.ids) {
-                for &id in &g.new.objects {
-                    if self.is_alive(id) {
-                        self.in_place_refresh(id);
-                    }
-                }
-            }
-        });
         phases.mark("apply");
 
         // What is made from now on is made from the new files.
@@ -457,6 +453,17 @@ impl Engine {
             };
             *slot.borrow_mut() = (renew(&inst, &files, &mut memo), *to);
         }
+        // A binding that names an id that came or went, once
+        // the slots name the objects of the new instances.
+        self.batch(|| {
+            for g in grown.iter().filter(|g| g.ids) {
+                for &id in &g.new.objects {
+                    if self.is_alive(id) {
+                        self.in_place_refresh(id);
+                    }
+                }
+            }
+        });
         let added: rustc_hash::FxHashSet<ObjectId> = grown
             .iter()
             .flat_map(|g| g.cr.all.iter().copied())
@@ -580,7 +587,13 @@ impl Engine {
     /// `None` when the patch does more than give members other values.
     fn in_place_files(&self, patch: &ReloadPatch) -> Option<Vec<Changed>> {
         let mut by_file: HashMap<&str, Vec<(&ObjectKey, Edited)>> = HashMap::default();
+        // Per file, the old key of a moved object to its new one.
+        let mut moves: HashMap<&str, HashMap<&ObjectKey, &ObjectKey>> = HashMap::default();
         for op in &patch.ops {
+            if let ReloadOp::ObjectMoved { file, from, to } = op {
+                moves.entry(file.as_str()).or_default().insert(from, to);
+                continue;
+            }
             let (file, object, what) = match op {
                 ReloadOp::PropertyChanged {
                     file,
@@ -592,8 +605,12 @@ impl Engine {
                     (file, object, Edited::Function(name))
                 }
                 // Which objects came and went is read from the files: an
-                // object is the same one when it has the same key.
-                ReloadOp::ObjectAdded { .. } | ReloadOp::ObjectRemoved { .. } => continue,
+                // object is the same one when it has the same key, type
+                // and parent, and keeps its order among its siblings. One
+                // moved or retyped is removed and added.
+                ReloadOp::ObjectAdded { .. }
+                | ReloadOp::ObjectRemoved { .. }
+                | ReloadOp::TypeChanged { .. } => continue,
                 _ => {
                     tracing::debug!("reload not in place: {op:?}");
                     return None;
@@ -646,8 +663,12 @@ impl Engine {
                     Edited::Handler => {}
                 }
             }
-            let Some((whole, remap, moved, objects)) = same_but_edits(&old.ir, new, &mut edits)
-            else {
+            let Some((whole, remap, moved, objects)) = same_but_edits(
+                &old.ir,
+                new,
+                &mut edits,
+                moves.get(new.file.as_str()).unwrap_or(&HashMap::default()),
+            ) else {
                 tracing::debug!("reload not in place: {} changed its shape", new.file);
                 return None;
             };
@@ -796,6 +817,11 @@ impl Engine {
         Some(Grown {
             old: old.clone(),
             gone: gone.into_iter().map(|i| old.objects[i]).collect(),
+            carry: m
+                .carry
+                .iter()
+                .map(|&(i, j)| (old.objects[i], new.objects[j]))
+                .collect(),
             new,
             cr,
             tops,
@@ -1014,6 +1040,32 @@ impl Engine {
         }
     }
 
+    /// Gives each moved object's new one what scripts and its state gave
+    /// the old one, before the old one goes.
+    fn in_place_carry(&self, grown: &[Grown]) {
+        let st = &self.inner.reload;
+        if grown.iter().all(|g| g.carry.is_empty()) {
+            return;
+        }
+        let state_props = st.state_props.borrow().clone();
+        let migrators = st.migrators.borrow().clone();
+        let was_muting = (st.muting.get(), st.muted_all.get());
+        st.muting.set(true);
+        st.muted_all.set(true);
+        self.batch(|| {
+            for &(from, to) in grown.iter().flat_map(|g| &g.carry) {
+                if !self.is_alive(from) || !self.is_alive(to) {
+                    continue;
+                }
+                if let Some(taken) = self.reload_take(from, &state_props, &migrators) {
+                    self.reload_give(to, taken, &Default::default(), &migrators);
+                }
+            }
+        });
+        st.muting.set(was_muting.0);
+        st.muted_all.set(was_muting.1);
+    }
+
     /// Runs the bindings of `obj` again, keeping where each came from.
     fn in_place_refresh(&self, obj: ObjectId) {
         let nodes: Vec<NodeId> = {
@@ -1196,7 +1248,12 @@ type Same = (
 /// [`Same`] when `new` is `old` but for the edited members and for
 /// objects added after the children of one that stays or removed;
 /// `None` otherwise. Sets the old index of each edit.
-fn same_but_edits(old: &CompiledFile, new: &CompiledFile, edits: &mut [Edit]) -> Option<Same> {
+fn same_but_edits(
+    old: &CompiledFile,
+    new: &CompiledFile,
+    edits: &mut Vec<Edit>,
+    moves: &HashMap<&ObjectKey, &ObjectKey>,
+) -> Option<Same> {
     if old.imports != new.imports
         || old.pragmas != new.pragmas
         || old.scripts != new.scripts
@@ -1210,14 +1267,15 @@ fn same_but_edits(old: &CompiledFile, new: &CompiledFile, edits: &mut [Edit]) ->
         if o.name != n.name || o.id != n.id || o.kind != n.kind || o.signature != n.signature {
             return None;
         }
-        let m = match_objects(old, new, CompIdx(c as u32))?;
+        let m = match_objects(old, new, CompIdx(c as u32), moves)?;
         if !m.same() && !grows_simply(o, n, &m) {
             return None;
         }
         objects.push(m);
     }
+    // An added object is made from the new file as a whole.
+    edits.retain(|e| objects[e.comp.index()].to_old[e.obj].is_some());
     for e in edits.iter_mut() {
-        // An added object is made from the new file as a whole.
         e.was = objects[e.comp.index()].to_old[e.obj]?;
     }
     let none: Vec<String> = Vec::new();
@@ -1329,7 +1387,12 @@ fn is_model(od: &ObjectDef) -> bool {
 
 /// Pairs the objects of component `comp` of both files by their keys;
 /// `None` when two objects of a file have one key.
-fn match_objects(old: &CompiledFile, new: &CompiledFile, comp: CompIdx) -> Option<Objects> {
+fn match_objects(
+    old: &CompiledFile,
+    new: &CompiledFile,
+    comp: CompIdx,
+    moves: &HashMap<&ObjectKey, &ObjectKey>,
+) -> Option<Objects> {
     let key = |f: &CompiledFile, i: usize| {
         f.object_key(ObjRef {
             component: comp,
@@ -1345,8 +1408,17 @@ fn match_objects(old: &CompiledFile, new: &CompiledFile, comp: CompIdx) -> Optio
     }
     let mut to_new = Vec::with_capacity(o.objects.len());
     let mut to_old = vec![None; n.objects.len()];
+    let mut keyed = Vec::new();
+    let mut moved = Vec::new();
     for i in 0..o.objects.len() {
-        let j = at.remove(&key(old, i));
+        let k = key(old, i);
+        let j = at.remove(&k);
+        keyed.extend(j.map(|j| (i, j)));
+        if j.is_none()
+            && let Some(to) = moves.get(&k)
+        {
+            moved.push((i, (*to).clone()));
+        }
         if let Some(j) = j {
             to_old[j] = Some(i);
         }
@@ -1356,7 +1428,102 @@ fn match_objects(old: &CompiledFile, new: &CompiledFile, comp: CompIdx) -> Optio
     if to_new.iter().flatten().count() != to_old.iter().flatten().count() {
         return None;
     }
-    Some(Objects { to_new, to_old })
+    // One of another type, or under another parent, is another object, and
+    // so is all that is in it. A parent comes before what is in it.
+    for j in 0..n.objects.len() {
+        let Some(i) = to_old[j] else { continue };
+        let parent = match (n.objects[j].parent, o.objects[i].parent) {
+            (Some(p), Some(q)) => to_old[p.index()] == Some(q.index()),
+            (None, None) => true,
+            _ => false,
+        };
+        if !parent || n.objects[j].ty != o.objects[i].ty || n.objects[j].on != o.objects[i].on {
+            to_old[j] = None;
+            to_new[i] = None;
+        }
+    }
+    // Siblings in another order: the most of them that keep theirs stay,
+    // the others are made again with all that is in them.
+    for od in &n.objects {
+        let kept: Vec<(usize, usize)> = od
+            .children
+            .iter()
+            .filter_map(|v| match v {
+                ObjectValue::Object(k) => to_old[k.index()].map(|i| (k.index(), i)),
+                ObjectValue::Component(_) => None,
+            })
+            .collect();
+        let was: Vec<usize> = kept.iter().map(|&(_, i)| i).collect();
+        for (&(j, i), stays) in kept.iter().zip(longest_rising(&was)) {
+            if !stays {
+                to_old[j] = None;
+                to_new[i] = None;
+            }
+        }
+    }
+    for j in 0..n.objects.len() {
+        if let Some(i) = to_old[j]
+            && n.objects[j]
+                .parent
+                .is_some_and(|p| to_old[p.index()].is_none())
+        {
+            to_old[j] = None;
+            to_new[i] = None;
+        }
+    }
+    // One moved keeps its key: it is made again, but what was given to it
+    // goes on, as the full path carries it.
+    // One the compiler saw move to another key is found under it.
+    for (i, to) in moved {
+        if let Some(j) = at.remove(&to) {
+            keyed.push((i, j));
+        }
+    }
+    keyed.sort_unstable();
+    // One under an object of another type starts afresh, as all below
+    // that does. A parent comes before what is in it.
+    let mut carried = vec![false; o.objects.len()];
+    let mut carry = Vec::new();
+    for (i, j) in keyed {
+        let under = o.objects[i]
+            .parent
+            .is_none_or(|p| to_new[p.index()].is_some() || carried[p.index()]);
+        if to_new[i].is_none()
+            && under
+            && n.objects[j].ty == o.objects[i].ty
+            && n.objects[j].on == o.objects[i].on
+        {
+            carried[i] = true;
+            carry.push((i, j));
+        }
+    }
+    Some(Objects {
+        to_new,
+        to_old,
+        carry,
+    })
+}
+
+/// Which of `seq` make up a longest rising run of it, in its order.
+fn longest_rising(seq: &[usize]) -> Vec<bool> {
+    // Quadratic, over the children of one object.
+    let mut len = vec![1usize; seq.len()];
+    let mut prev = vec![usize::MAX; seq.len()];
+    for b in 0..seq.len() {
+        for a in 0..b {
+            if seq[a] < seq[b] && len[a] + 1 > len[b] {
+                len[b] = len[a] + 1;
+                prev[b] = a;
+            }
+        }
+    }
+    let mut stay = vec![false; seq.len()];
+    let mut at = (0..seq.len()).max_by_key(|&k| (len[k], usize::MAX - k));
+    while let Some(k) = at {
+        stay[k] = true;
+        at = (prev[k] != usize::MAX).then_some(prev[k]);
+    }
+    stay
 }
 
 /// Whether the objects of `n` are those of `o` with objects added after
