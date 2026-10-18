@@ -222,6 +222,9 @@ struct Run {
     /// them it shows. Its own: the cache keeps single pictures.
     frames: Option<std::sync::Arc<decode::Frames>>,
     frame: usize,
+    /// How many pages the document shown has: 1 for a picture, 0 for
+    /// nothing shown.
+    pages: u32,
 }
 
 #[qml_impl]
@@ -297,12 +300,13 @@ pub struct Image {
     /// The part of the (scaled) picture to keep; empty for all of it.
     #[qml(notify, reset)]
     pub source_clip_rect: Rect,
-    /// Of a still picture, always the first: there is no other.
+    /// The page of a PDF document shown; of a still picture, always the
+    /// first: there is no other.
     #[qml(notify)]
     pub current_frame: i32,
-    /// 1 for a still picture, there or failed; 0 until one of those, and
-    /// left as it was by an empty source, as in Qt. An `AnimatedImage`
-    /// counts its frames.
+    /// The pages of a PDF document, 1 for a still picture, there or
+    /// failed; 0 until one of those, and left as it was by an empty source,
+    /// as in Qt. An `AnimatedImage` counts its frames.
     #[qml(notify, readonly)]
     pub frame_count: i32,
 }
@@ -340,11 +344,8 @@ impl Image {
             reload(e, me);
         })?;
         if !is_a::<AnimatedImage>(e, me) {
-            // Qt keeps a still picture on its one frame, whatever is asked.
             e.watch(me, Image::CURRENT_FRAME.index, move |e, v| {
-                if v.to_number() != 0.0 {
-                    set(e, me, Image::CURRENT_FRAME.index, Value::Int(0));
-                }
+                turn_to(e, me, v.to_number());
             })?;
         }
         e.effect_in(me, move |e| update_painted(e, me))?;
@@ -372,10 +373,36 @@ fn set(e: &Engine, me: ObjectId, p: PropIndex, v: Value) {
 }
 
 /// `frameCount` of an `Image` that is no `AnimatedImage`, after its
-/// `status`, in Qt's order. Qt leaves it alone when the source is cleared.
-fn count_still_frames(e: &Engine, me: ObjectId, status: i32) {
+/// `status`, in Qt's order: the `pages` of a document, 1 for a picture.
+/// Qt leaves it alone when the source is cleared.
+fn count_still_frames(e: &Engine, me: ObjectId, status: i32, pages: u32) {
     if status != image_status::NULL && is_a::<Image>(e, me) && !is_a::<AnimatedImage>(e, me) {
-        set(e, me, Image::FRAME_COUNT.index, Value::Int(1));
+        let pages = i32::try_from(pages.max(1)).unwrap_or(i32::MAX);
+        set(e, me, Image::FRAME_COUNT.index, Value::Int(pages));
+    }
+}
+
+/// `currentFrame` of an `Image` that is no `AnimatedImage` was set to
+/// `frame`: a page of the document shown is turned to, and anything else
+/// is ignored, as in Qt, which puts back the page shown (the first of a
+/// picture, its only one).
+fn turn_to(e: &Engine, me: ObjectId, frame: f64) {
+    let Some((pages, shown)) = with_run(e, me, |r| {
+        (r.pages, r.key.as_ref().map_or(0, |k| k.request.page))
+    }) else {
+        return;
+    };
+    let is_page = frame >= 0.0 && frame.fract() == 0.0 && frame < f64::from(pages.max(1));
+    if !is_page {
+        let back = if pages > 1 { shown } else { 0 };
+        set(
+            e,
+            me,
+            Image::CURRENT_FRAME.index,
+            Value::Int(i32::try_from(back).unwrap_or(0)),
+        );
+    } else if frame as u32 != shown {
+        reload(e, me);
     }
 }
 
@@ -469,6 +496,14 @@ fn request_of(e: &Engine, me: ObjectId) -> Request {
             scale: 0,
             animated,
             limit,
+            page: if animated {
+                0
+            } else {
+                // A page there is not shows the first, but is kept as
+                // asked, as in Qt.
+                let frame = e.read(me, Image::CURRENT_FRAME.index).to_number();
+                if frame > 0.0 { frame as u32 } else { 0 }
+            },
         }
     })
 }
@@ -534,6 +569,7 @@ fn reload(e: &Engine, me: ObjectId) {
                     Picture {
                         image: l.image,
                         natural: l.natural,
+                        pages: l.pages,
                     },
                     l.frames,
                 )
@@ -607,10 +643,15 @@ fn finish(
     cache: bool,
     frames: Option<std::sync::Arc<decode::Frames>>,
 ) {
-    let Picture { image, natural } = picture;
+    let Picture {
+        image,
+        natural,
+        pages,
+    } = picture;
     let asked = with_run(e, me, |r| {
         r.frames = frames;
         r.frame = 0;
+        r.pages = pages;
         r.key = Some(key);
         r.natural = natural;
         // Without the cache nobody else has the pixels: the item must.
@@ -622,14 +663,15 @@ fn finish(
         r.sharpening = None;
         r.requested.is_some()
     }) == Some(true);
-    announce(e, me, natural, asked);
+    announce(e, me, natural, asked, pages);
     // After the batch: the item's size may follow the picture's.
     fit_unpainted(e, me);
 }
 
-/// The item says it is Ready with a picture of `natural` size; `asked`
-/// is whether the author set `sourceSize`, which then stays as set.
-fn announce(e: &Engine, me: ObjectId, natural: (u32, u32), asked: bool) {
+/// The item says it is Ready with a picture of `natural` size, or a page
+/// that size of a document of `pages`; `asked` is whether the author set
+/// `sourceSize`, which then stays as set.
+fn announce(e: &Engine, me: ObjectId, natural: (u32, u32), asked: bool, pages: u32) {
     let (w, h) = (f64::from(natural.0), f64::from(natural.1));
     // In the order Qt announces them; a handler of any of them sees the
     // others already in place.
@@ -646,7 +688,7 @@ fn announce(e: &Engine, me: ObjectId, natural: (u32, u32), asked: bool) {
             ImageBase::STATUS.index,
             Value::Int(image_status::READY),
         );
-        count_still_frames(e, me, image_status::READY);
+        count_still_frames(e, me, image_status::READY, pages);
         if !asked {
             report_size(e, me, w, h);
         }
@@ -665,6 +707,7 @@ fn decode_aside(e: &Engine, me: ObjectId, key: ImageKey, natural: (u32, u32), ge
     let asked = with_run(e, me, |r| {
         r.frames = None;
         r.frame = 0;
+        r.pages = 1;
         r.key = Some(key.clone());
         r.natural = natural;
         r.held = None;
@@ -677,7 +720,7 @@ fn decode_aside(e: &Engine, me: ObjectId, key: ImageKey, natural: (u32, u32), ge
         r.aside = true;
         r.requested.is_some()
     }) == Some(true);
-    announce(e, me, natural, asked);
+    announce(e, me, natural, asked, 1);
     let store = ImageStore::of(e);
     if store.defers_asides() {
         store.defer_aside(e, me, generation);
@@ -749,6 +792,7 @@ fn unload(e: &Engine, me: ObjectId, status: i32) {
         r.sharpening = None;
         r.frames = None;
         r.frame = 0;
+        r.pages = 0;
         r.requested.is_some()
     }) == Some(true);
     e.batch(|| {
@@ -758,7 +802,7 @@ fn unload(e: &Engine, me: ObjectId, status: i32) {
         set(e, me, Item::IMPLICIT_WIDTH.index, Value::Real(0.0));
         set(e, me, Item::IMPLICIT_HEIGHT.index, Value::Real(0.0));
         set(e, me, ImageBase::STATUS.index, Value::Int(status));
-        count_still_frames(e, me, status);
+        count_still_frames(e, me, status, 1);
         if !asked {
             report_size(e, me, 0.0, 0.0);
         }
@@ -807,6 +851,7 @@ pub(crate) fn delivered(
                     Picture {
                         image: l.image.clone(),
                         natural: l.natural,
+                        pages: l.pages,
                     },
                     cache,
                     l.frames.clone(),
@@ -1120,6 +1165,8 @@ fn shrink_kept(
             &Picture {
                 image: image.clone(),
                 natural,
+                // Only a picture is kept smaller; a document is drawn.
+                pages: 1,
             },
         );
         drop(source);

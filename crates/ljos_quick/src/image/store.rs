@@ -51,6 +51,8 @@ const FINISH_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) struct Picture {
     pub image: ImageHandle,
     pub natural: (u32, u32),
+    /// How many pages the document has, 1 for a picture.
+    pub pages: u32,
 }
 
 impl Picture {
@@ -58,6 +60,7 @@ impl Picture {
         Self {
             image: loaded.image.clone(),
             natural: loaded.natural,
+            pages: loaded.pages,
         }
     }
 }

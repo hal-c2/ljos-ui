@@ -52,6 +52,7 @@ glutin = { version = "0.32.3", default-features = false, features = ["egl", "way
 # Must match egui's accesskit: its types do not interoperate across minor versions.
 accesskit = "0.24.1"
 vello_cpu = "0.3"
+hayro = "0.8.0"
 parley = "0.12"
 # The library Fontique links on Linux; ljos_text asks it for family substitutes.
 yeslogic-fontconfig-sys = "6.0.1"

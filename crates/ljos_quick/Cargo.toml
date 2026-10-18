@@ -44,6 +44,7 @@ thiserror.workspace = true
 zune-jpeg.workspace = true
 jpeg-decoder.workspace = true
 resvg.workspace = true
+hayro.workspace = true
 
 [dev-dependencies]
 # Tests compile QML strings; the crate itself never links the parser.

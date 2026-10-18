@@ -1,5 +1,5 @@
 //! From a URL to pixels: fetching the bytes, decoding PNG, JPEG and GIF
-//! or drawing an SVG, and scaling to the size an item asked for.
+//! or drawing an SVG or a page of a PDF, and scaling to the size an item asked for.
 //!
 //! Everything here is plain data in and out, with no engine in sight, so
 //! the same function runs on the UI thread for a synchronous Image and on
@@ -38,6 +38,9 @@ pub struct Request {
     /// paint asks for more when it is drawn larger. Nothing QML reads
     /// changes, since the picture keeps reporting its own size.
     pub limit: u32,
+    /// The page of a document asked for (`currentFrame`): 0, the first,
+    /// for whatever has no pages.
+    pub page: u32,
 }
 
 impl Request {
@@ -73,6 +76,8 @@ pub(crate) struct Loaded {
     pub vector: bool,
     /// Every frame, for a request that is `animated`; `image` is the first.
     pub frames: Option<Arc<Frames>>,
+    /// How many pages the document has, 1 for a picture or a drawing.
+    pub pages: u32,
 }
 
 /// The frames of an animation, each with how long it is shown.
@@ -356,6 +361,9 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
 
 /// Decodes `bytes` of `url`, then scales and clips them to `request`.
 pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Loaded, LoadError> {
+    if is_pdf(bytes) {
+        return draw_pdf(url, bytes, request);
+    }
     if is_svg(bytes) {
         let image = draw_svg(url, bytes, request)?;
         return Ok(Loaded {
@@ -363,6 +371,7 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
             image,
             vector: true,
             frames: None,
+            pages: 1,
         });
     }
     if request.animated && bytes.starts_with(GIF) {
@@ -385,6 +394,7 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
             image,
             vector: false,
             frames: Some(Arc::new(Frames { images, delays })),
+            pages: 1,
         });
     }
     let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
@@ -400,6 +410,7 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
             natural,
             vector: false,
             frames: None,
+            pages: 1,
         });
     }
     if asks_nothing && let Some(loaded) = png_shrunk(url, bytes, request.limit) {
@@ -416,6 +427,7 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
             natural,
             vector: false,
             frames: None,
+            pages: 1,
         });
     }
     derive(url, raw.reduced(0, url)?, request)
@@ -437,6 +449,7 @@ pub(crate) fn derive(url: &str, whole: ImageHandle, request: Request) -> Result<
         natural,
         vector: false,
         frames: None,
+        pages: 1,
     })
 }
 
@@ -997,6 +1010,80 @@ fn draw_svg(url: &str, bytes: &[u8], request: Request) -> Result<ImageHandle, Lo
     clip(url, image, request.clip, scale)
 }
 
+/// Whether `bytes` are a PDF document, by its header, which readers look
+/// for in the first kilobyte.
+fn is_pdf(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(1024)]
+        .windows(5)
+        .any(|w| w == b"%PDF-")
+}
+
+/// Draws page `request.page` of a PDF document, or its first page when it
+/// has no such page, as a drawing: a page is as large as its crop box in
+/// points (Qt 6.11.2, measured on qml6), made at the size `request` asks
+/// for in device pixels, over nothing.
+fn draw_pdf(url: &str, bytes: &[u8], request: Request) -> Result<Loaded, LoadError> {
+    use hayro::hayro_interpret::util::TransformExt as _;
+    use hayro::vello_cpu;
+    // Qt's words for a document it cannot read, whatever the reason.
+    let unreadable = || LoadError::decode(url, "Unable to read image data");
+    let pdf = hayro::hayro_syntax::Pdf::new(bytes.to_vec()).map_err(|_| unreadable())?;
+    let pages = pdf.pages();
+    let page = usize::try_from(request.page)
+        .ok()
+        .and_then(|i| pages.get(i))
+        .or_else(|| pages.first())
+        .ok_or_else(unreadable)?;
+    let (w, h) = page.render_dimensions();
+    let (w, h) = (f64::from(w), f64::from(h));
+    let (lw, lh) = drawing_size((w, h), request);
+    let scale = request.scale_factor();
+    let device = |n: u32| {
+        let n = (f64::from(n) * scale).round().max(1.0);
+        // As many pixels a side as the rasteriser takes.
+        (n <= f64::from(u16::MAX))
+            .then_some(n as u16)
+            .ok_or_else(|| too_large(url))
+    };
+    let (pw, ph) = (device(lw)?, device(lh)?);
+    let mut ctx = vello_cpu::RenderContext::new(pw, ph);
+    let transform = hayro::kurbo::Affine::scale_non_uniform(f64::from(pw) / w, f64::from(ph) / h)
+        * page.initial_transform(true).to_kurbo();
+    hayro::render_into(
+        page,
+        &hayro::RenderCache::new(),
+        &hayro::hayro_interpret::InterpreterSettings::default(),
+        &hayro::RenderSettings::default(),
+        &mut ctx,
+        transform,
+    );
+    ctx.flush();
+    let mut pixmap = vello_cpu::Pixmap::new(pw, ph);
+    ctx.render_with(
+        &mut pixmap,
+        &mut vello_cpu::Resources::default(),
+        vello_cpu::RasterizerSettings {
+            target_init: vello_cpu::TargetInit::Clear(vello_cpu::color::palette::css::TRANSPARENT),
+            ..Default::default()
+        },
+    );
+    // vello_cpu keeps premultiplied RGBA, as an `ImageHandle` does.
+    let image = ImageHandle::from_premultiplied(
+        u32::from(pw),
+        u32::from(ph),
+        pixmap.data_as_u8_slice().to_vec(),
+    )
+    .map_err(|err| LoadError::decode(url, err.to_string()))?;
+    let image = clip(url, image, request.clip, scale)?;
+    Ok(Loaded {
+        natural: (image.width(), image.height()),
+        image,
+        vector: true,
+        frames: None,
+        pages: u32::try_from(pages.len()).unwrap_or(u32::MAX),
+    })
+}
+
 /// The first bytes of a GIF, either version.
 const GIF: &[u8] = b"GIF8";
 
@@ -1100,6 +1187,7 @@ fn png_shrunk(url: &str, bytes: &[u8], limit: u32) -> Option<Result<Loaded, Load
         natural,
         vector: false,
         frames: None,
+        pages: 1,
     }))
 }
 
@@ -1399,7 +1487,92 @@ mod tests {
             scale: 0,
             animated: false,
             limit: 0,
+            page: 0,
         }
+    }
+
+    /// A PDF document with a page of each size in points, each filled red
+    /// over its left half.
+    fn pdf(pages: &[(u32, u32)]) -> Vec<u8> {
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            String::new(),
+        ];
+        let mut kids = Vec::new();
+        for (i, (w, h)) in pages.iter().enumerate() {
+            kids.push(format!("{} 0 R", 3 + 2 * i));
+            objects.push(format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents {} 0 R >>",
+                4 + 2 * i
+            ));
+            let paint = format!("1 0 0 rg 0 0 {} {h} re f", w / 2);
+            objects.push(format!(
+                "<< /Length {} >>\nstream\n{paint}\nendstream",
+                paint.len()
+            ));
+        }
+        objects[1] = format!(
+            "<< /Type /Pages /Kids [{}] /Count {} >>",
+            kids.join(" "),
+            pages.len()
+        );
+        let mut out = String::from("%PDF-1.4\n");
+        let mut offsets = Vec::new();
+        for (i, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out += &format!("{} 0 obj\n{body}\nendobj\n", i + 1);
+        }
+        let xref = out.len();
+        out += &format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1);
+        for at in offsets {
+            out += &format!("{at:010} 00000 n \n");
+        }
+        out += &format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        );
+        out.into_bytes()
+    }
+
+    #[test]
+    fn a_pdf_page_is_drawn_at_its_size_in_points_over_nothing() {
+        let bytes = pdf(&[(40, 20), (10, 30)]);
+        let first = load_bytes("a.pdf", &bytes, Request::default()).unwrap();
+        assert_eq!((first.pages, first.natural), (2, (40, 20)));
+        assert!(first.vector);
+        let px = first.image.data();
+        let at = |x: usize, y: usize| &px[(y * 40 + x) * 4..][..4];
+        assert_eq!(at(5, 10), [255, 0, 0, 255]);
+        assert_eq!(at(35, 10), [0, 0, 0, 0]);
+        let second = Request {
+            page: 1,
+            ..Request::default()
+        };
+        let second = load_bytes("a.pdf", &bytes, second).unwrap();
+        assert_eq!(second.natural, (10, 30));
+    }
+
+    #[test]
+    fn a_pdf_page_there_is_not_is_the_first_and_a_size_asked_keeps_its_shape() {
+        let bytes = pdf(&[(40, 20)]);
+        let missing = Request {
+            page: 5,
+            ..Request::default()
+        };
+        assert_eq!(
+            load_bytes("a.pdf", &bytes, missing).unwrap().natural,
+            (40, 20)
+        );
+        let wider = load_bytes("a.pdf", &bytes, ask(100, 0, false)).unwrap();
+        assert_eq!(wider.natural, (100, 50));
+        let sharp = load_bytes("a.pdf", &bytes, Request::default().at_scale(2.0)).unwrap();
+        assert_eq!((sharp.image.width(), sharp.image.height()), (80, 40));
+    }
+
+    #[test]
+    fn a_broken_pdf_is_an_error() {
+        let err = load_bytes("a.pdf", b"%PDF-1.4\nnothing", Request::default()).unwrap_err();
+        assert!(matches!(err, LoadError::Decode { .. }), "{err:?}");
     }
 
     /// A 3 by 2 GIF of one colour a frame, each frame `delay` hundredths.
