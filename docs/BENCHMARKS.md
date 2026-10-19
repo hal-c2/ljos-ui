@@ -3629,3 +3629,72 @@ DECISIONs:
   writing the reuse scenarios, and is left to the bindings work.
 - In qml6, a required property is already set when the delegate's `Component.onCompleted`
   runs. The scenarios rely only on that, not on the order in which the signals are emitted.
+
+### calqlatr's press, seventh pass: attached Behaviors, list entries, native parts (2026-10-19)
+
+Measured as in the sixth pass above. The base is origin at f1c98955. Ir is from callgrind on a
+release build with line tables, per calqlatr press (140 presses) and per clocks `timeChanged`
+(700 calls). Wall time alternates `qml6` 6.11.2 and Ljós, seven runs each, per press over
+2 800 presses. The load average was 25–55.
+
+| | qml6 | Ljós base | Ljós after |
+|---|---:|---:|---:|
+| calqlatr, Ir per press | | 1.387 M | 1.378 M |
+| calqlatr, wall per press | 0.099–0.110 ms | 0.116–0.143 ms | 0.115–0.126 ms |
+| clocks, Ir per `timeChanged` | | 16.34 k | 16.35 k |
+
+On this machine, at this load, calqlatr is 14–17 % above qml6. That gap is wider than the
+sixth pass's 7–10 %. The qml6 runs were faster than in the sixth pass (276–308 ms per 2 800,
+against 290–297 ms then). Ljós's own runs are about as fast as they were. Clocks does not
+change.
+
+Correctness first:
+- A Behavior on an attached property (`Behavior on Layout.leftMargin`) or on a member of a
+  group (`Behavior on border.width`) now stands in front of that property and animates it, as
+  on qml6. Before, the value was written straight through.
+  `features/animation/behavior-on-member.feature` (@qt-parity) covers it.
+- A side margin of `Layout` that was never given a value (`Layout.leftMargin`) reads
+  `Layout.margins`, also when `margins` changes later. `features/layouts/attached-set-later.feature`
+  (@qt-parity) covers it.
+- The sixth pass made the first step of an animation without `from` skip its write, but only
+  for a property that already has a value of its own. The write still made for one that was
+  never given a value is now pinned: `features/animation/behavior-start-gives-margin.feature`
+  (@qt-parity). A side margin that follows `Layout.margins` stops following it once a
+  Behavior has started on it, because the start gave it the margin as its own. If the skip
+  also covers unset properties, the scenario fails ("5 5 8 8" where qml6 gives "5 5 5 8").
+
+The cuts, with Ir per press:
+- `children[i]` and `children.length` from a script look at the list where it is held, either
+  a node's value or a native field. Before, each read made the whole list a value. A tracked
+  read is kept as `try_read` keeps it. 1.387 M → 1.386 M: the copy was an `Arc` clone, so
+  little was saved. What an entry costs is mostly elsewhere, in the next cut.
+- `find_native_mut` looks for the part of an object's native chain that declares a field. It
+  made three dynamic calls per part: `as_any`, `type_id` and `base_mut`. The derive now
+  answers `part_mut` as it already answered `part`, in one call, with the base's own called
+  by its type. Every native field write and every list entry goes through it.
+  1.386 M → 1.378 M.
+
+What is left of a press, about 1.38 M Ir:
+- Writes and what they set off: about 0.41 M from scripts' writes through the graph's batch.
+  That is mostly bindings and layouts recomputing, which is the work itself.
+- QuickJS itself, about 0.33 M.
+- Host reads: about 94 k from `get`, about 45 k of that making live list objects
+  (95 a press at about 280 Ir in `JS_NewObjectProtoClass`). Each entry is still about 360 Ir
+  between the host's entry, the list read and `to_js`.
+- tier 1: 35 runs at about 4.8 k each, almost all of it reads (about 50 Ir each through
+  `try_read`). The machine's own dispatch is about 10 Ir per instruction. The frame setup is
+  no longer measurable.
+
+DECISIONs:
+- List objects are not cached per property. On qml6 each read of `a.children` gives a new
+  object: `===` is false, and an expando does not stick. A cache would be visible.
+- The side margins read `Layout.margins` by having `margins`'s write give each unset side the
+  value as a default (`reset_to`). A side keeps it until it is given a value of its own. Qt
+  documents the side margins as following `margins` when unset; this matches it on qml6.
+- A Behavior on a member of a value (`font.pixelSize`) is not animated yet; the write goes
+  through. qml6 animates it. A Behavior on a member of an attached value
+  (`Drag.hotSpot.x`) crashes qml6 6.11.2, so it has no scenario.
+- No counting test for the in-place list read or the derive's `part_mut`: the engine has no
+  counter for list copies or dynamic calls. The language, views and layouts features pin the
+  behaviour.
+- ListView's delegate creation and teardown are left to the views lane.
