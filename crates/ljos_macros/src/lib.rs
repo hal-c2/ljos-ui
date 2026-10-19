@@ -806,6 +806,22 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                         .unwrap_or_else(|| #e::find_native(&self.#f, ty)),
                 )
             }
+            fn answers_parts(&self) -> bool {
+                true
+            }
+            fn part_mut(
+                &mut self,
+                ty: ::core::any::TypeId,
+            ) -> #p::Option<&mut dyn #e::QmlObject> {
+                if ty == ::core::any::TypeId::of::<Self>() {
+                    return #p::Option::Some(self);
+                }
+                if #e::QmlObject::answers_parts(&self.#f) {
+                    #e::QmlObject::part_mut(&mut self.#f, ty)
+                } else {
+                    #e::find_native_mut(&mut self.#f, ty)
+                }
+            }
         },
         None => quote! {
             fn part(
@@ -815,6 +831,15 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                 #p::Option::Some(
                     (ty == ::core::any::TypeId::of::<Self>()).then_some(self as &dyn #e::QmlObject),
                 )
+            }
+            fn answers_parts(&self) -> bool {
+                true
+            }
+            fn part_mut(
+                &mut self,
+                ty: ::core::any::TypeId,
+            ) -> #p::Option<&mut dyn #e::QmlObject> {
+                (ty == ::core::any::TypeId::of::<Self>()).then_some(self as &mut dyn #e::QmlObject)
             }
         },
     };

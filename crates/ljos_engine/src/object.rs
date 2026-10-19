@@ -40,6 +40,15 @@ pub trait QmlObject: Any {
     fn part(&self, _ty: TypeId) -> Option<Option<&dyn QmlObject>> {
         None
     }
+    /// Whether [`QmlObject::part_mut`] answers. Asked first: a mutable
+    /// borrow handed back from one arm cannot be walked in the other.
+    fn answers_parts(&self) -> bool {
+        false
+    }
+    /// Mutable [`QmlObject::part`]; read when [`QmlObject::answers_parts`].
+    fn part_mut(&mut self, _ty: TypeId) -> Option<&mut dyn QmlObject> {
+        None
+    }
 }
 
 /// Static facts about a native type, for generated code.
@@ -67,6 +76,9 @@ pub fn find_native(root: &dyn QmlObject, ty: TypeId) -> Option<&dyn QmlObject> {
 
 /// Mutable [`find_native`].
 pub fn find_native_mut(root: &mut dyn QmlObject, ty: TypeId) -> Option<&mut dyn QmlObject> {
+    if root.answers_parts() {
+        return root.part_mut(ty);
+    }
     if root.as_any().type_id() == ty {
         return Some(root);
     }
