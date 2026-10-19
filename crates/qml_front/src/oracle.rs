@@ -126,6 +126,15 @@ pub trait TypeOracle {
         false
     }
 
+    /// Whether the type is a part of a module the runtime implements that
+    /// the runtime's description of that module does not list: a file of
+    /// Qt's that only Qt's table names. Its members are not known, so a
+    /// name written bare in one of its bindings is looked up around it, and
+    /// the runtime cannot make it. The compiler warns where it is written.
+    fn is_unlisted(&self, _ty: Self::Type) -> bool {
+        false
+    }
+
     /// Whether the runtime gives `ty` a member called `name` that the
     /// description of `ty` does not list: what a back end adds to one of
     /// Qt's types. Such a name is not reported as missing.
@@ -423,6 +432,10 @@ impl TypeOracle for QtTypeOracle {
 
     fn members_warned(&self, ty: QtType) -> bool {
         ty.0.is_own && self.members_known(ty)
+    }
+
+    fn is_unlisted(&self, ty: QtType) -> bool {
+        ty.0.is_unlisted
     }
 
     fn adds_member(&self, ty: QtType, name: &str) -> bool {

@@ -300,6 +300,20 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 span,
             ));
         }
+        if let Some(Kind::Builtin(builtin)) = &self.tree.objects[index].kind
+            && self.types.oracle.is_unlisted(*builtin)
+            && let TypeRef::Native { module, name } = &ty
+        {
+            self.diagnostics.push(Diagnostic::warning(
+                Code::UnlistedType,
+                format!(
+                    "`{name}` of {module} is a QML file of Qt's that Ljós's own table of types \
+                     does not list: what it has is not known, so a name written bare in it is \
+                     looked up around it, and Ljós cannot make it"
+                ),
+                span,
+            ));
+        }
         let id = self.tree.objects[index].id.map(str::to_string);
         let def = self.def_mut(at);
         def.ty = ty;

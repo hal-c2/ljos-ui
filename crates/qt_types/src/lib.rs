@@ -45,7 +45,10 @@
 //! One thing of a passed-over module is kept: the names of the members
 //! Ljós adds to a type Qt's table has (`font.scaleWithSystem`, the actions
 //! of `Accessible.`), which [`Type::adds`] answers for. A name that is no
-//! member of Qt's type is wrong only if the runtime lacks it too.
+//! member of Qt's type is wrong only if the runtime lacks it too. A QML
+//! file Qt's table names in such a module that Ljós's own does not list
+//! (a part of a style Ljós has no file for, or one added since `ljos.txt`
+//! was written) is marked [`Type::is_unlisted`], for the compiler to warn of.
 //!
 //! `LJOS_QT_TYPES=/path/to/types.txt` at build time takes Qt's table from
 //! elsewhere; `LJOS_QT_TYPES=none` builds without one on a machine that has
@@ -345,6 +348,10 @@ pub struct Type {
     /// a style, `CheckIndicator`), the type Ljós's own file is built on:
     /// the runtime has what that has.
     stands_on: Option<usize>,
+    /// A QML file Qt's table names in a module Ljós's own table describes
+    /// too, which that table does not list and nothing stands behind: what
+    /// it has is not known, and the runtime has no such file.
+    pub is_unlisted: bool,
 }
 
 impl Type {
@@ -700,6 +707,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                 module = word();
                 passed_over = is_own && table.modules.contains_key(module);
                 if passed_over {
+                    over.modules.push(module);
                     continue;
                 }
                 let empty = Module {
@@ -769,6 +777,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     attached: None,
                     added: Vec::new(),
                     stands_on: None,
+                    is_unlisted: false,
                 });
             }
             (1, name) => exports.push((module, name, word())),
@@ -884,6 +893,24 @@ fn read(qt: &'static str, own: &'static str) -> Table {
             _ => ty.attached = to,
         }
     }
+    for uri in &over.modules {
+        let Some(module) = table.modules.get(uri) else {
+            continue;
+        };
+        let listed = |name: &str| over.exports.iter().any(|(m, n, _)| m == uri && *n == name);
+        let unlisted: Vec<usize> = module
+            .exports
+            .iter()
+            .filter(|(name, index)| {
+                let ty = &table.types[**index];
+                ty.qml_file.is_some() && ty.prototype.is_none() && !listed(name)
+            })
+            .map(|(_, index)| *index)
+            .collect();
+        for index in unlisted {
+            table.types[index].is_unlisted = true;
+        }
+    }
     for (module, name, class) in over.exports {
         let (Some(own), Some(index)) = (
             over.classes.get(class),
@@ -931,4 +958,6 @@ struct PassedOver {
     classes: HashMap<&'static str, usize>,
     /// The module, the name and the class.
     exports: Vec<(&'static str, &'static str, &'static str)>,
+    /// The modules passed over.
+    modules: Vec<&'static str>,
 }

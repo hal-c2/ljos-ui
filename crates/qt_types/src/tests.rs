@@ -555,6 +555,28 @@ fn an_undescribed_qml_file_has_what_ljos_builds_it_on() {
     assert!(!indicator.adds("widht"));
 }
 
+/// A part Ljós's own table lists is not unlisted; one only Qt's table
+/// names (`CopyAction`, a file of Qt's Fusion that Ljós does not have) is.
+#[test]
+fn a_part_only_qt_names_is_unlisted() {
+    assert!(!ty("QtQuick.Controls.Fusion.impl", "CheckIndicator").is_unlisted);
+    let copy = module("QtQuick.Controls.Fusion.impl").and_then(|m| m.type_named("CopyAction"));
+    assert_eq!(copy.is_some(), has_qt_table());
+    if let Some(copy) = copy
+        && copy.prototype().is_none()
+    {
+        assert!(copy.is_unlisted);
+    }
+    // Nor is anything of a module Ljós's own table does not describe.
+    if let Some(charts) = module("QtCharts") {
+        assert!(
+            !charts
+                .type_named("ChartView")
+                .is_some_and(|ty| ty.is_unlisted)
+        );
+    }
+}
+
 /// The listing is every module `module` finds, once, in order.
 #[test]
 fn modules_lists_every_module_in_order() {

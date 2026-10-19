@@ -93,6 +93,9 @@ pub enum Code {
     ScriptUnavailable,
     /// Objects a reload can tell apart only by their order.
     ReloadIdentity,
+    /// An object of a type Qt's table names in a module the runtime
+    /// implements, which the runtime's own description does not list.
+    UnlistedType,
 }
 
 impl Code {
@@ -115,6 +118,7 @@ impl Code {
             Code::ScriptSyntax => "script-syntax",
             Code::ScriptUnavailable => "script-unavailable",
             Code::ReloadIdentity => "reload-identity",
+            Code::UnlistedType => "unlisted-type",
         }
     }
 }

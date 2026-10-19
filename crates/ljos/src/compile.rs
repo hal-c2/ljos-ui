@@ -851,6 +851,13 @@ impl TypeOracle for EngineOracle {
         }
     }
 
+    fn is_unlisted(&self, ty: EngineType) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.is_unlisted(ty),
+            EngineType::Native(_) => false,
+        }
+    }
+
     fn reads_checked(&self, ty: EngineType) -> bool {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.reads_checked(ty),

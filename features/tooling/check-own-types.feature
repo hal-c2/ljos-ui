@@ -257,3 +257,49 @@ Feature: Checking files that use the modules Ljós adds
         Main.qml:3:11: warning: `colr` is not a property of `Rectangle`; did you mean `color`? [unknown-property]
         1 files, 0 errors, 1 warnings
         """
+
+  Rule: A part of a style that Ljós's own table does not list is a warning
+
+    A style's parts are QML files. Qt's table names them but does not say
+    what they have; Ljós's own table says it of the parts Ljós has. A part
+    it does not list has members nobody knows, so a name written bare in
+    one of its bindings is looked up around it, and the program cannot
+    make it.
+
+    Scenario: A part Ljós's own table lists has nothing to report
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import QtQuick.Controls.Fusion.impl
+        Item {
+          width: 300
+          CheckBox {
+            id: check
+            indicator: CheckIndicator { control: check; x: (width - implicitWidth) / 2 }
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    @qt-table
+    Scenario: A part only Qt's table names is a warning where it is written
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Fusion.impl
+        Item {
+          width: 300
+          CopyAction { objectName: "copy" }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:5:11: warning: `CopyAction` of QtQuick.Controls.Fusion.impl is a QML file of Qt's that Ljós's own table of types does not list: what it has is not known, so a name written bare in it is looked up around it, and Ljós cannot make it [unlisted-type]
+        1 files, 0 errors, 1 warnings
+        """
