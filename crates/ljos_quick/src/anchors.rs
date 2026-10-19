@@ -51,7 +51,39 @@ struct Ctx<'a> {
     engine: &'a Engine,
     obj: ObjectId,
     parent: Option<ObjectId>,
+    /// What [`read_lines`] read.
+    lines: [Value; 9],
     warnings: Vec<String>,
+}
+
+// Where each line is in what [`read_lines`] gives.
+const FILL: usize = 0;
+const CENTER_IN: usize = 1;
+const LEFT: usize = 2;
+const RIGHT: usize = 3;
+const H_CENTER: usize = 4;
+const TOP: usize = 5;
+const BOTTOM: usize = 6;
+const V_CENTER: usize = 7;
+const BASELINE: usize = 8;
+
+/// `fill`, `centerIn` and the seven lines of `obj`'s anchors.
+fn read_lines(engine: &Engine, obj: ObjectId) -> [Value; 9] {
+    let a = AnchorProps::get();
+    engine.read_values(
+        obj,
+        [
+            a.fill,
+            a.center_in,
+            a.left,
+            a.right,
+            a.horizontal_center,
+            a.top,
+            a.bottom,
+            a.vertical_center,
+            a.baseline,
+        ],
+    )
 }
 
 impl Ctx<'_> {
@@ -97,12 +129,12 @@ impl Ctx<'_> {
     }
 
     /// An `anchors.<side>` line, checked for the right axis.
-    fn line(&mut self, p: PropIndex, horizontal: bool) -> Option<AnchorLine> {
-        let v = self.engine.read(self.obj, p);
+    fn line(&mut self, i: usize, horizontal: bool) -> Option<AnchorLine> {
+        let v = &self.lines[i];
         if v.is_nullish() {
             return None;
         }
-        let Some(l) = AnchorLine::from_value(&v) else {
+        let Some(l) = AnchorLine::from_value(v) else {
             self.warn("Unable to assign a non-anchor value to an anchor.");
             return None;
         };
@@ -130,15 +162,26 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) 
     if !engine.is_alive(obj) {
         return;
     }
-    let a = AnchorProps::get();
+    // Most items are anchored by nothing, and each new one runs this: the
+    // lines are read in one go, and an item none is set on asks no more.
+    let lines = read_lines(engine, obj);
+    let mut st = state.borrow_mut();
+    if lines.iter().all(Value::is_nullish) {
+        if [st.x, st.y, st.w, st.h].iter().any(Option::is_some) {
+            engine.batch(|| st.release(engine, obj));
+        }
+        st.warned.clear();
+        return;
+    }
+    drop(st);
+    let (fill, center_in) = (lines[FILL].as_object(), lines[CENTER_IN].as_object());
     let mut cx = Ctx {
         engine,
         obj,
         parent: engine.visual_parent(obj),
+        lines,
         warnings: Vec::new(),
     };
-    let fill = engine.read(obj, a.fill).as_object();
-    let center_in = engine.read(obj, a.center_in).as_object();
     let h = horizontal(&mut cx, fill, center_in);
     let v = vertical(&mut cx, fill, center_in);
 
@@ -167,16 +210,16 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) 
 /// has to know before the item's effect has run (a transition between two
 /// sets of anchors). Follows nothing and warns of nothing.
 pub(crate) fn resolve(engine: &Engine, obj: ObjectId) -> [Option<f64>; 4] {
-    let a = AnchorProps::get();
     engine.untrack(|| {
+        let lines = read_lines(engine, obj);
+        let (fill, center_in) = (lines[FILL].as_object(), lines[CENTER_IN].as_object());
         let mut cx = Ctx {
             engine,
             obj,
             parent: engine.visual_parent(obj),
+            lines,
             warnings: Vec::new(),
         };
-        let fill = engine.read(obj, a.fill).as_object();
-        let center_in = engine.read(obj, a.center_in).as_object();
         let h = horizontal(&mut cx, fill, center_in);
         let v = vertical(&mut cx, fill, center_in);
         [h.pos, h.len, v.pos, v.len]
@@ -208,9 +251,9 @@ fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<Object
             _ => Span::default(),
         };
     }
-    let mut left = cx.line(a.left, true);
-    let mut right = cx.line(a.right, true);
-    let mut hcenter = cx.line(a.horizontal_center, true);
+    let mut left = cx.line(LEFT, true);
+    let mut right = cx.line(RIGHT, true);
+    let mut hcenter = cx.line(H_CENTER, true);
     if hcenter.is_none()
         && let Some(t) = center_in
     {
@@ -280,10 +323,10 @@ fn vertical(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<ObjectId
             _ => Span::default(),
         };
     }
-    let top = cx.line(a.top, false);
-    let bottom = cx.line(a.bottom, false);
-    let mut vcenter = cx.line(a.vertical_center, false);
-    let baseline = cx.line(a.baseline, false);
+    let top = cx.line(TOP, false);
+    let bottom = cx.line(BOTTOM, false);
+    let mut vcenter = cx.line(V_CENTER, false);
+    let baseline = cx.line(BASELINE, false);
     if vcenter.is_none()
         && let Some(t) = center_in
     {
