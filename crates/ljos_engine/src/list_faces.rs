@@ -34,6 +34,7 @@ use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
 use crate::js::{JsState, obj_to_u64, u64_to_obj};
 use crate::meta::PropertyAccess;
+use crate::meta::PropertyFlags;
 use crate::types::TypeTag;
 use crate::value::Value;
 
@@ -342,14 +343,59 @@ impl Engine {
         }
     }
 
+    /// What `f` makes of that list, read as [`live_list`](Self::live_list)
+    /// reads it. A list held in a node is looked at where it is: a script
+    /// that walks `children[i]` reads one entry, and the length, many times.
+    pub(crate) fn live_list_with<R>(
+        &self,
+        obj: u64,
+        prop: u32,
+        f: impl FnOnce(&[Value]) -> R,
+    ) -> Option<R> {
+        let (id, p) = (u64_to_obj(obj), PropIndex(prop));
+        let tracked = self.inner.tracking.get() > 0;
+        let node = {
+            let mut store = self.inner.store.borrow_mut();
+            let h = store.objects.get_mut(id)?;
+            let meta = h.meta.property(p)?;
+            let constant = meta.flags.contains(PropertyFlags::CONSTANT);
+            if meta.is_alias() || h.makes_on_read(p) {
+                None
+            } else if let Some(n) = h.node(p) {
+                Some(n)
+            } else if let Some(items) = crate::list::held_entries(h, p) {
+                // As try_read reads a field: kept on the object when a
+                // binding follows it.
+                let r = f(items);
+                drop(store);
+                if tracked && !constant {
+                    self.keep_field_read(id, p);
+                }
+                return Some(r);
+            } else {
+                None
+            }
+        };
+        match node {
+            Some(n) => self
+                .inner
+                .graph
+                .try_get_with(n, |v| match v {
+                    Value::List(items) => Some(f(items)),
+                    _ => None,
+                })
+                .flatten(),
+            None => self.live_list(obj, prop).map(|items| f(&items)),
+        }
+    }
+
     /// Entry `index` of that list, as a script is given it.
     pub(crate) fn live_list_entry(&self, obj: u64, prop: u32, index: u32) -> Option<JsValue> {
-        let items = self.live_list(obj, prop)?;
-        let v = items.get(index as usize)?;
+        let v = self.live_list_with(obj, prop, |items| items.get(index as usize).cloned())??;
         if let Some(js) = self.inner.js.borrow().as_ref() {
             js.lists.live_entries.set(js.lists.live_entries.get() + 1);
         }
-        Some(self.to_js(v))
+        Some(self.to_js(&v))
     }
 
     /// How many entries scripts have read of native lists of objects: one

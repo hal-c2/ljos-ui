@@ -469,6 +469,15 @@ impl ListSlot<'_> {
     }
 }
 
+/// The entries the list property `prop` holds, where they are held.
+pub(crate) fn held_entries(h: &mut ObjectHeader, prop: PropIndex) -> Option<&[Value]> {
+    match list_slot(h, prop)? {
+        ListSlot::Field(list) => Some(list.0.as_slice()),
+        ListSlot::Dynamic(Value::List(items)) => Some(items.as_slice()),
+        ListSlot::Dynamic(_) => None,
+    }
+}
+
 fn list_slot(h: &mut ObjectHeader, prop: PropIndex) -> Option<ListSlot<'_>> {
     let p = h.meta.property(prop)?;
     if !p.is_list() {

@@ -875,8 +875,8 @@ impl HostObjects for EngineHost {
     fn list_len(&self, obj: u64, prop: u32) -> u32 {
         self.engine()
             .ok()
-            .and_then(|e| e.live_list(obj, prop))
-            .map_or(0, |items| u32::try_from(items.len()).unwrap_or(u32::MAX))
+            .and_then(|e| e.live_list_with(obj, prop, <[Value]>::len))
+            .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     fn list_entry(&self, obj: u64, prop: u32, index: u32) -> Option<JsValue> {
