@@ -3494,3 +3494,66 @@ DECISIONs:
 - A Behavior on an attached property (`Layout.leftMargin`) is not animated by Ljós; it writes
   the value straight through. qml6 animates it. This is left for its own scenario.
 - ListView's delegate creation and teardown are left to the views lane.
+
+### Scroll copies against a redraw, todolist's pop, and the CPU outside llvmpipe (2026-10-19)
+
+The setup is as in the "Software GL" section above: the off-screen sway sandbox, llvmpipe, and
+`qml6` 6.11.2 with `QT_QUICK_CONTROLS_STYLE=Basic`. Builds are release. "Base" is b6a6f165 and
+"after" is this batch on top of it. Both ran back to back with Qt at a load average of 7 to 30,
+with one spike to 92. Each cell lists three runs, in ms of CPU over the bench window.
+
+| | Ljós base | Ljós after | Qt |
+|---|---:|---:|---:|
+| listview scroll: outside llvmpipe | 613 / 1034 / 549 | 346 / 646 / 752 | 321 / 420 / 349 |
+| photosurface scroll: outside llvmpipe | 252 / 247 / 287 | 278 / 271 / 333 | 291 / 268 / 251 |
+| todolist push and pop: outside llvmpipe | 58 / 84 / 84 | 79 / 88 / 81 | 37 / 36 / 31 |
+| todolist pop: first frame (ms) | 74.2 / 74.8 / 74.8 | 1.4 / 1.2 / 1.1 | 1.5 / 1.2 / 1.1 |
+
+Under this load the wall-clock CPU moves by up to 2× between runs of one build, so it cannot
+tell the builds apart. The CPU work is compared below by instructions counted under callgrind.
+
+- **Scroll copies, pixel for pixel.** `ljos_bdd/tests/scroll_copies.rs` scrolls a clipped
+  ListView and a Flickable fourteen times, once with the copies on and once with
+  `LJOS_SCROLL_COPIES=off`, and compares the windows. The scenario is
+  `features/window/scroll-pixels.feature`.
+  - The test found that egui's dithering, which is noise placed by screen position, moved with
+    the copied pixels. Frames differed by one or two levels on 200 to 15 000 pixels. Neither
+    painter dithers now, and Qt Quick does not dither either.
+  - Moved pixels now match the previous frame, moved, exactly. Of 14 scrolls, 8 moved pixels.
+- **todolist's pop.** The page under the pushed one owned it, because the pushed page was
+  declared inside it. Freezing the covered page froze the shown page with it: its timers
+  stopped, and the scene stopped following it until the release popped the stack. A page that
+  owns a page the view shows now stays awake (`features/controls/stack-view-owned-page.feature`).
+- **Outside llvmpipe** (callgrind on listview's main thread, instructions inside
+  `QuickScene::frame`, per frame):
+  - The build before b6a6f165 (4a497a06) used 8.53 M per frame and the base uses 8.00 M. Most
+    of that drop comes from two upstream rewrites that landed before this batch:
+    - 30eb8b5b gives a run one field-read entry with a bit per property;
+    - c0053d1d reads a text's inputs, its font among them, in one go.
+
+    Each replaced a change this batch had made to the same code (a field-read index made only
+    past 64 entries, and a font read once). Those changes were dropped.
+  - *The scroll diff.* The search for what went now looks only as far as what came. It rejects
+    shapes of another kind, or bounds more than half a pixel off the shift, before moving a
+    copy to compare. `LastPicture::change` went from 6.6 % of a frame to 5.4 %. The frame as a
+    whole stayed at 8.0 M because the rows created vary between runs.
+  - Where a frame goes now: delegate creation 32 %, GL paint 15 %, `TextInputs::read` 11 %,
+    keeping field reads 8 %, and the scroll diff 5 %.
+
+**DECISIONs.**
+- Only a page that owns a page shown by the same StackView stays awake. Owning a page shown by
+  another view does not count.
+- Shapes are told apart by bounds within 0.5 px, which is below any shift a scroll copies.
+- Edge pixels may differ by one level between copies on and off. They do not have to be equal,
+  because llvmpipe covers a smoothed edge differently at another place on screen: 51 pixels in
+  15 frames, one level apart.
+
+**What is left.**
+- listview: Ljós's CPU outside llvmpipe is still above Qt's.
+  - Creating the rows that scroll into sight is a third of the frame.
+  - `TextInputs::read` runs four times per text per frame: complete, the polish effect, polish,
+    and the content effect.
+- todolist's push and pop are not yet profiled on their own. Outside llvmpipe they cost about
+  2.3× Qt's.
+- About 9 % of the main thread is memcpy in the EGL/gallium present. Those are row copies, which
+  are inherent to software GL.
