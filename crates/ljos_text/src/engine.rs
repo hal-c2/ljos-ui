@@ -706,6 +706,7 @@ fn extract(
         let mut runs = Vec::new();
         let mut boxes = Vec::new();
         let mut vertical: Option<Vertical> = None;
+        let mut unseen: Option<Vertical> = None;
         let justified = wrapped && justify_width.is_some();
         // Spaces at a wrap hang outside the line and do not count.
         let content = m.advance - m.hanging_advance;
@@ -745,10 +746,20 @@ fn extract(
             let fm = *run.font_metrics();
             let chosen = face::vertical(run.font(), run.font_size(), shaped_vertical(&fm));
             let (ascent, descent) = (floor64(chosen.ascent), floor64(chosen.descent));
-            vertical = Some(vertical.map_or(Vertical { ascent, descent }, |v| Vertical {
-                ascent: v.ascent.max(ascent),
-                descent: v.descent.max(descent),
-            }));
+            let tall = |v: Option<Vertical>| {
+                Some(v.map_or(Vertical { ascent, descent }, |v| Vertical {
+                    ascent: v.ascent.max(ascent),
+                    descent: v.descent.max(descent),
+                }))
+            };
+            // A run that draws nothing (the character an editor keeps for
+            // an image) is as tall as its font only on a line without
+            // objects.
+            if gr.glyphs().all(|g| g.advance == 0.0) {
+                unseen = tall(unseen);
+            } else {
+                vertical = tall(vertical);
+            }
             let baseline = gr.baseline();
             let (placed, advances) = snapped(&gr);
             let offset = gr.offset() - shift;
@@ -823,10 +834,13 @@ fn extract(
                 qt,
             );
         }
+        if boxes.is_empty() {
+            vertical = vertical.or(unseen);
+        }
         let has_glyphs = !runs.is_empty() || !boxes.is_empty();
         // Measured on Qt 6.11: a line that is only objects standing on the
         // baseline is as tall as they are, without room for descenders.
-        let only_standing = runs.is_empty()
+        let only_standing = vertical.is_none()
             && !boxes.is_empty()
             && boxes.iter().all(|b| b.align == BoxAlign::Baseline);
         let mut vertical = if only_standing {

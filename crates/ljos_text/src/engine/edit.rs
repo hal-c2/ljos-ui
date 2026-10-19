@@ -40,15 +40,28 @@ pub(super) fn carets(shape: &Shape, text: &str) -> Vec<LineCarets> {
             m.hanging_advance > 0.0 && (pen >= content - 1e-3 || pen + advance <= 1e-3)
         };
         let mut shift = 0.0_f32;
-        let mut clusters = Vec::new();
+        let mut clusters: Vec<CaretCluster> = Vec::new();
         let mut glyph_bytes = Vec::new();
         // A run whose text changes brush (a span that only tags or
         // underlines) comes as several glyph runs: each takes the next
         // clusters of the run, as many as its glyphs belong to.
         let mut taken: Option<((usize, std::ops::Range<usize>), usize)> = None;
         for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(gr) = item else {
-                continue;
+            let gr = match item {
+                PositionedLayoutItem::GlyphRun(gr) => gr,
+                // An image stands right after the character kept for it,
+                // which takes no room: the character is as wide as the
+                // image, so a cursor after it stands after the image even
+                // where nothing follows.
+                PositionedLayoutItem::InlineBox(placed) => {
+                    if let Some(c) = clusters.last_mut()
+                        && c.x1 - c.x0 < 1e-3
+                        && (c.x1 - f64::from(placed.x - shift)).abs() < 1e-3
+                    {
+                        c.x1 += f64::from(placed.width);
+                    }
+                    continue;
+                }
             };
             let (placed, advances) = snapped(&gr);
             let mut x = gr.offset() - shift;
