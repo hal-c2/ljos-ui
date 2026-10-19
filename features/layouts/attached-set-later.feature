@@ -8,9 +8,33 @@
 Feature: An attached value that is given later
   Several attached properties mean one thing until they are given a value
   and another once they are, also when the value given is the one the
-  property already read as: a side margin follows Layout.margins, a layout
+  property already read as: a side margin reads and follows Layout.margins, a layout
   inside a layout fills, a cell is chosen by the grid, and mirroring comes
   from the parent.
+
+  Scenario: A side margin never given a value reads Layout.margins
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Layouts
+      RowLayout {
+        id: root; objectName: "root"
+        property string seen
+        Rectangle { id: a; Layout.margins: 5 }
+        Rectangle { id: b; Layout.leftMargin: 3; Layout.margins: 5 }
+        Rectangle { id: c; Layout.margins: 5; Layout.leftMargin: 3 }
+        function look() {
+          seen = a.Layout.leftMargin + " " + a.Layout.topMargin + " " + b.Layout.leftMargin
+            + " " + b.Layout.topMargin + " " + c.Layout.leftMargin
+          a.Layout.margins = 7
+          seen += " " + a.Layout.bottomMargin
+          a.Layout.leftMargin = undefined
+          seen += " " + a.Layout.leftMargin
+        }
+      }
+      """
+    When the method "look" of "root" is called
+    Then the property "seen" of "root" is "5 5 3 5 3 7 7"
 
   Scenario: A side margin of 0 no longer follows Layout.margins
     Given the QML:

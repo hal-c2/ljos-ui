@@ -27,7 +27,9 @@ pub use proxy::LayoutItemProxy;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use ljos_engine::{Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Value};
+use ljos_engine::{
+    Cx, Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Value,
+};
 
 use crate::enums::{EnumTable, align, layout_direction};
 use crate::item::{Item, is_a, is_unset, is_unset_tracked, num, write_computed, write_placed};
@@ -201,6 +203,24 @@ fn all_margins(engine: &Engine, attached: ObjectId, _side: PropIndex) -> Value {
     engine.read(attached, LayoutAttached::MARGINS.index)
 }
 
+/// `Layout.margins` written: a side never given a value reads it, and is
+/// still never given one. A binding would make the side count as set, and
+/// a Behavior's start is what gives the side a value of its own.
+fn margins_written(cx: &Cx, m: f64) -> Option<f64> {
+    let (e, att) = (cx.engine, cx.this);
+    for side in [
+        LayoutAttached::LEFT_MARGIN.index,
+        LayoutAttached::TOP_MARGIN.index,
+        LayoutAttached::RIGHT_MARGIN.index,
+        LayoutAttached::BOTTOM_MARGIN.index,
+    ] {
+        if is_unset(e, att, side) {
+            let _ = e.reset_to(att, side, Value::Real(m));
+        }
+    }
+    Some(m)
+}
+
 /// What `Layout.` attaches to a child of a layout.
 ///
 /// A property counts only once it was given a value: until then the
@@ -236,7 +256,7 @@ pub struct LayoutAttached {
     pub row_span: i32,
     #[qml(notify)]
     pub column_span: i32,
-    #[qml(notify)]
+    #[qml(notify, write = margins_written)]
     pub margins: f64,
     /// The side margins follow `margins` until they get a value.
     #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
