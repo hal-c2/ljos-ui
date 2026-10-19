@@ -270,6 +270,9 @@ struct Target<'a> {
     functions: Vec<String>,
     renamed: Vec<(String, String)>,
     fresh: Vec<String>,
+    /// Edited members through a name the object does not have: told of
+    /// again, as a fresh load tells of them.
+    missing: Vec<String>,
 }
 
 impl Engine {
@@ -397,6 +400,7 @@ impl Engine {
                         functions: e.functions.clone(),
                         renamed: e.renamed.clone(),
                         fresh: e.fresh.clone(),
+                        missing: Vec::new(),
                     };
                     if let Err(why) = self.in_place_applies(&mut t, c, &users) {
                         return not_here(why);
@@ -557,6 +561,9 @@ impl Engine {
                         self.in_place_keep(&inst, id, t.def, name);
                     }
                     continue;
+                }
+                for name in &t.missing {
+                    self.in_place_missing(&inst, t.def, name);
                 }
                 for name in &t.names {
                     if gives(t.def, name) {
@@ -1360,6 +1367,7 @@ impl Engine {
         for name in &t.fresh {
             self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;
         }
+        let mut missing = Vec::new();
         for name in &t.names {
             if !gives(t.def, name) {
                 self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;
@@ -1373,6 +1381,13 @@ impl Engine {
             }
             let Some(target) = self.untrack(|| self.in_place_placed(&t.inst, id, t.def, name))
             else {
+                // Through a name the object has not (an alias since
+                // renamed): a fresh load finds no more.
+                let first = name.split('.').next().unwrap_or(name);
+                if keeps(t.def, name) && self.property_index(id, first).is_err() {
+                    missing.push(name.clone());
+                    continue;
+                }
                 return Err("an edited member is not found");
             };
             let target = target.at();
@@ -1389,6 +1404,8 @@ impl Engine {
                 return Err("an edited member is given where the object is made");
             }
         }
+        t.names.retain(|n| !missing.contains(n));
+        t.missing = missing;
         let wholes: Vec<&str> = c
             .whole
             .iter()
@@ -1544,6 +1561,26 @@ impl Engine {
         if let Some(props) = self.inner.reload.assigned.borrow_mut().get_mut(&o) {
             props.retain(|q| *q != p);
         }
+    }
+
+    /// Tells of the member `name` that `od` gives through a name its
+    /// object has not, as a fresh load does.
+    fn in_place_missing(&self, inst: &Rc<Instance>, od: &ObjectDef, name: &str) {
+        let (path, leaf) = match name.rsplit_once('.') {
+            Some((p, l)) => (p.split('.').map(str::to_owned).collect(), l),
+            None => (Vec::<String>::new(), name),
+        };
+        let Some((m, _)) = held_in(od, name) else {
+            return;
+        };
+        let at = match m.bindings.iter().find(|b| b.name == leaf) {
+            Some(b) => inst.file.ir.expr(b.expr).span,
+            None => match m.assignments.iter().find(|a| a.name == leaf) {
+                Some(a) => a.span,
+                None => return,
+            },
+        };
+        self.no_property(inst, at.line, at.column, &path, leaf);
     }
 
     /// Hands the keeper of `id` (foreign.rs), an object of `inst`, the

@@ -3574,3 +3574,49 @@ Feature: What a reload changes
       And the property "x" of "box" is at least 40
       When the property "wide" of "root" is set to false
       Then the property "width" of "label" is 16
+
+  Rule: A member edited that its object does not have goes in place
+
+    A member given through a name the object does not have (an alias
+    since renamed, say) is told of again, as a fresh load tells of it,
+    and the rest goes on.
+
+    Scenario: A member through an alias that is not there edited is told of again
+      Given the file "Viewer.qml":
+        """qml
+        import QtQuick
+        Item {
+          property alias shownNow: shown
+          Text { id: shown; text: "a" }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Viewer { current.text: "b" }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the log has 1 warnings matching "non-existent property .current.text"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Viewer { current.text: "c" }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the log has 2 warnings matching "non-existent property .current.text"
+      And the property "x" of "box" is at least 40
