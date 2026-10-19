@@ -396,7 +396,10 @@ fn moved_in(
         // Shapes came into view before the next that moved, or went out
         // of it: whichever skips fewer.
         let came = (1..AHEAD).find(|&k| b.get(j + k).is_some_and(|y| moved(&a[i], y)));
-        let gone = (1..AHEAD).find(|&k| a.get(i + k).is_some_and(|x| moved(x, &b[j])));
+        // What went is taken only where fewer went than came: no further
+        // is looked.
+        let gone =
+            (1..came.unwrap_or(AHEAD)).find(|&k| a.get(i + k).is_some_and(|x| moved(x, &b[j])));
         match (came, gone) {
             (Some(k), g) if g.is_none_or(|g| k <= g) => {
                 b[j..j + k].iter().for_each(|s| add(extent(s, ppp)));
@@ -421,6 +424,9 @@ fn moved_in(
 /// How far `b` lies from `a` when it is `a` moved by whole pixels, not
 /// by none.
 fn shift(a: &Shape, b: &Shape, ppp: f32) -> Option<egui::Vec2> {
+    if std::mem::discriminant(a) != std::mem::discriminant(b) {
+        return None;
+    }
     let by = match (a, b) {
         (Shape::Mesh(a), Shape::Mesh(b)) => b.vertices.first()?.pos - a.vertices.first()?.pos,
         (Shape::Callback(_), _) | (_, Shape::Callback(_)) => return None,
@@ -460,6 +466,16 @@ fn moved_by(a: &Shape, b: &Shape, by: egui::Vec2) -> bool {
         (Shape::Mesh(_), _) | (_, Shape::Mesh(_)) => false,
         (a, b) if std::mem::discriminant(a) != std::mem::discriminant(b) => false,
         (a, b) => {
+            // Most shapes looked at are not the other moved: told by their
+            // kind and bounds, before a copy is moved to be compared.
+            if std::mem::discriminant(a) != std::mem::discriminant(b)
+                || (b.visual_bounding_rect().min - a.visual_bounding_rect().min - by)
+                    .abs()
+                    .max_elem()
+                    > 0.5
+            {
+                return false;
+            }
             let mut a = a.clone();
             a.translate(by);
             a == *b
