@@ -25,8 +25,8 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use ljos_ir::{
-    Arg, Attached, Binding, CompIdx, ComponentKind, ExprId, FunctionDecl, Literal, Members, ObjRef,
-    ObjectValue, PropertyBinding, SourceSpan, TranslationKind, TypeRef,
+    Arg, Attached, Binding, CompIdx, ComponentKind, ExprId, FunctionDecl, ImportSource, Literal,
+    Members, ObjRef, ObjectValue, PropertyBinding, SourceSpan, TranslationKind, TypeRef,
 };
 use ljos_js::{JsValue, Scope};
 use ljos_runtime::{Job, JobCx, JobPoll, Lane, ProcId};
@@ -1320,7 +1320,7 @@ impl Engine {
                     let child = inst.objects[j.index()];
                     let child_def = &inst.file.ir.component(inst.comp).objects[j.index()];
                     if let Some(on) = &child_def.on {
-                        self.apply_value_source(id, child, on);
+                        self.apply_value_source(&inst.file, id, child, on);
                         continue;
                     }
                     let r = children_default().and_then(|prop| self.list_append(id, prop, child));
@@ -1362,13 +1362,22 @@ impl Engine {
     /// `Type on property { }`: `source` is not a value of the property but
     /// operates on it (an animation, a Behavior). It stays owned by `obj`
     /// and goes to whoever registered for its kind.
-    fn apply_value_source(&self, obj: ObjectId, source: ObjectId, on: &[String]) {
+    fn apply_value_source(
+        &self,
+        file: &LoadedFile,
+        obj: ObjectId,
+        source: ObjectId,
+        on: &[String],
+    ) {
         let Some((name, path)) = on.split_last() else {
             return;
         };
         // Only a warning names the place.
         let at = || self.location_of(source).unwrap_or_default();
-        match self.member_target(obj, path, name) {
+        let target = self
+            .member_target(obj, path, name)
+            .or_else(|e| self.attached_target(file, obj, path, name).ok_or(e));
+        match target {
             Ok(t) => {
                 if !self.offer_value_source(source, t.obj, t.prop) {
                     let ty = self.meta_of(source).map(|m| m.name.to_string());
@@ -1386,6 +1395,41 @@ impl Engine {
                 on.join(".")
             )),
         }
+    }
+
+    /// `Layout.leftMargin` of `obj`, `Q.Layout.leftMargin` where the module
+    /// is imported as `Q`: the member of what the type the path starts with
+    /// attaches to `obj`, found among the modules the file imports.
+    fn attached_target(
+        &self,
+        file: &LoadedFile,
+        obj: ObjectId,
+        path: &[String],
+        name: &str,
+    ) -> Option<Target> {
+        let (alias, ty, rest) = match path {
+            [a, t, rest @ ..]
+                if file
+                    .ir
+                    .imports
+                    .iter()
+                    .any(|i| i.alias.as_deref() == Some(a)) =>
+            {
+                (Some(a.as_str()), t, rest)
+            }
+            [t, rest @ ..] => (None, t, rest),
+            [] => return None,
+        };
+        if !ty.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return None;
+        }
+        let att = file.ir.imports.iter().find_map(|i| match &i.source {
+            ImportSource::Module(uri) if i.alias.as_deref() == alias => {
+                self.attached_by_name(obj, uri, ty)
+            }
+            _ => None,
+        })?;
+        self.member_target(att, rest, name).ok()
     }
 
     /// The rows the `ListElement`s among `values` declare, as role names

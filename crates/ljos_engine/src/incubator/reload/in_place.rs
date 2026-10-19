@@ -1065,7 +1065,7 @@ impl Engine {
         let Some(p) = od.parent else { return };
         let (parent, child) = (inst.objects[p.index()], inst.objects[j]);
         if let Some(on) = &od.on {
-            self.apply_value_source(parent, child, on);
+            self.apply_value_source(&inst.file, parent, child, on);
             return;
         }
         let r = self
