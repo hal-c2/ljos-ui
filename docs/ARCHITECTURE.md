@@ -694,7 +694,7 @@ Freezing stops *work*, not *meaning* (04 §3.5).
 - **Frozen subtrees** are hidden from accessibility (unless they are the active route) and are not interactive.
 - **Transitions and predictive back** may keep at most two cached page snapshots.
 - **Property test:** with and without freezing, observers see the same final values and the same set of signals (presence, not count).
-- **As built (M2).** `Engine::set_frozen` freezes an object and what it owns: effects are parked in the graph and run once on thaw against the latest values, while bindings still answer reads; a timer that came due fires once on thaw; animations stand still and catch up. `StackView` freezes the pages it covers, and `SwipeView` freezes its non-current pages while it rests (all pages thaw while it moves, and a page taken out thaws). The static analysis of where freezing is allowed, the exemptions, Loader and delegates are not built.
+- **As built (M2).** `Engine::set_frozen` freezes an object and what it owns: effects are parked in the graph and run once on thaw against the latest values, while bindings still answer reads; a timer that came due fires once on thaw; animations stand still and catch up. `StackView` freezes the pages it covers, but not a page that owns one it shows (a page declared inside another and pushed over it, `features/controls/stack-view-owned-page.feature`), and `SwipeView` freezes its non-current pages while it rests (all pages thaw while it moves, and a page taken out thaws). The static analysis of where freezing is allowed, the exemptions, Loader and delegates are not built.
 
 ### 8.4 Virtualised views
 

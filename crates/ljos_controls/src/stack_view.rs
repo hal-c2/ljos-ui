@@ -680,7 +680,7 @@ fn load(e: &Engine, me: ObjectId, index: usize) -> Result<Option<ObjectId>, Engi
     // while it is frozen, and this one is what thaws it.
     let follow = e.effect_in(me, move |e| {
         let shown = e.read(att, StackViewAttached::VISIBLE.index).to_boolean();
-        e.untrack(|| follow_shown(e, item, shown));
+        e.untrack(|| follow_shown(e, me, item, shown));
     })?;
     if let Some(entry) = st.entries.borrow_mut().get_mut(index) {
         entry.follow = Some(follow);
@@ -751,19 +751,65 @@ fn fit(e: &Engine, me: ObjectId, w: f64, h: f64) -> Result<(), EngineError> {
 /// §8.3): it keeps its objects and values, but its effects, timers and
 /// animations wait until it is shown again. A page that asks to be seen
 /// under the one on top is not frozen.
-fn follow_shown(e: &Engine, item: ObjectId, shown: bool) {
+///
+/// Freezing a page freezes what it owns, and a page can own another page
+/// of the stack: one declared inside it and pushed over it. A page stays
+/// awake while it owns one that is shown.
+fn follow_shown(e: &Engine, me: ObjectId, item: ObjectId, shown: bool) {
     if !e.is_alive(item) {
         return;
     }
+    let pages: Vec<ObjectId> = state_of(e, me).map_or_else(Vec::new, |st| {
+        st.entries
+            .borrow()
+            .iter()
+            .filter_map(|en| en.item)
+            .filter(|i| e.is_alive(*i))
+            .collect()
+    });
+    let holders: Vec<ObjectId> = pages
+        .iter()
+        .copied()
+        .filter(|p| *p != item && owns(e, *p, item))
+        .collect();
     if shown {
         check(e, "StackView", e.set_frozen(item, false));
+        for holder in &holders {
+            check(e, "StackView", e.set_frozen(*holder, false));
+        }
     }
     let r = set_computed(e, item, Item::VISIBLE.index, Value::Bool(shown));
     check(e, "StackView.visible", r);
     if !shown {
         // Takes hold once the page has seen itself hidden.
-        check(e, "StackView", e.set_frozen(item, true));
+        for page in std::iter::once(item).chain(holders) {
+            let awake = is_shown(e, page)
+                || pages
+                    .iter()
+                    .any(|p| *p != page && is_shown(e, *p) && owns(e, page, *p));
+            if !awake {
+                check(e, "StackView", e.set_frozen(page, true));
+            }
+        }
     }
+}
+
+/// Whether `holder` owns `obj`, directly or through what it owns.
+fn owns(e: &Engine, holder: ObjectId, obj: ObjectId) -> bool {
+    let mut at = e.owner(obj);
+    while let Some(o) = at {
+        if o == holder {
+            return true;
+        }
+        at = e.owner(o);
+    }
+    false
+}
+
+/// Whether the view shows `page` now.
+fn is_shown(e: &Engine, page: ObjectId) -> bool {
+    e.existing_attached_object(page, &attacher())
+        .is_some_and(|att| e.read(att, StackViewAttached::VISIBLE.index).to_boolean())
 }
 
 fn show(e: &Engine, item: ObjectId, on: bool) {
