@@ -56,9 +56,13 @@ const NOT_YET: &[&str] = &[
     // The particles' own rotation is not built, so `Item.rotation` turns
     // the whole painter instead.
     "ImageParticle.rotation",
-    // A role is taken back; the whole group at once needs a group that
-    // can be assigned to, which the engine does not have.
+    // A role is taken back, of the palette and of each of its colour
+    // groups; a whole group at once needs a group that can be assigned to,
+    // which the engine does not have.
     "*.palette",
+    "*.palette.active",
+    "*.palette.disabled",
+    "*.palette.inactive",
     // Quick's validators keep the name and read numbers in the C locale.
     "DoubleValidator.locale",
     "IntValidator.locale",
