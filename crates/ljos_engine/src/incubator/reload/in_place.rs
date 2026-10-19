@@ -577,6 +577,14 @@ impl Engine {
                         let _ = self.in_place_unset(&inst, t.obj, t.old, t.def, name, true);
                     }
                 }
+                if t.fresh.iter().any(|n| n.starts_with("anchors.")) {
+                    let gone = |l: &str| {
+                        t.fresh
+                            .iter()
+                            .any(|n| n.strip_prefix("anchors.") == Some(l))
+                    };
+                    self.in_place_unanchor(&inst, t.obj, t.def, &gone);
+                }
                 // Each renamed property starts as a fresh one does.
                 for (_, name) in &t.renamed {
                     if gives(t.def, name) {
@@ -715,12 +723,36 @@ impl Engine {
                 false
             };
             let instances: Vec<Rc<Instance>> = st.instances.borrow().clone();
+            let went: Vec<&str> = grown
+                .iter()
+                .flat_map(|g| g.unset.iter().map(|(n, _)| n.as_str()))
+                .collect();
             self.batch(|| {
                 for inst in instances.iter().filter(|i| sees(i)) {
                     for &id in &inst.objects {
                         if self.is_alive(id) {
                             self.in_place_refresh(id);
                         }
+                    }
+                    if went.is_empty() {
+                        continue;
+                    }
+                    let comp = inst.file.ir.component(inst.comp);
+                    for (j, od) in comp.objects.iter().enumerate() {
+                        if j >= inst.objects.len() || !self.is_alive(inst.objects[j]) {
+                            continue;
+                        }
+                        let gone = |l: &str| {
+                            held_in(od, &format!("anchors.{l}"))
+                                .and_then(|(m, l)| m.bindings.iter().find(|b| b.name == l))
+                                .is_some_and(|b| {
+                                    inst.file.ir.expr(b.expr).refs.iter().any(|r| {
+                                        matches!(r.resolved, Resolved::Unknown)
+                                            && went.contains(&r.name.as_str())
+                                    })
+                                })
+                        };
+                        self.in_place_unanchor(inst, j, od, &gone);
                     }
                 }
             });
@@ -1601,6 +1633,60 @@ impl Engine {
             },
         };
         self.no_property(inst, at.line, at.column, &path, leaf);
+    }
+
+    /// An anchor to nothing leaves an item where the anchor last put it,
+    /// where a fresh load leaves it at the place it gives itself. Each axis
+    /// of object `j` of `inst` that only anchors whose binding reads an id
+    /// that is gone placed (`gone`, by anchor) goes back to what `od`
+    /// gives, or else to what a new object of its type has.
+    fn in_place_unanchor(
+        &self,
+        inst: &Rc<Instance>,
+        j: usize,
+        od: &ObjectDef,
+        gone: &dyn Fn(&str) -> bool,
+    ) {
+        let given = |leaf: &str| {
+            held_in(od, &format!("anchors.{leaf}"))
+                .is_some_and(|(m, l)| m.bindings.iter().any(|b| b.name == l))
+        };
+        let mut reset = Vec::new();
+        for (sides, middle, pos, size) in [
+            (["left", "right"], &["horizontalCenter"][..], "x", "width"),
+            (
+                ["top", "bottom"],
+                &["verticalCenter", "baseline"][..],
+                "y",
+                "height",
+            ),
+        ] {
+            let leaves: Vec<&str> = sides
+                .iter()
+                .chain(middle)
+                .chain(&["centerIn", "fill"])
+                .copied()
+                .filter(|l| given(l))
+                .collect();
+            if leaves.is_empty() || !leaves.iter().all(|l| gone(l)) {
+                continue;
+            }
+            reset.push(pos);
+            if sides.iter().all(|l| given(l)) || given("fill") {
+                reset.push(size);
+            }
+        }
+        if reset.is_empty() {
+            return;
+        }
+        let id = inst.objects[j];
+        for name in reset {
+            if gives(od, name) {
+                self.in_place_set(inst, id, od, name);
+            } else {
+                let _ = self.in_place_unset(inst, j, od, od, name, true);
+            }
+        }
     }
 
     /// Hands the keeper of `id` (foreign.rs), an object of `inst`, the

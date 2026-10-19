@@ -2677,6 +2677,74 @@ Feature: What a reload changes
       And the property "size" of "hint" is 0
       And the property "x" of "box" is at least 40
 
+    Scenario: An item anchored to a removed object stands where a fresh load puts it
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          Item { id: mark; x: 50; y: 60; width: 10; height: 10 }
+          Rectangle { objectName: "tag"; width: 5; height: 5; anchors.left: mark.right; anchors.top: mark.bottom }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "x" of "tag" is 60
+      And the property "y" of "tag" is 70
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          Rectangle { objectName: "tag"; width: 5; height: 5; anchors.left: mark.right; anchors.top: mark.bottom }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 0
+      And the property "y" of "tag" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: An anchor edited to a removed object leaves the item at the x it gives
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          Item { id: mark; x: 50; y: 60; width: 10; height: 10 }
+          Rectangle { objectName: "tag"; x: 7; width: 5; height: 5; anchors.left: mark.right; anchors.top: parent.top }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "x" of "tag" is 60
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          Rectangle { objectName: "tag"; x: 7; width: 5; height: 5; anchors.left: mark.left; anchors.top: parent.top }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "x" of "tag" is 7
+      And the property "x" of "box" is at least 40
+
   Rule: An edit to a component a user sets the member of goes in place for the others
 
     The instances whose user sets the edited member keep the user's
