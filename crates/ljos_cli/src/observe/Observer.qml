@@ -1706,14 +1706,14 @@ ApplicationWindow {
                                 picture = "data:" + r.content[i].mimeType + ";base64," + r.content[i].data
                     }
 
-                    // The ends of a binding as a line: `width of #box`.
-                    function ends(list) {
-                        if (!list || list.length === 0)
-                            return "nothing"
-                        return list.map(function(d) {
-                            var of = d.object_name ? " of #" + d.object_name : d.object ? " of a " + d.object : ""
-                            return (d.property || "a handler") + of
-                        }).join(", ")
+                    // One end of a binding as the file would name it:
+                    // `width of box`, by id, else `#objectName`, else type.
+                    function endText(d) {
+                        var of = d.id ? " of " + d.id
+                            : d.object_name ? " of #" + d.object_name
+                            : d.object ? " of " + (/^[aeiou]/i.test(d.object) ? "an " : "a ") + d.object
+                            : ""
+                        return (d.property || "a handler") + of
                     }
 
                     // A value as a field shows it.
@@ -2262,18 +2262,56 @@ ApplicationWindow {
                                         color: theme.text
                                         font.bold: true
                                     }
-                                    Text {
-                                        width: parent.width
-                                        wrapMode: Text.Wrap
-                                        text: "reads " + objects.ends(bound.modelData.reads)
-                                        color: theme.subtle
-                                        font.pixelSize: 11
+                                    // Each end that is an object is a link
+                                    // to it, as a value that holds one is.
+                                    Repeater {
+                                        model: [["reads", bound.modelData.reads || []],
+                                                ["read by", bound.modelData.read_by || []]]
+                                        delegate: Flow {
+                                            id: endRow
+                                            required property var modelData
+                                            width: bound.width
+                                            spacing: 4
+                                            Text {
+                                                text: endRow.modelData[0]
+                                                color: theme.subtle
+                                                font.pixelSize: 11
+                                            }
+                                            Text {
+                                                visible: endRow.modelData[1].length === 0
+                                                text: "nothing"
+                                                color: theme.subtle
+                                                font.pixelSize: 11
+                                            }
+                                            Repeater {
+                                                model: endRow.modelData[1]
+                                                delegate: Text {
+                                                    id: end
+                                                    required property var modelData
+                                                    required property int index
+                                                    readonly property bool linked: !!modelData.handle
+                                                    text: objects.endText(modelData)
+                                                          + (index + 1 < endRow.modelData[1].length ? "," : "")
+                                                    color: linked ? theme.accent : theme.subtle
+                                                    font.pixelSize: 11
+                                                    font.underline: endArea.containsMouse
+                                                    MouseArea {
+                                                        id: endArea
+                                                        anchors.fill: parent
+                                                        enabled: end.linked
+                                                        hoverEnabled: enabled
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        Accessible.role: Accessible.Button
+                                                        Accessible.name: end.text
+                                                        onClicked: objects.pick(end.modelData.handle, end.modelData.name)
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                     Text {
-                                        width: parent.width
-                                        wrapMode: Text.Wrap
-                                        text: "read by " + objects.ends(bound.modelData.read_by)
-                                              + (bound.modelData.truncated ? ", and more" : "")
+                                        visible: bound.modelData.truncated === true
+                                        text: "and more"
                                         color: theme.subtle
                                         font.pixelSize: 11
                                     }

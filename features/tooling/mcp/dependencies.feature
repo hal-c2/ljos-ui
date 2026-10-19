@@ -29,6 +29,10 @@ Feature: What a property depends on
           width: top.twice
           height: 10
         }
+        Item { objectName: "holder"; property int n: 3
+          Item { objectName: "inner"; property int got: parent.n } }
+        Item { objectName: "bare"; property int k: 1
+          Item { property int got: parent.k } }
       }
       """
     And the inspector is connected
@@ -52,6 +56,41 @@ Feature: What a property depends on
         """
       Then the answer's "/dependencies/reads/0/property" is "count"
       And the answer's "/dependencies/reads/0/object_name" is "root"
+
+    Scenario: An object at either end is named by its id, with a handle to it
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#root", "dependencies": "twice"}
+        """
+      Then the answer's "/dependencies/reads/0/id" is "top"
+      And the answer's "/dependencies/reads/0/name" is "top"
+      And the answer's "/dependencies/reads/0/handle" matches "^@[0-9]+\.[0-9]+$"
+      And the answer's text contains "count of top"
+
+    Scenario: An object without an id is named by its objectName
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#holder", "dependencies": "n"}
+        """
+      Then the answer's "/dependencies/read_by/0/id" is null
+      And the answer's "/dependencies/read_by/0/name" is "inner"
+      And the answer's text contains "got of #inner"
+
+    Scenario: An object without an id or an objectName is named by its type
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#bare", "dependencies": "k"}
+        """
+      Then the answer's "/dependencies/read_by/0/name" is "Item"
+      And the answer's text contains "got of an Item"
+
+    Scenario: The handle of an object at an end is enough to inspect it
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#holder", "dependencies": "n"}
+        """
+      And the agent calls the tool "app_inspect" with the answer's "/dependencies/read_by/0/handle" as "target"
+      Then the answer's "/object_name" is "inner"
 
     Scenario: What reads a property is listed, across objects
       When the agent calls the tool "app_inspect" with:

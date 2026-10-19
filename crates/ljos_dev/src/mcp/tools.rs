@@ -124,22 +124,42 @@ pub(crate) fn visible_to_the_top(engine: &Engine, obj: ObjectId) -> bool {
 
 /// One end of a dependency, as an agent reads it.
 fn dependency_end(engine: &Engine, d: &DependencyReport) -> Value {
-    let (ty, object_name) = match d.object {
-        Some(o) if engine.is_alive(o) => (
-            engine
-                .inspect_object(o)
-                .and_then(|r| r.types.first().cloned()),
-            engine.untrack(|| text_property(engine, o, "objectName")),
-        ),
-        _ => (None, None),
+    let (ty, id, object_name, handle) = match d.object {
+        Some(o) if engine.is_alive(o) => {
+            let report = engine.inspect_object(o);
+            (
+                report.as_ref().and_then(|r| r.types.first().cloned()),
+                report.and_then(|r| r.id),
+                engine.untrack(|| text_property(engine, o, "objectName")),
+                Some(super::objects::handle(o)),
+            )
+        }
+        _ => (None, None, None, None),
     };
+    // What a reader of the file calls it: its id, else its objectName,
+    // else its type.
+    let name = id
+        .clone()
+        .or_else(|| object_name.clone())
+        .or_else(|| ty.clone());
     json!({
+        "name": name,
+        "id": id,
         "object": ty,
         "object_name": object_name,
+        "handle": handle,
         "property": d.property,
         "bound": d.bound,
         "tier": d.tier.map(|t| t.as_str()),
     })
+}
+
+/// `a` or `an` before a type's name, by its first letter.
+fn article(word: &str) -> &'static str {
+    match word.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
+        _ => "a",
+    }
 }
 
 /// The `dependencies` of `app_inspect`: what the binding of `name` read when
@@ -165,9 +185,14 @@ fn dependencies(engine: &Engine, name: &str, graph: &BindingGraph) -> (Value, St
     });
     let end = |v: &Value| {
         let property = v["property"].as_str().unwrap_or("(a handler)");
-        let object = match (v["object_name"].as_str(), v["object"].as_str()) {
-            (Some(n), _) => format!(" of #{n}"),
-            (None, Some(t)) => format!(" of a {t}"),
+        let object = match (
+            v["id"].as_str(),
+            v["object_name"].as_str(),
+            v["object"].as_str(),
+        ) {
+            (Some(id), _, _) => format!(" of {id}"),
+            (None, Some(n), _) => format!(" of #{n}"),
+            (None, None, Some(t)) => format!(" of {} {t}", article(t)),
             _ => String::new(),
         };
         format!("{property}{object}")
