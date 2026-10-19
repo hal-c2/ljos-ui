@@ -107,6 +107,9 @@ pub struct Part {
     pub offset: usize,
     /// The piece stands where it is whatever the alignment (a table cell).
     pub fixed: bool,
+    /// A table cell that reads right to left: the width its lines stand at
+    /// the right of.
+    pub flush_right: Option<f64>,
 }
 
 /// A block as laid out.
@@ -561,6 +564,9 @@ impl RichDoc {
 
     /// Where line `line` of `part` of `block` starts, for a view.
     fn line_x(block: &Block, part: &Part, line: &Line, view: &View) -> f64 {
+        if let Some(width) = part.flush_right {
+            return part.x + (width - line.width).max(0.0);
+        }
         if part.fixed || line.justified {
             return part.x;
         }
@@ -934,6 +940,7 @@ fn lay_flat(
             right: 0.0,
             offset: 0,
             fixed: false,
+            flush_right: None,
         }],
         marker: None,
         rules: Vec::new(),
@@ -977,6 +984,7 @@ fn lay_block(
             right: 0.0,
             offset: 0,
             fixed: true,
+            flush_right: None,
             layout: marker,
         }
     });
@@ -993,6 +1001,7 @@ fn lay_block(
             right,
             offset: 0,
             fixed: false,
+            flush_right: None,
         }],
         marker,
         rules: Vec::new(),
@@ -1166,6 +1175,8 @@ fn lay_table(
         if parts.is_empty() {
             baseline = top + frame + padding + layout.baseline;
         }
+        // Measured on Qt 6.11.
+        let flush_right = layout.rtl.then_some(widths[cell.column]);
         parts.push(Part {
             layout,
             x: indent + left + frame + padding,
@@ -1173,6 +1184,7 @@ fn lay_table(
             right: 0.0,
             offset: cell.range.start,
             fixed: true,
+            flush_right,
         });
     }
     if border > 0.0 {

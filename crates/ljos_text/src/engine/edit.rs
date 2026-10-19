@@ -552,11 +552,19 @@ impl TextEngine {
             let mut row_cells = Vec::with_capacity(row.len());
             for (c, (lines, _)) in row.into_iter().enumerate() {
                 let bytes = cells[r][c].clone();
+                // A cell that reads right to left stands at the right of
+                // its column, as in Qt 6.11.
+                let rtl = crate::direction::reads_right_to_left(&text[bytes.clone()]);
                 let first = out.len();
                 let count = lines.len();
                 let mut top = 0.0;
                 for (k, (mut line, places)) in lines.into_iter().enumerate() {
                     let height = line.vertical.natural();
+                    let flush = if rtl {
+                        (widths[c] - f64::from(line.width)).max(0.0)
+                    } else {
+                        0.0
+                    };
                     let mut end = None;
                     if k + 1 == count {
                         if text[bytes.end..].starts_with(['\t', '\n']) {
@@ -568,7 +576,7 @@ impl TextEngine {
                         grid: 0,
                         row: r,
                         top,
-                        dx: lefts[c] + frame + padding,
+                        dx: lefts[c] + frame + padding + flush,
                         end,
                     };
                     out.push((line, places, place));

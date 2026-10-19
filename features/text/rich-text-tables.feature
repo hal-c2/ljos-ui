@@ -9,7 +9,8 @@ Feature: Tables in a rich Text
   too, and a cell's bgcolor, or its background-color, fills the cell
   inside its padding. The frames around the table and around each cell
   are as wide as the border and grey, whatever colour the text is. A
-  table given less width than its text needs wraps the text in its cells.
+  table given less width than its text needs wraps the text in its cells,
+  and a cell that reads right to left stands at the right of its column.
   The text is Liberation Sans, where at 36 pixels a no-break space is ten
   pixels wide and a line 41 high, and at 20 pixels a "c" is ten wide.
 
@@ -27,6 +28,10 @@ Feature: Tables in a rich Text
           objectName: "wrapped"; x: 200; width: 80; wrapMode: Text.WordWrap
           textFormat: Text.RichText; font.family: "Liberation Sans"; font.pixelSize: 20
           text: "<table border='1'><tr><td>cc cc cc cc</td><td>c c</td></tr></table>"
+        }
+        Text {
+          y: 200; textFormat: Text.RichText; font.family: "Liberation Sans"; font.pixelSize: 20
+          text: "<table><tr><td><span style='background-color:#00ff00'>\u05d0\u05d1</span></td></tr><tr><td>cccccccccc</td></tr></table>"
         }
       }
       """
@@ -68,3 +73,14 @@ Feature: Tables in a rich Text
       Then the property "contentWidth" of "wrapped" is 80
       And the property "implicitWidth" of "wrapped" is 135
       And the property "contentHeight" of "wrapped" is 100
+
+  Rule: A cell that reads right to left stands at the right of its column
+
+    Scenario Outline: The pixel at <x>, <y> is <colour>, <where>
+      When 100 milliseconds pass
+      Then the pixel at <x>, <y> of the window is "<colour>"
+
+      Examples:
+        | x  | y   | colour  | where                                    |
+        | 10 | 212 | #ffffff | at the left of the column                |
+        | 90 | 212 | #00ff00 | under the text, at the right of the column |
