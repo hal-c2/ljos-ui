@@ -228,18 +228,38 @@ fn shown_num(e: &Engine, shown: &Shown, obj: ObjectId, p: PropIndex) -> f64 {
 
 impl Geom {
     fn read(e: &Engine, obj: ObjectId, shown: &Shown) -> Geom {
+        // In two goes rather than eleven: each new item runs this.
+        let [z, w, h, opacity, rotation, scale, origin] = e
+            .read_numbers(
+                obj,
+                [
+                    Item::Z.index,
+                    Item::WIDTH.index,
+                    Item::HEIGHT.index,
+                    Item::OPACITY.index,
+                    Item::ROTATION.index,
+                    Item::SCALE.index,
+                    Item::TRANSFORM_ORIGIN.index,
+                ],
+            )
+            .unwrap_or_default();
+        let [visible, clip, transform] = e.read_values(
+            obj,
+            [Item::VISIBLE.index, Item::CLIP.index, Item::TRANSFORM.index],
+        );
+        let shown = |p: PropIndex, v: f64| shown.get(obj, p).unwrap_or(v);
         Geom {
-            z: num(e, obj, Item::Z.index),
-            w: num(e, obj, Item::WIDTH.index),
-            h: num(e, obj, Item::HEIGHT.index),
-            visible: e.read(obj, Item::VISIBLE.index).to_boolean(),
+            z,
+            w,
+            h,
+            visible: visible.to_boolean(),
             faces_away: crate::flipable::faces_away(e, obj),
-            opacity: shown_num(e, shown, obj, Item::OPACITY.index),
-            clip: e.read(obj, Item::CLIP.index).to_boolean(),
-            rotation: shown_num(e, shown, obj, Item::ROTATION.index),
-            scale: shown_num(e, shown, obj, Item::SCALE.index),
-            origin: num(e, obj, Item::TRANSFORM_ORIGIN.index) as i32,
-            listed: matches!(e.read(obj, Item::TRANSFORM.index), Value::List(l) if !l.is_empty()),
+            opacity: shown(Item::OPACITY.index, opacity),
+            clip: clip.to_boolean(),
+            rotation: shown(Item::ROTATION.index, rotation),
+            scale: shown(Item::SCALE.index, scale),
+            origin: origin as i32,
+            listed: matches!(transform, Value::List(l) if !l.is_empty()),
         }
     }
 }
