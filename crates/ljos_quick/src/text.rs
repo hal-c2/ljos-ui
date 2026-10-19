@@ -202,6 +202,10 @@ pub struct Text {
     /// [`init_text`] ran.
     #[qml(skip)]
     initialised: bool,
+    /// What the completion measured the text with, until the scene's first
+    /// look at it: a polish of the same inputs would only measure it again.
+    #[qml(skip)]
+    measured: Option<Box<TextInputs>>,
     /// The document, once the text was more than plain.
     #[qml(skip)]
     pub(crate) rich: Option<rich::Shared>,
@@ -284,6 +288,7 @@ impl Default for Text {
             right_padding: 0.0,
             bottom_padding: 0.0,
             initialised: false,
+            measured: None,
             rich: None,
         }
     }
@@ -305,7 +310,12 @@ impl Text {
         if t.params.width.is_some() || t.text.is_empty() {
             return Ok(());
         }
-        write_measured(cx.engine, cx.this, &t, &text_engine())
+        write_measured(cx.engine, cx.this, &t, &text_engine())?;
+        if t.rich.is_none() {
+            cx.engine
+                .with_mut(cx.this, |x: &mut Text| x.measured = Some(Box::new(t)))?;
+        }
+        Ok(())
     }
 
     /// A link was pressed and released. Nothing is opened: what an address
@@ -787,7 +797,19 @@ pub(crate) fn polish(
 ) -> Result<(), EngineError> {
     init_text(engine, obj)?;
     let t = engine.untrack(|| TextInputs::read(engine, obj));
+    // Measured again, so what the completion measured no longer stands.
+    engine.with_mut(obj, |x: &mut Text| x.measured = None)?;
     write_measured(engine, obj, &t, te)
+}
+
+/// Whether `t` is what the completion measured the text with and nothing
+/// measured it since. Asked once: the answer is forgotten either way.
+pub(crate) fn completion_measured(engine: &Engine, obj: ObjectId, t: &TextInputs) -> bool {
+    engine
+        .with_mut(obj, |x: &mut Text| x.measured.take())
+        .ok()
+        .flatten()
+        .is_some_and(|m| *m == *t)
 }
 
 /// Lays `t` out and writes what it measures on `obj`.

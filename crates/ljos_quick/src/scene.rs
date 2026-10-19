@@ -2722,7 +2722,12 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Managed => crate::layouts::read_inputs(e, obj),
         Kind::Text => {
             // Reads the item's size too, where the layout depends on it.
-            TextInputs::read(e, obj);
+            let t = TextInputs::read(e, obj);
+            // A new text was measured as it was completed; laid out as it
+            // still is, it is not polished to be measured again.
+            if text::completion_measured(e, obj, &t) {
+                return;
+            }
         }
         Kind::Canvas => crate::canvas::read_inputs(e, obj),
         Kind::Item
