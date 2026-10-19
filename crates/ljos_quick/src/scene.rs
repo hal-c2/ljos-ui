@@ -292,6 +292,13 @@ struct Shared {
     /// The map of a `transform` list, from [`list_effect`].
     list: FxHashMap<ObjectId, crate::transform::Projective>,
     content: FxHashMap<ObjectId, Paint>,
+    /// What each Text's polish effect last read of it: its paint and its
+    /// polish take it from here, so a text's inputs are read once a change
+    /// and not by each.
+    text_inputs: FxHashMap<ObjectId, TextInputs>,
+    /// The Texts that have a content effect: their polish effect gives
+    /// them their paint.
+    texts_shown: FxHashSet<ObjectId>,
     structure: FxHashSet<ObjectId>,
     polish: FxHashSet<ObjectId>,
     dead: Vec<ObjectId>,
@@ -1168,7 +1175,10 @@ impl QuickScene {
                     Kind::Row => positioners::layout(engine, obj, Axis::Horizontal),
                     Kind::Column => positioners::layout(engine, obj, Axis::Vertical),
                     Kind::Managed => crate::layouts::polish(engine, obj),
-                    Kind::Text => text::polish(engine, obj, &self.text),
+                    Kind::Text => {
+                        let read = self.shared.borrow().text_inputs.get(&obj).cloned();
+                        text::polish(engine, obj, &self.text, read)
+                    }
                     // Only after the fonts changed (`refresh_text`).
                     Kind::Editor => crate::text_input::refresh(engine, obj),
                     Kind::Canvas => crate::canvas::polish(engine, obj),
@@ -1356,6 +1366,8 @@ impl QuickScene {
         // Its entry is gone, so a place told is not read.
         s.list.remove(&obj);
         s.content.remove(&obj);
+        s.text_inputs.remove(&obj);
+        s.texts_shown.remove(&obj);
         s.structure.remove(&obj);
         s.polish.remove(&obj);
         drop(s);
@@ -2051,6 +2063,9 @@ impl QuickScene {
                 (false, Some(n)) => {
                     let _ = engine.graph().dispose(n);
                     e.content_effect = None;
+                    if e.kind == Kind::Text {
+                        self.shared.borrow_mut().texts_shown.remove(&obj);
+                    }
                     // Text that left the screen keeps its numbers only: the
                     // display list holds the glyph runs, so it goes too
                     // (ARCHITECTURE §7.5). Coming back paints it again.
@@ -2754,9 +2769,23 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             let t = TextInputs::read(e, obj);
             // A new text was measured as it was completed; laid out as it
             // still is, it is not polished to be measured again.
-            if text::completion_measured(e, obj, &t) {
+            let polish = !text::completion_measured(e, obj, &t);
+            let shown = shared.borrow().texts_shown.contains(&obj);
+            if !polish && !shown {
+                // Nothing for a frame to do.
+                shared.borrow_mut().text_inputs.insert(obj, t);
                 return;
             }
+            mark(shared, |s| {
+                if shown {
+                    s.content.insert(obj, Paint::Text(t.clone()));
+                }
+                s.text_inputs.insert(obj, t);
+                if polish {
+                    s.polish.insert(obj);
+                }
+            });
+            return;
         }
         Kind::Canvas => crate::canvas::read_inputs(e, obj),
         Kind::Item
@@ -2802,7 +2831,17 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
     }
     let p = match kind {
         Kind::Rectangle => Paint::Rect(RectanglePaint::read(e, obj)),
-        Kind::Text => Paint::Text(TextInputs::read(e, obj)),
+        Kind::Text => {
+            // Painted from what the polish effect read, which tells it of
+            // every change from now on. Read here only for a text that has
+            // no polish effect: tracked, so this runs again on a change.
+            let read = {
+                let mut s = shared.borrow_mut();
+                s.texts_shown.insert(obj);
+                s.text_inputs.get(&obj).cloned()
+            };
+            Paint::Text(read.unwrap_or_else(|| TextInputs::read(e, obj)))
+        }
         Kind::Image => Paint::Image(crate::image::ImagePaint::read_on_screen(e, obj)),
         Kind::Editor => Paint::Editor(crate::text_input::EditorPaint::read(e, obj)),
         Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),

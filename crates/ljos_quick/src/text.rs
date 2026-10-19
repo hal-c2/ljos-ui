@@ -794,9 +794,17 @@ pub(crate) fn polish(
     engine: &Engine,
     obj: ObjectId,
     te: &SharedTextEngine,
+    read: Option<TextInputs>,
 ) -> Result<(), EngineError> {
+    let fresh = !engine.untrack(|| engine.with(obj, |t: &Text| t.initialised))?;
     init_text(engine, obj)?;
-    let t = engine.untrack(|| TextInputs::read(engine, obj));
+    // What the scene's polish effect read is what the text is now: it runs
+    // again on every change. A text first set up just now may read
+    // otherwise.
+    let t = match read {
+        Some(t) if !fresh => t,
+        _ => engine.untrack(|| TextInputs::read(engine, obj)),
+    };
     // Measured again, so what the completion measured no longer stands.
     engine.with_mut(obj, |x: &mut Text| x.measured = None)?;
     write_measured(engine, obj, &t, te)
