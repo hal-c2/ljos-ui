@@ -86,6 +86,18 @@ fn max_size(spec: &WindowSpec) -> Option<[f64; 2]> {
     (w.is_some() || h.is_some()).then(|| [w.unwrap_or(UNLIMITED), h.unwrap_or(UNLIMITED)])
 }
 
+/// `size` held within the smallest and the largest size `spec` allows,
+/// which a platform is told but may not hold a size asked of it to.
+#[cfg(feature = "mcp")]
+pub(crate) fn within_limits(spec: &WindowSpec, size: [f64; 2]) -> [f64; 2] {
+    std::array::from_fn(|axis| {
+        let max = spec.max_size[axis]
+            .filter(|max| *max > 0.0)
+            .unwrap_or(f64::INFINITY);
+        size[axis].min(max).max(spec.min_size[axis])
+    })
+}
+
 /// A window whose smallest and largest size are the same cannot be
 /// resized by its user, which a platform shows in its frame.
 fn resizable(spec: &WindowSpec) -> bool {
@@ -256,6 +268,19 @@ mod tests {
             multi_window: true,
             ..Capabilities::default()
         }
+    }
+
+    #[cfg(feature = "mcp")]
+    #[test]
+    fn a_size_asked_of_a_window_is_held_within_its_limits() {
+        let limited = WindowSpec {
+            min_size: [100.0, 0.0],
+            max_size: [Some(250.0), None],
+            ..spec()
+        };
+        assert_eq!(within_limits(&limited, [400.0, 150.0]), [250.0, 150.0]);
+        assert_eq!(within_limits(&limited, [50.0, 5000.0]), [100.0, 5000.0]);
+        assert_eq!(within_limits(&spec(), [400.0, 150.0]), [400.0, 150.0]);
     }
 
     #[test]

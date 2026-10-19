@@ -1795,9 +1795,14 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(size) = self.app.take_resize_request() else {
             return;
         };
-        let Some(slot) = self.slots.iter_mut().find(|s| s.is_root()) else {
+        let Some(i) = self.slots.iter().position(Slot::is_root) else {
             return self.app.finish_resize(true);
         };
+        let size = match self.spec_of(i, engine, sys) {
+            Some(spec) => windows::within_limits(&spec, size),
+            None => size,
+        };
+        let slot = &mut self.slots[i];
         let Some(id) = slot.surface.as_ref().map(|s| s.id) else {
             return self.app.finish_resize(true);
         };

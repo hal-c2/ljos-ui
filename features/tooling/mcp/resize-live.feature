@@ -7,8 +7,9 @@
 @ljos-only @desktop
 Feature: An agent resizes the window of a running application
   On the desktop the window is the platform's. `app_resize` asks the
-  platform to give the primary window the size and answers once the
-  window has it, or with the size it has when the platform gave another.
+  platform to give the primary window the size, held within the window's
+  smallest and largest size, and answers once the window has it, or with
+  the size it has and the size asked for when it was given another.
   The scene is then laid out at that size as if the user had dragged
   the window's edge: a root item takes the window's size, a root
   `Window` is told its new width and height, and what is anchored to
@@ -55,3 +56,29 @@ Feature: An agent resizes the window of a running application
     And the property "width" of "root" is 300
     And the property "height" of "root" is 150
     And the property "width" of "fill" is 300
+
+  # The window's own limits make the platform's answer the same on every
+  # desktop: the size asked for is past the largest the window may have.
+  @api-QtQuick.Window.maximumWidth
+  Scenario: A size past the window's largest is answered with the size given
+    Given the QML:
+      """qml
+      import QtQuick
+      Window {
+        objectName: "root"
+        width: 200; height: 100; visible: true
+        maximumWidth: 250
+        Rectangle { objectName: "fill"; anchors.fill: parent }
+      }
+      """
+    When the agent calls the tool "app_resize" with:
+      """json
+      {"width": 400, "height": 150}
+      """
+    Then the answer's "/width" is 250
+    And the answer's "/height" is 150
+    And the answer's "/asked/width" is 400
+    And the answer's "/asked/height" is 150
+    And the answer's text contains "asked for 400x150; the platform gave the window 250x150"
+    And the property "width" of "root" is 250
+    And the property "width" of "fill" is 250
