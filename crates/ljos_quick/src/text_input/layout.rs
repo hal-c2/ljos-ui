@@ -618,6 +618,10 @@ pub(crate) fn position_at(st: &SharedState, at: kurbo::Point, mode: i32) -> usiz
         if y >= layout.content_height {
             return s.model.len();
         }
+        if let Some(grid) = layout.grid_at(y) {
+            let x = at.x - s.geo.line_x.get(grid.lines.start).copied().unwrap_or(0.0);
+            return s.shown.pos_of(layout.hit_grid(grid, x, y, on_character));
+        }
         let index = layout.line_at(y);
         // Between two paragraphs that stand apart, measured on Qt 6.11: a
         // pixel under the one is its end, and the rest of the room the

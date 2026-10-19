@@ -227,6 +227,14 @@ impl EditorPaint {
         };
         let top = self.geo.top;
         self.paint_block_backgrounds(layout, out);
+        // A table's background, then its cells' over it.
+        for (line, rect, color) in &layout.fills {
+            if let Some(color) = crate::text::editor_css_color(color).map(crate::rectangle::to_rgba)
+            {
+                let shift = kurbo::Vec2::new(self.line_x(*line), top);
+                out.fill_rect(*rect + shift, color);
+            }
+        }
         self.paint_run_backgrounds(layout, out);
         // A highlighted background is behind the selection, which is what
         // the user is doing now.
@@ -249,11 +257,11 @@ impl EditorPaint {
                 self.selection_color,
             );
         }
-        // The frames of tables, in the text's colour as a rich `Text` draws
-        // them.
+        // The frames of tables, grey as a rich `Text` draws them.
+        let frame = crate::text::table_frame();
         for (line, rule) in &layout.rules {
             let shift = kurbo::Vec2::new(self.line_x(*line), top);
-            out.fill_rect(*rule + shift, self.color);
+            out.fill_rect(*rule + shift, frame);
         }
         for (index, line) in layout.lines.iter().enumerate() {
             let x = self.line_x(index);

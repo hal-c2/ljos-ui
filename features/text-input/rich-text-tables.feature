@@ -58,6 +58,9 @@ Feature: Tables in a rich TextEdit
         | 34 | 34 | 5        |
         | 2  | 34 | 2        |
         | 50 | 34 | 7        |
+        | 20 | 23 | 1        |
+        | 20 | 25 | 2        |
+        | 50 | 25 | 6        |
 
     Scenario: Down goes to the cell below
       When the user presses the pointer at 20, 34

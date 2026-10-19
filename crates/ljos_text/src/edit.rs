@@ -80,6 +80,9 @@ pub struct EditLine {
     pub clusters: Vec<CaretCluster>,
     /// The glyph runs, left to right.
     pub runs: Vec<EditRun>,
+    /// Where the cursor stands on the line when it has no characters: the
+    /// left of a cell's text in a table, the right of a table beside one.
+    pub left: f64,
 }
 
 /// Where a cursor stands.
@@ -113,19 +116,56 @@ pub struct EditBlock {
 }
 
 /// How a row of a table stands among the others, as a rich `Text` sets
-/// its tables (`ljos_text::rich`): its cells in columns as wide as their
-/// widest text, apart by the spacing and each cell's frame.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// its tables (`ljos_text::rich`): every cell laid out on its own, in
+/// columns as wide as their widest text or as the width shares out, apart
+/// by the spacing and each cell's frame.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct EditTable {
     /// Which row of its table the paragraph is; 0 starts a table.
     pub row: usize,
-    /// Width of the frame around the table; any gives every cell a frame
-    /// of one pixel too.
+    /// Width of the frame around the table and around every cell.
     pub border: f64,
     /// Space between cells, and between them and the frame.
     pub spacing: f64,
     /// Space between a cell's frame and its text.
     pub padding: f64,
+    /// The colour behind the whole table, as written (the row starting
+    /// the table says).
+    pub background: Option<std::sync::Arc<str>>,
+    /// The colour behind each cell of the row, inside its padding.
+    pub cells: Vec<Option<std::sync::Arc<str>>>,
+}
+
+/// A table of an [`EditLayout`]: where its rows and columns are, for a
+/// click to find its cell and the cursor to go up and down in it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EditGrid {
+    /// Its lines, every cell's in the order of the text.
+    pub lines: Range<usize>,
+    /// Top and bottom of the table, from the layout's top.
+    pub top: f64,
+    pub bottom: f64,
+    /// Its right edge, from its lines' left edge.
+    pub right: f64,
+    /// The top of each row's text, from the layout's top.
+    pub rows: Vec<f64>,
+    /// The left of each column's text, from its lines' left edge.
+    pub columns: Vec<f64>,
+    /// The cells of each row.
+    pub cells: Vec<Vec<EditCell>>,
+    /// The position after the table.
+    pub after: usize,
+}
+
+/// A cell of an [`EditGrid`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EditCell {
+    /// Its lines.
+    pub lines: Range<usize>,
+    /// Bytes of its text.
+    pub bytes: Range<usize>,
+    /// The bottom of its text, from the layout's top.
+    pub bottom: f64,
 }
 
 /// Where a paragraph of an [`EditLayout`] laid out from [`EditBlock`]s is.
@@ -161,10 +201,15 @@ pub struct EditLayout {
     /// The paragraphs, when the text was laid out from [`EditBlock`]s;
     /// empty otherwise.
     pub blocks: Vec<PlacedBlock>,
-    /// The frames of tables, one pixel wide or the border's width: each
-    /// with the line whose left edge its x counts from (the table's first
-    /// row), y from the layout's top.
+    /// The frames of tables, as wide as the border: each with the line
+    /// whose left edge its x counts from (the table's first), y from the
+    /// layout's top.
     pub rules: Vec<(usize, Rect)>,
+    /// The backgrounds of tables and their cells, counted as the frames
+    /// are, with their colours as written.
+    pub fills: Vec<(usize, Rect, std::sync::Arc<str>)>,
+    /// The tables.
+    pub tables: Vec<EditGrid>,
 }
 
 impl EditLayout {
@@ -219,7 +264,7 @@ impl EditLayout {
                     .filter(|c| byte >= c.range.end)
                     .map(CaretCluster::trailing)
             })
-            .unwrap_or(0.0);
+            .unwrap_or(line.left);
         Caret {
             line: index,
             x,
@@ -288,7 +333,84 @@ impl EditLayout {
         if y >= self.content_height {
             return self.len;
         }
+        if let Some(grid) = self.grid_at(y) {
+            return self.hit_grid(grid, x, y, on_character);
+        }
         self.hit_line(self.line_at(y), x, on_character)
+    }
+
+    /// The table at a height: a line's bottom edge is the line's, so its
+    /// top edge is not the table's (measured on Qt 6.11).
+    pub fn grid_at(&self, y: f64) -> Option<&EditGrid> {
+        self.tables.iter().find(|g| g.top < y && y <= g.bottom)
+    }
+
+    /// The position at a point of a table, `x` from its lines' left edge,
+    /// as Qt 6.11 puts it: in the cell whose text starts last before the
+    /// point, at the start of its text above it and its end below it, and
+    /// right of the table after the table.
+    pub fn hit_grid(&self, grid: &EditGrid, x: f64, y: f64, on_character: bool) -> usize {
+        if x > grid.right {
+            return grid.after;
+        }
+        let row = grid.rows.iter().rposition(|top| *top < y).unwrap_or(0);
+        let Some(cells) = grid.cells.get(row).filter(|c| !c.is_empty()) else {
+            return grid.after;
+        };
+        let column = grid.columns.iter().rposition(|left| *left < x).unwrap_or(0);
+        let cell = &cells[column.min(cells.len() - 1)];
+        if y < grid.rows[row] {
+            return cell.bytes.start;
+        }
+        if y >= cell.bottom {
+            return cell.bytes.end;
+        }
+        let line = (cell.lines.clone())
+            .rfind(|i| self.lines[*i].top <= y)
+            .unwrap_or(cell.lines.start);
+        self.hit_line(line, x, on_character)
+    }
+
+    /// The table, row and column of a line in a cell.
+    pub fn cell_of_line(&self, line: usize) -> Option<(&EditGrid, usize, usize)> {
+        let grid = self.tables.iter().find(|g| g.lines.contains(&line))?;
+        grid.cells.iter().enumerate().find_map(|(r, row)| {
+            let c = row.iter().position(|c| c.lines.contains(&line))?;
+            Some((grid, r, c))
+        })
+    }
+
+    /// The line a cursor goes to from `line` going down or up: in a table
+    /// the one below or above in the same column, out of the table the
+    /// paragraph after or before it, and into one its first or last cell,
+    /// as in Qt 6.11.
+    pub fn vertical(&self, line: usize, down: bool) -> Option<usize> {
+        let Some((grid, r, c)) = self.cell_of_line(line) else {
+            return if down {
+                Some(line + 1).filter(|l| *l < self.lines.len())
+            } else {
+                line.checked_sub(1)
+            };
+        };
+        let cell = &grid.cells[r][c];
+        let near = |row: &Vec<EditCell>| row.get(c).or(row.last()).map(|c| c.lines.clone());
+        if down {
+            if line + 1 < cell.lines.end {
+                return Some(line + 1);
+            }
+            match grid.cells.get(r + 1).and_then(near) {
+                Some(lines) => Some(lines.start),
+                None => Some(grid.lines.end).filter(|l| *l < self.lines.len()),
+            }
+        } else {
+            if line > cell.lines.start {
+                return Some(line - 1);
+            }
+            match r.checked_sub(1).and_then(|r| near(&grid.cells[r])) {
+                Some(lines) => Some(lines.end - 1),
+                None => grid.lines.start.checked_sub(1),
+            }
+        }
     }
 
     /// The boxes that cover a range of text, one or more per line it is on,

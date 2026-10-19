@@ -421,15 +421,13 @@ impl TextEditor {
         let Some(st) = ops::ready(cx.engine, cx.this) else {
             return String::new();
         };
+        super::rich::sync_doc(&mut st.borrow_mut());
         let s = st.borrow();
         let at = |p: i32| usize::try_from(p).unwrap_or(0);
-        let text = s.model.slice(at(start), at(end));
-        if s.rich.is_some() {
-            // Paragraphs of rich text are apart by U+2029, as in Qt.
-            ljos_text::rich::RichText::plain_of(text)
-        } else {
-            text.to_owned()
-        }
+        let text = s.model.text();
+        let slice = s.model.slice(at(start), at(end));
+        let from = slice.as_ptr() as usize - text.as_ptr() as usize;
+        super::rich::plain_text(&s, from..from + slice.len())
     }
 
     /// `moveCursorSelection(position, mode)`: the cursor goes to
@@ -752,10 +750,7 @@ pub(crate) fn publish_unshown(
     let (cursor, selection, selected, len, undo, redo, preedit, multi) = {
         let s = st.borrow();
         let m = &s.model;
-        let selected = match &s.rich {
-            Some(_) => ljos_text::rich::RichText::plain_of(m.selected_text()),
-            None => m.selected_text().to_owned(),
-        };
+        let selected = super::rich::plain_text(&s, m.selection_bytes());
         (
             m.cursor() as i32,
             m.selection(),

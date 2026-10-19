@@ -320,18 +320,20 @@ fn motion(s: &State, motion: Motion, select: bool, echo: i32) -> Plan {
             };
             let caret = layout.caret(s.shown.byte_of(cursor));
             let left = |line: usize| s.geo.line_x.get(line).copied().unwrap_or(0.0);
+            // In a table the column is kept from the cell's left edge, so a
+            // cursor going between cells of other widths keeps its place in
+            // them, as in Qt 6.11.
+            let inset = |line: usize| layout.lines.get(line).map_or(0.0, |l| l.left);
             let x = match s.sticky {
                 Some((x, at)) if at == cursor => x,
-                _ => left(caret.line) + caret.x,
+                _ => left(caret.line) + caret.x - inset(caret.line),
             };
-            let target = if motion == Motion::Down {
-                Some(caret.line + 1).filter(|l| *l < layout.lines.len())
-            } else {
-                caret.line.checked_sub(1)
-            };
+            let target = layout.vertical(caret.line, motion == Motion::Down);
             match target {
                 Some(line) => Plan::Move {
-                    pos: s.shown.pos_of(layout.hit_line(line, x - left(line), false)),
+                    pos: s
+                        .shown
+                        .pos_of(layout.hit_line(line, x - left(line) + inset(line), false)),
                     select,
                     column: Some(x),
                 },
@@ -522,8 +524,23 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
         }
         Action::NewLine => {
             if multi {
+                // DECISION: Return in a table cell breaks the line in the
+                // cell. Qt adds a paragraph to the cell, which a cell here
+                // cannot hold; on screen the two look the same.
+                let in_cell = {
+                    let mut s = st.borrow_mut();
+                    super::rich::sync_doc(&mut s);
+                    let at = s.model.selection_bytes().start;
+                    s.rich.as_ref().is_some_and(|r| {
+                        let blocks = r.doc.blocks();
+                        blocks
+                            .get(r.doc.block_index(at))
+                            .is_some_and(|b| b.table.is_some())
+                    })
+                };
+                let text = if in_cell { "\u{2028}" } else { "\n" };
                 ops::edit(engine, obj, How::user(EditKind::Other), |m| {
-                    m.replace_selection("\n")
+                    m.replace_selection(text)
                 });
             }
         }

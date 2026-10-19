@@ -482,6 +482,17 @@ pub(crate) fn refresh(engine: &Engine, obj: ObjectId, st: &SharedState) {
     load_images(engine, obj, st);
 }
 
+/// The text of a byte range as `getText` and `selectedText` give it: of
+/// rich text with paragraphs, cells and tables marked as Qt marks them.
+pub(crate) fn plain_text(s: &State, bytes: std::ops::Range<usize>) -> String {
+    let text = s.model.text();
+    match &s.rich {
+        Some(r) if r.doc.text() == text => r.doc.plain_text(bytes),
+        Some(_) => RichText::plain_of(&text[bytes]),
+        None => text[bytes].to_owned(),
+    }
+}
+
 /// `text` as the document is now: written out again when it changed since
 /// the last time.
 pub(crate) fn written_out(engine: &Engine, obj: ObjectId, st: &SharedState) -> String {
@@ -694,8 +705,12 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
             .iter()
             .enumerate()
             .map(|(i, b)| {
-                // The rows of one table share their format.
-                let same_table = i > 0 && Arc::ptr_eq(&blocks[i - 1], b);
+                let same_table = i > 0
+                    && blocks[i - 1]
+                        .table
+                        .as_ref()
+                        .zip(b.table.as_ref())
+                        .is_some_and(|(a, b)| a.same_table(b));
                 row = if same_table { row + 1 } else { 0 };
                 EditBlock {
                     margin_top: f64::from(b.margin_top),
@@ -703,11 +718,13 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
                     indent: f64::from(b.indent),
                     indent_right: f64::from(b.indent_right),
                     marker: b.marker.clone(),
-                    table: b.table.map(|t| EditTable {
+                    table: b.table.as_ref().map(|t| EditTable {
                         row,
-                        border: f64::from(t.border),
-                        spacing: f64::from(t.spacing),
-                        padding: f64::from(t.padding),
+                        border: f64::from(t.table.border),
+                        spacing: f64::from(t.table.spacing),
+                        padding: f64::from(t.table.padding),
+                        background: t.table.background.clone(),
+                        cells: t.cells.iter().map(|c| c.background.clone()).collect(),
                     }),
                 }
             })

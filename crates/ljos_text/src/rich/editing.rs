@@ -17,10 +17,15 @@
 //! is [`OBJECT`], each one character, as in Qt.
 //!
 //! The text is written back out the way Qt writes it: [`RichText::html`]
-//! as Qt's HTML document, [`RichText::markdown`] as its Markdown. Tables
-//! are read as their cells' text, a paragraph per row with its cells apart
-//! by tabs, with the [`TableFormat`] an editor lays them out by, and are not
-//! written back as tables.
+//! as Qt's HTML document, [`RichText::markdown`] as its Markdown.
+//!
+//! A table is a paragraph per row, its cells apart by tabs, each row with
+//! a [`TableRow`] that says how its table and its cells are set. Its text
+//! is counted as Qt counts it: the '\n' into the table, every tab and the
+//! '\n' between rows stand where Qt has U+FDD0 before a cell, and the '\n'
+//! out of it where Qt has U+FDD1 ([`RichText::plain_text`]). As in Qt, a
+//! table that starts or ends the document has an empty paragraph before or
+//! after it, as two tables have between them; those are not written back.
 
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -88,16 +93,43 @@ pub struct BlockFormat {
     pub background: Option<Arc<str>>,
     pub align: Option<HAlign>,
     /// The paragraph is a row of a table: its cells are set apart by tabs.
-    /// The rows of one table share their format.
-    pub table: Option<TableFormat>,
+    pub table: Option<TableRow>,
 }
 
-/// How the cells of a table stand apart (see [`super::Table`]).
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A row of a table. The rows of one table share its [`TableFormat`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableRow {
+    pub table: Arc<TableFormat>,
+    /// One per cell, as the row was read.
+    pub cells: Arc<[CellFormat]>,
+}
+
+impl TableRow {
+    /// The two rows are of one table.
+    pub fn same_table(&self, other: &TableRow) -> bool {
+        Arc::ptr_eq(&self.table, &other.table)
+    }
+}
+
+/// How a table and its cells stand apart (see [`super::Table`]).
+#[derive(Clone, Debug, PartialEq)]
 pub struct TableFormat {
     pub border: f32,
     pub spacing: f32,
     pub padding: f32,
+    /// The colour behind the table, as the text keeps it.
+    pub background: Option<Arc<str>>,
+    /// The width the table was given, as written.
+    pub width: Option<Arc<str>>,
+}
+
+/// How a cell of a table is set.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CellFormat {
+    /// The colour behind the cell, as the text keeps it.
+    pub background: Option<Arc<str>>,
+    /// A `th`.
+    pub header: bool,
 }
 
 impl Default for BlockFormat {
@@ -127,12 +159,46 @@ impl BlockFormat {
             marker: block.marker.clone(),
             background: block.background.clone(),
             align: block.align,
-            table: block.table.as_ref().map(|t| TableFormat {
-                border: t.border,
-                spacing: t.spacing,
-                padding: t.padding,
-            }),
+            table: None,
         }
+    }
+
+    /// The formats of the rows of `block`'s table, colours as `resolve`
+    /// keeps them; none for a block that is no table.
+    fn rows_of(block: &Block, resolve: &dyn Fn(&str) -> Option<Arc<str>>) -> Vec<Arc<Self>> {
+        let Some(t) = &block.table else {
+            return Vec::new();
+        };
+        let mut base = Self::of(block);
+        base.background = base.background.as_deref().and_then(resolve);
+        let table = Arc::new(TableFormat {
+            border: t.border,
+            spacing: t.spacing,
+            padding: t.padding,
+            background: t.background.as_deref().and_then(resolve),
+            width: t.width.clone(),
+        });
+        let rows = t.cells.iter().map(|c| c.row + 1).max().unwrap_or(1);
+        (0..rows)
+            .map(|row| {
+                let cells = t
+                    .cells
+                    .iter()
+                    .filter(|c| c.row == row)
+                    .map(|c| CellFormat {
+                        background: c.background.as_deref().and_then(resolve),
+                        header: c.header,
+                    })
+                    .collect();
+                Arc::new(Self {
+                    table: Some(TableRow {
+                        table: Arc::clone(&table),
+                        cells,
+                    }),
+                    ..base.clone()
+                })
+            })
+            .collect()
     }
 
     /// A numbered list item (its marker ends in a full stop).
@@ -234,17 +300,42 @@ impl RichText {
             f
         };
         let plain = Arc::new(CharFormat::default());
+        let mut after_table = false;
         for (bi, block) in blocks.iter().enumerate() {
-            let mut bf = BlockFormat::of(block);
-            bf.background = bf.background.as_deref().and_then(resolve);
-            let bf = Arc::new(bf);
-            if bi == 0 {
+            let rows = BlockFormat::rows_of(block, resolve);
+            let bf = rows.first().cloned().unwrap_or_else(|| {
+                let mut bf = BlockFormat::of(block);
+                bf.background = bf.background.as_deref().and_then(resolve);
+                Arc::new(bf)
+            });
+            let table = block.table.as_ref();
+            // Measured: Qt has an empty paragraph before a table that starts
+            // the document and between two tables.
+            if after_table && table.is_some() {
+                out.push(&PARAGRAPH.to_string(), &plain);
+                out.blocks.push(Arc::default());
+            }
+            if bi == 0 && table.is_none() {
                 out.blocks[0] = Arc::clone(&bf);
             } else {
                 out.push(&PARAGRAPH.to_string(), &plain);
                 out.blocks.push(Arc::clone(&bf));
             }
-            let breaks_paragraph = matches!(block.kind, BlockKind::Code | BlockKind::Table);
+            after_table = table.is_some();
+            let breaks_paragraph = block.kind == BlockKind::Code;
+            // Where the cells start and end: a '\n' in a cell is a line
+            // break, one between them starts the next row.
+            let in_cell =
+                |at: usize| table.and_then(|t| t.cells.iter().find(|c| c.range.contains(&at)));
+            let bounds: Vec<usize> = table
+                .map(|t| {
+                    t.cells
+                        .iter()
+                        .flat_map(|c| [c.range.start, c.range.end])
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut row = 0;
             let text = &block.text;
             let mut images = block.images.iter().peekable();
             let mut i = 0;
@@ -281,23 +372,49 @@ impl RichText {
                 if let Some(image) = images.peek() {
                     end = end.min(image.index.max(i + 1));
                 }
+                if let Some(b) = bounds.iter().copied().filter(|b| *b > i).min() {
+                    end = end.min(b);
+                }
                 while !text.is_char_boundary(end) {
                     end += 1;
                 }
-                let f = span.map_or_else(|| Arc::clone(&plain), |s| format_of(&s.style));
+                let cell = in_cell(i);
+                let f = match (span, cell.and_then(|c| c.background.as_ref())) {
+                    // Measured: Qt gives the text of a cell with a
+                    // background that background too.
+                    (s, Some(bg)) if s.is_none_or(|s| s.style.background.is_none()) => {
+                        format_of(&Inline {
+                            background: Some(Arc::clone(bg)),
+                            ..span.map(|s| s.style.clone()).unwrap_or_default()
+                        })
+                    }
+                    (Some(s), _) => format_of(&s.style),
+                    (None, _) => Arc::clone(&plain),
+                };
                 for (k, piece) in text[i..end].split('\n').enumerate() {
                     if k > 0 {
-                        if breaks_paragraph {
+                        if table.is_some() && cell.is_none() {
+                            row += 1;
+                            out.push(&PARAGRAPH.to_string(), &plain);
+                            out.blocks
+                                .push(rows.get(row).cloned().unwrap_or_else(|| Arc::clone(&bf)));
+                        } else if breaks_paragraph {
                             out.push(&PARAGRAPH.to_string(), &f);
                             out.blocks.push(Arc::clone(&bf));
                         } else {
                             out.push(&LINE_BREAK.to_string(), &f);
                         }
                     }
-                    out.push(piece, &f);
+                    let between_cells = table.is_some() && cell.is_none();
+                    out.push(piece, if between_cells { &plain } else { &f });
                 }
                 i = end;
             }
+        }
+        // Measured: and after one that ends it.
+        if after_table {
+            out.push(&PARAGRAPH.to_string(), &plain);
+            out.blocks.push(Arc::default());
         }
         out
     }
@@ -477,6 +594,13 @@ impl RichText {
         out.splice_rich(0..range.start, &RichText::empty_fragment());
         // The first paragraph is the one the range starts in.
         out.blocks[0] = Arc::clone(&self.blocks[self.block_index(range.start)]);
+        // Measured: a part of one cell is a paragraph of its own.
+        if out.blocks.len() == 1 && out.blocks[0].table.is_some() && !out.text.contains('\t') {
+            out.blocks[0] = Arc::new(BlockFormat {
+                table: None,
+                ..(*out.blocks[0]).clone()
+            });
+        }
         out
     }
 
@@ -636,8 +760,15 @@ impl RichText {
     fn write_body(&self, out: &mut String, fragment: bool) {
         let count = self.blocks.len();
         let mut list: Option<bool> = None;
-        for (index, block) in self.blocks.iter().enumerate() {
+        let mut written = false;
+        let mut index = 0;
+        while index < count {
+            let block = &self.blocks[index];
             let range = self.block_range(index);
+            if self.beside_table(index) {
+                index += 1;
+                continue;
+            }
             let in_list = block.kind == BlockKind::List;
             let ordered = block.ordered();
             if let Some(was) = list
@@ -646,9 +777,25 @@ impl RichText {
                 out.push_str(if was { "</ol>" } else { "</ul>" });
                 list = None;
             }
-            if index > 0 && !(in_list && list.is_some()) {
+            if written && !(in_list && list.is_some()) {
                 out.push('\n');
             }
+            written = true;
+            if let Some(row) = &block.table {
+                let end = (index..count)
+                    .find(|i| {
+                        self.blocks[*i]
+                            .table
+                            .as_ref()
+                            .is_none_or(|r| !r.same_table(row))
+                    })
+                    .unwrap_or(count);
+                self.write_table(out, &row.table, index..end);
+                index = end;
+                continue;
+            }
+            index += 1;
+            let index = index - 1;
             if in_list && list.is_none() {
                 let _ = write!(
                     out,
@@ -662,6 +809,7 @@ impl RichText {
                 out.push_str("<hr />");
                 continue;
             }
+            // Measured: a fragment's marks are in paragraphs, not in cells.
             let tag = match block.kind {
                 BlockKind::Heading(n) => format!("h{}", n.clamp(1, 6)),
                 BlockKind::Code => "pre".to_owned(),
@@ -709,6 +857,76 @@ impl RichText {
         if let Some(was) = list {
             out.push_str(if was { "</ol>" } else { "</ul>" });
         }
+    }
+
+    /// Paragraph `index` is the empty one Qt has beside a table at an end
+    /// of the document or between two tables, which it does not write.
+    fn beside_table(&self, index: usize) -> bool {
+        let block = &self.blocks[index];
+        if !self.block_range(index).is_empty() || **block != BlockFormat::default() {
+            return false;
+        }
+        let table = |i: Option<usize>| {
+            i.and_then(|i| self.blocks.get(i))
+                .is_some_and(|b| b.table.is_some())
+        };
+        let (before, after) = (table(index.checked_sub(1)), table(Some(index + 1)));
+        (before && after) || (index == 0 && after) || (index + 1 == self.blocks.len() && before)
+    }
+
+    /// The rows `rows` of a table as Qt writes them.
+    fn write_table(&self, out: &mut String, table: &TableFormat, rows: Range<usize>) {
+        let _ = write!(
+            out,
+            "<table border=\"{}\" style=\" margin-top:0px; margin-bottom:0px; \
+             margin-left:0px; margin-right:0px;\"",
+            num(table.border)
+        );
+        if let Some(width) = &table.width {
+            let _ = write!(out, " width=\"{}\"", escape_attr(width));
+        }
+        let _ = write!(
+            out,
+            " cellspacing=\"{}\" cellpadding=\"{}\"",
+            num(table.spacing),
+            num(table.padding)
+        );
+        if let Some(bg) = &table.background {
+            let _ = write!(out, " bgcolor=\"{bg}\"");
+        }
+        out.push('>');
+        for row in rows {
+            out.push_str("\n<tr>");
+            let range = self.block_range(row);
+            let cells = self.blocks[row].table.as_ref().map(|r| &r.cells);
+            let mut at = range.start;
+            for (c, text) in self.text[range].split('\t').enumerate() {
+                let cell = at..at + text.len();
+                at = cell.end + 1;
+                let format = cells.and_then(|cells| cells.get(c));
+                out.push_str("\n<td");
+                if let Some(bg) = format.and_then(|f| f.background.as_deref()) {
+                    let _ = write!(out, " bgcolor=\"{bg}\"");
+                }
+                out.push('>');
+                if !cell.is_empty() {
+                    out.push_str("\n<p");
+                    // Measured: a th is written as a td in the middle.
+                    if format.is_some_and(|f| f.header) {
+                        out.push_str(" align=\"center\"");
+                    }
+                    out.push_str(
+                        " style=\" margin-top:0px; margin-bottom:0px; margin-left:0px; \
+                         margin-right:0px; -qt-block-indent:0; text-indent:0px;\">",
+                    );
+                    self.write_inline(out, cell);
+                    out.push_str("</p>");
+                }
+                out.push_str("</td>");
+            }
+            out.push_str("</tr>");
+        }
+        out.push_str("</table>");
     }
 
     fn write_inline(&self, out: &mut String, range: Range<usize>) {
@@ -864,6 +1082,33 @@ impl RichText {
     /// by U+2029.
     pub fn plain_of(text: &str) -> String {
         text.replace(PARAGRAPH, "\u{2029}")
+    }
+
+    /// The text of `range` as `getText` and `selectedText` give it:
+    /// paragraphs apart by U+2029, and in a table U+FDD0 before each cell
+    /// and U+FDD1 after the table, as Qt has them.
+    pub fn plain_text(&self, range: Range<usize>) -> String {
+        let range = self.clamp(range);
+        let mut block = self.block_index(range.start);
+        let row = |i: usize| self.blocks.get(i).and_then(|b| b.table.as_ref());
+        let mut out = String::with_capacity(range.len());
+        for c in self.text[range].chars() {
+            out.push(match c {
+                PARAGRAPH => {
+                    let (here, next) = (row(block), row(block + 1));
+                    block += 1;
+                    match (here, next) {
+                        (_, Some(n)) if here.is_none_or(|h| !h.same_table(n)) => '\u{fdd0}',
+                        (Some(_), Some(_)) => '\u{fdd0}',
+                        (Some(_), None) => '\u{fdd1}',
+                        _ => '\u{2029}',
+                    }
+                }
+                '\t' if row(block).is_some() => '\u{fdd0}',
+                c => c,
+            });
+        }
+        out
     }
 
     /// This text as new paragraphs after the text it is spliced in at
@@ -1239,8 +1484,33 @@ mod tests {
     #[test]
     fn tables_are_read_as_rows() {
         let t = rich("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>");
-        assert_eq!(t.blocks().len(), 2);
-        assert!(t.text().starts_with('a'));
+        // An empty paragraph before the table and one after it.
+        assert_eq!(t.blocks().len(), 4);
+        assert_eq!(t.text(), "\na\tb\nc\n");
+        assert_eq!(
+            t.plain_text(0..t.text().len()),
+            "\u{fdd0}a\u{fdd0}b\u{fdd0}c\u{fdd1}"
+        );
+        let two = rich("<table><tr><td>a</td></tr></table><table><tr><td>b</td></tr></table>");
+        assert_eq!(two.text(), "\na\n\nb\n");
+        let broken = rich("x<table><tr><td>a<br>b</td><td>c</td></tr></table>y");
+        assert_eq!(broken.text(), "x\na\u{2028}b\tc\ny");
+    }
+
+    #[test]
+    fn tables_are_written_back_as_tables() {
+        let t = rich(
+            "x<table border='1' bgcolor='#ff0000'><tr><td bgcolor='#00ff00'>a</td><td></td></tr>\
+             <tr><td>b</td></tr></table>",
+        );
+        assert_eq!(
+            body(&t),
+            "<p>x</p>|<table border='1' style=' margin-top:0px; margin-bottom:0px; \
+             margin-left:0px; margin-right:0px;' cellspacing='2' cellpadding='0' \
+             bgcolor='#ff0000'>|<tr>|<td bgcolor='#00ff00'>|<p><span style=' \
+             background-color:#00ff00;'>a</span></p></td>|<td></td></tr>|<tr>|<td>|\
+             <p>b</p></td></tr></table>"
+        );
     }
 
     #[test]

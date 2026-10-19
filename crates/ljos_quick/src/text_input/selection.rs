@@ -129,7 +129,7 @@ fn current(engine: &Engine, obj: ObjectId, st: &SharedState) -> Shown {
         .get(r.doc.block_index(at))
         .and_then(|b| b.align);
     Shown {
-        text: RichText::plain_of(selected),
+        text: super::rich::plain_text(&s, s.model.selection_bytes()),
         font: font_with(&base_font, &f),
         color: color_of(&f).unwrap_or(base_color),
         alignment: to_align(block),

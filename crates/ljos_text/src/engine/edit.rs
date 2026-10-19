@@ -3,7 +3,9 @@
 
 use std::ops::Range;
 
-use ljos_render::kurbo::Rect;
+use std::sync::Arc;
+
+use ljos_render::kurbo::{Rect, Vec2};
 use parley::{BaseDirection, PositionedLayoutItem};
 
 use super::{
@@ -12,9 +14,10 @@ use super::{
 };
 use crate::direction::in_right_to_left_block;
 use crate::edit::{
-    CaretCluster, EditBlock, EditLayout, EditLine, EditParams, EditRun, EditTable, PlacedBlock,
+    CaretCluster, EditBlock, EditCell, EditGrid, EditLayout, EditLine, EditParams, EditRun,
+    EditTable, PlacedBlock,
 };
-use crate::layout::LineRun;
+use crate::rich::column_widths;
 use crate::style::{InlineObject, Ranged, StyleSpan, TextStyle, WrapMode};
 
 /// The characters of one line and, for every glyph run that has glyphs, the
@@ -203,234 +206,79 @@ fn moved(mut line: RawLine, mut places: LineCarets, at: usize) -> (RawLine, Line
     (line, places)
 }
 
-/// A cell of a row of a table: where its text was laid out on the row's
-/// line and where it goes.
-#[derive(Clone, Debug)]
-struct CellPlace {
-    /// Bytes of its text.
-    bytes: Range<usize>,
-    /// The tab after it, which sets it apart from the next.
-    tab: Option<Range<usize>>,
-    /// Left and right edge of its text as laid out on one line.
-    from: f64,
-    to: f64,
-    /// How far its text moves right.
+/// Where a line of a table's cell goes in its table.
+#[derive(Clone, Copy, Debug)]
+struct CellLine {
+    /// Which of the layout's tables.
+    grid: usize,
+    row: usize,
+    /// Its top, from the top of its cell's text.
+    top: f64,
+    /// How far its text moves right: where its cell's text starts.
     dx: f64,
-    /// Where the next cell's text starts, for the tab.
-    next: f64,
+    /// Where its own text ends when it is its cell's last line, which
+    /// holds the tab or the line break after the cell.
+    end: Option<usize>,
 }
 
-/// A table of an editing layout: its rows, which are lines
-/// `first_line..first_line + cells.len()`, and where everything goes.
+/// A cell of a [`Grid`]: its lines, its bytes and how high its text is.
+type GridCell = (Range<usize>, Range<usize>, f64);
+
+/// A cell laid out on its own: its lines and its widest line.
+type LaidCell = (Vec<(RawLine, LineCarets)>, f32);
+
+/// A table of an editing layout, laid out before its lines are placed.
 struct Grid {
-    first_line: usize,
-    cells: Vec<Vec<CellPlace>>,
-    /// The top of each row's text, from the table's top.
+    /// Its lines.
+    lines: Range<usize>,
+    cells: Vec<Vec<GridCell>>,
+    /// The left of each column's text and the top of each row's, from the
+    /// table's top left.
+    lefts: Vec<f64>,
     tops: Vec<f64>,
     width: f64,
     height: f64,
-    /// The frames, from the table's top left.
+    /// Its width when no cell wraps.
+    natural: f64,
+    /// The frames and the backgrounds, from the table's top left.
     rules: Vec<Rect>,
+    fills: Vec<(Rect, Arc<str>)>,
 }
 
-/// The tables among the lines, laid out as a rich `Text` lays out its own
-/// (`rich::doc`): a column is as wide as its widest text, rounded up, and a
-/// row as high as its line; cells stand apart by the spacing and by a frame
-/// of one pixel each when the table has a border. A table one of whose rows
-/// takes more than one line (a cell with a line break) is left as lines.
-fn grids(
-    text: &str,
-    raw: &[(RawLine, LineCarets)],
-    table_of: &dyn Fn(usize) -> Option<(usize, EditTable)>,
-) -> Vec<Grid> {
-    let mut out = Vec::new();
-    let mut index = 0;
-    while index < raw.len() {
-        let Some((mut paragraph, table)) = table_of(index) else {
-            index += 1;
-            continue;
-        };
-        let first_line = index;
-        let (mut end, mut one_line_each) = (index + 1, true);
-        while let Some((next, t)) = table_of(end).filter(|_| end < raw.len()) {
-            if next == paragraph {
-                one_line_each = false;
-            } else if t.row == 0 {
-                break;
-            }
-            paragraph = next;
-            end += 1;
-        }
-        index = end;
-        let rows = &raw[first_line..end];
-        if !one_line_each {
-            continue;
-        }
-        let mut cells: Vec<Vec<CellPlace>> = rows
-            .iter()
-            .map(|(line, places)| cells_of(text, line, places))
-            .collect();
-        let columns = cells.iter().map(Vec::len).max().unwrap_or(0);
-        let mut widths = vec![0.0_f64; columns];
-        for row in &cells {
-            for (c, cell) in row.iter().enumerate() {
-                widths[c] = widths[c].max((cell.to - cell.from).ceil());
-            }
-        }
-        let heights: Vec<f64> = rows.iter().map(|(l, _)| l.vertical.natural()).collect();
-        let (border, spacing, padding) = (table.border, table.spacing, table.padding);
-        let frame = if border > 0.0 { 1.0 } else { 0.0 };
-        let around = 2.0 * (padding + frame);
-        let edges = |sizes: &[f64]| {
-            let mut at = border + spacing;
-            let mut out = Vec::with_capacity(sizes.len());
-            for size in sizes {
-                out.push(at);
-                at += size + around + spacing;
-            }
-            (out, at + border)
-        };
-        let (lefts, width) = edges(&widths);
-        let (tops, height) = edges(&heights);
-        let mut rules = Vec::new();
-        for (r, row) in cells.iter_mut().enumerate() {
-            for c in 0..columns {
-                if frame > 0.0 {
-                    let (x0, y0) = (lefts[c], tops[r]);
-                    let (x1, y1) = (x0 + widths[c] + around, y0 + heights[r] + around);
-                    rules.extend([
-                        Rect::new(x0, y0, x1, y0 + 1.0),
-                        Rect::new(x0, y1 - 1.0, x1, y1),
-                        Rect::new(x0, y0, x0 + 1.0, y1),
-                        Rect::new(x1 - 1.0, y0, x1, y1),
-                    ]);
-                }
-                let next = lefts.get(c + 1).map(|l| l + frame + padding);
-                if let Some(cell) = row.get_mut(c) {
-                    cell.dx = lefts[c] + frame + padding - cell.from;
-                    cell.next = next.unwrap_or(cell.to + cell.dx);
-                }
-            }
-        }
-        if border > 0.0 {
-            rules.extend([
-                Rect::new(0.0, 0.0, width, border),
-                Rect::new(0.0, height - border, width, height),
-                Rect::new(0.0, 0.0, border, height),
-                Rect::new(width - border, 0.0, width, height),
-            ]);
-        }
-        out.push(Grid {
-            first_line,
-            cells,
-            tops: tops.iter().map(|t| t + frame + padding).collect(),
-            width,
-            height,
-            rules,
-        });
+/// A line moved right by `dx` into its cell: its characters, its glyphs
+/// and the lines under and over them.
+fn shift_line(line: &mut EditLine, dx: f64) {
+    line.left = dx;
+    if dx == 0.0 {
+        return;
     }
-    out
-}
-
-/// The cells of a row laid out on one line: its text between tabs.
-fn cells_of(text: &str, line: &RawLine, places: &LineCarets) -> Vec<CellPlace> {
-    let mut out = Vec::new();
-    let (mut start, mut from) = (line.range.start, 0.0_f64);
-    let mut to = from;
-    for c in &places.clusters {
-        if text.get(c.range.clone()) == Some("\t") {
-            out.push(CellPlace {
-                bytes: start..c.range.start,
-                tab: Some(c.range.clone()),
-                from,
-                to: c.x0.max(from),
-                dx: 0.0,
-                next: 0.0,
-            });
-            (start, from) = (c.range.end, c.x1);
-            to = from;
-        } else {
-            to = to.max(c.x1);
-        }
-    }
-    out.push(CellPlace {
-        bytes: start..line.range.end,
-        tab: None,
-        from,
-        to,
-        dx: 0.0,
-        next: 0.0,
-    });
-    out
-}
-
-/// Moves the text of every cell of a row's line to its column: its
-/// characters, its glyphs and the lines under and over them. A tab between
-/// two cells reaches from the end of the one's text to the start of the
-/// other's, and draws nothing.
-fn place_cells(line: &mut EditLine, cells: &[CellPlace]) {
-    let cell_of = |byte: usize| cells.iter().position(|c| c.bytes.contains(&byte));
+    let v = Vec2::new(dx, 0.0);
     for c in &mut line.clusters {
-        if let Some(cell) = cells
-            .iter()
-            .find(|cell| cell.tab.as_ref() == Some(&c.range))
-        {
-            (c.x0, c.x1) = (cell.to + cell.dx, cell.next);
-        } else if let Some(cell) = cell_of(c.range.start).map(|i| &cells[i]) {
-            c.x0 += cell.dx;
-            c.x1 += cell.dx;
-        }
+        c.x0 += dx;
+        c.x1 += dx;
     }
-    let mut runs = Vec::with_capacity(line.runs.len());
-    for run in std::mem::take(&mut line.runs) {
-        let mut at = 0;
-        while at < run.glyph_bytes.len() {
-            let cell = cell_of(run.glyph_bytes[at]);
-            let end = (at..run.glyph_bytes.len())
-                .find(|&g| cell_of(run.glyph_bytes[g]) != cell)
-                .unwrap_or(run.glyph_bytes.len());
-            if let Some(cell) = cell.map(|i| &cells[i]) {
-                runs.push(moved_run(&run, at..end, cell));
-            }
-            at = end;
+    for run in &mut line.runs {
+        let mut glyphs = (*run.run.glyphs).clone();
+        for g in &mut glyphs.glyphs {
+            g.x += dx as f32;
         }
+        glyphs.bounds = glyphs.bounds + v;
+        run.run.glyphs = Arc::new(glyphs);
+        let d = &mut run.run.decorations;
+        d.underline = d.underline.map(|r| r + v);
+        d.strike_through = d.strike_through.map(|r| r + v);
+        run.run.overline = run.run.overline + v;
     }
-    line.runs = runs;
 }
 
-/// Glyphs `glyphs` of a run, moved with the cell they are in, and the
-/// lines under and over the run where they cross the cell.
-fn moved_run(run: &EditRun, glyphs: Range<usize>, cell: &CellPlace) -> EditRun {
-    let dx = cell.dx;
-    let mut glyph_run = (*run.run.glyphs).clone();
-    glyph_run.glyphs = glyph_run.glyphs[glyphs.clone()]
-        .iter()
-        .map(|g| ljos_render::PositionedGlyph {
-            x: g.x + dx as f32,
-            ..*g
-        })
-        .collect();
-    glyph_run.bounds = glyph_run.bounds + ljos_render::kurbo::Vec2::new(dx, 0.0);
-    let within = |r: Rect| {
-        Rect::new(
-            r.x0.max(cell.from) + dx,
-            r.y0,
-            r.x1.min(cell.to).max(r.x0.max(cell.from)) + dx,
-            r.y1,
-        )
-    };
-    let mut decorations = run.run.decorations;
-    decorations.underline = decorations.underline.map(within);
-    decorations.strike_through = decorations.strike_through.map(within);
-    EditRun {
-        run: LineRun {
-            glyphs: std::sync::Arc::new(glyph_run),
-            decorations,
-            overline: within(run.run.overline),
-            tag: run.run.tag,
-        },
-        glyph_bytes: run.glyph_bytes[glyphs].to_vec(),
-    }
+/// The frame of `width` inside a box.
+fn frame_of(x0: f64, y0: f64, x1: f64, y1: f64, width: f64) -> [Rect; 4] {
+    [
+        Rect::new(x0, y0, x1, y0 + width),
+        Rect::new(x0, y1 - width, x1, y1),
+        Rect::new(x0, y0, x0 + width, y1),
+        Rect::new(x1 - width, y0, x1, y1),
+    ]
 }
 
 impl TextEngine {
@@ -491,6 +339,244 @@ impl TextEngine {
         };
         self.paragraphs.insert(key, entry, frame);
         (lines, natural)
+    }
+
+    /// The lines of one cell of a table, `bytes` of `text`, and its width
+    /// when nothing wraps.
+    #[allow(clippy::too_many_arguments)]
+    fn cell(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        bytes: Range<usize>,
+        class: BreakClass,
+        max_advance: Option<f32>,
+        fallback: Vertical,
+    ) -> (Vec<(RawLine, LineCarets)>, f32) {
+        if bytes.is_empty() {
+            let mut line = RawLine::empty(fallback);
+            line.range = bytes.start..bytes.start;
+            let places = LineCarets {
+                clusters: Vec::new(),
+                glyph_bytes: Vec::new(),
+            };
+            return (vec![(line, places)], 0.0);
+        }
+        let (spans, _) = within(ranged, bytes.clone());
+        // An image stands before the position after it, which may be the
+        // cell's end.
+        let objects: Vec<InlineObject> = ranged
+            .objects
+            .iter()
+            .filter(|o| o.index > bytes.start && o.index <= bytes.end)
+            .map(|o| InlineObject {
+                index: o.index - bytes.start,
+                ..*o
+            })
+            .collect();
+        let part = Ranged {
+            spans: &spans,
+            objects: &objects,
+            strut: ranged.strut,
+        };
+        let (lines, natural) = self.paragraph(
+            &text[bytes.clone()],
+            style,
+            &part,
+            class,
+            max_advance,
+            fallback,
+        );
+        let lines = lines
+            .into_iter()
+            .map(|(line, places)| moved(line, places, bytes.start))
+            .collect();
+        (lines, natural)
+    }
+
+    /// A table: the rows `rows` of `text` (each a paragraph, its line break
+    /// included, as `tables` say), laid out as a rich `Text` lays out its
+    /// own (`rich::doc`). Every cell is laid out on its own; a column is as
+    /// wide as its widest text, rounded up, or given less `room` than that
+    /// the columns share it out and their cells wrap; a row is as high as
+    /// its highest cell. Cells stand apart by the spacing, inside frames as
+    /// wide as the border. Lines come in the order of the text, cell by
+    /// cell.
+    #[allow(clippy::too_many_arguments)]
+    fn lay_table(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        (class, room): (BreakClass, Option<f64>),
+        fallback: Vertical,
+        rows: &[Range<usize>],
+        tables: &[&EditTable],
+    ) -> (Vec<(RawLine, LineCarets, CellLine)>, Grid) {
+        let t = tables[0];
+        let (border, spacing, padding) = (t.border, t.spacing, t.padding);
+        let frame = border;
+        let around = 2.0 * (padding + frame);
+        let cells: Vec<Vec<Range<usize>>> = rows
+            .iter()
+            .map(|cut| {
+                let end = if text[cut.clone()].ends_with('\n') {
+                    cut.end - 1
+                } else {
+                    cut.end
+                };
+                let mut out = Vec::new();
+                let mut start = cut.start;
+                for (i, _) in text[cut.start..end].match_indices('\t') {
+                    out.push(start..cut.start + i);
+                    start = cut.start + i + 1;
+                }
+                out.push(start..end);
+                out
+            })
+            .collect();
+        let columns = cells.iter().map(Vec::len).max().unwrap_or(0);
+        let mut laid: Vec<Vec<LaidCell>> = Vec::with_capacity(cells.len());
+        for row in &cells {
+            let mut out = Vec::with_capacity(row.len());
+            for bytes in row {
+                out.push(self.cell(text, style, ranged, bytes.clone(), class, None, fallback));
+            }
+            laid.push(out);
+        }
+        let mut maxs = vec![0.0_f64; columns];
+        for row in &laid {
+            for (c, (_, natural)) in row.iter().enumerate() {
+                maxs[c] = maxs[c].max(f64::from(*natural).ceil());
+            }
+        }
+        let chrome = 2.0 * border + spacing * (columns + 1) as f64 + around * columns as f64;
+        let natural = maxs.iter().sum::<f64>() + chrome;
+        let room = room.map(|w| w - chrome);
+        let widths = if room.is_some_and(|room| maxs.iter().sum::<f64>() > room) {
+            let words = BreakClass::of(WrapMode::WordWrap);
+            let mut mins = vec![0.0_f64; columns];
+            for row in &cells {
+                for (c, bytes) in row.iter().enumerate() {
+                    let (lines, _) = self.cell(
+                        text,
+                        style,
+                        ranged,
+                        bytes.clone(),
+                        words,
+                        Some(1.0),
+                        fallback,
+                    );
+                    let widest = lines
+                        .iter()
+                        .map(|(l, _)| f64::from(l.width))
+                        .fold(0.0, f64::max);
+                    mins[c] = mins[c].max(widest.ceil());
+                }
+            }
+            let widths = column_widths(&mins, &maxs, room);
+            for (r, row) in cells.iter().enumerate() {
+                for (c, bytes) in row.iter().enumerate() {
+                    if f64::from(laid[r][c].1) > widths[c] {
+                        let max = Some(widths[c] as f32);
+                        laid[r][c] =
+                            self.cell(text, style, ranged, bytes.clone(), class, max, fallback);
+                    }
+                }
+            }
+            widths
+        } else {
+            maxs
+        };
+        let high = |lines: &[(RawLine, LineCarets)]| {
+            lines.iter().map(|(l, _)| l.vertical.natural()).sum::<f64>()
+        };
+        let heights: Vec<f64> = laid
+            .iter()
+            .map(|row| row.iter().map(|(l, _)| high(l)).fold(0.0, f64::max))
+            .collect();
+        // Left edges of the columns and top edges of the rows (of the
+        // cells' frames), and where the last one ends.
+        let edges = |sizes: &[f64]| {
+            let mut at = border + spacing;
+            let mut out = Vec::with_capacity(sizes.len());
+            for size in sizes {
+                out.push(at);
+                at += size + around + spacing;
+            }
+            (out, at + border)
+        };
+        let (lefts, width) = edges(&widths);
+        let (tops, height) = edges(&heights);
+        let mut rules = Vec::new();
+        let mut fills = Vec::new();
+        if let Some(color) = &t.background {
+            fills.push((Rect::new(0.0, 0.0, width, height), Arc::clone(color)));
+        }
+        for (r, row) in cells.iter().enumerate() {
+            for c in 0..row.len() {
+                let (x0, y0) = (lefts[c], tops[r]);
+                let (x1, y1) = (x0 + widths[c] + around, y0 + heights[r] + around);
+                if frame > 0.0 {
+                    rules.extend(frame_of(x0, y0, x1, y1, frame));
+                }
+                if let Some(Some(color)) = tables.get(r).and_then(|t| t.cells.get(c)) {
+                    // Measured: inside the padding, which keeps the
+                    // table's colour.
+                    let inset = frame + padding;
+                    let rect = Rect::new(x0 + inset, y0 + inset, x1 - inset, y1 - inset);
+                    fills.push((rect, Arc::clone(color)));
+                }
+            }
+        }
+        if border > 0.0 {
+            rules.extend(frame_of(0.0, 0.0, width, height, border));
+        }
+        let mut out = Vec::new();
+        let mut grid_cells = Vec::with_capacity(laid.len());
+        for (r, row) in laid.into_iter().enumerate() {
+            let mut row_cells = Vec::with_capacity(row.len());
+            for (c, (lines, _)) in row.into_iter().enumerate() {
+                let bytes = cells[r][c].clone();
+                let first = out.len();
+                let count = lines.len();
+                let mut top = 0.0;
+                for (k, (mut line, places)) in lines.into_iter().enumerate() {
+                    let height = line.vertical.natural();
+                    let mut end = None;
+                    if k + 1 == count {
+                        if text[bytes.end..].starts_with(['\t', '\n']) {
+                            line.range.end = bytes.end + 1;
+                        }
+                        end = Some(bytes.end);
+                    }
+                    let place = CellLine {
+                        grid: 0,
+                        row: r,
+                        top,
+                        dx: lefts[c] + frame + padding,
+                        end,
+                    };
+                    out.push((line, places, place));
+                    top += height;
+                }
+                row_cells.push((first..out.len(), bytes, top));
+            }
+            grid_cells.push(row_cells);
+        }
+        let grid = Grid {
+            lines: 0..out.len(),
+            cells: grid_cells,
+            lefts: lefts.iter().map(|l| l + frame + padding).collect(),
+            tops: tops.iter().map(|t| t + frame + padding).collect(),
+            width,
+            height,
+            natural,
+            rules,
+            fills,
+        };
+        (out, grid)
     }
 
     /// Lay out `text` for editing. Not cached as a whole (the item keeps the
@@ -586,7 +672,13 @@ impl TextEngine {
             None if text.is_empty() => None,
             None => paragraphs(text),
         };
-        let (mut raw, mut natural, rtl): (Vec<(RawLine, LineCarets)>, f64, bool) =
+        // Each raw line of a table's cell with where it goes, and the
+        // tables.
+        let mut cell_of: Vec<Option<CellLine>> = Vec::new();
+        let mut grids: Vec<Grid> = Vec::new();
+        // Which paragraphs are empty, for the ones beside a table.
+        let mut empty: Vec<bool> = Vec::new();
+        let (mut raw, natural, rtl): (Vec<(RawLine, LineCarets)>, f64, bool) =
             if text.is_empty() && blocks.is_none() {
                 (Vec::new(), 0.0, false)
             } else if let Some(cuts) = cuts {
@@ -595,8 +687,54 @@ impl TextEngine {
                 let mut raw = Vec::new();
                 let mut natural = 0.0_f64;
                 let count = cuts.len();
-                for (i, cut) in cuts.into_iter().enumerate() {
+                empty = cuts
+                    .iter()
+                    .map(|c| text[c.clone()].trim_end_matches('\n').is_empty())
+                    .collect();
+                let mut i = 0;
+                while i < count {
+                    let cut = cuts[i].clone();
                     let block = block_of(i);
+                    if let Some(table) = block.table.as_ref().filter(|_| blocks.is_some()) {
+                        // The rows of the table: up to one that starts the
+                        // next.
+                        let mut rows = vec![table];
+                        while let Some(t) = (i + rows.len() < count)
+                            .then(|| block_of(i + rows.len()).table.as_ref())
+                            .flatten()
+                            .filter(|t| t.row != 0)
+                        {
+                            rows.push(t);
+                        }
+                        let room = limit_of(block).map(|w| w.max(1.0));
+                        let (lines, mut grid) = self.lay_table(
+                            text,
+                            style,
+                            ranged,
+                            (class, room),
+                            fallback,
+                            &cuts[i..i + rows.len()],
+                            &rows,
+                        );
+                        natural = natural.max(grid.natural + inset(block));
+                        let first = raw.len();
+                        grid.lines = first..first + lines.len();
+                        for (lines, _, _) in grid.cells.iter_mut().flatten() {
+                            *lines = lines.start + first..lines.end + first;
+                        }
+                        cell_of.resize(first, None);
+                        for (line, places, mut place) in lines {
+                            place.grid = grids.len();
+                            owner.push(i + place.row);
+                            cell_of.push(Some(place));
+                            raw.push((line, places));
+                        }
+                        grids.push(grid);
+                        i += rows.len();
+                        continue;
+                    }
+                    i += 1;
+                    let i = i - 1;
                     let (at, len) = (cut.start, cut.len());
                     if len == 0 {
                         // An empty last paragraph: the cursor's line.
@@ -618,16 +756,11 @@ impl TextEngine {
                         objects: &objects,
                         strut: ranged.strut,
                     };
-                    // The cells of a table are as wide as their text.
-                    let max_advance = limit_of(block)
-                        .filter(|_| block.table.is_none())
-                        .map(|w| w as f32);
+                    let max_advance = limit_of(block).map(|w| w as f32);
                     let (mut lines, width) =
                         self.paragraph(&text[cut], style, &part, class, max_advance, fallback);
-                    if block.table.is_none() {
-                        let inset = if blocks.is_some() { inset(block) } else { 0.0 };
-                        natural = natural.max(f64::from(width) + inset);
-                    }
+                    let inset = if blocks.is_some() { inset(block) } else { 0.0 };
+                    natural = natural.max(f64::from(width) + inset);
                     // The empty line after a paragraph's break is the next
                     // paragraph's first.
                     if i + 1 < count && lines.last().is_some_and(|(l, _)| l.range.start == len) {
@@ -677,28 +810,34 @@ impl TextEngine {
         }
 
         let count = raw.len();
-        let table_of = |index: usize| {
-            let i = *blocks.and(owner.get(index))?;
-            block_of(i).table.map(|t| (i, t))
-        };
-        let grids = grids(text, &raw, &table_of);
-        let mut row_of_line: Vec<Option<(&Grid, usize)>> = vec![None; count];
-        for grid in &grids {
-            for row in 0..grid.cells.len() {
-                row_of_line[grid.first_line + row] = Some((grid, row));
+        cell_of.resize(count, None);
+        let paragraphs = empty.len();
+        let is_table = |i: usize| i < paragraphs && block_of(i).table.is_some();
+        // Measured: the empty paragraph Qt has before a table that starts
+        // the document is at its top left and the one after a table that
+        // ends it, or between two, at its bottom right; neither takes room.
+        let beside = |i: usize| -> Option<bool> {
+            if blocks.is_none() || is_table(i) || !empty.get(i).copied().unwrap_or(false) {
+                return None;
             }
-            let inset = owner
-                .get(grid.first_line)
-                .map_or(0.0, |i| inset(block_of(*i)));
-            natural = natural.max(grid.width + inset);
-        }
+            let after = i > 0 && is_table(i - 1) && (i + 1 >= paragraphs || is_table(i + 1));
+            if after {
+                Some(true)
+            } else {
+                (i == 0 && is_table(i + 1)).then_some(false)
+            }
+        };
         let mut rules = Vec::new();
+        let mut fills = Vec::new();
         let mut lines = Vec::with_capacity(count);
         let mut placed = Vec::new();
         let (mut top, mut content_width, mut below) = (0.0_f64, 0.0_f64, 0.0_f64);
         let mut table_top = 0.0_f64;
+        let mut grid_tops = vec![0.0_f64; grids.len()];
+        // The bottom and the width of the table last placed.
+        let mut last_table: Option<(f64, f64)> = None;
         for (index, (line, places)) in raw.into_iter().enumerate() {
-            let row = row_of_line[index];
+            let cell = cell_of[index];
             let (block, inset) = match blocks {
                 Some(_) => {
                     let i = owner.get(index).copied().unwrap_or(0);
@@ -707,7 +846,7 @@ impl TextEngine {
                         // Between two paragraphs the larger margin counts,
                         // as a rich Text has it; between two rows of a
                         // table none does.
-                        if index > 0 && row.is_none_or(|(_, r)| r == 0) {
+                        if index > 0 && cell.is_none_or(|c| c.row == 0) {
                             top += below.max(block.margin_top);
                         }
                         below = block.margin_bottom;
@@ -729,24 +868,37 @@ impl TextEngine {
                 None => (&plain, 0.0),
             };
             let height = line.vertical.natural();
-            let width = match row {
-                Some((grid, _)) => grid.width,
-                None => reported_width(line.width, limit_of(block)),
+            let edge = owner.get(index).and_then(|i| beside(*i));
+            // Its top, its width, where its cursor stands without
+            // characters and whether the next line is below it.
+            let (line_top, width, left, advances) = match (cell, edge) {
+                (Some(c), _) => {
+                    let grid = &grids[c.grid];
+                    if index == grid.lines.start {
+                        table_top = top;
+                        grid_tops[c.grid] = top;
+                        let down = Vec2::new(0.0, top);
+                        rules.extend(grid.rules.iter().map(|r| (index, *r + down)));
+                        fills.extend(
+                            grid.fills
+                                .iter()
+                                .map(|(r, color)| (index, *r + down, Arc::clone(color))),
+                        );
+                    }
+                    (
+                        table_top + grid.tops[c.row] + c.top,
+                        grid.width,
+                        c.dx,
+                        false,
+                    )
+                }
+                (None, Some(true)) if let Some((bottom, right)) = last_table => {
+                    (bottom - height, right, right, false)
+                }
+                (None, Some(_)) => (top, 0.0, 0.0, false),
+                (None, None) => (top, reported_width(line.width, limit_of(block)), 0.0, true),
             };
             content_width = content_width.max(width + inset);
-            let line_top =
-                match row {
-                    Some((grid, r)) => {
-                        if r == 0 {
-                            table_top = top;
-                            rules.extend(grid.rules.iter().map(|rule| {
-                                (index, *rule + ljos_render::kurbo::Vec2::new(0.0, top))
-                            }));
-                        }
-                        table_top + grid.tops[r]
-                    }
-                    None => top,
-                };
             let range = line.range.clone();
             let own = text.get(range.clone()).unwrap_or("");
             let trimmed = if line.hard_break {
@@ -756,10 +908,13 @@ impl TextEngine {
             } else {
                 own
             };
+            let end = cell
+                .and_then(|c| c.end)
+                .unwrap_or(range.start + trimmed.len());
             let finished = line.finish(line_top, width);
             let mut glyph_bytes = places.glyph_bytes.into_iter();
             let mut edit_line = EditLine {
-                end: range.start + trimmed.len(),
+                end,
                 range,
                 top: line_top,
                 height,
@@ -774,18 +929,52 @@ impl TextEngine {
                         run,
                     })
                     .collect(),
+                left,
             };
-            match row {
-                Some((grid, r)) => {
-                    place_cells(&mut edit_line, &grid.cells[r]);
-                    if r + 1 == grid.cells.len() {
-                        top = table_top + grid.height;
-                    }
+            if let Some(c) = cell {
+                shift_line(&mut edit_line, c.dx);
+                let grid = &grids[c.grid];
+                if index + 1 == grid.lines.end {
+                    top = table_top + grid.height;
+                    last_table = Some((top, grid.width));
                 }
-                None => top += height,
+            } else if advances {
+                top += height;
             }
             lines.push(edit_line);
         }
+        let tables = grids
+            .iter()
+            .zip(grid_tops)
+            .map(|(g, top)| EditGrid {
+                lines: g.lines.clone(),
+                top,
+                bottom: top + g.height,
+                right: g.width,
+                rows: g.tops.iter().map(|t| top + t).collect(),
+                columns: g.lefts.clone(),
+                cells: g
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .map(|(r, row)| {
+                        row.iter()
+                            .map(|(lines, bytes, high)| EditCell {
+                                lines: lines.clone(),
+                                bytes: bytes.clone(),
+                                bottom: top + g.tops[r] + high,
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                after: g
+                    .lines
+                    .end
+                    .checked_sub(1)
+                    .and_then(|l| lines.get(l))
+                    .map_or(text.len(), |l| l.range.end),
+            })
+            .collect();
         EditLayout {
             baseline: lines.first().map_or(0.0, |l| l.baseline),
             lines,
@@ -796,6 +985,8 @@ impl TextEngine {
             len: text.len(),
             blocks: placed,
             rules,
+            fills,
+            tables,
         }
     }
 }
@@ -997,7 +1188,7 @@ mod tests {
                 row,
                 border: 1.0,
                 spacing: 2.0,
-                padding: 0.0,
+                ..EditTable::default()
             }),
             ..EditBlock::default()
         };
@@ -1018,7 +1209,8 @@ mod tests {
             &EditParams::default(),
             &[EditBlock::default(), row(0), row(1), EditBlock::default()],
         );
-        assert_eq!(l.lines.len(), 4);
+        // A line for every cell.
+        assert_eq!(l.lines.len(), 6);
         // Border, spacing and the cell's frame before the first column;
         // its width (the widest text, rounded up), the frame, the spacing
         // and the next frame before the second.
@@ -1032,34 +1224,86 @@ mod tests {
         // A row is as high as its line, and its frames go round it.
         let (line, top) = (16.0, l.lines[1].top);
         assert_eq!(top, line + first);
-        assert_eq!(l.lines[2].top, top + line + 1.0 + 2.0 + 1.0);
+        assert_eq!(l.lines[2].top, top);
+        assert_eq!(l.lines[3].top, top + line + 1.0 + 2.0 + 1.0);
         let height = 1.0 + 2.0 * (2.0 + line + 2.0) + 2.0 + 1.0;
-        assert_eq!(l.lines[3].top, line + height);
+        assert_eq!(l.lines[5].top, line + height);
+        assert_eq!(l.content_height, line + height + line);
         let table_width = second + e + 1.0 + 2.0 + 1.0;
         assert_eq!(l.natural_width, table_width);
         assert_eq!(l.lines[1].width, table_width);
         // Four frames of cells and the table's.
         assert_eq!(l.rules.len(), 5 * 4);
         assert!(l.rules.iter().all(|(line, _)| *line == 1));
-        // A click between two cells is at the end of the one or the start
-        // of the other.
+        // A cell's line holds the tab after it; its text ends before.
+        assert_eq!((l.lines[1].range.clone(), l.lines[1].end), (2..5, 4));
+        // A click is in the column whose text starts last before it.
         assert_eq!(l.hit(first + a_b + 1.0, top + 5.0, false), 4);
-        assert_eq!(l.hit(second - 1.0, top + 5.0, false), 5);
-        // The tab draws nothing, and every glyph moved with its cell.
-        let glyphs: Vec<(usize, f32)> = l.lines[1]
-            .runs
-            .iter()
-            .flat_map(|r| {
-                r.glyph_bytes
-                    .iter()
-                    .copied()
-                    .zip(r.run.glyphs.glyphs.iter().map(|g| g.x))
-            })
-            .collect();
+        assert_eq!(l.hit(second - 1.0, top + 5.0, false), 4);
+        assert_eq!(l.hit(second + 1.0, top + 5.0, false), 5);
+        // Above a cell's text is its start, below it its end, right of the
+        // table after it.
+        assert_eq!(l.hit(first + 1.0, top - 1.0, false), 2);
+        assert_eq!(l.hit(first + 1.0, top + line + 1.0, false), 4);
+        assert_eq!(l.hit(table_width + 1.0, top + 5.0, false), 14);
+        // Up and down keep to the column.
+        assert_eq!(l.vertical(2, true), Some(4));
+        assert_eq!(l.vertical(4, true), Some(5));
+        assert_eq!(l.vertical(3, false), Some(1));
+        assert_eq!(l.vertical(0, true), Some(1));
+        assert_eq!(l.vertical(5, false), Some(4));
+        // Every glyph moved with its cell.
+        let glyphs = |line: &EditLine| -> Vec<(usize, f32)> {
+            line.runs
+                .iter()
+                .flat_map(|r| {
+                    r.glyph_bytes
+                        .iter()
+                        .copied()
+                        .zip(r.run.glyphs.glyphs.iter().map(|g| g.x))
+                })
+                .collect()
+        };
         assert_eq!(
-            glyphs.iter().map(|(b, _)| *b).collect::<Vec<_>>(),
-            vec![2, 3, 5]
+            glyphs(&l.lines[1])
+                .iter()
+                .map(|(b, _)| *b)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
         );
-        assert_eq!(f64::from(glyphs[2].1), second);
+        assert_eq!(glyphs(&l.lines[2]), vec![(5, second as f32)]);
+    }
+
+    #[test]
+    fn a_table_given_too_little_room_wraps_its_cells() {
+        let row = EditBlock {
+            table: Some(EditTable {
+                border: 1.0,
+                ..EditTable::default()
+            }),
+            ..EditBlock::default()
+        };
+        let text = "\nab ab ab\tc\n";
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let blocks = [EditBlock::default(), row, EditBlock::default()];
+        let wide =
+            engine.edit_layout_blocks(text, &style, &Ranged::NONE, &EditParams::default(), &blocks);
+        let params = EditParams {
+            width: Some(wide.natural_width - 10.0),
+            wrap: WrapMode::WordWrap,
+        };
+        let narrow = engine.edit_layout_blocks(text, &style, &Ranged::NONE, &params, &blocks);
+        assert_eq!(narrow.natural_width, wide.natural_width);
+        assert_eq!(narrow.content_width, wide.natural_width - 10.0);
+        // The first cell takes two lines, the second stays one.
+        assert_eq!(narrow.lines.len(), wide.lines.len() + 1);
+        assert!(narrow.content_height > wide.content_height);
+        // The empty paragraphs beside the table take no room: before it at
+        // its top left, after it at its bottom right.
+        let last = narrow.lines.last().expect("a line");
+        assert_eq!(narrow.lines[0].top, 0.0);
+        assert_eq!(last.top + last.height, narrow.content_height);
+        assert_eq!(narrow.caret(text.len()).x, narrow.content_width);
     }
 }

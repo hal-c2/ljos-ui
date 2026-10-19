@@ -47,10 +47,12 @@ pub use doc::{
     RichDoc, View, default_image_size,
 };
 pub use editing::{
-    BlockFormat, CharFormat, DocFont, ImageFormat, LINE_BREAK, OBJECT, PARAGRAPH, RichText,
-    TableFormat,
+    BlockFormat, CellFormat, CharFormat, DocFont, ImageFormat, LINE_BREAK, OBJECT, PARAGRAPH,
+    RichText, TableFormat, TableRow,
 };
 pub use select::SelectionScope;
+
+pub(crate) use doc::column_widths;
 
 use crate::style::{BoxAlign, StyleSpan, TextStyle};
 
