@@ -2585,11 +2585,23 @@ impl Engine {
 
     /// Where the property's current value came from.
     pub fn provenance(&self, obj: ObjectId, prop: PropIndex) -> Option<Provenance> {
-        let (obj, prop) = self.redirect(obj, prop);
-        let (node, assigned) = {
+        let look = |obj: ObjectId, prop: PropIndex, alias: bool| {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj)?;
-            (h.node(prop), h.is_assigned(prop))
+            // Nearly no property asked is an alias: the look that says so
+            // is the one that answers.
+            if alias || h.meta.property(prop).is_some_and(|p| !p.is_alias()) {
+                Some(Some((h.node(prop), h.is_assigned(prop))))
+            } else {
+                Some(None)
+            }
+        };
+        let (node, assigned) = match look(obj, prop, false)? {
+            Some(found) => found,
+            None => {
+                let (obj, prop) = self.redirect(obj, prop);
+                look(obj, prop, true)??
+            }
         };
         match node {
             Some(n) => self.inner.graph.provenance(n),
