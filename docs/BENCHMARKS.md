@@ -3557,3 +3557,75 @@ tell the builds apart. The CPU work is compared below by instructions counted un
   2.3× Qt's.
 - About 9 % of the main thread is memcpy in the EGL/gallium present. Those are row copies, which
   are inherent to software GL.
+
+### B16: listview's delegates, made and reused (2026-10-19)
+
+The same two measures as B15, on the same machine, off-screen in the cua sandbox on the GPU,
+with `qml6` 6.11.2 and the Basic style. The start is B15's end (7da8bdb4). The Ljós binary is
+bd697c5d as it was before it was rebased onto the calqlatr commits above. The a11y commit
+after it does no work with the screen reader off. qml6 was run again alongside it and came out
+within 3 % of B15's figures.
+
+| Scroll, M instructions/s | Start (B15) | After | qml6 (same run) |
+|---|---:|---:|---:|
+| thermostat | 130 | 100.7 | 125 |
+| rssnews | 46 | 34.6 | 50.7 |
+| listview | 270 | 246 | 102.9 |
+| listview with `reuseItems: true` | — | 134 | 60.5 |
+
+| Scroll, CPU % of one core | Ljós | qml6 (same run) |
+|---|---:|---:|
+| thermostat | 3.02 | 4.33 |
+| rssnews | 3.85 | 2.39 |
+| listview | 6.89 | 5.17 |
+
+The CPU run had a one-minute load of 12 to 68, so it reads as "within noise of qml6's" and
+nothing finer. Frames are 60 a second on both, with the same median and 95th percentile
+intervals and input latency.
+
+**Per delegate, by callgrind** (main thread, 40 s warm-up, 20 s window; delegates counted as
+half the `Item` completions):
+
+| Binary | Delegates | Instructions | Per delegate |
+|---|---:|---:|---:|
+| Before the four cuts below | 9581 | 4.35 G | 454 k |
+| bd697c5d | 8612 | 3.80 G | 442 k |
+
+B15's 480 k was over 348 frames of a different window, so it does not compare closely.
+
+The commits:
+
+- 2bcf6cd7, 67f447a5: `reuseItems`. The ListView scenarios are pinned against qml6 as a
+  black box. A reuse re-runs only the bindings that read the row and completes nothing again.
+  The delegate keeps its own state, and the new row's roles have been read by the time
+  `reused` is told. A pooled delegate is still visible when it is told, and a view that
+  shrinks keeps its pool. TableView now pools the rows that scrolled out before it loads the
+  row that scrolls in, as qml6 does. Before, stepping one row made a new delegate where qml6
+  reuses one.
+- 74546381: an item anchored by nothing reads its nine anchor lines in one go and stops there.
+- 9a5e7fec: an item's geometry is read in two batched reads, not eleven separate ones.
+- 820d5c4d: a shape already broken at a width is not broken again at the same width.
+- bd697c5d: a text that its completion measured is not polished to measure the same inputs
+  again.
+- 8d806112: the links of a Text are placed in the nearest scrolling space, like items. A
+  scroll of a view no longer re-runs the effect that lists them. A press maps its point
+  through where the item is at that moment.
+
+**listview is still 2.4× qml6's instructions**, and 2.2× with `reuseItems`. As in B15, the
+remaining cost has no hotspot. Per delegate, the top self costs are: `try_read` 14 k, the
+`ComputeGuard` drop 11.5 k, `free` 11 k, `read_access` 10 k, `malloc` 8 k and
+`FieldReads::add` 8 k. Parley's shaping, font resolution and analysis together come to about
+9 k.
+
+DECISIONs:
+- A per-Component template of bindings was not built. The cost is spread over reads, graph
+  nodes and allocation rather than over working out the shape of the graph. A template would
+  save the planning, not the nodes, and it touches the creator that ilang is working in.
+- When TableView trims its pool is not pinned. qml6 gives no black-box signal for it that is
+  stable from run to run.
+- Take a row whose top lies exactly on the view's bottom edge. Ljós keeps it, and qml6 pools
+  it. This is left as it is and is not pinned by a scenario.
+- A binding that reads and writes the same root property loops in Ljós. It was found while
+  writing the reuse scenarios, and is left to the bindings work.
+- In qml6, a required property is already set when the delegate's `Component.onCompleted`
+  runs. The scenarios rely only on that, not on the order in which the signals are emitted.
