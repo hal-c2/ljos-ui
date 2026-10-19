@@ -1246,7 +1246,7 @@ impl Timed {
                 let eased = p.curve.value(progress);
                 for (i, (slot, lerp)) in p.slots.iter().zip(p.lerps.iter().flatten()).enumerate() {
                     // A Behavior's start shows the property where it is: a
-                    // write of what it holds changes nothing.
+                    // write of the value it was given changes nothing.
                     if eased == 0.0 && p.held.is_none() && resting.get(i) == Some(&true) {
                         continue;
                     }
@@ -1441,7 +1441,12 @@ impl PropNode {
                     None => (engine.untrack(|| engine.read(slot.obj, slot.prop)), true),
                 };
                 let lerp = Lerp::new(self.kind, &slot.ty, &from, to.as_ref());
-                resting.push(own && lerp.at(0.0).is_some_and(|v| v == from));
+                // One never given a value is given its own by this write,
+                // as on Qt, and no longer goes by its default.
+                resting.push(
+                    own && lerp.at(0.0).is_some_and(|v| v == from)
+                        && !is_unset(engine, slot.obj, slot.prop),
+                );
                 lerp
             })
             .collect();
