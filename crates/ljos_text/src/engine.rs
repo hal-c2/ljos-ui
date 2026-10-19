@@ -102,6 +102,9 @@ struct ShapedEntry {
     class: BreakClass,
     ranged: OwnedRanged,
     shape: Shape,
+    /// The width and justification `shape` is broken at now: a layout
+    /// that asks the same again does not break it again.
+    broken: (Option<f32>, bool),
     /// The widest line by its advances alone.
     advance: f32,
     natural_width: f32,
@@ -1573,6 +1576,7 @@ impl TextEngine {
                 natural_width,
                 rtl: shape.is_rtl(),
                 shape,
+                broken: (None, false),
             };
             return self.shapes.insert(key, entry, frame);
         }
@@ -1673,7 +1677,10 @@ impl TextEngine {
             // touch wider than Qt's: a text that fits as Qt counts it (an
             // item as wide as its own text) must not be broken.
             let max_advance = max_advance.filter(|w| entry.natural_width > *w);
-            break_lines(&mut entry.shape, max_advance, justify);
+            if entry.broken != (max_advance, justify) {
+                break_lines(&mut entry.shape, max_advance, justify);
+                entry.broken = (max_advance, justify);
+            }
             let mut lines = extract(
                 &entry.shape,
                 fallback,
