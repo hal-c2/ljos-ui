@@ -3477,3 +3477,100 @@ Feature: What a reload changes
       And a reload happens
       Then the property "seen" of "root" is "second/b"
       And the property "x" of "box" is at least 40
+
+  Rule: A value a state's PropertyChanges gives, edited, goes in place
+
+    The PropertyChanges takes the value as now written. A state in force
+    puts it on its target at once, as a fresh load enters it; one that is
+    not gives it when it is entered.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property bool wide: true
+          Text { id: label; objectName: "label"; text: "a"; width: 10; font.pixelSize: 12 }
+          states: [
+            State {
+              name: "wide"; when: root.wide
+              PropertyChanges { target: label; width: 30; font.pixelSize: 20 }
+            },
+            State {
+              name: "tall"; when: !root.wide
+              PropertyChanges { label.width: 5 }
+            }
+          ]
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "width" of "label" is 30
+
+    Scenario: A value of the state in force edited is on its target at once
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property bool wide: true
+          Text { id: label; objectName: "label"; text: "a"; width: 10; font.pixelSize: 12 }
+          states: [
+            State {
+              name: "wide"; when: root.wide
+              PropertyChanges { target: label; width: 40; font.pixelSize: 22 }
+            },
+            State {
+              name: "tall"; when: !root.wide
+              PropertyChanges { label.width: 5 }
+            }
+          ]
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "label" is 40
+      And the property "font.pixelSize" of "label" is 22
+      And the property "x" of "box" is at least 40
+      When the property "wide" of "root" is set to false
+      Then the property "width" of "label" is 5
+      When the property "wide" of "root" is set to true
+      Then the property "width" of "label" is 40
+
+    Scenario: A value of a state not in force edited is given when the state is entered
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property bool wide: true
+          Text { id: label; objectName: "label"; text: "a"; width: 10; font.pixelSize: 12 }
+          states: [
+            State {
+              name: "wide"; when: root.wide
+              PropertyChanges { target: label; width: 30; font.pixelSize: 20 }
+            },
+            State {
+              name: "tall"; when: !root.wide
+              PropertyChanges { label.width: 8 * 2 }
+            }
+          ]
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "label" is 30
+      And the property "x" of "box" is at least 40
+      When the property "wide" of "root" is set to false
+      Then the property "width" of "label" is 16

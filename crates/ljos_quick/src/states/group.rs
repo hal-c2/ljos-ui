@@ -83,6 +83,27 @@ pub(crate) fn is_deferred(engine: &Engine, owner: ObjectId) -> bool {
         .contains(&owner)
 }
 
+/// The change `change` was given something anew: the state in force that
+/// holds it is put in place again, without a transition, as a fresh load
+/// enters it.
+pub(crate) fn changed(engine: &Engine, change: ObjectId) {
+    let groups: Vec<Rc<Group>> = engine
+        .extension::<Groups>()
+        .by_owner
+        .borrow()
+        .values()
+        .cloned()
+        .collect();
+    for g in groups {
+        let now = g.current.borrow().clone();
+        if g.changes_of(engine, &now, &mut Vec::new())
+            .contains(&change)
+        {
+            g.reapply(engine);
+        }
+    }
+}
+
 /// What a state put in place, to be taken away when it is left.
 enum Applied {
     Layer {
@@ -470,6 +491,25 @@ impl Group {
                     }
                 }
                 None => {}
+            }
+        });
+    }
+
+    /// Takes the state in force off and puts it on again as it now is,
+    /// at once: its scripts are not run again.
+    fn reapply(self: &Rc<Self>, engine: &Engine) {
+        if self.changing.get() {
+            return;
+        }
+        engine.batch(|| {
+            let mut round = Round::default();
+            self.interrupt(engine, &mut round);
+            self.leave(engine, &mut round);
+            let now = self.current.borrow().clone();
+            for change in self.changes_of(engine, &now, &mut Vec::new()) {
+                if !is_a::<StateChangeScript>(engine, change) {
+                    self.enter(engine, change, &mut round, &[]);
+                }
             }
         });
     }

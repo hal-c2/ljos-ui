@@ -552,6 +552,12 @@ impl Engine {
                 if !self.is_alive(id) {
                     continue;
                 }
+                if self.foreign_keeper(id).is_some() {
+                    for name in &t.names {
+                        self.in_place_keep(&inst, id, t.def, name);
+                    }
+                    continue;
+                }
                 for name in &t.names {
                     if gives(t.def, name) {
                         // A fresh load's binding that fails leaves the
@@ -1313,10 +1319,23 @@ impl Engine {
         if !self.is_alive(id) {
             return Ok(());
         }
-        // A PropertyChanges or a Binding keeps what it is given for its
-        // target.
+        // A PropertyChanges keeps what it is given for its target: it is
+        // handed the member again, as written now. One of its own, or one
+        // no longer given, is the full path's.
         if self.foreign_keeper(id).is_some() {
-            return Err("a state or a Binding holds the edited object");
+            let handed = t.obj != 0
+                && t.renamed.is_empty()
+                && t.fresh.is_empty()
+                && t.names.iter().all(|name| {
+                    let first = name.split('.').next().unwrap_or(name);
+                    self.property_index(id, first).is_err()
+                        && keeps(t.def, name)
+                        && !t.old.attached.iter().any(|a| is_or_under(name, &a.written))
+                });
+            if !handed {
+                return Err("a state or a Binding holds the edited object");
+            }
+            return Ok(());
         }
         let given = self.inner.reload.given.borrow();
         let given = given.get(&id);
@@ -1524,6 +1543,23 @@ impl Engine {
         let (o, p) = self.redirect(t.obj, t.prop);
         if let Some(props) = self.inner.reload.assigned.borrow_mut().get_mut(&o) {
             props.retain(|q| *q != p);
+        }
+    }
+
+    /// Hands the keeper of `id` (foreign.rs), an object of `inst`, the
+    /// member `name` as `od` now writes it.
+    fn in_place_keep(&self, inst: &Rc<Instance>, id: ObjectId, od: &ObjectDef, name: &str) {
+        let (path, leaf) = match name.rsplit_once('.') {
+            Some((p, l)) => (p.split('.').map(str::to_owned).collect(), l),
+            None => (Vec::new(), name),
+        };
+        let Some((m, _)) = held_in(od, name) else {
+            return;
+        };
+        if let Some(b) = m.bindings.iter().find(|b| b.name == leaf) {
+            self.keep_foreign_binding(inst, id, &path, b);
+        } else if let Some(a) = m.assignments.iter().find(|a| a.name == leaf) {
+            self.keep_foreign_literal(inst, id, &path, a);
         }
     }
 
@@ -1886,6 +1922,12 @@ fn gives(od: &ObjectDef, name: &str) -> bool {
     held_in(od, name).is_some_and(|(m, leaf)| {
         m.assignments.iter().any(|a| a.name == leaf) || m.bindings.iter().any(|b| b.name == leaf)
     })
+}
+
+/// Whether `od` gives `name` a value or a binding of its own, not in
+/// what is attached: what a keeper is handed in place.
+fn keeps(od: &ObjectDef, name: &str) -> bool {
+    !od.attached.iter().any(|a| is_or_under(name, &a.written)) && gives(od, name)
 }
 
 /// Whether `od` gives its object all of `name`: `name` itself or what

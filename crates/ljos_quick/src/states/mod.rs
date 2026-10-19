@@ -62,8 +62,29 @@ pub(crate) fn register(engine: &Engine) {
     // frame its `delayed` waits for.
     engine.register_module(ljos_engine::module!("QtQml" 2.0 => [Binding]));
     // What a PropertyChanges is given are properties of its target.
+    // One handed again (a reload's edit) takes the place of the one it
+    // was, and a state in force puts it on its target.
     engine.register_foreign_members(PropertyChanges::static_meta(), |e, obj, member| {
-        let _ = e.with_mut::<PropertyChanges, _>(obj, |pc| pc.members.push(member));
+        let again = e
+            .with_mut::<PropertyChanges, _>(obj, |pc| {
+                let at = pc.members.iter().position(|m| {
+                    m.object == member.object
+                        && m.name == member.name
+                        && match (&m.attached, &member.attached) {
+                            (Some(a), Some(b)) => ljos_engine::MetaRef::ptr_eq(a, b),
+                            (a, b) => a.is_none() && b.is_none(),
+                        }
+                });
+                match at {
+                    Some(i) => pc.members[i] = member,
+                    None => pc.members.push(member),
+                }
+                at.is_some()
+            })
+            .unwrap_or(false);
+        if again {
+            group::changed(e, obj);
+        }
     });
     // `script: ...` is a statement to run when the state is entered.
     engine.register_script_property(

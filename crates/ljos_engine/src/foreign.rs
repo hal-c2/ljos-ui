@@ -69,7 +69,9 @@ struct Keepers {
 impl Engine {
     /// Makes `meta` (and what derives from it) a type that keeps members
     /// for other objects: a member written in such an object that the type
-    /// does not have goes to `keep` instead of failing the creation.
+    /// does not have goes to `keep` instead of failing the creation. A
+    /// dev reload that edits such a member in place hands it to `keep`
+    /// again: it takes the place of the one of its name.
     pub fn register_foreign_members(
         &self,
         meta: &'static MetaObject,
