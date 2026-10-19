@@ -283,6 +283,32 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         .collect();
     let sight = (cx, cx + w.max(0.0));
 
+    // Rows the last pass placed wholly out of sight go before any row is
+    // loaded, so a row that scrolls in takes the delegate of the one that
+    // scrolled out (qml6) rather than a new one. A row whose height
+    // changed and is in sight after all takes one back from the pool.
+    if reuse && cols > 0 {
+        let last_y = st.row_y.borrow();
+        let gone: Vec<ObjectId> = d
+            .live()
+            .into_iter()
+            .filter(|&(i, o)| {
+                let row = i / cols;
+                let (Some(&top), Some(&tall)) = (last_y.get(row), heights.get(row)) else {
+                    return false;
+                };
+                !tall.is_nan()
+                    && (top + tall <= cy || top > cy + h.max(0.0))
+                    && !st.editing.get().is_some_and(|ed| ed.delegate == o)
+            })
+            .map(|(_, o)| o)
+            .collect();
+        drop(last_y);
+        for o in gone {
+            release(e, st, &d, o, reuse);
+        }
+    }
+
     // Rows in sight, top down, each with its cells in sight; which
     // columns those are is found on the first of them.
     let mut shown: Option<Vec<usize>> = None;
