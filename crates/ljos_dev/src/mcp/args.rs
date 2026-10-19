@@ -52,10 +52,9 @@ Find items by locator: `role=button[name=\"Save\"]`, `text=notes`, `#objectName`
 reference, path, bounds and states per match. No match is an empty list, not an error.";
 
 pub const INSPECT: &str = "\
-One item in depth: type, id, file and line, geometry, its window's singletons, \
-properties with where each value is from (assigned, bound at tier 0, 1 or js, animated, host, \
-default). `target` is a reference or locator. `all` adds defaults; `dependencies` names a \
-property: its reads, readers, tier.";
+One item in depth: type, id, file and line, geometry, window singletons, properties with \
+where each value is from (assigned, bound at tier 0/1/js, animated, host, default). `all` adds \
+defaults; `dependencies` names a property: its reads, readers, tier; `bindings`: every binding's.";
 
 pub const SCREENSHOT: &str = "\
 PNG of the window, or of one item when `target` is given, drawn by the software renderer (works \
@@ -209,6 +208,10 @@ pub struct InspectArgs {
     /// ran, which bindings read it, and the tier its binding runs at.
     #[serde(default)]
     pub dependencies: Option<String>,
+    /// Every property of the object that a binding sets, each with what
+    /// its binding read, what reads it, and its tier.
+    #[serde(default)]
+    pub bindings: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]

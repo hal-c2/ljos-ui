@@ -7,7 +7,8 @@
 use std::fmt::Write as _;
 
 use ljos_engine::{
-    BindingGraph, DependencyReport, Engine, EngineError, ObjectId, Provenance, Value as QmlValue,
+    BindingGraph, DependencyReport, Engine, EngineError, ObjectId, PropertyReport, Provenance,
+    Value as QmlValue,
 };
 use ljos_mcp_core::{
     CapSet, Delta, ErrorCode, LineOptions, Locator, Outline, RefTable, SurfaceError, ToolReply,
@@ -194,6 +195,35 @@ fn dependencies(engine: &Engine, name: &str, graph: &BindingGraph) -> (Value, St
         if graph.truncated { " (cut)" } else { "" }
     );
     (value, text)
+}
+
+/// The `bindings` of `app_inspect`: the [`dependencies`] of each property
+/// a binding sets, in the order the properties are listed.
+fn bindings(engine: &Engine, obj: ObjectId, properties: &[PropertyReport]) -> (Value, String) {
+    let mut all = Vec::new();
+    let mut text = String::new();
+    // An animation runs over a bound value too: the binding is still there.
+    // Those a type keeps for itself (`childrenRect`, a corner's radius)
+    // were written nowhere, and would bury the ones that were.
+    let bound = properties.iter().filter(|p| {
+        matches!(p.provenance, Provenance::Bound | Provenance::Animated) && p.written_at.is_some()
+    });
+    for p in bound {
+        let Ok(graph) = engine.untrack(|| engine.binding_graph(obj, &p.name, MAX_DEPENDENCIES))
+        else {
+            continue;
+        };
+        if !graph.bound {
+            continue;
+        }
+        let (value, said) = dependencies(engine, &p.name, &graph);
+        all.push(value);
+        text.push_str(&said);
+    }
+    if all.is_empty() {
+        text.push_str("no bindings\n");
+    }
+    (json!(all), text)
 }
 
 fn no_match(what: &str) -> SurfaceError {
@@ -591,6 +621,12 @@ impl Look<'_> {
                 })?;
             let (value, text) = dependencies(engine, name, &graph);
             out.insert("dependencies".into(), value);
+            head.push_str(&text);
+        }
+
+        if args.bindings {
+            let (value, text) = bindings(engine, obj, &properties);
+            out.insert("bindings".into(), value);
             head.push_str(&text);
         }
 

@@ -2379,7 +2379,7 @@ fn answer_matches(w: &mut LjosWorld, pointer: String, re: String) -> StepResult 
     inspector_seen(w, |s| s.answer_matches(&pointer, &unquoted(&re)))
 }
 
-#[then(regex = r#"^the answer's "(/[^"]*)" has (\d+) entries$"#)]
+#[then(regex = r#"^the answer's "(/[^"]*)" has (\d+) entr(?:y|ies)$"#)]
 fn answer_has(w: &mut LjosWorld, pointer: String, count: usize) -> StepResult {
     inspector_seen(w, |s| s.answer_has(&pointer, count))
 }

@@ -1311,6 +1311,10 @@ ApplicationWindow {
                     property string head: ""
                     property string where: ""
                     property bool all: false
+                    // Whether the bindings are shown, each with what it
+                    // read and what reads it.
+                    property bool bindings: false
+                    property var binds: []
                     property string picture: ""
                     property string pictureNote: ""
                     // The property whose field is being typed in: the
@@ -1656,7 +1660,7 @@ ApplicationWindow {
                     // that a change is shown one answer after it is made
                     // rather than two.
                     function inspect(withPicture) {
-                        window.ask("app_inspect", { target: picked, all: all }, "inspect")
+                        window.ask("app_inspect", { target: picked, all: all, bindings: bindings }, "inspect")
                         shotAsked = withPicture === true && pickedItem
                         if (shotAsked)
                             window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture")
@@ -1666,6 +1670,7 @@ ApplicationWindow {
                         if (!ok) {
                             props = []
                             propRows = 0
+                            binds = []
                             head = window.refusal(r)
                             where = ""
                             picture = ""
@@ -1678,6 +1683,7 @@ ApplicationWindow {
                             props = s.properties
                             propRows = props.length
                         }
+                        binds = s.bindings || []
                         pickedItem = s.geometry !== undefined && s.geometry !== null
                         if (pickedItem) {
                             if (!shotAsked)
@@ -1698,6 +1704,16 @@ ApplicationWindow {
                         for (var i = 0; i < r.content.length; ++i)
                             if (r.content[i].type === "image")
                                 picture = "data:" + r.content[i].mimeType + ";base64," + r.content[i].data
+                    }
+
+                    // The ends of a binding as a line: `width of #box`.
+                    function ends(list) {
+                        if (!list || list.length === 0)
+                            return "nothing"
+                        return list.map(function(d) {
+                            var of = d.object_name ? " of #" + d.object_name : d.object ? " of a " + d.object : ""
+                            return (d.property || "a handler") + of
+                        }).join(", ")
                     }
 
                     // A value as a field shows it.
@@ -1898,10 +1914,10 @@ ApplicationWindow {
                                 readonly property bool narrow: propCard.width < 364
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                columns: narrow ? 2 : 3
+                                columns: narrow ? 3 : 4
                                 Text {
                                     Layout.fillWidth: true
-                                    Layout.columnSpan: propHead.narrow ? 2 : 1
+                                    Layout.columnSpan: propHead.narrow ? 3 : 1
                                     text: objects.picked === "" ? "Pick an object" : objects.head
                                     color: theme.text
                                     font.bold: true
@@ -1918,6 +1934,15 @@ ApplicationWindow {
                                     checked: objects.all
                                     onToggled: {
                                         objects.all = checked
+                                        if (objects.picked !== "")
+                                            objects.pick(objects.picked, objects.pickedName)
+                                    }
+                                }
+                                CheckBox {
+                                    text: "Bindings"
+                                    checked: objects.bindings
+                                    onToggled: {
+                                        objects.bindings = checked
                                         if (objects.picked !== "")
                                             objects.pick(objects.picked, objects.pickedName)
                                     }
@@ -2198,6 +2223,59 @@ ApplicationWindow {
                                                 onClicked: objects.revert(prop.modelData.name)
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            // The bindings, each with what it read and
+                            // what reads it, under the values they set.
+                            Rectangle {
+                                visible: objects.bindings && objects.picked !== ""
+                                Layout.fillWidth: true
+                                height: 1
+                                color: theme.rule
+                            }
+                            ListView {
+                                id: bindingList
+                                visible: objects.bindings && objects.picked !== ""
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                Layout.preferredHeight: Math.min(Math.max(contentHeight, 24), propCard.height * 0.45)
+                                clip: true
+                                model: window.page === 3 && visible ? objects.binds.length : 0
+                                ScrollBar.vertical: ScrollBar {}
+                                Text {
+                                    visible: bindingList.count === 0
+                                    text: "No bindings written for it"
+                                    color: theme.subtle
+                                }
+                                delegate: Column {
+                                    id: bound
+                                    required property int index
+                                    readonly property var modelData: objects.binds[index] || ({})
+                                    width: ListView.view.width
+                                    bottomPadding: 6
+                                    Text {
+                                        width: parent.width
+                                        elide: Text.ElideRight
+                                        text: bound.modelData.property
+                                              + (bound.modelData.tier ? "  ·  tier " + bound.modelData.tier : "")
+                                        color: theme.text
+                                        font.bold: true
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        wrapMode: Text.Wrap
+                                        text: "reads " + objects.ends(bound.modelData.reads)
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        wrapMode: Text.Wrap
+                                        text: "read by " + objects.ends(bound.modelData.read_by)
+                                              + (bound.modelData.truncated ? ", and more" : "")
+                                        color: theme.subtle
+                                        font.pixelSize: 11
                                     }
                                 }
                             }

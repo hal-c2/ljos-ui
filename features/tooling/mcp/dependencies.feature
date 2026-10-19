@@ -8,8 +8,9 @@
 Feature: What a property depends on
   An agent that wants to know why a value is what it is can ask for the
   dependencies of one property: the properties its binding read when it last
-  ran, the bindings that read it, and the tier the binding runs at. This
-  only reads, so it needs no more than the capability `inspect`.
+  ran, the bindings that read it, and the tier the binding runs at. It can
+  ask the same of every binding written for an object at once. This only
+  reads, so it needs no more than the capability `inspect`.
 
   Background:
     Given the QML:
@@ -80,6 +81,43 @@ Feature: What a property depends on
         """
       Then the answer's "/dependencies/bound" is false
       And the answer's "/dependencies/reads" has 0 entries
+
+  Rule: An object's bindings are listed together, each with what it read
+
+    Scenario: Every bound property of an object is listed with its dependencies
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#root", "bindings": true}
+        """
+      Then the answer's "/bindings" has 2 entries
+      And the answer's "/bindings/0/property" is "twice"
+      And the answer's "/bindings/0/tier" is "1"
+      And the answer's "/bindings/0/reads/0/property" is "count"
+      And the answer's "/bindings/0/read_by" has 2 entries
+      And the answer's "/bindings/1/property" is "label"
+      And the answer's "/bindings/1/reads/0/property" is "twice"
+
+    Scenario: A binding that reads another object names it
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#box", "bindings": true}
+        """
+      Then the answer's "/bindings" has 1 entry
+      And the answer's "/bindings/0/property" is "width"
+      And the answer's "/bindings/0/reads/0/object_name" is "root"
+
+    Scenario: An object whose properties are all assigned has no bindings
+      Given the inspector is connected with the capabilities "inspect, mutate"
+      And the agent has requested a snapshot
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#box", "property": "width", "value": 7}
+        """
+      And the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#box", "bindings": true}
+        """
+      Then the answer's "/bindings" has 0 entries
 
   Rule: A property that is not there is told with its name
 

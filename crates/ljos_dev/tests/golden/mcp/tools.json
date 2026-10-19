@@ -154,13 +154,18 @@
     "read_only": true
   },
   {
-    "description": "One item in depth: type, id, file and line, geometry, its window's singletons, properties with where each value is from (assigned, bound at tier 0, 1 or js, animated, host, default). `target` is a reference or locator. `all` adds defaults; `dependencies` names a property: its reads, readers, tier.",
+    "description": "One item in depth: type, id, file and line, geometry, window singletons, properties with where each value is from (assigned, bound at tier 0/1/js, animated, host, default). `all` adds defaults; `dependencies` names a property: its reads, readers, tier; `bindings`: every binding's.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
         "all": {
           "default": false,
           "description": "List every property, including those still at their default.",
+          "type": "boolean"
+        },
+        "bindings": {
+          "default": false,
+          "description": "Every property of the object that a binding sets, each with what\nits binding read, what reads it, and its tier.",
           "type": "boolean"
         },
         "dependencies": {
