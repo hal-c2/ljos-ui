@@ -23,6 +23,12 @@
 //! read the graph gave a node only when it changed (`FieldReads`) is new
 //! among the reads, which makes it a cause too. While no trace follows
 //! bindings a binding's run pays one look at a flag.
+//!
+//! A binding written on an alias runs as part of the binding of what the
+//! alias leads to, so it is the target's node that runs. It is told to a
+//! trace of the object it was written on all the same, by the alias's
+//! name, and an alias of one member is told changed with that member's
+//! value, not the whole property's.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -31,7 +37,7 @@ use std::time::Instant;
 use ljos_reactive::NodeId;
 use rustc_hash::FxHashMap;
 
-use crate::engine::Engine;
+use crate::engine::{BindingFn, Engine};
 use crate::error::EngineError;
 use crate::ids::{ConnectionId, ObjectId, PropIndex, SignalIndex};
 use crate::meta::{PropertyAccess, PropertyFlags};
@@ -144,7 +150,22 @@ impl Engine {
         let mut conns = Vec::with_capacity(changes.len() + 1);
         for (signal, prop) in changes {
             let sink = sink.clone();
+            // An alias of one member changes with the whole property and
+            // is told it: what it changed to is the member.
+            let member = self.alias_member(obj, prop).is_some();
             let told = self.connect(obj, signal, move |engine, args| {
+                if member {
+                    let value = engine.untrack(|| engine.read(obj, prop));
+                    sink(
+                        engine,
+                        obj,
+                        Traced::Change {
+                            prop,
+                            value: &value,
+                        },
+                    );
+                    return;
+                }
                 let value = args.first().unwrap_or(&Value::Undefined);
                 sink(engine, obj, Traced::Change { prop, value });
             });
@@ -194,17 +215,37 @@ impl Engine {
         let reads = follow.then(|| {
             // What each binding read is kept now, so that its first run
             // after this has something to be compared with.
-            let nodes: Vec<(PropIndex, NodeId)> = {
+            let (mut nodes, aliases): (Vec<(PropIndex, NodeId)>, Vec<PropIndex>) = {
                 let store = self.inner.store.borrow();
-                store.objects.get(obj).map_or_else(Vec::new, |h| {
-                    (0..h.meta.properties.len())
-                        .filter_map(|i| {
-                            let p = PropIndex(i as u32);
-                            Some((p, h.node(p)?))
-                        })
-                        .collect()
-                })
+                let Some(h) = store.objects.get(obj) else {
+                    return FxHashMap::default();
+                };
+                let aliases = (0..h.meta.properties.len())
+                    .map(|i| PropIndex(i as u32))
+                    .filter(|p| h.meta.property(*p).is_some_and(|m| m.is_alias()))
+                    .collect();
+                let nodes = (0..h.meta.properties.len())
+                    .filter_map(|i| {
+                        let p = PropIndex(i as u32);
+                        Some((p, h.node(p)?))
+                    })
+                    .collect();
+                (nodes, aliases)
             };
+            // A binding written on an alias is the node of what it leads to.
+            for p in aliases {
+                let (to, tp) = self.redirect(obj, p);
+                let n = self
+                    .inner
+                    .store
+                    .borrow()
+                    .objects
+                    .get(to)
+                    .and_then(|h| h.node(tp));
+                if let Some(n) = n {
+                    nodes.push((p, n));
+                }
+            }
             nodes
                 .into_iter()
                 .filter(|(_, n)| self.inner.graph.is_bound(*n))
@@ -241,12 +282,18 @@ impl Engine {
     /// The start of a run of the binding of `prop`, if a trace follows
     /// the bindings of `obj`: what it read that changed since its last run.
     pub(crate) fn binding_runs(&self, obj: ObjectId, prop: PropIndex) -> Option<BindingRun> {
+        let node = self.inner.store.borrow().objects.get(obj)?.node(prop)?;
+        self.binding_runs_at(obj, prop, node)
+    }
+
+    /// [`Engine::binding_runs`] for a binding whose node is `node`, which
+    /// for one written on an alias is the node of the property it leads to.
+    fn binding_runs_at(&self, obj: ObjectId, prop: PropIndex, node: NodeId) -> Option<BindingRun> {
         let kept = {
             let by_object = self.inner.traces.by_object.borrow();
             let reads = by_object.get(&obj)?.reads.as_ref()?;
             reads.get(&prop).cloned().unwrap_or_default()
         };
-        let node = self.inner.store.borrow().objects.get(obj)?.node(prop)?;
         let g = &self.inner.graph;
         let changed: Vec<NodeId> = g
             .sources(node)
@@ -271,6 +318,38 @@ impl Engine {
             node,
             cause,
             started: Instant::now(),
+        })
+    }
+
+    /// A binding written on the alias `prop` of `obj`, which runs as part of
+    /// the binding of `to`, the property the alias leads to: a trace of
+    /// `obj` that follows its bindings is told of each run by the alias's
+    /// name, with what the binding of `to` read that changed. Whether it
+    /// gave what it had is the alias's value, not the whole property's,
+    /// when the alias is of one member.
+    pub(crate) fn traced_as_alias(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        (to, tp): (ObjectId, PropIndex),
+        mut f: BindingFn,
+    ) -> BindingFn {
+        let mut last = Value::Undefined;
+        Box::new(move |engine| {
+            let followed = if engine.inner.traces.follows_bindings() {
+                engine.untrack(|| {
+                    let node = engine.inner.store.borrow().objects.get(to)?.node(tp)?;
+                    engine.binding_runs_at(obj, prop, node)
+                })
+            } else {
+                None
+            };
+            let v = f(engine)?;
+            if let Some(run) = followed {
+                engine.binding_ran(run, &last, &v);
+            }
+            last = v.clone();
+            Some(v)
         })
     }
 

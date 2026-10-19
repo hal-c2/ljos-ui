@@ -2330,10 +2330,16 @@ impl Engine {
         internal: bool,
         free: Free,
     ) -> Result<(), EngineError> {
+        let to = self.redirect(obj, prop);
+        let f = if to == (obj, prop) {
+            f
+        } else {
+            self.traced_as_alias(obj, prop, to, f)
+        };
         if let Some(target) = self.alias_member(obj, prop) {
             return self.bind_member(target, f, internal, free);
         }
-        let (obj, prop) = self.redirect(obj, prop);
+        let (obj, prop) = to;
         self.drop_maker(obj, prop);
         let ty = {
             let store = self.inner.store.borrow();

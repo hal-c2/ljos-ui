@@ -15,7 +15,8 @@ Feature: Tracing what happens to an object over time
   emitted, the properties that changed with their new values, and its end.
   Asked to, it also writes down each time a binding of the object ran
   again: what it read that changed, how long it took, and whether it gave
-  the value it had, which is work done for nothing.
+  the value it had, which is work done for nothing. A binding written on
+  an alias is the object's, by the alias's name.
   Nothing is written down for an object that is not traced, and the list
   is bounded: the oldest give way and are counted.
 
@@ -26,6 +27,9 @@ Feature: Tracing what happens to an object over time
       Item {
         id: top
         objectName: "root"
+        component Card: Item {
+          property alias caption: label.text; property alias size: label.font.pixelSize
+          Text { id: label; objectName: "label" } }
         width: 200; height: 100
         property int count: 0
         property real level: 0
@@ -37,6 +41,7 @@ Feature: Tracing what happens to an object over time
         Item { objectName: "gauge"; property int doubled: top.count * 2 }
         Item { objectName: "sign"; property bool positive: top.count > 0 }
         Rectangle { objectName: "box"; width: 10; height: 10; border.color: top.open ? "red" : "blue" }
+        Card { objectName: "card"; caption: "n " + top.count; size: top.count + 10 }
         TextInput { objectName: "secret"; width: 100; height: 20; echoMode: TextInput.Password }
         Loader {
           active: top.open
@@ -128,6 +133,17 @@ Feature: Tracing what happens to an object over time
       And the answer's "/events/0/value" is 736.0003
       And the answer's text contains "= 736.0003"
 
+    Scenario: A change through an alias to a member gives the member's value
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#card"}
+        """
+      And the property "count" of "root" is set to 2
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events" has 2 entries
+      And the answer's text contains "size = 12"
+      And the answer's text contains "caption = \"n 2\""
+
     # A group's member has no change signal of its own; it changes all
     # the same, and its group is a part of the object already.
     Scenario: A member of a group is written down by its full name
@@ -175,6 +191,25 @@ Feature: Tracing what happens to an object over time
       And the answer's "/events/2/name" is "positive"
       And the answer's "/events/2/same" is true
       And the answer's text contains "gave the value it had"
+
+    Scenario: A binding on an alias is written down by the alias's name
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#card", "bindings": true}
+        """
+      And the property "count" of "root" is set to 2
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events" has 4 entries
+      And the answer's "/events/0/kind" is "binding"
+      And the answer's "/events/0/name" is "caption"
+      And the answer's "/events/0/cause/0/property" is "count"
+      And the answer's "/events/1/kind" is "binding"
+      And the answer's "/events/1/name" is "size"
+      And the answer's "/events/1/cause/0/property" is "count"
+      And the answer's "/events/1/same" is false
+      And the answer's "/events/3/kind" is "change"
+      And the answer's "/events/3/name" is "size"
+      And the answer's text contains "binding size ← Scenario \"root\".count"
 
     Scenario: A trace not asked for bindings writes down only what changed
       When the agent calls the tool "app_trace" with:
