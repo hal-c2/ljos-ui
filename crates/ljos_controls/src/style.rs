@@ -2012,9 +2012,12 @@ pub(crate) fn register(engine: &Engine) {
         MetaRef::Static(Universal::static_meta()),
     );
 
+    // A new attached object changes what no other one inherits: only
+    // what its author gives it does, and the watches below hear that.
+    // Bumping here re-ran every other one's sync for each delegate a view
+    // or a popup made, which is quadratic in what it makes.
     engine.on_attached_created(|e, _owner, att| {
         if is_a::<MaterialAttached>(e, att) {
-            bump_style_epoch(e);
             for prop in [
                 MaterialAttached::THEME.index,
                 MaterialAttached::PRIMARY.index,
@@ -2035,7 +2038,6 @@ pub(crate) fn register(engine: &Engine) {
                 sync_material(e, att);
             });
         } else if is_a::<UniversalAttached>(e, att) {
-            bump_style_epoch(e);
             for prop in [
                 UniversalAttached::THEME.index,
                 UniversalAttached::ACCENT.index,

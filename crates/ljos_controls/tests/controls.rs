@@ -545,3 +545,48 @@ fn fusion_makes_no_more_objects_than_it_draws() {
         );
     }
 }
+
+/// Makes `rows` Material buttons one at a time, as a view does as it
+/// scrolls, below an item that gives them an accent, and returns the
+/// effects that ran.
+fn material_rows(rows: usize) -> u64 {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Material
+Column {
+    id: column
+    Material.accent: Material.Red
+    property int rows: 0
+    onRowsChanged: row.createObject(column)
+    Component {
+        id: row
+        Button {}
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    for n in 1..=rows {
+        e.write_by_name(root, "rows", Value::Int(n as i32)).unwrap();
+        settle(&mut s, &e, Time::ZERO);
+    }
+    e.graph().stats().effect_runs
+}
+
+/// Each Material attached object made had every other one made before it
+/// look again: opening a dialog of many delegates cost many times many.
+/// What a new one is given reaches the rest by the writes that give it,
+/// so twice the rows cost twice as much.
+#[test]
+fn material_items_made_one_by_one_cost_what_each_costs() {
+    let once = material_rows(40);
+    let twice = material_rows(80);
+    assert!(
+        twice * 10 < once * 22,
+        "twice the rows ran {twice} effects, against {once}"
+    );
+}
