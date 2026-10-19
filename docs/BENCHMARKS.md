@@ -3442,3 +3442,55 @@ DECISIONs:
   while idle, so idle stays at 0 %.
 - listview is left with its spread per-delegate cost (above).
 - Clocks' remaining native part was not taken. It is under 1 M/s a cut (see B14).
+
+### calqlatr's press, sixth pass: Behavior starts, script reads, provenance (2026-10-19)
+
+Measured as in the fifth pass above. The base is origin at b411fe63, which already has the
+one-entry field reads (f76868aa). Ir is from callgrind on a release build, per calqlatr press
+(140 presses) and per clocks `timeChanged` (700 calls). Wall time alternates `qml6` 6.11.2, the
+base and the after, five runs each, per press over 2 800 presses. The load average was 42–67.
+The table keeps the three runs taken at the lower end of that.
+
+| | qml6 | Ljós base | Ljós after |
+|---|---:|---:|---:|
+| calqlatr, Ir per press | | 1.418 M | 1.376 M |
+| calqlatr, wall per press | 0.103–0.106 ms | 0.117–0.124 ms | 0.111–0.121 ms |
+| clocks, Ir per `timeChanged` | | 16.26 k | 16.26 k |
+
+calqlatr is now 7–10 % above qml6, down from 12 %. Clocks does not change. The cuts, in order,
+with Ir per press as measured on the base each one was made on:
+- A Behavior first checks that its animation moves the property, then starts it. The start
+  looked up the same `target`, `targets`, `property` and `properties` again. The check now
+  hands the slots it found to the start: 1.423 M → 1.415 M.
+- When a script reads a text or an object that already has a wrapper, the read hands QuickJS a
+  raw value. Before, it made a value tied to the context, which is a dup and a free of the
+  context at each read: 1.415 M → 1.394 M.
+- The first moment of a property animation without `from` shows the value the property
+  already holds. A property that already has a value of its own is no longer written then.
+  One that was never given a value is still written, since on Qt that start gives the property
+  the value as its own: 1.394 M → 1.385 M. `features/animation/behavior-start-gives-value.feature`
+  (@qt-parity) pins the start: an item's width no longer follows its implicit width once a
+  Behavior has started on it.
+- `provenance` looks at the object once. It used to look once to follow aliases and again to
+  answer. An animation's start asks it about nine times.
+
+What is left of a press, about 1.38 M Ir:
+- The script, about 0.13 M in the interpreter, plus `try_read` from the host: some 600 reads a
+  press, about 120 Ir each on their own.
+- 35 tier 1 runs, about 1.25 k each in the machine itself, with about 400 Ir per read.
+- 11 Behavior starts, about 7 k each with the flush. The easing and duration reads are about
+  1.2 k of that, the `running` write and its batch most of the rest.
+- `updateDimmed` reads `children` of two grids per entry. Each read is the whole list,
+  about 250 Ir.
+
+DECISIONs:
+- No counting tests for the slots handed over, the raw values or the skipped first writes. The
+  engine has no counter for named lookups, context dups or writes that change nothing.
+  The animation and language features pin the behaviour.
+- The slots handed from the check to the start could be stale if the animation's targets
+  changed in between. Both happen in the same flush, so this is accepted.
+- QuickJS's own accessor entry still dups and frees the context per call: rquickjs has no
+  borrowed `Ctx`.
+- A Behavior on an attached property (`Layout.leftMargin`) is not animated by Ljós; it writes
+  the value straight through. qml6 animates it. This is left for its own scenario.
+- ListView's delegate creation and teardown are left to the views lane.
