@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cgroup::{self, Cgroup},
+    counters,
     gate::Gate,
     procfs,
     profile::{Profile, cpu_set},
@@ -76,6 +77,9 @@ pub struct Phases {
     pub gesture: Gesture,
     /// Read `/proc` for resident memory and mapped files.
     pub detail: bool,
+    /// Count each thread's instructions while it is measured
+    /// ([`crate::counters`]).
+    pub instructions: bool,
 }
 
 /// What drives an application under load.
@@ -188,6 +192,14 @@ pub struct Span {
     /// workers whose wakeups `woken` cannot count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_cpu_ms: Option<f64>,
+    /// The instructions the threads alive at the start retired in user
+    /// space, by name: work that, unlike CPU time, does not grow with
+    /// what else the machine runs ([`crate::counters`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<BTreeMap<String, u64>>,
+    /// Why there is no `instructions`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions_missing: Option<String>,
     pub frames: Option<Frames>,
     /// Clicks, moves or wheel notches given, for a driven window.
     pub clicks: Option<u32>,
@@ -489,6 +501,7 @@ fn span(
     drive: Option<(i32, i32, i32, i32)>,
     points: &[[f64; 2]],
     region: Option<(i32, i32, i32, i32)>,
+    instructions: bool,
 ) -> Option<Span> {
     let counter = match (&setup.wayland, region) {
         (Some(display), Some(r)) => FrameCounter::start(display, r).ok(),
@@ -499,6 +512,11 @@ fn span(
     let thr0 = w.cg.throttled_usec();
     let sw0 = procfs::thread_switches(pid);
     let ns0 = procfs::thread_cpu_ns(pid);
+    let counted = if instructions {
+        counters::Instructions::start(pid)
+    } else {
+        Err("not asked for".to_owned())
+    };
     let start = Instant::now();
     let mut clicks = None;
     let mut inputs = Vec::new();
@@ -523,6 +541,10 @@ fn span(
     let ns1 = procfs::thread_cpu_ns(pid);
     let live_ms = procfs::live_cpu_ns(&ns0, &ns1) as f64 / 1e6;
     let thread_cpu_ms = procfs::cpu_by_name(&ns0, &ns1, &sw1);
+    let (instructions, instructions_missing) = match counted {
+        Ok(c) => (Some(c.finish(&sw1)), None),
+        Err(why) => (None, Some(why)),
+    };
     let times = counter.and_then(|c| c.finish().ok());
     let cpu_ms = ms(cpu1.saturating_sub(cpu0));
     #[allow(clippy::cast_precision_loss)]
@@ -549,6 +571,8 @@ fn span(
         clicks,
         woken,
         thread_cpu_ms,
+        instructions,
+        instructions_missing,
         // Rounding between the two clocks is not an ended thread.
         ended_cpu_ms: Some((cpu_ms - live_ms).max(0.0)).filter(|ms| *ms >= 1.0),
     })
@@ -1030,6 +1054,7 @@ fn run_once(
                 None,
                 &[],
                 rect,
+                phases.instructions,
             );
             if w.exited.is_none() {
                 out.idled = Some(memory(&w));
@@ -1050,6 +1075,7 @@ fn run_once(
                 rect.filter(|_| drive),
                 points,
                 rect,
+                phases.instructions,
             );
         }
         if phases.detail && w.exited.is_none() {
@@ -1120,6 +1146,7 @@ pub fn min_memory(
         load: Duration::ZERO,
         gesture: Gesture::Click,
         detail: false,
+        instructions: false,
     };
     let mut probes = Vec::new();
     let mut probe = |mib: u64| -> Result<bool, Error> {

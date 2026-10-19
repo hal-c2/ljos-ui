@@ -94,6 +94,9 @@ pub struct Bench {
     /// Start each application once, unmeasured, first.
     #[arg(long)]
     warm_up: bool,
+    /// Do not count the instructions each thread retires while measured.
+    #[arg(long)]
+    no_instructions: bool,
     /// Also search for the least memory each starts in under this profile.
     #[arg(long, value_name = "PROFILE")]
     bisect: Option<String>,
@@ -255,6 +258,7 @@ impl Bench {
                 load: secs(self.load),
                 gesture: self.gesture,
                 detail: true,
+                instructions: !self.no_instructions,
             },
             warm_up: self.warm_up,
             repeat: self.repeat,

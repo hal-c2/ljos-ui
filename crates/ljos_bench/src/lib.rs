@@ -9,6 +9,7 @@
 //! limits asked for, so nothing is measured outside a limit.
 
 pub mod cgroup;
+pub mod counters;
 pub mod gate;
 pub mod measure;
 pub mod procfs;
@@ -193,6 +194,7 @@ pub fn run(
                     load: Duration::ZERO,
                     gesture: measure::Gesture::Click,
                     detail: false,
+                    instructions: false,
                 };
                 measure::run(setup, &app.id, &rt, &Profile::desktop(), warm, false, &[])?;
             }

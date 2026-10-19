@@ -112,6 +112,17 @@ Feature: Measuring an application under a limit
       And the JSON file "out/report.json" has "/runs/0/limits/cpu_quota_percent" equal to 20
       And the JSON file "out/report.json" has "/runs/0/limits/memory_max" equal to 268435456
 
+  Rule: The work of each thread is counted in instructions where the processor counts them
+
+    # CPU time grows with what else the machine runs; the instructions a
+    # thread retires do not. Whether a machine has a counter a user may
+    # read is its own (a virtual machine often has none), so what is
+    # checked here is that a count not made says why.
+    Scenario: Instructions not asked for are not counted, and the report says so
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 1 --no-instructions --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/load/instructions_missing" equal to "not asked for"
+
   Rule: A kill for want of memory is a result, not an error
 
     Scenario: The kernel kills the application
