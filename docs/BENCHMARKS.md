@@ -3698,3 +3698,94 @@ DECISIONs:
   counter for list copies or dynamic calls. The language, views and layouts features pin the
   behaviour.
 - ListView's delegate creation and teardown are left to the views lane.
+
+### The cost of a click's passes, and alarms' slow clicks (2026-10-19)
+
+The section above left the static snippets at 0.15–0.42 % of a core while driven, against qml6's
+0.07–0.14 %, with two passes a click. This pass profiled single clicks under callgrind (release
+build): clicks that change nothing (focus-column, flow-diagram, borderimage-defaults) and clicks
+whose handler runs a script (the signals snippets, methods-app).
+
+**A script's click walked the whole JS heap.** When a window rests after a script ran, the engine
+asks whether the scripts' heap grew enough to collect. QuickJS gives its byte count only through
+`JS_ComputeMemoryUsage`, which walks every object, shape and atom: 78 % of what such a click cost
+under callgrind. The runtime now allocates through a counting allocator, and the check reads the
+count. B15 above made the check run once a rest is 100 ms long; a click every half second
+still has one such rest, so each click still paid for the walk. On signals-basic, the main thread's time for 25 clicks went from 29–40 ms to 20–24 ms
+(qml6: 6–8 ms), and driven CPU from 0.27–0.36 % to 0.19–0.23 % (qml6: 0.08–0.09 %).
+
+**A click that changes nothing draws nothing, in both runtimes.** Frames sent while driven are 0
+in Ljós and in qml6 for every snippet whose clicks change nothing on screen (all but the two with a
+blinking cursor and vertical-positioner-transition). The pass after such a press or release finds nothing
+dirty and records nothing. What is left of a no-change click (about 230 k instructions under
+callgrind on focus-column) is the cost of waking: about four main-thread wakes a click, one of
+them the extra loop turn a redraw request costs, and the clipboard's thread, which shares the
+Wayland connection and wakes about five times a click.
+
+**alarms.** Making a Material attached object bumped the style's epoch, which made every other
+Material object look up its values again. Opening the alarm dialog makes many of them, one at a
+time, so its cost grew with the square of what it made. A new object now changes nothing for
+the others; what an author gives it still reaches the items below by the write that gives it.
+`features/controls/material-made-later.feature` pins this, and
+`material_items_made_one_by_one_cost_what_each_costs` in `crates/ljos_controls/tests/controls.rs`
+counts the effects for 40 and 80 rows. The dialog's open went from 40 M to 22 M instructions
+(129 M to 110 M for the whole run).
+
+The p95 did not move: 47.0–50.2 ms against qml6's 34.3–34.4 ms (one qml6 run 104 ms), at loads
+15–40. Its slow clicks are presses on the dialog's round "+" and "−" buttons. alarms imports
+`QtQuick.Controls.Material`, and Ljós's Material controls have no ripple or raised look when
+pressed, so the press changes nothing on screen and the bench waits for the release's frame,
+40 ms later. That frame took 9 ms. qml6 draws the ripple on the press, about 2 ms after it.
+
+| | driven CPU % | busiest thread % | main thread ms | lag p95 ms |
+|---|---:|---:|---:|---:|
+| alarms, Ljós | 0.32 | 0.26 | 27.0 | 47.3 |
+| alarms, qml6 | 6.44 | 1.41 | 24.0 | 34.4 |
+
+**The static snippets again.** The 18 snippets were run against qml6 back to back on the two
+changes above, with `--warm-up --repeat 3`, in chunks of three or four, at load averages of
+6.7–135. Medians:
+
+| example | driven CPU % (Qt) | busiest thread % (Qt) | main thread ms (Qt) | lag p95 ms (Qt) |
+|---|---:|---:|---:|---:|
+| snippet-borderimage-defaults | 0.12 (0.07) | 0.10 (0.05) | 11.8 (6.1) | — (—) |
+| snippet-vertical-positioner-transition | 0.18 (0.10) | 0.16 (0.07) | 18.7 (7.9) | 41.8 (40.7) |
+| snippet-flow-diagram | 0.17 (0.09) | 0.14 (0.06) | 16.8 (6.9) | — (—) |
+| snippet-focus-column | 0.16 (0.07) | 0.14 (0.05) | 15.9 (5.6) | — (—) |
+| snippet-focus-scopes | 0.32 (0.41) | 0.28 (0.09) | 32.5 (10.5) | 456.3 (457.0) |
+| snippet-rectangle-smooth | 0.16 (0.07) | 0.13 (0.05) | 15.8 (5.7) | — (—) |
+| snippet-texteditor | 0.38 (0.77) | 0.33 (0.19) | 39.0 (15.3) | 457.5 (456.3) |
+| snippet-text-lines | 0.17 (0.08) | 0.14 (0.05) | 16.4 (6.2) | — (—) |
+| snippet-components-application | 0.20 (0.09) | 0.17 (0.07) | 19.8 (7.8) | — (—) |
+| snippet-properties-application | 0.19 (0.09) | 0.16 (0.06) | 18.7 (6.9) | — (—) |
+| snippet-alias-application | 0.14 (0.08) | 0.12 (0.05) | 14.0 (6.3) | — (—) |
+| snippet-property-signals | 0.17 (0.09) | 0.14 (0.05) | 17.0 (6.1) | — (—) |
+| snippet-signals-basic | 0.24 (0.09) | 0.21 (0.06) | 25.1 (7.5) | — (—) |
+| snippet-signals-parameters | 0.27 (0.15) | 0.23 (0.10) | 27.3 (11.6) | — (—) |
+| snippet-signals-no-parameters | 0.21 (0.11) | 0.18 (0.08) | 21.7 (9.2) | — (—) |
+| snippet-signals-connectslots | 0.21 (0.10) | 0.19 (0.07) | 22.0 (8.5) | — (—) |
+| snippet-signals-connectdynamic | 0.24 (0.12) | 0.21 (0.09) | 24.4 (10.4) | — (—) |
+| snippet-methods-app | 0.24 (0.09) | 0.21 (0.07) | 24.3 (8.1) | — (—) |
+
+Ljós now uses 0.12–0.38 % of a core while driven, against 0.07–0.77 %. It wins snippet-focus-scopes
+and snippet-texteditor, whose cursor blinks, and still uses about twice qml6's CPU on the rest,
+where a click costs a few wakes and no frame. Its main thread spends 12–39 ms on 25 clicks,
+against 6–15 ms for qml6's.
+
+What is left:
+
+| loss | cause | owner |
+|---|---|---|
+| static snippets, about twice qml6's CPU while driven | The cost of each wake, not of the passes' work: a redraw request costs a loop turn of its own, and the clipboard thread wakes on every Wayland event. | shell |
+| alarms lag p95 47 against 34 ms | Material controls draw nothing on press: no ripple, no raised look. | controls |
+| a Material value given in every delegate | An author's write of a Material value still bumps one epoch for the whole style, so delegates that each give one are quadratic to make. | controls |
+
+- **DECISION: the heap count is pinned by a Rust test, not a feature.** It changes no behaviour
+  a QML author can see, only how often the heap is walked.
+- **DECISION: the redraw request's extra loop turn is left.** Taking it out changes when frames
+  are paced against the compositor's callbacks, which the passes-per-click scenario and the
+  animation benches depend on; it needs its own measurement.
+- **DECISION: Material press feedback is left for later.** A ripple and a raised look on every
+  Material control is a style feature of its own, with its own scenarios against qml6.
+- **DECISION: an author's write still bumps the global epoch.** Scoping it to the items below the
+  writer needs the attached objects to know their descendants, a larger change than this batch's.
