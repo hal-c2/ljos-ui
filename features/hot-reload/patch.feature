@@ -3478,6 +3478,47 @@ Feature: What a reload changes
       Then the property "seen" of "root" is "second/b"
       And the property "x" of "box" is at least 40
 
+    Scenario: What a user gives through an alias goes to the object made again
+      Given the file "Viewer.qml":
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          property alias words: shown.text
+          Text { id: shown; objectName: "first"; text: "a" }
+          Item { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Viewer { id: viewer; words: "mine" }
+          property string seen: viewer.current.objectName + "/" + viewer.current.text
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "seen" of "root" is "first/mine"
+      When the file "Viewer.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          property alias words: shown.text
+          Item { }
+          Text { id: shown; objectName: "second"; text: "b" }
+        }
+        """
+      And a reload happens
+      Then the property "seen" of "root" is "second/mine"
+      And the property "x" of "box" is at least 40
+
   Rule: A value a state's PropertyChanges gives, edited, goes in place
 
     The PropertyChanges takes the value as now written. A state in force

@@ -615,6 +615,9 @@ impl Engine {
         // An alias whose object was made again stands for the new one,
         // and what reads through it reads that.
         let mut realiased: Vec<Rc<Instance>> = Vec::new();
+        // (user, its object, alias): what a user gives through an alias
+        // of a component's root goes to the object it stands for now.
+        let mut given: Vec<(Rc<Instance>, usize, String)> = Vec::new();
         for c in changed.iter().filter(|c| !c.realias.is_empty()) {
             for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
                 let now = renew(inst, &files, &mut memo);
@@ -627,6 +630,11 @@ impl Engine {
                     {
                         self.wire_alias(&now, id, p);
                         any = true;
+                        if *j == 0
+                            && let Some((user, i)) = users.get(&Rc::as_ptr(inst))
+                        {
+                            given.push((renew(user, &files, &mut memo), *i, name.clone()));
+                        }
                     }
                 }
                 if any {
@@ -730,6 +738,18 @@ impl Engine {
                 }
             }
             self.batch(|| {
+                for (user, i, alias) in &given {
+                    let id = user.objects[*i];
+                    if !self.is_alive(id) {
+                        continue;
+                    }
+                    let od = &user.file.ir.component(user.comp).objects[*i];
+                    for name in given_names(od).filter(|n| is_or_under(n, alias)) {
+                        if gives(od, &name) {
+                            self.in_place_set(user, id, od, &name);
+                        }
+                    }
+                }
                 for inst in &readers {
                     for &id in &inst.objects {
                         if self.is_alive(id) {
