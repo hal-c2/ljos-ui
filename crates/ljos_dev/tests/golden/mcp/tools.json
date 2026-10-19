@@ -643,6 +643,54 @@
     "read_only": true
   },
   {
+    "description": "A timeline of the frames, for comparing runtimes: `record` starts or stops it. Each frame says what woke it (input, timer, animation, message) and where its time went: timers, animations, layout, scene build, bindings, text, render, present. `since` takes `next_since`.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "holder": {
+          "default": null,
+          "description": "A name for the client: with `record`, the recording it asked for\nends once no `app_watch` with this `holder` has waited for a while,\nor when it stops it. Others' recordings go on.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max": {
+          "default": null,
+          "description": "The most frames to list (default 60, at most 600).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "record": {
+          "default": null,
+          "description": "Start recording (`true`) or stop (`false`). What was recorded\nstays until newer frames push it out.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "since": {
+          "default": null,
+          "description": "The `next_since` of an earlier answer: only the frames after it,\noldest first. Without it, the latest frames.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "FramesArgs",
+      "type": "object"
+    },
+    "name": "app_frames",
+    "read_only": true
+  },
+  {
     "description": "Click the item `target` (a reference or locator) at its centre: a move, a press and a release through the same hit test as a mouse, so what is on top gets it. `button` is left (default), right or middle; `count` 2 is a double click. Answers once the frame settled, with what changed.",
     "input_schema": {
       "$defs": {

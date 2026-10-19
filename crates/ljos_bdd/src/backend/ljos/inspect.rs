@@ -139,6 +139,7 @@ fn pump(inspector: &mut Inspector, live: &mut Live, fault: &mut Option<BackendEr
         fault.get_or_insert(e);
     }
     inspector.observe(&live.engine);
+    inspector.record_scene_frames(&mut live.scene, 0);
     let mut report = live.scene.take_incubation_report().unwrap_or_default();
     report.elapsed = started.elapsed();
     inspector.record_frame(&report);

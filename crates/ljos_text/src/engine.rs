@@ -486,6 +486,15 @@ pub struct TextEngine {
     keep_frames: u64,
     generation: u64,
     stats: CacheStats,
+    /// What laying out cost since it was last taken, while it is timed.
+    timed: Option<TextTimes>,
+}
+
+/// Laying out text that was not in the cache: how long and how often.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextTimes {
+    pub spent: std::time::Duration,
+    pub layouts: u64,
 }
 
 impl std::fmt::Debug for TextEngine {
@@ -1207,6 +1216,7 @@ impl TextEngine {
             keep_frames: KEEP_FRAMES,
             generation: 0,
             stats: CacheStats::default(),
+            timed: None,
         };
         if system {
             engine.warm_fallback();
@@ -1317,6 +1327,36 @@ impl TextEngine {
         }
     }
 
+    /// Times the layouts made from now on, for [`Self::take_times`], or
+    /// stops. Off, no clock is read.
+    pub fn set_timed(&mut self, on: bool) {
+        self.timed = on.then(TextTimes::default);
+    }
+
+    /// What laying out cost since the last call; nothing while not timed.
+    pub fn take_times(&mut self) -> TextTimes {
+        self.timed.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// [`Self::build_layout`], timed while the engine is.
+    fn timed_layout(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: Option<&Ranged<'_>>,
+        params: &LayoutParams,
+    ) -> TextLayout {
+        let Some(started) = self.timed.is_some().then(std::time::Instant::now) else {
+            return self.build_layout(text, style, ranged, params);
+        };
+        let layout = self.build_layout(text, style, ranged, params);
+        if let Some(t) = &mut self.timed {
+            t.spent += started.elapsed();
+            t.layouts += 1;
+        }
+        layout
+    }
+
     /// Cache sizes and counters.
     pub fn stats(&self) -> CacheStats {
         CacheStats {
@@ -1347,7 +1387,7 @@ impl TextEngine {
             return e.layout.clone();
         }
         self.stats.layout_misses += 1;
-        let layout = Arc::new(self.build_layout(text, style, None, params));
+        let layout = Arc::new(self.timed_layout(text, style, None, params));
         // A hash collision replaces the other entry: a miss later, never a
         // wrong layout, because hits compare the whole key.
         self.layouts.insert(
@@ -1392,7 +1432,7 @@ impl TextEngine {
             return e.layout.clone();
         }
         self.stats.layout_misses += 1;
-        let layout = Arc::new(self.build_layout(text, style, Some(ranged), params));
+        let layout = Arc::new(self.timed_layout(text, style, Some(ranged), params));
         self.layouts.insert(
             key,
             LayoutEntry {

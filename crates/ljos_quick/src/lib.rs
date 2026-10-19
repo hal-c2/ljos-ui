@@ -41,6 +41,7 @@ pub mod palette;
 mod particles;
 #[doc(hidden)]
 pub use particles::{emitters_looked_at, particle_reads, particles_painted};
+mod frame_times;
 mod pointer_item;
 mod positioners;
 mod press_and_hold;
@@ -82,6 +83,7 @@ pub use drop_area::{
 pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
 pub use font_loader::{FontFamilies, FontLoader};
+pub use frame_times::{FrameTimes, Woke};
 pub use gradient::{Gradient, GradientPaint, GradientStop};
 pub use handlers::{
     DragAxis, DragHandler, HoverHandler, PinchGesture, PinchHandler, PinchPhase, PointHandler,

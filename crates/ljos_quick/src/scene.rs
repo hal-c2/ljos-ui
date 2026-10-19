@@ -520,6 +520,11 @@ pub struct QuickScene {
     /// what it owns is destroyed next and is not given back what the
     /// scene gave it.
     going: Option<ObjectId>,
+    /// The frames' times added up while a timeline records
+    /// (frame_times.rs); `None`, and no frame reads a clock for it.
+    pub(crate) timing: Option<crate::frame_times::FrameTimes>,
+    /// Input reached the scene since the last frame, while timed.
+    pub(crate) saw_input: std::cell::Cell<bool>,
 }
 
 impl Drop for QuickScene {
@@ -596,6 +601,8 @@ impl QuickScene {
             platform: None,
             watching_shown: false,
             going: None,
+            timing: None,
+            saw_input: std::cell::Cell::new(false),
         }
     }
 
@@ -670,6 +677,10 @@ impl QuickScene {
                 wake(&s);
             }
         });
+    }
+
+    pub(crate) fn text_engine(&self) -> &SharedTextEngine {
+        &self.text
     }
 
     /// What the scene shows, in logical pixels.
@@ -866,7 +877,12 @@ impl QuickScene {
     /// translated into the host's clock for `next_wake`, so the two clocks
     /// need not share an epoch.
     pub fn frame(&mut self, engine: &Engine, now: Time) -> FrameOutput {
+        use crate::frame_times::{FrameTimes, Laps, lap};
         self.frame += 1;
+        let mut laps = self.timing.is_some().then(Laps::start);
+        let mut steps = FrameTimes::default();
+        // An animation under way as the frame starts is stepped by it.
+        let animating = laps.is_some() && crate::animation::any_stepping(engine);
         // Marks made during the frame are drained by it or reported
         // through `next_wake`; they must not wake the host a second time.
         {
@@ -889,6 +905,7 @@ impl QuickScene {
         let platform = ljos_platform::Platform::of(engine);
         platform.deliver(engine);
         self.platform = Some(platform);
+        lap(&mut laps, &mut steps.other);
         // 3. Timers and animations.
         let engine_now = engine.now();
         engine.advance_timers(engine_now);
@@ -899,6 +916,7 @@ impl QuickScene {
         // here, between turns: what a boundary discards is deleted next
         // and what it makes is laid out in this frame.
         engine.deliver_faults();
+        lap(&mut laps, &mut steps.timers);
         // 4. Deferred deletes.
         let deleted = engine.process_deferred_deletes();
         let dead = std::mem::take(&mut self.shared.borrow_mut().dead);
@@ -908,17 +926,21 @@ impl QuickScene {
         // Focus asked for while objects were being made.
         crate::focus::tree::settle(engine);
         self.sync_layer(engine);
+        lap(&mut laps, &mut steps.other);
         // 5. Animations, from the frame's time and nothing else.
         crate::animation::tick(engine, now);
         crate::long_press::tick(engine, now);
         crate::flickable::fling::tick(engine, now);
         crate::canvas::tick(engine);
         crate::views::path_view::tick(engine, now);
+        lap(&mut laps, &mut steps.animations);
         // 6. Polish.
         self.polish(engine);
+        lap(&mut laps, &mut steps.layout);
         // 7. Incubate. New items join the tree and are laid out in this
         // same frame, so what is shown is never half placed.
         let incubating = self.incubate(engine);
+        lap(&mut laps, &mut steps.create);
         // 8. Sync.
         self.reconcile(engine);
         self.apply_geometry(engine);
@@ -952,6 +974,10 @@ impl QuickScene {
         // Layouts no frame asked for lately are dropped here, on a frame
         // that runs anyway; nothing ages while the scene is idle.
         self.text.borrow_mut().end_frame();
+        lap(&mut laps, &mut steps.scene);
+        if let Some(laps) = laps {
+            self.add_frame_times(engine, laps, steps, animating);
+        }
         let pending = {
             let mut s = self.shared.borrow_mut();
             let p = s.pending() || self.a11y.pending();
@@ -2068,6 +2094,7 @@ impl QuickScene {
     /// Delivers a pointer event (pipeline steps 1-2). Returns whether an
     /// item or handler took it.
     pub fn pointer_event(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
+        self.note_input();
         // A wheel event tells the buttons that are held (`wheel.buttons`).
         self.pointer.held = match ev.kind {
             PointerKind::Press | PointerKind::Move | PointerKind::Release => ev.buttons,
@@ -2133,6 +2160,7 @@ impl QuickScene {
         ev: &crate::input::WheelEvent,
         buttons: MouseButtons,
     ) -> bool {
+        self.note_input();
         let hits = self.hits(engine, ev.pos);
         crate::wheel::deliver(engine, &hits, ev, buttons)
     }
@@ -2140,6 +2168,7 @@ impl QuickScene {
     /// Offers a pinch the platform recognised (a touchpad's) to the
     /// `PinchHandler`s under it. Returns whether one took it.
     pub fn pinch_event(&mut self, engine: &Engine, g: &crate::handlers::PinchGesture) -> bool {
+        self.note_input();
         let hits = self.hits(engine, g.center);
         crate::handlers::pinch_gesture(engine, g, &hits)
     }

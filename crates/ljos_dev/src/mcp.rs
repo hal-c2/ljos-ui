@@ -47,6 +47,7 @@ mod observe;
 mod paint;
 mod reload;
 mod surface;
+mod timeline;
 mod tools;
 mod trace;
 mod values;
@@ -280,6 +281,8 @@ pub struct Inspector {
     startup: Startup,
     paint: PaintStats,
     frames: FrameLog,
+    /// What `app_frames` recorded.
+    timeline: timeline::Timeline,
     /// Properties assigned by `app_set_property`, so that `app_inspect`
     /// can say they were assigned by devtools and not by the application.
     edits: edits::Edits,
@@ -356,6 +359,7 @@ impl Inspector {
             startup: Startup::default(),
             paint: PaintStats::default(),
             frames: FrameLog::default(),
+            timeline: timeline::Timeline::default(),
             edits: edits::Edits::default(),
             _observing: ljos_runtime::observe::enable(),
         };
@@ -411,6 +415,7 @@ impl Inspector {
         }
         self.paint.record(report);
         self.frames.record_paint(report);
+        self.timeline.record_paint(report);
     }
 
     /// Whether a client follows items with `app_watch`: only then need the
@@ -655,6 +660,16 @@ impl Inspector {
         });
     }
 
+    /// Records where the time of the scene's frames in this pass went, for
+    /// `app_frames`, with how many messages the host took from other
+    /// threads. Call it at the end of every pass, before painting; while
+    /// nobody records, the scene keeps no times and this does nothing.
+    pub fn record_scene_frames(&mut self, scene: &mut QuickScene, drained: usize) {
+        if let Some(times) = scene.take_frame_times() {
+            self.timeline.record(times, drained);
+        }
+    }
+
     /// Records a frame the host ran, for `app_metrics`.
     pub fn record_frame(&mut self, report: &FrameReport) {
         self.changes.frame();
@@ -718,6 +733,7 @@ impl Inspector {
             lease.release(engine, scene);
         }
         if answered > 0 {
+            self.timeline.asked();
             // What the inspector did itself is in the measurements it
             // gives, under its own name: an agent that looks at where the
             // time went must be able to tell its own looking apart.
@@ -796,6 +812,10 @@ impl Inspector {
             // The next request of this round sees what the act did.
             *capture = Some(after);
             let _ = reply.send(answer);
+            return;
+        }
+        if let Kind::Frames(args) = &kind {
+            let _ = reply.send(timeline::frames(engine, scene, &mut self.timeline, args));
             return;
         }
         let scene: &QuickScene = scene;
@@ -1117,7 +1137,9 @@ enum Started {
 /// already taken.
 fn needs_scene(kind: &Kind) -> bool {
     match kind {
-        Kind::Logs(_) | Kind::Metrics | Kind::Processes(_) | Kind::Watch(_) => false,
+        Kind::Logs(_) | Kind::Metrics | Kind::Processes(_) | Kind::Watch(_) | Kind::Frames(_) => {
+            false
+        }
         Kind::Objects(args) => objects::needs_scene(args),
         Kind::Trace(args) => trace::needs_scene(args),
         Kind::Resource(r) => *r == Resource::Tree,

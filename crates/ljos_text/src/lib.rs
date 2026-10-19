@@ -58,7 +58,7 @@ pub use edit::{
     Caret, CaretCluster, EditBlock, EditCell, EditGrid, EditLayout, EditLine, EditParams, EditRun,
     EditTable, PlacedBlock,
 };
-pub use engine::{CacheStats, TextEngine};
+pub use engine::{CacheStats, TextEngine, TextTimes};
 pub use fonts::{BUNDLED_FAMILY, FontError, RegisteredFace, bundled_regular};
 pub use layout::{FontMetrics, Line, LineRun, PlacedBox, TextBounds, TextLayout};
 pub use model::{

@@ -132,6 +132,8 @@ pub(crate) struct Inner {
     pub(crate) delayed: crate::delayed_errors::DelayedErrors,
     /// The objects an inspector traces (trace.rs).
     pub(crate) traces: crate::trace::Traces,
+    /// What a frame timeline counts (timing.rs); one flag while off.
+    pub(crate) timing: crate::timing::Timing,
     /// The properties whose setters (those that get a `Cx`) are running,
     /// innermost last: a write to one of them from inside is refused.
     setters: RefCell<SmallVec<[(ObjectId, PropIndex); 2]>>,
@@ -294,6 +296,7 @@ impl Engine {
             slow: Default::default(),
             delayed: Default::default(),
             traces: Default::default(),
+            timing: Default::default(),
             setters: RefCell::new(SmallVec::new()),
             frozen: Cell::new(0),
         });
@@ -2435,6 +2438,7 @@ impl Engine {
             // While a trace follows bindings each run is told: what it
             // read that changed, how long it took and what it gave.
             // Otherwise this is one look at a flag.
+            let _timed = engine.inner.timing.binding();
             let followed = if engine.inner.traces.follows_bindings() {
                 engine
                     .binding_runs(obj, prop)

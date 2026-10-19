@@ -918,8 +918,12 @@ impl Engine {
                 Pending::Destroy(o) => {
                     self.destroy(o);
                 }
-                Pending::Call(f) => f(self),
+                Pending::Call(f) => {
+                    self.inner.timing.timer_fired();
+                    f(self)
+                }
                 Pending::Start(o) => {
+                    self.inner.timing.timer_fired();
                     self.inner.timers.borrow_mut().by_start.remove(&o);
                     let running = self.with::<Timer, _>(o, |t| t.running).unwrap_or(false);
                     if running && let Some(s) = Timer::meta_ref().signal_index("triggered") {
@@ -927,6 +931,7 @@ impl Engine {
                     }
                 }
                 Pending::Timer(o) => {
+                    self.inner.timing.timer_fired();
                     self.inner.timers.borrow_mut().by_timer.remove(&o);
                     let n = fired.entry(o).or_default();
                     *n += 1;

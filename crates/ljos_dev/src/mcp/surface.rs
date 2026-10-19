@@ -149,30 +149,38 @@ impl InspectorSurface {
     ) -> Self {
         let release = handle.clone();
         let holders = Holders::new(move |holder| {
-            // Whoever held the traces is gone, so the answer is awaited
-            // here: the UI thread skips a request nobody waits for. A
-            // full inbox drops it; the traces then stay until stopped, as
-            // ones without a holder do.
+            // Whoever held the traces and the recording is gone, so the
+            // answers are awaited here: the UI thread skips a request
+            // nobody waits for. A full inbox drops it; what it held then
+            // stays until stopped, as what has no holder does.
             let Ok(runtime) = tokio::runtime::Handle::try_current() else {
                 return;
             };
-            let (reply, answer) = oneshot::channel();
-            runtime.spawn(async move {
-                let _ = answer.await;
-            });
-            let stop = super::trace::TraceArgs {
+            let traces = Kind::Trace(super::trace::TraceArgs {
                 stop: true,
-                holder: Some(holder),
+                holder: Some(holder.clone()),
                 ..Default::default()
-            };
-            let _ = release.send(DevReq {
-                kind: Kind::Trace(stop),
-                reply,
-                deadline: Instant::now() + timeout,
-                slot: None,
-                per_copy: ljos_mcp_core::DEFAULT_RESULT_BYTES / 2,
-                caps: CapSet::of([Cap::Inspect]),
             });
+            let frames = Kind::Frames(super::timeline::FramesArgs {
+                record: Some(false),
+                holder: Some(holder),
+                max: Some(1),
+                ..Default::default()
+            });
+            for kind in [traces, frames] {
+                let (reply, answer) = oneshot::channel();
+                runtime.spawn(async move {
+                    let _ = answer.await;
+                });
+                let _ = release.send(DevReq {
+                    kind,
+                    reply,
+                    deadline: Instant::now() + timeout,
+                    slot: None,
+                    per_copy: ljos_mcp_core::DEFAULT_RESULT_BYTES / 2,
+                    caps: CapSet::of([Cap::Inspect]),
+                });
+            }
         });
         InspectorSurface {
             registry: args::registry(),
@@ -359,6 +367,7 @@ impl McpSurface for InspectorSurface {
             };
             let holds = match &kind {
                 Kind::Trace(a) if a.target.is_some() && !a.stop => a.holder.clone(),
+                Kind::Frames(a) if a.record == Some(true) => a.holder.clone(),
                 _ => None,
             };
             let answer = self.ask(kind, per_copy, ctx.caps).await;

@@ -683,6 +683,15 @@ pub(crate) fn run_count(engine: &Engine) -> usize {
     d.runs.borrow().len()
 }
 
+/// Whether a run that is not paused is under way: the next tick steps it.
+pub(crate) fn any_stepping(engine: &Engine) -> bool {
+    driver(engine)
+        .runs
+        .borrow()
+        .iter()
+        .any(|r| !r.cancelled.get() && !r.paused.get())
+}
+
 pub(crate) fn runs(engine: &Engine) -> Vec<(ObjectId, bool)> {
     driver(engine)
         .runs

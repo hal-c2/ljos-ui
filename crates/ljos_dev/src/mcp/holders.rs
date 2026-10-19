@@ -1,4 +1,4 @@
-//! Which client holds which traces, on the server's thread.
+//! Which client holds which traces and frame recordings, on the server's thread.
 //!
 //! Each call is answered on its own, with no session to end, so a client
 //! is known to be there only while it waits for the application with
@@ -6,7 +6,7 @@
 //! as it is answered. One that has not asked again within the time its
 //! last watch said it would wait (at least [`LEAST`], at most [`MOST`])
 //! is gone, as is one whose watch was dropped before it was answered: its
-//! connection closed. The traces it holds are then stopped.
+//! connection closed. The traces and the recording it holds are then stopped.
 //!
 //! Nothing here runs while nobody holds anything: the one timer is armed
 //! when a holder's last watch ends, and the UI thread is woken only to

@@ -434,6 +434,7 @@ impl QuickScene {
     /// then the item with active focus and its parents. Returns whether anything
     /// accepted it, so the host knows which keys are still its own.
     pub fn key_event(&mut self, engine: &Engine, ev: &KeyEvent) -> bool {
+        self.note_input();
         self.root()
             .is_some_and(|root| deliver_key(engine, root, ev))
     }

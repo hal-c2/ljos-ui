@@ -92,6 +92,12 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
     driver::next_wake(engine, now)
 }
 
+/// Whether the next tick steps an animation; it changes nothing, unlike
+/// [`next_wake`], which plans the frames it asks for.
+pub(crate) fn any_stepping(engine: &Engine) -> bool {
+    driver::any_stepping(engine)
+}
+
 /// Tells the animations the display's refresh period (60 Hz until told):
 /// a visible animation asks for one frame per period, and a `Qt.callLater`
 /// queued while the queue runs waits one.

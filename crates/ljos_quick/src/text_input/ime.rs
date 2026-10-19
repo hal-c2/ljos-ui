@@ -159,6 +159,7 @@ impl QuickScene {
     /// UTF-16 units. Returns whether an editor took it: `false` when no
     /// editor has active focus or it is read-only.
     pub fn ime_preedit(&self, engine: &Engine, text: &str, cursor: Option<usize>) -> bool {
+        self.note_input();
         self.text_input_target(engine)
             .is_some_and(|(item, client)| client.set_preedit(engine, item, text, cursor))
     }
@@ -166,6 +167,7 @@ impl QuickScene {
     /// An input method types `text`, ending its composition. Returns
     /// whether an editor took it.
     pub fn ime_commit(&self, engine: &Engine, text: &str) -> bool {
+        self.note_input();
         self.text_input_target(engine)
             .is_some_and(|(item, client)| client.commit(engine, item, text))
     }

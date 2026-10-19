@@ -163,6 +163,10 @@ impl<M> ShellApp<M> {
         // the application (the log was read) it is in no frame.
         #[cfg(feature = "mcp")]
         let looked = tools.inspector.as_mut().and_then(|s| s.take_work());
+        #[cfg(feature = "mcp")]
+        if let Some(served) = tools.inspector.as_mut() {
+            served.record_scene_frames(view.scene_mut(), last_drain.drained);
+        }
         let frames = view.stats().frames;
         if tools.measuring() && frames != tools.frames {
             tools.frames = frames;
@@ -445,6 +449,14 @@ mod inspector {
 
         pub(crate) fn record_frame(&mut self, report: &FrameReport) {
             self.inspector.record_frame(report);
+        }
+
+        pub(crate) fn record_scene_frames(
+            &mut self,
+            scene: &mut ljos_quick::QuickScene,
+            drained: usize,
+        ) {
+            self.inspector.record_scene_frames(scene, drained);
         }
 
         pub(crate) fn take_work(&mut self) -> Option<FrameReport> {

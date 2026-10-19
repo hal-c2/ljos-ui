@@ -119,7 +119,7 @@ impl Entry {
     }
 }
 
-fn paint_json(p: &PaintReport) -> Value {
+pub(super) fn paint_json(p: &PaintReport) -> Value {
     json!({
         "drawn": match p.drawn {
             Drawn::Whole => "whole",
@@ -135,17 +135,17 @@ fn paint_json(p: &PaintReport) -> Value {
     })
 }
 
-fn us(d: Duration) -> u64 {
+pub(super) fn us(d: Duration) -> u64 {
     d.as_micros() as u64
 }
 
-fn ms(d: Duration) -> String {
+pub(super) fn ms(d: Duration) -> String {
     format!("{:.2} ms", d.as_secs_f64() * 1000.0)
 }
 
 /// The 50th and 95th percentile and the largest of `times`, by nearest
 /// rank.
-fn spread(mut times: Vec<Duration>) -> Option<[Duration; 3]> {
+pub(super) fn spread(mut times: Vec<Duration>) -> Option<[Duration; 3]> {
     if times.is_empty() {
         return None;
     }

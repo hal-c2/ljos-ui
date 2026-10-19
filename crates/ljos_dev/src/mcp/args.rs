@@ -556,6 +556,7 @@ pub enum Kind {
     Watch(super::watch::WatchArgs),
     Objects(super::objects::ObjectsArgs),
     Trace(super::trace::TraceArgs),
+    Frames(super::timeline::FramesArgs),
     Resource(Resource),
     /// Something that changes the application or its input.
     Act(Act),
@@ -601,10 +602,10 @@ impl Kind {
 }
 
 /// Where the tools that act begin in [`TOOLS`]; the ones before only read.
-pub const FIRST_ACT: usize = 11;
+pub const FIRST_ACT: usize = 12;
 
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 24] = [
+pub const TOOLS: [&str; 25] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -616,6 +617,7 @@ pub const TOOLS: [&str; 24] = [
     "app_watch",
     "app_objects",
     "app_trace",
+    "app_frames",
     "app_click",
     "app_type",
     "app_press",
@@ -666,6 +668,10 @@ pub fn registry() -> ToolRegistry {
         .declare(read(ToolDef::new::<super::trace::TraceArgs>(
             "app_trace",
             super::trace::TRACE,
+        )))
+        .declare(read(ToolDef::new::<super::timeline::FramesArgs>(
+            "app_frames",
+            super::timeline::FRAMES,
         )))
         .declare(input(ToolDef::new::<ClickArgs>("app_click", CLICK)))
         .declare(input(ToolDef::new::<TypeArgs>("app_type", TYPE)))
@@ -1059,6 +1065,17 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             }
             holder(tool, a.holder.as_deref())?;
             Kind::Trace(a)
+        }
+        "app_frames" => {
+            let a: super::timeline::FramesArgs = read(tool, args)?;
+            let most = super::timeline::MAX_KEPT;
+            match a.max {
+                Some(0) => return Err(bad(tool, "`max` is at least 1")),
+                Some(m) if m > most => return Err(bad(tool, format!("`max` is at most {most}"))),
+                _ => {}
+            }
+            holder(tool, a.holder.as_deref())?;
+            Kind::Frames(a)
         }
         other => {
             return Err(SurfaceError::not_found(format!(
