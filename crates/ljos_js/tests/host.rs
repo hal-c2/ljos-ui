@@ -401,6 +401,44 @@ fn collect_if_idle_runs_only_after_growth() {
     assert!(!host.collect_if_idle());
 }
 
+// Whether to collect is asked each time a window rests after a script ran,
+// so it reads a count the allocator keeps rather than walking the heap.
+#[test]
+fn heap_bytes_follow_what_scripts_hold_without_a_walk() {
+    let host = JsHost::new(JsConfig {
+        gc_threshold: usize::MAX / 2,
+        ..JsConfig::default()
+    })
+    .unwrap();
+    let start = host.heap_bytes();
+    assert!(start > 0, "the runtime itself is on the heap");
+    // QuickJS's own count, which only the walk reads out, is of what it
+    // gave out; the system's also has what its arena has yet to give.
+    let walked = host.memory_stats().unwrap().malloc_size;
+    assert!(
+        start >= walked / 2 && start <= walked * 2,
+        "{start} against {walked}"
+    );
+    host.enter("alloc", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.keep = []; for (let i = 0; i < 2000; i++) keep.push(new Array(50).fill(i));")
+    })
+    .unwrap();
+    let grown = host
+        .enter("inside", host.config().slice, |_| Ok(host.heap_bytes()))
+        .unwrap();
+    assert!(grown > start + 400 * 1024, "{grown} after {start}");
+    host.enter("drop", host.config().slice, |s| {
+        s.eval::<(), _>("globalThis.keep = null;")
+    })
+    .unwrap();
+    host.collect_now();
+    assert!(
+        host.heap_bytes() < grown - 400 * 1024,
+        "{} after {grown}",
+        host.heap_bytes()
+    );
+}
+
 #[test]
 fn memory_stats_unavailable_inside_a_run() {
     let host = plain();

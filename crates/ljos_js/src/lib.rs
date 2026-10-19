@@ -31,6 +31,7 @@ mod bytecode;
 mod color;
 mod config;
 mod fault;
+mod heap;
 mod host;
 mod objects;
 mod value;

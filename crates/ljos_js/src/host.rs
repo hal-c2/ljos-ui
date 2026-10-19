@@ -26,6 +26,7 @@ use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
     MethodDef, MethodFace, PlainValue, PropDef, SignalDef, Slice, SourceMapper, SourceText,
     TypeDef, ValueKind,
+    heap::{Counted, HeapCount},
     objects::{HostWrapper, new_wrapper, register_wrapper_class, wrapper_id},
     value::{Pending, WeakRef},
 };
@@ -1184,6 +1185,7 @@ pub struct JsHost {
     interrupt: Rc<InterruptState>,
     cfg: JsConfig,
     last_collect: Cell<usize>,
+    heap: HeapCount,
     /// Loaded bytecode is read in place (QuickJS `ROM_DATA`): module code
     /// points into these buffers, so they must outlive the runtime. Declared
     /// last, so they are freed last.
@@ -1236,7 +1238,8 @@ const UNOPTIMISED: u32 = if cfg!(debug_assertions) { 8 } else { 1 };
 
 impl JsHost {
     pub fn new(cfg: JsConfig) -> Result<Self, JsFault> {
-        let rt = Runtime::new()?;
+        let heap = HeapCount::default();
+        let rt = Runtime::new_with_alloc(Counted::new(heap.clone()))?;
         if let Some(limit) = cfg.memory_limit {
             rt.set_memory_limit(limit);
         }
@@ -1322,6 +1325,7 @@ impl JsHost {
             interrupt,
             cfg,
             last_collect: Cell::new(0),
+            heap,
             bytecode: RefCell::default(),
         })
     }
@@ -1876,18 +1880,25 @@ impl JsHost {
     /// Runs the cycle collector if the heap grew enough since the last
     /// collection. Meant for the Idle lane; returns whether it ran.
     pub fn collect_if_idle(&self) -> bool {
-        let Some(stats) = self.memory_stats() else {
+        if self.state.entered.get() {
             return false;
-        };
+        }
         let last = self.last_collect.get();
-        if stats.malloc_size < last.saturating_add(self.cfg.idle_collect_min_growth) {
+        if self.heap_bytes() < last.saturating_add(self.cfg.idle_collect_min_growth) {
             return false;
         }
         self.rt.run_gc();
-        self.last_collect
-            .set(self.memory_stats().map_or(0, |s| s.malloc_size));
+        self.last_collect.set(self.heap_bytes());
         self.flush_released();
         true
+    }
+
+    /// What the runtime holds from the system allocator: blocks QuickJS
+    /// carves small allocations from, and large ones whole. Unlike
+    /// [`JsHost::memory_stats`] this walks nothing and may be asked inside
+    /// a run.
+    pub fn heap_bytes(&self) -> usize {
+        self.heap.bytes()
     }
 
     /// Unconditional collection (memory pressure). Not available inside a run.
@@ -1896,8 +1907,7 @@ impl JsHost {
             return false;
         }
         self.rt.run_gc();
-        self.last_collect
-            .set(self.memory_stats().map_or(0, |s| s.malloc_size));
+        self.last_collect.set(self.heap_bytes());
         self.flush_released();
         true
     }

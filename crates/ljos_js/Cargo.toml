@@ -20,6 +20,10 @@ smallvec.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+# The runtime's allocator asks the C library how large a block is.
+[target.'cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))'.dependencies]
+libc.workspace = true
+
 [features]
 # Generates the QuickJS bindings at build time instead of using the bundled
 # per-target files. Needed for aarch64-linux-android and other targets without

@@ -3931,6 +3931,7 @@ dependencies = [
 name = "ljos_js"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "ljos_runtime",
  "rquickjs",
  "rustc-hash 2.1.3",
