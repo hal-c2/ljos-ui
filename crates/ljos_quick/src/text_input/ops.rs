@@ -262,10 +262,10 @@ pub(crate) fn program_insert(engine: &Engine, obj: ObjectId, pos: i32, text: &st
 }
 
 /// `remove(start, end)` from a program, positions in either order and cut
-/// to the text. Returns what was removed.
-pub(crate) fn program_remove(engine: &Engine, obj: ObjectId, start: i32, end: i32) -> String {
+/// to the text.
+pub(crate) fn program_remove(engine: &Engine, obj: ObjectId, start: i32, end: i32) {
     let Some(st) = ready(engine, obj) else {
-        return String::new();
+        return;
     };
     let (single, len) = {
         let s = st.borrow();
@@ -273,7 +273,6 @@ pub(crate) fn program_remove(engine: &Engine, obj: ObjectId, start: i32, end: i3
     };
     let at = |p: i32| usize::try_from(p).unwrap_or(0).min(len);
     let (a, b) = (at(start.min(end)), at(start.max(end)));
-    let removed = st.borrow().model.slice(a, b).to_owned();
     let how = How {
         kind: if single {
             EditKind::Program
@@ -287,7 +286,6 @@ pub(crate) fn program_remove(engine: &Engine, obj: ObjectId, start: i32, end: i3
         anywhere: single,
     };
     edit(engine, obj, how, |m| m.remove(a, b));
-    removed
 }
 
 /// `clear()`: unlike assigning an empty text it can be undone, and unlike

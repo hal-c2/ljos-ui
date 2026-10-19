@@ -17,7 +17,7 @@ use crate::edit::{
     CaretCluster, EditBlock, EditCell, EditGrid, EditLayout, EditLine, EditParams, EditRun,
     EditTable, PlacedBlock,
 };
-use crate::rich::column_widths;
+use crate::rich::{CELL, column_widths};
 use crate::style::{InlineObject, Ranged, StyleSpan, TextStyle, WrapMode};
 
 /// The characters of one line and, for every glyph run that has glyphs, the
@@ -230,7 +230,7 @@ struct CellLine {
     /// How far its text moves right: where its cell's text starts.
     dx: f64,
     /// Where its own text ends when it is its cell's last line, which
-    /// holds the tab or the line break after the cell.
+    /// holds the [`CELL`] or the line break after the cell.
     end: Option<usize>,
 }
 
@@ -441,7 +441,7 @@ impl TextEngine {
                 };
                 let mut out = Vec::new();
                 let mut start = cut.start;
-                for (i, _) in text[cut.start..end].match_indices('\t') {
+                for (i, _) in text[cut.start..end].match_indices(CELL) {
                     out.push(start..cut.start + i);
                     start = cut.start + i + 1;
                 }
@@ -567,7 +567,7 @@ impl TextEngine {
                     };
                     let mut end = None;
                     if k + 1 == count {
-                        if text[bytes.end..].starts_with(['\t', '\n']) {
+                        if text[bytes.end..].starts_with([CELL, '\n']) {
                             line.range.end = bytes.end + 1;
                         }
                         end = Some(bytes.end);
@@ -1214,7 +1214,7 @@ mod tests {
             ..EditBlock::default()
         };
         // Two rows of two cells between two paragraphs.
-        let text = "x\nab\tc\nabcd\te\ny";
+        let text = "x\nab\u{1f}c\nabcd\u{1f}e\ny";
         let mut engine = TextEngine::new();
         let style = TextStyle::default();
         let mut width = |s: &str| {
@@ -1256,7 +1256,7 @@ mod tests {
         // Four frames of cells and the table's.
         assert_eq!(l.rules.len(), 5 * 4);
         assert!(l.rules.iter().all(|(line, _)| *line == 1));
-        // A cell's line holds the tab after it; its text ends before.
+        // A cell's line holds the CELL after it; its text ends before.
         assert_eq!((l.lines[1].range.clone(), l.lines[1].end), (2..5, 4));
         // A click is in the column whose text starts last before it.
         assert_eq!(l.hit(first + a_b + 1.0, top + 5.0, false), 4);
@@ -1304,7 +1304,7 @@ mod tests {
             }),
             ..EditBlock::default()
         };
-        let text = "\nab ab ab\tc\n";
+        let text = "\nab ab ab\u{1f}c\n";
         let mut engine = TextEngine::new();
         let style = TextStyle::default();
         let blocks = [EditBlock::default(), row, EditBlock::default()];

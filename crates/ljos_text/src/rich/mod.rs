@@ -47,7 +47,7 @@ pub use doc::{
     RichDoc, View, default_image_size,
 };
 pub use editing::{
-    BlockFormat, CellFormat, CharFormat, DocFont, ImageFormat, LINE_BREAK, OBJECT, PARAGRAPH,
+    BlockFormat, CELL, CellFormat, CharFormat, DocFont, ImageFormat, LINE_BREAK, OBJECT, PARAGRAPH,
     RichText, TableFormat, TableRow,
 };
 pub use select::SelectionScope;

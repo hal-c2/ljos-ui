@@ -7,7 +7,6 @@
 //! reads and saves files.
 
 use ljos_engine::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, Url, Value, qml_impl};
-use ljos_text::rich::RichText;
 use ljos_text::utf16_to_byte;
 
 use super::base::{EditKind, SharedState, TextEditor, check, publish, state_of};
@@ -145,14 +144,11 @@ impl TextEdit {
     }
 
     /// `remove(start, end)`: positions in either order, cut to the text.
-    /// Returns what was removed.
+    /// Measured: it gives nothing back, though the documentation has it
+    /// return a string.
     #[qml(invokable)]
-    fn remove(cx: &Cx, start: i32, end: i32) -> String {
-        let removed = ops::program_remove(cx.engine, cx.this, start, end);
-        match state_of(cx.engine, cx.this) {
-            Some(st) if st.borrow().rich.is_some() => RichText::plain_of(&removed),
-            _ => removed,
-        }
+    fn remove(cx: &Cx, start: i32, end: i32) {
+        ops::program_remove(cx.engine, cx.this, start, end);
     }
 
     /// `getFormattedText(start, end)`: that part of rich text as HTML or

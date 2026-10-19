@@ -19,10 +19,10 @@
 //! The text is written back out the way Qt writes it: [`RichText::html`]
 //! as Qt's HTML document, [`RichText::markdown`] as its Markdown.
 //!
-//! A table is a paragraph per row, its cells apart by tabs, each row with
-//! a [`TableRow`] that says how its table and its cells are set. Its text
-//! is counted as Qt counts it: the '\n' into the table, every tab and the
-//! '\n' between rows stand where Qt has U+FDD0 before a cell, and the '\n'
+//! A table is a paragraph per row, its cells apart by [`CELL`], each row
+//! with a [`TableRow`] that says how its table and its cells are set. Its
+//! text is counted as Qt counts it: the '\n' into the table, every
+//! [`CELL`] and the '\n' between rows stand where Qt has U+FDD0 before a cell, and the '\n'
 //! out of it where Qt has U+FDD1 ([`RichText::plain_text`]). As in Qt, a
 //! table that starts or ends the document has an empty paragraph before or
 //! after it, as two tables have between them; those are not written back.
@@ -42,6 +42,9 @@ pub const PARAGRAPH: char = '\n';
 pub const LINE_BREAK: char = '\u{2028}';
 /// Stands for an image.
 pub const OBJECT: char = '\u{fffc}';
+/// Ends a cell of a table row that another follows. It is not a tab, which
+/// Qt lets a cell hold, and is one byte as a tab is.
+pub const CELL: char = '\u{1f}';
 
 /// How a character is set.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -92,7 +95,7 @@ pub struct BlockFormat {
     /// The colour behind the paragraph, as written.
     pub background: Option<Arc<str>>,
     pub align: Option<HAlign>,
-    /// The paragraph is a row of a table: its cells are set apart by tabs.
+    /// The paragraph is a row of a table: its cells are set apart by [`CELL`].
     pub table: Option<TableRow>,
 }
 
@@ -405,8 +408,11 @@ impl RichText {
                             out.push(&LINE_BREAK.to_string(), &f);
                         }
                     }
-                    let between_cells = table.is_some() && cell.is_none();
-                    out.push(piece, if between_cells { &plain } else { &f });
+                    if table.is_some() && cell.is_none() {
+                        out.push(&piece.replace('\t', &CELL.to_string()), &plain);
+                    } else {
+                        out.push(piece, &f);
+                    }
                 }
                 i = end;
             }
@@ -595,7 +601,7 @@ impl RichText {
         // The first paragraph is the one the range starts in.
         out.blocks[0] = Arc::clone(&self.blocks[self.block_index(range.start)]);
         // Measured: a part of one cell is a paragraph of its own.
-        if out.blocks.len() == 1 && out.blocks[0].table.is_some() && !out.text.contains('\t') {
+        if out.blocks.len() == 1 && out.blocks[0].table.is_some() && !out.text.contains(CELL) {
             out.blocks[0] = Arc::new(BlockFormat {
                 table: None,
                 ..(*out.blocks[0]).clone()
@@ -900,7 +906,7 @@ impl RichText {
             let range = self.block_range(row);
             let cells = self.blocks[row].table.as_ref().map(|r| &r.cells);
             let mut at = range.start;
-            for (c, text) in self.text[range].split('\t').enumerate() {
+            for (c, text) in self.text[range].split(CELL).enumerate() {
                 let cell = at..at + text.len();
                 at = cell.end + 1;
                 let format = cells.and_then(|cells| cells.get(c));
@@ -1078,10 +1084,12 @@ impl RichText {
         }
     }
 
-    /// The text as `getText` and `selectedText` give it: paragraphs apart
-    /// by U+2029.
+    /// The text as `getText` and `selectedText` give it, without the
+    /// paragraphs' formats: paragraphs apart by U+2029, and U+FDD0 where a
+    /// cell ends.
     pub fn plain_of(text: &str) -> String {
         text.replace(PARAGRAPH, "\u{2029}")
+            .replace(CELL, "\u{fdd0}")
     }
 
     /// The text of `range` as `getText` and `selectedText` give it:
@@ -1104,7 +1112,7 @@ impl RichText {
                         _ => '\u{2029}',
                     }
                 }
-                '\t' if row(block).is_some() => '\u{fdd0}',
+                CELL if row(block).is_some() => '\u{fdd0}',
                 c => c,
             });
         }
@@ -1486,7 +1494,7 @@ mod tests {
         let t = rich("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>");
         // An empty paragraph before the table and one after it.
         assert_eq!(t.blocks().len(), 4);
-        assert_eq!(t.text(), "\na\tb\nc\n");
+        assert_eq!(t.text(), "\na\u{1f}b\nc\n");
         assert_eq!(
             t.plain_text(0..t.text().len()),
             "\u{fdd0}a\u{fdd0}b\u{fdd0}c\u{fdd1}"
@@ -1494,7 +1502,7 @@ mod tests {
         let two = rich("<table><tr><td>a</td></tr></table><table><tr><td>b</td></tr></table>");
         assert_eq!(two.text(), "\na\n\nb\n");
         let broken = rich("x<table><tr><td>a<br>b</td><td>c</td></tr></table>y");
-        assert_eq!(broken.text(), "x\na\u{2028}b\tc\ny");
+        assert_eq!(broken.text(), "x\na\u{2028}b\u{1f}c\ny");
     }
 
     #[test]
