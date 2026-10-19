@@ -479,10 +479,13 @@ fn accessible_parts(engine: &Engine, obj: ObjectId) -> Option<AccessibleParts> {
 /// two bits and never both.
 const FIRST_PART_KEY: u64 = 3 << 62;
 
-/// A part as the tree is told it: in the scene's coordinates.
+/// A part as the tree is told it: its bounds in the coordinates of the
+/// nearest space above its item (the scene's when `space` is `None`), so
+/// that a scroll moves the space and not the part; `at` in the item's own.
 struct PlacedPart {
     role: AkRole,
     name: String,
+    space: Option<ObjectId>,
     bounds: Bounds,
     at: (f64, f64),
 }
@@ -988,17 +991,17 @@ impl A11yPass {
             let placed = if parts.is_empty() {
                 Vec::new()
             } else {
-                let t = crate::item::scene_transform(e, obj);
+                let (space, t) = transform_to_space(e, obj);
                 parts
                     .into_iter()
                     .map(|p| {
                         let r = t.transform_rect_bbox(p.rect);
-                        let at = t * p.at;
                         PlacedPart {
                             role: p.role,
                             name: p.name,
+                            space,
                             bounds: Bounds::new(r.x0, r.y0, r.x1, r.y1),
-                            at: (at.x, at.y),
+                            at: (p.at.x, p.at.y),
                         }
                     })
                     .collect()
@@ -1052,8 +1055,15 @@ impl A11yPass {
             let mut data = NodeData::new(part.role);
             data.name = part.name;
             data.press = true;
-            data.bounds = part.bounds;
+            // Where it is in the scene is the tree's to work out from the
+            // placement; what the node had stays, so an unmoved part is
+            // not a change.
+            data.bounds = self.tree.get(*key).map_or(part.bounds, |old| old.bounds);
             self.tree.upsert(*key, data);
+            if let Some(s) = part.space {
+                self.watch_space(engine, s);
+            }
+            self.tree.place(*key, part.space.map(key_of), part.bounds);
             self.part_owner.insert(*key, (obj, part.at));
         }
         let changed = keys.len() != before;
@@ -1533,8 +1543,11 @@ impl QuickScene {
         let (mut x, mut y) = data.bounds.center();
         // A part has no `Accessible` object to ask: the click is all.
         let part = self.a11y.part_owner.get(&key).copied();
-        if let Some((_, at)) = part {
-            (x, y) = at;
+        if let Some((owner, at)) = part {
+            // Where the item is now, scrolls included.
+            let t = engine.untrack(|| crate::item::scene_transform(engine, owner));
+            let p = t * kurbo::Point::new(at.0, at.1);
+            (x, y) = (p.x, p.y);
         }
         let item = item_of(key);
         if part.is_none()
