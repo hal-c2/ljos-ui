@@ -262,6 +262,9 @@ struct Inner<V> {
     queues: Vec<Queue>,
     frames: Vec<Frame>,
     read_pool: Vec<Vec<NodeId>>,
+    /// Node lists of disposed scopes, emptied, for the scopes made next: a
+    /// view that makes and disposes delegates grows no list after the first.
+    node_lists: Vec<Vec<NodeId>>,
     walk_pool: Vec<Vec<(NodeId, u32)>>,
     /// (node, colour, read stamp of the node that sent the mark).
     mark_stack: Vec<(NodeId, NodeState, u64)>,
@@ -473,6 +476,7 @@ impl<V: Clone + 'static> Graph<V> {
                 queues: vec![Queue::new()],
                 frames: Vec::new(),
                 read_pool: Vec::new(),
+                node_lists: Vec::new(),
                 walk_pool: Vec::new(),
                 mark_stack: Vec::new(),
                 eval_stack: Vec::new(),
@@ -510,7 +514,9 @@ impl<V: Clone + 'static> Graph<V> {
             .get(parent)
             .ok_or(ReactiveError::DeadScope(parent))?
             .frozen;
-        let id = i.scopes.insert(Scope::new(Some(parent), frozen));
+        let mut scope = Scope::new(Some(parent), frozen);
+        scope.nodes = i.node_lists.pop().unwrap_or_default();
+        let id = i.scopes.insert(scope);
         let tail = i.scopes[parent].last_child.replace(id);
         i.scopes[id].prev = tail;
         match tail {
@@ -592,15 +598,17 @@ impl<V: Clone + 'static> Graph<V> {
         for cleanup in cleanups.into_iter().rev() {
             cleanup();
         }
-        let nodes = match self.inner.borrow_mut().scopes.get_mut(scope) {
+        let mut nodes = match self.inner.borrow_mut().scopes.get_mut(scope) {
             Some(s) => std::mem::take(&mut s.nodes),
             None => return,
         };
-        for n in nodes.into_iter().rev() {
+        for &n in nodes.iter().rev() {
             // Nodes disposed one by one earlier are already gone.
             let _ = self.dispose(n);
         }
-        let leftover = {
+        nodes.clear();
+        self.inner.borrow_mut().give_back_node_list(nodes);
+        let mut leftover = {
             let mut i = self.inner.borrow_mut();
             match i.scopes.remove(scope) {
                 Some(s) => {
@@ -611,9 +619,11 @@ impl<V: Clone + 'static> Graph<V> {
             }
         };
         // Nodes a cleanup created in this scope go too.
-        for n in leftover.into_iter().rev() {
+        for &n in leftover.iter().rev() {
             let _ = self.dispose(n);
         }
+        leftover.clear();
+        self.inner.borrow_mut().give_back_node_list(leftover);
     }
 
     /// Freezes or thaws a scope (ARCHITECTURE.md §8.3). While a scope is
@@ -2544,6 +2554,15 @@ fn enqueue<V>(queues: &mut [Queue], n: NodeId, node: &mut Node<V>) {
 }
 
 impl<V: Clone + 'static> Inner<V> {
+    /// Keeps an empty node list for a scope to come. Lists past a few
+    /// hundred nodes, and lists past what a churning view needs, are freed.
+    fn give_back_node_list(&mut self, list: Vec<NodeId>) {
+        debug_assert!(list.is_empty());
+        if list.capacity() > 0 && list.capacity() <= 256 && self.node_lists.len() < 256 {
+            self.node_lists.push(list);
+        }
+    }
+
     fn insert_node(
         &mut self,
         scope: ScopeId,
@@ -2926,7 +2945,9 @@ impl<V: Clone + 'static> Inner<V> {
                 src.scratch = e.back;
             }
         }
-        let mut fresh = Edges::new();
+        // Sized once: a binding that reads a dozen properties would
+        // otherwise grow its list three times.
+        let mut fresh = Edges::with_capacity(reads.len());
         let mut height = 0;
         for &r in reads {
             if r == n {
