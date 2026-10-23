@@ -477,6 +477,10 @@ fn roles_of(kind: Kind) -> &'static [PropIndex; ROLE_COUNT] {
 const ACTIVE: usize = 0;
 const DISABLED: usize = 2;
 
+/// What is read now, then each group: role `i` of slot `s` is at
+/// `s * ROLE_COUNT + i`.
+const SLOTS: usize = 4 * ROLE_COUNT;
+
 /// The properties of each group's roles, as [`roles_of`].
 fn groups_of(kind: Kind) -> &'static [[PropIndex; ROLE_COUNT]; 3] {
     static CONTROL: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
@@ -928,9 +932,6 @@ fn resolve_palette(
     let roles = roles.unwrap_or(&ROLES);
     let own = roles_of(kind);
     let own_groups = groups_of(kind);
-    // What is read now, then each group: role `i` of slot `s` is at
-    // `s * ROLE_COUNT + i`.
-    const SLOTS: usize = 4 * ROLE_COUNT;
     let prop = |at: usize| match at / ROLE_COUNT {
         0 => own[at],
         s => own_groups[s - 1][at % ROLE_COUNT],
@@ -1168,13 +1169,28 @@ fn hand_down_to_plain_items(engine: &Engine) {
 }
 
 /// Gives a plain item the colours of the items it is in, for each role
-/// it did not set itself: on its next read, or now if something observes
-/// the role. A role nobody above set is the style's again, where it had
-/// another.
+/// and each group's it did not set itself: on its next read, or now if
+/// something observes it. A colour nobody above set is the style's
+/// again, where it had another.
 fn take_from_above(engine: &Engine, item: ObjectId) {
-    let own = roles_of(Kind::Item);
-    let mut inherited: [Option<Color>; ROLE_COUNT] = [None; ROLE_COUNT];
-    let mine: Vec<bool> = own.iter().map(|p| author_set(engine, item, *p)).collect();
+    // Each role, then each group's: a colour set on a palette is set in
+    // each of its groups, and one set in a group there alone, so the
+    // groups too are the nearest ancestor's (checked on qml6).
+    let own_roles = roles_of(Kind::Item);
+    let own_groups = groups_of(Kind::Item);
+    let prop = |at: usize| match at / ROLE_COUNT {
+        0 => own_roles[at],
+        g => own_groups[g - 1][at % ROLE_COUNT],
+    };
+    let mut inherited: [Option<Color>; SLOTS] = [None; SLOTS];
+    // A group's colour the item gave on its palette is its own too.
+    let groups = has_groups(engine, item);
+    let mine: Vec<bool> = (0..SLOTS)
+        .map(|at| {
+            (at < ROLE_COUNT || groups) && author_set(engine, item, prop(at))
+                || author_set(engine, item, own_roles[at % ROLE_COUNT])
+        })
+        .collect();
     let mut open = mine.iter().filter(|m| !**m).count();
     let mut cur = above(engine, item);
     for _ in 0..4096 {
@@ -1185,11 +1201,21 @@ fn take_from_above(engine: &Engine, item: ObjectId) {
             break;
         }
         if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k)) {
-            let theirs = roles_of(k);
-            for i in 0..ROLE_COUNT {
-                if !mine[i] && inherited[i].is_none() && author_set(engine, p, theirs[i]) {
-                    inherited[i] = color_of(&engine.read(p, theirs[i]));
-                    open -= usize::from(inherited[i].is_some());
+            let groups = has_groups(engine, p);
+            for at in 0..SLOTS {
+                if mine[at] || inherited[at].is_some() {
+                    continue;
+                }
+                let i = at % ROLE_COUNT;
+                let c = match at / ROLE_COUNT {
+                    0 => author_set(engine, p, roles_of(k)[i])
+                        .then(|| color_of(&engine.read(p, roles_of(k)[i])))
+                        .flatten(),
+                    g => author_colour(engine, p, k, groups, g - 1, i),
+                };
+                if c.is_some() {
+                    inherited[at] = c;
+                    open -= 1;
                 }
             }
         }
@@ -1197,17 +1223,20 @@ fn take_from_above(engine: &Engine, item: ObjectId) {
     }
     let has_palette = ljos_quick::palette::has_own(engine, item);
     let plain = engine.extension::<PlainItems>();
-    for i in 0..ROLE_COUNT {
-        let p = own[i];
-        if mine[i] {
-            continue;
-        }
+    let style = style_roles(engine).unwrap_or(&ROLES);
+    for at in (0..SLOTS).filter(|at| !mine[*at]) {
+        let p = prop(at);
         // Nothing above, and the item still has the style's colour.
-        if inherited[i].is_none() && !has_palette && !engine.is_made_on_read(item, p) {
+        if inherited[at].is_none() && !has_palette && !engine.is_made_on_read(item, p) {
             continue;
         }
-        let c =
-            Value::Color(inherited[i].unwrap_or(style_roles(engine).unwrap_or(&ROLES)[i].active));
+        let role = &style[at % ROLE_COUNT];
+        let fallback = if at / ROLE_COUNT == DISABLED + 1 {
+            role.disabled
+        } else {
+            role.active
+        };
+        let c = Value::Color(inherited[at].unwrap_or(fallback));
         let done = if engine.observers_of(item, p).is_empty() {
             engine.make_on_read(item, p, move |_| c)
         } else {

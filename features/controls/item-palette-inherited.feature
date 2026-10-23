@@ -59,3 +59,41 @@ Feature: A plain item's colours are those of the items it is in
 
   Scenario: An item inside a control has the control's colours
     Then the property "palette.window" of "inpane" is "#123456"
+
+  Rule: Each colour group is inherited too
+
+    Scenario: A plain item's groups are those of the items it is in
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        ApplicationWindow {
+          palette.button: "#111111"
+          palette.disabled.button: "#222222"
+          palette.inactive.window: "#333333"
+          Item {
+            palette.active.base: "#00ffff"
+            Item { palette.disabled.text: "#444444"; Item { objectName: "c" } }
+          }
+        }
+        """
+      Then the property "palette.active.button" of "c" is "#111111"
+      And the property "palette.inactive.button" of "c" is "#111111"
+      And the property "palette.disabled.button" of "c" is "#222222"
+      And the property "palette.inactive.window" of "c" is "#333333"
+      And the property "palette.active.base" of "c" is "#00ffff"
+      And the property "palette.disabled.text" of "c" is "#444444"
+
+    Scenario: A group's colour set from a script reaches the plain items inside
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        ApplicationWindow {
+          palette.button: "#111111"
+          Item { objectName: "a"; Item { objectName: "c" } }
+        }
+        """
+      When the property "palette.inactive.button" of "a" is set to "#555555"
+      Then the property "palette.inactive.button" of "c" is "#555555"
+      And the property "palette.active.button" of "c" is "#111111"
