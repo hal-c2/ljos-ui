@@ -196,9 +196,10 @@ impl FieldReads {
             words,
             props: smallvec::smallvec![0; words],
             // An object read at all is read by a few runs: its bindings,
-            // its effects and their next runs.
-            runs: Vec::with_capacity(4),
-            bits: Vec::with_capacity(4 * words),
+            // its effects and their next runs, which
+            // come before the old ones are swept.
+            runs: Vec::with_capacity(8),
+            bits: Vec::with_capacity(8 * words),
             at: FxHashMap::default(),
             sweep_at: 0,
             last: usize::MAX,

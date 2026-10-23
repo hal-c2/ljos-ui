@@ -77,6 +77,11 @@ impl Engine {
             } else {
                 let makers = &mut h.ext_mut().made_on_read;
                 makers.retain(|(p, _)| *p != prop);
+                // A type that binds one default on a read binds several
+                // (a Text binds six), so they go in one allocation.
+                if makers.capacity() == 0 {
+                    makers.reserve_exact(8);
+                }
                 makers.push((prop, Maker::Bind(bind)));
                 false
             }
