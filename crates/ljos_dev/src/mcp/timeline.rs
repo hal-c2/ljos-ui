@@ -95,6 +95,12 @@ impl Entry {
         self.paint.and_then(|p| p.present)
     }
 
+    /// The engine's frames and the painting that showed them, as
+    /// `app_metrics` counts a frame.
+    fn total(&self) -> Duration {
+        self.times.total + self.paint.map_or(Duration::ZERO, |p| p.build + p.paint)
+    }
+
     fn json(&self) -> Value {
         let t = &self.times;
         json!({
@@ -102,7 +108,7 @@ impl Entry {
             "at_ms": (self.at.as_secs_f64() * 10_000.0).round() / 10.0,
             "woke": self.woke(),
             "scene_frames": t.frames,
-            "total_us": us(t.total),
+            "total_us": us(self.total()),
             "passes": {
                 "timers_us": us(t.timers),
                 "animations_us": us(t.animations),
@@ -134,7 +140,7 @@ impl Entry {
             } else {
                 woke.join(", ")
             },
-            ms(t.total),
+            ms(self.total()),
             ms(t.timers),
             ms(t.animations),
             ms(t.layout),
@@ -344,7 +350,7 @@ fn summary(shown: &[&Entry]) -> Option<Value> {
         return None;
     }
     let parts: [(&str, Part); 9] = [
-        ("total_us", |e| Some(e.times.total)),
+        ("total_us", |e| Some(e.total())),
         ("timers_us", |e| Some(e.times.timers)),
         ("animations_us", |e| Some(e.times.animations)),
         ("layout_us", |e| Some(e.times.layout)),
