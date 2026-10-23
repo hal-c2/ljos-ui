@@ -4228,6 +4228,17 @@ module QtQuick.Controls.Fusion
 		prop darkShade QtQuick.color named readonly
 		prop topShadow QtQuick.color named readonly
 		prop innerContrastLine QtQuick.color named readonly
+		method highlight
+		method highlightedText
+		method outline
+		method highlightedOutline
+		method tabFrameColor
+		method buttonColor
+		method buttonOutline
+		method gradientStart
+		method gradientStop
+		method mergedColors
+		method grooveColor
 	type QtQuick/Controls/Fusion/GroupBox.qml GroupBox
 		prototype QtQuick.Templates.GroupBox named
 	type QtQuick/Controls/Fusion/ItemDelegate.qml ItemDelegate
@@ -4297,16 +4308,12 @@ module QtQuick.Controls.Fusion.impl
 		prop pressed QtQml.bool named
 		prop highlighted QtQml.bool named
 		prop outlinesFocus QtQml.bool named
-		prop button QtQuick.color named readonly
-		prop highlight QtQuick.color named readonly
+		prop face QtQuick.color named readonly
 		signal controlChanged
 		signal pressedChanged
 		signal highlightedChanged
 		signal outlinesFocusChanged
-		signal buttonChanged
-		signal highlightChanged
-		method shade
-		method tinted
+		signal faceChanged
 	type QtQuick/Controls/Fusion/impl/CheckIndicator.qml CheckIndicator
 		prototype QtQuick.Rectangle named
 		prop control QtQuick.Templates.AbstractButton named pointer
@@ -4330,7 +4337,6 @@ module QtQuick.Controls.Fusion.impl
 		prop vertical QtQml.bool named
 		prop fillOpacity QtQml.real named
 		prop alwaysHighlighted QtQml.bool named
-		prop window QtQuick.color named readonly
 		prop button QtQuick.color named readonly
 		prop highlight QtQuick.color named readonly
 		prop lit QtQml.bool named readonly
@@ -4340,7 +4346,6 @@ module QtQuick.Controls.Fusion.impl
 		signal verticalChanged
 		signal fillOpacityChanged
 		signal alwaysHighlightedChanged
-		signal windowChanged
 		signal buttonChanged
 		signal highlightChanged
 		signal litChanged
@@ -4349,13 +4354,10 @@ module QtQuick.Controls.Fusion.impl
 		prototype QtQuick.Rectangle named
 		prop control QtQuick.Controls.Basic.Control named pointer
 		prop visualFocus QtQml.bool named
-		prop button QtQuick.color named readonly
-		prop highlight QtQuick.color named readonly
+		prop face QtQuick.color named readonly
 		signal controlChanged
 		signal visualFocusChanged
-		signal buttonChanged
-		signal highlightChanged
-		method shade
+		signal faceChanged
 	type QtQuick/Controls/Fusion/impl/SwitchIndicator.qml SwitchIndicator
 		prototype QtQuick.Controls.Fusion.impl.SliderGroove named
 	type QtQuick/Controls/Fusion/impl/TextFieldBackground.qml TextFieldBackground

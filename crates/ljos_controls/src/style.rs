@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use ljos_engine::{
-    Color, ComponentSource, Engine, EngineError, MetaRef, NodeId, ObjectId, PropIndex, Provenance,
-    QmlObject, QmlType, QmlValue, Reset, Value, Version, qml_singleton,
+    Color, ComponentSource, Cx, Engine, EngineError, MetaRef, NodeId, ObjectId, PropIndex,
+    Provenance, QmlObject, QmlType, QmlValue, Reset, Value, Version, qml_singleton,
 };
 use ljos_ir::CompiledFile;
 use ljos_quick::Item;
@@ -1318,6 +1318,223 @@ impl Default for Fusion {
             inner_contrast_line: argb(0x1effffff),
         }
     }
+}
+
+/// Fusion's shades of a palette, which its controls draw with. The maths
+/// is fitted to what qml6 gives for sampled palettes (fusion-shades.feature):
+/// exact for every shade but those of a highlighted button and the
+/// highlighted outline, which are exact for the usual highlights and near
+/// for others.
+#[ljos_engine::qml_impl]
+impl Fusion {
+    #[qml(invokable)]
+    fn highlight(cx: &Cx, palette: Value) -> Color {
+        role(cx, &palette, "highlight")
+    }
+
+    #[qml(invokable, name = "highlightedText")]
+    fn highlighted_text(cx: &Cx, palette: Value) -> Color {
+        role(cx, &palette, "highlightedText")
+    }
+
+    #[qml(invokable)]
+    fn outline(cx: &Cx, palette: Value) -> Color {
+        role(cx, &palette, "window").darker(140.0)
+    }
+
+    #[qml(invokable, name = "highlightedOutline")]
+    fn highlighted_outline(cx: &Cx, palette: Value) -> Color {
+        highlighted_outline(role(cx, &palette, "highlight"))
+    }
+
+    #[qml(invokable, name = "tabFrameColor")]
+    fn tab_frame_color(cx: &Cx, palette: Value) -> Color {
+        let [h, s, v] = button_hsv(role(cx, &palette, "button"));
+        Color::WHITE.with_hsv16(h, s, v).lighter(104.0)
+    }
+
+    #[qml(invokable, name = "buttonColor")]
+    fn button_color(
+        cx: &Cx,
+        palette: Value,
+        highlighted: Value,
+        down: Value,
+        hovered: Value,
+    ) -> Color {
+        let button = role(cx, &palette, "button");
+        let (down, hovered) = (down.to_boolean(), hovered.to_boolean());
+        if highlighted.to_boolean() {
+            let mut c = highlighted_button(button, role(cx, &palette, "highlight"));
+            if down {
+                c = c.darker(110.0);
+            }
+            if hovered {
+                c = c.lighter(104.0);
+            }
+            return c;
+        }
+        let [h, s, mut v] = button_hsv(button);
+        if down {
+            v = (v * 100.0 / 110.0).trunc();
+        }
+        if hovered {
+            v = (v * 1.04).round().min(65535.0);
+        }
+        Color::WHITE.with_hsv16(h, s, v)
+    }
+
+    #[qml(invokable, name = "buttonOutline")]
+    fn button_outline(cx: &Cx, palette: Value, highlighted: Value, enabled: Value) -> Color {
+        let enabled = matches!(enabled, Value::Undefined) || enabled.to_boolean();
+        if !enabled {
+            role(cx, &palette, "window").darker(122.0)
+        } else if highlighted.to_boolean() {
+            highlighted_outline(role(cx, &palette, "highlight"))
+        } else {
+            role(cx, &palette, "window").darker(140.0)
+        }
+    }
+
+    #[qml(invokable, name = "gradientStart")]
+    fn gradient_start(color: Value) -> Color {
+        Color::from_value(&color)
+            .unwrap_or(Color::INVALID)
+            .lighter(124.0)
+    }
+
+    #[qml(invokable, name = "gradientStop")]
+    fn gradient_stop(color: Value) -> Color {
+        Color::from_value(&color)
+            .unwrap_or(Color::INVALID)
+            .lighter(102.0)
+    }
+
+    #[qml(invokable, name = "mergedColors")]
+    fn merged_colors(a: Value, b: Value, factor: Value) -> Color {
+        let a = Color::from_value(&a).unwrap_or(Color::INVALID);
+        let b = Color::from_value(&b).unwrap_or(Color::INVALID);
+        let factor = match factor {
+            Value::Undefined => 50,
+            f => f.to_number() as i32,
+        };
+        merged(a, b, factor)
+    }
+
+    #[qml(invokable, name = "grooveColor")]
+    fn groove_color(cx: &Cx, palette: Value) -> Color {
+        let [h, s, v] = button_hsv(role(cx, &palette, "button"));
+        let v = (f64::from(to8(v)) * 0.9).trunc() * 257.0;
+        Color::WHITE.with_hsv16(h, f64::from(to8(s)) * 257.0, v)
+    }
+}
+
+/// A colour role of a palette as a script hands it over: a colour group,
+/// or a `Palette` object.
+fn role(cx: &Cx, palette: &Value, name: &str) -> Color {
+    let v = match palette {
+        Value::Object(id) => cx.engine.read_by_name(*id, name),
+        v => cx.engine.js_member(v, name).unwrap_or(Value::Undefined),
+    };
+    Color::from_value(&v).unwrap_or(Color::INVALID)
+}
+
+/// A 16-bit channel to 8 bits, rounded.
+fn to8(x: f64) -> u32 {
+    (x as u32 * 255 + 32767) / 65535
+}
+
+/// The opaque button colour lightened by more the darker it is, as
+/// [`Color::hsv16`] has it.
+fn lit_button(button: Color) -> [f64; 3] {
+    let [r, g, b, _] = button.to_rgba8().map(i32::from);
+    let gray = (r * 11 + g * 16 + b * 5) / 32;
+    let by = ((180 - gray) / 6).max(1);
+    let opaque = Color::rgba16(button.r, button.g, button.b, 65535);
+    opaque.lighter(f64::from(100 + by)).hsv16()
+}
+
+/// The hue, saturation and value of a plain Fusion button.
+fn button_hsv(button: Color) -> [f64; 3] {
+    let [h, s, v] = lit_button(button);
+    [
+        (h / 100.0).trunc() * 100.0,
+        (f64::from(to8(s)) * 0.75).trunc() * 257.0,
+        (f64::from(to8(v)) * 257.0 * 100.0 / 104.0).trunc(),
+    ]
+}
+
+/// A highlighted button: the button tinted a tenth of the way to the
+/// highlight, then darkened.
+fn highlighted_button(button: Color, highlight: Color) -> Color {
+    let [h, s, v] = lit_button(button);
+    let c = Color::WHITE.with_hsv16(
+        (h / 100.0).trunc() * 100.0,
+        (f64::from(to8(s)) * 0.75).trunc() * 257.0,
+        f64::from(to8(v)) * 257.0,
+    );
+    let [r, g, b, a] = merged(c, highlight, 90).to_rgba8();
+    Color::from_rgba8(r, g, b, a).darker(104.0)
+}
+
+/// `a` and `b` mixed `factor` hundredths of `a`, in 8-bit channels, with
+/// the alpha of `a`.
+fn merged(a: Color, b: Color, factor: i32) -> Color {
+    let (a8, b8) = (a.to_rgba8(), b.to_rgba8());
+    let mix = |x: u8, y: u8| ((i32::from(x) * factor + i32::from(y) * (100 - factor)) / 100) as u8;
+    Color::from_rgba8(
+        mix(a8[0], b8[0]),
+        mix(a8[1], b8[1]),
+        mix(a8[2], b8[2]),
+        a8[3],
+    )
+}
+
+/// The highlight darkened for an outline, but no lighter in its HSL
+/// lightness than 160 of 255.
+fn highlighted_outline(highlight: Color) -> Color {
+    let d = highlight.darker(125.0);
+    if to8(d.hsv16()[2]) <= 160 {
+        return d;
+    }
+    let [r, g, b, a] = highlight.to_rgba_f();
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let l = (max + min) / 2.0;
+    let s = if max == min {
+        0.0
+    } else if l < 0.5 {
+        (max - min) / (max + min)
+    } else {
+        (max - min) / (2.0 - max - min)
+    };
+    let h = if max == min {
+        0.0
+    } else if r == max {
+        ((g - b) / (max - min)).rem_euclid(6.0)
+    } else if g == max {
+        (b - r) / (max - min) + 2.0
+    } else {
+        (r - g) / (max - min) + 4.0
+    } / 6.0;
+    let l = 160.0 / 255.0;
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let p = 2.0 * l - q;
+    let ch = |mut t: f64| {
+        t = t.rem_euclid(1.0);
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    Color::from_rgba_f(ch(h + 1.0 / 3.0), ch(h), ch(h - 1.0 / 3.0), a)
 }
 
 // ============================================================================

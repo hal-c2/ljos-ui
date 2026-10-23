@@ -16,7 +16,7 @@ Rectangle {
 
     radius: 2
     color: control.palette.base
-    border.color: control.activeFocus ? focusColor : Qt.darker(control.palette.button, 1.4)
+    border.color: control.activeFocus ? focusColor : Fusion.outline(control.palette)
 
     Rectangle {
         x: 1

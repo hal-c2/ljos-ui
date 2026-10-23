@@ -119,11 +119,13 @@ T.SpinBox {
                 height: parent.height - 2
                 radius: 2
                 gradient: Gradient {
-                    GradientStop { position: 0; color: Qt.lighter(host.palette.button, 1.07) }
+                    GradientStop {
+                        position: 0
+                        color: Fusion.gradientStart(Fusion.buttonColor(host.palette, false, false, false))
+                    }
                     GradientStop {
                         position: 1
-                        color: Qt.rgba(host.palette.button.r * 0.988, host.palette.button.g * 0.988,
-                                       host.palette.button.b * 0.988, host.palette.button.a)
+                        color: Fusion.gradientStop(Fusion.buttonColor(host.palette, false, false, false))
                     }
                 }
 
@@ -131,7 +133,7 @@ T.SpinBox {
                     x: host.mirrored ? parent.width - 1 : 0
                     width: 1
                     height: parent.height
-                    color: Qt.darker(host.palette.button, 1.4)
+                    color: Fusion.outline(host.palette)
                 }
             }
         }

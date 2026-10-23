@@ -97,7 +97,7 @@ T.ComboBox {
                     radius: 2
                     color: host.palette.base
                     border.color: field.activeFocus ? Qt.darker(host.palette.highlight, 1.25)
-                                                    : Qt.darker(host.palette.button, 1.4)
+                                                    : Fusion.outline(host.palette)
 
                     Rectangle {
                         x: 1

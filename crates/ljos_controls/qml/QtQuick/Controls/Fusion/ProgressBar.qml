@@ -2,6 +2,7 @@
 // running Qt reports. The bar is a field as tall as a button, with the
 // share done filled in the highlight. The stripes are a drawing of our own.
 import QtQuick
+import QtQuick.Controls.Fusion
 import QtQuick.Templates as T
 
 T.ProgressBar {
@@ -87,7 +88,7 @@ T.ProgressBar {
             implicitWidth: 120
             implicitHeight: 24
             color: control.palette.base
-            border.color: Qt.darker(control.palette.button, 1.4)
+            border.color: Fusion.outline(control.palette)
             radius: 2
 
             // A faint shade under the top edge, as if the field were sunken.

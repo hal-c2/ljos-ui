@@ -14,25 +14,16 @@ Rectangle {
     property T.Control control
     property bool visualFocus: false
 
-    readonly property color button: control.palette.button
-    readonly property color highlight: control.palette.highlight
-
-    function shade(scale) {
-        return Qt.rgba(button.r * scale, button.g * scale, button.b * scale, button.a)
-    }
+    // Fusion's shade of a button, or a highlighted one's with the keyboard.
+    readonly property color face: Fusion.buttonColor(control.palette, visualFocus, false, false)
 
     implicitWidth: 13
     implicitHeight: 13
     radius: 2
     border.color: "transparent"
     gradient: Gradient {
-        GradientStop { position: 0; color: Qt.lighter(handle.button, 1.07) }
-        GradientStop {
-            position: 1
-            color: handle.visualFocus
-                   ? Qt.tint(handle.shade(0.982), Qt.rgba(handle.highlight.r, handle.highlight.g, handle.highlight.b, 0.095))
-                   : handle.shade(0.988)
-        }
+        GradientStop { position: 0; color: Fusion.gradientStart(handle.face) }
+        GradientStop { position: 1; color: Fusion.gradientStop(handle.face) }
     }
 
     Rectangle {
@@ -40,8 +31,8 @@ Rectangle {
         height: parent.height
         radius: parent.radius
         color: "transparent"
-        border.color: handle.visualFocus ? Qt.darker(handle.highlight, 1.25)
-                                         : Qt.darker(handle.control.palette.window, 1.4)
+        border.color: handle.visualFocus ? Fusion.highlightedOutline(handle.control.palette)
+                                         : Fusion.outline(handle.control.palette)
 
         // A faint light line just inside the outline.
         Rectangle {
