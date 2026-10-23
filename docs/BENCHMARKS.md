@@ -3868,3 +3868,102 @@ What is left:
   Material control is a style feature of its own, with its own scenarios against qml6.
 - **DECISION: an author's write still bumps the global epoch.** Scoping it to the items below the
   writer needs the attached objects to know their descendants, a larger change than this batch's.
+
+### B17: graph nodes, property reads and a Text's inputs per delegate (2026-10-23)
+
+These are B16's two measures, taken on the same machine. Everything ran off-screen in the cua
+sandbox on the GPU, against `qml6` 6.11.2 with the Basic style. The start is 0f513821, the commit
+that wrote B16's section, with nothing from this batch. The end is 99a70314. Both are
+profiling builds (release, line tables). qml6 was run alongside them. The one-minute load was
+33 to 41 throughout, so read small differences as noise.
+
+| Scroll, M instructions/s | Start | After | qml6 (same run) |
+|---|---:|---:|---:|
+| thermostat | 100.8 | 96.4 | 125.0 |
+| rssnews | 34.4 | 34.1 | see below |
+| listview | 248.6 | 227.0 | 102.8 |
+| listview with `reuseItems: true` | 133.1 | 124.5 | 60.4 |
+
+rssnews reads a live feed. In this run the feed carried images, and qml6 decoded them while
+it scrolled: 206 M/s on its `QQuickPixmapReader` thread, against 43 M/s on its other threads.
+Ljós does not show the feed's images in this example yet. Its first run, while it loaded the
+feed, read 76 M/s on both binaries, so neither total compares with B16's 50.7.
+
+| Scroll, CPU % of one core | Ljós | qml6 (same run) |
+|---|---:|---:|
+| thermostat | 6.04 | 10.3 |
+| rssnews | 7.74 | 10.1 |
+| listview | 15.1 | 10.9 |
+
+The load was 32, so these percentages are about twice B16's on both sides. Only the ratio
+means anything: listview is ×1.39 of qml6, and the geometric mean of the three is ×0.85.
+
+**Per delegate, by callgrind.** This is listview's main thread, with a 40 s warm-up and a
+20 s window. Delegates are counted as half the `Item` completions.
+
+| Binary | Delegates | Instructions | Per delegate | `malloc` per delegate |
+|---|---:|---:|---:|---:|
+| Start | 9100 | 4.00 G | 440 k | 233 |
+| d4c935a6 (the text and read commits) | 9128 | 3.60 G | 394.5 k | 193 |
+| 99a70314 | 8039 | 3.12 G | 388 k | 194 |
+
+The last commit removes 6 of the 60 `Vec` growths per delegate, not mallocs.
+
+The commits:
+
+- 475333a9: a text's inputs are read once per change, by its polish effect. Paint and
+  polish use that one read. `TextInputs::read` used to run four times per text per frame.
+  Now it runs twice per text when the text is made: once when its completion measures it,
+  and once in the polish effect.
+- 4f1c1315: asking whether an object is of a type builds no error value. The chooser and the
+  style's `is_a` asked this for every delegate.
+- 5c234832: most objects are read by only a few runs, and those keep their reads in a short
+  list scanned in order. A map is built only from 16 runs.
+- 9211575d: when a scope is disposed, its node list is kept for the next scope. The pool
+  holds up to 256 lists, each with a capacity of 256 or less. `Graph::bind` went from 13
+  mallocs per delegate to 7.
+- 0233dfbc: `read_values_unless_bound_on_read` reads a group of properties in one pass,
+  including properties whose bindings are still waiting to be made on a read. A write that
+  drops such a waiting binding tells everyone who read past it.
+- d4c935a6: a Text's four side paddings, its `horizontalAlignment` and its
+  `effectiveHorizontalAlignment` are bound only when something reads them. Until then they
+  cost a stored value and nothing else, and the layout works out the same values itself.
+  `features/text/padding.feature` pins this against qml6.
+- 99a70314: an object's waiting bindings, and the first runs that read it, start in one
+  allocation instead of growing.
+
+**listview is still 2.2× qml6's instructions per second, and 2.1× with `reuseItems`.** The
+top self costs per delegate are now:
+
+- `try_read` 12 k;
+- `free` 9 k;
+- the `ComputeGuard` drop 8.7 k;
+- `read_access` 8.4 k;
+- the 19-property Text read 7.7 k;
+- `malloc` 6.9 k;
+- `Graph::dispose` 5.8 k;
+- `FieldReads::add` 5 k.
+
+Parley's shaping costs about 28 k per delegate inclusive, but it shapes once per text.
+
+These are left:
+
+- `views::pass::tell` makes four computed writes per call, about 11.6 per delegate and
+  4.5 k instructions. That code belongs to the views work.
+- `FieldReads::new` makes 8 mallocs per delegate.
+- `read_access` finds a native part through `QmlObject::part` and its base chain. That is
+  665 k calls of `Text::part` in the window, 15 M instructions.
+- `__qml_get_font` clones the font, and `text_style` makes an `Arc` of the family. Each
+  costs about 2 mallocs per delegate.
+
+DECISIONs:
+
+- A Text is still read twice when it is made, once by the completion measure and once by
+  the polish effect, and once per change after that. Merging the two reads at creation
+  would mean the completion has to wait for the polish.
+- When a write drops a binding that was waiting for a read, readers are told before the
+  write lands. A reader may therefore run once more than it needs to, but only when the
+  written value differs from the stored one, which is rare.
+- The pool keeps at most 256 node lists, each with a capacity of 256 or less, so one huge
+  scope does not hold its memory for good.
+- `pass::tell` is left to the views work.
