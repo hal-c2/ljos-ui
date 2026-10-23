@@ -73,6 +73,7 @@ mod made_on_read;
 pub use made_on_read::BindOnRead;
 mod made_when_reached;
 mod member_aliases;
+mod memory;
 mod meta;
 mod model;
 mod number;
@@ -133,6 +134,7 @@ pub use list::QmlList;
 pub use listmodel::{CarriedCell, CarriedRows, ListElement, ListModel};
 pub use loader::{ComponentSource, MapSource, encoded_url, file_url, url_path};
 pub use log::{LogEntry, LogLevel};
+pub use memory::TypeMemory;
 pub use meta::{
     AttachedTypeId, CompleteThunk, Declared, EnumInfo, Getter, GroupGet, GroupGetMut, ImplInfo,
     ListAppend, ListField, ListInsert, ListRemove, MetaBuilder, MetaObject, MetaRef, MethodDecl,

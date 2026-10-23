@@ -52,6 +52,29 @@ mod edit;
 /// their colour does (which the engine never sees).
 type Shape = parley::Layout<u32>;
 
+/// About what a shaped text holds per byte of the text: Parley keeps a
+/// cluster, a glyph and what it found of the character for each, and
+/// says nothing of its size.
+const SHAPED_BYTES_PER_TEXT_BYTE: usize = 56;
+
+/// What the text engine keeps, for a tool that shows where memory went.
+/// Counts are exact; `bytes` is an estimate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextMemory {
+    /// Layouts held.
+    pub layouts: usize,
+    /// Shaped texts held.
+    pub shapes: usize,
+    /// Paragraphs of edited text held.
+    pub paragraphs: usize,
+    /// Styles whose metrics are kept.
+    pub styles: usize,
+    /// Glyphs whose advance or ink this thread keeps, for every engine on it.
+    pub glyphs: usize,
+    /// About the bytes of all of it.
+    pub bytes: usize,
+}
+
 /// Counters for tests and diagnostics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CacheStats {
@@ -127,6 +150,13 @@ struct OwnedRanged {
     spans: Box<[StyleSpan]>,
     objects: Box<[InlineObject]>,
     strut: bool,
+}
+
+impl OwnedRanged {
+    fn bytes(&self) -> usize {
+        self.spans.len() * std::mem::size_of::<StyleSpan>()
+            + self.objects.len() * std::mem::size_of::<InlineObject>()
+    }
 }
 
 impl OwnedRanged {
@@ -244,6 +274,22 @@ struct RawLine {
     /// The line has text of its own (a line that only breaks takes the
     /// height of the style its line break is in).
     has_glyphs: bool,
+}
+
+impl RawLine {
+    fn bytes(&self) -> usize {
+        let runs: usize = self
+            .runs
+            .iter()
+            .map(|r| {
+                r.glyphs.capacity() * std::mem::size_of::<PositionedGlyph>()
+                    + r.coords.capacity() * 2
+            })
+            .sum();
+        self.runs.capacity() * std::mem::size_of::<RawRun>()
+            + runs
+            + self.boxes.capacity() * std::mem::size_of::<RawBox>()
+    }
 }
 
 impl RawLine {
@@ -1358,6 +1404,48 @@ impl TextEngine {
     }
 
     /// Cache sizes and counters.
+    /// What the caches hold now: one pass over their entries.
+    pub fn memory(&self) -> TextMemory {
+        let shaped: usize = self
+            .shapes
+            .values()
+            .map(|e| {
+                std::mem::size_of::<ShapedEntry>()
+                    + e.text.len() * (1 + SHAPED_BYTES_PER_TEXT_BYTE)
+                    + e.ranged.bytes()
+            })
+            .sum();
+        let laid: usize = self
+            .layouts
+            .values()
+            .map(|e| {
+                std::mem::size_of::<LayoutEntry>()
+                    + e.text.len()
+                    + e.ranged.as_ref().map_or(0, OwnedRanged::bytes)
+                    + e.layout.bytes()
+            })
+            .sum();
+        let paragraphs: usize = self.paragraphs.values().map(|e| e.bytes()).sum();
+        let styles = self.styles.capacity()
+            * (std::mem::size_of::<TextStyle>() + std::mem::size_of::<StyleMetrics>());
+        let (glyphs, faces) = measure::kept();
+        TextMemory {
+            layouts: self.layouts.len(),
+            shapes: self.shapes.len(),
+            paragraphs: self.paragraphs.len(),
+            styles: self.styles.len(),
+            glyphs,
+            bytes: shaped
+                + laid
+                + paragraphs
+                + styles
+                + faces
+                + self.shapes.table_bytes()
+                + self.layouts.table_bytes()
+                + self.paragraphs.table_bytes(),
+        }
+    }
+
     pub fn stats(&self) -> CacheStats {
         CacheStats {
             layouts: self.layouts.len(),

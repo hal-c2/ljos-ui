@@ -1238,6 +1238,75 @@ impl EpaintBackend {
     }
 
     /// The glyph atlas as it is now.
+    /// What it keeps from frame to frame: one pass over its lists and
+    /// nodes. A mesh two of them share is counted once.
+    pub fn memory(&self) -> crate::BackendMemory {
+        fn mesh_bytes(m: &Mesh) -> usize {
+            m.indices.capacity() * size_of::<u32>()
+                + m.vertices.capacity() * size_of::<egui::epaint::Vertex>()
+        }
+        let mut seen: FxHashSet<*const Mesh> = FxHashSet::default();
+        let mut m = crate::BackendMemory::default();
+        let mut mesh = |arc: &Arc<Mesh>, m: &mut crate::BackendMemory| {
+            if seen.insert(Arc::as_ptr(arc)) {
+                m.meshes += 1;
+                m.mesh_bytes += mesh_bytes(arc);
+            }
+        };
+        for entry in self.lists.values() {
+            for seg in entry.segs.iter() {
+                match seg {
+                    LocalSeg::Mesh(arc) => mesh(arc, &mut m),
+                    LocalSeg::Image(i) => mesh(&i.mesh, &mut m),
+                    _ => {}
+                }
+            }
+        }
+        for entry in self.nodes.values() {
+            for seg in &entry.segs {
+                match seg {
+                    WorldSeg::Mesh(arc) => mesh(arc, &mut m),
+                    WorldSeg::Image(i) => mesh(&i.mesh, &mut m),
+                    WorldSeg::Glyphs(g) => {
+                        if let Some(g) = &g.mesh {
+                            mesh(&g.mesh, &mut m);
+                        }
+                    }
+                    WorldSeg::Shape(s) => {
+                        let (shape_mesh, texture) = s.held();
+                        if let Some(arc) = shape_mesh {
+                            mesh(arc, &mut m);
+                        }
+                        if texture > 0 {
+                            m.shape_textures += 1;
+                            m.shape_texture_bytes += texture;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let side = self.atlas.side();
+        m.glyphs = self.atlas.len();
+        m.glyph_atlas_bytes = self.atlas.alpha().len()
+            + if self.atlas.texture_id().is_some() {
+                side * side * 4
+            } else {
+                0
+            };
+        for entry in self.textures.values() {
+            if let Held::Own(handle) = &entry.texture {
+                let [w, h] = handle.size();
+                m.textures += 1;
+                m.texture_bytes += w * h * 4;
+            }
+        }
+        m.pages = self.pages.pages();
+        let page = crate::image_atlas::PAGE as usize;
+        m.page_bytes = m.pages * page * page * 4;
+        m
+    }
+
     pub fn glyph_atlas(&self) -> GlyphAtlasInfo<'_> {
         GlyphAtlasInfo {
             side: self.atlas.side(),

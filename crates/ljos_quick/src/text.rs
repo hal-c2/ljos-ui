@@ -73,6 +73,13 @@ pub fn text_engine() -> SharedTextEngine {
     })
 }
 
+/// The UI thread's text engine if one is in use, without making one or
+/// waiting for one being made: for tools that look, which must not load
+/// fonts by looking.
+pub fn text_engine_in_use() -> Option<SharedTextEngine> {
+    ENGINE.with(|slot| slot.borrow().clone())
+}
+
 /// Makes `engine` the UI thread's text engine, for example one made by
 /// [`TextEngine::with_system_fonts`]. A scene picks it up on its next frame
 /// and lays its text out again; install it before the first frame, or call

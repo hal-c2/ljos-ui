@@ -264,6 +264,19 @@ impl RenderNode {
     }
 }
 
+/// What a render tree holds, for a tool that shows where memory went.
+/// Counts are exact; `bytes` is an estimate, which counts a display list's
+/// commands but not the glyphs, paths and pictures they share with others.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TreeMemory {
+    pub nodes: usize,
+    /// Display lists the nodes paint.
+    pub lists: usize,
+    /// Drawing commands in them.
+    pub ops: usize,
+    pub bytes: usize,
+}
+
 /// Slotmap of [`RenderNode`]s with a single root.
 #[derive(Debug)]
 pub struct RenderTree {
@@ -312,6 +325,28 @@ impl RenderTree {
     /// Never true: the root always exists.
     pub fn is_empty(&self) -> bool {
         false
+    }
+
+    /// What the tree holds now: one pass over its nodes.
+    pub fn memory(&self) -> TreeMemory {
+        let mut m = TreeMemory {
+            nodes: self.nodes.len(),
+            bytes: self.nodes.capacity() * std::mem::size_of::<RenderNode>(),
+            ..TreeMemory::default()
+        };
+        for node in self.nodes.values() {
+            if node.children.spilled() {
+                m.bytes += node.children.capacity() * std::mem::size_of::<NodeId>();
+            }
+            m.bytes += node.paint_order.len() * std::mem::size_of::<NodeId>();
+            if let Some(list) = &node.content {
+                m.lists += 1;
+                m.ops += list.ops().len();
+                m.bytes +=
+                    std::mem::size_of::<crate::DisplayList>() + std::mem::size_of_val(list.ops());
+            }
+        }
+        m
     }
 
     /// Does `id` name a live node?

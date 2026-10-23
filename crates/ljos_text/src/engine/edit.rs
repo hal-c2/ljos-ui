@@ -140,6 +140,30 @@ pub(super) struct ParagraphEntry {
     natural: f32,
 }
 
+impl ParagraphEntry {
+    /// About the bytes it holds, itself included.
+    pub(super) fn bytes(&self) -> usize {
+        let lines: usize = self
+            .lines
+            .iter()
+            .map(|(raw, carets)| {
+                raw.bytes()
+                    + carets.clusters.capacity() * std::mem::size_of::<CaretCluster>()
+                    + carets
+                        .glyph_bytes
+                        .iter()
+                        .map(|g| 24 + g.capacity() * 8)
+                        .sum::<usize>()
+            })
+            .sum();
+        std::mem::size_of::<Self>()
+            + self.text.len()
+            + self.ranged.bytes()
+            + self.lines.capacity() * std::mem::size_of::<(RawLine, LineCarets)>()
+            + lines
+    }
+}
+
 /// Where the paragraphs of `text` are, each with its line break, when they
 /// can be laid out one by one: there are several, and nothing in the text
 /// reads right to left. The whole text has one direction, which the first

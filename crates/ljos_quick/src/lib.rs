@@ -136,7 +136,7 @@ pub use repeater::Repeater;
 pub use safe_area::{SafeArea, SafeAreaAttached, safe_area_insets, set_safe_area_insets};
 pub use scene::{
     DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD, FrameOutput, INCUBATION_BUDGET, MAX_POLISH_PASSES,
-    POLISH_CATEGORY, QuickScene, SCENE_CATEGORY, TimerHook,
+    POLISH_CATEGORY, QuickScene, SCENE_CATEGORY, SceneMemory, TimerHook,
 };
 pub use shader_effect::{GridMesh, ShaderEffect, ShaderEffectSource};
 pub use shapes::{Shape, ShapePaint, ShapePath};
@@ -154,7 +154,7 @@ pub use system_prefs::{
 };
 pub use text::{
     DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, font_families, set_text_engine,
-    set_text_engine_later, shown_text_style, text_engine, text_style,
+    set_text_engine_later, shown_text_style, text_engine, text_engine_in_use, text_style,
 };
 pub use text::{RichHandle, SelectionScope};
 pub use text_input::{

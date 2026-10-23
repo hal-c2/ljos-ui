@@ -183,6 +183,14 @@ pub(crate) struct ShapeSeg {
 }
 
 impl ShapeSeg {
+    /// Its mesh, if it is one, and the bytes of its texture, if it has one.
+    pub(crate) fn held(&self) -> (Option<&Arc<Mesh>>, usize) {
+        (
+            self.mesh.as_ref(),
+            self.texture.as_ref().map_or(0, |t| t.bytes),
+        )
+    }
+
     pub(crate) fn new(cmd: ShapeCmd, to_screen: Affine, opacity: f32) -> Self {
         Self {
             cmd,

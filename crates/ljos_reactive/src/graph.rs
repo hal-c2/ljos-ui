@@ -1967,6 +1967,40 @@ impl<V: Clone + 'static> Graph<V> {
         self.inner.borrow().nodes.len()
     }
 
+    /// About the bytes the graph holds: its node and scope tables as
+    /// allocated, the edges and node lists that outgrew their inline
+    /// room, and the node lists kept for scopes to come. The values and
+    /// closures the nodes hold are not counted. One pass over the nodes,
+    /// for a tool that is asked where memory went.
+    pub fn bytes(&self) -> usize {
+        let i = self.inner.borrow();
+        let edges = |e: &Edges| {
+            if e.spilled() {
+                e.capacity() * std::mem::size_of::<Edge>()
+            } else {
+                0
+            }
+        };
+        let id = std::mem::size_of::<NodeId>();
+        let nodes: usize = i
+            .nodes
+            .values()
+            .map(|n| edges(&n.sources) + edges(&n.observers))
+            .sum();
+        let scopes: usize = i
+            .scopes
+            .values()
+            .map(|s| (s.nodes.capacity() + s.deferred.capacity()) * id)
+            .sum();
+        let pooled: usize = i.node_lists.iter().map(|l| l.capacity() * id).sum();
+        i.nodes.capacity() * std::mem::size_of::<Node<V>>()
+            + i.scopes.capacity() * std::mem::size_of::<Scope>()
+            + i.tags.capacity() * (id + 8)
+            + nodes
+            + scopes
+            + pooled
+    }
+
     /// No live nodes.
     pub fn is_empty(&self) -> bool {
         self.len() == 0

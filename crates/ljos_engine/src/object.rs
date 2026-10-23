@@ -189,6 +189,19 @@ pub(crate) struct FieldReads {
 const INDEX_RUNS: usize = 16;
 
 impl FieldReads {
+    /// About the bytes it holds, itself included.
+    pub(crate) fn bytes(&self) -> usize {
+        std::mem::size_of::<FieldReads>()
+            + if self.props.spilled() {
+                self.props.capacity() * 8
+            } else {
+                0
+            }
+            + self.runs.capacity() * std::mem::size_of::<Reader>()
+            + self.bits.capacity() * 8
+            + self.at.capacity() * std::mem::size_of::<(NodeId, SmallVec<[u32; 2]>)>()
+    }
+
     /// For an object with `len` properties.
     pub(crate) fn new(len: usize) -> Self {
         let words = len.div_ceil(64).max(1);

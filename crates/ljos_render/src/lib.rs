@@ -28,7 +28,9 @@ mod glyph_atlas;
 #[cfg(feature = "b0")]
 mod image_atlas;
 
-pub use backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RenderError, RgbaImage};
+pub use backend::{
+    BackendMemory, EncodeStats, FrameView, MemoryPressure, RenderBackend, RenderError, RgbaImage,
+};
 pub use canvas::{CanvasPaint, CanvasPainter, CanvasShadow, DrawState};
 pub use compose::{
     ClipEntry, ClipId, ComposeStats, FrameSnapshot, PaintItem, hit_test, is_axis_aligned,
@@ -49,7 +51,7 @@ pub use ljos_shader;
 pub use raster::{RasterConfig, TextMode, VelloCpuReference};
 pub use rgba::Rgba;
 pub use shader::{Cull, ShaderOp, ShaderTexture, Viewport};
-pub use tree::{ClipSpec, Dirty, LayerSpec, NodeId, RenderNode, RenderTree, TreeError};
+pub use tree::{ClipSpec, Dirty, LayerSpec, NodeId, RenderNode, RenderTree, TreeError, TreeMemory};
 
 /// Geometry types. Re-exported from vello_cpu so the whole workspace sees one
 /// version of kurbo and peniko.

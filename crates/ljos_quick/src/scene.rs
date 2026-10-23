@@ -440,6 +440,17 @@ struct PointerState {
     cursor: i32,
 }
 
+/// What a scene keeps, for a tool that shows where memory went. Counts
+/// are exact; `bytes` is an estimate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SceneMemory {
+    /// Items the scene shows.
+    pub items: usize,
+    pub tree: ljos_render::TreeMemory,
+    /// The tree's and the scene's own tables.
+    pub bytes: usize,
+}
+
 /// An item tree, its render tree, and the frame pipeline between them.
 pub struct QuickScene {
     tree: RenderTree,
@@ -845,6 +856,21 @@ impl QuickScene {
 
     pub fn render_tree(&self) -> &RenderTree {
         &self.tree
+    }
+
+    /// What the scene keeps: its render tree and display lists, and its
+    /// own table of the items it shows. One pass over the tree's nodes.
+    pub fn memory(&self) -> SceneMemory {
+        let tree = self.tree.memory();
+        SceneMemory {
+            items: self.entries.len(),
+            bytes: tree.bytes
+                + self.entries.capacity()
+                    * (std::mem::size_of::<ObjectId>() + std::mem::size_of::<Entry>())
+                + self.paint.capacity()
+                    * (std::mem::size_of::<ObjectId>() + std::mem::size_of::<Paint>()),
+            tree,
+        }
     }
 
     pub fn node_of(&self, item: ObjectId) -> Option<NodeId> {

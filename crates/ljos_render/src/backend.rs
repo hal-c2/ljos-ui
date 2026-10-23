@@ -27,6 +27,42 @@ impl<'a> FrameView<'a> {
 /// workspace is trimmed with, so a host passes the same level to all of them.
 pub use ljos_runtime::MemoryPressure;
 
+/// What a backend keeps from frame to frame, for a tool that shows where
+/// memory went. Counts are exact; bytes are estimates: a texture counts
+/// four bytes a texel, which is what it is given, whatever the driver
+/// makes of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BackendMemory {
+    /// Meshes kept: display lists cut into triangles, and those placed on
+    /// the screen.
+    pub meshes: usize,
+    pub mesh_bytes: usize,
+    /// Glyphs on the glyph atlas.
+    pub glyphs: usize,
+    /// The atlas's coverage on the CPU and its texture.
+    pub glyph_atlas_bytes: usize,
+    /// Pictures with a texture of their own.
+    pub textures: usize,
+    pub texture_bytes: usize,
+    /// Shared pages small pictures are put on.
+    pub pages: usize,
+    pub page_bytes: usize,
+    /// Shapes drawn into textures of their own.
+    pub shape_textures: usize,
+    pub shape_texture_bytes: usize,
+}
+
+impl BackendMemory {
+    /// All of it.
+    pub fn bytes(&self) -> usize {
+        self.mesh_bytes
+            + self.glyph_atlas_bytes
+            + self.texture_bytes
+            + self.page_bytes
+            + self.shape_texture_bytes
+    }
+}
+
 /// What an `encode` call did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EncodeStats {

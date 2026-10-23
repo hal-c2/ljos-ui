@@ -148,6 +148,24 @@ pub(crate) fn ink_right(
     })
 }
 
+/// The glyphs whose advance or ink this thread keeps, and about the bytes
+/// of the tables they are kept in.
+pub(crate) fn kept() -> (usize, usize) {
+    FACES.with_borrow(|faces| {
+        let bytes = faces
+            .map
+            .values()
+            .map(|f| {
+                std::mem::size_of::<Face>()
+                    + f.coords.len() * 2
+                    + f.advances.capacity() * 8
+                    + f.ink.capacity() * (16 + std::mem::size_of::<Option<f64>>())
+            })
+            .sum();
+        (faces.glyphs, bytes)
+    })
+}
+
 /// Glyphs read from a font so far on this thread.
 pub(crate) fn measured() -> u64 {
     FACES.with_borrow(|faces| faces.measured)

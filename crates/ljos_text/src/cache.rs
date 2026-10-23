@@ -29,6 +29,15 @@ impl<K: Hash + Eq, V> FrameCache<K, V> {
         self.map.len()
     }
 
+    pub(crate) fn values(&self) -> impl Iterator<Item = &V> {
+        self.map.values().map(|e| &e.value)
+    }
+
+    /// Bytes of the table itself, as allocated.
+    pub(crate) fn table_bytes(&self) -> usize {
+        self.map.capacity() * (std::mem::size_of::<K>() + std::mem::size_of::<Entry<V>>())
+    }
+
     pub(crate) fn clear(&mut self) {
         self.map.clear();
     }

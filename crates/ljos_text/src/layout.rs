@@ -141,6 +141,31 @@ pub struct TextLayout {
 }
 
 impl TextLayout {
+    /// About the bytes it holds, itself and its glyphs included.
+    pub fn bytes(&self) -> usize {
+        let lines: usize = self
+            .lines
+            .iter()
+            .map(|l| {
+                let runs: usize = l
+                    .runs
+                    .iter()
+                    .map(|r| {
+                        std::mem::size_of::<ljos_render::GlyphRun>()
+                            + r.glyphs.glyphs.capacity()
+                                * std::mem::size_of::<ljos_render::PositionedGlyph>()
+                            + r.glyphs.normalized_coords.capacity() * 2
+                    })
+                    .sum();
+                l.runs.capacity() * std::mem::size_of::<LineRun>()
+                    + runs
+                    + l.clusters.capacity() * std::mem::size_of::<CaretCluster>()
+                    + l.boxes.capacity() * std::mem::size_of::<PlacedBox>()
+            })
+            .sum();
+        std::mem::size_of::<Self>() + self.lines.capacity() * std::mem::size_of::<Line>() + lines
+    }
+
     /// Number of shown lines; never 0, since empty text still has a line.
     pub fn line_count(&self) -> usize {
         self.lines.len()
