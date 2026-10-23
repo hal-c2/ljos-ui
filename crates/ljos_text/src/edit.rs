@@ -303,7 +303,9 @@ impl EditLayout {
                 .map_or(after(last), |c| {
                     if on_character {
                         c.range.start
-                    } else if x < (c.x0 + c.x1) / 2.0 {
+                    // Measured: exactly halfway is before the character
+                    // (features/text-input/pointer-halfway.feature).
+                    } else if x <= (c.x0 + c.x1) / 2.0 {
                         before(c)
                     } else {
                         after(c)

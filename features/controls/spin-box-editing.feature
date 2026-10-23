@@ -36,7 +36,7 @@ Feature: A SpinBox and the keyboard
   Rule: A box takes the keyboard through its number
 
     Scenario: A click on the number gives the box the keyboard
-      When the user touches 90, 40
+      When the user touches 92, 40
       Then the property "activeFocus" of "s" is true
       And the property "contentItem.activeFocus" of "s" is true
       And the property "contentItem.cursorVisible" of "s" is false
@@ -142,11 +142,11 @@ Feature: A SpinBox and the keyboard
     @api-QtQuick.Controls.SpinBox.editable
     Scenario: An editable box has a number that can be changed
       Then the property "contentItem.readOnly" of "s" is false
-      When the user touches 90, 40
+      When the user touches 92, 40
       Then the property "contentItem.cursorVisible" of "s" is true
 
     Scenario: What is typed is shown and is not the value yet
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "42"
       Then the property "displayText" of "s" is "042"
       And the property "contentItem.text" of "s" is "042"
@@ -154,7 +154,7 @@ Feature: A SpinBox and the keyboard
       And the property "log" of "s" is ""
 
     Scenario Outline: <key> makes what was typed the value
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "42"
       And the user presses "<key>"
       Then the property "value" of "s" is 42
@@ -167,7 +167,7 @@ Feature: A SpinBox and the keyboard
         | Enter  |
 
     Scenario: Leaving the box with the Tab key makes what was typed the value
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "42"
       And the user presses "Tab"
       Then the property "value" of "s" is 42
@@ -175,41 +175,41 @@ Feature: A SpinBox and the keyboard
       And the property "activeFocus" of "s" is false
 
     Scenario: The keyboard going elsewhere makes what was typed the value
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "42"
       And the method "forceActiveFocus" of "t" is called
       Then the property "value" of "s" is 42
       And the property "log" of "s" is "v42 m42 "
 
     Scenario: A step by a button throws away what was typed
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "42"
       And the user touches 140, 40
       Then the property "value" of "s" is 1
       And the property "displayText" of "s" is "1"
 
     Scenario: A step by a key throws away what was typed
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "42"
       And the user presses "Up"
       Then the property "value" of "s" is 1
       And the property "displayText" of "s" is "1"
 
     Scenario: A digit that would take the number out of its range is refused
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "500"
       Then the property "displayText" of "s" is "050"
       When the user presses "Return"
       Then the property "value" of "s" is 50
 
     Scenario: Letters are refused
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "ab"
       Then the property "displayText" of "s" is "0"
 
     Scenario: An empty number is nought
       When the property "value" of "s" is set to 7
-      And the user touches 90, 40
+      And the user touches 92, 40
       And the user presses "Ctrl+A"
       And the user presses "Backspace"
       Then the property "displayText" of "s" is ""
@@ -221,7 +221,7 @@ Feature: A SpinBox and the keyboard
     Scenario: A number below the range becomes its beginning
       When the property "from" of "s" is set to 10
       And the property "value" of "s" is set to 20
-      And the user touches 90, 40
+      And the user touches 92, 40
       And the user presses "Ctrl+A"
       And the user types "5"
       Then the property "value" of "s" is 20
@@ -233,12 +233,12 @@ Feature: A SpinBox and the keyboard
       And the property "log" of "s" is "v10 v20 v10 m10 "
 
     Scenario: Return on a number that was not changed modifies nothing
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user presses "Return"
       Then the property "log" of "s" is ""
 
     Scenario: A value set by a script replaces what is being typed
-      When the user touches 90, 40
+      When the user touches 92, 40
       And the user types "4"
       And the property "value" of "s" is set to 7
       Then the property "displayText" of "s" is "7"
@@ -247,7 +247,7 @@ Feature: A SpinBox and the keyboard
     @api-QtQuick.Controls.SpinBox.live
     Scenario: A live box takes each keystroke as its value, without calling it modified
       When the property "live" of "s" is set to true
-      And the user touches 90, 40
+      And the user touches 92, 40
       And the user types "42"
       Then the property "value" of "s" is 42
       And the property "displayText" of "s" is "42"
