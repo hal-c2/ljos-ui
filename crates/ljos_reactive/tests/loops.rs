@@ -211,6 +211,46 @@ fn a_self_loop_is_reported_once_and_runs_once() {
 }
 
 #[test]
+fn a_binding_that_writes_what_it_read_runs_once_a_change() {
+    // Qt, `n: 0; m: { n = n + 1; return n }`: n 1, m 1 with a warning for m;
+    // n = 10 gives n 11, m 11 and warns again. A write of the value n
+    // already holds, or of something m did not read, is no loop.
+    for eager in [false, true] {
+        let g = graph(eager);
+        let [n, m, k, other, same] = props(&g);
+        let runs = Rc::new(Cell::new(0));
+        let r = runs.clone();
+        g.bind(m, move |g| {
+            r.set(r.get() + 1);
+            let v = g.get(n) + 1;
+            g.set(n, v);
+            g.get(n)
+        })
+        .unwrap();
+        assert_eq!(settled(&g, [m, n]), [1, 1], "eager {eager}");
+        assert_eq!(runs.get(), 1, "eager {eager}");
+        assert_eq!(loops(&g), [m]);
+        g.set(n, 10);
+        assert_eq!(settled(&g, [m, n]), [11, 11], "eager {eager}");
+        assert_eq!(runs.get(), 2, "eager {eager}");
+        assert_eq!(loops(&g), [m]);
+        g.bind(other, move |g| {
+            g.set(k, g.get(n) * 3);
+            g.get(n)
+        })
+        .unwrap();
+        g.bind(same, move |g| {
+            g.set(n, g.get(n));
+            g.get(n)
+        })
+        .unwrap();
+        assert_eq!(settled(&g, [other, same, k]), [11, 11, 33], "eager {eager}");
+        assert_eq!(loops(&g), []);
+        g.check_invariants().unwrap();
+    }
+}
+
+#[test]
 fn every_new_trigger_reports_again_and_settles_again() {
     // Qt, `p: q + x; q: p + 1`: p 1, q 2 at first; x = 5 gives p 7, q 8;
     // x = 7 gives p 15, q 16. Each step warns once, for p.

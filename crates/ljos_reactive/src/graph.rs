@@ -160,6 +160,10 @@ struct Node<V> {
     /// While it settles: a source of it took a new value, so its change
     /// came back round as a change. That is the binding loop; a cycle whose
     /// other members give the values they had is none.
+    ///
+    /// While a binding computes, outside a settle: it changed, as it ran,
+    /// what it had already read. On Qt that is a binding loop too; it is
+    /// reported when the run finishes and the binding is not run again.
     came_back: bool,
     /// A binding set aside by [`Graph::hold`]: installed, not run.
     held: bool,
@@ -2348,6 +2352,7 @@ impl<V: Clone + 'static> Graph<V> {
                     let node = &mut i.nodes[n];
                     node.state = NodeState::Clean;
                     let self_read = std::mem::take(&mut node.self_read);
+                    let wrote_back = !node.settling && std::mem::take(&mut node.came_back);
                     if let Some(v) = value {
                         if let Kind::Property(p) = &mut node.kind {
                             p.animated = false;
@@ -2366,6 +2371,14 @@ impl<V: Clone + 'static> Graph<V> {
                             i.nodes[n].came_back = true;
                         }
                     }
+                    // Qt stops there, with the binding's result standing
+                    // and the write it made kept, and warns.
+                    if wrote_back {
+                        i.emit(Diagnostic::BindingLoop {
+                            node: n,
+                            cycle: vec![n],
+                        });
+                    }
                     if i.nodes[n].pending {
                         // It runs again anyway; that run settles the cycle
                         // if its result still travels round.
@@ -2380,6 +2393,9 @@ impl<V: Clone + 'static> Graph<V> {
                     let node = &mut i.nodes[n];
                     node.pending = false;
                     node.self_read = false;
+                    if !node.settling {
+                        node.came_back = false;
+                    }
                     if matches!(node.kind, Kind::Effect(_) | Kind::Told { .. }) {
                         node.state = NodeState::Clean;
                     } else {
@@ -2835,7 +2851,12 @@ impl<V: Clone + 'static> Inner<V> {
                         .find(|f| f.node == Some(m))
                         .is_some_and(|f| f.stamp == from_stamp);
                 if read {
-                    node.pending = true;
+                    let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
+                    if bound && from_stamp != ALWAYS_STALE {
+                        node.came_back = true;
+                    } else {
+                        node.pending = true;
+                    }
                 }
                 continue;
             }
