@@ -508,6 +508,7 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
         // Over a selection of cells either key empties the cells.
         Action::Backspace | Action::Delete
             if ops::empty_cells(engine, obj, EditKind::Other).is_some() => {}
+        Action::Backspace if ops::outdent(engine, obj) => {}
         Action::Backspace => {
             ops::edit(engine, obj, How::user(EditKind::Backspace), |m| {
                 m.backspace()

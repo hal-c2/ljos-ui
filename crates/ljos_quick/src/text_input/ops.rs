@@ -217,6 +217,19 @@ pub(crate) fn empty_cells(engine: &Engine, obj: ObjectId, kind: EditKind) -> Opt
     Some(removed)
 }
 
+/// Backspace at the start of a list item: the item leaves its list, or
+/// then its indent goes, before the paragraph joins the one before.
+pub(crate) fn outdent(engine: &Engine, obj: ObjectId) -> bool {
+    let Some(st) = ready(engine, obj) else {
+        return false;
+    };
+    if !super::rich::outdent(&mut st.borrow_mut()) {
+        return false;
+    }
+    check(engine, "edit", publish(engine, obj, &st));
+    true
+}
+
 /// Types `text` at the cursor as the user would: over the selection, or
 /// over what follows the cursor in `overwriteMode`.
 pub(crate) fn type_text(engine: &Engine, obj: ObjectId, text: &str) -> bool {

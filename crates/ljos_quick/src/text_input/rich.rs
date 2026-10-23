@@ -421,6 +421,28 @@ pub(crate) fn saved(s: &mut State) {
     }
 }
 
+/// Backspace at the start of a list item, or of a paragraph that was one
+/// and keeps its indent: the paragraph's format steps out as one step of
+/// the history, and the text stays. Whether it did.
+pub(crate) fn outdent(s: &mut State) -> bool {
+    sync_doc(s);
+    let Some(r) = s.rich.as_ref() else {
+        return false;
+    };
+    let at = s.model.cursor_byte();
+    if s.model.has_selection() || r.doc.text() != s.model.text() {
+        return false;
+    }
+    let i = r.doc.block_index(at);
+    if r.doc.block_range(i).start != at || r.doc.blocks()[i].outdented().is_none() {
+        return false;
+    }
+    format_step(s, |doc, range| {
+        doc.set_block_format(range, |b| b.outdented().unwrap_or_else(|| b.clone()));
+    });
+    true
+}
+
 /// Changes the format of the selection, or of the paragraph the cursor is
 /// in, as one step of the history. `f` gets the text and the bytes.
 pub(crate) fn format_step(s: &mut State, f: impl FnOnce(&mut RichText, std::ops::Range<usize>)) {

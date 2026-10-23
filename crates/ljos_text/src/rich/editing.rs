@@ -90,6 +90,10 @@ pub struct BlockFormat {
     pub margin_bottom: f32,
     pub indent: f32,
     pub indent_right: f32,
+    /// How many of the indent's steps of [`BlockFormat::INDENT_STEP`] the
+    /// paragraph keeps from a list it was taken out of, which Backspace
+    /// takes away before it joins the paragraph to the one before.
+    pub block_indent: u8,
     /// The bullet or number of a list item.
     pub marker: Option<Arc<str>>,
     /// The colour behind the paragraph, as written.
@@ -155,6 +159,7 @@ impl Default for BlockFormat {
             margin_bottom: 0.0,
             indent: 0.0,
             indent_right: 0.0,
+            block_indent: 0,
             marker: None,
             background: None,
             align: None,
@@ -164,6 +169,33 @@ impl Default for BlockFormat {
 }
 
 impl BlockFormat {
+    /// The width of one step of indent, Qt's default `indentWidth`.
+    pub const INDENT_STEP: f32 = 40.0;
+
+    /// What Backspace at the start of the paragraph makes of it before it
+    /// joins it to the one before, as in Qt 6.11: a list item leaves its
+    /// list and keeps its indent, and then the indent goes a step at a time
+    /// (features/text-input/rich-text-list-editing.feature). `None` when
+    /// Backspace joins.
+    pub fn outdented(&self) -> Option<Self> {
+        if self.table.is_some() {
+            return None;
+        }
+        if self.kind == BlockKind::List {
+            return Some(Self {
+                kind: BlockKind::Paragraph,
+                marker: None,
+                block_indent: 1,
+                ..self.clone()
+            });
+        }
+        (self.block_indent > 0).then(|| Self {
+            indent: (self.indent - Self::INDENT_STEP).max(0.0),
+            block_indent: self.block_indent - 1,
+            ..self.clone()
+        })
+    }
+
     fn of(block: &Block) -> Self {
         Self {
             kind: block.kind,
@@ -171,6 +203,7 @@ impl BlockFormat {
             margin_bottom: block.margin_bottom,
             indent: block.indent,
             indent_right: block.indent_right,
+            block_indent: 0,
             marker: block.marker.clone(),
             background: block.background.clone(),
             align: block.align,
