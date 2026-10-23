@@ -2740,6 +2740,85 @@ apart.
 - **The slowest saves.** On both sides, a few saves out of 20 took hundreds of ms because the
   machine was loaded. The medians leave them out.
 
+### Hot reload: the full path cut by half again (2026-10-23)
+
+The same fuzzer as above: 25 edits to every corpus example, at seeds 7, 13 and 29. "before" is
+the build at the start of this work and "after" is the build with every step below. An edit
+that a step below handles now goes in place, and its result is checked against a fresh load.
+
+1. An alias renamed.
+2. A `Component` written inside an object comes or goes with it. Only templates may come or go,
+   and the objects made from a template that is gone are destroyed.
+3. A singleton's file edited: the singleton is edited in place, like any other object.
+4. A binding edited to read an id that is gone: a warning and `undefined`, as a fresh load gives.
+   An axis placed only by anchors to that id goes back to where a fresh load puts it.
+5. An object given to a member that is removed: the member goes back to what a new object has.
+   The full path stays when the inner component gives that member.
+6. An object made again that an alias names: the alias names the new object, and the users that
+   read it, or give values through it, are given them again.
+7. A value a state's `PropertyChanges` gives, edited: the state in force is applied again
+   without its transition or scripts. Every object made from the file takes the new value.
+8. A member edited through a name its object does not have: a warning, in place.
+
+| Reason | 7 before | 7 after | 13 before | 13 after | 29 before | 29 after |
+|---|---:|---:|---:|---:|---:|---:|
+| a component's signature changed | 9 | 4 | 13 | 8 | 10 | 4 |
+| ComponentRemoved | 6 | – | 9 | – | 9 | – |
+| a singleton's file edited | 5 | – | 5 | – | 6 | – |
+| an edited binding reads an id that is gone | 5 | – | 2 | – | 4 | – |
+| an object's declared properties changed | 4 | – | 3 | – | 6 | – |
+| a renamed property's object has members its user declares | 3 | 5 | 3 | 6 | 3 | 6 |
+| an object's members given objects changed | 3 | 2 | 4 | – | 8 | 3 |
+| an element is not in a model that stays | 3 | 3 | 1 | 1 | – | – |
+| a state or a Binding holds the edited object | 2 | 1 | 6 | 3 | 2 | 2 |
+| a renamed property is read or set in another file | 1 | 7 | 5 | 8 | 5 | 8 |
+| an edited member is not found | 1 | – | 7 | – | 1 | – |
+| FileAdded | 1 | 1 | 1 | 1 | 1 | 1 |
+| objects came or went, grouped members, the parent can't hold it | 3 | 3 | – | – | – | – |
+| the component an object is made from gives a part of it | – | – | – | 2 | – | 2 |
+| an object's children changed | – | – | – | 1 | – | – |
+| a component's name, id or kind changed | – | – | 1 | – | – | – |
+| a state or a Binding holds an object made again (alias) | – | – | – | – | – | 1 |
+| an object is given through an alias of an object made again | – | – | – | – | – | 1 |
+| **full path** | **46** | **26** | **60** | **30** | **55** | **28** |
+| **in place** | **561** | **581** | **578** | **584** | **571** | **598** |
+| **diverged** | **41** | **41** | **48** | **49** | **30** | **29** |
+
+The renamed-property rows grow because edits that used to stop earlier now reach them.
+The two alias rows are a guard added last. Without it, seed 29 took two coffee edits in place
+and diverged on them: a state wrote through an alias whose object was made again, and a user
+gave a state through one. The guard matches the alias by name, so it can send more edits to the
+full path than it needs to.
+
+**Save to frame**, median of 20 saves 2.5 s apart, at a load average of 20–40 from other work.
+For thermostat, qml6 ran through `qmlpreview` as in the section above. The clocks and calqlatr
+qml6 times are from that section.
+
+| Edit | Ljós in place | Ljós full path | qml6 through qmlpreview |
+|---|---:|---:|---:|
+| clocks, a binding's value | 17.4 ms | 20.7 ms | 119.5 ms |
+| calqlatr, a binding's value | 24.7 ms | 59.5 ms | 131 ms |
+| thermostat, a singleton's colour | 34.2 ms | 129.1 ms | 270 ms |
+| thermostat, a state's `PropertyChanges` value | 35.0 ms | 122.4 ms | 301 ms |
+
+On the full path, thermostat also holds about 97 MB where in place holds 76 MB.
+
+**State kept on purpose**, beyond the list above:
+
+- **The order of objects made again.** Siblings, or a view's contents, made again come after
+  those that stay, as when a script makes them (samegame, alarms).
+- **Layouts after a move.** A layout that held an object moved into it keeps the widths it gave
+  (stocqt).
+- **Values the run built up**, such as calqlatr's `dimmed`.
+
+**Not fixed:**
+
+- **A Text on a SwipeView page that isn't shown.** Its contentHeight is not measured again when
+  its font changes (thermostat). This is not a reload bug.
+- **The palette after a reload.** Removing a Popup or a Button leaves the root's palette at the
+  default colours where a fresh load gives the style's (alarms, android-splashscreen). The
+  baseline build does the same.
+
 ### Clicks on a settled window, and a press that arrives (2026-10-18)
 
 `BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench samegame --profile desktop --settle 3 --idle 4
