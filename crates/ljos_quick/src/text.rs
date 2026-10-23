@@ -384,27 +384,42 @@ pub(crate) fn init_text(engine: &Engine, obj: ObjectId) -> Result<(), EngineErro
         return Ok(());
     }
     engine.with_mut(obj, |t: &mut Text| t.initialised = true)?;
-    for side in [
-        Text::LEFT_PADDING.index,
-        Text::TOP_PADDING.index,
-        Text::RIGHT_PADDING.index,
-        Text::BOTTOM_PADDING.index,
-    ] {
+    // Each of these is bound when something first reads or watches it.
+    // The layout works the same out for itself (`TextInputs::read`), so a
+    // text nobody asks for its sides holds a value and no binding.
+    for side in SIDES {
         if is_unset(engine, obj, side) {
-            engine.bind(obj, side, move |e| e.read(obj, Text::PADDING.index))?;
+            engine.bind_on_read(obj, side, |e, obj, side| {
+                e.bind(obj, side, move |e| e.read(obj, Text::PADDING.index))
+            })?;
         }
     }
     // Right-to-left text is aligned right until an alignment is assigned;
     // assigning one replaces this binding, as Qt documents.
     if is_unset(engine, obj, Text::HORIZONTAL_ALIGNMENT.index) {
-        let p = Text::HORIZONTAL_ALIGNMENT.index;
-        engine.bind(obj, p, move |e| natural_alignment(e, obj, p))?;
+        engine.bind_on_read(obj, Text::HORIZONTAL_ALIGNMENT.index, |e, obj, p| {
+            e.bind(obj, p, move |e| natural_alignment(e, obj, p))
+        })?;
     }
     // Without layout mirroring the effective alignment is the alignment.
-    engine.bind_initial(obj, Text::EFFECTIVE_HORIZONTAL_ALIGNMENT.index, move |e| {
-        e.read(obj, Text::HORIZONTAL_ALIGNMENT.index)
-    })
+    engine.bind_on_read(
+        obj,
+        Text::EFFECTIVE_HORIZONTAL_ALIGNMENT.index,
+        |e, obj, p| {
+            e.bind_initial(obj, p, move |e| {
+                e.read(obj, Text::HORIZONTAL_ALIGNMENT.index)
+            })
+        },
+    )
 }
+
+/// A `Text`'s side paddings, in the order `TextInputs` keeps them.
+const SIDES: [ljos_engine::PropIndex; 4] = [
+    Text::LEFT_PADDING.index,
+    Text::TOP_PADDING.index,
+    Text::RIGHT_PADDING.index,
+    Text::BOTTOM_PADDING.index,
+];
 
 /// Font size used when neither `pixelSize` nor `pointSize` is set: the
 /// application font's ([`Font::DEFAULT_POINT_SIZE`]) in pixels.
@@ -567,7 +582,8 @@ impl TextInputs {
             style_color_v,
             link_color_v,
             line_height_mode,
-        ] = engine.read_values(
+            padding,
+        ] = engine.read_values_unless_bound_on_read(
             obj,
             [
                 Text::HORIZONTAL_ALIGNMENT.index,
@@ -588,16 +604,56 @@ impl TextInputs {
                 Text::STYLE_COLOR.index,
                 Text::LINK_COLOR.index,
                 Text::LINE_HEIGHT_MODE.index,
+                Text::PADDING.index,
             ],
         );
+        // What `init_text` binds on a read, worked out here instead: a
+        // side follows the padding, an alignment nobody gave follows the
+        // direction of the text.
+        let padding = padding.unwrap_or_default().to_number();
+        let side = |v: Option<Value>| v.map_or(padding, |v| v.to_number());
+        let [left, top_pad, right, bottom] = [left, top_pad, right, bottom].map(side);
+        let written = written.unwrap_or_default().to_js_string();
+        let [
+            v_align,
+            wrap_v,
+            elide_v,
+            line_height,
+            max_lines,
+            format_v,
+            font,
+            color_v,
+            style_v,
+            style_color_v,
+            link_color_v,
+            line_height_mode,
+        ] = [
+            v_align,
+            wrap_v,
+            elide_v,
+            line_height,
+            max_lines,
+            format_v,
+            font,
+            color_v,
+            style_v,
+            style_color_v,
+            link_color_v,
+            line_height_mode,
+        ]
+        .map(Option::unwrap_or_default);
         let int = |v: &Value| v.to_number() as i32;
-        let h_align = int(&h_align);
+        let h_align = match h_align {
+            Some(v) => int(&v),
+            None if reads_right_to_left(written.as_str()) => align::RIGHT,
+            None => align::LEFT,
+        };
         let v_align = int(&v_align);
         let wrap = wrap(int(&wrap_v));
         let elide = elide_mode(int(&elide_v));
         let line_height = line_height.to_number();
         let max_lines = int(&max_lines);
-        let pad = [left, top_pad, right, bottom].map(|v| v.to_number());
+        let pad = [left, top_pad, right, bottom];
         // Qt wraps and elides to a width the item was given, never to the
         // one it took from the text itself.
         // The size is read either way: a layout that sizes the item stops
@@ -623,7 +679,6 @@ impl TextInputs {
             Value::Color(c) => c,
             _ => or,
         };
-        let written = written.to_js_string();
         let format = resolve_format(int(&format_v), written.as_str());
         let font = match font {
             Value::Font(f) => Some(f),
