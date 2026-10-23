@@ -136,6 +136,8 @@ ApplicationWindow {
             trace.add(s)
         else if (route === "frames" && ok)
             timeline.add(s)
+        else if (route === "memory" && ok)
+            memory.show(s)
         else if (route.indexOf("sample-") === 0 && ok)
             overview.part(route.substring(7), s)
     }
@@ -168,7 +170,7 @@ ApplicationWindow {
 
     // The page shown.
     readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace",
-                                   "Supervision", "Frames"]
+                                   "Supervision", "Frames", "Memory"]
     property int page: 0
     onPageChanged: watcher.start()
 
@@ -188,6 +190,8 @@ ApplicationWindow {
         // A frame recorded that drew something is a pass drawn.
         else if (page === 7 && (all || changed.indexOf("paints") >= 0))
             timeline.load()
+        else if (page === 8 && (all || changed.indexOf("paints") >= 0 || changed.indexOf("reloads") >= 0))
+            memory.load()
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
         if (all || changed.indexOf("traces") >= 0)
@@ -314,6 +318,8 @@ ApplicationWindow {
     function bytes(n) {
         if (n === undefined || n === null)
             return "—"
+        if (n < 1024)
+            return n + " B"
         if (n < 1024 * 1024)
             return (n / 1024).toFixed(0) + " KiB"
         return (n / (1024 * 1024)).toFixed(1) + " MiB"
@@ -1250,6 +1256,13 @@ ApplicationWindow {
                     property int shownCount: 0
                     property string filter: ""
                     onFilterChanged: show()
+                    // The largest first, as `app_objects` says each holds,
+                    // rather than in the tree's order.
+                    property bool bySize: false
+                    onBySizeChanged: show()
+                    // The rows are a list, not a tree, under a filter or
+                    // in order of size.
+                    readonly property bool listed: filter !== "" || bySize
                     ListModel { id: treeRows }
                     // What `treeRows` holds and what it is to hold, where
                     // each wanted row is, how far down the tree the filter
@@ -1545,6 +1558,19 @@ ApplicationWindow {
                             syncing.start()
                     }
 
+                    // A filter `>N`, `>Nk` or `>Nm` keeps the objects that
+                    // hold at least that many bytes; -1 for one of text.
+                    function leastBytes(f) {
+                        var m = /^>\s*(\d+(?:\.\d+)?)\s*([km]?)i?b?$/.exec(f)
+                        if (!m)
+                            return -1
+                        return Number(m[1]) * (m[2] === "k" ? 1024 : m[2] === "m" ? 1048576 : 1)
+                    }
+
+                    function sizeText(n) {
+                        return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " KiB"
+                    }
+
                     // What the filter looks in, in lower case, worked out
                     // once a row.
                     function key(row) {
@@ -1564,7 +1590,8 @@ ApplicationWindow {
                             depth: row.depth || 0,
                             isItem: row.item === true,
                             dim: row.visible === false,
-                            hidden: row.hidden === undefined ? -1 : row.hidden
+                            hidden: row.hidden === undefined ? -1 : row.hidden,
+                            size: row.bytes || 0
                         }
                     }
 
@@ -1575,6 +1602,7 @@ ApplicationWindow {
                             || held.isItem !== (row.item === true)
                             || held.dim !== (row.visible === false)
                             || held.hidden !== (row.hidden === undefined ? -1 : row.hidden)
+                            || held.size !== (row.bytes || 0)
                     }
 
                     // Brings the view's rows a piece nearer the rows
@@ -1588,14 +1616,23 @@ ApplicationWindow {
                         var began = Date.now()
                         var t = tree
                         var f = filter.toLowerCase()
+                        var least = leastBytes(f)
                         var i = scanned
                         for (; i < t.length; ++i) {
                             if (i % 16 === 15 && Date.now() - began >= syncMs)
                                 break
-                            if (f !== "" && key(t[i]).indexOf(f) < 0)
+                            if (least >= 0 ? (t[i].bytes || 0) < least
+                                           : f !== "" && key(t[i]).indexOf(f) < 0)
                                 continue
                             at[t[i].handle] = w.length
                             w.push(t[i])
+                        }
+                        // Sorted once every row is looked at, and once
+                        // only: the rows already brought over are kept.
+                        if (i === t.length && scanned < t.length && bySize) {
+                            w.sort(function(a, b) { return (b.bytes || 0) - (a.bytes || 0) })
+                            for (var r = 0; r < w.length; ++r)
+                                at[w[r].handle] = r
                         }
                         scanned = i
                         if (i < t.length)
@@ -1778,13 +1815,34 @@ ApplicationWindow {
                             id: treeFilter
                             x: 8; y: 8
                             width: parent.width - 16
-                            placeholderText: "Filter by type, id or name"
+                            placeholderText: "Filter by type, id, name or >size"
                             // A field is not named by its placeholder.
                             Accessible.name: "Filter objects"
                             onTextChanged: objects.filter = text
                         }
                         Text {
+                            id: sizeOrder
+                            anchors.right: parent.right
+                            anchors.rightMargin: 12
+                            anchors.top: treeFilter.bottom
+                            anchors.topMargin: 6
+                            text: objects.bySize ? "largest first" : "tree order"
+                            color: sizeHover.containsMouse ? theme.accent : theme.subtle
+                            font.pixelSize: 11
+                            MouseArea {
+                                id: sizeHover
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                hoverEnabled: true
+                                Accessible.role: Accessible.Button
+                                Accessible.name: objects.bySize ? "Show in tree order" : "Show largest first"
+                                onClicked: objects.bySize = !objects.bySize
+                            }
+                        }
+                        Text {
                             x: 12
+                            width: sizeOrder.x - 18
+                            elide: Text.ElideRight
                             anchors.top: treeFilter.bottom
                             anchors.topMargin: 6
                             color: theme.subtle
@@ -1817,13 +1875,14 @@ ApplicationWindow {
                                 required property bool isItem
                                 required property bool dim
                                 required property int hidden
+                                required property real size
                                 width: ListView.view.width
                                 height: objects.rowHeight
                                 color: objects.picked === node.handle ? theme.accentSoft
                                      : nodeHover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
                                      : "transparent"
                                 Row {
-                                    x: 10 + (objects.filter === "" ? node.depth * 14 : 0)
+                                    x: 10 + (objects.listed ? 0 : node.depth * 14)
                                     height: parent.height
                                     spacing: 6
                                     Rectangle {
@@ -1851,7 +1910,7 @@ ApplicationWindow {
                                     // may have the id of their component.
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
-                                        visible: objects.filter !== "" || !node.ident && !node.oname
+                                        visible: objects.listed || !node.ident && !node.oname
                                         text: node.handle
                                         color: theme.subtle
                                         font.pixelSize: 11
@@ -1867,6 +1926,17 @@ ApplicationWindow {
                                         color: discloseHover.containsMouse ? theme.accent : theme.subtle
                                         font.bold: discloseHover.containsMouse
                                     }
+                                }
+                                // About what it holds, at the right.
+                                Text {
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: node.size > 0
+                                    text: objects.sizeText(node.size)
+                                    color: theme.subtle
+                                    font.family: theme.mono
+                                    font.pixelSize: 11
                                 }
                                 MouseArea {
                                     id: nodeHover
@@ -3515,6 +3585,242 @@ ApplicationWindow {
                             text: timeline.recording ? "No frame since recording began: the application is at rest"
                                                      : "Press Record to keep each frame's times"
                             color: theme.subtle
+                        }
+                    }
+                }
+
+                // ----- Memory ------------------------------------------
+                // Where the application's memory is, as an allocator view
+                // shows it: the parts beside what the process holds, the
+                // objects by type, and each window. Asked when shown and
+                // when a pass is drawn, at most once a second as the watch
+                // settles; nothing is asked while another page is shown.
+                ColumnLayout {
+                    id: memory
+                    spacing: 10
+                    property var last: null
+                    // The largest part, so that bars compare.
+                    property real most: 1
+                    readonly property var parts: [
+                        { key: "objects", name: "objects", tone: theme.accent },
+                        { key: "script", name: "script heap", tone: theme.warn },
+                        { key: "reactive", name: "reactive graph", tone: theme.violet },
+                        { key: "text", name: "text caches", tone: theme.good },
+                        { key: "images", name: "images", tone: "#3fa7a0" },
+                        { key: "scenes", name: "scenes", tone: "#d77fae" },
+                        { key: "renderers", name: "renderers", tone: theme.bad }
+                    ]
+
+                    function load() {
+                        window.ask("app_memory", { max: 200 }, "memory")
+                    }
+
+                    function sum(windows, of) {
+                        var n = 0
+                        for (var i = 0; i < windows.length; ++i) {
+                            var w = of(windows[i])
+                            n += w ? w.bytes : 0
+                        }
+                        return n
+                    }
+
+                    function show(s) {
+                        last = s
+                        var sizes = {
+                            objects: s.objects.bytes,
+                            script: s.script ? s.script.bytes : 0,
+                            reactive: s.reactive.bytes,
+                            text: s.text ? s.text.bytes : 0,
+                            images: s.images.bytes,
+                            scenes: sum(s.windows, function (w) { return w.scene }),
+                            renderers: sum(s.windows, function (w) { return w.render })
+                        }
+                        partRows.clear()
+                        var top = 1
+                        for (var i = 0; i < parts.length; ++i) {
+                            var p = parts[i]
+                            top = Math.max(top, sizes[p.key])
+                            partRows.append({ name: p.name, tone: String(p.tone), bytes: sizes[p.key] })
+                        }
+                        typeRows.clear()
+                        for (var j = 0; j < s.objects.types.length; ++j) {
+                            var t = s.objects.types[j]
+                            top = Math.max(top, t.bytes)
+                            typeRows.append({ type: t.type, count: t.count, bytes: t.bytes })
+                        }
+                        most = top
+                        windowRows.clear()
+                        for (var k = 0; k < s.windows.length; ++k) {
+                            var w = s.windows[k]
+                            var r = w.render
+                            windowRows.append({
+                                name: w.window === null ? "window " + k : w.window,
+                                scene: w.scene.items + " items, " + w.scene.lists + " display lists, "
+                                       + window.bytes(w.scene.bytes),
+                                render: r === null ? "nothing draws it"
+                                      : r.meshes + " meshes, " + (r.textures + r.pages + r.shape_textures)
+                                        + " textures, glyph atlas " + window.bytes(r.glyph_atlas_bytes)
+                                        + ", " + window.bytes(r.bytes)
+                            })
+                        }
+                    }
+
+                    ListModel { id: partRows }
+                    ListModel { id: typeRows }
+                    ListModel { id: windowRows }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text { text: "Memory"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: !memory.last ? ""
+                                : (memory.last.process
+                                   ? window.bytes(memory.last.process.resident_bytes) + " resident, "
+                                     + window.bytes(memory.last.process.own_bytes) + " of it its own · "
+                                   : "")
+                                  + window.bytes(memory.last.counted_bytes) + " counted below"
+                            color: theme.subtle
+                        }
+                        Button {
+                            text: "Refresh"
+                            onClicked: memory.load()
+                        }
+                    }
+
+                    // One bar a part, to the scale of the largest part or
+                    // type. Bytes no allocator counts are estimates.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: partColumn.implicitHeight + 16
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        Column {
+                            id: partColumn
+                            x: 8; y: 8
+                            width: parent.width - 16
+                            spacing: 4
+                            Repeater {
+                                model: window.page === 8 ? partRows : null
+                                delegate: Row {
+                                    id: partRow
+                                    required property string name
+                                    required property string tone
+                                    required property real bytes
+                                    spacing: 10
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: name + ", " + window.bytes(bytes)
+                                    Text { width: 120; text: partRow.name; color: theme.text; font.pixelSize: 12 }
+                                    Text {
+                                        width: 80
+                                        horizontalAlignment: Text.AlignRight
+                                        text: window.bytes(partRow.bytes)
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Rectangle {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        height: 10
+                                        radius: 2
+                                        width: Math.max(1, (partColumn.width - 230) * partRow.bytes / memory.most)
+                                        color: partRow.tone
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: !memory.last ? "" : "Objects by type · " + memory.last.objects.count + " objects"
+                              + (memory.last.objects.types_left_out > 0
+                                 ? " · " + memory.last.objects.types_left_out + " smaller types not listed" : "")
+                        color: theme.subtle
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+                        ListView {
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            clip: true
+                            model: window.page === 8 ? typeRows : null
+                            ScrollBar.vertical: ScrollBar {}
+                            delegate: Item {
+                                id: typeRow
+                                required property int index
+                                required property string type
+                                required property int count
+                                required property real bytes
+                                width: ListView.view.width
+                                height: 22
+                                Accessible.role: Accessible.ListItem
+                                Accessible.name: type + ", " + count + (count === 1 ? " object, " : " objects, ") + window.bytes(bytes)
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: typeRow.index % 2 ? theme.cardAlt : "transparent"
+                                }
+                                Row {
+                                    x: 6
+                                    height: parent.height
+                                    spacing: 10
+                                    Text {
+                                        width: 180
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: typeRow.type
+                                        color: theme.text
+                                        elide: Text.ElideRight
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: 60
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        horizontalAlignment: Text.AlignRight
+                                        text: typeRow.count
+                                        color: theme.subtle
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: 80
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        horizontalAlignment: Text.AlignRight
+                                        text: window.bytes(typeRow.bytes)
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Rectangle {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        height: 10
+                                        radius: 2
+                                        width: Math.max(1, (typeRow.width - 370) * typeRow.bytes / memory.most)
+                                        color: theme.accent
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Each window: its scene, and what its renderer keeps.
+                    Repeater {
+                        model: window.page === 8 ? windowRows : null
+                        delegate: Column {
+                            id: windowRow
+                            required property string name
+                            required property string scene
+                            required property string render
+                            Layout.fillWidth: true
+                            Text { text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
+                            Text { text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
+                            Text { text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
                         }
                     }
                 }
