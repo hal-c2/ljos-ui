@@ -9,8 +9,8 @@
 //! Basic-derived QML components under their own documented metrics,
 //! palettes and attached style properties.
 
-use std::cell::{Cell, OnceCell};
-use std::collections::{BTreeMap, HashMap};
+use std::cell::{Cell, OnceCell, RefCell};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use ljos_engine::{
@@ -197,6 +197,37 @@ fn style_epoch(engine: &Engine) -> Option<NodeId> {
         slot.0.set(g.property(g.root(), Value::Int(0)).ok());
     }
     slot.0.get()
+}
+
+/// The items a walk for an inherited value went past while they had no
+/// attached style object. The walk saw nothing there to depend on: a
+/// value given there later must make it look again, and nothing else
+/// must. Dead items are let go when the set has doubled.
+#[derive(Default)]
+struct PassedBare {
+    items: RefCell<HashSet<ObjectId>>,
+    prune_at: Cell<usize>,
+}
+
+fn passed_bare(engine: &Engine, item: ObjectId) {
+    let passed = engine.extension::<PassedBare>();
+    let mut items = passed.items.borrow_mut();
+    if items.insert(item) && items.len() > passed.prune_at.get().max(64) {
+        items.retain(|i| engine.is_alive(*i));
+        passed.prune_at.set(items.len() * 2);
+    }
+}
+
+/// An author gave `att` a value: the walks that went past its item
+/// before it had `att` look again. Walks since then read `att` itself.
+fn given_where_passed(engine: &Engine, att: ObjectId) {
+    let passed = engine.extension::<PassedBare>();
+    let was = engine
+        .owner(att)
+        .is_some_and(|item| passed.items.borrow_mut().remove(&item));
+    if was {
+        bump_style_epoch(engine);
+    }
 }
 
 fn bump_style_epoch(engine: &Engine) {
@@ -952,7 +983,11 @@ fn inherited_material_theme(engine: &Engine, att: ObjectId) -> i32 {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
-        if let Some(a) = engine.existing_attached_object(p, &meta) {
+        let attached = engine.existing_attached_object(p, &meta);
+        if attached.is_none() {
+            passed_bare(engine, p);
+        }
+        if let Some(a) = attached {
             let v = engine.read(a, MaterialAttached::THEME.index).to_number() as i32;
             if author_set(engine, a, MaterialAttached::THEME.index) {
                 return if v == 1 { 1 } else { 0 };
@@ -998,7 +1033,11 @@ fn inherited_material_color(
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
-        if let Some(a) = engine.existing_attached_object(p, &meta) {
+        let attached = engine.existing_attached_object(p, &meta);
+        if attached.is_none() {
+            passed_bare(engine, p);
+        }
+        if let Some(a) = attached {
             let value = engine.read(a, prop);
             if author_set(engine, a, prop) {
                 // An ancestor's effect may not have resolved this assignment yet.
@@ -1872,7 +1911,11 @@ fn inherited_universal_theme(engine: &Engine, att: ObjectId) -> i32 {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
-        if let Some(a) = engine.existing_attached_object(p, &meta) {
+        let attached = engine.existing_attached_object(p, &meta);
+        if attached.is_none() {
+            passed_bare(engine, p);
+        }
+        if let Some(a) = attached {
             let v = engine.read(a, UniversalAttached::THEME.index).to_number() as i32;
             if author_set(engine, a, UniversalAttached::THEME.index) {
                 return if v == 1 { 1 } else { 0 };
@@ -1913,7 +1956,11 @@ fn inherited_universal_color(
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
-        if let Some(a) = engine.existing_attached_object(p, &meta) {
+        let attached = engine.existing_attached_object(p, &meta);
+        if attached.is_none() {
+            passed_bare(engine, p);
+        }
+        if let Some(a) = attached {
             let value = engine.read(a, prop);
             if author_set(engine, a, prop) {
                 let raw = match value {
@@ -2240,7 +2287,7 @@ pub(crate) fn register(engine: &Engine) {
                         e.provenance(att, prop),
                         Some(Provenance::Assigned | Provenance::Bound)
                     ) {
-                        bump_style_epoch(e);
+                        given_where_passed(e, att);
                     }
                 });
             }
@@ -2259,7 +2306,7 @@ pub(crate) fn register(engine: &Engine) {
                         e.provenance(att, prop),
                         Some(Provenance::Assigned | Provenance::Bound)
                     ) {
-                        bump_style_epoch(e);
+                        given_where_passed(e, att);
                     }
                 });
             }

@@ -73,3 +73,34 @@ Feature: Material values reach what is made after them
     When the method "look" of "middle" is called
     Then the property "seen" of "middle" is "#3f51b5"
     And the property "accent" of "leaf" is "#f44336"
+
+  # A value an item is given reaches the items below it that were made
+  # before it, and only those look again: a delegate that gives one
+  # changes nothing for the others.
+  Scenario: Delegates that each give a Material value keep their own
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Material
+      Item {
+        width: 200; height: 100
+        Material.accent: Material.Red
+        ListView {
+          objectName: "list"; anchors.fill: parent
+          model: 40
+          delegate: Item {
+            width: 200; height: 20
+            Material.background: index % 2 ? Material.Green : Material.Blue
+            Text {
+              objectName: "row" + index
+              property color background: Material.background
+              property color accent: Material.accent
+            }
+          }
+        }
+      }
+      """
+    When the method "positionViewAtEnd" of "list" is called
+    Then the property "background" of "row39" is "#4caf50"
+    And the property "background" of "row38" is "#2196f3"
+    And the property "accent" of "row39" is "#f44336"

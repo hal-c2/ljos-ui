@@ -578,6 +578,49 @@ Column {
     e.graph().stats().effect_runs
 }
 
+/// Makes `rows` Material buttons one at a time, each giving itself a
+/// background, and returns the effects that ran.
+fn material_rows_given(rows: usize) -> u64 {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Material
+Column {
+    id: column
+    Material.accent: Material.Red
+    property int rows: 0
+    onRowsChanged: row.createObject(column)
+    Component {
+        id: row
+        Button { Material.background: Material.Green }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    for n in 1..=rows {
+        e.write_by_name(root, "rows", Value::Int(n as i32)).unwrap();
+        settle(&mut s, &e, Time::ZERO);
+    }
+    e.graph().stats().effect_runs
+}
+
+/// A Material value an author gave an item made every Material object
+/// look again, so delegates that each give one cost many times many.
+/// Only what was made below the item before it looks again.
+#[test]
+fn material_rows_that_each_give_a_value_cost_what_each_costs() {
+    let once = material_rows_given(40);
+    let twice = material_rows_given(80);
+    assert!(
+        twice * 10 < once * 22,
+        "twice the rows ran {twice} effects, against {once}"
+    );
+}
+
 /// Each Material attached object made had every other one made before it
 /// look again: opening a dialog of many delegates cost many times many.
 /// What a new one is given reaches the rest by the writes that give it,
