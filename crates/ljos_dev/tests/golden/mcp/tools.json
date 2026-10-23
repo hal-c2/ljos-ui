@@ -537,7 +537,7 @@
     "read_only": true
   },
   {
-    "description": "Every object below `root` (a target; default the scene's root), items or not: Timers, models, animations. Each has a `@handle` any tool takes, type, id, objectName and depth. `depth` limits how far down, `hidden` counts what it left out; a cut answer's `next_cursor`, as `cursor`, lists the rest.",
+    "description": "Every object below `root` (a target; default the scene's root), items or not: Timers, models, animations. Each has a `@handle`, type, id, objectName, depth and about its bytes. `depth` limits how far down, `hidden` counts what it left out; a cut answer's `next_cursor`, as `cursor`, lists the rest.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -688,6 +688,36 @@
       "type": "object"
     },
     "name": "app_frames",
+    "read_only": true
+  },
+  {
+    "description": "Where the application's memory is: objects by type (count, about how many bytes), the script heap, the reactive graph, text caches, images, and per window the scene and what its renderer keeps, beside the process's resident bytes. `type` keeps one type; `max` bounds the list.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "default": null,
+          "description": "The most types to list, the most bytes first (default 20, at most\n1000). The rest are counted in `types_left_out`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "type": {
+          "default": null,
+          "description": "Only the objects of this type, by the name `app_objects` gives it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "MemoryArgs",
+      "type": "object"
+    },
+    "name": "app_memory",
     "read_only": true
   },
   {

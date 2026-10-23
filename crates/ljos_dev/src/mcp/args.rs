@@ -557,6 +557,7 @@ pub enum Kind {
     Objects(super::objects::ObjectsArgs),
     Trace(super::trace::TraceArgs),
     Frames(super::timeline::FramesArgs),
+    Memory(super::memory::MemoryArgs),
     Resource(Resource),
     /// Something that changes the application or its input.
     Act(Act),
@@ -602,10 +603,10 @@ impl Kind {
 }
 
 /// Where the tools that act begin in [`TOOLS`]; the ones before only read.
-pub const FIRST_ACT: usize = 12;
+pub const FIRST_ACT: usize = 13;
 
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 25] = [
+pub const TOOLS: [&str; 26] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -618,6 +619,7 @@ pub const TOOLS: [&str; 25] = [
     "app_objects",
     "app_trace",
     "app_frames",
+    "app_memory",
     "app_click",
     "app_type",
     "app_press",
@@ -672,6 +674,10 @@ pub fn registry() -> ToolRegistry {
         .declare(read(ToolDef::new::<super::timeline::FramesArgs>(
             "app_frames",
             super::timeline::FRAMES,
+        )))
+        .declare(read(ToolDef::new::<super::memory::MemoryArgs>(
+            "app_memory",
+            super::memory::MEMORY,
         )))
         .declare(input(ToolDef::new::<ClickArgs>("app_click", CLICK)))
         .declare(input(ToolDef::new::<TypeArgs>("app_type", TYPE)))
@@ -1076,6 +1082,19 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             }
             holder(tool, a.holder.as_deref())?;
             Kind::Frames(a)
+        }
+        "app_memory" => {
+            let a: super::memory::MemoryArgs = read(tool, args)?;
+            let most = super::memory::MOST_TYPES;
+            match a.max {
+                Some(0) => return Err(bad(tool, "`max` is at least 1")),
+                Some(m) if m > most => return Err(bad(tool, format!("`max` is at most {most}"))),
+                _ => {}
+            }
+            if a.r#type.as_deref().is_some_and(str::is_empty) {
+                return Err(bad(tool, "`type` names a type"));
+            }
+            Kind::Memory(a)
         }
         other => {
             return Err(SurfaceError::not_found(format!(

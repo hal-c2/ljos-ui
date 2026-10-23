@@ -283,6 +283,30 @@ impl<M> ShellApp<M> {
         }
     }
 
+    /// Says that the shell tells `app_memory` what each window's scene
+    /// and renderer hold.
+    pub(crate) fn set_measures_render(&mut self) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().set_measures_render();
+        }
+    }
+
+    /// Whether an `app_memory` waits to be told what the windows hold.
+    pub(crate) fn waits_for_memory(&self) -> bool {
+        self.tools
+            .inspector
+            .as_ref()
+            .is_some_and(|served| served.inspector().waits_for_memory())
+    }
+
+    /// Answers the `app_memory` requests that wait.
+    pub(crate) fn finish_memory(&mut self, windows: &[ljos_dev::mcp::WindowMemory]) {
+        let Self { view, tools, .. } = self;
+        if let Some(served) = tools.inspector.as_mut() {
+            served.inspector_mut().finish_memory(view.engine(), windows);
+        }
+    }
+
     /// A frame of the primary window's display: what a slow frame is
     /// slower than.
     pub(crate) fn set_frame_budget(&mut self, budget: std::time::Duration) {

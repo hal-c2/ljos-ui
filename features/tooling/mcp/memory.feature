@@ -1,0 +1,94 @@
+# Sources:
+#   docs/ARCHITECTURE.md (principle 6: 0 % CPU when idle) and section 19.4
+#   (`app_memory`)
+#   https://www.erlang.org/doc/apps/observer/observer_ug.html
+# The inspector is a Ljós extension: Qt has nothing to compare it with.
+
+@ljos-only @headless
+Feature: An agent reads where the application's memory is
+  `app_memory` breaks down what the application holds, as an observer's
+  allocator view does: its objects by type, the script heap, the reactive
+  graph, the text caches, and per window the scene's tree and display
+  lists and what its renderer keeps, beside the process's resident bytes.
+  Counts are exact. Bytes no allocator counts for us are estimates, and
+  say so. Asking reads running counts and walks the objects once; nothing
+  is kept up to date for it, so an application at rest stays at rest.
+
+  Background:
+    Given the QML:
+      """qml
+      import QtQuick
+      Rectangle {
+        objectName: "root"
+        width: 200; height: 200
+        property var names: []
+        Column {
+          Repeater {
+            model: 5
+            Text { text: "row " + index }
+          }
+        }
+        Timer { interval: 1000 }
+        Component.onCompleted: names = ["a", "b", "c"].map(function (n) { return n + n })
+      }
+      """
+    And the inspector is connected with the capabilities "inspect"
+
+  Scenario: The objects are counted by type, the largest first
+    When the agent calls the tool "app_memory"
+    Then the answer's "/objects/count" is at least 8
+    And the answer's "/objects/bytes" is at least 1
+    And the answer's "/objects/approximate" is true
+    And the answer's "/objects/types/0/bytes" is at least 1
+    And the answer's text contains "objects"
+
+  Scenario: One type is asked for by its name
+    When the agent calls the tool "app_memory" with:
+      """json
+      {"type": "Text"}
+      """
+    Then the answer's "/objects/types" has 1 entry
+    And the answer's "/objects/types/0/type" is "Text"
+    And the answer's "/objects/types/0/count" is 5
+
+  Scenario: The list of types is as long as asked
+    When the agent calls the tool "app_memory" with:
+      """json
+      {"max": 2}
+      """
+    Then the answer's "/objects/types" has 2 entries
+    And the answer's "/objects/types_left_out" is at least 1
+
+  Scenario: The script heap is the allocator's own count
+    When the agent calls the tool "app_memory"
+    Then the answer's "/script/bytes" is at least 1
+    And the answer's "/script/approximate" is false
+
+  Scenario: The reactive graph, the text caches and the process
+    When the agent calls the tool "app_memory"
+    Then the answer's "/reactive/nodes" is at least 1
+    And the answer's "/reactive/bytes" is at least 1
+    And the answer's "/text/layouts" is at least 1
+    And the answer's "/text/bytes" is at least 1
+    And the answer's "/process/resident_bytes" is at least 1
+    And the answer's "/counted_bytes" is at least 1
+
+  # Headless, nothing renders: the scene is there, a renderer is not.
+  Scenario: Each window has its scene, and its renderer where one draws
+    When the agent calls the tool "app_memory"
+    Then the answer's "/windows" has 1 entry
+    And the answer's "/windows/0/scene/nodes" is at least 1
+    And the answer's "/windows/0/scene/lists" is at least 1
+    And the answer's "/windows/0/scene/bytes" is at least 1
+    And the answer's "/windows/0/render" is null
+
+  Scenario: Each object says about how much it holds
+    When the agent calls the tool "app_objects"
+    Then the answer's "/objects/0/bytes" is at least 1
+
+  Scenario: A type that is not there is asked for
+    When the agent calls the tool "app_memory" with:
+      """json
+      {"type": "Slider"}
+      """
+    Then the answer's "/objects/types" has 0 entries

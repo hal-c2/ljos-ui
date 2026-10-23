@@ -23,9 +23,9 @@ use super::tools::{flag, text_property};
 
 pub const OBJECTS: &str = "\
 Every object below `root` (a target; default the scene's root), items or not: Timers, models, \
-animations. Each has a `@handle` any tool takes, type, id, objectName and depth. `depth` limits \
-how far down, `hidden` counts what it left out; a cut answer's `next_cursor`, as `cursor`, lists \
-the rest.";
+animations. Each has a `@handle`, type, id, objectName, depth and about its bytes. `depth` \
+limits how far down, `hidden` counts what it left out; a cut answer's `next_cursor`, as \
+`cursor`, lists the rest.";
 
 /// The most objects one answer lists unless told otherwise, and at all.
 const DEFAULT_MAX: usize = 500;
@@ -245,6 +245,7 @@ pub(crate) fn objects(
                     "object_name": name,
                     "item": item,
                     "children": children,
+                    "bytes": engine.object_bytes(obj),
                 });
                 if item {
                     row["visible"] = json!(flag(engine, obj, "visible"));

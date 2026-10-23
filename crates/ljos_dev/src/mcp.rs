@@ -42,6 +42,7 @@ mod edits;
 mod frames;
 mod holders;
 mod logs;
+mod memory;
 mod objects;
 mod observe;
 mod paint;
@@ -82,6 +83,7 @@ pub use ljos_mcp_core::glue::http::{
 pub use ljos_mcp_core::{
     Cap, CapSet, ParseCapError, SOCKET_PATH_MAX, SocketPathError, check_socket_path,
 };
+pub use memory::WindowMemory;
 pub use paint::{Drawn, PaintReport, PainterInfo, StartupStep};
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
 
@@ -243,6 +245,12 @@ struct ParkedResize {
     size: [f64; 2],
 }
 
+/// An `app_memory` waiting for the host to say what its windows hold.
+struct ParkedMemory {
+    reply: oneshot::Sender<Answer>,
+    args: memory::MemoryArgs,
+}
+
 /// The inspector's side on the UI thread. The host makes one, hands the
 /// [`InspectorSurface`] to a server ([`serve`]) or an in-process client,
 /// and calls [`pump`](Self::pump) when woken.
@@ -274,6 +282,10 @@ pub struct Inspector {
     resizes_window: bool,
     resize_wanted: Option<[f64; 2]>,
     parked_resize: Option<ParkedResize>,
+    /// The host says what each window's renderer keeps, when asked
+    /// ([`finish_memory`](Self::finish_memory)).
+    measures_render: bool,
+    parked_memory: Vec<ParkedMemory>,
     /// How many windows the application has, as the host last said.
     windows: usize,
     /// What paints the primary window, as the host said.
@@ -354,6 +366,8 @@ impl Inspector {
             resizes_window: false,
             resize_wanted: None,
             parked_resize: None,
+            measures_render: false,
+            parked_memory: Vec::new(),
             windows: 1,
             painter: None,
             startup: Startup::default(),
@@ -386,6 +400,31 @@ impl Inspector {
     /// it the tool sizes the scene alone, as for a host with no window.
     pub fn set_resizes_window(&mut self) {
         self.resizes_window = true;
+    }
+
+    /// Says that the host draws its windows and tells, when an
+    /// `app_memory` waits ([`waits_for_memory`](Self::waits_for_memory)),
+    /// what each one's scene and renderer hold
+    /// ([`finish_memory`](Self::finish_memory)). Without it the tool tells
+    /// of the inspector's scene alone, with nothing drawing it.
+    pub fn set_measures_render(&mut self) {
+        self.measures_render = true;
+    }
+
+    /// Whether an `app_memory` waits for the host to say what its windows
+    /// hold.
+    pub fn waits_for_memory(&self) -> bool {
+        !self.parked_memory.is_empty()
+    }
+
+    /// Answers the `app_memory` requests that wait, with what the host's
+    /// windows hold, the primary one first.
+    pub fn finish_memory(&mut self, engine: &Engine, windows: &[WindowMemory]) {
+        for parked in std::mem::take(&mut self.parked_memory) {
+            let _ = parked
+                .reply
+                .send(Ok(memory::memory(engine, windows, &parked.args)));
+        }
     }
 
     /// Says how many windows the application has. The inspector sees the
@@ -814,6 +853,25 @@ impl Inspector {
             let _ = reply.send(answer);
             return;
         }
+        if let Kind::Memory(args) = &kind {
+            if self.measures_render {
+                // The host answers it once this pass is over, when it can
+                // look at every window and what draws it.
+                self.parked_memory.push(ParkedMemory {
+                    reply,
+                    args: args.clone(),
+                });
+                (self.wake)();
+                return;
+            }
+            let windows = [WindowMemory {
+                window: None,
+                scene: scene.memory(),
+                render: None,
+            }];
+            let _ = reply.send(Ok(memory::memory(engine, &windows, args)));
+            return;
+        }
         if let Kind::Frames(args) = &kind {
             let _ = reply.send(timeline::frames(engine, scene, &mut self.timeline, args));
             return;
@@ -1137,9 +1195,12 @@ enum Started {
 /// already taken.
 fn needs_scene(kind: &Kind) -> bool {
     match kind {
-        Kind::Logs(_) | Kind::Metrics | Kind::Processes(_) | Kind::Watch(_) | Kind::Frames(_) => {
-            false
-        }
+        Kind::Logs(_)
+        | Kind::Metrics
+        | Kind::Processes(_)
+        | Kind::Watch(_)
+        | Kind::Frames(_)
+        | Kind::Memory(_) => false,
         Kind::Objects(args) => objects::needs_scene(args),
         Kind::Trace(args) => trace::needs_scene(args),
         Kind::Resource(r) => *r == Resource::Tree,

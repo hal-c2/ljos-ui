@@ -731,6 +731,7 @@ impl<M: Send + 'static> Desktop<M> {
         let app = {
             let mut app = app;
             app.set_resizes_window();
+            app.set_measures_render();
             app
         };
         Self {
@@ -1274,6 +1275,10 @@ impl<M: Send + 'static> Desktop<M> {
                 self.resize_due = None;
             }
         }
+        #[cfg(feature = "mcp")]
+        if self.slots[i].is_root() && self.app.waits_for_memory() {
+            self.serve_memory();
+        }
         let slot = &mut self.slots[i];
         let view = match slot.view.as_mut() {
             Some(view) => view,
@@ -1790,6 +1795,27 @@ impl<M: Send + 'static> Desktop<M> {
     /// Asks the platform for the size an agent wants the primary window
     /// to have (`app_resize`), as for a `Window` whose size the
     /// application wrote; the pass at the size given answers the agent.
+    /// Tells the `app_memory` requests that wait what each window's scene
+    /// and renderer hold, the root's first. A renderer is counted whether
+    /// or not its window is on the screen: what it keeps is held all the
+    /// same.
+    #[cfg(feature = "mcp")]
+    fn serve_memory(&mut self) {
+        let windows: Vec<_> = self
+            .slots
+            .iter()
+            .map(|slot| {
+                let view = slot.view.as_ref().unwrap_or_else(|| self.app.view());
+                ljos_dev::mcp::WindowMemory {
+                    window: slot.window,
+                    scene: view.scene().memory(),
+                    render: Some(view.backend().memory()),
+                }
+            })
+            .collect();
+        self.app.finish_memory(&windows);
+    }
+
     #[cfg(feature = "mcp")]
     fn serve_resize(&mut self, host: &mut Control<'_>, engine: &Engine, sys: &WindowSystem) {
         let Some(size) = self.app.take_resize_request() else {
