@@ -239,6 +239,9 @@ pub struct DesktopBackend {
     /// The passes read when counting began, and how many each reading
     /// itself runs.
     passes_from: Option<(u64, u64)>,
+    /// Each of the application's threads by id, with its name and the
+    /// times it had been woken when counting began.
+    wakes_from: Option<BTreeMap<u32, (String, u64)>>,
     /// The work of the application and of its observer when counting
     /// began, and what each reading itself does.
     work_from: Vec<(&'static str, Counted)>,
@@ -246,6 +249,33 @@ pub struct DesktopBackend {
     seen: Seen,
     /// What the application's environment has besides the sandbox's.
     env: Vec<(String, String)>,
+}
+
+/// Each thread of process `pid` by id: its name, and how many times the
+/// kernel switched to it, as the times it was woken.
+fn thread_wakes(pid: u32) -> Result<BTreeMap<u32, (String, u64)>> {
+    let mut threads = BTreeMap::new();
+    for task in std::fs::read_dir(format!("/proc/{pid}/task"))? {
+        let task = task?;
+        let Some(tid) = task.file_name().to_str().and_then(|t| t.parse().ok()) else {
+            continue;
+        };
+        // A thread that ended between the listing and the read is gone.
+        let Ok(status) = std::fs::read_to_string(task.path().join("status")) else {
+            continue;
+        };
+        let field = |key: &str| {
+            status
+                .lines()
+                .find_map(|l| l.strip_prefix(key))
+                .map(str::trim)
+        };
+        let name = field("Name:").unwrap_or("?").to_owned();
+        let n = |key| field(key).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+        let woke = n("voluntary_ctxt_switches:") + n("nonvoluntary_ctxt_switches:");
+        threads.insert(tid, (name, woke));
+    }
+    Ok(threads)
 }
 
 /// Work read when counting began, and the work one reading does.
@@ -586,6 +616,30 @@ impl Backend for DesktopBackend {
             .ok_or_else(|| BackendError::Failed("the passes were not being counted".into()))?;
         let now = self.passes()?;
         Ok(now.saturating_sub(from).saturating_sub(reading))
+    }
+
+    fn count_wakes(&mut self) -> Result<()> {
+        let pid = self.running()?.app.id();
+        self.wakes_from = Some(thread_wakes(pid)?);
+        Ok(())
+    }
+
+    fn wakes_counted(&mut self) -> Result<Vec<(String, u64)>> {
+        let pid = self.running()?.app.id();
+        let from = self
+            .wakes_from
+            .as_ref()
+            .ok_or_else(|| BackendError::Failed("the wakes were not being counted".into()))?;
+        let now = thread_wakes(pid)?;
+        Ok(now
+            .into_iter()
+            .filter(|(tid, _)| *tid != pid)
+            .filter_map(|(tid, (name, n))| {
+                let was = from.get(&tid).map_or(0, |(_, w)| *w);
+                let woke = n.saturating_sub(was);
+                (woke > 0).then_some((name, woke))
+            })
+            .collect())
     }
 
     fn observe(&mut self) -> Result<()> {

@@ -39,3 +39,19 @@ Feature: A click runs only the passes it needs
     And 1000 milliseconds pass
     Then the window ran at most 2 passes since they were counted
     And the property "clicks" of "area" is 1
+
+  # The clipboard is the system's, read when a paste asks and written when
+  # a copy does: a thread that kept it on the window's connection to the
+  # display woke on every event the window got. A screen reader hears only
+  # what changed, so a pass that changes nothing tells its thread nothing.
+  # The first click makes the window active, which a reader is told.
+  Scenario: A click that changes nothing wakes no thread but the window's
+    When the user presses the pointer at 50, 30
+    And the user releases the pointer at 50, 30
+    And 1000 milliseconds pass
+    And the wakes of the application's threads are counted
+    And the user presses the pointer at 50, 30
+    And the user releases the pointer at 50, 30
+    And 1000 milliseconds pass
+    Then no thread but the window's woke since they were counted
+    And the property "clicks" of "area" is 2

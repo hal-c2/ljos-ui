@@ -628,6 +628,23 @@ pub trait Backend: fmt::Debug {
             what: "counting the times text is measured",
         })
     }
+    /// Starts counting how often each of the application's threads is
+    /// woken. Only a shell's process can be read: the oracle's threads
+    /// are its own.
+    fn count_wakes(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the wakes of the application's threads",
+        })
+    }
+    /// Each thread but the window's own that woke since
+    /// [`Backend::count_wakes`], by name, with how many times it did.
+    fn wakes_counted(&mut self) -> Result<Vec<(String, u64)>> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the wakes of the application's threads",
+        })
+    }
     /// Starts `ljos observe` on the running application. Only a shell is
     /// observed: the observer is a window of its own.
     fn observe(&mut self) -> Result<()> {

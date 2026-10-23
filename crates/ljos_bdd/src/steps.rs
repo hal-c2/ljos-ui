@@ -1173,6 +1173,24 @@ fn text_measured_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
     })
 }
 
+#[when("the wakes of the application's threads are counted")]
+fn wakes_are_counted(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.count_wakes())
+}
+
+#[then("no thread but the window's woke since they were counted")]
+fn no_other_thread_woke(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let woke = b.wakes_counted()?;
+        if woke.is_empty() {
+            Ok(())
+        } else {
+            let said: Vec<String> = woke.iter().map(|(t, n)| format!("{t} {n} times")).collect();
+            Err(BackendError::Failed(format!("woke: {}", said.join(", "))))
+        }
+    })
+}
+
 #[when("the application is observed")]
 fn application_observed(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.observe())
