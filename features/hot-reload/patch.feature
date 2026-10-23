@@ -3684,6 +3684,61 @@ Feature: What a reload changes
       When the property "wide" of "root" is set to false
       Then the property "width" of "label" is 16
 
+  Rule: A value a state gives, edited, reaches every object made from its file
+
+    Each object made from the file keeps its own state and is given the
+    value as now written, as a fresh load makes each of them.
+
+    Scenario: A value edited in a state is given to each object made from the file
+      Given the file "Holder.qml":
+        """qml
+        import QtQuick
+        Item { property int n; Badge { n: parent.n } }
+        """
+      And the file "Badge.qml":
+        """qml
+        import QtQuick
+        Item {
+          id: badge
+          property int n
+          width: inner.size
+          objectName: "badge" + n
+          QtObject { id: inner; property int size: 1 }
+          states: State {
+            name: "big"; when: true
+            PropertyChanges { target: inner; size: 10 }
+          }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Repeater { model: 3; Holder { n: index } }
+        }
+        """
+      Then the property "width" of "badge2" is 10
+      When the file "Badge.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: badge
+          property int n
+          width: inner.size
+          objectName: "badge" + n
+          QtObject { id: inner; property int size: 1 }
+          states: State {
+            name: "big"; when: true
+            PropertyChanges { target: inner; size: 20 }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "badge0" is 20
+      And the property "width" of "badge1" is 20
+      And the property "width" of "badge2" is 20
+
   Rule: A member edited that its object does not have goes in place
 
     A member given through a name the object does not have (an alias
