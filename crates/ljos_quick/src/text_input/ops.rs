@@ -66,6 +66,7 @@ fn acted(engine: &Engine, obj: ObjectId, f: impl FnOnce(&SharedState)) -> Option
     f(&st);
     {
         let mut s = st.borrow_mut();
+        super::cells::snap(&mut s);
         s.run = None;
         s.sticky = None;
     }
@@ -155,6 +156,7 @@ pub(crate) fn edit(
     {
         let mut s = st.borrow_mut();
         super::rich::after_edit(&mut s);
+        s.cell_anchor = None;
         if changed {
             let end = how.end.unwrap_or_else(|| s.model.cursor());
             s.run = Some(Run {
@@ -196,17 +198,38 @@ pub(crate) fn begin_editing(engine: &Engine, obj: ObjectId) {
     st.borrow_mut().run = None;
 }
 
+/// Typing, Backspace or Delete over a selection of cells: empties the
+/// cells and leaves the cursor in the cursor's cell, where what is typed
+/// next joins the step. `None` when no cells are selected; else whether
+/// any text went.
+pub(crate) fn empty_cells(engine: &Engine, obj: ObjectId, kind: EditKind) -> Option<bool> {
+    let st = ready(engine, obj)?;
+    let removed = {
+        let mut s = st.borrow_mut();
+        let removed = super::cells::empty(&mut s)?;
+        super::rich::after_edit(&mut s);
+        let end = s.model.cursor();
+        s.run = removed.then_some(Run { kind, end });
+        s.sticky = None;
+        removed
+    };
+    check(engine, "edit", publish(engine, obj, &st));
+    Some(removed)
+}
+
 /// Types `text` at the cursor as the user would: over the selection, or
 /// over what follows the cursor in `overwriteMode`.
 pub(crate) fn type_text(engine: &Engine, obj: ObjectId, text: &str) -> bool {
+    let emptied = empty_cells(engine, obj, EditKind::Typed);
     let overwrite = flag(engine, obj, TextEditor::OVERWRITE_MODE.index);
-    edit(engine, obj, How::user(EditKind::Typed), |m| {
+    let typed = edit(engine, obj, How::user(EditKind::Typed), |m| {
         if overwrite {
             m.overwrite(text)
         } else {
             m.replace_selection(text)
         }
-    })
+    });
+    typed || emptied == Some(true)
 }
 
 /// Types `text` into an editor as the user would, for a host that has
@@ -318,7 +341,7 @@ pub(crate) fn copy(engine: &Engine, obj: ObjectId) -> bool {
     if !may_copy(engine, obj, &st) {
         return false;
     }
-    let text = st.borrow().model.selected_text().to_owned();
+    let text = super::cells::copied_text(&mut st.borrow_mut());
     if text.is_empty() {
         return false;
     }
@@ -337,6 +360,9 @@ pub(crate) fn copy(engine: &Engine, obj: ObjectId) -> bool {
 pub(crate) fn cut(engine: &Engine, obj: ObjectId) -> bool {
     if read_only(engine, obj) || !copy(engine, obj) {
         return false;
+    }
+    if let Some(removed) = empty_cells(engine, obj, EditKind::Other) {
+        return removed;
     }
     edit(engine, obj, How::user(EditKind::Other), |m| {
         m.delete_selection()

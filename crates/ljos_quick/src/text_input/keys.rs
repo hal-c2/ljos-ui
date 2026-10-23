@@ -270,6 +270,9 @@ fn motion(s: &State, motion: Motion, select: bool, echo: i32) -> Plan {
                 return Plan::Keep;
             }
             let forward = (motion == Motion::Right) != rtl;
+            if select && let Some(step) = super::cells::shift_step(s, forward) {
+                return step.map_or(Plan::Keep, to);
+            }
             if !select && model.has_selection() {
                 // The selection goes and the cursor is left at its end
                 // on the side of the key.
@@ -423,8 +426,11 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
             {
                 let mut s = st.borrow_mut();
                 s.model.move_to(pos, select);
+                super::cells::snap(&mut s);
                 s.run = None;
-                s.sticky = column.map(|x| (x, pos));
+                // Kept where a selection of cells took the cursor.
+                let at = s.model.cursor();
+                s.sticky = column.map(|x| (x, at));
             }
             check(engine, "cursor", publish(engine, obj, &st));
         }
@@ -499,6 +505,9 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
         Action::Redo => {
             ops::redo(engine, obj);
         }
+        // Over a selection of cells either key empties the cells.
+        Action::Backspace | Action::Delete
+            if ops::empty_cells(engine, obj, EditKind::Other).is_some() => {}
         Action::Backspace => {
             ops::edit(engine, obj, How::user(EditKind::Backspace), |m| {
                 m.backspace()

@@ -114,6 +114,18 @@ impl TableRow {
     }
 }
 
+/// A cell of a table, as [`RichText::cell_at`] finds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableCell {
+    /// The paragraphs of the cell's table, one per row.
+    pub rows: Range<usize>,
+    /// The paragraph of the cell's row.
+    pub row: usize,
+    pub column: usize,
+    /// The cell's characters.
+    pub text: Range<usize>,
+}
+
 /// How a table and its cells stand apart (see [`super::Table`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableFormat {
@@ -1119,6 +1131,72 @@ impl RichText {
         out
     }
 
+    /// The cell of a table `byte` is in, from the cell's start to its end
+    /// both included; `None` outside tables.
+    pub fn cell_at(&self, byte: usize) -> Option<TableCell> {
+        let byte = byte.min(self.text.len());
+        let row = self.block_index(byte);
+        let here = self.blocks.get(row)?.table.as_ref()?;
+        let same = |i: usize| {
+            self.blocks
+                .get(i)
+                .and_then(|b| b.table.as_ref())
+                .is_some_and(|t| t.same_table(here))
+        };
+        let mut first = row;
+        while first > 0 && same(first - 1) {
+            first -= 1;
+        }
+        let mut last = row + 1;
+        while same(last) {
+            last += 1;
+        }
+        let (column, text) = self
+            .cells_of_row(row)
+            .into_iter()
+            .enumerate()
+            .find(|(_, r)| byte <= r.end)?;
+        Some(TableCell {
+            rows: first..last,
+            row,
+            column,
+            text,
+        })
+    }
+
+    /// The characters of each cell of the row that is paragraph `row`.
+    pub fn cells_of_row(&self, row: usize) -> Vec<Range<usize>> {
+        let line = self.block_range(row);
+        let mut start = line.start;
+        let mut out = Vec::new();
+        for cell in self.text[line].split(CELL) {
+            out.push(start..start + cell.len());
+            start += cell.len() + CELL.len_utf8();
+        }
+        out
+    }
+
+    /// The cells of the rectangle two cells of one table span, a row after
+    /// another and each row from left to right.
+    pub fn cell_rectangle(&self, a: &TableCell, b: &TableCell) -> Vec<Range<usize>> {
+        let columns = a.column.min(b.column)..=a.column.max(b.column);
+        (a.row.min(b.row)..=a.row.max(b.row))
+            .flat_map(|row| {
+                let cells = self.cells_of_row(row);
+                columns.clone().filter_map(move |c| cells.get(c).cloned())
+            })
+            .collect()
+    }
+
+    /// Where the table of the paragraphs `rows` starts and ends, as a
+    /// selection that takes it in has it: at the paragraph break into it
+    /// and at the start of the paragraph after it.
+    pub fn table_range(&self, rows: Range<usize>) -> Range<usize> {
+        let start = self.block_range(rows.start).start.saturating_sub(1);
+        let end = self.block_range(rows.end.max(1) - 1).end + 1;
+        start..end.min(self.text.len())
+    }
+
     /// This text as new paragraphs after the text it is spliced in at
     /// (`append`): a paragraph break, then the text with its paragraphs'
     /// formats.
@@ -1503,6 +1581,27 @@ mod tests {
         assert_eq!(two.text(), "\na\n\nb\n");
         let broken = rich("x<table><tr><td>a<br>b</td><td>c</td></tr></table>y");
         assert_eq!(broken.text(), "x\na\u{2028}b\u{1f}c\ny");
+    }
+
+    #[test]
+    fn cells_are_found_by_where_they_are() {
+        let t =
+            rich("x<table><tr><td>pq</td><td>r</td></tr><tr><td>s</td><td>tu</td></tr></table>y");
+        assert_eq!(t.text(), "x\npq\u{1f}r\ns\u{1f}tu\ny");
+        assert_eq!(t.cell_at(1), None);
+        let cell = |b| t.cell_at(b).map(|c| (c.row, c.column, c.text));
+        assert_eq!(cell(2), Some((1, 0, 2..4)));
+        assert_eq!(cell(4), Some((1, 0, 2..4)));
+        assert_eq!(cell(5), Some((1, 1, 5..6)));
+        assert_eq!(cell(6), Some((1, 1, 5..6)));
+        assert_eq!(cell(11), Some((2, 1, 9..11)));
+        assert_eq!(t.cell_at(12), None);
+        let (a, b) = (t.cell_at(5).unwrap(), t.cell_at(7).unwrap());
+        assert_eq!(a.rows, 1..3);
+        assert_eq!(t.cell_rectangle(&a, &b), [2..4, 5..6, 7..8, 9..11]);
+        let c = t.cell_at(9).unwrap();
+        assert_eq!(t.cell_rectangle(&a, &c), [5..6, 9..11]);
+        assert_eq!(t.table_range(a.rows), 1..12);
     }
 
     #[test]

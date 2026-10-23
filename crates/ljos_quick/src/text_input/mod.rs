@@ -28,6 +28,7 @@
 
 mod a11y;
 mod base;
+mod cells;
 mod clipboard;
 mod edit;
 mod files;

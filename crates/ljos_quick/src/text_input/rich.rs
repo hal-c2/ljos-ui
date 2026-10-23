@@ -30,7 +30,7 @@ use ljos_text::rich::{
     BlockFormat, CharFormat, DocFont, HAlign, ImageFormat, OBJECT, ParseOptions, RichText,
     TextFormat, might_be_rich,
 };
-use ljos_text::{BUNDLED_FAMILY, EditBlock, EditTable, utf16_to_byte};
+use ljos_text::{BUNDLED_FAMILY, EditBlock, EditTable, byte_to_utf16, utf16_to_byte};
 
 use super::base::{SharedState, State, TextEditor};
 use super::edit::TextEdit;
@@ -265,6 +265,27 @@ pub(crate) fn before_edit(s: &mut State, start: Option<usize>, breaks: bool) {
         Some(p) => utf16_to_byte(text, p),
         None => s.model.selection_bytes().start,
     });
+}
+
+/// Removes each of `ranges` (bytes, in order, none overlapping) as one
+/// step of the history, the last first, so that the rich text is told of
+/// each on its own.
+pub(crate) fn remove_each(s: &mut State, ranges: &[std::ops::Range<usize>]) {
+    if let Some(r) = s.rich.as_mut() {
+        r.fresh_step = true;
+    }
+    for range in ranges.iter().rev().filter(|r| !r.is_empty()) {
+        let text = s.model.text();
+        let (a, b) = (
+            byte_to_utf16(text, range.start),
+            byte_to_utf16(text, range.end),
+        );
+        if let Some(r) = s.rich.as_mut() {
+            r.hint = Some(range.start);
+        }
+        s.model.remove(a, b);
+        sync_doc(s);
+    }
 }
 
 /// The edit was made: tells the rich text.

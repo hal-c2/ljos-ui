@@ -108,6 +108,9 @@ pub(crate) struct State {
     /// The column Up and Down keep to, and the cursor position it was
     /// taken at: it holds only while the cursor is still there.
     pub sticky: Option<(f64, usize)>,
+    /// The anchor the user set, and where it was moved to as a selection
+    /// of cells has it: it holds only while the anchor is still there.
+    pub cell_anchor: Option<(usize, usize)>,
     pub pointer: PointerState,
     /// The component of `cursorDelegate` and what was made from it.
     pub delegate: Option<(ObjectId, ObjectId)>,
@@ -750,7 +753,7 @@ pub(crate) fn publish_unshown(
     let (cursor, selection, selected, len, undo, redo, preedit, multi) = {
         let s = st.borrow();
         let m = &s.model;
-        let selected = super::rich::plain_text(&s, m.selection_bytes());
+        let selected = super::cells::selected_text(&s);
         (
             m.cursor() as i32,
             m.selection(),
