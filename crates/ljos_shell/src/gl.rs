@@ -49,6 +49,10 @@ const AREAS: usize = (GRID * GRID) as usize;
 /// The cells a side of the window is cut into past [`AREAS`].
 const GRID: u32 = 4;
 
+/// Past this many areas, a frame that changes a fifth of the window is
+/// drawn whole ([`Damage::mostly`]).
+const SCATTERED: usize = GRID as usize;
+
 /// Past this many areas a frame goes to the grid without joining them.
 const JOINED: usize = 4 * AREAS;
 
@@ -1040,11 +1044,20 @@ impl Damage {
     /// the shapes left out spare it work: two hundred moving bars drawn
     /// in the cells around them spared a third of the window and cost a
     /// tenth of the frame more than drawing it whole.
+    ///
+    /// Areas scattered over the window ([`SCATTERED`]) are drawn whole
+    /// sooner: each draws again every shape that reaches it, and a driver
+    /// pays for each draw on the thread that makes it. A page sliding
+    /// over another changed a third of the window in a dozen cells, which
+    /// made forty draws where the whole window is ten; on llvmpipe the
+    /// thread that draws spent a fifth less drawing it whole, and the
+    /// rasteriser's threads about as much more as that spared.
     fn mostly(&self, size: [u32; 2], software: bool) -> bool {
         let window = u64::from(size[0]) * u64::from(size[1]);
         let covered: u64 = self.0.iter().map(|px| u64::from(px.pixels())).sum();
         let (part, of) = if software { (3, 4) } else { (1, 2) };
-        window > 0 && covered * of >= window * part
+        let scattered = self.0.len() > SCATTERED && covered * 5 >= window;
+        window > 0 && (covered * of >= window * part || scattered)
     }
 
     /// The areas that cover `areas`: those that overlap become one around
@@ -1403,6 +1416,21 @@ mod tests {
         let less = Damage(vec![Px([0, 0, 100, 40]), Px([0, 90, 50, 100])]);
         assert!(!less.mostly([100, 100], false));
         assert!(!Damage::default().mostly([0, 0], false));
+    }
+
+    #[test]
+    fn areas_scattered_over_a_fair_part_of_the_window_draw_it_whole() {
+        // A row of cells across a fifth of the window, as a page sliding
+        // in changes it.
+        let cells = |n: u32| Damage((0..n).map(|i| Px([i * 20, 0, i * 20 + 20, 20])).collect());
+        for software in [true, false] {
+            assert!(cells(5).mostly([100, 100], software));
+            // As many cells, over less of the window, are drawn apart.
+            let small = Damage((0..5).map(|i| Px([i * 20, 0, i * 20 + 20, 10])).collect());
+            assert!(!small.mostly([100, 100], software));
+        }
+        // A few cells over as much stay apart on a rasteriser on the CPU.
+        assert!(!cells(4).mostly([100, 100], true));
     }
 
     #[test]
