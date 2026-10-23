@@ -26,7 +26,7 @@ Feature: What the inspector lets an agent do
     And the inspector is connected
 
   Scenario: Started with no capability named, the tools are the ones that read, in a fixed order
-    Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace"
+    Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames"
 
   Scenario: Every tool offered to an agent that may only read is marked as one that changes nothing
     Then every tool the agent is offered is marked read-only
@@ -90,19 +90,19 @@ Feature: What the inspector lets an agent do
 
     Scenario: Input offers the tools that give input, and the batch of them
       Given the inspector is connected with the capabilities "inspect, input"
-      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_click, app_type, app_press, app_scroll, app_touch, app_advance, app_resize, app_set_appearance, app_batch"
+      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames, app_click, app_type, app_press, app_scroll, app_touch, app_advance, app_resize, app_set_appearance, app_batch"
 
     Scenario: Mutate offers the tools that change the application
       Given the inspector is connected with the capabilities "inspect, mutate"
-      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_set_property, app_invoke, app_reload"
+      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames, app_set_property, app_invoke, app_reload"
 
     Scenario: Eval offers the tool that runs script
       Given the inspector is connected with the capabilities "inspect, eval"
-      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_eval"
+      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames, app_eval"
 
     Scenario: Every capability offers every tool
       Given the inspector is connected with the capabilities "inspect, input, mutate, eval"
-      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_click, app_type, app_press, app_scroll, app_touch, app_advance, app_resize, app_set_appearance, app_batch, app_set_property, app_invoke, app_reload, app_eval"
+      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames, app_click, app_type, app_press, app_scroll, app_touch, app_advance, app_resize, app_set_appearance, app_batch, app_set_property, app_invoke, app_reload, app_eval"
 
     Scenario: Input and mutate together do not grant eval
       Given the inspector is connected with the capabilities "inspect, input, mutate"
