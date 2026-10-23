@@ -159,6 +159,9 @@ struct Changed {
     /// (component, new index, alias name): an alias of an object that
     /// stays, whose object is made again; it is pointed at the new one.
     realias: Vec<(CompIdx, usize, String)>,
+    /// (file, names): another file whose bindings that name a renamed
+    /// property, by its old name or its new, are bound again.
+    rebind: Vec<(String, Vec<String>)>,
 }
 
 /// Where the objects of a component of the old file are in the new one.
@@ -254,6 +257,13 @@ impl Renewed {
 /// The changed files, by the old ones.
 type Files = HashMap<*const LoadedFile, Renewed>;
 
+/// (instance, object, member): a binding to make again.
+type Rebind = (Rc<Instance>, usize, String);
+
+/// An instance that uses a component as the type of its object, and the
+/// object's index.
+type User = (Rc<Instance>, usize);
+
 /// (line, column) of the old file to (line, column) of the new.
 type Moves = HashMap<(u32, u32), (u32, u32)>;
 
@@ -273,6 +283,9 @@ struct Target<'a> {
     /// Edited members through a name the object does not have: told of
     /// again, as a fresh load tells of them.
     missing: Vec<String>,
+    /// With a property renamed: the type the old file gave the object,
+    /// and the user whose object's type, built on it, the object has.
+    renames: Option<(MetaRef, Option<User>)>,
 }
 
 impl Engine {
@@ -404,6 +417,7 @@ impl Engine {
                         renamed: e.renamed.clone(),
                         fresh: e.fresh.clone(),
                         missing: Vec::new(),
+                        renames: None,
                     };
                     if let Err(why) = self.in_place_applies(&mut t, c, &users) {
                         return not_here(why);
@@ -412,6 +426,10 @@ impl Engine {
                 }
             }
         }
+        let rebinds = match self.rebinds(&changed, &instances) {
+            Ok(r) => r,
+            Err(why) => return not_here(why),
+        };
         // The instances objects are added to or removed from.
         let mut growing: Vec<(Rc<Instance>, usize)> = Vec::new();
         for inst in &instances {
@@ -486,6 +504,27 @@ impl Engine {
             }
         }
         phases.mark("loader");
+        // The types built on one a rename replaces are built again when
+        // next asked for, in every file.
+        let replaced: Vec<MetaRef> = targets
+            .iter()
+            .filter_map(|t| t.renames.as_ref().map(|(m, _)| m.clone()))
+            .collect();
+        if !replaced.is_empty() {
+            let on_replaced = |m: &MetaRef| {
+                let mut cur = Some(m.clone());
+                while let Some(m) = cur {
+                    if replaced.iter().any(|r| MetaRef::ptr_eq(r, &m)) {
+                        return true;
+                    }
+                    cur = m.base.clone();
+                }
+                false
+            };
+            for f in self.inner.loader.borrow().files.values() {
+                f.metas.borrow_mut().retain(|_, m| !on_replaced(m));
+            }
+        }
 
         let mut memo: HashMap<*const Instance, Rc<Instance>> = HashMap::default();
         // Each instance is made again around the objects that stay, the
@@ -545,9 +584,14 @@ impl Engine {
             if !self.is_alive(id) {
                 continue;
             }
-            let renamed = self
-                .object_meta(&inst.file, inst.comp, t.obj)
-                .is_ok_and(|meta| self.rename_meta(id, meta));
+            let meta = match t.renames.as_ref().and_then(|(_, by)| by.as_ref()) {
+                Some((user, i)) => {
+                    let user = renew(user, &files, &mut memo);
+                    self.object_meta(&user.file, user.comp, *i)
+                }
+                None => self.object_meta(&inst.file, inst.comp, t.obj),
+            };
+            let renamed = meta.is_ok_and(|meta| self.rename_meta(id, meta));
             if !renamed {
                 tracing::warn!("a renamed property's object keeps its old names");
             }
@@ -604,6 +648,18 @@ impl Engine {
                 {
                     self.install_function(&inst, id, f);
                 }
+            }
+            // What reads a renamed property elsewhere starts again, as on a
+            // fresh load: a read of the old name finds nothing.
+            for (inst, j, name) in &rebinds {
+                let inst = renew(inst, &files, &mut memo);
+                let id = inst.objects[*j];
+                if !self.is_alive(id) {
+                    continue;
+                }
+                let od = &inst.file.ir.component(inst.comp).objects[*j];
+                let _ = self.in_place_unset(&inst, *j, od, od, name, true);
+                self.in_place_set(&inst, id, od, name);
             }
         });
         // A model whose elements were edited is taken to its new rows.
@@ -955,6 +1011,8 @@ impl Engine {
                 ReloadOp::SignatureChanged { .. }
                 | ReloadOp::ComponentAdded { .. }
                 | ReloadOp::ComponentRemoved { .. } => continue,
+                // Read from the loaded files below.
+                ReloadOp::FileAdded { .. } => continue,
                 _ => {
                     tracing::debug!("reload not in place: {op:?}");
                     return None;
@@ -968,8 +1026,20 @@ impl Engine {
         let mut out = Vec::new();
         for f in &patch.files {
             let new = &f.file;
+            // A file new to the application (one that did not compile
+            // before, say) that nothing loaded names is made of nothing.
             if f.added {
-                return not_here(format_args!("{} is new", new.file));
+                let named = self
+                    .inner
+                    .loader
+                    .borrow()
+                    .files
+                    .values()
+                    .any(|l| names_file(&l.ir, &new.file));
+                if named {
+                    return not_here(format_args!("{} is new", new.file));
+                }
+                continue;
             }
             if resets(new) {
                 return not_here(format_args!("{} asks for a reset", new.file));
@@ -1027,9 +1097,10 @@ impl Engine {
                 tracing::debug!("reload not in place: {} changed its shape", new.file);
                 return None;
             };
-            if let Some(why) = self.renamed_elsewhere(&old, &edits) {
-                return not_here(why);
-            }
+            let rebind = match self.renamed_elsewhere(&old, &edits, patch) {
+                Ok(rebind) => rebind,
+                Err(why) => return not_here(why),
+            };
             out.push(Changed {
                 old,
                 new: Arc::new(new.clone()),
@@ -1041,30 +1112,37 @@ impl Engine {
                 objects,
                 models,
                 realias,
+                rebind,
             });
         }
         Some(out)
     }
 
     /// Why a property `edits` rename cannot be renamed where it stands:
-    /// another file may read or set it by either name, or its type has a
-    /// member of one. `None` when it can.
-    fn renamed_elsewhere(&self, file: &Rc<LoadedFile>, edits: &[Edit]) -> Option<String> {
+    /// another file sets it by either name, or its signal, a script reads
+    /// it, or its type has a member of one. Else the other files whose
+    /// bindings may read it, with the names to look for.
+    fn renamed_elsewhere(
+        &self,
+        file: &Rc<LoadedFile>,
+        edits: &[Edit],
+        patch: &ReloadPatch,
+    ) -> Result<Vec<(String, Vec<String>)>, String> {
         let loader = self.inner.loader.borrow();
+        let mut rebind: Vec<(String, Vec<String>)> = Vec::new();
         for e in edits {
             let od = &file.ir.component(e.comp).objects[e.was];
             let base = self.type_meta(file, &od.ty).ok();
             for (from, to) in &e.renamed {
-                let words = [
-                    from.clone(),
-                    to.clone(),
+                let names = [from.clone(), to.clone()];
+                let signals = [
                     format!("{from}Changed"),
                     format!("{to}Changed"),
                     format!("on{}Changed", capitalized(from)),
                     format!("on{}Changed", capitalized(to)),
                 ];
                 let why = |other: &str| {
-                    Some(format!(
+                    Err(format!(
                         "the property {from} of {} renamed to {to} is read or set in {other}",
                         file.key
                     ))
@@ -1076,39 +1154,108 @@ impl Engine {
                             || base.method_index(n).is_some()
                     })
                 {
-                    return Some(format!(
+                    return Err(format!(
                         "the property {from} of {} renamed to {to} names a member of its type",
                         file.key
                     ));
                 }
+                let any = |text: &str, words: &[String]| words.iter().any(|w| mentions(text, w));
                 // A script reaches it through an object it is handed.
                 if file
                     .ir
                     .scripts
                     .iter()
-                    .any(|s| words.iter().any(|w| mentions(&s.source, w)))
+                    .any(|s| any(&s.source, &names) || any(&s.source, &signals))
                 {
                     return why("a script of its own file");
                 }
                 for other in loader.files.values().filter(|f| f.key != file.key) {
                     let ir = &other.ir;
-                    let read = std::iter::once(ir.js.source.as_str())
-                        .chain(ir.scripts.iter().map(|s| s.source.as_str()))
-                        .any(|text| words.iter().any(|w| mentions(text, w)));
+                    let js = ir.js.source.as_str();
+                    // What is connected to the signal, or set by the name,
+                    // a fresh load refuses: the full path tells of it.
                     let set = || {
                         ir.components
                             .iter()
                             .flat_map(|c| &c.objects)
                             .flat_map(written_names)
-                            .any(|n| words.iter().any(|w| w == n))
+                            .any(|n| names.iter().chain(&signals).any(|w| w == n))
                     };
-                    if read || set() {
+                    if any(js, &signals)
+                        || ir
+                            .scripts
+                            .iter()
+                            .any(|s| any(&s.source, &names) || any(&s.source, &signals))
+                        || set()
+                    {
                         return why(&other.key);
+                    }
+                    if !any(js, &names) {
+                        continue;
+                    }
+                    if patch.files.iter().any(|f| f.file.file == other.key) {
+                        return why(&other.key);
+                    }
+                    match rebind.iter_mut().find(|(k, _)| *k == other.key) {
+                        Some((_, words)) => words.extend(names.iter().cloned()),
+                        None => rebind.push((other.key.clone(), names.to_vec())),
                     }
                 }
             }
         }
-        None
+        Ok(rebind)
+    }
+
+    /// (instance, object, member): the bindings of live objects of other
+    /// files that name a renamed property, by its old name or its new.
+    /// One a script has since replaced stays replaced. Why not, when one
+    /// cannot be bound again where it stands.
+    fn rebinds(
+        &self,
+        changed: &[Changed],
+        instances: &[Rc<Instance>],
+    ) -> Result<Vec<Rebind>, &'static str> {
+        let mut out = Vec::new();
+        for (key, words) in changed.iter().flat_map(|c| &c.rebind) {
+            for inst in instances.iter().filter(|i| i.file.key == *key) {
+                let ir = &inst.file.ir;
+                for (j, od) in ir.component(inst.comp).objects.iter().enumerate() {
+                    let Some(&id) = inst.objects.get(j) else {
+                        continue;
+                    };
+                    if !self.is_alive(id) {
+                        continue;
+                    }
+                    for name in given_names(od) {
+                        if !binds_to(ir, od, &name, words) {
+                            continue;
+                        }
+                        if self.foreign_keeper(id).is_some() {
+                            return Err("a state or a Binding gives what reads a renamed property");
+                        }
+                        let Some(placed) =
+                            self.untrack(|| self.in_place_placed(inst, id, od, &name))
+                        else {
+                            continue;
+                        };
+                        let (o, p) = self.redirect(placed.at().obj, placed.at().prop);
+                        let replaced = self
+                            .inner
+                            .reload
+                            .assigned
+                            .borrow()
+                            .get(&o)
+                            .is_some_and(|props| props.contains(&p));
+                        if replaced {
+                            continue;
+                        }
+                        self.untrack(|| self.in_place_unset(inst, j, od, od, &name, false))?;
+                        out.push((inst.clone(), j, name));
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Whether objects can be added to `inst` and removed from it where it
@@ -1410,14 +1557,31 @@ impl Engine {
             return Err("a renamed property is given where the object is made");
         }
         // A user that declares members on the object gave it a type of
-        // its own, built on the old one; only a full load rebuilds it.
-        if !t.renamed.is_empty()
-            && !self.meta_of(id).is_some_and(|live| {
-                self.object_meta(&t.inst.file, t.inst.comp, t.was)
-                    .is_ok_and(|own| MetaRef::ptr_eq(&live, &own))
-            })
-        {
-            return Err("a renamed property's object has members its user declares");
+        // its own, built on the old one: that is built again.
+        if !t.renamed.is_empty() {
+            let live = self.meta_of(id);
+            let own = self.object_meta(&t.inst.file, t.inst.comp, t.was).ok();
+            let (Some(live), Some(own)) = (live, own) else {
+                return Err("a renamed property's object has no type of its file");
+            };
+            let mut by = None;
+            if !MetaRef::ptr_eq(&live, &own) {
+                let mut below = t.inst.clone();
+                let mut root = t.was == 0;
+                loop {
+                    let Some((user, i)) = users.get(&Rc::as_ptr(&below)).filter(|_| root) else {
+                        return Err("a renamed property's object has a type of no user");
+                    };
+                    let theirs = self.object_meta(&user.file, user.comp, *i);
+                    if theirs.is_ok_and(|m| MetaRef::ptr_eq(&live, &m)) {
+                        by = Some((user.clone(), *i));
+                        break;
+                    }
+                    root = *i == 0;
+                    below = user.clone();
+                }
+            }
+            t.renames = Some((own, by));
         }
         for name in &t.fresh {
             self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;
@@ -2643,13 +2807,17 @@ fn same_but_edits(
 /// object of their own that is removed and that `b` no longer gives; the
 /// dotted names of those.
 fn unassigned(a: &mut ObjectDef, b: &ObjectDef) -> Vec<String> {
-    let gone = ObjectValue::Object(ObjIdx(u32::MAX));
+    // An object, or a template, the new file no longer has.
+    let gone = |v: &ObjectValue| {
+        *v == ObjectValue::Object(ObjIdx(u32::MAX))
+            || *v == ObjectValue::Component(CompIdx(u32::MAX))
+    };
     let mut out = Vec::new();
     let mut take = |m: &mut Members, prefix: &str| {
         m.objects.retain(|oa| {
             let removed = !oa.is_list
                 && !oa.values.is_empty()
-                && oa.values.iter().all(|v| *v == gone)
+                && oa.values.iter().all(gone)
                 && !given_names(b).any(|g| is_or_under(&g, &dotted(prefix, &oa.name)));
             if removed {
                 out.push(dotted(prefix, &oa.name));
@@ -2753,6 +2921,53 @@ fn mentions(text: &str, word: &str) -> bool {
         !text[..at].chars().next_back().is_some_and(part)
             && !text[at + word.len()..].chars().next().is_some_and(part)
     })
+}
+
+/// Whether the binding `od` gives `name` reads one of `words`.
+fn binds_to(ir: &CompiledFile, od: &ObjectDef, name: &str, words: &[String]) -> bool {
+    let Some((m, leaf)) = held_in(od, name) else {
+        return false;
+    };
+    let Some(b) = m.bindings.iter().find(|b| b.name == leaf) else {
+        return false;
+    };
+    let Some(js) = ir.js.functions.get(ir.expr(b.expr).js_fn.index()) else {
+        return true;
+    };
+    let source = ir.js.source.as_str();
+    let head = format!("export function {}(", js.export);
+    let body = source.find(&head).map_or(source, |at| {
+        let rest = &source[at + head.len()..];
+        rest.find("\nexport function ")
+            .map_or(rest, |end| &rest[..end])
+    });
+    words.iter().any(|w| mentions(body, w))
+}
+
+/// Whether `ir` may make an object of the file `key`: by its type, by a
+/// name it could not resolve, or by its name in a string or a script.
+fn names_file(ir: &CompiledFile, key: &str) -> bool {
+    let stem = key.rsplit('/').next().unwrap_or(key);
+    fn says(l: &Literal, stem: &str) -> bool {
+        match l {
+            Literal::String(t) => t.contains(stem),
+            Literal::List(l) => l.iter().any(|l| says(l, stem)),
+            Literal::Object(f) => f.iter().any(|(_, l)| says(l, stem)),
+            _ => false,
+        }
+    }
+    let of = |m: &Members| m.assignments.iter().any(|a| says(&a.value, stem));
+    let objects = ir.components.iter().flat_map(|c| &c.objects);
+    objects.clone().any(|od| match &od.ty {
+        TypeRef::Component { file, .. } => file == key,
+        TypeRef::Unresolved(_) => true,
+        TypeRef::Native { .. } => false,
+    }) || objects.clone().any(|od| {
+        of(&od.members)
+            || od.grouped.iter().any(|g| of(&g.members))
+            || od.attached.iter().any(|a| of(&a.members))
+    }) || mentions(&ir.js.source, stem)
+        || ir.scripts.iter().any(|s| mentions(&s.source, stem))
 }
 
 /// The names `od` gives members, handlers and groups by.

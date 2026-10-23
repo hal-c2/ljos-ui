@@ -279,6 +279,32 @@ Feature: What a reload changes
       And a reload happens
       Then the object "badge" exists
 
+    Scenario: A file that compiles again, which nothing uses, leaves the objects as they are
+      Given the file "Spare.qml":
+        """qml
+        import QtQuick
+        Item { Missing {} }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Spare.qml" is changed to:
+        """qml
+        import QtQuick
+        Item { objectName: "spare" }
+        """
+      And a reload happens
+      Then the property "x" of "box" is at least 40
+      And the object "spare" does not exist
+
     Scenario: A file is removed with its last use
       Given the file "Badge.qml":
         """qml
@@ -1204,7 +1230,8 @@ Feature: What a reload changes
 
     The delegate goes with the object, as its rows do; one moved is made
     again where the file now writes it, delegate and rows too. The
-    delegates of the objects that stay keep their rows.
+    delegates of the objects that stay keep their rows. A delegate
+    removed from a view that stays takes its rows with it.
 
     Background:
       Given the QML:
@@ -1252,6 +1279,34 @@ Feature: What a reload changes
       And the property "width" of "linea" is 20
       When the method "more" of "root" is called
       Then the property "width" of "linec" is 20
+
+    Scenario: A view's delegate written inline is removed, and the view stays without rows
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          ListView {
+            objectName: "first"; width: 50; height: 100; model: things
+          }
+          ListView {
+            objectName: "second"; width: 50; height: 100; model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            }
+          }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      And a reload happens
+      Then the object "onea" does not exist
+      And the property "delegate" of "first" is null
+      And the property "x" of "linea" is at least 40
+      When the method "more" of "root" is called
+      Then the object "onec" does not exist
+      And the object "linec" exists
 
     Scenario: A view whose delegate is written inline is moved, and is made again there with its rows
       When the file "Scenario.qml" is changed to:
@@ -3239,10 +3294,13 @@ Feature: What a reload changes
       And a reload happens
       Then the property "held" of "root" is null
 
-  Rule: A property renamed goes in place when no other file reads or sets either name
+  Rule: A property renamed goes in place when no other file sets either name
 
     The property is given what the file now gives it, as a new object
-    would be. When another file uses the name, the roots are made again.
+    would be. What another file binds to either name is bound again: a
+    read of the old name finds nothing, as on a fresh load. A user that
+    declares members of its own has them still. When another file sets
+    the name, or a script file reads it, the roots are made again.
 
     Background:
       Given the file "Pill.qml":
@@ -3298,7 +3356,7 @@ Feature: What a reload changes
       Then the property "shown" of "root" is "n4"
       And the property "heard" of "root" is 1
 
-    Scenario: A property another file reads is renamed by making the roots again
+    Scenario: A property another file reads is renamed in place, and its reads are bound again
       When the file "Scenario.qml" is changed to:
         """qml
         import QtQuick
@@ -3320,7 +3378,35 @@ Feature: What a reload changes
       And a reload happens
       Then the property "tint" of "root" is 1
       And the property "seen" of "pill" is 0
-      And the property "x" of "box" is at most 20
+      And the property "x" of "box" is at least 40
+      When the file "Pill.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle { width: 10; height: 10; property real seen: parent ? parent.tint : 0 }
+        """
+      And a reload happens
+      Then the property "seen" of "pill" is 1
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int count: 3
+          property real shade: 1
+          property string shown: "n" + count
+          property int heard: 0
+          onCountChanged: heard++
+          Pill { objectName: "pill" }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function bump() { count++ }
+        }
+        """
+      And a reload happens
+      Then the property "seen" of "pill" is 0
+      And the property "x" of "box" is at least 40
 
     Scenario: A property of a component file renamed goes in place for its users
       When the file "Pill.qml" is changed to:
@@ -3359,7 +3445,7 @@ Feature: What a reload changes
       When the property "caption" of "pill" is set to "b"
       Then the property "text" of "echo" is "b!"
 
-    Scenario: A property renamed under members a user declares makes the roots again
+    Scenario: A property renamed under members a user declares goes in place
       When the file "Scenario.qml" is changed to:
         """qml
         import QtQuick
@@ -3379,6 +3465,8 @@ Feature: What a reload changes
         }
         """
       And a reload happens
+      And the method "go" of "root" is called
+      And 500 milliseconds pass
       And the file "Pill.qml" is changed to:
         """qml
         import QtQuick
@@ -3387,6 +3475,9 @@ Feature: What a reload changes
       And a reload happens
       Then the property "looked" of "pill" is 1
       And the property "mine" of "pill" is 2
+      And the property "x" of "box" is at least 40
+      When the property "mine" of "pill" is set to 5
+      Then the property "mine" of "pill" is 5
 
   Rule: An edit to a singleton's file goes in place
 
