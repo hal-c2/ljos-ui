@@ -237,6 +237,10 @@ struct Slot {
     actions: Vec<egui_winit::ActionRequested>,
     /// When the platform was asked to let the window draw, and has not.
     redraw_asked: Option<Instant>,
+    /// The platform let the window draw after the last frame it showed:
+    /// the display has taken that frame, and the next can be drawn at
+    /// once. Asking again would cost a turn of the loop to hear yes.
+    free: bool,
     /// The platform did not let it draw in time: it is out of sight.
     stalled: bool,
     /// The platform said that nothing of the window can be seen.
@@ -315,6 +319,7 @@ impl Slot {
             pending: egui::TexturesDelta::default(),
             actions: Vec::new(),
             redraw_asked: None,
+            free: false,
             stalled: false,
             occluded: false,
             headless_at: None,
@@ -373,6 +378,7 @@ impl Slot {
         self.told = false;
         self.sent_root = None;
         self.redraw_asked = None;
+        self.free = false;
         self.stalled = false;
         self.occluded = false;
         self.headless_due = None;
@@ -444,6 +450,7 @@ impl Slot {
     /// draws every frame, and one in fifty missed its refresh.
     fn drawn(&mut self, began: Instant, now: Instant) {
         self.undrawn = 0;
+        self.free = false;
         let interval = self.frame_hold();
         let from = match self.beat {
             Some(beat) if began >= beat && began < beat + interval / 2 => beat,
@@ -1619,7 +1626,10 @@ impl<M: Send + 'static> Desktop<M> {
         let engine = Rc::clone(self.app.engine());
         let sys = WindowSystem::of(&engine);
         match event {
-            WindowEvent::RedrawRequested => return self.pass(host, i, true),
+            WindowEvent::RedrawRequested => {
+                self.slots[i].free = true;
+                return self.pass(host, i, true);
+            }
             WindowEvent::CloseRequested => return self.close_requested(i, &engine, &sys),
             WindowEvent::Destroyed => return,
             _ => {}
@@ -1960,14 +1970,21 @@ impl<M: Send + 'static> Desktop<M> {
     /// Asks the platform to let the windows draw whose time has come, and
     /// runs the passes of those that cannot be seen.
     fn schedule(&mut self, host: &mut Control<'_>, now: Instant) {
+        let mut draw = Vec::new();
         for key in self.repaints.take_due(now) {
-            let Some(slot) = self.slots.iter_mut().find(|s| s.key == key) else {
+            let Some(i) = self.slots.iter().position(|s| s.key == key) else {
                 continue;
             };
+            let slot = &mut self.slots[i];
             let held = slot.held.filter(|t| *t > now);
             match (slot.surface.as_ref(), held) {
                 // The display would have held a drawn frame this long.
                 (Some(_), Some(until)) if !slot.out_of_sight() => self.repaints.request(key, until),
+                // The platform would answer at once: it is not asked.
+                (Some(_), _) if !slot.out_of_sight() && slot.free => {
+                    slot.redraw_asked.get_or_insert(now);
+                    draw.push(i);
+                }
                 (Some(surface), _) if !slot.out_of_sight() => {
                     host.request_redraw(surface.id);
                     slot.redraw_asked.get_or_insert(now);
@@ -1992,6 +2009,9 @@ impl<M: Send + 'static> Desktop<M> {
                 slot.headless_due = None;
                 due.push(i);
             }
+        }
+        for i in draw {
+            self.pass(host, i, true);
         }
         for i in due {
             self.pass(host, i, false);
