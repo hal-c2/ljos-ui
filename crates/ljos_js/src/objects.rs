@@ -127,12 +127,7 @@ pub trait HostObjects {
     /// text, when the host can tell without the script's scope; `None`
     /// reads it with [`get`](Self::get). A text is handed to `text` rather
     /// than copied, and read as [`PlainValue::Text`]. It runs no script.
-    fn get_plain(
-        &self,
-        _obj: u64,
-        _prop: u32,
-        _text: &mut dyn FnMut(&str),
-    ) -> Option<PlainValue> {
+    fn get_plain(&self, _obj: u64, _prop: u32, _text: &mut dyn FnMut(&str)) -> Option<PlainValue> {
         None
     }
 

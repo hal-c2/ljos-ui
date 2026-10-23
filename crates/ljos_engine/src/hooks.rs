@@ -268,7 +268,11 @@ impl Engine {
         &self,
         f: impl Fn(&Engine, ObjectId, ObjectId, PropIndex, &str) -> bool + 'static,
     ) {
-        self.inner.hooks.member_sources.borrow_mut().push(Rc::new(f));
+        self.inner
+            .hooks
+            .member_sources
+            .borrow_mut()
+            .push(Rc::new(f));
     }
 
     /// Offers an object declared `on` a member of a value to the listeners.

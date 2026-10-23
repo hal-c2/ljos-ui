@@ -1397,10 +1397,11 @@ impl Engine {
                 }
             }
             // `font.pixelSize`: a member of a value.
-            Err(_) if let Some((t, ty)) = self.value_target(obj, path)
-                && Value::Undefined
-                    .with_member(&ty, name, &Value::Undefined)
-                    .is_some() =>
+            Err(_)
+                if let Some((t, ty)) = self.value_target(obj, path)
+                    && Value::Undefined
+                        .with_member(&ty, name, &Value::Undefined)
+                        .is_some() =>
             {
                 if !self.offer_member_value_source(source, t.obj, t.prop, name) {
                     let ty = self.meta_of(source).map(|m| m.name.to_string());

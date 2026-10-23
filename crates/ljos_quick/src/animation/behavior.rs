@@ -378,7 +378,12 @@ fn intercept_member(
             return;
         }
         if let Some(from) = shown {
-            let _ = e.write_internal(proxy, MemberValue::VALUE.index, Value::Real(from), WriteKind::Animation);
+            let _ = e.write_internal(
+                proxy,
+                MemberValue::VALUE.index,
+                Value::Real(from),
+                WriteKind::Animation,
+            );
         }
         retarget(e, behavior, anim, &defaults);
     };
