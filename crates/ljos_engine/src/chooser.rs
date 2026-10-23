@@ -136,9 +136,7 @@ pub struct DelegateChooser {
 
 /// Whether `obj` is a [`DelegateChooser`].
 pub(crate) fn is_chooser(engine: &Engine, obj: ObjectId) -> bool {
-    engine
-        .untrack(|| engine.with::<DelegateChooser, _>(obj, |_| ()))
-        .is_ok()
+    engine.is::<DelegateChooser>(obj)
 }
 
 /// Whether a `DataChanged` notification on `roles` touches the role `chooser`

@@ -1190,6 +1190,17 @@ impl Engine {
 
     // ------------------------------------------------------------- natives
 
+    /// Whether `obj` is alive and has a `T` part. Unlike a [`with`](Self::with)
+    /// that fails, it builds no error: a question asked of every delegate.
+    pub fn is<T: QmlType>(&self, obj: ObjectId) -> bool {
+        self.inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .is_some_and(|h| downcast_chain::<T>(&*h.native).is_some())
+    }
+
     /// Borrows the `T` part of `obj`. `f` must not call back into the
     /// engine (the store is borrowed while it runs).
     pub fn with<T: QmlType, R>(

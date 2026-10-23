@@ -265,7 +265,7 @@ fn above(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
 }
 
 fn is_a<T: QmlType>(engine: &Engine, obj: ObjectId) -> bool {
-    engine.with::<T, _>(obj, |_| ()).is_ok()
+    engine.is::<T>(obj)
 }
 
 fn write_if_changed(engine: &Engine, obj: ObjectId, prop: PropIndex, val: Value) {
