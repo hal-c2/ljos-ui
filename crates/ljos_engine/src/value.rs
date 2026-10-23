@@ -676,6 +676,12 @@ pub enum Value {
 const _: () = assert!(std::mem::size_of::<Value>() <= 16);
 
 impl Value {
+    /// The member `name` of this value that is not an object
+    /// (`pixelSize` of a font, `x` of a point); `None` when it has none.
+    pub fn member(&self, name: &str) -> Option<Value> {
+        crate::incubator::tier1::member_of(self, name)
+    }
+
     /// This value of the value type `ty` (`font`, `point`, `size`, `rect`,
     /// a vector, `quaternion`) with its member `name` (`pixelSize`) set to
     /// `v`: what a QML

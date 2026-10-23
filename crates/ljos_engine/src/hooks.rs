@@ -50,6 +50,10 @@ pub type Interceptor = Rc<dyn Fn(&Engine, &Value, Interception) -> bool>;
 /// property). True: it is now operating on the property.
 type ValueSourceListener = Rc<dyn Fn(&Engine, ObjectId, ObjectId, PropIndex) -> bool>;
 
+/// [`ValueSourceListener`] for a member of a value (`on font.pixelSize`):
+/// also given the member's name.
+type MemberSourceListener = Rc<dyn Fn(&Engine, ObjectId, ObjectId, PropIndex, &str) -> bool>;
+
 /// A script property's statement.
 pub(crate) type Script = Rc<dyn Fn(&Engine)>;
 
@@ -62,6 +66,7 @@ pub(crate) struct Hooks {
     /// Per object, as an object has at most a few and they go together.
     interceptors: RefCell<FxHashMap<ObjectId, Vec<(PropIndex, Interceptor)>>>,
     value_sources: RefCell<Vec<ValueSourceListener>>,
+    member_sources: RefCell<Vec<MemberSourceListener>>,
     script_props: RefCell<Vec<(&'static MetaObject, PropIndex)>>,
     scripts: RefCell<FxHashMap<ObjectId, Vec<(PropIndex, Script)>>>,
     /// Called when the JS host has started.
@@ -253,6 +258,31 @@ impl Engine {
     ) -> bool {
         let listeners = self.inner.hooks.value_sources.borrow().clone();
         listeners.iter().any(|f| f(self, source, target, prop))
+    }
+
+    /// Registers for objects declared `on` a member of a value-type
+    /// property (`Behavior on font.pixelSize`). `f(source, target,
+    /// property, member)` returns whether `source` now operates on the
+    /// member.
+    pub fn on_member_value_source(
+        &self,
+        f: impl Fn(&Engine, ObjectId, ObjectId, PropIndex, &str) -> bool + 'static,
+    ) {
+        self.inner.hooks.member_sources.borrow_mut().push(Rc::new(f));
+    }
+
+    /// Offers an object declared `on` a member of a value to the listeners.
+    pub(crate) fn offer_member_value_source(
+        &self,
+        source: ObjectId,
+        target: ObjectId,
+        prop: PropIndex,
+        member: &str,
+    ) -> bool {
+        let listeners = self.inner.hooks.member_sources.borrow().clone();
+        listeners
+            .iter()
+            .any(|f| f(self, source, target, prop, member))
     }
 
     /// Makes `prop` of `meta` (and of what derives from it) a script

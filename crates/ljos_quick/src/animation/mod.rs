@@ -80,6 +80,10 @@ pub(crate) fn register(engine: &Engine) {
             false
         }
     });
+    // `Behavior on font.pixelSize { }`.
+    engine.on_member_value_source(|e, source, target, prop, member| {
+        is_a::<Behavior>(e, source) && behavior::attach_member(e, source, target, prop, member)
+    });
 }
 
 /// Frame step 5: every running animation is brought to `now`.

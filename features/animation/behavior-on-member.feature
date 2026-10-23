@@ -4,7 +4,7 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-rectangle.html#border-prop
 # Verified on Qt 6.11.2 (qml6, offscreen). qml6 crashes on a Behavior on a member of an
 # attached value (`Drag.hotSpot.x`), so that has no scenario here. A Behavior on a member of a
-# value (`font.pixelSize`) animates that member on qml6; Ljós does not yet, so it has none either.
+# value (`font.pixelSize`) is in behavior-on-value-member.feature.
 
 @qt-parity
 Feature: A Behavior on an attached property or a member of a group

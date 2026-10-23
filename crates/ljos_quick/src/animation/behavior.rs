@@ -6,6 +6,10 @@
 //! the value it shows now. A new value while that is under way starts the
 //! animation again from where the property is: Qt's retargeting rule.
 //!
+//! `Behavior on font.pixelSize` stands in front of `font` and lets
+//! through what changes the other members. Its animation moves a number
+//! of a [`MemberValue`] of its own, which goes into the member.
+//!
 //! Values written while the object is being created are not seen here
 //! (the engine intercepts neither initial values nor a binding's first
 //! value), so nothing animates into its initial state.
@@ -71,6 +75,17 @@ pub struct BehaviorTarget {
     pub name: Atom,
     #[qml(notify, readonly)]
     pub object: Option<ObjectId>,
+}
+
+/// What the animation of a Behavior on a member of a value moves: the
+/// member's number, written into the value as it changes.
+#[derive(Debug, Default, QmlObject)]
+#[qml(name = "BehaviorMember", uncreatable)]
+pub struct MemberValue {
+    #[qml(base)]
+    pub object: QtObject,
+    #[qml(notify)]
+    pub value: f64,
 }
 
 /// The Behaviors by the property each stands in front of: a change of
@@ -227,6 +242,163 @@ pub(crate) fn attach(engine: &Engine, behavior: ObjectId, target: ObjectId, prop
             intercept(e, behavior, (target, prop), &ty, v, how)
         })),
     );
+}
+
+/// Puts `behavior` in front of the member `member` of the value `prop` of
+/// `target` holds (`Behavior on font.pixelSize`).
+///
+/// DECISION: a change of state does not animate the member (it is not
+/// among the Behaviors [`follow`] finds); the state's value goes in at once.
+pub(crate) fn attach_member(
+    engine: &Engine,
+    behavior: ObjectId,
+    target: ObjectId,
+    prop: PropIndex,
+    member: &str,
+) -> bool {
+    let info = engine
+        .meta_of(target)
+        .and_then(|m| m.property(prop).map(|p| (p.name.clone(), p.ty.clone())));
+    let Some((name, ty)) = info else {
+        return false;
+    };
+    let Ok(proxy) = engine.create_native(MemberValue::default(), Some(behavior)) else {
+        return false;
+    };
+    let member = Atom::new(member);
+    for (path, v) in [
+        (
+            "targetProperty.name",
+            Value::string(format!("{name}.{member}")),
+        ),
+        ("targetProperty.object", Value::Object(target)),
+    ] {
+        if let Ok(p) = engine.property_index(behavior, path) {
+            let _ = engine.write_internal(behavior, p, v, WriteKind::Imperative);
+        }
+    }
+    let (into, m) = (ty.clone(), member.clone());
+    let _ = engine.watch(proxy, MemberValue::VALUE.index, move |e, v| {
+        let whole = e.peek(target, prop);
+        if let Some(w) = whole.with_member(&into, &m, v)
+            && w != whole
+        {
+            let _ = e.write_internal(target, prop, w, WriteKind::Animation);
+        }
+    });
+    engine.set_interceptor(
+        target,
+        prop,
+        Some(Rc::new(move |e, v, how| {
+            intercept_member(e, (behavior, proxy), (target, prop), (&ty, &member), v, how)
+        })),
+    );
+    true
+}
+
+/// A value on its way into a property whose member `member` has a
+/// Behavior. True: held back, with the member where the animation has it.
+fn intercept_member(
+    e: &Engine,
+    (behavior, proxy): (ObjectId, ObjectId),
+    (target, prop): (ObjectId, PropIndex),
+    (ty, member): (&TypeTag, &Atom),
+    v: &Value,
+    how: Interception,
+) -> bool {
+    if !e.is_alive(behavior) || !e.is_alive(proxy) {
+        return false;
+    }
+    let (enabled, anim) = e.untrack(|| {
+        (
+            e.read(behavior, Behavior::ENABLED.index).to_boolean(),
+            e.read(behavior, Behavior::ANIMATION.index).as_object(),
+        )
+    });
+    let anim = anim.filter(|a| e.is_alive(*a));
+    let whole = ty.coerce(v).unwrap_or_else(|_| v.clone());
+    let Some(to) = whole.member(member).map(|m| m.to_number()) else {
+        return false;
+    };
+    let mut defaults = Defaults {
+        obj: proxy,
+        prop: MemberValue::VALUE.index,
+        to: Some(Value::Real(to)),
+        aimed: None,
+    };
+    let through = match anim {
+        Some(a) => !enabled || !moves(e, a, &mut defaults),
+        None => true,
+    };
+    let shown = e.peek(target, prop).member(member).map(|m| m.to_number());
+    let running = anim.is_some_and(|a| driver::has_run(e, a));
+    if through {
+        // The value goes in as it is, and an animation on its way to an
+        // older one must not carry on over it.
+        if running && let Some(a) = anim {
+            match how {
+                Interception::Write => driver::stop_driven(e, a),
+                Interception::Binding => {
+                    if driver::forget_driven(e, a) {
+                        e.after_binding(move |e| {
+                            if e.is_alive(a) {
+                                driver::settle_driven(e, a);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        e.after_binding(move |e| note_target(e, behavior, &Value::Real(to)));
+        return false;
+    }
+    let Some(anim) = anim else { return false };
+    let goal = if running {
+        Some(
+            e.untrack(|| e.read(behavior, Behavior::TARGET_VALUE.index))
+                .to_number(),
+        )
+    } else {
+        shown
+    };
+    if goal == Some(to) && !running {
+        // The member does not change: the others go in at once.
+        return false;
+    }
+    let Some(held) = whole.with_member(ty, member, &Value::Real(shown.unwrap_or(to))) else {
+        return false;
+    };
+    // A write of another member (`font.bold = false`) comes as the whole
+    // value with this member as it is shown.
+    // DECISION: so a value equal to the one the animation shows now does
+    // not retarget it, unlike on Qt, which sees which member was written.
+    let restart = goal != Some(to) && shown != Some(to);
+    let start = move |e: &Engine| {
+        if !e.is_alive(anim) || !e.is_alive(proxy) {
+            return;
+        }
+        if let Some(from) = shown {
+            let _ = e.write_internal(proxy, MemberValue::VALUE.index, Value::Real(from), WriteKind::Animation);
+        }
+        retarget(e, behavior, anim, &defaults);
+    };
+    match how {
+        Interception::Write => {
+            let _ = e.write_internal(target, prop, held, WriteKind::Imperative);
+            if restart {
+                start(e);
+            }
+        }
+        // The binding stays: what it gave goes in, the member held back,
+        // once it has given it.
+        Interception::Binding => e.after_binding(move |e| {
+            let _ = e.write_internal(target, prop, held, WriteKind::Animation);
+            if restart {
+                start(e);
+            }
+        }),
+    }
+    true
 }
 
 /// A value on its way into the property. True: held back, the animation
