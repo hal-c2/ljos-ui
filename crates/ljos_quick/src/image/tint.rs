@@ -5,9 +5,11 @@
 //! `Image` has no such property in QML. A type derived from it that has
 //! one (the icon of a control) registers how to read it; the tinted
 //! pixels are made once for each picture and colour, and are dropped with
-//! the last display list that shows them.
+//! the last display list that shows them, unless they are among the few
+//! made last.
 
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 
 use ljos_engine::{Color, Engine, MetaRef, ObjectId};
 use ljos_render::{ImageHandle, WeakImage};
@@ -25,7 +27,14 @@ struct Tints {
     made: RefCell<FxHashMap<(u64, [u8; 4]), WeakImage>>,
     /// How many `made` kept at its last sweep.
     swept: Cell<usize>,
+    /// The last few made, held: a colour that goes back and forth (a
+    /// button that is pressed and let go, dimmed and lit again) finds its
+    /// picture again after the display list that showed it is gone.
+    recent: RefCell<VecDeque<ImageHandle>>,
 }
+
+/// How many [`Tints::recent`] holds.
+const RECENT: usize = 4;
 
 /// Makes items of type `meta` (and of the types derived from it) paint
 /// their picture in the colour `tint` gives.
@@ -60,7 +69,7 @@ pub(crate) fn tinted(engine: &Engine, obj: ObjectId, image: ImageHandle) -> Imag
 }
 
 /// `image` laid over in `colour`, made once for each picture and colour
-/// while a display list shows it.
+/// while a display list shows it or it is among the last few made.
 fn tinted_in(engine: &Engine, image: ImageHandle, colour: Color) -> ImageHandle {
     let tints = engine.extension::<Tints>();
     let rgba = colour.to_rgba_f().map(|c| (c * 255.0).round() as u8);
@@ -78,6 +87,11 @@ fn tinted_in(engine: &Engine, image: ImageHandle, colour: Color) -> ImageHandle 
     }
     let out = lay_over(&image, rgba);
     made.insert(key, out.downgrade());
+    let mut recent = tints.recent.borrow_mut();
+    if recent.len() == RECENT {
+        recent.pop_front();
+    }
+    recent.push_back(out.clone());
     out
 }
 
