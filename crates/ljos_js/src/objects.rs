@@ -83,11 +83,14 @@ impl HostError {
 }
 
 /// A value [`HostObjects::get_plain`] and [`HostObjects::set_plain`]
-/// pass: one QuickJS holds with no reference.
+/// pass: one QuickJS holds with no reference, or a text.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlainValue {
     Number(f64),
     Bool(bool),
+    /// A text, which `get_plain` gave to the reader it was handed. Never
+    /// written with `set_plain`.
+    Text,
 }
 
 /// What a script reads for a method of an object
@@ -120,10 +123,16 @@ pub trait HostObjects {
 
     fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsOut, HostError>;
 
-    /// [`get`](Self::get) for a property that holds a number or a bool,
-    /// when the host can tell without the script's scope; `None` reads it
-    /// with [`get`](Self::get). It runs no script.
-    fn get_plain(&self, _obj: u64, _prop: u32) -> Option<PlainValue> {
+    /// [`get`](Self::get) for a property that holds a number, a bool or a
+    /// text, when the host can tell without the script's scope; `None`
+    /// reads it with [`get`](Self::get). A text is handed to `text` rather
+    /// than copied, and read as [`PlainValue::Text`]. It runs no script.
+    fn get_plain(
+        &self,
+        _obj: u64,
+        _prop: u32,
+        _text: &mut dyn FnMut(&str),
+    ) -> Option<PlainValue> {
         None
     }
 

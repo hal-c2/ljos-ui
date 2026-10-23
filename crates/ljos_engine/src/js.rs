@@ -698,23 +698,36 @@ impl HostObjects for EngineHost {
         let p = PropIndex(prop);
         // Most properties are neither an alias, a group nor a `list<T>`
         // declared in QML: one look at the property says so.
-        let plain = {
+        let (plain, held_list) = {
             let store = engine.inner.store.borrow();
             store
                 .objects
                 .get(id)
-                .and_then(|h| h.meta.property(p))
-                .is_some_and(|info| {
-                    !info.is_alias()
+                .and_then(|h| Some((h, h.meta.property(p)?)))
+                .map_or((false, false), |(h, info)| {
+                    let plain = !info.is_alias()
                         && !info.flags.contains(PropertyFlags::GROUP)
                         && !matches!(
                             (&info.ty, &info.access),
                             (TypeTag::List(Some(_)), PropertyAccess::Dynamic { .. })
-                        )
+                        );
+                    (
+                        plain,
+                        plain && info.list_field.is_some() && !h.makes_on_read(p),
+                    )
                 })
         };
         if !plain && let Some((owner, name)) = engine.group_at(id, p) {
             return group_proxy(scope, &engine, owner, &name).map_err(HostError::from);
+        }
+        // A native list read where no binding follows it is read entry by
+        // entry by what is given (list_faces.rs): reading it whole here
+        // would only make the list to let it go.
+        if held_list
+            && engine.inner.tracking.get() == 0
+            && let Some(list) = engine.native_list(id, p)
+        {
+            return Ok(list);
         }
         let read = engine.try_read(id, p);
         // A `list<T>` declared in QML is read as the property's own list
@@ -740,12 +753,21 @@ impl HostObjects for EngineHost {
         }
     }
 
-    fn get_plain(&self, obj: u64, prop: u32) -> Option<ljos_js::PlainValue> {
+    fn get_plain(
+        &self,
+        obj: u64,
+        prop: u32,
+        text: &mut dyn FnMut(&str),
+    ) -> Option<ljos_js::PlainValue> {
         let engine = self.engine().ok()?;
         match engine.plain_script_read(u64_to_obj(obj), PropIndex(prop))? {
             Value::Int(i) => Some(ljos_js::PlainValue::Number(f64::from(i))),
             Value::Real(r) => Some(ljos_js::PlainValue::Number(r)),
             Value::Bool(b) => Some(ljos_js::PlainValue::Bool(b)),
+            Value::String(s) => {
+                text(&s);
+                Some(ljos_js::PlainValue::Text)
+            }
             _ => None,
         }
     }
@@ -760,6 +782,7 @@ impl HostObjects for EngineHost {
         let v = match value {
             ljos_js::PlainValue::Number(n) => Value::Real(n),
             ljos_js::PlainValue::Bool(b) => Value::Bool(b),
+            ljos_js::PlainValue::Text => return None,
         };
         let (id, p) = (u64_to_obj(obj), PropIndex(prop));
         if engine.tier1_spying() {

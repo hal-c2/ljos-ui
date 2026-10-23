@@ -2033,10 +2033,20 @@ unsafe fn prop_get(
 ) -> rquickjs::qjs::JSValue {
     // SAFETY: as the caller's.
     unsafe {
-        match raw_plain(ctx, this, known, |_, host, id| host.get_plain(id, prop)) {
+        // A text goes to QuickJS straight from the host's, with no copy
+        // of it on the way, and with no second read of it the long way.
+        let mut text = rquickjs::qjs::JS_UNDEFINED;
+        let mut made = |s: &str| {
+            text = rquickjs::qjs::JS_NewStringLen(ctx, s.as_ptr().cast(), s.len() as _);
+        };
+        match raw_plain(ctx, this, known, |_, host, id| {
+            host.get_plain(id, prop, &mut made)
+        }) {
             Some(PlainValue::Number(n)) => return raw_number(n),
             Some(PlainValue::Bool(b)) => return raw_bool(b),
-            _ => {}
+            // An exception when there was no room for it.
+            Some(PlainValue::Text) => return text,
+            None => {}
         }
         raw_accessor(ctx, this, |scope, host, id| {
             let out = host.get(scope, id, prop).map_err(|e| e.into_js(&scope.ctx));
