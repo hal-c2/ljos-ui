@@ -76,6 +76,7 @@ impl Live {
         }
         // A file that does not compile is told by making an object of it,
         // as without a reload session.
+        rig.reloader.set_controls_style(self.controls_style.clone());
         rig.reloader.start();
         rig.started = true;
         self.engine

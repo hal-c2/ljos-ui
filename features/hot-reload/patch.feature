@@ -3858,3 +3858,76 @@ Feature: What a reload changes
       And a reload happens
       Then the log has 2 warnings matching "non-existent property .current.text"
       And the property "x" of "box" is at least 40
+
+  Rule: A window's colours after a reload are the ones a fresh load gives
+
+    The style's palette is the application's while it makes an object of
+    the style's module. A reload that removes the last such object, or
+    makes the first, gives every colour group of the window what a fresh
+    load of the new files gives it.
+
+    Scenario: A window whose last Fusion control is removed has Basic's colours again
+      Given the application starts with the controls configuration:
+        """
+        [Controls]
+        Style=Fusion
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Window {
+          objectName: "root"
+          Text { text: "first" }
+          Button { text: "close" }
+        }
+        """
+      Then the property "palette.button" of "root" is "#efefef"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Window {
+          objectName: "root"
+          Text { text: "first" }
+        }
+        """
+      And a reload happens
+      Then the property "palette.button" of "root" is "#e0e0e0"
+      And the property "palette.active.button" of "root" is "#e0e0e0"
+      And the property "palette.inactive.button" of "root" is "#e0e0e0"
+      And the property "palette.disabled.button" of "root" is "#e0e0e0"
+      And the property "palette.active.highlight" of "root" is "#0066ff"
+
+    Scenario: A window given its first Fusion control has Fusion's colours
+      Given the application starts with the controls configuration:
+        """
+        [Controls]
+        Style=Fusion
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Window {
+          objectName: "root"
+          Text { text: "first" }
+        }
+        """
+      Then the property "palette.button" of "root" is "#e0e0e0"
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Window {
+          objectName: "root"
+          Text { text: "first" }
+          Button { text: "close" }
+        }
+        """
+      And a reload happens
+      Then the property "palette.button" of "root" is "#efefef"
+      And the property "palette.active.button" of "root" is "#efefef"
+      And the property "palette.inactive.button" of "root" is "#efefef"
+      And the property "palette.disabled.button" of "root" is "#efefef"
+      And the property "palette.active.highlight" of "root" is "#308cc6"

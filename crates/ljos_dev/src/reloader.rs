@@ -106,6 +106,11 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         }
     }
 
+    /// [`ReloadSession::set_controls_style`].
+    pub fn set_controls_style(&mut self, style: Option<qml_front::project::ControlsStyle>) {
+        self.session.set_controls_style(style);
+    }
+
     pub fn session(&self) -> &ReloadSession<O> {
         &self.session
     }

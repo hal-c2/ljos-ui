@@ -713,6 +713,7 @@ impl Engine {
         }
         *st.pending.borrow_mut() = None;
         if let Some(done) = self.reload_in_place(patch, roots) {
+            self.recount_modules();
             return Ok(done);
         }
         let mut phases = Phases::start();
@@ -812,6 +813,7 @@ impl Engine {
             js.release_unused_types();
         }
         phases.mark("types");
+        self.recount_modules();
         phases.done();
         let pending = st.pending.borrow();
         let p = pending.as_ref();

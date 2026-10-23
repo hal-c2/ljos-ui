@@ -16,6 +16,7 @@ use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::ObjectId;
 use crate::meta::MetaRef;
+use crate::value::Value;
 
 /// Gives the engine compiled files by key (`"Main"`, `"controls/Button"`).
 /// A file's components refer to other files by the same keys.
@@ -449,6 +450,9 @@ pub(crate) struct LoaderState {
     /// The modules the application's files import or make objects of
     /// ([`Engine::uses_module`]).
     pub(crate) used_modules: HashSet<String>,
+    /// What [`Engine::uses_module`] tracks: moved when `used_modules`
+    /// changes. Made at the first read; until then nobody follows it.
+    pub(crate) modules_node: Option<ljos_reactive::NodeId>,
     /// The modules whose types stand in as empty Items that the log has
     /// said so of, by the first part of their name (`QtQuick3D`): once
     /// each, however many files import them.
@@ -783,8 +787,14 @@ impl Engine {
         let file = Rc::new(LoadedFile::new(key, url, ir, source.bytecode(key)));
         file.epoch.set(self.inner.reload.epoch.get());
         let mut loader = self.inner.loader.borrow_mut();
+        let len = loader.used_modules.len();
         loader.used_modules.extend(used);
+        let grew = loader.used_modules.len() != len;
         loader.files.insert(key.to_owned(), file.clone());
+        drop(loader);
+        if grew {
+            self.modules_changed();
+        }
         Ok(file)
     }
 
@@ -792,8 +802,59 @@ impl Engine {
     /// an object of a type the compiler found in it. A style's palette is
     /// the application's when it uses the style: `import QtQuick.Controls`
     /// compiled for a style makes objects of that style's module.
+    ///
+    /// Tracked: what reads it runs again when a file loaded later, or a
+    /// reload, changes the modules the application uses.
     pub fn uses_module(&self, uri: &str) -> bool {
+        let node = self.inner.loader.borrow().modules_node;
+        let node = node.or_else(|| {
+            let g = self.graph();
+            let n = g.property(g.root(), Value::Int(0)).ok()?;
+            self.inner.loader.borrow_mut().modules_node = Some(n);
+            Some(n)
+        });
+        if let Some(n) = node {
+            self.graph().get(n);
+        }
         self.inner.loader.borrow().used_modules.contains(uri)
+    }
+
+    fn modules_changed(&self) {
+        let node = self.inner.loader.borrow().modules_node;
+        if let Some(n) = node {
+            let g = self.graph();
+            let Value::Int(at) = g.get_untracked(n) else {
+                return;
+            };
+            g.set(n, Value::Int(at.wrapping_add(1)));
+        }
+    }
+
+    /// After a reload, the modules are those of the files the objects that
+    /// stand were declared in, as a fresh load of the new files loads
+    /// them: a file edited or no longer used takes back what it used.
+    pub(crate) fn recount_modules(&self) {
+        let urls: HashSet<Atom> = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .values()
+                .filter_map(|h| Some(h.ext.as_ref()?.location.as_ref()?.url.clone()))
+                .collect()
+        };
+        let mut l = self.inner.loader.borrow_mut();
+        let now: HashSet<String> = l
+            .files
+            .values()
+            .filter(|f| urls.contains(&f.url))
+            .flat_map(|f| modules_of(&f.ir))
+            .collect();
+        if now == l.used_modules {
+            return;
+        }
+        l.used_modules = now;
+        drop(l);
+        self.modules_changed();
     }
 }
 

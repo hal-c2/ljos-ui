@@ -652,6 +652,14 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         }
     }
 
+    /// Chooses the style behind `import QtQuick.Controls`, as a program
+    /// chooses one when it starts: for a session whose files are given,
+    /// which reads no configuration. Every file compiles again.
+    pub fn set_controls_style(&mut self, style: Option<qml_front::project::ControlsStyle>) {
+        self.project.set_controls_style(style);
+        self.all_dirty = true;
+    }
+
     /// A session over every QML file under `root`, as [`Project::load`]
     /// finds them.
     pub fn open(root: &Path, oracle: O) -> Result<Self, Error> {
