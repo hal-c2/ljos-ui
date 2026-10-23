@@ -505,6 +505,12 @@ fn extends(meta: &crate::meta::MetaObject, base: &crate::meta::MetaObject) -> bo
             .all(|(a, b)| a.name == b.name)
 }
 
+/// Whether a script may assign to the property: a group only when it is
+/// given whole (`whole_group.rs`).
+fn writable(p: &crate::PropertyInfo) -> bool {
+    !p.flags.contains(PropertyFlags::GROUP) || p.reset.is_some()
+}
+
 /// The JS shape of a type. Every property is an accessor, dotted grouped
 /// leaves included (`obj["border.width"]`), so the group proxy can reach
 /// them; a later property of the same name shadows an earlier one.
@@ -515,7 +521,7 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
         let def = PropDef {
             name: p.name.to_string(),
             id: i as u32,
-            writable: !p.flags.contains(PropertyFlags::GROUP),
+            writable: writable(p),
         };
         match seen.get(p.name.as_str()) {
             Some(at) => props[*at] = def,
@@ -596,7 +602,7 @@ fn own_type_def(meta: &MetaRef) -> TypeDef {
             props.push(PropDef {
                 name: p.name.to_string(),
                 id,
-                writable: !p.flags.contains(PropertyFlags::GROUP),
+                writable: writable(p),
             });
         }
     }
@@ -807,6 +813,16 @@ impl HostObjects for EngineHost {
                 .map(|i| i.ty.clone())
                 .unwrap_or(TypeTag::Var)
         };
+        // `x.palette = y.palette`: a copy of the group the proxy stands for.
+        if let JsValue::Handle(r) = &value
+            && let Ok(JsValue::Object(src)) = scope.get_field(r, "__ljosGroupOf")
+            && let Ok(JsValue::String(prefix)) = scope.get_field(r, "__ljosGroupPrefix")
+            && engine.is_whole_group(id, p)
+        {
+            return engine
+                .assign_group(id, p, u64_to_obj(src), &prefix, false)
+                .map_err(host_err);
+        }
         if let JsValue::Handle(r) = &value
             && let Ok(JsValue::Handle(f)) = scope.get_field(r, "__ljosBinding")
             && scope.is_function(&f)
@@ -2086,6 +2102,9 @@ const PRELUDE: &str = r##"
   // `border.width` names.
   g.__ljos_group = function (obj, prefix, leaves) {
     const o = {};
+    // What assigning the group elsewhere copies.
+    Object.defineProperty(o, "__ljosGroupOf", { value: obj });
+    Object.defineProperty(o, "__ljosGroupPrefix", { value: prefix });
     for (const leaf of leaves) {
       Object.defineProperty(o, leaf, {
         get() { return obj[prefix + leaf]; },

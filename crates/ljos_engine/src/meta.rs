@@ -1032,6 +1032,19 @@ impl MetaBuilder {
         self
     }
 
+    /// Makes the group `name`, added with [`MetaBuilder::group`], one that
+    /// is assigned and taken back whole, as a palette is: `undefined` takes
+    /// back each of its members, and another object's group or an object
+    /// of the group's type gives it the members given a value there
+    /// (`whole_group.rs`).
+    pub fn whole_group(mut self, name: &str) -> Self {
+        if let Some(p) = self.inherited_property(name) {
+            p.flags.remove(PropertyFlags::READONLY);
+            p.reset = Some(crate::whole_group::RESET);
+        }
+        self
+    }
+
     /// A property declared in QML, stored in a dynamic slot.
     #[inline(never)]
     pub fn property(mut self, name: &str, ty: TypeTag, flags: PropertyFlags, notify: bool) -> Self {

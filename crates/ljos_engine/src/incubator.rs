@@ -2273,6 +2273,9 @@ impl Engine {
         let Some(mut cur) = self.arg_value(inst, &param.arg) else {
             return false;
         };
+        if self.is_whole_group(t.obj, t.prop) {
+            return self.follow_group(t, cur, &t0.path);
+        }
         for name in walk {
             let Value::Object(o) = cur else { return false };
             let Ok(p) = self.property_index(o, name) else {
@@ -2320,6 +2323,37 @@ impl Engine {
             }
         }
         true
+    }
+
+    /// `palette: a.palette`, `palette.active: a.palette.active`: a group
+    /// given whole follows the source's (`whole_group.rs`). `path` is read
+    /// from `cur` until what is left of it names a group there.
+    fn follow_group(&self, t: &Target, mut cur: Value, path: &[impl AsRef<str>]) -> bool {
+        for (i, name) in path.iter().enumerate() {
+            let Value::Object(o) = cur else { return false };
+            let rest = path[i..]
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>()
+                .join(".");
+            if self.group_at_name(o, &rest) {
+                if let Err(e) = self.assign_group(t.obj, t.prop, o, &format!("{rest}."), true) {
+                    self.warn(e.to_string());
+                }
+                return true;
+            }
+            let Ok(p) = self.property_index(o, name.as_ref()) else {
+                return false;
+            };
+            cur = self.untrack(|| self.read(o, p));
+        }
+        false
+    }
+
+    /// Whether `obj` has a group named `name`.
+    fn group_at_name(&self, obj: ObjectId, name: &str) -> bool {
+        self.property_index(obj, name)
+            .is_ok_and(|p| self.group_at(obj, p).is_some())
     }
 
     fn install_binding(&self, inst: &Rc<Instance>, t: &Target, pb: &PropertyBinding) {

@@ -1867,6 +1867,13 @@ impl Engine {
         {
             return self.reset_impl(obj, prop, internal);
         }
+        // An object of a group's type given to a group that is given whole:
+        // `palette: Palette {}` follows it, as a group given in QML does.
+        if let Value::Object(src) = v
+            && self.is_whole_group(obj, prop)
+        {
+            return self.assign_group(obj, prop, src, "", how == WriteKind::Initial);
+        }
         // An array is the script's own in a `var`, a list anywhere else
         // (script_arrays.rs).
         let v = self.for_slot(obj, prop, v);

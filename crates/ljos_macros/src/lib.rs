@@ -32,7 +32,8 @@
 //!
 //! Field attributes: `base`, `notify` (adds `nameChanged`), `readonly`,
 //! `required`, `constant`, `group` (a grouped property; the field's type
-//! derives `QmlObject` too), `lazy` (with `group`, on an `Option<Box<T>>`
+//! derives `QmlObject` too; with a plain `reset` it is assigned and taken
+//! back whole, `MetaBuilder::whole_group`), `lazy` (with `group`, on an `Option<Box<T>>`
 //! field: the group is made on its first write, and until then reads give
 //! `T::default()`, so an object that never sets the group pays for a
 //! pointer and not for the group; `lazy = path` names a `fn() -> T` to
@@ -559,10 +560,10 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                     "a group has no change signal; put `notify` on the group type's fields",
                 ));
             }
-            if a.reset.is_some() {
+            if matches!(a.reset, Some(Some(_))) {
                 return Err(Error::new(
                     ident.span(),
-                    "a group is not taken back whole; put `reset` on the group type's fields",
+                    "a group is taken back whole by a plain `reset`; put `reset = expr` on the group type's fields",
                 ));
             }
             if a.write.is_some() {
@@ -611,6 +612,9 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             builder.push(quote! {
                 .group(#name, <#fty as #e::QmlType>::static_meta(), #flags, #get, #get_mut)
             });
+            if a.reset.is_some() {
+                builder.push(quote!(.whole_group(#name)));
+            }
             let cname = format_ident!(
                 "{}",
                 ident.to_string().trim_start_matches('_').to_uppercase()

@@ -102,6 +102,7 @@ mod url_global;
 mod value;
 mod value_faces;
 mod value_types;
+mod whole_group;
 
 pub use atom::Atom;
 pub use boundary::{APPLICATION_PROC, Boundary, BoundaryConfig, SubtreeSnapshot, SupervisorInfo};
