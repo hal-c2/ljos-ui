@@ -233,6 +233,8 @@ pub(crate) fn copied_html(s: &mut State) -> Option<String> {
     if range.is_empty() {
         return None;
     }
+    // DECISION: of a selection of cells the HTML is of the characters
+    // from one end to the other, which takes in the cells; not measured.
     Some(match &s.rich {
         Some(r) => r.doc.html_fragment(range),
         None => {

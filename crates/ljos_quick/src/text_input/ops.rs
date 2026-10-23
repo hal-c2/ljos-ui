@@ -391,6 +391,9 @@ pub(crate) fn paste(engine: &Engine, obj: ObjectId) -> bool {
         return false;
     }
     begin_editing(engine, obj);
+    // DECISION: a paste over a selection of cells empties them and goes
+    // in the cursor's cell, as typing does; not measured.
+    empty_cells(engine, obj, EditKind::Other);
     if let (Some(fragment), Some(r)) = (fragment, st.borrow_mut().rich.as_mut()) {
         r.pending = Some(fragment);
     }
