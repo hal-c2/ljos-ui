@@ -10,38 +10,7 @@
 //! machine often has neither, and the report then says why it has no
 //! count.
 
-use std::{
-    collections::BTreeMap,
-    fs,
-    io::{self, Read as _},
-    os::fd::{FromRawFd as _, OwnedFd},
-};
-
-/// `struct perf_event_attr` up to `config2`; the kernel takes any size it
-/// knows, and zero for the rest.
-#[repr(C)]
-#[derive(Default)]
-struct Attr {
-    kind: u32,
-    size: u32,
-    config: u64,
-    sample_period: u64,
-    sample_type: u64,
-    read_format: u64,
-    flags: u64,
-    wakeup_events: u32,
-    bp_type: u32,
-    config1: u64,
-    config2: u64,
-}
-
-const PERF_TYPE_HARDWARE: u32 = 0;
-const PERF_COUNT_HW_INSTRUCTIONS: u64 = 1;
-const PERF_FORMAT_TOTAL_TIME_ENABLED: u64 = 1;
-const PERF_FORMAT_TOTAL_TIME_RUNNING: u64 = 2;
-/// `exclude_kernel` and `exclude_hv`: a user may count only its own code.
-const USER_ONLY: u64 = (1 << 5) | (1 << 6);
-const PERF_FLAG_FD_CLOEXEC: libc::c_ulong = 8;
+use std::{collections::BTreeMap, fs, io::Read as _};
 
 /// A counter on each thread a process had when counting began.
 #[derive(Debug)]
@@ -107,38 +76,83 @@ impl Instructions {
     }
 }
 
-fn counter(tid: u32) -> io::Result<OwnedFd> {
-    let attr = Attr {
-        kind: PERF_TYPE_HARDWARE,
-        size: u32::try_from(size_of::<Attr>()).expect("small"),
-        config: PERF_COUNT_HW_INSTRUCTIONS,
-        read_format: PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING,
-        flags: USER_ONLY,
-        ..Attr::default()
-    };
-    let tid =
-        libc::pid_t::try_from(tid).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-    // SAFETY: `attr` is a valid perf_event_attr of the size it says and
-    // outlives the call; the result is a new descriptor or -1.
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_perf_event_open,
-            &raw const attr,
-            tid,
-            -1 as libc::c_int,
-            -1 as libc::c_int,
-            PERF_FLAG_FD_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let fd = libc::c_int::try_from(fd).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-    // SAFETY: the kernel just gave this descriptor, and nothing else owns it.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+/// Only Linux has `perf_event_open`; elsewhere the report says there is no
+/// count rather than the build failing.
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn counter(_tid: u32) -> std::io::Result<std::os::fd::OwnedFd> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 
-#[cfg(test)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use perf::counter;
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod perf {
+    use std::{
+        io,
+        os::fd::{FromRawFd as _, OwnedFd},
+    };
+
+    /// `struct perf_event_attr` up to `config2`; the kernel takes any size it
+    /// knows, and zero for the rest.
+    #[repr(C)]
+    #[derive(Default)]
+    struct Attr {
+        kind: u32,
+        size: u32,
+        config: u64,
+        sample_period: u64,
+        sample_type: u64,
+        read_format: u64,
+        flags: u64,
+        wakeup_events: u32,
+        bp_type: u32,
+        config1: u64,
+        config2: u64,
+    }
+
+    const PERF_TYPE_HARDWARE: u32 = 0;
+    const PERF_COUNT_HW_INSTRUCTIONS: u64 = 1;
+    const PERF_FORMAT_TOTAL_TIME_ENABLED: u64 = 1;
+    const PERF_FORMAT_TOTAL_TIME_RUNNING: u64 = 2;
+    /// `exclude_kernel` and `exclude_hv`: a user may count only its own code.
+    const USER_ONLY: u64 = (1 << 5) | (1 << 6);
+    const PERF_FLAG_FD_CLOEXEC: libc::c_ulong = 8;
+
+    pub(super) fn counter(tid: u32) -> io::Result<OwnedFd> {
+        let attr = Attr {
+            kind: PERF_TYPE_HARDWARE,
+            size: u32::try_from(size_of::<Attr>()).expect("small"),
+            config: PERF_COUNT_HW_INSTRUCTIONS,
+            read_format: PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING,
+            flags: USER_ONLY,
+            ..Attr::default()
+        };
+        let tid =
+            libc::pid_t::try_from(tid).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // SAFETY: `attr` is a valid perf_event_attr of the size it says and
+        // outlives the call; the result is a new descriptor or -1.
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_perf_event_open,
+                &raw const attr,
+                tid,
+                -1 as libc::c_int,
+                -1 as libc::c_int,
+                PERF_FLAG_FD_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let fd =
+            libc::c_int::try_from(fd).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+        // SAFETY: the kernel just gave this descriptor, and nothing else owns it.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
 mod tests {
     use super::*;
 
