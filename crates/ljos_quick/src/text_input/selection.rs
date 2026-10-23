@@ -90,18 +90,15 @@ fn font_with(base: &Font, f: &CharFormat) -> Font {
     font
 }
 
-/// The format the selection reads as: that of its first character, or
-/// without one what would be typed at the cursor.
+/// The format the selection reads as: the cursor's, whichever end of the
+/// selection it is at, as in Qt 6.11; without a selection what would be
+/// typed at the cursor.
 fn format_here(s: &super::base::State) -> Option<Arc<CharFormat>> {
     let r = s.rich.as_ref()?;
-    let sel = s.model.selection_bytes();
-    Some(if sel.is_empty() {
-        match &r.typing {
-            Some((at, f)) if *at == sel.start => Arc::clone(f),
-            _ => r.doc.cursor_format(sel.start),
-        }
-    } else {
-        r.doc.format_at(sel.start)
+    let at = s.model.cursor_byte();
+    Some(match &r.typing {
+        Some((typed, f)) if *typed == at && !s.model.has_selection() => Arc::clone(f),
+        _ => r.doc.cursor_format(at),
     })
 }
 
