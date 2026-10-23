@@ -227,6 +227,10 @@ struct Slot {
     applied: Option<WindowSpec>,
     /// The accessibility adapter was sent the scene's tree.
     told: bool,
+    /// egui's tree as the adapter was last sent it. The same again
+    /// changes nothing a reader hears, and still woke the adapter's
+    /// thread on every pass.
+    sent_root: Option<egui::accesskit::TreeUpdate>,
     /// Pictures the painter has not been given yet.
     pending: egui::TexturesDelta,
     /// What the window asked for through egui (cut, copy, paste).
@@ -307,6 +311,7 @@ impl Slot {
             painter: None,
             applied: None,
             told: false,
+            sent_root: None,
             pending: egui::TexturesDelta::default(),
             actions: Vec::new(),
             redraw_asked: None,
@@ -366,6 +371,7 @@ impl Slot {
     /// known of it holds.
     fn forget_platform(&mut self) {
         self.told = false;
+        self.sent_root = None;
         self.redraw_asked = None;
         self.stalled = false;
         self.occluded = false;
@@ -1428,7 +1434,10 @@ impl<M: Send + 'static> Desktop<M> {
                 None => app.view_mut(),
             };
             let updates = view.graft_updates(root, &mut slot.told);
-            if let Some(adapter) = surface.state.accesskit.as_mut() {
+            if let Some(adapter) = surface.state.accesskit.as_mut()
+                && (updates.grafted.is_some() || slot.sent_root.as_ref() != Some(&updates.root))
+            {
+                slot.sent_root = Some(updates.root.clone());
                 adapter.update_if_active(|| updates.root);
                 if let Some(grafted) = updates.grafted {
                     adapter.update_if_active(|| grafted);
@@ -1643,6 +1652,7 @@ impl<M: Send + 'static> Desktop<M> {
                 && let Some(adapter) = surface.state.accesskit.as_mut()
             {
                 adapter.update_if_active(|| release);
+                slot.sent_root = None;
                 self.repaints.request(slot.key, Instant::now());
             }
         }
@@ -1733,6 +1743,7 @@ impl<M: Send + 'static> Desktop<M> {
             accesskit_winit::WindowEvent::InitialTreeRequested => {
                 slot.ctx.enable_accesskit();
                 slot.told = false;
+                slot.sent_root = None;
             }
             accesskit_winit::WindowEvent::ActionRequested(request) => {
                 if let Some(surface) = slot.surface.as_mut() {
@@ -1742,6 +1753,7 @@ impl<M: Send + 'static> Desktop<M> {
             accesskit_winit::WindowEvent::AccessibilityDeactivated => {
                 slot.ctx.disable_accesskit();
                 slot.told = false;
+                slot.sent_root = None;
                 return;
             }
         }
