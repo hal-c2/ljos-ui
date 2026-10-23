@@ -15,10 +15,12 @@ Feature: StackView.visible
       Item {
         id: root; objectName: "root"; width: 300; height: 200; property string seen: ""
         Component { id: note; Rectangle { } }
+        Component { id: counted; Rectangle { property int flips: 0; property int inner: 0; onVisibleChanged: flips++; Rectangle { onVisibleChanged: parent.inner++ } } }
         StackView { id: stack; objectName: "stack"; anchors.fill: parent; initialItem: Rectangle { id: first; objectName: "first" } }
         function push() { stack.push(note, {}, StackView.Immediate) }
         function show() { first.StackView.visible = true }
         function forget() { first.StackView.visible = undefined; seen = first.visible + " " + first.StackView.visible }
+        function pushCounted() { stack.push(counted); seen = stack.currentItem.flips + " " + stack.currentItem.inner }
         function forgetTop() { var t = stack.currentItem; t.StackView.visible = false; t.StackView.visible = undefined; seen = t.visible + " " + t.StackView.visible }
       }
       """
@@ -39,3 +41,7 @@ Feature: StackView.visible
     When the method "push" of "root" is called
     And the method "forgetTop" of "root" is called
     Then the property "seen" of "root" is "true true"
+
+  Scenario: A page pushed onto the stack is never hidden on its way in
+    When the method "pushCounted" of "root" is called
+    Then the property "seen" of "root" is "0 0"

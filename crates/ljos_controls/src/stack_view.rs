@@ -676,6 +676,10 @@ fn load(e: &Engine, me: ObjectId, index: usize) -> Result<Option<ObjectId>, Engi
         StackViewAttached::INDEX.index,
         Value::Int(index as i32),
     )?;
+    // Shown before anything follows it: until the view makes it current,
+    // the page would read hidden, and every item in it would be covered
+    // and uncovered again on its way in.
+    show(e, item, true);
     // In the view's scope, not the page's: the page's own effects wait
     // while it is frozen, and this one is what thaws it.
     let follow = e.effect_in(me, move |e| {
@@ -685,7 +689,6 @@ fn load(e: &Engine, me: ObjectId, index: usize) -> Result<Option<ObjectId>, Engi
     if let Some(entry) = st.entries.borrow_mut().get_mut(index) {
         entry.follow = Some(follow);
     }
-    show(e, item, true);
     let w = e.untrack(|| num(e, me, Control::AVAILABLE_WIDTH.index));
     let h = e.untrack(|| num(e, me, Control::AVAILABLE_HEIGHT.index));
     fit(e, me, w, h)?;
