@@ -111,3 +111,25 @@ Feature: An agent reads a timeline of the frames
       """
     Then the answer's "/recording" is false
     And the answer's text contains "not recording"
+
+  # A client that names itself as the holder, as the observer does, keeps
+  # the recording for itself: another letting go does not end it.
+  Scenario: A recording two clients hold lasts until both let it go
+    When the agent calls the tool "app_frames" with:
+      """json
+      {"record": true, "holder": "first"}
+      """
+    And the agent calls the tool "app_frames" with:
+      """json
+      {"record": true, "holder": "second"}
+      """
+    And the agent calls the tool "app_frames" with:
+      """json
+      {"record": false, "holder": "first"}
+      """
+    Then the answer's "/recording" is true
+    When the agent calls the tool "app_frames" with:
+      """json
+      {"record": false, "holder": "second"}
+      """
+    Then the answer's "/recording" is false

@@ -134,6 +134,8 @@ ApplicationWindow {
             logs.add(s)
         else if (route === "trace" && ok)
             trace.add(s)
+        else if (route === "frames" && ok)
+            timeline.add(s)
         else if (route.indexOf("sample-") === 0 && ok)
             overview.part(route.substring(7), s)
     }
@@ -166,7 +168,7 @@ ApplicationWindow {
 
     // The page shown.
     readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace",
-                                   "Supervision"]
+                                   "Supervision", "Frames"]
     property int page: 0
     onPageChanged: watcher.start()
 
@@ -183,6 +185,9 @@ ApplicationWindow {
         // Every fault is logged, so a new one is a new log line.
         else if (page === 6 && (all || changed.indexOf("logs") >= 0))
             supervision.load()
+        // A frame recorded that drew something is a pass drawn.
+        else if (page === 7 && (all || changed.indexOf("paints") >= 0))
+            timeline.load()
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
         if (all || changed.indexOf("traces") >= 0)
@@ -3212,6 +3217,303 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             visible: faultRows.count === 0
                             text: "No faults"
+                            color: theme.subtle
+                        }
+                    }
+                }
+
+                // ----- Frames ------------------------------------------
+                // Each frame while recorded: what woke it and where its
+                // time went, to set beside another runtime's. The
+                // recording is held by this window, so it ends with it.
+                ColumnLayout {
+                    id: timeline
+                    spacing: 10
+                    property var since: null
+                    property bool recording: false
+                    property int dropped: 0
+                    property var summary: null
+                    // The longest frame since Clear, and never less than a
+                    // frame of a 60 Hz display, so that bars compare.
+                    property real scale: 16667
+                    readonly property var parts: [
+                        { key: "timers", name: "timers", tone: theme.warn },
+                        { key: "animations", name: "animations", tone: theme.violet },
+                        { key: "layout", name: "layout", tone: theme.accent },
+                        { key: "create", name: "create", tone: theme.good },
+                        { key: "scene", name: "scene build", tone: "#3fa7a0" },
+                        { key: "other", name: "other", tone: theme.subtle },
+                        { key: "render", name: "render", tone: theme.bad },
+                        { key: "present", name: "present", tone: "#d77fae" }
+                    ]
+
+                    function args() {
+                        var a = { max: 600 }
+                        if (since !== null)
+                            a.since = since
+                        return a
+                    }
+
+                    function load() {
+                        window.ask("app_frames", args(), "frames")
+                    }
+
+                    function record(on) {
+                        var a = args()
+                        a.record = on
+                        a.holder = window.holder
+                        window.ask("app_frames", a, "frames")
+                    }
+
+                    function add(s) {
+                        recording = s.recording
+                        dropped = s.dropped
+                        since = s.next_since
+                        if (s.frames.length > 0)
+                            summary = s.summary
+                        // Only a view at its end follows: one scrolled
+                        // back is being read.
+                        var following = frameRows.count === 0 || frameView.atYEnd
+                        for (var i = 0; i < s.frames.length; ++i)
+                            put(s.frames[i])
+                        var over = frameRows.count - 600
+                        if (over > 0)
+                            frameRows.remove(0, over)
+                        if (s.frames.length > 0 && following)
+                            frameView.positionViewAtEnd()
+                        if (s.more)
+                            load()
+                    }
+
+                    function put(f) {
+                        var p = f.passes
+                        var row = {
+                            seq: f.frame,
+                            at: (f.at_ms / 1000).toFixed(3) + " s",
+                            woke: f.woke.join(", "),
+                            frames: f.scene_frames,
+                            total: f.total_us,
+                            timers: p.timers_us,
+                            animations: p.animations_us,
+                            layout: p.layout_us,
+                            create: p.create_us,
+                            scene: p.scene_us,
+                            other: p.other_us,
+                            render: f.render_us === null ? 0 : f.render_us,
+                            present: f.present_us === null ? 0 : f.present_us,
+                            bindings: f.bindings_us,
+                            runs: f.binding_runs,
+                            text: f.text_us,
+                            layouts: f.text_layouts
+                        }
+                        scale = Math.max(scale, row.total)
+                        frameRows.append(row)
+                    }
+
+                    function clear() {
+                        frameRows.clear()
+                        summary = null
+                        scale = 16667
+                    }
+
+                    // "p50 · p95 · max" of a part, as the last answer
+                    // gave it over the frames it listed.
+                    function spread(key) {
+                        var s = summary ? summary[key + "_us"] : undefined
+                        if (!s)
+                            return "—"
+                        return window.ms(s.p50) + " · " + window.ms(s.p95) + " · " + window.ms(s.max)
+                    }
+
+                    function wokeTone(woke) {
+                        return woke.indexOf("input") >= 0 ? theme.accent
+                             : woke.indexOf("animation") >= 0 ? theme.violet
+                             : woke.indexOf("timer") >= 0 ? theme.warn : theme.subtle
+                    }
+
+                    ListModel { id: frameRows }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text { text: "Frames"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            text: (timeline.recording ? "recording" : "not recording") + " · "
+                                  + frameRows.count + " frames"
+                                  + (timeline.dropped > 0 ? " · " + timeline.dropped + " older gave way" : "")
+                            color: timeline.recording ? theme.good : theme.subtle
+                        }
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: timeline.recording ? "Stop" : "Record"
+                            onClicked: timeline.record(!timeline.recording)
+                        }
+                        Button {
+                            text: "Clear"
+                            onClicked: timeline.clear()
+                        }
+                    }
+
+                    // p50 · p95 · max of each part over the frames listed.
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 14
+                        visible: timeline.summary !== null
+                        Repeater {
+                            model: ["total", "layout", "scene", "bindings", "text", "render", "present"]
+                            delegate: Column {
+                                required property string modelData
+                                Text {
+                                    text: modelData === "scene" ? "scene build" : modelData
+                                    color: theme.subtle
+                                    font.pixelSize: 11
+                                }
+                                Text {
+                                    text: timeline.spread(modelData)
+                                    color: theme.text
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                }
+                            }
+                        }
+                    }
+
+                    // What the colours of a bar are.
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        Repeater {
+                            model: timeline.parts
+                            delegate: Row {
+                                required property var modelData
+                                spacing: 5
+                                Rectangle {
+                                    width: 10; height: 10; radius: 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: modelData.tone
+                                }
+                                Text { text: modelData.name; color: theme.subtle; font.pixelSize: 11 }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+                        ListView {
+                            id: frameView
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            clip: true
+                            model: window.page === 7 ? frameRows : null
+                            onModelChanged: if (model !== null) Qt.callLater(frameView.positionViewAtEnd)
+                            ScrollBar.vertical: ScrollBar {}
+                            delegate: Item {
+                                id: frameRow
+                                required property int index
+                                required property int seq
+                                required property string at
+                                required property string woke
+                                required property int frames
+                                required property real total
+                                required property real timers
+                                required property real animations
+                                required property real layout
+                                required property real create
+                                required property real scene
+                                required property real other
+                                required property real render
+                                required property real present
+                                required property real bindings
+                                required property int runs
+                                required property real text
+                                required property int layouts
+                                readonly property real barWidth: Math.max(40, width - 560)
+                                width: ListView.view.width
+                                height: 24
+                                Accessible.role: Accessible.ListItem
+                                Accessible.name: "frame " + seq + ", woke by " + (woke === "" ? "nothing" : woke)
+                                                 + ", " + window.ms(total)
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: frameRow.index % 2 ? theme.cardAlt : "transparent"
+                                }
+                                Row {
+                                    x: 6
+                                    height: parent.height
+                                    spacing: 10
+                                    Text {
+                                        width: 50
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        horizontalAlignment: Text.AlignRight
+                                        text: frameRow.seq
+                                        color: theme.subtle
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: 70
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        horizontalAlignment: Text.AlignRight
+                                        text: frameRow.at
+                                        color: theme.subtle
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: 140
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: frameRow.woke === "" ? "—" : frameRow.woke
+                                        color: timeline.wokeTone(frameRow.woke)
+                                        elide: Text.ElideRight
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: 70
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        horizontalAlignment: Text.AlignRight
+                                        text: window.ms(frameRow.total)
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    // The passes, then painting, to one
+                                    // scale for every row.
+                                    Row {
+                                        width: frameRow.barWidth
+                                        height: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        Repeater {
+                                            model: timeline.parts
+                                            delegate: Rectangle {
+                                                required property var modelData
+                                                height: 12
+                                                width: frameRow.barWidth * frameRow[modelData.key] / timeline.scale
+                                                color: modelData.tone
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        width: 180
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "bindings " + window.ms(frameRow.bindings) + " (" + frameRow.runs + ")"
+                                              + " · text " + window.ms(frameRow.text) + " (" + frameRow.layouts + ")"
+                                        color: theme.subtle
+                                        elide: Text.ElideRight
+                                        font.pixelSize: 11
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: frameRows.count === 0
+                            text: timeline.recording ? "No frame since recording began: the application is at rest"
+                                                     : "Press Record to keep each frame's times"
                             color: theme.subtle
                         }
                     }
