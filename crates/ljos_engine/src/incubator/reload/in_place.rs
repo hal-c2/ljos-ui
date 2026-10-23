@@ -1693,29 +1693,31 @@ impl Engine {
     }
 
     /// Why an alias of an object made again cannot be pointed at the new
-    /// one in place: a state or a `Binding` writes through it, or aims at
-    /// the object it stands for, and holds the old one; or a user gives an
-    /// object through it. The full path gives the new one all of that, as
-    /// a fresh load does.
+    /// one in place: a state or a `Binding` writes through that alias of
+    /// that object, or aims at the object it stands for, and holds the old
+    /// one; or a user gives an object through it. The full path gives the
+    /// new one all of that, as a fresh load does. Another object's alias
+    /// of the same name is not this one.
     fn realias_held(
         &self,
         changed: &[Changed],
         instances: &[Rc<Instance>],
         users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
     ) -> Option<&'static str> {
-        let mut names: Vec<&str> = Vec::new();
+        // The object that has each alias, and the alias's name.
+        let mut owners: Vec<(ObjectId, &str)> = Vec::new();
         let mut olds: Vec<ObjectId> = Vec::new();
         for c in changed.iter().filter(|c| !c.realias.is_empty()) {
             for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
                 let comp = c.old.ir.component(inst.comp);
                 let m = &c.objects[inst.comp.index()];
                 for (_, j, name) in c.realias.iter().filter(|r| r.0 == inst.comp) {
-                    names.push(name);
-                    let stood = m
-                        .to_old
-                        .get(*j)
-                        .copied()
-                        .flatten()
+                    let was = m.to_old.get(*j).copied().flatten();
+                    owners.extend(
+                        was.and_then(|i| inst.objects.get(i).copied())
+                            .map(|o| (o, name.as_str())),
+                    );
+                    let stood = was
                         .and_then(|i| comp.objects[i].properties.iter().find(|p| p.name == *name))
                         .and_then(|p| p.alias.as_ref())
                         .filter(|a| a.path.is_empty())
@@ -1732,7 +1734,7 @@ impl Engine {
                 }
             }
         }
-        if names.is_empty() {
+        if owners.is_empty() && olds.is_empty() {
             return None;
         }
         for inst in instances {
@@ -1744,17 +1746,56 @@ impl Engine {
                 if !self.is_alive(id) || self.foreign_keeper(id).is_none() {
                     continue;
                 }
-                let through = given_names(od).any(|n| n.split('.').any(|s| names.contains(&s)));
-                let aimed = !olds.is_empty()
-                    && self.property_index(id, "target").is_ok_and(|p| {
-                        matches!(self.untrack(|| self.read(id, p)), Value::Object(o) if olds.contains(&o))
+                let target = self
+                    .property_index(id, "target")
+                    .ok()
+                    .map(|p| self.untrack(|| self.read(id, p)));
+                if let Some(Value::Object(o)) = target
+                    && olds.contains(&o)
+                {
+                    return Some("a state or a Binding holds an object made again");
+                }
+                // A `Binding`'s `property` is written as a string.
+                let named = self
+                    .property_index(id, "property")
+                    .ok()
+                    .map(|p| self.untrack(|| self.read(id, p)))
+                    .and_then(|v| match v {
+                        Value::String(s) if !s.is_empty() => Some(s.to_string()),
+                        _ => None,
                     });
-                if through || aimed {
+                let held = given_names(od).chain(named).any(|n| match target {
+                    Some(Value::Object(t)) => self.walks_through(t, &n, &owners),
+                    // Where it writes is not known: by name.
+                    _ => n.split('.').any(|s| owners.iter().any(|(_, a)| *a == s)),
+                });
+                if held {
                     return Some("a state or a Binding holds an object made again");
                 }
             }
         }
         None
+    }
+
+    /// Whether writing the dotted `name` on `from` goes through one of
+    /// `owners`' aliases: each part read on the object the parts before it
+    /// reached.
+    fn walks_through(&self, from: ObjectId, name: &str, owners: &[(ObjectId, &str)]) -> bool {
+        let mut cur = from;
+        for part in name.split('.') {
+            if owners.iter().any(|&(o, a)| o == cur && a == part) {
+                return true;
+            }
+            let next = self
+                .property_index(cur, part)
+                .ok()
+                .map(|p| self.untrack(|| self.read(cur, p)));
+            match next {
+                Some(Value::Object(o)) if self.is_alive(o) => cur = o,
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Hands the keeper of `id` (foreign.rs), an object of `inst`, the

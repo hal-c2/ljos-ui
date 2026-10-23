@@ -3504,8 +3504,9 @@ Feature: What a reload changes
     An object moved among its siblings is made again; an alias of it, or
     of a member of it, stands for the new one, as in a fresh load, and
     what reads through the alias reads that. Where a state or a Binding
-    writes through the alias, or a user gives an object through it, the
-    roots are made again.
+    writes through that object's alias, or a user gives an object through
+    it, the roots are made again; an alias of the same name on another
+    object is not it.
 
     Scenario: A user reads through aliases of an object moved before its sibling
       Given the file "Viewer.qml":
@@ -3660,6 +3661,58 @@ Feature: What a reload changes
         """
       And a reload happens
       Then the property "width" of "second" is 30
+
+    Scenario: A state that writes through another object's alias of the same name goes in place
+      Given the file "Viewer.qml":
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          Text { id: shown; objectName: "first"; text: "a" }
+          Item { }
+        }
+        """
+      And the file "Other.qml":
+        """qml
+        import QtQuick
+        Item {
+          property alias current: label
+          Text { id: label; objectName: "label"; text: "b" }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Viewer { id: viewer }
+          Other { id: other }
+          states: State {
+            name: "faded"; when: true
+            PropertyChanges { target: other; current.opacity: 0.5 }
+          }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "opacity" of "label" is 0.5
+      When the file "Viewer.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          Item { }
+          Text { id: shown; objectName: "second"; text: "a" }
+        }
+        """
+      And a reload happens
+      Then the property "opacity" of "label" is 0.5
+      And the property "opacity" of "second" is 1
+      And the property "x" of "box" is at least 40
 
   Rule: A value a state's PropertyChanges gives, edited, goes in place
 
