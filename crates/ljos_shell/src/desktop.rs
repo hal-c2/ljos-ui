@@ -1438,6 +1438,18 @@ impl<M: Send + 'static> Desktop<M> {
                 repaints.request(slot.key, Instant::now());
             }
         }
+        // The clipboard is the platform's, which reads and writes the
+        // system's only when asked. egui-winit's keeps a thread on the
+        // window's own connection, which woke on every event it got.
+        let clipboard = ljos_platform::Platform::of(&engine).clipboard();
+        platform_output.commands.retain(|command| match command {
+            egui::OutputCommand::CopyText(text) => {
+                // As a copy in Qt, a write the system refuses is dropped.
+                let _ = clipboard.set_text(ljos_platform::ClipboardMode::Clipboard, text);
+                false
+            }
+            _ => true,
+        });
         surface.state.handle_platform_output_with_event_loop(
             &surface.window,
             host.event_loop(),
@@ -1457,7 +1469,10 @@ impl<M: Send + 'static> Desktop<M> {
                 egui_winit::ActionRequested::Cut => egui::Event::Cut,
                 egui_winit::ActionRequested::Copy => egui::Event::Copy,
                 egui_winit::ActionRequested::Paste => {
-                    match surface.state.clipboard_text().filter(|t| !t.is_empty()) {
+                    let text = ljos_platform::Platform::of(&engine)
+                        .clipboard()
+                        .text(ljos_platform::ClipboardMode::Clipboard);
+                    match text.filter(|t| !t.is_empty()) {
                         Some(text) => egui::Event::Paste(text.replace("\r\n", "\n")),
                         None => continue,
                     }
