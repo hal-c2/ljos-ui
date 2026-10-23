@@ -86,7 +86,9 @@ impl Line {
                 .iter()
                 .find(|c| x < c.x1)
                 .map_or(after(last), |c| {
-                    if x < (c.x0 + c.x1) / 2.0 {
+                    // Exactly halfway is before the character, as a press in a
+                    // TextEdit is (features/text-input/pointer-halfway.feature).
+                    if x <= (c.x0 + c.x1) / 2.0 {
                         before(c)
                     } else {
                         after(c)
