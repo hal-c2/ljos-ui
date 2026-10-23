@@ -144,7 +144,7 @@ pub struct Item {
     #[qml(group)]
     pub layer: ItemLayer,
     /// Made when a colour is first set: most items never set one.
-    #[qml(group, lazy)]
+    #[qml(group, lazy, reset)]
     pub palette: Option<Box<Palette>>,
     /// Static accessibility data for a later a11y pass (ARCHITECTURE §14).
     #[qml(skip)]

@@ -20,7 +20,10 @@
 //! group's colour is where nobody set it, is the controls' business too
 //! (`features/controls/palette-groups.feature`).
 //!
-//! TODO(palette): a whole `Palette {}` assigned at once is not built.
+//! A palette, and each of its groups, is also given whole: a `Palette {}`,
+//! another item's palette or group, or `undefined`, which takes back every
+//! colour set in it (`ljos_engine`'s `whole_group.rs`,
+//! `features/controls/palette-assign.feature`).
 
 use std::cell::Cell;
 
@@ -188,7 +191,7 @@ pub struct ColorGroup {
 
 /// The `palette` group.
 #[derive(Clone, Debug, QmlObject)]
-#[qml(name = "Palette", uncreatable)]
+#[qml(name = "Palette")]
 pub struct Palette {
     #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub accent: Color,
@@ -235,13 +238,13 @@ pub struct Palette {
     /// The colours of a control in an active window; what `palette.button`
     /// reads there unless it is not enabled. Made when first written: most
     /// palettes never are, and read Basic's colours until then.
-    #[qml(group, lazy = active_group)]
+    #[qml(group, lazy = active_group, reset)]
     pub active: Option<Box<ColorGroup>>,
     /// In a window that is not active.
-    #[qml(group, lazy = active_group)]
+    #[qml(group, lazy = active_group, reset)]
     pub inactive: Option<Box<ColorGroup>>,
     /// Of a control that is not enabled.
-    #[qml(group, lazy = disabled_group)]
+    #[qml(group, lazy = disabled_group, reset)]
     pub disabled: Option<Box<ColorGroup>>,
 }
 

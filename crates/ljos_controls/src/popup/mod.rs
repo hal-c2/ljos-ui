@@ -293,7 +293,7 @@ pub struct Popup {
     pub exit: Option<ObjectId>,
     #[qml(notify, reset = item::FONT_RESET)]
     pub font: Font,
-    #[qml(group)]
+    #[qml(group, reset)]
     pub palette: Palette,
     /// Its item's, which has the window's until it is given one.
     #[qml(notify, reset = item::LOCALE_RESET)]
@@ -504,7 +504,7 @@ pub(crate) fn move_to(engine: &Engine, popup: ObjectId, x: f64, y: f64) -> Resul
 
 /// What a popup declared in `owner` is placed from: the item it is
 /// declared in, the content item of a popup or of a window.
-pub(super) fn default_parent(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
+pub(crate) fn default_parent(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
     let mut cur = engine.owner(popup);
     for _ in 0..64 {
         let o = cur?;

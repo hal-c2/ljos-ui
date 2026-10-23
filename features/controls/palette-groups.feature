@@ -12,6 +12,8 @@ Feature: A palette's colour groups
   active one otherwise. A colour set on the palette itself is set in
   every group; one set in a group is set there alone. The items inside
   take each colour of each group from the nearest item above that set it.
+  A popup takes its groups from the window it belongs to, as it does
+  the palette's colours.
 
   Scenario: A control that is not enabled reads its disabled colours
     Given the QML:
@@ -117,3 +119,51 @@ Feature: A palette's colour groups
     Then the property "palette.highlight" of "switch" is "#919191"
     And the property "palette.active.highlight" of "switch" is "#308cc6"
     And the pixel at 16, 14 of the window is within 12 of "#359bdb"
+
+  Scenario Outline: A <type> takes its colour groups from the window
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      ApplicationWindow {
+        palette.button: "#111111"
+        palette.disabled.button: "#222222"
+        palette.inactive.window: "#333333"
+        Pane {
+          palette.disabled.button: "#999999"
+          <type> { objectName: "p"; palette.active.base: "#00ffff" }
+        }
+      }
+      """
+    Then the property "palette.button" of "p" is "#111111"
+    And the property "palette.active.button" of "p" is "#111111"
+    And the property "palette.disabled.button" of "p" is "#222222"
+    And the property "palette.inactive.window" of "p" is "#333333"
+    And the property "palette.active.base" of "p" is "#00ffff"
+    And the property "palette.base" of "p" is "#00ffff"
+
+    Examples:
+      | type    |
+      | Popup   |
+      | Menu    |
+      | Dialog  |
+      | ToolTip |
+      | Drawer  |
+
+  Scenario: A popup's colour group is given whole and taken back
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      ApplicationWindow {
+        objectName: "root"
+        palette.disabled.button: "#222222"
+        function clear() { p.palette.disabled = undefined }
+        Button { id: a; palette.active.button: "#abcdef"; palette.disabled.button: "#0000ff" }
+        Menu { id: p; objectName: "p"; palette.active: a.palette.active; palette.disabled.button: "#555555" }
+      }
+      """
+    Then the property "palette.button" of "p" is "#abcdef"
+    And the property "palette.disabled.button" of "p" is "#555555"
+    When the method "clear" of "root" is called
+    Then the property "palette.disabled.button" of "p" is "#222222"

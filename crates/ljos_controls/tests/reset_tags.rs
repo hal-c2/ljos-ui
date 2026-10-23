@@ -56,13 +56,6 @@ const NOT_YET: &[&str] = &[
     // The particles' own rotation is not built, so `Item.rotation` turns
     // the whole painter instead.
     "ImageParticle.rotation",
-    // A role is taken back, of the palette and of each of its colour
-    // groups; a whole group at once needs a group that can be assigned to,
-    // which the engine does not have.
-    "*.palette",
-    "*.palette.active",
-    "*.palette.disabled",
-    "*.palette.inactive",
     // Quick's validators keep the name and read numbers in the C locale.
     "DoubleValidator.locale",
     "IntValidator.locale",
@@ -92,8 +85,9 @@ const BEYOND_QT: &[&str] = &[
     "BorderImage.sourceSize",
 ];
 
-fn not_yet(ty: &str, property: &str) -> bool {
-    NOT_YET.iter().any(|entry| {
+/// The entry of [`NOT_YET`] that lists the property, if any.
+fn not_yet(ty: &str, property: &str) -> Option<&'static str> {
+    NOT_YET.iter().copied().find(|entry| {
         // The type may have a dot of its own only in "(attached)" names,
         // which have none: the first dot ends it.
         let Some((t, p)) = entry.split_once('.') else {
@@ -128,6 +122,9 @@ fn what_qt_takes_back_is_taken_back_here() {
     let mut missing = Vec::new();
     let mut extra = Vec::new();
     let mut done = Vec::new();
+    // The entries that still list a property without a reset: one that
+    // names many types is done only when the last of them has one.
+    let mut still = Vec::new();
     let mut seen = 0;
     for (module, ty, name, meta) in metas(&e) {
         let Some(qt) = QtTypeOracle.module_type(&module, &ty) else {
@@ -150,11 +147,14 @@ fn what_qt_takes_back_is_taken_back_here() {
             match (in_qt, here) {
                 (true, true) => {
                     seen += 1;
-                    if listed {
-                        done.push(format!("{name}.{}", property.name));
+                    if let Some(entry) = listed {
+                        done.push((entry, format!("{name}.{}", property.name)));
                     }
                 }
-                (true, false) if !listed => missing.push(format!("{name}.{}", property.name)),
+                (true, false) => match listed {
+                    Some(entry) => still.push(entry),
+                    None => missing.push(format!("{name}.{}", property.name)),
+                },
                 (false, true) => {
                     let which = format!("{name}.{}", property.name);
                     if !BEYOND_QT.contains(&which.as_str()) {
@@ -165,6 +165,11 @@ fn what_qt_takes_back_is_taken_back_here() {
             }
         }
     }
+    let mut done: Vec<String> = done
+        .into_iter()
+        .filter(|(entry, _)| !entry.starts_with("*.") || !still.contains(entry))
+        .map(|(_, which)| which)
+        .collect();
     for list in [&mut missing, &mut extra, &mut done] {
         list.sort();
         list.dedup();

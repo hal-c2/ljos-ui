@@ -65,7 +65,7 @@ use std::sync::{Arc, OnceLock};
 use ljos_a11y::ColorScheme;
 use ljos_engine::{
     Color, Engine, EngineError, Font, NodeId, ObjectId, PropIndex, Provenance, QmlType, Reset,
-    Value,
+    Value, WriteKind,
 };
 use ljos_quick::{Item, Text, TextEditor};
 
@@ -388,17 +388,20 @@ fn bump(engine: &Engine, which: Which) {
     let before = all.pending.get();
     all.pending.set(before | 1 << which as u8);
     if before == 0 {
-        engine.after_creation(|e| {
-            let pending = e.extension::<Epochs>().pending.take();
-            for which in [Which::Font, Which::Palette, Which::Locale] {
-                if pending & 1 << which as u8 != 0 {
-                    move_epoch(e, which);
-                }
-            }
-            if pending & 1 << Which::Palette as u8 != 0 {
-                hand_down_to_plain_items(e);
-            }
-        });
+        engine.after_creation(move_pending);
+    }
+}
+
+/// Moves the epochs [`bump`] put off until the creation is done.
+fn move_pending(engine: &Engine) {
+    let pending = engine.extension::<Epochs>().pending.take();
+    for which in [Which::Font, Which::Palette, Which::Locale] {
+        if pending & 1 << which as u8 != 0 {
+            move_epoch(engine, which);
+        }
+    }
+    if pending & 1 << Which::Palette as u8 != 0 {
+        hand_down_to_plain_items(engine);
     }
 }
 
@@ -673,25 +676,36 @@ pub(crate) fn attach(
 /// the pane's colours).
 fn above(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
     if let Some(popup) = crate::popup::popup_of(engine, obj) {
-        let mut cur = match engine.read(popup, crate::popup::Popup::PARENT.index) {
+        let parent = match engine.read(popup, crate::popup::Popup::PARENT.index) {
             Value::Object(p) => Some(p),
             _ => None,
         };
-        for _ in 0..4096 {
-            let p = cur.filter(|p| engine.is_alive(*p))?;
-            if matches!(
-                kind_of(engine, p),
-                Some(Kind::Window | Kind::ApplicationWindow)
-            ) {
-                return Some(p);
-            }
-            cur = engine.visual_parent(p);
-        }
-        return None;
+        // A drawer hangs from an overlay, which an item that hosts the
+        // window may own: then the window it was written in.
+        return window_above(engine, parent)
+            .or_else(|| window_above(engine, crate::popup::default_parent(engine, popup)));
     }
     engine
         .visual_parent(obj)
         .or_else(|| ljos_quick::layer_host(engine, obj))
+}
+
+/// The nearest window at or above `cur` (tracked).
+fn window_above(engine: &Engine, mut cur: Option<ObjectId>) -> Option<ObjectId> {
+    for _ in 0..4096 {
+        let p = cur.filter(|p| engine.is_alive(*p))?;
+        if matches!(
+            kind_of(engine, p),
+            Some(Kind::Window | Kind::ApplicationWindow)
+        ) {
+            return Some(p);
+        }
+        // A drawer hangs from the window's overlay, a layer.
+        cur = engine
+            .visual_parent(p)
+            .or_else(|| ljos_quick::layer_host(engine, p));
+    }
+    None
 }
 
 /// What the nearest ancestor with a font hands down.
@@ -1012,26 +1026,62 @@ pub(crate) fn register(engine: &Engine) {
     ljos_quick::palette::set_on_group_written(engine, group_written);
 }
 
-/// A colour is about to be set in a group of `obj` from a script: from now
-/// on, a change of any colour of its groups is news to it and to the
-/// objects inside it. Few objects ever have a group's colour set.
+/// A colour is about to be set in a group of `obj` from a script, or on
+/// the palette of a control or a window that completed: from now on, a
+/// change of any colour of its groups, and of its palette's, is news to it
+/// and to the objects inside it. Few objects ever have a colour set after
+/// they completed. A plain item hears its palette's colours already
+/// ([`item_palette_set`]).
 fn group_written(engine: &Engine, obj: ObjectId) {
     let plain = engine.extension::<PlainItems>();
-    if plain.grouping.get() || plain.groups_watched.borrow().contains(&obj) {
+    if plain.grouping.get() || plain.handing.get() || plain.groups_watched.borrow().contains(&obj) {
         return;
     }
     let Some(kind) = kind_of(engine, obj) else {
         return;
     };
     plain.groups_watched.borrow_mut().insert(obj);
-    for p in groups_of(kind).iter().flatten().copied() {
-        // It hears the write about to be stored.
-        let watched = engine.watch(obj, p, move |e, _| {
-            if author_set(e, obj, p) {
-                colours_changed(e, obj);
+    let palette = (kind != Kind::Item).then(|| roles_of(kind));
+    for p in groups_of(kind)
+        .iter()
+        .flatten()
+        .chain(palette.into_iter().flatten())
+        .copied()
+    {
+        // It hears the write about to be stored. A colour of the palette
+        // that is bound is written over as it resolves, which is no news.
+        let role = roles_of(kind).contains(&p);
+        let watched = engine.watch(obj, p, move |e, v| {
+            let given = match e.provenance(obj, p) {
+                Some(Provenance::Assigned) => true,
+                Some(Provenance::Bound) => !role,
+                _ => false,
+            };
+            if given {
+                over_groups(e, obj, kind, p, v);
+                colours_written(e, obj);
             }
         });
         check(engine, "palette", watched.map(|_| ()));
+    }
+}
+
+/// A colour set on the palette after it completed is set in each of its
+/// groups, over one set there before, as on qml6, where the last colour
+/// written wins. `p` that is not a palette colour (a group's) is left.
+fn over_groups(engine: &Engine, obj: ObjectId, kind: Kind, p: PropIndex, v: &Value) {
+    let Some(i) = roles_of(kind).iter().position(|r| *r == p) else {
+        return;
+    };
+    for g in groups_of(kind) {
+        let q = g[i];
+        if author_set(engine, obj, q) && engine.untrack(|| engine.read(obj, q)) != *v {
+            check(
+                engine,
+                "palette",
+                engine.untrack(|| engine.write(obj, q, v.clone(), WriteKind::Imperative)),
+            );
+        }
     }
 }
 
@@ -1049,17 +1099,21 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
     if plain.handing.get() || plain.watched.borrow().contains(&item) {
         return;
     }
-    if kind_of(engine, item) != Some(Kind::Item) {
-        return;
+    match kind_of(engine, item) {
+        Some(Kind::Item) => {}
+        // Its groups were resolved with the colours it had then.
+        Some(_) if written => return group_written(engine, item),
+        _ => return,
     }
     let roles = roles_of(Kind::Item);
     // A colour being written is not yet stored nor marked as the author's.
     if written || own && roles.iter().any(|p| author_set(engine, item, *p)) {
         plain.watched.borrow_mut().insert(item);
         for p in roles.iter().copied() {
-            let watched = engine.watch(item, p, move |e, _| {
+            let watched = engine.watch(item, p, move |e, v| {
                 if author_set(e, item, p) {
-                    colours_changed(e, item);
+                    over_groups(e, item, Kind::Item, p, v);
+                    colours_written(e, item);
                 }
             });
             check(engine, "palette", watched.map(|_| ()));
@@ -1079,6 +1133,14 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
 fn colours_changed(engine: &Engine, obj: ObjectId) {
     engine.extension::<PlainItems>().from.borrow_mut().push(obj);
     bump(engine, Which::Palette);
+}
+
+/// As [`colours_changed`], for a colour written on an object that
+/// completed: what reads it next sees it, as on qml6, also from an
+/// `onCompleted` handler of the creation it was made in.
+fn colours_written(engine: &Engine, obj: ObjectId) {
+    colours_changed(engine, obj);
+    move_pending(engine);
 }
 
 /// Hands the colours of the objects an author changed down to the plain

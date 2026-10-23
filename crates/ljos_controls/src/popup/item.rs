@@ -28,7 +28,7 @@ use super::{Popup, close_policy, dismiss, popup_of, put};
 use crate::containers::{Page, Pane};
 use crate::control::Control;
 use crate::util::{check, flag};
-use ljos_quick::palette::{ROLE_COUNT, role_props};
+use ljos_quick::palette::{ROLE_COUNT, group_props, role_props};
 
 /// The item of a popup.
 #[derive(Debug, Default, QmlObject)]
@@ -142,14 +142,25 @@ fn author_set(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
     )
 }
 
-fn popup_roles() -> &'static [PropIndex; ROLE_COUNT] {
-    static ROLES: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
-    ROLES.get_or_init(|| role_props(Popup::static_meta()))
+/// Every colour of a palette: its roles, then each group's.
+const COLOURS: usize = ROLE_COUNT * 4;
+
+fn colours_of(meta: &ljos_engine::MetaObject) -> [PropIndex; COLOURS] {
+    let (roles, groups) = (role_props(meta), group_props(meta));
+    std::array::from_fn(|i| match i / ROLE_COUNT {
+        0 => roles[i],
+        g => groups[g - 1][i % ROLE_COUNT],
+    })
 }
 
-fn item_roles() -> &'static [PropIndex; ROLE_COUNT] {
-    static ROLES: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
-    ROLES.get_or_init(|| role_props(Control::static_meta()))
+fn popup_colours() -> &'static [PropIndex; COLOURS] {
+    static COLOURS_OF: OnceLock<[PropIndex; COLOURS]> = OnceLock::new();
+    COLOURS_OF.get_or_init(|| colours_of(Popup::static_meta()))
+}
+
+fn item_colours() -> &'static [PropIndex; COLOURS] {
+    static COLOURS_OF: OnceLock<[PropIndex; COLOURS]> = OnceLock::new();
+    COLOURS_OF.get_or_init(|| colours_of(Control::static_meta()))
 }
 
 /// Keeps the popup's `font` and `palette` and its item's the same: what
@@ -198,8 +209,10 @@ pub(super) fn mirror_look(
         });
     })?;
 
-    let (mine, theirs) = (popup_roles(), item_roles());
-    for i in 0..ROLE_COUNT {
+    // The colour groups too: the item resolves them from the window, and
+    // what it reads now from them (checked on qml6).
+    let (mine, theirs) = (popup_colours(), item_colours());
+    for i in 0..COLOURS {
         let (from, to) = (mine[i], theirs[i]);
         hand_down(
             engine,
@@ -210,7 +223,7 @@ pub(super) fn mirror_look(
         engine.watch(popup, from, move |e, v| hand_down(e, from, to, v))?;
     }
     engine.effect_in(popup, move |e| {
-        for i in 0..ROLE_COUNT {
+        for i in 0..COLOURS {
             let colour = e.read(item, theirs[i]);
             e.untrack(|| {
                 if !author_set(e, popup, mine[i]) {
@@ -243,8 +256,8 @@ fn of_item(popup_prop: PropIndex) -> Option<PropIndex> {
     } else if popup_prop == Popup::LOCALE.index {
         Some(Control::LOCALE.index)
     } else {
-        let i = popup_roles().iter().position(|p| *p == popup_prop)?;
-        Some(item_roles()[i])
+        let i = popup_colours().iter().position(|p| *p == popup_prop)?;
+        Some(item_colours()[i])
     }
 }
 

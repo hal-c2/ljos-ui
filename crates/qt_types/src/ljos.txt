@@ -961,6 +961,7 @@ module QtQuick
 	MouseEvent QtQuick.MouseEvent
 	NumberAnimation QtQuick.NumberAnimation
 	OpacityAnimator QtQuick.OpacityAnimator
+	Palette QtQuick.Palette
 	ParallelAnimation QtQuick.ParallelAnimation
 	ParentAnimation QtQuick.ParentAnimation
 	ParentChange QtQuick.ParentChange
@@ -1706,7 +1707,7 @@ module QtQuick
 		prop transitions QtQml.var named list
 		prop transform QtQml.var named list
 		prop layer QtQuick.ItemLayer pointer readonly
-		prop palette QtQuick.Palette pointer readonly
+		prop palette QtQuick.Palette pointer reset
 		signal xChanged
 		signal yChanged
 		signal zChanged
@@ -1871,6 +1872,52 @@ module QtQuick
 		prototype QtQuick.PropertyAnimation named
 	type QtQuick.OpacityAnimator OpacityAnimator
 		prototype QtQuick.Animator named
+	type QtQuick.Palette Palette
+		prop accent QtQuick.color named reset
+		prop alternateBase QtQuick.color named reset
+		prop base QtQuick.color named reset
+		prop brightText QtQuick.color named reset
+		prop button QtQuick.color named reset
+		prop buttonText QtQuick.color named reset
+		prop dark QtQuick.color named reset
+		prop highlight QtQuick.color named reset
+		prop highlightedText QtQuick.color named reset
+		prop light QtQuick.color named reset
+		prop link QtQuick.color named reset
+		prop linkVisited QtQuick.color named reset
+		prop mid QtQuick.color named reset
+		prop midlight QtQuick.color named reset
+		prop placeholderText QtQuick.color named reset
+		prop shadow QtQuick.color named reset
+		prop text QtQuick.color named reset
+		prop toolTipBase QtQuick.color named reset
+		prop toolTipText QtQuick.color named reset
+		prop window QtQuick.color named reset
+		prop windowText QtQuick.color named reset
+		prop active QtQuick.ColorGroup pointer reset
+		prop inactive QtQuick.ColorGroup pointer reset
+		prop disabled QtQuick.ColorGroup pointer reset
+		signal accentChanged
+		signal alternateBaseChanged
+		signal baseChanged
+		signal brightTextChanged
+		signal buttonChanged
+		signal buttonTextChanged
+		signal darkChanged
+		signal highlightChanged
+		signal highlightedTextChanged
+		signal lightChanged
+		signal linkChanged
+		signal linkVisitedChanged
+		signal midChanged
+		signal midlightChanged
+		signal placeholderTextChanged
+		signal shadowChanged
+		signal textChanged
+		signal toolTipBaseChanged
+		signal toolTipTextChanged
+		signal windowChanged
+		signal windowTextChanged
 	type QtQuick.ParallelAnimation ParallelAnimation
 		prototype QtQuick.Animation named
 		default animations
@@ -3430,53 +3477,6 @@ module QtQuick
 		signal effectChanged
 		signal textureSizeChanged
 		signal sourceRectChanged
-	type QtQuick.Palette Palette
-		is uncreatable
-		prop accent QtQuick.color named reset
-		prop alternateBase QtQuick.color named reset
-		prop base QtQuick.color named reset
-		prop brightText QtQuick.color named reset
-		prop button QtQuick.color named reset
-		prop buttonText QtQuick.color named reset
-		prop dark QtQuick.color named reset
-		prop highlight QtQuick.color named reset
-		prop highlightedText QtQuick.color named reset
-		prop light QtQuick.color named reset
-		prop link QtQuick.color named reset
-		prop linkVisited QtQuick.color named reset
-		prop mid QtQuick.color named reset
-		prop midlight QtQuick.color named reset
-		prop placeholderText QtQuick.color named reset
-		prop shadow QtQuick.color named reset
-		prop text QtQuick.color named reset
-		prop toolTipBase QtQuick.color named reset
-		prop toolTipText QtQuick.color named reset
-		prop window QtQuick.color named reset
-		prop windowText QtQuick.color named reset
-		prop active QtQuick.ColorGroup pointer readonly
-		prop inactive QtQuick.ColorGroup pointer readonly
-		prop disabled QtQuick.ColorGroup pointer readonly
-		signal accentChanged
-		signal alternateBaseChanged
-		signal baseChanged
-		signal brightTextChanged
-		signal buttonChanged
-		signal buttonTextChanged
-		signal darkChanged
-		signal highlightChanged
-		signal highlightedTextChanged
-		signal lightChanged
-		signal linkChanged
-		signal linkVisitedChanged
-		signal midChanged
-		signal midlightChanged
-		signal placeholderTextChanged
-		signal shadowChanged
-		signal textChanged
-		signal toolTipBaseChanged
-		signal toolTipTextChanged
-		signal windowChanged
-		signal windowTextChanged
 	type QtQuick.KeyNavigationAttached KeyNavigationAttached
 		is uncreatable
 		enum Priority BeforeItem=0 AfterItem=1
@@ -3553,6 +3553,50 @@ module QtQuick
 		prototype QtQml.QtObject named
 		is uncreatable
 		method update
+	type QtQuick.ColorGroup ColorGroup
+		is uncreatable
+		prop accent QtQuick.color named reset
+		prop alternateBase QtQuick.color named reset
+		prop base QtQuick.color named reset
+		prop brightText QtQuick.color named reset
+		prop button QtQuick.color named reset
+		prop buttonText QtQuick.color named reset
+		prop dark QtQuick.color named reset
+		prop highlight QtQuick.color named reset
+		prop highlightedText QtQuick.color named reset
+		prop light QtQuick.color named reset
+		prop link QtQuick.color named reset
+		prop linkVisited QtQuick.color named reset
+		prop mid QtQuick.color named reset
+		prop midlight QtQuick.color named reset
+		prop placeholderText QtQuick.color named reset
+		prop shadow QtQuick.color named reset
+		prop text QtQuick.color named reset
+		prop toolTipBase QtQuick.color named reset
+		prop toolTipText QtQuick.color named reset
+		prop window QtQuick.color named reset
+		prop windowText QtQuick.color named reset
+		signal accentChanged
+		signal alternateBaseChanged
+		signal baseChanged
+		signal brightTextChanged
+		signal buttonChanged
+		signal buttonTextChanged
+		signal darkChanged
+		signal highlightChanged
+		signal highlightedTextChanged
+		signal lightChanged
+		signal linkChanged
+		signal linkVisitedChanged
+		signal midChanged
+		signal midlightChanged
+		signal placeholderTextChanged
+		signal shadowChanged
+		signal textChanged
+		signal toolTipBaseChanged
+		signal toolTipTextChanged
+		signal windowChanged
+		signal windowTextChanged
 	type QtQuick.PathCurveElement PathCurveElement
 		prototype QtQuick.PathElement
 		is uncreatable
@@ -3770,50 +3814,6 @@ module QtQuick
 		signal widthChanged
 		signal heightChanged
 		signal visibilityChanged
-	type QtQuick.ColorGroup ColorGroup
-		is uncreatable
-		prop accent QtQuick.color named reset
-		prop alternateBase QtQuick.color named reset
-		prop base QtQuick.color named reset
-		prop brightText QtQuick.color named reset
-		prop button QtQuick.color named reset
-		prop buttonText QtQuick.color named reset
-		prop dark QtQuick.color named reset
-		prop highlight QtQuick.color named reset
-		prop highlightedText QtQuick.color named reset
-		prop light QtQuick.color named reset
-		prop link QtQuick.color named reset
-		prop linkVisited QtQuick.color named reset
-		prop mid QtQuick.color named reset
-		prop midlight QtQuick.color named reset
-		prop placeholderText QtQuick.color named reset
-		prop shadow QtQuick.color named reset
-		prop text QtQuick.color named reset
-		prop toolTipBase QtQuick.color named reset
-		prop toolTipText QtQuick.color named reset
-		prop window QtQuick.color named reset
-		prop windowText QtQuick.color named reset
-		signal accentChanged
-		signal alternateBaseChanged
-		signal baseChanged
-		signal brightTextChanged
-		signal buttonChanged
-		signal buttonTextChanged
-		signal darkChanged
-		signal highlightChanged
-		signal highlightedTextChanged
-		signal lightChanged
-		signal linkChanged
-		signal linkVisitedChanged
-		signal midChanged
-		signal midlightChanged
-		signal placeholderTextChanged
-		signal shadowChanged
-		signal textChanged
-		signal toolTipBaseChanged
-		signal toolTipTextChanged
-		signal windowChanged
-		signal windowTextChanged
 	type QtQuick.SafeMargins SafeMargins
 		is uncreatable
 		prop left QtQml.real named readonly
@@ -6059,7 +6059,7 @@ module QtQuick.Templates
 		prop enter QtQml.QtObject named pointer
 		prop exit QtQml.QtObject named pointer
 		prop font QtQuick.font named reset
-		prop palette QtQuick.Templates.Palette pointer readonly
+		prop palette QtQuick.Templates.Palette pointer reset
 		prop locale QtQml.var named reset
 		prop mirrored QtQml.bool named readonly
 		prop anchors QtQuick.Templates.PopupAnchors pointer readonly
@@ -6645,53 +6645,6 @@ module QtQuick.Templates
 		signal overlayChanged
 		signal modalChanged
 		signal modelessChanged
-	type QtQuick.Templates.Palette Palette
-		is uncreatable
-		prop accent QtQuick.color named reset
-		prop alternateBase QtQuick.color named reset
-		prop base QtQuick.color named reset
-		prop brightText QtQuick.color named reset
-		prop button QtQuick.color named reset
-		prop buttonText QtQuick.color named reset
-		prop dark QtQuick.color named reset
-		prop highlight QtQuick.color named reset
-		prop highlightedText QtQuick.color named reset
-		prop light QtQuick.color named reset
-		prop link QtQuick.color named reset
-		prop linkVisited QtQuick.color named reset
-		prop mid QtQuick.color named reset
-		prop midlight QtQuick.color named reset
-		prop placeholderText QtQuick.color named reset
-		prop shadow QtQuick.color named reset
-		prop text QtQuick.color named reset
-		prop toolTipBase QtQuick.color named reset
-		prop toolTipText QtQuick.color named reset
-		prop window QtQuick.color named reset
-		prop windowText QtQuick.color named reset
-		prop active QtQuick.Templates.ColorGroup pointer readonly
-		prop inactive QtQuick.Templates.ColorGroup pointer readonly
-		prop disabled QtQuick.Templates.ColorGroup pointer readonly
-		signal accentChanged
-		signal alternateBaseChanged
-		signal baseChanged
-		signal brightTextChanged
-		signal buttonChanged
-		signal buttonTextChanged
-		signal darkChanged
-		signal highlightChanged
-		signal highlightedTextChanged
-		signal lightChanged
-		signal linkChanged
-		signal linkVisitedChanged
-		signal midChanged
-		signal midlightChanged
-		signal placeholderTextChanged
-		signal shadowChanged
-		signal textChanged
-		signal toolTipBaseChanged
-		signal toolTipTextChanged
-		signal windowChanged
-		signal windowTextChanged
 	type QtQuick.Templates.PopupAnchors PopupAnchors
 		is uncreatable
 		prop centerIn QtQml.QtObject named pointer reset
@@ -6822,50 +6775,6 @@ module QtQuick.Templates
 		prop displacement QtQml.real named readonly
 		signal tumblerChanged
 		signal displacementChanged
-	type QtQuick.Templates.ColorGroup ColorGroup
-		is uncreatable
-		prop accent QtQuick.color named reset
-		prop alternateBase QtQuick.color named reset
-		prop base QtQuick.color named reset
-		prop brightText QtQuick.color named reset
-		prop button QtQuick.color named reset
-		prop buttonText QtQuick.color named reset
-		prop dark QtQuick.color named reset
-		prop highlight QtQuick.color named reset
-		prop highlightedText QtQuick.color named reset
-		prop light QtQuick.color named reset
-		prop link QtQuick.color named reset
-		prop linkVisited QtQuick.color named reset
-		prop mid QtQuick.color named reset
-		prop midlight QtQuick.color named reset
-		prop placeholderText QtQuick.color named reset
-		prop shadow QtQuick.color named reset
-		prop text QtQuick.color named reset
-		prop toolTipBase QtQuick.color named reset
-		prop toolTipText QtQuick.color named reset
-		prop window QtQuick.color named reset
-		prop windowText QtQuick.color named reset
-		signal accentChanged
-		signal alternateBaseChanged
-		signal baseChanged
-		signal brightTextChanged
-		signal buttonChanged
-		signal buttonTextChanged
-		signal darkChanged
-		signal highlightChanged
-		signal highlightedTextChanged
-		signal lightChanged
-		signal linkChanged
-		signal linkVisitedChanged
-		signal midChanged
-		signal midlightChanged
-		signal placeholderTextChanged
-		signal shadowChanged
-		signal textChanged
-		signal toolTipBaseChanged
-		signal toolTipTextChanged
-		signal windowChanged
-		signal windowTextChanged
 
 module QtQuick.VectorImage
 	VectorImage QtQuick.VectorImage.VectorImage

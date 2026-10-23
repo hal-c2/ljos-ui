@@ -246,10 +246,11 @@ pub fn register(engine: &Engine) {
     handlers::register(engine);
     drag::register(engine);
     drop_area::register(engine);
-    // FontLoader, SystemPalette, Qt.fontFamilies, and the platform's
-    // modules (QtQuick.Dialogs, QtCore) whose drawn dialogs are items.
+    // FontLoader, SystemPalette, a Palette to give whole, Qt.fontFamilies,
+    // and the platform's modules (QtQuick.Dialogs, QtCore) whose drawn
+    // dialogs are items.
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [
-        FontLoader, SystemPalette,
+        FontLoader, SystemPalette, Palette,
     ]));
     font_loader::register(engine);
     ljos_platform::register(engine);
