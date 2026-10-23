@@ -18,6 +18,7 @@
 //! `features/window/` and `features/controls/application-window.feature`.
 
 mod app;
+mod container;
 mod screen;
 mod system;
 
@@ -38,6 +39,7 @@ pub use app::{
     Application, ApplicationState, ScreenInfo, ScreenSpec, application_reopened,
     quit_on_last_window_closed, set_application_arguments, set_quit_on_last_window_closed,
 };
+pub use container::WindowContainer;
 pub use screen::{Screen, ScreenAttached, device_pixel_ratio};
 use system::NO_MAXIMUM;
 pub use system::{
@@ -92,6 +94,9 @@ pub(crate) struct WinState {
     normal: Cell<Option<[f64; 4]>>,
     /// Whether the window was ever shown: only then does closing it ask.
     surfaced: Cell<bool>,
+    /// The `WindowContainer` that shows it as part of its own window:
+    /// then it is an item there, with or without a host.
+    container: Cell<Option<ObjectId>>,
     /// Counts the writes of this module under way, which its own
     /// watchers let pass.
     busy: Cell<u32>,
@@ -117,6 +122,7 @@ impl Default for WinState {
             wanted: Cell::new(WINDOWED),
             normal: Cell::new(None),
             surfaced: Cell::new(false),
+            container: Cell::new(None),
             busy: Cell::new(0),
             root: Cell::new(false),
             adopted: Cell::new(false),
@@ -653,7 +659,7 @@ fn init_window(engine: &Engine, win: ObjectId) -> Result<(), EngineError> {
     st.root.set(enclosing_window(e, win).is_none());
     sys.add(win);
 
-    if is_unset(e, win, Window::TRANSIENT_PARENT.index) {
+    if is_unset(e, win, Window::TRANSIENT_PARENT.index) && st.container.get().is_none() {
         let inside = enclosing_window(e, win).map_or(Value::Null, Value::Object);
         e.write_internal(
             win,
@@ -677,7 +683,7 @@ fn init_window(engine: &Engine, win: ObjectId) -> Result<(), EngineError> {
     }
 
     // With a host a window is a tree of its own, wherever it was declared.
-    if hosted && parent.is_some() {
+    if hosted && parent.is_some() && st.container.get().is_none() {
         set_parent_item(e, win, None)?;
     }
     if !hosted && parent.is_none() {
@@ -752,8 +758,9 @@ fn init_window(engine: &Engine, win: ObjectId) -> Result<(), EngineError> {
         e.effect_in(win, move |e| {
             let sys = WindowSystem::of(e);
             let parent = e.visual_parent(win);
+            let contained = st.container.get().is_some();
             if parent.is_some() {
-                if sys.is_hosted() {
+                if sys.is_hosted() && !contained {
                     // Runs again without the parent.
                     check(e, "Window", e.untrack(|| set_parent_item(e, win, None)));
                     // Among another window's items the keys were somebody
@@ -771,7 +778,7 @@ fn init_window(engine: &Engine, win: ObjectId) -> Result<(), EngineError> {
             let visible = flag(e, win, Window::VISIBLE.index);
             // Without a host the root of what was loaded is what its scene
             // shows, shown or not; any other window is seen while shown.
-            let seen = sys.is_hosted() || st.root.get() || visible;
+            let seen = (sys.is_hosted() && !contained) || st.root.get() || visible;
             check(
                 e,
                 "Window",
@@ -957,6 +964,11 @@ pub(crate) fn register(engine: &Engine) {
         "QtQuick",
         ljos_engine::Version::new(2, 15),
         MetaRef::Static(CloseEvent::static_meta()),
+    );
+    engine.register_type(
+        "QtQuick",
+        ljos_engine::Version::new(2, 15),
+        MetaRef::Static(WindowContainer::static_meta()),
     );
     ljos_quick::register_window_position(engine, |e, item| {
         let w = window_above(e, item)?;

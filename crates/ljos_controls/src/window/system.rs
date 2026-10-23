@@ -225,11 +225,15 @@ impl WindowSystem {
         self.windows.borrow_mut().push(win);
     }
 
-    /// The windows there are, in the order they were made.
+    /// The windows there are, in the order they were made, but for those
+    /// a `WindowContainer` shows as part of another.
     pub fn windows(&self, engine: &Engine) -> Vec<ObjectId> {
         let mut all = self.windows.borrow_mut();
         all.retain(|w| engine.is_alive(*w));
-        all.clone()
+        all.iter()
+            .copied()
+            .filter(|w| state_of(engine, *w).is_some_and(|s| s.container.get().is_none()))
+            .collect()
     }
 
     /// What `win` wants to be. `None` when it is no window.

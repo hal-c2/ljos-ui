@@ -1033,6 +1033,7 @@ module QtQuick
 	WheelEvent QtQuick.WheelEvent
 	WheelHandler QtQuick.WheelHandler
 	Window QtQuick.Window
+	WindowContainer QtQuick.WindowContainer
 	XAnimator QtQuick.XAnimator
 	YAnimator QtQuick.YAnimator
 	color QtQuick.color
@@ -3107,6 +3108,11 @@ module QtQuick
 		method alert
 		method startSystemMove
 		method startSystemResize
+	type QtQuick.WindowContainer WindowContainer
+		prototype QtQuick.Item named
+		prop window QtQml.QtObject named pointer
+		signal windowChanged
+		signal containedWindowChanged window
 	type QtQuick.XAnimator XAnimator
 		prototype QtQuick.Animator named
 	type QtQuick.YAnimator YAnimator
