@@ -143,6 +143,110 @@ impl Color {
     }
 }
 
+/// `Qt.lighter` and `Qt.darker` step for step, for what shades a colour
+/// natively as a script would (a style's shades of its palette).
+impl Color {
+    /// Lighter by `percent` (150 is half as light again); below 100 it is
+    /// darker. What does not fit in the value comes off the saturation.
+    pub fn lighter(self, percent: f64) -> Color {
+        // A NaN is no factor either.
+        if percent.is_nan() || percent <= 0.0 || !self.is_valid() {
+            return self;
+        }
+        if percent < 100.0 {
+            return self.darker((10000.0 / percent).trunc());
+        }
+        let [h, mut s, mut v] = self.hsv16();
+        v = (v * percent / 100.0).trunc();
+        if v > U16 {
+            s = (s - (v - U16)).max(0.0);
+            v = U16;
+        }
+        self.with_hsv16(h, s, v)
+    }
+
+    /// Darker by `percent` (200 is half the value); below 100 it is lighter.
+    pub fn darker(self, percent: f64) -> Color {
+        if percent.is_nan() || percent <= 0.0 || !self.is_valid() {
+            return self;
+        }
+        if percent < 100.0 {
+            return self.lighter((10000.0 / percent).trunc());
+        }
+        let [h, s, v] = self.hsv16();
+        self.with_hsv16(h, s, (v * 100.0 / percent).trunc())
+    }
+
+    /// The hue in hundredths of a degree (0 for a grey), and the saturation
+    /// and value in 16 bits, as the colour's members have them.
+    pub fn hsv16(self) -> [f64; 3] {
+        let [r, g, b] = [self.r, self.g, self.b].map(f64::from);
+        let max = r.max(g).max(b);
+        let delta = max - r.min(g).min(b);
+        let (h, s) = if delta == 0.0 {
+            (-1.0, 0.0)
+        } else {
+            let mut h = if r == max {
+                (g - b) / delta
+            } else if g == max {
+                2.0 + (b - r) / delta
+            } else {
+                4.0 + (r - g) / delta
+            };
+            h *= 60.0;
+            if h < 0.0 {
+                h += 360.0;
+            }
+            let h = single((round(h * 100.0) % 36000.0) / 36000.0);
+            (h, single(round(delta / max * U16) / U16))
+        };
+        let v = single(max / U16);
+        [
+            if h < 0.0 { 0.0 } else { round(h * 36000.0) },
+            round(s * U16),
+            round(v * U16),
+        ]
+    }
+
+    /// The colour of a hue, saturation and value as [`Color::hsv16`] gives
+    /// them, with this colour's alpha.
+    pub fn with_hsv16(self, hue: f64, sat: f64, val: f64) -> Color {
+        let h = single(hue / 6000.0);
+        let i = h.floor();
+        let f = single(h - i);
+        let s = single(sat / U16);
+        let v = single(val / U16);
+        let ch = |x: f64| round(single(single(v * x) * U16));
+        let p = ch(single(1.0 - s));
+        let q = ch(single(1.0 - single(s * f)));
+        let t = ch(single(1.0 - single(s * single(1.0 - f))));
+        let a = round(single(f64::from(self.a) / U16) * U16);
+        let (r, g, b) = match i as i64 {
+            0 => (val, t, p),
+            1 => (q, val, p),
+            2 => (p, val, t),
+            3 => (p, q, val),
+            4 => (t, p, val),
+            _ => (val, p, q),
+        };
+        let c16 = |n: f64| n.clamp(0.0, U16) as u16;
+        Color::rgba16(c16(r), c16(g), c16(b), c16(a))
+    }
+}
+
+const U16: f64 = 65535.0;
+
+/// To single precision and back, as `Math.fround`.
+fn single(x: f64) -> f64 {
+    f64::from(x as f32)
+}
+
+/// `Math.round` of a number that is not negative: a half goes up.
+fn round(x: f64) -> f64 {
+    let floor = x.floor();
+    if x - floor >= 0.5 { floor + 1.0 } else { floor }
+}
+
 impl fmt::Display for Color {
     /// `#rrggbb`, or `#aarrggbb` when not opaque: what QML prints for a
     /// colour converted to a string.
