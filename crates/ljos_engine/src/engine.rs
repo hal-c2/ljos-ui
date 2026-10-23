@@ -1335,10 +1335,32 @@ impl Engine {
     /// looked up, before a binding of another of `props` that is out of
     /// date runs.
     pub fn read_values<const N: usize>(&self, obj: ObjectId, props: [PropIndex; N]) -> [Value; N] {
+        self.read_values_impl::<N, false>(obj, props).0
+    }
+
+    /// [`Engine::read_values`], with `None` for each of `props` still to be
+    /// bound on its read ([`Engine::bind_on_read`]), which stays unbound:
+    /// [`Engine::read_unless_bound_on_read`] of each, together.
+    pub fn read_values_unless_bound_on_read<const N: usize>(
+        &self,
+        obj: ObjectId,
+        props: [PropIndex; N],
+    ) -> [Option<Value>; N] {
+        let (mut out, due) = self.read_values_impl::<N, true>(obj, props);
+        std::array::from_fn(|i| (!due[i]).then(|| std::mem::take(&mut out[i])))
+    }
+
+    fn read_values_impl<const N: usize, const UNBOUND: bool>(
+        &self,
+        obj: ObjectId,
+        props: [PropIndex; N],
+    ) -> ([Value; N], [bool; N]) {
         #[derive(Clone, Copy)]
         enum Slot {
             Node(NodeId),
             Read,
+            /// Still to be bound on its read; left so.
+            Due,
             /// As [`Engine::read`] does it.
             Slow,
         }
@@ -1348,7 +1370,7 @@ impl Engine {
         {
             let store = self.inner.store.borrow();
             let Some(h) = store.objects.get(obj) else {
-                return std::array::from_fn(|_| Value::Null);
+                return (std::array::from_fn(|_| Value::Null), [false; N]);
             };
             let tracking = self.inner.tracking.get() != 0;
             for i in 0..N {
@@ -1356,6 +1378,13 @@ impl Engine {
                 let Some(p) = h.meta.property(prop) else {
                     continue;
                 };
+                if UNBOUND && !p.is_alias() && h.binds_on_read(prop) {
+                    // A write drops the binding to come, and the reader
+                    // hears of it as of any field it read.
+                    kept[i] = tracking;
+                    slots[i] = Slot::Due;
+                    continue;
+                }
                 if p.is_alias() || h.makes_on_read(prop) {
                     continue;
                 }
@@ -1380,10 +1409,15 @@ impl Engine {
         if kept.contains(&true) {
             self.keep_field_reads(obj, (0..N).filter(|&i| kept[i]).map(|i| props[i]));
         }
+        let mut due = [false; N];
         for i in 0..N {
             let v = match slots[i] {
                 Slot::Node(n) => self.inner.graph.try_get(n).unwrap_or_default(),
                 Slot::Read => std::mem::take(&mut out[i]),
+                Slot::Due => {
+                    due[i] = true;
+                    continue;
+                }
                 Slot::Slow => {
                     out[i] = self.read(obj, props[i]);
                     continue;
@@ -1391,7 +1425,7 @@ impl Engine {
             };
             out[i] = self.live(v);
         }
-        out
+        (out, due)
     }
 
     /// [`Engine::property_index`] for a caller that has no use for why

@@ -170,7 +170,22 @@ impl Engine {
     pub(crate) fn drop_maker(&self, obj: ObjectId, prop: PropIndex) {
         // Dropped outside the borrow: dropping a closure may run anything.
         let maker = self.take_maker(obj, prop);
+        let unbound = matches!(maker, Some(Maker::Bind(_)));
         drop(maker);
+        // A reader that worked out what the binding would give
+        // ([`Engine::read_unless_bound_on_read`]) is told it no longer
+        // stands, also when the value written is the one the field held.
+        let read = unbound
+            && self
+                .inner
+                .store
+                .borrow()
+                .objects
+                .get(obj)
+                .is_some_and(|h| h.read_without_node(prop));
+        if read {
+            let _ = self.notify(obj, prop);
+        }
     }
 
     /// A read of `prop` is about to happen: its value is made first if it

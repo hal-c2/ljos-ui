@@ -347,7 +347,9 @@ impl FieldReads {
                 .filter(|&i| self.runs[i as usize].node == reader)
                 .collect()
         } else {
-            self.at.get(&reader).map_or(SmallVec::new(), |a| a.iter().copied().collect())
+            self.at
+                .get(&reader)
+                .map_or(SmallVec::new(), |a| a.iter().copied().collect())
         };
         mine.into_iter()
             .map(move |i| (i as usize, &self.runs[i as usize]))
