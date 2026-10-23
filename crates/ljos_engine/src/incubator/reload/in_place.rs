@@ -386,6 +386,9 @@ impl Engine {
                 }
             }
         }
+        if let Some(why) = self.realias_held(&changed, &instances, &users) {
+            return not_here(why);
+        }
         let mut targets: Vec<Target> = Vec::new();
         for c in &changed {
             for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
@@ -1689,6 +1692,71 @@ impl Engine {
         }
     }
 
+    /// Why an alias of an object made again cannot be pointed at the new
+    /// one in place: a state or a `Binding` writes through it, or aims at
+    /// the object it stands for, and holds the old one; or a user gives an
+    /// object through it. The full path gives the new one all of that, as
+    /// a fresh load does.
+    fn realias_held(
+        &self,
+        changed: &[Changed],
+        instances: &[Rc<Instance>],
+        users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
+    ) -> Option<&'static str> {
+        let mut names: Vec<&str> = Vec::new();
+        let mut olds: Vec<ObjectId> = Vec::new();
+        for c in changed.iter().filter(|c| !c.realias.is_empty()) {
+            for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
+                let comp = c.old.ir.component(inst.comp);
+                let m = &c.objects[inst.comp.index()];
+                for (_, j, name) in c.realias.iter().filter(|r| r.0 == inst.comp) {
+                    names.push(name);
+                    let stood = m
+                        .to_old
+                        .get(*j)
+                        .copied()
+                        .flatten()
+                        .and_then(|i| comp.objects[i].properties.iter().find(|p| p.name == *name))
+                        .and_then(|p| p.alias.as_ref())
+                        .filter(|a| a.path.is_empty())
+                        .and_then(|a| a.object)
+                        .filter(|o| o.component == inst.comp)
+                        .and_then(|o| inst.objects.get(o.object.index()).copied());
+                    olds.extend(stood);
+                    if *j == 0
+                        && let Some((user, i)) = users.get(&Rc::as_ptr(inst))
+                        && gives_object_under(&user.file.ir.component(user.comp).objects[*i], name)
+                    {
+                        return Some("an object is given through an alias of an object made again");
+                    }
+                }
+            }
+        }
+        if names.is_empty() {
+            return None;
+        }
+        for inst in instances {
+            let comp = inst.file.ir.component(inst.comp);
+            for (j, od) in comp.objects.iter().enumerate() {
+                let Some(&id) = inst.objects.get(j) else {
+                    continue;
+                };
+                if !self.is_alive(id) || self.foreign_keeper(id).is_none() {
+                    continue;
+                }
+                let through = given_names(od).any(|n| n.split('.').any(|s| names.contains(&s)));
+                let aimed = !olds.is_empty()
+                    && self.property_index(id, "target").is_ok_and(|p| {
+                        matches!(self.untrack(|| self.read(id, p)), Value::Object(o) if olds.contains(&o))
+                    });
+                if through || aimed {
+                    return Some("a state or a Binding holds an object made again");
+                }
+            }
+        }
+        None
+    }
+
     /// Hands the keeper of `id` (foreign.rs), an object of `inst`, the
     /// member `name` as `od` now writes it.
     fn in_place_keep(&self, inst: &Rc<Instance>, id: ObjectId, od: &ObjectDef, name: &str) {
@@ -2128,6 +2196,21 @@ fn held_in<'d, 'n>(od: &'d ObjectDef, name: &'n str) -> Option<(&'d Members, &'n
         let rest = name.strip_prefix(a.written.as_str())?.strip_prefix('.')?;
         Some((&a.members, rest))
     })
+}
+
+/// Whether `od` gives an object to `name` or to a member under it.
+fn gives_object_under(od: &ObjectDef, name: &str) -> bool {
+    od.members
+        .objects
+        .iter()
+        .any(|o| is_or_under(&o.name, name))
+        || od.grouped.iter().any(|g| {
+            let path = g.path.join(".");
+            g.members
+                .objects
+                .iter()
+                .any(|o| is_or_under(&dotted(&path, &o.name), name))
+        })
 }
 
 fn dotted(prefix: &str, name: &str) -> String {

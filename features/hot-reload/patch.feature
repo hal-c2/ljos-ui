@@ -3503,7 +3503,9 @@ Feature: What a reload changes
 
     An object moved among its siblings is made again; an alias of it, or
     of a member of it, stands for the new one, as in a fresh load, and
-    what reads through the alias reads that.
+    what reads through the alias reads that. Where a state or a Binding
+    writes through the alias, or a user gives an object through it, the
+    roots are made again.
 
     Scenario: A user reads through aliases of an object moved before its sibling
       Given the file "Viewer.qml":
@@ -3586,6 +3588,78 @@ Feature: What a reload changes
       And a reload happens
       Then the property "seen" of "root" is "second/mine"
       And the property "x" of "box" is at least 40
+
+    Scenario: A state that holds the object made again through an alias holds the new one
+      Given the file "Viewer.qml":
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          Text { id: shown; objectName: "first"; text: "a" }
+          Item { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Viewer { id: viewer }
+          states: State {
+            name: "faded"; when: true
+            PropertyChanges { target: viewer; current.opacity: 0.5 }
+          }
+        }
+        """
+      Then the property "opacity" of "first" is 0.5
+      When the file "Viewer.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          Item { }
+          Text { id: shown; objectName: "second"; text: "a" }
+        }
+        """
+      And a reload happens
+      Then the property "opacity" of "second" is 0.5
+
+    Scenario: An object a user gives through an alias goes to the object made again
+      Given the file "Viewer.qml":
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          Text { id: shown; objectName: "first"; text: "a" }
+          Item { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Viewer {
+            id: viewer
+            current.states: State {
+              name: "wide"; when: true
+              PropertyChanges { target: viewer.current; width: 30 }
+            }
+          }
+        }
+        """
+      Then the property "width" of "first" is 30
+      When the file "Viewer.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          Item { }
+          Text { id: shown; objectName: "second"; text: "a" }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "second" is 30
 
   Rule: A value a state's PropertyChanges gives, edited, goes in place
 
