@@ -1142,10 +1142,14 @@ impl Gen<'_> {
             })
             .collect();
         // What an object or a resolved URL reads as text is its address or
-        // the directory a case runs in, which differ on every run.
+        // the directory a case runs in, which differ on every run. Qt's
+        // JSON.stringify of an object holding an item walks the item's
+        // parent, out of the case into the batch and the cases beside it.
         for a in &mut args {
             let unstable = match a {
-                Expr::Ref { prop, .. } => prop.is_empty() && matches!(label, "String" | "template"),
+                Expr::Ref { prop, .. } => {
+                    prop.is_empty() && matches!(label, "String" | "template" | "object-1")
+                }
                 Expr::Op { label: inner, .. } => {
                     *inner == "Qt.resolvedUrl" && label == "url-string"
                 }

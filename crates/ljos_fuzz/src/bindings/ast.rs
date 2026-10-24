@@ -509,12 +509,15 @@ impl Obj {
     }
 }
 
+/// The keys of an enum, with the value each is given if any.
+pub type EnumKeys = Vec<(String, Option<i64>)>;
+
 /// A whole case.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     pub root: Obj,
     /// `enum Shade { … }` of the root, with the value each key is given.
-    pub enums: Vec<(String, Vec<(String, Option<i64>)>)>,
+    pub enums: Vec<(String, EnumKeys)>,
     pub steps: Vec<Stmt>,
 }
 

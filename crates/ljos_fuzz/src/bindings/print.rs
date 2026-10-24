@@ -214,10 +214,13 @@ pub fn expr(e: &Expr) -> String {
                 {
                     chars.next();
                     let a = args.get(d as usize).map(expr).unwrap_or_default();
-                    // `1.toFixed(2)` does not parse and `--1` is a decrement:
-                    // what a template puts next to a number gets parentheses.
+                    // `1.toFixed(2)` does not parse, `typeof x.length` is not
+                    // `(typeof x).length` and `--1` is a decrement: what a
+                    // template puts before a member or after a sign gets
+                    // parentheses.
                     let signed = a.starts_with(['-', '+']);
-                    let member = chars.peek() == Some(&'.') && (signed || a.parse::<f64>().is_ok());
+                    let member = chars.peek() == Some(&'.')
+                        && (signed || a.contains(' ') || a.parse::<f64>().is_ok());
                     let sign = out.ends_with(['-', '+']) && signed;
                     if member || sign {
                         let _ = write!(out, "({a})");

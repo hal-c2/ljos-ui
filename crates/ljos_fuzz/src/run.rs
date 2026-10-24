@@ -2,7 +2,7 @@
 //! differences, shrink one case per group and write its repro.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     thread,
     time::{Duration, Instant},
@@ -185,21 +185,27 @@ pub fn run<A: Area>(area: &A, config: &Config) -> Result<Report, Error> {
     let mut tasks: Vec<(usize, Diff, usize)> = Vec::new();
     for group in &mut groups {
         group.sort_by_key(|(_, i, _)| rendered[*i].qml.len());
-        let mut seen = std::collections::BTreeSet::new();
-        let mut picked = Vec::new();
+        let mut picked: Vec<(String, usize, Diff)> = Vec::new();
         for (sig, i, d) in group.iter() {
-            if picked.len() < config.per_group && seen.insert(sig.clone()) {
-                picked.push((*i, d.clone()));
+            if picked.len() < config.per_group && picked.iter().all(|(s, _, _)| s != sig) {
+                picked.push((sig.clone(), *i, d.clone()));
             }
         }
-        // The group's cases are counted once, on its first representative.
-        let total = group
-            .iter()
-            .map(|(_, i, _)| *i)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len();
-        for (k, (i, d)) in picked.into_iter().enumerate() {
-            tasks.push((i, d, if k == 0 { total } else { 0 }));
+        // Each case is counted once: on the first representative with one
+        // of the case's signatures, or on the first of all if it has none.
+        let mut sigs: BTreeMap<usize, BTreeSet<&str>> = BTreeMap::new();
+        for (sig, i, _) in group.iter() {
+            sigs.entry(*i).or_default().insert(sig.as_str());
+        }
+        let mut counts = vec![0; picked.len()];
+        for of_case in sigs.values() {
+            let k = picked
+                .iter()
+                .position(|(s, _, _)| of_case.contains(s.as_str()));
+            counts[k.unwrap_or(0)] += 1;
+        }
+        for ((_, i, d), n) in picked.into_iter().zip(counts) {
+            tasks.push((i, d, n));
         }
     }
     tasks.truncate(config.max_buckets);
