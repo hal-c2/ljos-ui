@@ -6,6 +6,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(feature = "dev-qml")]
+use ljos_engine::QmlTextCompiler;
 use ljos_engine::{
     Engine, MapSource, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeDump, TypeEntry,
     TypeTag,
@@ -167,6 +169,81 @@ pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled
         Some(engine) => compile_found(dirs, EngineOracle::from_engine(engine)),
         None => compile_found(dirs, QtTypeOracle),
     }
+}
+
+/// Gives `Qt.createQmlObject` on `engine` a compiler (development only,
+/// the `dev-qml` feature): a text is compiled as a file at the place the
+/// script names for it, against the files under `dirs` and the native
+/// types registered on `engine` now, so it finds the types beside that
+/// place as a file there would. [`App::qml_dirs`](crate::App::qml_dirs)
+/// does this itself; an engine whose components came from
+/// [`compile_dirs`] or [`compile_quiet`] (a harness, a
+/// [`TestWindow`](crate::testing)) is given one with this call.
+///
+/// The directories are read when the first text is made, not before:
+/// most programs never make an object from text. A program without
+/// the feature has no compiler, and the call is an error its script can
+/// catch.
+#[cfg(feature = "dev-qml")]
+pub fn install_text_compiler(engine: &Engine, dirs: &[&Path]) {
+    engine.set_qml_text_compiler(Some(text_compiler(dirs, Some(engine))));
+}
+
+/// The compiler [`install_text_compiler`] installs, for a host that
+/// installs it itself (`Engine::set_qml_text_compiler`); without an
+/// `engine` against the table of types alone.
+#[cfg(feature = "dev-qml")]
+#[must_use]
+pub fn text_compiler(dirs: &[&Path], engine: Option<&Engine>) -> QmlTextCompiler {
+    match engine {
+        Some(engine) => texts(dirs, EngineOracle::from_engine(engine)),
+        None => texts(dirs, QtTypeOracle),
+    }
+}
+
+#[cfg(feature = "dev-qml")]
+pub(crate) fn texts<O: TypeOracle + Clone + 'static>(dirs: &[&Path], oracle: O) -> QmlTextCompiler {
+    use std::cell::RefCell;
+
+    use ljos_compiler::{Project, compile_text};
+    use ljos_engine::{QmlText, QmlTextError};
+
+    fn errors(diagnostics: &[ljos_compiler::Diagnostic]) -> Vec<QmlTextError> {
+        diagnostics
+            .iter()
+            .filter(|d| d.severity == ljos_compiler::Severity::Error)
+            .map(|d| QmlTextError {
+                line: d.span.line,
+                column: d.span.column,
+                message: d.message.clone(),
+            })
+            .collect()
+    }
+
+    let dirs: Vec<PathBuf> = dirs.iter().map(|d| d.to_path_buf()).collect();
+    let project: RefCell<Option<Project<O>>> = RefCell::new(None);
+    std::rc::Rc::new(move |text: QmlText<'_>| {
+        let mut project = project.borrow_mut();
+        let project = match &mut *project {
+            Some(project) => project,
+            empty => {
+                let roots: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+                let loaded = Project::load_roots(&roots, oracle.clone()).map_err(|e| {
+                    vec![QmlTextError {
+                        line: 0,
+                        column: 0,
+                        message: e.to_string(),
+                    }]
+                })?;
+                empty.insert(loaded)
+            }
+        };
+        match compile_text(project, text.key, text.text) {
+            Ok(compiled) if !compiled.has_errors() => Ok(compiled.file),
+            Ok(compiled) => Err(errors(&compiled.diagnostics)),
+            Err(diagnostics) => Err(errors(&diagnostics)),
+        }
+    })
 }
 
 pub(crate) fn compile_found<O: TypeOracle>(dirs: &[&Path], oracle: O) -> Result<Compiled, String> {

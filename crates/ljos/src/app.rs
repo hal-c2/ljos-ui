@@ -70,6 +70,10 @@ pub struct App<M = ()> {
     qml_errors: crate::dev::OnError,
     #[cfg(feature = "dev-qml")]
     qml_diagnostics: Option<DiagnosticsHandler>,
+    /// What `Qt.createQmlObject` compiles with, over the directories
+    /// `qml_dirs` compiled.
+    #[cfg(feature = "dev-qml")]
+    texts: Option<ljos_engine::QmlTextCompiler>,
     #[cfg(feature = "mcp")]
     inspector: Option<crate::mcp::CapSet>,
     modules: Vec<Module>,
@@ -112,6 +116,8 @@ impl App<()> {
             qml_errors: crate::dev::OnError::Record,
             #[cfg(feature = "dev-qml")]
             qml_diagnostics: None,
+            #[cfg(feature = "dev-qml")]
+            texts: None,
             #[cfg(feature = "mcp")]
             inspector: None,
             modules: Vec::new(),
@@ -282,6 +288,12 @@ impl<M> App<M> {
     /// [`OnError::Fail`](crate::dev::OnError::Fail) before this
     /// call makes any error fail `qml_dir` instead. `Err` also when
     /// the directory cannot be read.
+    ///
+    /// The Engine is given a compiler for `Qt.createQmlObject` over the
+    /// same directories and types
+    /// ([`install_text_compiler`](crate::dev::install_text_compiler)),
+    /// so QML a program holds as text, a user's own file read at run
+    /// time, can be made, with the types beside the place it is given.
     #[cfg(feature = "dev-qml")]
     pub fn qml_dir(
         self,
@@ -326,6 +338,7 @@ impl<M> App<M> {
             }
         }
         self.source = Some(crate::compile::checked(&dirs, compiled, self.qml_errors)?);
+        self.texts = Some(crate::dev::text_compiler(&dirs, Some(&snapshot)));
         self.root = Some(root.into());
         Ok(self)
     }
@@ -423,6 +436,8 @@ impl<M> App<M> {
             qml_errors,
             #[cfg(feature = "dev-qml")]
             qml_diagnostics,
+            #[cfg(feature = "dev-qml")]
+            texts,
             #[cfg(feature = "mcp")]
             inspector,
             modules,
@@ -441,6 +456,8 @@ impl<M> App<M> {
             qml_errors,
             #[cfg(feature = "dev-qml")]
             qml_diagnostics,
+            #[cfg(feature = "dev-qml")]
+            texts,
             #[cfg(feature = "mcp")]
             inspector,
             modules,
@@ -461,10 +478,14 @@ impl<M> App<M> {
             source,
             context,
             on_window,
+            #[cfg(feature = "dev-qml")]
+            texts,
             ..
         } = self;
         let engine = crate::engine();
         prepare(&engine, modules, source, context, on_window);
+        #[cfg(feature = "dev-qml")]
+        engine.set_qml_text_compiler(texts);
         engine
     }
 
@@ -531,6 +552,8 @@ impl<M> App<M> {
             mut on_message,
             #[cfg(feature = "mcp")]
             inspector,
+            #[cfg(feature = "dev-qml")]
+            texts,
             ..
         } = self;
         #[cfg(feature = "mcp")]
@@ -551,6 +574,10 @@ impl<M> App<M> {
             // `prepare` must not register them a second time, so it
             // is the same function `build_engine` uses on its own.
             prepare(s.engine(), modules, source, context, on_window);
+            #[cfg(feature = "dev-qml")]
+            if texts.is_some() {
+                s.engine().set_qml_text_compiler(texts);
+            }
             if let Some(handler) = on_message.take() {
                 s.on_message(handler);
             }
