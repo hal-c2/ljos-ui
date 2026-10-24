@@ -451,14 +451,17 @@ impl TapHandler {
 
     /// `tapped(eventPoint, button)`. Deviation: `eventPoint` is the
     /// scene position as a `point`, not Qt's `eventPoint` value type.
+    /// The button has no name, as in Qt: a handler that does not declare
+    /// it is not given it, and `button` is whatever the document calls so.
     #[qml(signal)]
-    fn tapped(event_point: Point, button: i32);
+    fn tapped(event_point: Point, _: i32);
     #[qml(signal, name = "singleTapped")]
-    fn single_tapped(event_point: Point, button: i32);
+    fn single_tapped(event_point: Point, _: i32);
     #[qml(signal, name = "doubleTapped")]
-    fn double_tapped(event_point: Point, button: i32);
+    fn double_tapped(event_point: Point, _: i32);
+    /// `canceled(point)`: Qt names it `point`, not `eventPoint`.
     #[qml(signal)]
-    fn canceled(event_point: Point);
+    fn canceled(point: Point);
     /// The press was held for `longPressThreshold`.
     #[qml(signal, name = "longPressed")]
     fn long_pressed();

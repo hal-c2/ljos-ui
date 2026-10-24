@@ -90,7 +90,9 @@
 //!
 //! - `#[qml(signal)] fn pressed(x: f64, y: f64);` declares a signal (the
 //!   declaration has no body and is removed) and generates
-//!   `emit_pressed(cx, x, y)`;
+//!   `emit_pressed(cx, x, y)`. A parameter written `_` has no name: a
+//!   handler that does not declare its parameters is given the named ones
+//!   only, as Qt gives a handler only those its signal names;
 //! - `#[qml(invokable)]` exposes a method to QML and JS;
 //! - `#[qml(on_complete)]` marks the completion hook.
 //!
@@ -1072,6 +1074,8 @@ fn shape(sig: &Signature) -> Result<Shape> {
                 }
                 let name = match &*pt.pat {
                     Pat::Ident(pi) => camel(&pi.ident.to_string()),
+                    // No name, as a parameter of a C++ signal can be.
+                    Pat::Wild(_) => String::new(),
                     _ => format!("arg{}", s.args.len()),
                 };
                 s.args.push((name, (*pt.ty).clone()));

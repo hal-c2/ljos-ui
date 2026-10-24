@@ -440,7 +440,7 @@ module QtMultimedia
 		prop videoSize QtQml.size named readonly
 		signal subtitleTextChanged
 		signal videoSizeChanged
-		signal videoFrameChanged frame
+		signal videoFrameChanged _
 
 module QtNetwork
 	NetworkInformation QtNetwork.NetworkInformation
@@ -2784,10 +2784,10 @@ module QtQuick
 		signal longPressThresholdChanged
 		signal timeHeldChanged
 		signal pointChanged
-		signal tapped eventPoint button
-		signal singleTapped eventPoint button
-		signal doubleTapped eventPoint button
-		signal canceled eventPoint
+		signal tapped eventPoint _
+		signal singleTapped eventPoint _
+		signal doubleTapped eventPoint _
+		signal canceled point
 		signal longPressed
 	type QtQuick.Text Text
 		prototype QtQuick.Item named

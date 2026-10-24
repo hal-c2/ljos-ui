@@ -977,6 +977,23 @@ fn what_qt_says_of_a_type_ljos_has() {
                     ));
                 }
             }
+            // The names a handler that declares no parameters is given:
+            // one Qt's signal does not name is the document's name there.
+            for signal in meta.own_signals() {
+                let Some(in_qt) = oracle.signal(ty, &signal.name) else {
+                    continue;
+                };
+                let in_ljos: Vec<String> =
+                    signal.params.iter().map(|(p, _)| p.to_string()).collect();
+                // Fewer arguments than Qt passes is not this test's to say;
+                // a name Qt does not give is.
+                if in_ljos.iter().any(|n| !n.is_empty() && !in_qt.contains(n)) {
+                    differences.push((
+                        format!("{uri}.{name}.{}", signal.name),
+                        format!("Ljós gives a handler {in_ljos:?}, Qt {in_qt:?}"),
+                    ));
+                }
+            }
         }
     }
     differences.sort();

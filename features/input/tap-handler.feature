@@ -66,3 +66,33 @@ Feature: TapHandler
     When the user touches 10, 10
     Then the property "taps" of "root" is 1
     And the property "clicks" of "root" is 1
+
+  # Qt's runner agrees: crates/ljos_test/tests/qml/suite/tst_tap_handler_arguments.qml.
+  Scenario: An id named like the button is the object
+    The button tapped passes has no name, so a handler that does not declare
+    it is not given it, and `button` is the document's id.
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        property int n: 0
+        property var declared: "none"
+        Rectangle {
+          id: button
+          signal clicked
+          width: 24; height: 24
+          TapHandler { onTapped: button.clicked() }
+          onClicked: parent.n++
+        }
+        Rectangle {
+          x: 50; width: 24; height: 24
+          TapHandler { onTapped: (eventPoint, button) => root.declared = button }
+        }
+      }
+      """
+    When the user touches 5, 5
+    And the user touches 55, 5
+    Then the property "n" of "root" is 1
+    And the property "declared" of "root" is 1

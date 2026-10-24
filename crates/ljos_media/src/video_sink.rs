@@ -60,9 +60,11 @@ impl Default for VideoSink {
 
 #[qml_impl]
 impl VideoSink {
-    /// QML sees no value in `frame`: a `QVideoFrame` is not a QML type.
+    /// QML sees no value in the frame: a `QVideoFrame` is not a QML type.
+    /// Qt's VideoSink declares the signal again without the parameter, so
+    /// a handler is not given a `frame` by name.
     #[qml(signal, name = "videoFrameChanged")]
-    fn video_frame_changed(frame: Value);
+    fn video_frame_changed(_: Value);
 }
 
 /// Makes a sink for `output`, which shows what it is given.

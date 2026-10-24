@@ -894,7 +894,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     QmlBindingValue::Statement(s) => (Form::Statement, s.span()),
                     _ => unreachable!("matched above"),
                 };
-                let args = self.signal_args(owner, &slot, &signal);
+                let args = self.signal_args(owner, &slot, &signal).map(unnamed_placed);
                 let expr = self.expr(BindingKind::Handler, form, span, args, &target);
                 self.members_mut(at, &slot).handlers.push(Handler {
                     signal,
@@ -2975,4 +2975,22 @@ fn declared_name(type_name: &str, is_list: bool) -> String {
     } else {
         type_name.to_string()
     }
+}
+
+/// A handler's parameters as its function takes them: a parameter of the
+/// signal without a name (`tapped(eventPoint, _)`) is taken in its place
+/// under a name no document is written with, so it is passed but not given
+/// by name, and the name stays the document's (an id `button`), as in Qt.
+fn unnamed_placed(names: Vec<String>) -> Vec<String> {
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(i, name)| {
+            if name.is_empty() {
+                format!("$unnamed{i}")
+            } else {
+                name
+            }
+        })
+        .collect()
 }
