@@ -500,10 +500,8 @@ fn attached_created(e: &Engine, owner: ObjectId, att: ObjectId) -> Result<(), En
 }
 
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, owner, att| {
-        if is_a::<ToolTipAttached>(e, att) {
-            check(e, "ToolTip", attached_created(e, owner, att));
-        }
+    engine.on_attached_created_of::<ToolTipAttached>(|e, owner, att| {
+        check(e, "ToolTip", attached_created(e, owner, att));
         true
     });
 }

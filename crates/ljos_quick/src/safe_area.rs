@@ -17,7 +17,7 @@ use std::rc::Rc;
 
 use ljos_engine::{Engine, LogLevel, NodeId, ObjectId, PropIndex, QmlObject, Value, WriteKind};
 
-use crate::item::{Item, is_a};
+use crate::item::Item;
 use crate::scene::SCENE_CATEGORY;
 
 /// `SafeArea` (QtQuick): only ever used attached.
@@ -185,10 +185,7 @@ fn compute(engine: &Engine, item: ObjectId, own: ObjectId) -> [f64; 4] {
 /// Makes `margins` follow the item's place and what is asked of the
 /// area.
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, item, att| {
-        if !is_a::<SafeAreaAttached>(e, att) {
-            return true;
-        }
+    engine.on_attached_created_of::<SafeAreaAttached>(|e, item, att| {
         let s = state(e);
         let leaves: Vec<PropIndex> = ["left", "top", "right", "bottom"]
             .iter()

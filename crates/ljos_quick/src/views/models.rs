@@ -648,10 +648,8 @@ pub(crate) fn register(engine: &Engine) {
     ] {
         engine.register_type("QtQml.Models", Version::new(2, 0), MetaRef::Static(meta));
     }
-    engine.on_attached_created(|e, item, att| {
-        if is_a::<DelegateModelAttached>(e, att) {
-            delegate_groups::attached_created(e, item, att);
-        }
+    engine.on_attached_created_of::<DelegateModelAttached>(|e, item, att| {
+        delegate_groups::attached_created(e, item, att);
         true
     });
 }

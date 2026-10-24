@@ -253,24 +253,22 @@ fn state_assigned(engine: &Engine, group: ObjectId, s: i32) -> Result<(), Engine
 
 /// Follows `ButtonGroup.group` on buttons.
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, owner, att| {
-        if is_a::<ButtonGroupAttached>(e, att) {
-            let p = ButtonGroupAttached::GROUP.index;
-            let r = e.watch(att, p, move |e, v| {
-                if !e.is_alive(owner) || !is_a::<AbstractButton>(e, owner) {
-                    return;
-                }
-                let r = match v.as_object().filter(|g| is_a::<ButtonGroup>(e, *g)) {
-                    Some(g) => add(e, g, owner),
-                    None => match group_of(e, owner) {
-                        Some(g) if e.is_alive(g) => remove(e, g, owner),
-                        _ => Ok(()),
-                    },
-                };
-                check(e, "ButtonGroup.group", r);
-            });
-            check(e, "ButtonGroup.group", r.map(|_| ()));
-        }
+    engine.on_attached_created_of::<ButtonGroupAttached>(|e, owner, att| {
+        let p = ButtonGroupAttached::GROUP.index;
+        let r = e.watch(att, p, move |e, v| {
+            if !e.is_alive(owner) || !is_a::<AbstractButton>(e, owner) {
+                return;
+            }
+            let r = match v.as_object().filter(|g| is_a::<ButtonGroup>(e, *g)) {
+                Some(g) => add(e, g, owner),
+                None => match group_of(e, owner) {
+                    Some(g) if e.is_alive(g) => remove(e, g, owner),
+                    _ => Ok(()),
+                },
+            };
+            check(e, "ButtonGroup.group", r);
+        });
+        check(e, "ButtonGroup.group", r.map(|_| ()));
         true
     });
 }

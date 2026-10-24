@@ -2273,47 +2273,47 @@ pub(crate) fn register(engine: &Engine) {
     // what its author gives it does, and the watches below hear that.
     // Bumping here re-ran every other one's sync for each delegate a view
     // or a popup made, which is quadratic in what it makes.
-    engine.on_attached_created(|e, _owner, att| {
-        if is_a::<MaterialAttached>(e, att) {
-            for prop in [
-                MaterialAttached::THEME.index,
-                MaterialAttached::PRIMARY.index,
-                MaterialAttached::ACCENT.index,
-                MaterialAttached::FOREGROUND.index,
-                MaterialAttached::BACKGROUND.index,
-            ] {
-                let _ = e.watch(att, prop, move |e, _| {
-                    if matches!(
-                        e.provenance(att, prop),
-                        Some(Provenance::Assigned | Provenance::Bound)
-                    ) {
-                        given_where_passed(e, att);
-                    }
-                });
-            }
-            let _ = e.effect_in(att, move |e| {
-                sync_material(e, att);
-            });
-        } else if is_a::<UniversalAttached>(e, att) {
-            for prop in [
-                UniversalAttached::THEME.index,
-                UniversalAttached::ACCENT.index,
-                UniversalAttached::FOREGROUND.index,
-                UniversalAttached::BACKGROUND.index,
-            ] {
-                let _ = e.watch(att, prop, move |e, _| {
-                    if matches!(
-                        e.provenance(att, prop),
-                        Some(Provenance::Assigned | Provenance::Bound)
-                    ) {
-                        given_where_passed(e, att);
-                    }
-                });
-            }
-            let _ = e.effect_in(att, move |e| {
-                sync_universal(e, att);
+    engine.on_attached_created_of::<MaterialAttached>(|e, _owner, att| {
+        for prop in [
+            MaterialAttached::THEME.index,
+            MaterialAttached::PRIMARY.index,
+            MaterialAttached::ACCENT.index,
+            MaterialAttached::FOREGROUND.index,
+            MaterialAttached::BACKGROUND.index,
+        ] {
+            let _ = e.watch(att, prop, move |e, _| {
+                if matches!(
+                    e.provenance(att, prop),
+                    Some(Provenance::Assigned | Provenance::Bound)
+                ) {
+                    given_where_passed(e, att);
+                }
             });
         }
+        let _ = e.effect_in(att, move |e| {
+            sync_material(e, att);
+        });
+        true
+    });
+    engine.on_attached_created_of::<UniversalAttached>(|e, _owner, att| {
+        for prop in [
+            UniversalAttached::THEME.index,
+            UniversalAttached::ACCENT.index,
+            UniversalAttached::FOREGROUND.index,
+            UniversalAttached::BACKGROUND.index,
+        ] {
+            let _ = e.watch(att, prop, move |e, _| {
+                if matches!(
+                    e.provenance(att, prop),
+                    Some(Provenance::Assigned | Provenance::Bound)
+                ) {
+                    given_where_passed(e, att);
+                }
+            });
+        }
+        let _ = e.effect_in(att, move |e| {
+            sync_universal(e, att);
+        });
         true
     });
 }

@@ -9,7 +9,6 @@
 use ljos_engine::{Engine, LogLevel, ObjectId, QmlObject, Value};
 
 use super::tree;
-use crate::item::is_a;
 
 /// `Window` (QtQuick), attached only.
 #[derive(Debug, Default, QmlObject)]
@@ -66,10 +65,7 @@ fn visibility_enum() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
 /// Binds the attached properties to the window the item is in. The
 /// bindings read the item's parents, so they follow it to another window.
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, obj, att| {
-        if !is_a::<WindowAttached>(e, att) {
-            return true;
-        }
+    engine.on_attached_created_of::<WindowAttached>(|e, obj, att| {
         let focus = e.bind_initial(att, WindowAttached::ACTIVE_FOCUS_ITEM.index, move |e| {
             let root = tree::top_of(e, obj);
             tree::window_nodes(e, root)

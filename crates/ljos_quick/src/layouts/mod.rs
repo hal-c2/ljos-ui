@@ -520,16 +520,14 @@ pub(crate) fn managed(engine: &Engine, obj: ObjectId) -> bool {
 /// A child that gets its `Layout` object after its layout was measured
 /// makes the layout measure again.
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, item, att| {
-        if is_a::<LayoutAttached>(e, att) {
-            proxy::setup_proxy_attached(e, item, att);
-            if let Some(parent) = e.untrack(|| e.visual_parent(item))
-                && kind(e, parent).is_some()
-            {
-                // Not worth a warning: the layout then sees the object the
-                // next time anything else changes.
-                let _ = e.notify(parent, Item::CHILDREN.index);
-            }
+    engine.on_attached_created_of::<LayoutAttached>(|e, item, att| {
+        proxy::setup_proxy_attached(e, item, att);
+        if let Some(parent) = e.untrack(|| e.visual_parent(item))
+            && kind(e, parent).is_some()
+        {
+            // Not worth a warning: the layout then sees the object the
+            // next time anything else changes.
+            let _ = e.notify(parent, Item::CHILDREN.index);
         }
         true
     });

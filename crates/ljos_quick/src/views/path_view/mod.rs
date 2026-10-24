@@ -28,7 +28,7 @@ use ljos_engine::{
 use super::state::position_mode;
 use super::{models, warn};
 use crate::enums::EnumTable;
-use crate::item::{Item, is_a, write_computed};
+use crate::item::{Item, write_computed};
 use track::Track;
 
 pub(crate) use drag::steal;
@@ -580,10 +580,8 @@ pub(crate) fn register(engine: &Engine) {
         MetaRef::Static(PathView::static_meta()),
         drag::hooks(),
     );
-    engine.on_attached_created(|e, item, att| {
-        if is_a::<PathViewAttached>(e, att) {
-            tell_attached(e, item, att);
-        }
+    engine.on_attached_created_of::<PathViewAttached>(|e, item, att| {
+        tell_attached(e, item, att);
         true
     });
 }

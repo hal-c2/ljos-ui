@@ -701,10 +701,7 @@ pub(crate) fn register(engine: &Engine) {
     register_accessible_item(engine, meta(), AccessibleItem { describe, act });
     // A delegate that reads `Tumbler.` is told what it is in at once, and
     // follows the rows after.
-    engine.on_attached_created(|e, item, att| {
-        if !is_a::<TumblerAttached>(e, att) {
-            return true;
-        }
+    engine.on_attached_created_of::<TumblerAttached>(|e, item, att| {
         let found = move |e: &Engine| tumbler_above(e, item);
         let r = e
             .bind_initial(att, TumblerAttached::TUMBLER.index, move |e| {

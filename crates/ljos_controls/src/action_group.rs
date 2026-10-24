@@ -342,24 +342,22 @@ pub(crate) fn triggered(engine: &Engine, action: ObjectId) -> Result<(), EngineE
 
 /// Follows `ActionGroup.group` on actions.
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, owner, att| {
-        if is_a::<ActionGroupAttached>(e, att) {
-            let p = ActionGroupAttached::GROUP.index;
-            let r = e.watch(att, p, move |e, v| {
-                if !e.is_alive(owner) || !is_a::<Action>(e, owner) {
-                    return;
-                }
-                let r = match v.as_object().filter(|g| is_a::<ActionGroup>(e, *g)) {
-                    Some(g) => add(e, g, owner),
-                    None => match group_of(e, owner) {
-                        Some(g) => remove(e, g, owner),
-                        None => Ok(()),
-                    },
-                };
-                check(e, "ActionGroup.group", r);
-            });
-            check(e, "ActionGroup.group", r.map(|_| ()));
-        }
+    engine.on_attached_created_of::<ActionGroupAttached>(|e, owner, att| {
+        let p = ActionGroupAttached::GROUP.index;
+        let r = e.watch(att, p, move |e, v| {
+            if !e.is_alive(owner) || !is_a::<Action>(e, owner) {
+                return;
+            }
+            let r = match v.as_object().filter(|g| is_a::<ActionGroup>(e, *g)) {
+                Some(g) => add(e, g, owner),
+                None => match group_of(e, owner) {
+                    Some(g) => remove(e, g, owner),
+                    None => Ok(()),
+                },
+            };
+            check(e, "ActionGroup.group", r);
+        });
+        check(e, "ActionGroup.group", r.map(|_| ()));
         true
     });
 }

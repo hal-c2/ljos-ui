@@ -492,32 +492,30 @@ struct PlacedPart {
 
 /// Gives every new `Accessible` object its role-dependent `focusable`.
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, _, att| {
-        if is_a::<AccessibleAttached>(e, att) {
-            // A binding, so that it follows the role and an assignment
-            // replaces it. It is in place before the creator applies the
-            // item's own `Accessible.focusable`.
-            //
-            // Qt turns the default on with a focusable role and never off
-            // again: a button that becomes a slider stays focusable.
-            let was = Cell::new(false);
-            let r = e.bind(att, AccessibleAttached::FOCUSABLE.index, move |e| {
-                let role = e.read(att, AccessibleAttached::ROLE.index).to_number() as i32;
-                if Role::from_qt(role).is_some_and(Role::focusable_by_default) {
-                    was.set(true);
-                }
-                Value::Bool(was.get())
-            });
-            if let Err(err) = r {
-                e.log(
-                    LogLevel::Warning,
-                    SCENE_CATEGORY,
-                    format!("Accessible.focusable has no default: {err}"),
-                );
+    engine.on_attached_created_of::<AccessibleAttached>(|e, _, att| {
+        // A binding, so that it follows the role and an assignment
+        // replaces it. It is in place before the creator applies the
+        // item's own `Accessible.focusable`.
+        //
+        // Qt turns the default on with a focusable role and never off
+        // again: a button that becomes a slider stays focusable.
+        let was = Cell::new(false);
+        let r = e.bind(att, AccessibleAttached::FOCUSABLE.index, move |e| {
+            let role = e.read(att, AccessibleAttached::ROLE.index).to_number() as i32;
+            if Role::from_qt(role).is_some_and(Role::focusable_by_default) {
+                was.set(true);
             }
-            if let Err(err) = follow_role(e, att).and_then(|()| mirror_labels(e, att)) {
-                warn(e, format!("Accessible has no defaults: {err}"));
-            }
+            Value::Bool(was.get())
+        });
+        if let Err(err) = r {
+            e.log(
+                LogLevel::Warning,
+                SCENE_CATEGORY,
+                format!("Accessible.focusable has no default: {err}"),
+            );
+        }
+        if let Err(err) = follow_role(e, att).and_then(|()| mirror_labels(e, att)) {
+            warn(e, format!("Accessible has no defaults: {err}"));
         }
         true
     });
@@ -779,14 +777,11 @@ impl A11yPass {
             });
         let pending = Rc::downgrade(&self.pending);
         let wake = Rc::clone(&self.wake);
-        engine.on_attached_created(move |e, obj, att| {
+        engine.on_attached_created_of::<AccessibleAttached>(move |_, obj, _| {
             let Some(pending) = pending.upgrade() else {
                 // The scene is gone.
                 return false;
             };
-            if !is_a::<AccessibleAttached>(e, att) {
-                return true;
-            }
             let active = {
                 let mut p = pending.borrow_mut();
                 if p.active {

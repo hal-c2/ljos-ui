@@ -106,7 +106,8 @@ pub(crate) struct Inner {
     /// [`Engine::retranslate`].
     pub(crate) translation: Cell<Option<NodeId>>,
     pub(crate) parent_listeners: RefCell<Vec<ParentListener>>,
-    pub(crate) attached_listeners: RefCell<Vec<AttachedListener>>,
+    /// Each with the type of attached object it is for, if only one.
+    pub(crate) attached_listeners: RefCell<Vec<(Option<&'static MetaObject>, AttachedListener)>>,
     /// Set by the first `Component.onDestruction` handler, so destroying
     /// objects costs nothing extra in an engine that has none.
     pub(crate) destruction_handlers: Cell<bool>,
@@ -3092,8 +3093,19 @@ impl Engine {
         self.inner.store.borrow_mut().objects[obj]
             .attached
             .push((key, a));
-        // Called unborrowed: a listener may attach something itself.
-        let listeners = self.inner.attached_listeners.borrow().clone();
+        // Called unborrowed: a listener may attach something itself. Most
+        // are for one type, so only a few are picked out.
+        let listeners: SmallVec<[AttachedListener; 4]> = {
+            let store = self.inner.store.borrow();
+            let meta = &store.objects[a].meta;
+            self.inner
+                .attached_listeners
+                .borrow()
+                .iter()
+                .filter(|(ty, _)| ty.is_none_or(|t| meta.inherits(t)))
+                .map(|(_, l)| Rc::clone(l))
+                .collect()
+        };
         let mut done = Vec::new();
         for l in &listeners {
             if !l(self, obj, a) {
@@ -3104,7 +3116,7 @@ impl Engine {
             self.inner
                 .attached_listeners
                 .borrow_mut()
-                .retain(|l| !done.iter().any(|d| Rc::ptr_eq(d, l)));
+                .retain(|(_, l)| !done.iter().any(|d| Rc::ptr_eq(d, l)));
         }
         Ok(a)
     }
@@ -3126,7 +3138,23 @@ impl Engine {
     /// that there is something now. `f` is forgotten once it returns
     /// false, so a listener whose owner is gone costs nothing afterwards.
     pub fn on_attached_created(&self, f: impl Fn(&Engine, ObjectId, ObjectId) -> bool + 'static) {
-        self.inner.attached_listeners.borrow_mut().push(Rc::new(f));
+        self.inner
+            .attached_listeners
+            .borrow_mut()
+            .push((None, Rc::new(f)));
+    }
+
+    /// [`Engine::on_attached_created`] for attached objects of type `T`, or
+    /// one derived from it, only: an item may have many attached objects,
+    /// and the listeners for the other types are not called for it.
+    pub fn on_attached_created_of<T: QmlType>(
+        &self,
+        f: impl Fn(&Engine, ObjectId, ObjectId) -> bool + 'static,
+    ) {
+        self.inner
+            .attached_listeners
+            .borrow_mut()
+            .push((Some(T::static_meta()), Rc::new(f)));
     }
 
     // ------------------------------------------------------------ contexts

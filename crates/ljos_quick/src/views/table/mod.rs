@@ -1154,10 +1154,8 @@ pub(crate) fn register(engine: &Engine) {
     crate::focus::register_focus_scope(engine, meta.clone());
     crate::keys::register_key_item(engine, meta.clone(), nav::key_hooks());
     crate::pointer_item::register_pointer_item(engine, meta, nav::pointer_hooks());
-    engine.on_attached_created(|e, item, att| {
-        if is_a::<TableViewAttached>(e, att)
-            && let Some(view) = view_of(e, item)
-        {
+    engine.on_attached_created_of::<TableViewAttached>(|e, item, att| {
+        if let Some(view) = view_of(e, item) {
             tell_attached(e, view, att);
         }
         true

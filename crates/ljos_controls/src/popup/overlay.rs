@@ -402,10 +402,7 @@ pub(super) fn register(engine: &Engine) {
         },
     );
     ljos_quick::set_layer_take(engine, super::drawer_drag::take);
-    engine.on_attached_created(|e, owner, att| {
-        if !is_a::<OverlayAttached>(e, att) {
-            return true;
-        }
+    engine.on_attached_created_of::<OverlayAttached>(|e, owner, att| {
         let bound = e.bind_initial(att, OverlayAttached::OVERLAY.index, move |e| {
             // On a popup it is the overlay the popup is shown in. Its
             // parent is peeked, not read: `parent: Overlay.overlay` is

@@ -228,10 +228,7 @@ fn pairs() -> [(PropIndex, PropIndex, Value); 15] {
 }
 
 pub(super) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, obj, att| {
-        if !is_a::<ScreenAttached>(e, att) {
-            return true;
-        }
+    engine.on_attached_created_of::<ScreenAttached>(|e, obj, att| {
         for (own, theirs, none) in pairs() {
             let bound = e.bind_initial(att, own, move |e| {
                 screen_of(e, obj).map_or_else(|| none.clone(), |s| e.read(s, theirs))

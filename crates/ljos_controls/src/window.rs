@@ -954,8 +954,8 @@ fn bind_attached(engine: &Engine, item: ObjectId, att: ObjectId) -> Result<(), E
 }
 
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, item, att| {
-        if is_a::<WindowAttached>(e, att) && is_item(e, item) {
+    engine.on_attached_created_of::<WindowAttached>(|e, item, att| {
+        if is_item(e, item) {
             check(e, "Window", bind_attached(e, item, att));
         }
         true

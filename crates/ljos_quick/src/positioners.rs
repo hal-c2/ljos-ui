@@ -1279,9 +1279,8 @@ fn tell_one(
 /// A child the positioner has not placed yet (it has only just become
 /// one) has no place until the positioner runs again.
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, item, att| {
-        if is_a::<PositionerAttached>(e, att)
-            && let Some(parent) = e.untrack(|| e.visual_parent(item))
+    engine.on_attached_created_of::<PositionerAttached>(|e, item, att| {
+        if let Some(parent) = e.untrack(|| e.visual_parent(item))
             && let Some(which) = which(e, parent)
         {
             let place = with_placed(e, parent, which, |last| {

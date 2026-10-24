@@ -26,7 +26,7 @@ use ljos_render::kurbo;
 
 use crate::drop_area::{self, DragData, Offer, Tracker};
 use crate::handlers::EnumTable;
-use crate::item::{Item, is_a, scene_transform};
+use crate::item::{Item, scene_transform};
 use crate::scene::SCENE_CATEGORY;
 
 /// `Drag.DragType`.
@@ -461,10 +461,7 @@ fn schedule(engine: &Engine, att: ObjectId, st: &DragState) {
 /// drags, whether a script or a binding sets it.
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [Drag]));
-    engine.on_attached_created(|e, owner, att| {
-        if !is_a::<DragAttached>(e, att) {
-            return true;
-        }
+    engine.on_attached_created_of::<DragAttached>(|e, owner, att| {
         let _ = e.write_internal(
             att,
             DragAttached::SOURCE.index,

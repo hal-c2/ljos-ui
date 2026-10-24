@@ -12,7 +12,7 @@ use ljos_engine::{
 
 use super::key;
 use crate::enums::EnumTable;
-use crate::item::{is_a, is_unset};
+use crate::item::is_unset;
 
 /// `Keys.priority` and `KeyNavigation.priority`: before or after the
 /// item's own key handling.
@@ -287,10 +287,7 @@ fn pairs() -> [(PropIndex, PropIndex); 6] {
 /// it, unless that item says otherwise itself (the documentation's
 /// "implicitly set the other direction").
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, obj, att| {
-        if !is_a::<KeyNavigationAttached>(e, att) {
-            return true;
-        }
+    engine.on_attached_created_of::<KeyNavigationAttached>(|e, obj, att| {
         for (prop, back) in pairs() {
             // The watch also gives the property a node, which is what
             // lets the implied value below stay a default: a value the

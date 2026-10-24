@@ -20,7 +20,7 @@ use ljos_engine::{
     Engine, LogLevel, MetaRef, NodeId, ObjectId, PropIndex, QmlObject, QmlType, Reset, Value,
 };
 
-use crate::item::{is_a, is_unset_tracked};
+use crate::item::is_unset_tracked;
 use crate::scene::SCENE_CATEGORY;
 
 /// `LayoutMirroring` (QtQuick): only ever used attached.
@@ -63,10 +63,8 @@ fn epoch(engine: &Engine) -> Option<NodeId> {
 /// Tells everything that asked [`mirrored`] to ask again when an item gets
 /// its `LayoutMirroring` object.
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created(|e, _, att| {
-        if is_a::<LayoutMirroringAttached>(e, att)
-            && let Some(node) = epoch(e)
-        {
+    engine.on_attached_created_of::<LayoutMirroringAttached>(|e, _, _| {
+        if let Some(node) = epoch(e) {
             let g = e.graph();
             let n = g.get_untracked(node).to_number() as i32;
             g.set(node, Value::Int(n.wrapping_add(1)));

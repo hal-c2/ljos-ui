@@ -820,10 +820,8 @@ pub(crate) fn register(engine: &Engine) {
         MetaRef::Static(ItemView::static_meta()),
         current::key_hooks(),
     );
-    engine.on_attached_created(|e, item, att| {
-        if is_a::<ViewAttached>(e, att) {
-            tell_attached(e, item, att);
-        }
+    engine.on_attached_created_of::<ViewAttached>(|e, item, att| {
+        tell_attached(e, item, att);
         true
     });
 }
