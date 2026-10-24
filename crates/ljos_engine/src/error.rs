@@ -60,8 +60,9 @@ pub enum EngineError {
     /// A component could not be loaded or made.
     #[error("{0}")]
     Load(String),
-    /// `required property` left unset by whoever created the object.
-    #[error("Required property {0} was not initialized")]
+    /// `required property` left unset by whoever created the object: a
+    /// line for each, as Qt words it, where it is declared.
+    #[error("{0}")]
     RequiredNotSet(String),
     /// A JS exception or fault.
     #[error("{0}")]

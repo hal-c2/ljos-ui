@@ -585,11 +585,14 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
                     let mut path = group.to_vec();
                     path.extend(binding.name.parts.iter().copied());
                     self.change(binding, owner, &path);
-                    let template = self
+                    let template = match self
                         .tree
                         .property(self.types, owner, &path)
                         .or_else(|| self.attached(&path))
-                        .is_some_and(|property| property.is_component);
+                    {
+                        Some(property) => property.is_component,
+                        None => self.stands_in(owner) && leaves_required(&binding.value),
+                    };
                     self.values(&binding.value, context, template);
                 }
                 QmlMember::Property(QmlPropertyDeclaration {
@@ -640,6 +643,17 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
         }
     }
 
+    /// Whether `owner` is, or is made of, a type of a module the runtime
+    /// does not have ([`Origin::StandIn`]): what its type has is not known.
+    fn stands_in(&self, owner: usize) -> bool {
+        let object = &self.tree.objects[owner];
+        matches!(object.origin, Some(Origin::StandIn(_)))
+            || object
+                .kind
+                .as_ref()
+                .is_some_and(|kind| self.types.stands_in(kind).is_some())
+    }
+
     /// What `TableView.editDelegate` is: a property of what a type attaches.
     fn attached(&self, path: &[&str]) -> Option<Property<O::Type>> {
         let (name, of) = path.split_last()?;
@@ -676,6 +690,34 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
             self.object(object, context);
         }
     }
+}
+
+/// Whether an object of `value` declares a required property it does not
+/// set itself. Qt makes no such object, so where the type of the property
+/// is not known (a type that stands in) it can only be a template, which
+/// whatever has the property makes and sets it on (a delegate).
+fn leaves_required(value: &QmlBindingValue<'_>) -> bool {
+    let objects = match value {
+        QmlBindingValue::Object(object) => std::slice::from_ref(object),
+        QmlBindingValue::Objects(objects) => objects.as_slice(),
+        _ => return false,
+    };
+    objects.iter().any(|object| {
+        let set: HashSet<&str> = object
+            .members
+            .iter()
+            .filter_map(|member| match member {
+                QmlMember::Binding(binding) => binding.name.as_simple(),
+                _ => None,
+            })
+            .collect();
+        object.members.iter().any(|member| {
+            matches!(member, QmlMember::Property(declaration)
+                if (declaration.is_required || declaration.type_name.is_none())
+                    && declaration.value.is_none()
+                    && !set.contains(declaration.name.name.as_ref()))
+        })
+    })
 }
 
 /// How a declared property that is not an alias holds its value.

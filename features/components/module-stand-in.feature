@@ -94,3 +94,28 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
       """
     Then the pixel at 50, 50 of the window is "#2060a0"
     And the log has 1 warnings matching "QtQuick.Timeline"
+
+  # Qt makes no object that leaves a required property unset: one written
+  # so where a value goes can only be a template, given to the type to
+  # make (a delegate), and the type is not there to make it.
+  Scenario: A delegate written on a type that stands in is not made
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      Item {
+        id: root
+        objectName: "root"; width: 100; height: 100
+        property int made: 0
+        Repeater3D {
+          model: 3
+          delegate: Node {
+            required property int index
+            Component.onCompleted: root.made++
+          }
+        }
+      }
+      """
+    Then the property "made" of "root" is 0
+    And the log has 1 warnings matching "QtQuick3D"
+    And the log has no warning matching "Required property"

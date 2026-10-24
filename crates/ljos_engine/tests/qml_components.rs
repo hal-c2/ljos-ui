@@ -164,6 +164,11 @@ fn a_missing_required_property_is_an_error() {
             if m == "file:///Main.qml:3:3: Required property n was not initialized"),
         "{err:?}"
     );
+    // Each line says it whole: the error reads as its lines, once.
+    assert_eq!(
+        err.to_string(),
+        "file:///Main.qml:3:3: Required property n was not initialized"
+    );
     assert_eq!(h.engine.object_count(), before);
     // Given as an initial property, it is set.
     let root = h

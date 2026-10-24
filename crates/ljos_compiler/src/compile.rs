@@ -528,7 +528,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         };
         let at = self.place[owner];
         for object in objects {
-            if let Some(value) = self.object_value(owner, object, "default") {
+            // A template (a delegate) is for the missing type to make.
+            if let Some(value @ ObjectValue::Object(_)) =
+                self.object_value(owner, object, "default")
+            {
                 self.def_mut(at).children.push(value);
             }
         }
