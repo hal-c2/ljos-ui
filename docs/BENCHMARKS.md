@@ -4033,3 +4033,61 @@ DECISIONs:
 - The pool keeps at most 256 node lists, each with a capacity of 256 or less, so one huge
   scope does not hold its memory for good.
 - `pass::tell` is left to the views work.
+
+### B24: todolist's push and pop against qml6, and numbers that hold under load (2026-10-23)
+
+**How to measure on a loaded machine.** The machine these runs share had a one-minute load of
+7 to 98. At that load the CPU time of one run of a bench differs from the next by 15 to 50 %,
+so a cut of 10 % cannot be seen in it. Count instructions instead:
+
+- `ljos bench` counts the instructions each thread retires in user space, by thread name
+  (`--no-instructions` turns it off). It reads the processor's own counter, so it needs one,
+  and `perf_event_paranoid` at most 2. Five runs of todolist's push and pop at load 30 to 98
+  counted within 0.5 % of each other; their CPU time did not.
+- Divide by frames, or fit against them. A run that drops frames does less work, and a
+  loaded machine drops more of them. For todolist's push and pop, the main thread's count is
+  about 3.4 M instructions per transition frame plus about 35 M that do not depend on the
+  frame count. Compare those two numbers, not the totals.
+- Count the renderer's threads apart from the runtime's. Under software GL, llvmpipe's
+  threads (`llvmpipe-N`) do more work than the main thread. A change that cuts the main thread
+  can cost llvmpipe more, as the one below did.
+- For where it goes, run callgrind under the same bench through a `--ljos` wrapper, and dump
+  it every 2 s with `callgrind_control -d`. Each dump then holds about 9 to 10 frames. Divide
+  by the calls to a function that runs once a frame (`Desktop::pass`, `GlPainter::paint`,
+  `QuickScene::frame`). Do not use the inclusive cost of recursive functions, which
+  callgrind counts more than once. Valgrind is slow enough that the app drops frames, so
+  compare its counts per frame, never per run.
+- Wall-clock numbers (frame times, latency) still need the minimum of several runs at a known
+  load, and they are only good for comparing runs made side by side.
+
+**todolist: pushing the edit page and popping it.** Five runs each, off-screen in the cua
+sandbox on llvmpipe with the Basic style, at load 31 to 39. The table shows instructions in
+G (billions) for the whole run, and in M (millions) per frame.
+
+| | Main thread, G | Per frame, M | llvmpipe, G | Per frame, M | Frames | CPU ms |
+|---|---:|---:|---:|---:|---:|---:|
+| Start | 0.180–0.198 | 4.17 | 0.426–0.474 | 10.0 | 43–48 | 149–180 |
+| After | 0.157–0.166 | 3.46 | 0.471–0.510 | 10.6 | 45–48 | 143–178 |
+| qml6 6.11.2 | 0.105 | 3.50 | 0.827 | 27.6 | 30 | 153–184 |
+
+The 2.3× gap to Qt that we had measured was mostly frames. qml6 drew 30 frames for the two
+transitions, while Ljós drew 45 to 48. Per frame, Ljós's main thread now does what Qt's does.
+Counting llvmpipe as well, Ljós costs about 14 M instructions per frame and Qt about 31 M.
+
+The main thread's cost per frame came from scattered partial damage. During a transition the
+frame was drawn as 10 to 17 scissored areas, and each area drew its items again: 25 to 53
+draws a frame, and Mesa pays for each draw. The commits:
+
+- de3059ed: when more than 4 areas are damaged and they cover at least a fifth of the window,
+  the frame is drawn whole. This cut the main thread by 17 % per frame and cost llvmpipe 6 %,
+  because it fills more pixels.
+- 6cd0e9a4: a page pushed onto a StackView is shown before anything that follows it runs.
+  The first frame of the transition no longer lays out the page twice.
+
+Left:
+
+- The frame count: 45 to 48 against Qt's 30. Ljós draws every frame of the transition, and
+  Qt drops frames under llvmpipe. That shows the animation better, but it costs more in total.
+- When a page is pushed, the inherited properties (palette, font) cascade through it. This is
+  the largest one-off cost in the 35 M.
+- llvmpipe's extra 6 % from drawing whole frames.
