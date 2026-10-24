@@ -63,75 +63,9 @@ pub struct LogEntry {
     pub message: String,
 }
 
-/// One node of the accessibility tree, as an assistive technology sees it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct A11yNode {
-    pub role: String,
-    pub name: String,
-    pub description: String,
-    /// The author's `objectName`, when set.
-    pub object_name: String,
-    /// Whether this is the one node the keyboard is at: what a screen
-    /// reader reads out. The top node when nothing below it has it.
-    pub focused: bool,
-    /// What the node holds besides its name: the text of an editor.
-    pub value: String,
-    /// The part of `value` that is selected.
-    pub selected: String,
-    /// What the node says of itself, in the words of the steps:
-    /// "checkable", "checked", "partially checked", "pressed",
-    /// "expandable", "expanded", "selectable", "selected", "read-only",
-    /// "disabled", for a live region "live" (and "assertive" when it
-    /// interrupts), and "off screen" when it lies wholly outside the
-    /// window.
-    pub states: Vec<String>,
-    /// Its place among the rows it is one of, counted from 1, and how
-    /// many there are.
-    pub set: Option<(usize, usize)>,
-    /// The value of a slider-like node, then its least and its most, as
-    /// numbers are written.
-    pub range: Option<(String, String, String)>,
-    /// The role and name of each node that labels this one.
-    pub labelled_by: Vec<(String, String)>,
-    /// What a screen reader calls the node when its role alone does not
-    /// say ("dial" for a slider).
-    pub called: String,
-    pub children: Vec<A11yNode>,
-}
-
-impl A11yNode {
-    /// Depth-first search for `role` + `name`.
-    #[must_use]
-    pub fn find(&self, role: &str, name: &str) -> Option<&A11yNode> {
-        if self.is(role, name) {
-            return Some(self);
-        }
-        self.children.iter().find_map(|c| c.find(role, name))
-    }
-
-    #[must_use]
-    pub fn is(&self, role: &str, name: &str) -> bool {
-        self.role == role && self.name == name
-    }
-
-    /// The node the keyboard is at.
-    #[must_use]
-    pub fn focus(&self) -> Option<&A11yNode> {
-        if self.focused {
-            return Some(self);
-        }
-        self.children.iter().find_map(A11yNode::focus)
-    }
-
-    /// The node that has the first `role` + `name` as a child.
-    #[must_use]
-    pub fn parent_of(&self, role: &str, name: &str) -> Option<&A11yNode> {
-        if self.children.iter().any(|c| c.is(role, name)) {
-            return Some(self);
-        }
-        self.children.iter().find_map(|c| c.parent_of(role, name))
-    }
-}
+/// One node of the accessibility tree, as an assistive technology sees it;
+/// the Ljós backend reads it straight off the scene's tree.
+pub use ljos_a11y::AccessibleNode as A11yNode;
 
 /// Why a changed file was not applied.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

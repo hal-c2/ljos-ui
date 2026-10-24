@@ -13,7 +13,7 @@
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc, time::Duration};
 
-use ljos_a11y::{NodeKey, Tree, role_word};
+use ljos_a11y::{NodeKey, role_word};
 use ljos_compiler::{Project, compile_file, failure_reason};
 use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value as QmlValue};
 use ljos_quick::{KeyEvent, Modifiers, MouseButtons, PointerEvent, QuickScene, keys::key};
@@ -985,70 +985,6 @@ impl Live {
 
     /// The tree as steps see it: role words, names and nesting.
     fn a11y(&self) -> A11yNode {
-        // In the words of the steps.
-        fn states(d: &ljos_a11y::NodeData, off_screen: bool) -> Vec<String> {
-            use ljos_a11y::accesskit::Toggled;
-            let says = [
-                ("checkable", d.toggled.is_some()),
-                ("checked", d.toggled == Some(Toggled::True)),
-                ("partially checked", d.toggled == Some(Toggled::Mixed)),
-                ("pressed", d.pressed),
-                ("expandable", d.expanded.is_some()),
-                ("expanded", d.expanded == Some(true)),
-                ("selectable", d.selected.is_some()),
-                ("selected", d.selected == Some(true)),
-                ("read-only", d.read_only),
-                ("disabled", d.disabled),
-                // A live region: what it says is said again when it changes.
-                ("live", d.politeness().is_some()),
-                (
-                    "assertive",
-                    d.politeness() == Some(ljos_a11y::Politeness::Assertive),
-                ),
-                // Wholly outside the window: not read as shown.
-                ("off screen", off_screen),
-            ];
-            says.iter()
-                .filter(|(_, is)| *is)
-                .map(|(word, _)| (*word).to_owned())
-                .collect()
-        }
-        fn below(tree: &Tree, key: NodeKey, focus: Option<NodeKey>) -> Vec<A11yNode> {
-            let node = |k: &NodeKey| {
-                let d = tree.get(*k)?;
-                Some(A11yNode {
-                    role: role_word(d.role),
-                    name: d.name.clone(),
-                    description: d.description.clone(),
-                    object_name: d.author_id.clone(),
-                    focused: focus == Some(*k),
-                    value: d.text.as_ref().map(|t| t.value.clone()).unwrap_or_default(),
-                    selected: d
-                        .text
-                        .as_ref()
-                        .and_then(|t| {
-                            let (a, b) = (t.anchor.min(t.cursor), t.anchor.max(t.cursor));
-                            t.value.get(a..b).map(str::to_owned)
-                        })
-                        .unwrap_or_default(),
-                    states: states(d, tree.off_screen(*k)),
-                    set: d.position_in_set.zip(d.size_of_set),
-                    range: d
-                        .range
-                        .as_ref()
-                        .map(|r| (r.value.to_string(), r.min.to_string(), r.max.to_string())),
-                    labelled_by: d
-                        .labelled_by
-                        .iter()
-                        .filter_map(|l| tree.get(*l))
-                        .map(|l| (role_word(l.role), l.name.clone()))
-                        .collect(),
-                    called: d.role_description.clone(),
-                    children: below(tree, *k, focus),
-                })
-            };
-            tree.children(key).iter().filter_map(node).collect()
-        }
         let focus = self.scene.accessible_focus_node();
         // The window is named by its title, as the shell tells it.
         let sys = ljos_controls::WindowSystem::of(&self.engine);
@@ -1058,14 +994,7 @@ impl Live {
             .find_map(|r| sys.spec(&self.engine, *r))
             .map(|s| s.title)
             .unwrap_or_default();
-        A11yNode {
-            role: "window".into(),
-            name,
-            // With no node to name, the window is what has the keyboard.
-            focused: focus.is_none(),
-            children: below(self.scene.accessibility_tree(), NodeKey::ROOT, focus),
-            ..A11yNode::default()
-        }
+        A11yNode::window(self.scene.accessibility_tree(), name, focus)
     }
 
     /// The first node, in tree order, with this role and name.

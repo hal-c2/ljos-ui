@@ -26,7 +26,7 @@ use ljos_quick::QuickScene;
 use ljos_render::{DisplayList, kurbo};
 use ljos_runtime::{Clock as _, TIMER_GRANULARITY, Time, VirtualClock};
 
-pub use ljos_a11y::{Contrast, SystemPrefs};
+pub use ljos_a11y::{AccessibleNode, Contrast, NodeKey, SystemPrefs};
 pub use ljos_controls::ScreenSpec;
 pub use ljos_quick::text_input::highlights;
 
@@ -170,6 +170,41 @@ impl TestWindow {
             .engine
             .untrack(|| ljos_quick::scene_transform(&self.engine, item));
         Some(to_window.transform_rect_bbox(local))
+    }
+
+    /// Turns the accessibility tree on, as an assistive technology starting
+    /// up does, or off, and lets the scene come to rest. The scene builds
+    /// the tree only while it is on.
+    pub fn set_accessibility_active(&mut self, active: bool) -> Result<(), String> {
+        self.scene.set_accessibility_active(&self.engine, active);
+        self.settle()
+    }
+
+    /// The accessibility tree as of the last frame: a "window" node, named
+    /// by the shown `Window`'s title, holding the exposed items with their
+    /// computed roles, names, states and children. Only the window while
+    /// the tree is off.
+    pub fn accessibility_tree(&self) -> AccessibleNode {
+        let sys = ljos_controls::WindowSystem::of(&self.engine);
+        let title = self
+            .scene
+            .root()
+            .and_then(|r| sys.spec(&self.engine, r))
+            .map(|s| s.title)
+            .unwrap_or_default();
+        let tree = self.scene.accessibility_tree();
+        AccessibleNode::window(tree, title, self.scene.accessible_focus_node())
+    }
+
+    /// The node `item` is exposed as, while the tree is on.
+    pub fn accessible_node(&self, item: ObjectId) -> Option<NodeKey> {
+        self.scene.accessible_node(item)
+    }
+
+    /// The item behind a node of the tree; for a part of an item (a link
+    /// in a text), that item. `None` for an announcement.
+    pub fn accessible_item(&self, node: NodeKey) -> Option<ObjectId> {
+        self.scene.accessible_item(node)
     }
 
     /// What `item` painted in the last frame, in its own coordinates;
