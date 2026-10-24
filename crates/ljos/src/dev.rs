@@ -16,8 +16,12 @@
 //! [`install_text_compiler`] gives one to an engine set up by hand (a
 //! harness, a [`TestWindow`](crate::testing)). A text is compiled as a
 //! file at the place the script names, so the types beside that place
-//! are found: a directory of the user's own files is one of the
-//! directories named. A shipped application has no compiler by design;
+//! are found. Under `qml_dirs` the files are those on disk as the text
+//! is made, a file added since the start among them, and a text placed
+//! in a directory none of them is finds the files beside it there;
+//! [`install_text_compiler`] compiles against the directories as they
+//! were at its first text, and the engine loads only what its own
+//! source has. A shipped application has no compiler by design;
 //! there the call is an error the script can catch, and QML the
 //! application loads at run time has to come compiled, or the
 //! application ships with this feature on and links the parser.

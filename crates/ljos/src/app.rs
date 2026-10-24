@@ -73,7 +73,11 @@ pub struct App<M = ()> {
     /// What `Qt.createQmlObject` compiles with, over the directories
     /// `qml_dirs` compiled.
     #[cfg(feature = "dev-qml")]
-    texts: Option<ljos_engine::QmlTextCompiler>,
+    texts: Option<crate::texts::DiskTexts>,
+    /// The directories `qml_dirs` compiled, earlier ones first: what hot
+    /// reload follows.
+    #[cfg(feature = "dev-qml")]
+    qml_roots: Vec<std::path::PathBuf>,
     #[cfg(feature = "mcp")]
     inspector: Option<crate::mcp::CapSet>,
     modules: Vec<Module>,
@@ -118,6 +122,8 @@ impl App<()> {
             qml_diagnostics: None,
             #[cfg(feature = "dev-qml")]
             texts: None,
+            #[cfg(feature = "dev-qml")]
+            qml_roots: Vec::new(),
             #[cfg(feature = "mcp")]
             inspector: None,
             modules: Vec::new(),
@@ -294,6 +300,10 @@ impl<M> App<M> {
     /// ([`install_text_compiler`](crate::dev::install_text_compiler)),
     /// so QML a program holds as text, a user's own file read at run
     /// time, can be made, with the types beside the place it is given.
+    /// The disk is read as the text is made: a file added to a directory
+    /// since the start is a type the text may name, and a text placed
+    /// in a directory of its own finds the files beside it there.
+    /// Nothing watches the disk for it.
     #[cfg(feature = "dev-qml")]
     pub fn qml_dir(
         self,
@@ -338,7 +348,11 @@ impl<M> App<M> {
             }
         }
         self.source = Some(crate::compile::checked(&dirs, compiled, self.qml_errors)?);
-        self.texts = Some(crate::dev::text_compiler(&dirs, Some(&snapshot)));
+        self.texts = Some(crate::texts::DiskTexts::new(
+            &dirs,
+            crate::dev::EngineOracle::from_engine(&snapshot),
+        ));
+        self.qml_roots = dirs.iter().map(|d| d.to_path_buf()).collect();
         self.root = Some(root.into());
         Ok(self)
     }
@@ -438,6 +452,8 @@ impl<M> App<M> {
             qml_diagnostics,
             #[cfg(feature = "dev-qml")]
             texts,
+            #[cfg(feature = "dev-qml")]
+            qml_roots,
             #[cfg(feature = "mcp")]
             inspector,
             modules,
@@ -458,6 +474,8 @@ impl<M> App<M> {
             qml_diagnostics,
             #[cfg(feature = "dev-qml")]
             texts,
+            #[cfg(feature = "dev-qml")]
+            qml_roots,
             #[cfg(feature = "mcp")]
             inspector,
             modules,
@@ -483,9 +501,9 @@ impl<M> App<M> {
             ..
         } = self;
         let engine = crate::engine();
-        prepare(&engine, modules, source, context, on_window);
         #[cfg(feature = "dev-qml")]
-        engine.set_qml_text_compiler(texts);
+        let source = Source { source, texts };
+        prepare(&engine, modules, source, context, on_window);
         engine
     }
 
@@ -507,6 +525,11 @@ impl<M> App<M> {
     /// them is closed: the modules, components and context state go
     /// in, and the root component is created.
     ///
+    /// With the `dev` feature, an application whose QML
+    /// [`qml_dirs`](App::qml_dirs) compiled is watched in every one of
+    /// those directories, and a save to any of them is applied while it
+    /// runs, its state kept (`Setup::watch_qml_dirs`).
+    ///
     /// Call it on the main thread: some platforms allow a loop
     /// nowhere else.
     #[cfg(feature = "shell")]
@@ -520,6 +543,13 @@ impl<M> App<M> {
             ));
         };
         self.run_with(move |setup| {
+            // A development build follows every directory `qml_dirs`
+            // compiled: a save to any of them is applied as it runs.
+            #[cfg(all(feature = "dev", feature = "dev-qml"))]
+            if !setup.qml_dirs().is_empty() {
+                let oracle = crate::dev::EngineOracle::from_engine(setup.engine());
+                return setup.watch_qml_dirs_with(&[&root], Vec::new(), oracle);
+            }
             setup
                 .engine()
                 .create_from_url(&root, None, Vec::new())
@@ -533,6 +563,11 @@ impl<M> App<M> {
     /// already in when `setup` runs; what it makes is the root, and
     /// anything it sets on the setup afterwards wins over the
     /// builder's — a second `on_message` replaces the handler.
+    ///
+    /// With the `dev` feature the setup already knows the directories
+    /// [`qml_dirs`](App::qml_dirs) compiled, so `setup.watch_qml_dirs(&["override",
+    /// "Main"])` follows them all, the root made of the first of those
+    /// keys there is.
     #[cfg(feature = "shell")]
     pub fn run_with(
         self,
@@ -554,6 +589,8 @@ impl<M> App<M> {
             inspector,
             #[cfg(feature = "dev-qml")]
             texts,
+            #[cfg(feature = "dev-qml")]
+            qml_roots,
             ..
         } = self;
         #[cfg(feature = "mcp")]
@@ -573,11 +610,13 @@ impl<M> App<M> {
             // The shell's Engine already holds the standard modules;
             // `prepare` must not register them a second time, so it
             // is the same function `build_engine` uses on its own.
-            prepare(s.engine(), modules, source, context, on_window);
             #[cfg(feature = "dev-qml")]
-            if texts.is_some() {
-                s.engine().set_qml_text_compiler(texts);
-            }
+            let source = Source { source, texts };
+            prepare(s.engine(), modules, source, context, on_window);
+            #[cfg(all(feature = "dev", feature = "dev-qml"))]
+            s.set_qml_dirs(qml_roots);
+            #[cfg(all(feature = "dev-qml", not(feature = "dev")))]
+            drop(qml_roots);
             if let Some(handler) = on_message.take() {
                 s.on_message(handler);
             }
@@ -624,6 +663,17 @@ fn unbuilt_inspector(caps: Option<&std::ffi::OsStr>) -> Option<String> {
     })
 }
 
+/// The components an application starts with, and with `dev-qml` what
+/// `Qt.createQmlObject` reads from the disk beyond them.
+#[cfg(feature = "dev-qml")]
+struct Source {
+    source: Option<MapSource>,
+    texts: Option<crate::texts::DiskTexts>,
+}
+
+#[cfg(not(feature = "dev-qml"))]
+type Source = Option<MapSource>;
+
 /// Registers the application's modules, hands over its components
 /// and puts its context state in scope, in that order: a context
 /// value may be an object of a type a module just registered, and
@@ -632,13 +682,26 @@ fn unbuilt_inspector(caps: Option<&std::ffi::OsStr>) -> Option<String> {
 fn prepare(
     engine: &Engine,
     modules: Vec<Module>,
-    source: Option<MapSource>,
+    source: Source,
     context: Vec<PutContext>,
     on_window: Vec<PutContext>,
 ) {
     for module in modules {
         module(engine);
     }
+    #[cfg(feature = "dev-qml")]
+    match source {
+        Source {
+            source,
+            texts: Some(texts),
+        } => texts.install(engine, source),
+        Source {
+            source: Some(source),
+            texts: None,
+        } => engine.set_component_source(source),
+        Source { .. } => {}
+    }
+    #[cfg(not(feature = "dev-qml"))]
     if let Some(source) = source {
         engine.set_component_source(source);
     }

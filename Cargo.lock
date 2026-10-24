@@ -3579,6 +3579,8 @@ dependencies = [
  "ljos_dev",
  "ljos_engine",
  "ljos_i18n",
+ "ljos_ir",
+ "ljos_js",
  "ljos_media",
  "ljos_platform",
  "ljos_quick",

@@ -216,6 +216,8 @@ pub mod system;
 pub mod task;
 #[cfg(feature = "testing")]
 pub mod testing;
+#[cfg(feature = "dev-qml")]
+mod texts;
 pub mod types;
 
 pub use app::{App, create_root};

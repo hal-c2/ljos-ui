@@ -5,14 +5,21 @@
 use std::path::Path;
 
 fn main() {
+    // Every directory `qml_dirs` compiled is watched, without naming them
+    // again.
     ljos::App::new("watched")
+        .qml_dirs(["user", "qml"], "Main")
+        .unwrap()
         .run_with(|setup| {
             setup.on_reload(|report| {
                 if let ljos::reload::Report::Reloaded(stats) = report {
                     eprintln!("reloaded in {:?}", stats.apply);
                 }
             });
-            setup.watch(Path::new("qml/Main.qml"))
+            if setup.qml_dirs().is_empty() {
+                return setup.watch(Path::new("qml/Main.qml"));
+            }
+            setup.watch_qml_dirs(&["override", "Main"])
         })
         .unwrap();
 }

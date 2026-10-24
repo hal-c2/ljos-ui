@@ -163,3 +163,54 @@ fn without_a_compiler_the_script_is_told_why() {
         "{made}"
     );
 }
+
+#[test]
+fn a_text_placed_outside_the_directories_finds_the_files_beside_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    tree(tmp.path());
+    let (engine, root) = ljos::App::new("outside")
+        .qml_dir(tmp.path().join("app"), "Main")
+        .unwrap()
+        .build()
+        .unwrap();
+
+    // `plugins/` is none of the application's directories.
+    let card = tmp.path().join("plugins/Card.qml").canonicalize().unwrap();
+    let text = fs::read_to_string(&card).unwrap();
+    let url = format!("file://{}", card.display());
+    assert_eq!(make(&engine, root, &text, &url), "card");
+    assert_eq!(number_below(&engine, root, "badge", "width"), 12.0);
+}
+
+#[test]
+fn a_file_added_after_the_first_text_is_a_type_the_next_may_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    tree(tmp.path());
+    let app = tmp.path().join("app");
+    let (engine, root) = ljos::App::new("added")
+        .qml_dir(&app, "Main")
+        .unwrap()
+        .build()
+        .unwrap();
+    assert_eq!(make(&engine, root, PLAIN, "inline.qml"), "made");
+
+    fs::write(
+        app.join("parts/Fresh.qml"),
+        "import QtQuick\nItem { property int n: 5 }\n",
+    )
+    .unwrap();
+    let fresh = "import QtQuick\nFresh { objectName: \"fresh\" }";
+    assert_eq!(make(&engine, root, fresh, "parts/inline.qml"), "fresh");
+    assert_eq!(number_below(&engine, root, "fresh", "n"), 5.0);
+
+    // And in a directory that was not there at the first text.
+    fs::create_dir(app.join("more")).unwrap();
+    fs::write(
+        app.join("more/Later.qml"),
+        "import QtQuick\nItem { property int n: 6 }\n",
+    )
+    .unwrap();
+    let later = "import QtQuick\nLater { objectName: \"later\" }";
+    assert_eq!(make(&engine, root, later, "more/inline.qml"), "later");
+    assert_eq!(number_below(&engine, root, "later", "n"), 6.0);
+}

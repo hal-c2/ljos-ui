@@ -49,6 +49,10 @@ ljos_compiler = { path = "../ljos_compiler", optional = true }
 # Only with `dev-qml` or `build`, for `EngineOracle`: the compiler's oracle
 # interface the engine-backed oracle implements.
 qml_front = { path = "../qml_front", optional = true }
+# Only with `dev-qml`, for the component source `qml_dirs` hands the
+# engine (`texts.rs`): the compiled files and bytecode it passes on.
+ljos_ir = { path = "../ljos_ir", optional = true }
+ljos_js = { path = "../ljos_js", optional = true }
 
 [dev-dependencies]
 # Tests compile QML strings and, for `dev::compile_dir`, a directory.
@@ -88,7 +92,7 @@ media = ["dep:ljos_media", "ljos_shell?/media"]
 media-audio = ["media", "ljos_media/audio", "ljos_shell?/media-audio"]
 # Development only: `ljos::dev::compile_dir` and `App::qml_dir` compile a
 # directory of QML at start-up. Never in a shipped application.
-dev-qml = ["dep:ljos_compiler", "dep:qml_front"]
+dev-qml = ["dep:ljos_compiler", "dep:qml_front", "dep:ljos_ir", "dep:ljos_js"]
 # For an application's build script (`[build-dependencies]`):
 # `ljos::build::compile_dir_with_types` compiles its QML ahead of time,
 # against its own native types as its type dump file describes them
