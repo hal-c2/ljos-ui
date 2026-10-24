@@ -209,6 +209,7 @@ impl Picture {
             scene: &mut scene,
             clock: &self.clock,
             wake: &mut wake,
+            serve: None,
         };
         run.settle()?;
         run.advance(self.settle_ms)?;

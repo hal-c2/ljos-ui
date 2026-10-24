@@ -24,6 +24,9 @@ pub(crate) struct Run<'a> {
     pub(crate) clock: &'a VirtualClock,
     /// When the scene last said it next needs a frame.
     pub(crate) wake: &'a mut Option<Time>,
+    /// Called while waiting for the platform's answers: what the harness
+    /// serves on this thread that they wait on.
+    pub(crate) serve: Option<&'a mut dyn FnMut()>,
 }
 
 impl Run<'_> {
@@ -85,7 +88,10 @@ impl Run<'_> {
             if images.pending() == 0 && platform.pending() == 0 {
                 return Ok(());
             }
-            platform.finish(self.engine);
+            match self.serve.as_deref_mut() {
+                Some(serve) => platform.finish_with(self.engine, serve),
+                None => platform.finish(self.engine),
+            }
             // Left unanswered only when it gave up (and said so): waiting
             // again would only give up again.
             let gave_up = platform.pending() > 0;

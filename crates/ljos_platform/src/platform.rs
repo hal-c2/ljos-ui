@@ -41,6 +41,8 @@ const INBOX: usize = 256;
 
 /// How long [`Platform::finish`] waits for an answer before it gives up.
 const FINISH_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long [`Platform::finish_with`] waits between calls of its hook.
+const SERVE_SLICE: Duration = Duration::from_millis(2);
 
 type Waker = Arc<dyn Fn() + Send + Sync>;
 
@@ -386,14 +388,29 @@ impl Platform {
 
     /// Waits until every promised answer has come back and runs them,
     /// held or not. For tests and harnesses: a UI thread that must stay
-    /// responsive never calls it.
+    /// responsive never calls it. Gives up, with a warning, after 10 s
+    /// without an answer.
     pub fn finish(&self, engine: &Engine) {
+        self.finish_waiting(engine, FINISH_TIMEOUT, &mut || {});
+    }
+
+    /// [`Platform::finish`] that calls `between` on this thread every few
+    /// milliseconds while it waits: a harness serves there what the
+    /// outstanding answers wait on (a fake server it runs on this thread),
+    /// which it could not while blocked.
+    pub fn finish_with(&self, engine: &Engine, between: &mut dyn FnMut()) {
+        self.finish_waiting(engine, SERVE_SLICE, between);
+    }
+
+    fn finish_waiting(&self, engine: &Engine, slice: Duration, between: &mut dyn FnMut()) {
+        let mut quiet = Duration::ZERO;
         loop {
             let seen = self.signal.count();
             self.deliver_now(engine);
             if self.pending.get() == 0 {
                 return;
             }
+            between();
             let sent = self
                 .signal
                 .sent
@@ -402,9 +419,14 @@ impl Platform {
             let (_sent, timeout) = self
                 .signal
                 .arrived
-                .wait_timeout_while(sent, FINISH_TIMEOUT, |n| *n == seen)
+                .wait_timeout_while(sent, slice, |n| *n == seen)
                 .unwrap_or_else(PoisonError::into_inner);
-            if timeout.timed_out() {
+            quiet = if timeout.timed_out() {
+                quiet + slice
+            } else {
+                Duration::ZERO
+            };
+            if quiet >= FINISH_TIMEOUT {
                 engine.log(
                     LogLevel::Warning,
                     CATEGORY,

@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use ljos_engine::{Engine, ObjectId};
-use ljos_quick::QuickScene;
+use ljos_quick::{Item, QuickScene};
 use ljos_render::{DisplayList, kurbo};
 use ljos_runtime::{Clock as _, TIMER_GRANULARITY, Time, VirtualClock};
 
@@ -43,6 +43,7 @@ pub struct TestWindow {
     scene: QuickScene,
     clock: Arc<VirtualClock>,
     wake: Option<Time>,
+    serve: Option<Box<dyn FnMut()>>,
 }
 
 impl std::fmt::Debug for TestWindow {
@@ -69,6 +70,7 @@ impl TestWindow {
             scene: QuickScene::new(kurbo::Size::new(width, height)),
             clock,
             wake: None,
+            serve: None,
         }
     }
 
@@ -78,6 +80,27 @@ impl TestWindow {
         self.scene
             .set_root(&self.engine, root)
             .map_err(|e| e.to_string())?;
+        self.settle()
+    }
+
+    /// Makes the window `width` by `height` logical pixels, as a user
+    /// dragging its edge does, and lets the scene come to rest on the same
+    /// clock: a root `Window` is told its new size as the platform tells
+    /// it, and a root item takes it as `width` and `height`, as a host
+    /// that sizes its root to the view writes it.
+    pub fn resize(&mut self, width: f64, height: f64) -> Result<(), String> {
+        self.scene
+            .set_viewport(kurbo::Rect::new(0.0, 0.0, width, height));
+        if let Some(root) = self.scene.root() {
+            let windows = ljos_controls::WindowSystem::of(&self.engine);
+            if windows.spec(&self.engine, root).is_some() {
+                windows.resized(&self.engine, root, [width, height]);
+            } else {
+                for (prop, v) in [(Item::WIDTH, width), (Item::HEIGHT, height)] {
+                    self.engine.set(root, prop, v).map_err(|e| e.to_string())?;
+                }
+            }
+        }
         self.settle()
     }
 
@@ -94,8 +117,22 @@ impl TestWindow {
 
     /// Lets `ms` milliseconds pass, firing each timer at its own deadline
     /// and framing in between, as a host woken at each deadline would.
+    ///
+    /// Before and after, it waits for what was promised and runs it: the
+    /// answers of tasks (`ljos::task::spawn`), fetches and pictures being
+    /// decoded, which take real time the virtual clock knows nothing of.
+    /// A test that serves what they wait on from this thread (a fake
+    /// server) gives that to [`serve_while_waiting`](Self::serve_while_waiting),
+    /// or the wait blocks it for up to 10 s without an answer.
     pub fn advance(&mut self, ms: u64) -> Result<(), String> {
         self.run().advance(ms)
+    }
+
+    /// Calls `serve` on this thread every few milliseconds while
+    /// [`advance`](Self::advance) waits for outstanding answers, in place
+    /// of blocking: a fake server the test runs here answers there.
+    pub fn serve_while_waiting(&mut self, serve: impl FnMut() + 'static) {
+        self.serve = Some(Box::new(serve));
     }
 
     fn run(&mut self) -> Run<'_> {
@@ -104,6 +141,7 @@ impl TestWindow {
             scene: &mut self.scene,
             clock: &self.clock,
             wake: &mut self.wake,
+            serve: self.serve.as_deref_mut().map(|s| s as &mut dyn FnMut()),
         }
     }
 
