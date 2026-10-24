@@ -16,6 +16,12 @@
 //! - which action the source allows (copy, move, link), and a way to say
 //!   which one the target took;
 //! - drags out of the application into another.
+//!
+//! Some window systems bring no drops from outside at all (winit 0.30 has
+//! no drag-and-drop on Wayland). A host says so
+//! ([`Platform::set_external_drops_unavailable`]), and the first drop
+//! target that would take files is warned of once
+//! ([`Platform::note_external_drop_target`]).
 
 use std::path::PathBuf;
 
@@ -52,6 +58,63 @@ impl ExternalDrag {
             }
             _ => Vec::new(),
         }
+    }
+}
+
+/// Whether drops from outside can come, and whether that was said.
+#[derive(Debug, Default)]
+pub(crate) struct ExternalDrops {
+    /// Why they cannot, as the host says it; none while they can.
+    unavailable: Option<String>,
+    /// A drop target that would take files from outside exists.
+    target: bool,
+    warned: bool,
+}
+
+impl ExternalDrops {
+    /// The warning that is due now, once: when there is a target and
+    /// drops cannot come, in whichever order the two were learned.
+    fn due(&mut self) -> Option<String> {
+        let why = self
+            .unavailable
+            .as_deref()
+            .filter(|_| self.target && !self.warned)?;
+        self.warned = true;
+        Some(format!(
+            "files dragged in from other applications cannot reach a DropArea: {why}"
+        ))
+    }
+}
+
+impl Platform {
+    /// The host's window system brings no files dragged in from other
+    /// applications, for `reason` (what to run under instead, if
+    /// anything). A drop target that would take them is warned of once.
+    pub fn set_external_drops_unavailable(&self, engine: &Engine, reason: impl Into<String>) {
+        let due = {
+            let mut drops = self.external_drops.borrow_mut();
+            drops.unavailable = Some(reason.into());
+            drops.due()
+        };
+        warn(engine, due);
+    }
+
+    /// A drop target that would take files from other applications was
+    /// made: the drag-and-drop of the items says so of each.
+    pub fn note_external_drop_target(&self, engine: &Engine) {
+        let due = {
+            let mut drops = self.external_drops.borrow_mut();
+            drops.target = true;
+            drops.due()
+        };
+        warn(engine, due);
+    }
+}
+
+// Logged with no borrow held: a log handler may reach the platform.
+fn warn(engine: &Engine, due: Option<String>) {
+    if let Some(message) = due {
+        engine.log(LogLevel::Warning, CATEGORY, message);
     }
 }
 

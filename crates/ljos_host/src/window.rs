@@ -205,6 +205,10 @@ pub struct Capabilities {
     pub insets: bool,
     /// The system's back gesture is reported ([`crate::WindowEvent::Back`]).
     pub back: bool,
+    /// Files dragged in from other applications reach the window, in its
+    /// raw events. winit 0.30 has no drag-and-drop on Wayland; on X11,
+    /// XWayland included, it has.
+    pub file_drops: bool,
 }
 
 #[cfg(test)]

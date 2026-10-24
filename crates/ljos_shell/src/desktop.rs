@@ -2211,7 +2211,10 @@ pub(crate) fn run<M: Send + 'static>(
     let desktop_font = config
         .system_fonts
         .then(crate::desktop_font::Reading::start);
-    let host = WinitHost::<ShellEvent>::new()?;
+    let host = WinitHost::<ShellEvent>::with_x11_preferred(crate::platform::prefers_x11(
+        config.prefer_x11,
+        std::env::var("LJOS_PREFER_X11").ok().as_deref(),
+    ))?;
     // The drivers start while the application is built.
     let painter_choice = surface::Choice::from_env(std::env::var("LJOS_PAINTER").ok().as_deref());
     let starting = Starting::start(host.display_handle(), painter_choice);
@@ -2238,6 +2241,7 @@ pub(crate) fn run<M: Send + 'static>(
     // True from the start: the first turn of the loop opens the windows.
     let dirty = Rc::new(Cell::new(true));
     let hosting = Hosting {
+        wayland: host.is_wayland(),
         tree: tree_id(0),
         wake: waker(0, &proxy),
         changed: {

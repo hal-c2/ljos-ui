@@ -659,6 +659,7 @@ mod tests {
                 tree: egui::accesskit::TreeId::ROOT,
                 changed: Box::new(|| {}),
                 wake: Arc::new(|_| {}),
+                wayland: false,
             };
             ShellApp::hosted(
                 &ctx,

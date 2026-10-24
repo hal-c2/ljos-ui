@@ -96,6 +96,13 @@ pub struct ShellConfig {
     /// that the application's own choice comes after it and wins. False
     /// keeps the engine's `en_US`, the same on every machine.
     pub system_locale: bool,
+    /// [`run`] shows its windows through X11 rather than Wayland where the
+    /// session has both (XWayland), so that files dragged in from other
+    /// applications reach its `DropArea`s: the window library has no
+    /// drag-and-drop on Wayland. False keeps Wayland where there is one.
+    /// The environment's `LJOS_PREFER_X11` (`1` or `0`) overrides it, for
+    /// the user to choose either way.
+    pub prefer_x11: bool,
 }
 
 impl Default for ShellConfig {
@@ -110,6 +117,7 @@ impl Default for ShellConfig {
             drain_budget: DrainBudget::time(Duration::from_millis(4)),
             system_fonts: true,
             system_locale: true,
+            prefer_x11: false,
         }
     }
 }
@@ -135,6 +143,12 @@ impl ShellConfig {
 
     pub fn with_background(mut self, color: Color) -> Self {
         self.background = color;
+        self
+    }
+
+    /// See [`ShellConfig::prefer_x11`].
+    pub fn prefer_x11(mut self) -> Self {
+        self.prefer_x11 = true;
         self
     }
 }
@@ -274,6 +288,9 @@ pub(crate) struct Hosting {
     /// which the loop's own passes do not answer for
     /// ([`QmlView::set_waker`]).
     pub(crate) wake: ljos_egui::Waker,
+    /// The host speaks Wayland, where files from other applications do
+    /// not come.
+    pub(crate) wayland: bool,
 }
 
 impl<M: Send + 'static> ShellApp<M> {
@@ -314,14 +331,14 @@ impl<M: Send + 'static> ShellApp<M> {
         ljos_media::register(&engine);
         // Before `setup`: a window knows from its first moment whether it
         // is an item of a scene or a window of the platform.
-        let (tree, waker, changed) = match hosting {
+        let (tree, waker, changed, wayland) = match hosting {
             Some(h) => {
                 let changed: Rc<dyn Fn()> = Rc::from(h.changed);
                 let windows = Rc::clone(&changed);
                 ljos_controls::WindowSystem::of(&engine).set_host(move || windows());
-                (Some(h.tree), Some(h.wake), Some(changed))
+                (Some(h.tree), Some(h.wake), Some(changed), h.wayland)
             }
-            None => (None, None, None),
+            None => (None, None, None, false),
         };
         let wake: Arc<dyn Fn() + Send + Sync> = match &waker {
             Some(waker) => {
@@ -359,7 +376,7 @@ impl<M: Send + 'static> ShellApp<M> {
             // Before `setup` too: a `Settings` reads its file, and a
             // binding may ask `Qt.platform`, while the root is built.
             let wake = Arc::clone(&wake);
-            platform::install(&engine, move || wake());
+            platform::install(&engine, wayland, move || wake());
             // Pictures fill in after the window is drawn, as they do in
             // Qt: their fetches and decodes never hold up a frame.
             ljos_quick::ImageStore::of(&engine).set_start_after_frame(true);

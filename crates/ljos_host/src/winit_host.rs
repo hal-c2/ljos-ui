@@ -49,10 +49,32 @@ impl<U: From<Wake> + Send + 'static> WinitHost<U> {
     /// # Errors
     /// There is no display, or the platform refused.
     pub fn new() -> Result<Self, HostError> {
-        let event_loop = EventLoop::<U>::with_user_event()
+        Self::with_x11_preferred(false)
+    }
+
+    /// As [`WinitHost::new`], on X11 rather than Wayland when `prefer_x11`
+    /// and the session has both, which XWayland gives: winit 0.30 has no
+    /// drag-and-drop on Wayland, and on X11 it has file drops. Without an
+    /// X display, or on other platforms, the same as [`WinitHost::new`].
+    ///
+    /// # Errors
+    /// There is no display, or the platform refused.
+    pub fn with_x11_preferred(prefer_x11: bool) -> Result<Self, HostError> {
+        let mut builder = EventLoop::<U>::with_user_event();
+        let display = std::env::var_os("DISPLAY");
+        if chooses_x11(prefer_x11, display.as_deref()) {
+            platform::use_x11(&mut builder);
+        }
+        let event_loop = builder
             .build()
             .map_err(|e| HostError::Loop(e.to_string()))?;
         Ok(Self { event_loop })
+    }
+
+    /// The loop speaks Wayland rather than X11 (always false off Linux and
+    /// the BSDs).
+    pub fn is_wayland(&self) -> bool {
+        platform::loop_is_wayland(&self.event_loop)
     }
 
     /// Posts messages into the loop from any thread. A UI layer that has
@@ -104,6 +126,13 @@ impl<U: From<Wake> + Send + 'static> PlatformHost for WinitHost<U> {
     }
 }
 
+/// Whether to ask winit for X11: when the application prefers it and there
+/// is an X display to speak to. Without one winit's own choice stays, which
+/// is Wayland when the session has it.
+fn chooses_x11(prefer_x11: bool, display: Option<&std::ffi::OsStr>) -> bool {
+    prefer_x11 && display.is_some_and(|d| !d.is_empty())
+}
+
 fn capabilities(wayland: bool) -> Capabilities {
     Capabilities {
         multi_window: true,
@@ -116,6 +145,7 @@ fn capabilities(wayland: bool) -> Capabilities {
         touch: true,
         insets: false,
         back: false,
+        file_drops: !wayland,
     }
 }
 
@@ -671,7 +701,7 @@ fn translate(raw: &Raw, window: &Window, pointer: Option<[f64; 2]>) -> WindowEve
 
 /// What differs between window systems.
 mod platform {
-    use winit::event_loop::{ActiveEventLoop, EventLoop};
+    use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopBuilder};
     #[cfg(not(target_os = "macos"))]
     use winit::window::Window;
     use winit::window::WindowAttributes;
@@ -702,6 +732,11 @@ mod platform {
 
         pub(crate) fn loop_is_wayland<U: 'static>(event_loop: &EventLoop<U>) -> bool {
             event_loop.is_wayland()
+        }
+
+        pub(crate) fn use_x11<U: 'static>(builder: &mut EventLoopBuilder<U>) {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            builder.with_x11();
         }
 
         pub(crate) fn with_kind(attrs: WindowAttributes, kind: WindowKind) -> WindowAttributes {
@@ -811,6 +846,8 @@ mod platform {
             false
         }
 
+        pub(crate) fn use_x11<U: 'static>(_: &mut EventLoopBuilder<U>) {}
+
         pub(crate) fn with_kind(attrs: WindowAttributes, _: WindowKind) -> WindowAttributes {
             attrs
         }
@@ -852,7 +889,8 @@ mod platform {
     }
 
     pub(crate) use imp::{
-        HAS_WINDOW_KINDS, is_wayland, loop_is_wayland, set_backdrop, with_app_id, with_kind,
+        HAS_WINDOW_KINDS, is_wayland, loop_is_wayland, set_backdrop, use_x11, with_app_id,
+        with_kind,
     };
 }
 
@@ -1067,6 +1105,21 @@ mod tests {
         assert!(!c.window_position);
         assert!(!c.window_kinds);
         assert!(c.multi_window && c.ime);
+    }
+
+    #[test]
+    fn files_from_other_applications_come_on_x11_and_not_on_wayland() {
+        assert!(!capabilities(true).file_drops);
+        assert!(capabilities(false).file_drops);
+    }
+
+    #[test]
+    fn x11_is_asked_for_only_when_preferred_and_there_is_a_display() {
+        use std::ffi::OsStr;
+        assert!(chooses_x11(true, Some(OsStr::new(":0"))));
+        assert!(!chooses_x11(true, None));
+        assert!(!chooses_x11(true, Some(OsStr::new(""))));
+        assert!(!chooses_x11(false, Some(OsStr::new(":0"))));
     }
 
     #[test]

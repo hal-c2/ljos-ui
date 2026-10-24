@@ -222,3 +222,30 @@ fn a_system_that_asks_tells_the_answer_later() {
     let again = make::<crate::CameraPermission>(&e);
     assert_eq!(e.read_by_name(again, "status").to_number(), 2.0);
 }
+
+#[test]
+fn a_drop_target_files_cannot_reach_is_warned_of_once_in_either_order() {
+    let warnings = |e: &Engine| {
+        e.take_log()
+            .iter()
+            .filter(|r| r.message.contains("cannot reach a DropArea"))
+            .count()
+    };
+    let dir = tempfile::tempdir().expect("temp dir");
+    let e = engine(dir.path());
+    let p = Platform::of(&e);
+    p.note_external_drop_target(&e);
+    assert_eq!(warnings(&e), 0, "files may yet come");
+    p.set_external_drops_unavailable(&e, "no drag-and-drop here");
+    p.note_external_drop_target(&e);
+    p.set_external_drops_unavailable(&e, "no drag-and-drop here");
+    assert_eq!(warnings(&e), 1);
+
+    let e = engine(dir.path());
+    let p = Platform::of(&e);
+    p.set_external_drops_unavailable(&e, "no drag-and-drop here");
+    assert_eq!(warnings(&e), 0, "no target yet");
+    p.note_external_drop_target(&e);
+    p.note_external_drop_target(&e);
+    assert_eq!(warnings(&e), 1);
+}

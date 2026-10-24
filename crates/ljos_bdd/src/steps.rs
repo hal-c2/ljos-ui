@@ -620,6 +620,11 @@ fn network_changes(w: &mut LjosWorld, said: String) -> StepResult {
     w.each(|b| b.network(status))
 }
 
+#[given("the window system brings no files dragged in from other applications")]
+fn no_external_drops_given(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.no_external_drops())
+}
+
 #[given(regex = r#"^the desktop setting "([^"]+)" "([^"]+)" is (.+)$"#)]
 fn desktop_setting_is(
     w: &mut LjosWorld,

@@ -211,6 +211,7 @@ pub struct Platform {
     application: RefCell<Option<(String, String)>>,
     desktop_file_name: RefCell<Option<String>>,
     drop_handler: RefCell<Option<DropHandler>>,
+    pub(crate) external_drops: RefCell<crate::drop::ExternalDrops>,
     fetches: RefCell<HashMap<u64, FetchDone>>,
     // A parallel map to `fetches`, not one map of an enum: a request's
     // answer is a Response where a fetch's is bytes, and each delivery
@@ -262,6 +263,7 @@ impl Default for Platform {
             application: RefCell::new(None),
             desktop_file_name: RefCell::new(None),
             drop_handler: RefCell::new(None),
+            external_drops: RefCell::default(),
             fetches: RefCell::new(HashMap::new()),
             requests: RefCell::new(HashMap::new()),
             next_fetch: Cell::new(0),

@@ -137,10 +137,17 @@ impl DropArea {
 
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
-        let reg = cx.engine.extension::<Areas>();
-        let mut areas = reg.0.borrow_mut();
-        areas.retain(|a| cx.engine.is_alive(*a));
-        areas.push(cx.this);
+        {
+            let reg = cx.engine.extension::<Areas>();
+            let mut areas = reg.0.borrow_mut();
+            areas.retain(|a| cx.engine.is_alive(*a));
+            areas.push(cx.this);
+        }
+        // Files from other applications come as a URI list; the platform
+        // warns of an area they cannot reach.
+        if takes_keys(cx.engine, cx.this, &["text/uri-list".to_owned()]) {
+            ljos_platform::Platform::of(cx.engine).note_external_drop_target(cx.engine);
+        }
         Ok(())
     }
 }

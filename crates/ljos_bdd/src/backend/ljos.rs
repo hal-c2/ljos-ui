@@ -262,6 +262,7 @@ enum Said {
     /// application font.
     Font(ljos_engine::Font),
     Network(ljos_platform::NetworkStatus),
+    NoExternalDrops,
 }
 
 fn apply(engine: &Engine, said: Said) {
@@ -282,6 +283,8 @@ fn apply(engine: &Engine, said: Said) {
         Said::Desktop(report) => ljos_quick::report_system_prefs(engine, report),
         Said::Font(font) => ljos_controls::set_application_font(engine, Some(&font)),
         Said::Network(status) => ljos_platform::report_network_status(engine, status),
+        Said::NoExternalDrops => ljos_platform::Platform::of(engine)
+            .set_external_drops_unavailable(engine, "the window system has no drag-and-drop"),
     }
 }
 
@@ -1648,6 +1651,10 @@ impl Backend for LjosBackend {
 
     fn network(&mut self, status: ljos_platform::NetworkStatus) -> Result<()> {
         self.said(Said::Network(status))
+    }
+
+    fn no_external_drops(&mut self) -> Result<()> {
+        self.said(Said::NoExternalDrops)
     }
 
     fn a11y_act(&mut self, role: &str, name: &str, action: super::A11yAction) -> Result<()> {

@@ -18,7 +18,7 @@ use ljos_platform::{HttpFetcher, Platform};
 /// Gives a desktop application the system's services. Only the shell's
 /// own loop does this: an application shown in another host (eframe, a
 /// test) keeps the in-process ones.
-pub(crate) fn install(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
+pub(crate) fn install(engine: &Engine, wayland: bool, wake: impl Fn() + Send + Sync + 'static) {
     let platform = Platform::of(engine);
     // An answer from a dialog's thread wakes the loop; nothing waits for
     // one by looking.
@@ -48,11 +48,30 @@ pub(crate) fn install(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) 
     crate::settings::install(engine);
     crate::network::install(engine);
     crate::screen_reader::watch(engine);
-    platform.set_plugin_name(plugin_name());
+    platform.set_plugin_name(plugin_name(wayland));
+    if wayland {
+        platform.set_external_drops_unavailable(engine, NO_WAYLAND_DROPS);
+    }
+}
+
+/// Why files from other applications do not come on Wayland, and how to
+/// have them.
+const NO_WAYLAND_DROPS: &str = "the window library (winit 0.30) has no drag-and-drop on \
+    Wayland; run the application on X11 or XWayland, with LJOS_PREFER_X11=1 or \
+    ShellConfig::prefer_x11";
+
+/// Whether the shell asks for X11: the environment's `LJOS_PREFER_X11`
+/// when it says yes or no, else the application's choice.
+pub(crate) fn prefers_x11(config: bool, env: Option<&str>) -> bool {
+    match env.map(str::trim) {
+        Some("1" | "true" | "yes") => true,
+        Some("0" | "false" | "no") => false,
+        _ => config,
+    }
 }
 
 /// What Qt calls the window system: the name of its platform plugin.
-fn plugin_name() -> &'static str {
+fn plugin_name(wayland: bool) -> &'static str {
     if cfg!(target_os = "macos") {
         "cocoa"
     } else if cfg!(target_os = "windows") {
@@ -61,10 +80,38 @@ fn plugin_name() -> &'static str {
         "android"
     } else if cfg!(target_os = "ios") {
         "ios"
-    } else if std::env::var_os("WAYLAND_DISPLAY").is_some_and(|d| !d.is_empty()) {
-        // winit prefers Wayland when the session has one, as Qt does.
+    } else if wayland {
         "wayland"
     } else {
         "xcb"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_environment_says_yes_or_no_to_x11_and_else_the_application_does() {
+        assert!(prefers_x11(false, Some("1")));
+        assert!(prefers_x11(false, Some("true")));
+        assert!(!prefers_x11(true, Some("0")));
+        assert!(!prefers_x11(true, Some("no")));
+        assert!(prefers_x11(true, None));
+        assert!(!prefers_x11(false, None));
+        assert!(prefers_x11(true, Some("")));
+        assert!(!prefers_x11(false, Some("maybe")));
+    }
+
+    #[test]
+    fn the_window_system_is_named_by_what_the_host_speaks() {
+        if cfg!(all(
+            unix,
+            not(target_vendor = "apple"),
+            not(target_os = "android")
+        )) {
+            assert_eq!(plugin_name(true), "wayland");
+            assert_eq!(plugin_name(false), "xcb");
+        }
     }
 }

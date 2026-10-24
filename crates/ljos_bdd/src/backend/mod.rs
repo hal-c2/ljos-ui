@@ -334,6 +334,13 @@ pub trait Backend: fmt::Debug {
     fn network(&mut self, _status: ljos_platform::NetworkStatus) -> Result<()> {
         Err(BackendError::NotImplemented("the system's network"))
     }
+    /// The window system brings no files dragged in from other
+    /// applications, as winit has none on Wayland.
+    fn no_external_drops(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a window system without drops from outside",
+        ))
+    }
     /// An assistive technology asks the node with this role and name to
     /// select or change its text. A node that refuses is not an error.
     fn a11y_text(&mut self, _role: &str, _name: &str, _action: A11yTextAction) -> Result<()> {
