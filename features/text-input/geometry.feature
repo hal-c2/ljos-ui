@@ -177,3 +177,76 @@ Feature: Where the text and the cursor of a TextInput are
       And the property "cursorPosition" of "input" is set to 0
       And the property "cursorPosition" of "input" is set to 17
       Then the property "cursorRectangle.x" of "input" is 105.75
+
+  Rule: positionToRectangle leaves out the padding, unlike cursorRectangle
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          width: 300; height: 200
+          TextInput {
+            objectName: "input"; width: 100; leftPadding: 10; topPadding: 7
+            font.family: "Liberation Sans"; font.pixelSize: 20
+            text: "xx"
+            property real probe: 0
+          }
+          TextInput {
+            objectName: "centred"; y: 100; width: 100; padding: 6
+            horizontalAlignment: TextInput.AlignHCenter
+            font.family: "Liberation Sans"; font.pixelSize: 20
+            text: "x"
+            property real probe: 0
+          }
+        }
+        """
+
+    Scenario Outline: positionToRectangle(<position>).<side> of <name> is <value>
+      When the property "probe" of "<name>" is bound to "positionToRectangle(<position>).<side>"
+      Then the property "probe" of "<name>" is <value>
+
+      Examples:
+        | name    | position | side | value |
+        | input   | 0        | x    | 0     |
+        | input   | 2        | x    | 20    |
+        | input   | 0        | y    | 0     |
+        | centred | 0        | x    | 39    |
+
+    Scenario: cursorRectangle counts the padding
+      Then the property "cursorRectangle.x" of "input" is 30
+      And the property "cursorRectangle.y" of "input" is 7
+      And the property "cursorRectangle.x" of "centred" is 55
+
+  Rule: Centred text starts a whole 64th of a pixel left of the middle
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          width: 300; height: 200
+          TextInput {
+            objectName: "input"; x: 20; y: 20; width: 60; padding: 6
+            horizontalAlignment: TextInput.AlignHCenter
+            font.family: "Liberation Sans"; font.pixelSize: 12
+            text: "0"
+            property real probe: 0
+          }
+        }
+        """
+
+    Scenario: The free room is cut to a 64th before it is halved
+      When the property "probe" of "input" is bound to "positionToRectangle(0).x"
+      Then the property "probe" of "input" is 20.65625
+      And the property "cursorRectangle.x" of "input" is 33.328125
+
+    Scenario Outline: A press at <x> puts the cursor at <position>
+      When the user presses the pointer at <x>, 30
+      And the user releases the pointer at <x>, 30
+      Then the property "cursorPosition" of "input" is <position>
+
+      Examples:
+        | x  | position |
+        | 49 | 0        |
+        | 50 | 1        |

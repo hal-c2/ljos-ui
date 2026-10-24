@@ -289,6 +289,8 @@ pub(crate) struct Geometry {
     /// The left edge and the right edge of the document in a multi-line
     /// editor: inside the padding, as wide as the item or as the text.
     pub doc_x: (f64, f64),
+    /// The left and the top padding.
+    pub pad: (f64, f64),
 }
 
 /// The layout the state holds, laying the text out when it has none for
@@ -501,7 +503,15 @@ pub(crate) fn relayout(
             (!inputs.own_size).then_some((implicit_width, content_width + left + right));
         let x = if content_width <= avail {
             s.hscroll = 0.0;
-            horizontal_offset(inputs.h_align, avail - content_width)
+            // Qt holds the free room in 64ths of a pixel and halves it
+            // whole, so centred text starts up to a 128th left of the
+            // middle: measured on Qt 6.11 (features/text-input/geometry.feature).
+            let free = (avail - content_width) * 64.0;
+            if inputs.h_align & align::H_CENTER != 0 {
+                (free.round() / 2.0).floor() / 64.0
+            } else {
+                horizontal_offset(inputs.h_align, free / 64.0)
+            }
         } else if inputs.auto_scroll {
             // The text moves as little as keeps the cursor inside.
             let mut scroll = s.hscroll;
@@ -527,6 +537,7 @@ pub(crate) fn relayout(
         inputs.height - top_pad - bottom
     };
     geo.top = top_pad + vertical_offset(inputs.v_align, room, content_height);
+    geo.pad = (left, top_pad);
 
     let cursor = Rect {
         x: geo.line_x.get(caret.line).copied().unwrap_or(left) + caret.x,
@@ -584,7 +595,9 @@ pub(crate) fn relayout(
 }
 
 /// `positionToRectangle`: where the cursor would stand at `pos`. A position
-/// the text does not have gives an empty rectangle.
+/// the text does not have gives an empty rectangle. A `TextInput` leaves
+/// its left and top padding out, unlike its `cursorRectangle` and unlike a
+/// `TextEdit`, as Qt 6.11 does (features/text-input/geometry.feature).
 pub(crate) fn position_rect(st: &SharedState, pos: i32) -> Rect {
     let s = st.borrow();
     let (Some(layout), Ok(pos)) = (s.layout.as_ref(), usize::try_from(pos)) else {
@@ -594,9 +607,10 @@ pub(crate) fn position_rect(st: &SharedState, pos: i32) -> Rect {
         return Rect::default();
     }
     let caret = layout.caret(s.shown.byte_of(pos));
+    let (left, top) = if s.multi { (0.0, 0.0) } else { s.geo.pad };
     Rect {
-        x: s.geo.line_x.get(caret.line).copied().unwrap_or(0.0) + caret.x,
-        y: s.geo.top + caret.top,
+        x: s.geo.line_x.get(caret.line).copied().unwrap_or(0.0) + caret.x - left,
+        y: s.geo.top + caret.top - top,
         width: 1.0,
         height: caret.height,
     }
