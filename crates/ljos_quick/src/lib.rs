@@ -10,6 +10,8 @@
 mod accessible;
 mod anchors;
 mod animation;
+mod app_font;
+pub use app_font::application_font_changed;
 mod canvas;
 mod drag;
 mod drop_area;

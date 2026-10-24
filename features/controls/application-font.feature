@@ -8,16 +8,18 @@
 # A host program built on Qt's public API that calls `QGuiApplication::setFont` while the
 # window shows sees `Qt.application.font`, `Qt.font({...})` and every Text, Label and control
 # made afterwards take the new font, and a Text made before keep its own. Qt 6.11 leaves the
-# controls and windows made before on the old font too; Ljós makes them follow, as a desktop's
-# font change asks.
+# controls and windows made before on the old font too, and its documented setFont reaches no
+# plain Text, TextInput or TextEdit; a Qt program walks its windows' text items to set the family
+# on each one that names none. Ljós makes them all follow, as a desktop's font change asks.
 
 @ljos-only @api-QtQuick.Application.font
 Feature: The application font changes while the application runs
   The host can make another font the application font at any time, as a desktop does when its
   user picks another one. Every control, label and window that inherits its font then takes the
   new one. An attribute that an object, or one of the objects above it, set itself stays.
-  `Qt.application.font` reads the new font, and QML cannot assign it. A `Qt.font({...})` and a
-  plain text made after the change start from the new font; a plain text made before keeps its own.
+  `Qt.application.font` reads the new font, and QML cannot assign it. A `Qt.font({...})` made after
+  the change starts from the new font. A plain `Text`, `TextInput` or `TextEdit` follows it too,
+  keeping what its author named.
 
   Background:
     Given the QML:
@@ -94,10 +96,34 @@ Feature: The application font changes while the application runs
     And the property "font.pointSize" of "label" is 9
     And the property "app.pointSize" of "window" is 9
 
-  Scenario: A plain text keeps the font it was made with
+  Scenario: A plain text made before the change takes the new font
     When the application font is set to:
-      | pixelSize | 20 |
-    Then the property "font.pointSize" of "plain" is 9
+      | family    | Serif |
+      | pixelSize | 20    |
+    Then the property "font.family" of "plain" is "Serif"
+    And the property "font.pixelSize" of "plain" is 20
+
+  Scenario: Plain text items keep what their author named and follow in the rest
+    Given the QML:
+      """qml
+      import QtQuick
+      Column {
+        TextInput { objectName: "input"; text: "x" }
+        TextEdit { objectName: "edit"; text: "x" }
+        Text { objectName: "named"; text: "x"; font.family: "Monospace" }
+        Text { objectName: "bold"; text: "x"; font.bold: true }
+      }
+      """
+    When the application font is set to:
+      | family    | Serif |
+      | pixelSize | 20    |
+    Then the property "font.family" of "input" is "Serif"
+    And the property "font.family" of "edit" is "Serif"
+    And the property "font.pixelSize" of "edit" is 20
+    And the property "font.family" of "named" is "Monospace"
+    And the property "font.pixelSize" of "named" is 20
+    And the property "font.family" of "bold" is "Serif"
+    And the property "font.bold" of "bold" is true
 
   Scenario: Qt.font starts from the new application font
     Given the QML:

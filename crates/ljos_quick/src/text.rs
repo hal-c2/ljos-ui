@@ -313,6 +313,7 @@ impl Text {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init_text(cx.engine, cx.this)?;
+        crate::app_font::follow(cx.engine, cx.this, Text::FONT.index);
         // Qt's text knows its size by the time `Component.onCompleted`
         // runs. The layout stays in the engine's cache, so the first
         // frame's polish finds it there. Text that wraps or elides to a

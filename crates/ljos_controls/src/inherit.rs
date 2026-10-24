@@ -43,7 +43,7 @@
 //! ([`set_application_font`]), which the host can change at any time: the
 //! objects that inherit it follow, each once, and its attributes that differ
 //! from the default count as set above, so a style with a font of its own
-//! takes them too.
+//! takes them too. So does a plain text item, though it hands nothing down.
 //!
 //! Assigning `undefined` hands one back ([`FONT_RESET`], [`register`]'s
 //! reset of a colour, [`LOCALE_RESET`]): the object has what is above it again and follows
@@ -327,8 +327,9 @@ pub fn application_font(engine: &Engine) -> Arc<Font> {
 /// runs: every control, label and window that inherits its font takes it,
 /// keeping what it or an object above it set, and `Qt.application.font`
 /// reads it. Each of them is resolved once for a change. A `Qt.font({...})`
-/// and a plain `Text` made from now on start from it ([`Engine::set_default_font`]);
-/// a plain `Text` made before keeps the font it was made with.
+/// made from now on starts from it ([`Engine::set_default_font`]), and a
+/// plain `Text`, `TextInput` or `TextEdit` follows it where it names nothing
+/// of its own ([`ljos_quick::application_font_changed`]).
 ///
 /// [`Font::set_application_font`] is the font of the whole process, read
 /// when an object is made; this one is the engine's and is followed.
@@ -345,7 +346,11 @@ pub fn set_application_font(engine: &Engine, font: Option<&Font>) {
     let set = differing(&font, &process);
     engine.set_default_font((set != 0).then_some(&font));
     let font = Arc::new(font);
+    let old = font_value(&g.get_untracked(node));
     engine.batch(|| {
+        // A label or a text field resolves its font as a control does.
+        let resolves = |o| kind_of(engine, o).and_then(font_prop).is_some();
+        ljos_quick::application_font_changed(engine, &old, &font, resolves);
         engine.extension::<ApplicationFont>().set.set(set);
         g.set(node, Value::Font(font.clone()));
         if set != 0 && !engine.untrack(|| in_use(engine, Which::Font)) {

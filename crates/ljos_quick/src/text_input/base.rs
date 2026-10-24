@@ -345,6 +345,7 @@ impl TextEditor {
 
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
+        crate::app_font::follow(cx.engine, cx.this, TextEditor::FONT.index);
         init_editor(cx.engine, cx.this)
     }
 

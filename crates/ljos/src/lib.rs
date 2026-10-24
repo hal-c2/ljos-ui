@@ -321,7 +321,7 @@ pub fn reduced_motion(engine: &Engine) -> bool {
 /// default again for `None`: every control, label and window that
 /// inherits its font takes it, keeping what it or an object above it set,
 /// and `Qt.application.font` reads it (QML cannot assign it, as in Qt). A
-/// plain `Text` keeps the font it was made with.
+/// plain `Text`, `TextInput` or `TextEdit` follows it, except in what it names itself.
 ///
 /// ```
 /// use ljos::item::Font;
