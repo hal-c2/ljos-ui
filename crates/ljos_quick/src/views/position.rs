@@ -141,6 +141,10 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
     let Some(st) = state_of(e, view) else {
         return;
     };
+    if st.dirty.replace(false) {
+        pass::refresh(e, view);
+        return;
+    }
     if st.passes.get() != moved {
         return;
     }

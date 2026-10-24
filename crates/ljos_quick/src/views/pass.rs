@@ -878,7 +878,10 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>
     st.passes.set(st.passes.get() + 1);
     run(e, view, st, over);
     st.in_pass.set(false);
-    if st.dirty.replace(false) {
+    // What changed during a pass for a method is laid out once the method
+    // has gone where it measured: laid out now, it would be laid out where
+    // the view still is, and the row measured would be let go.
+    if over.is_none() && st.dirty.replace(false) {
         bump(e, st);
     }
     fetch_at_end(e, view, st);
