@@ -6,11 +6,14 @@
 @qt-parity @api-QtQuick.Controls.CheckBox @api-QtQuick.Controls.RadioButton
 @api-QtQuick.Controls.Switch @api-QtQuick.Controls.Slider
 @api-QtQuick.Controls.TextField @api-QtQuick.Controls.ComboBox
-@api-QtQuick.Controls.SpinBox
+@api-QtQuick.Controls.SpinBox @api-QtQuick.Controls.RoundButton
 Feature: How the Fusion style shows a control's state
   Pressed, a check box or radio button is shaded; one that is not enabled
   is filled with the window's colour and its mark is grey. A switch's or
-  slider's filled part is the highlight, and grey when it is not enabled.
+  slider's filled part is the highlight, and grey when it is not enabled;
+  a switch's fill shows only once it is checked, and stays in the
+  highlight when it is not enabled. A round button is a gradient over
+  white, flat in the pressed shade while it is down or checked.
   A slider's handle sits where its value is, across or down: a white knob
   in an outline of the window's colour, darker. A groove is shaded from
   top to bottom, a vertical one too. A field that
@@ -36,6 +39,11 @@ Feature: How the Fusion style shows a control's state
         RadioButton { objectName: "offRadio"; text: "Ab"; enabled: false }
         Switch { objectName: "switch"; text: "Ab" }
         Switch { objectName: "offSwitch"; text: "Ab"; enabled: false; checked: true }
+        Switch { objectName: "onSwitch"; text: "Ab"; checked: true }
+        RoundButton { objectName: "round"; text: "A" }
+        RoundButton { objectName: "downRound"; text: "A"; down: true }
+        RoundButton { objectName: "checkedRound"; text: "A"; checkable: true; checked: true }
+        RoundButton { objectName: "litRound"; text: "A"; highlighted: true; down: true }
         Slider { objectName: "slider"; value: 0.5 }
         Slider { objectName: "pressedSlider"; value: 0.5; pressed: true }
         Slider { objectName: "offSlider"; value: 0.5; enabled: false }
@@ -93,6 +101,28 @@ Feature: How the Fusion style shows a control's state
       | offSlider     | handle.color             | "#ffffff" |
       | offSlider     | handle.children.0.border.color | "#ababab" |
       | offSwitch     | indicator.children.1.color | "#ffffff" |
+      | switch        | indicator.children.0.opacity | 0       |
+      | switch        | indicator.children.0.visible | true    |
+      | switch        | indicator.children.0.width | 20        |
+      | onSwitch      | indicator.children.0.opacity | 1       |
+      | onSwitch      | indicator.children.0.width | 40        |
+      | onSwitch      | indicator.children.0.border.color | "#236690" |
+      | onSwitch      | indicator.children.0.gradient.stops.0.color | "#308cc6" |
+      | onSwitch      | indicator.children.0.gradient.stops.1.color | "#3aa8ee" |
+      | offSwitch     | indicator.children.0.border.color | "#696969" |
+      | offSwitch     | indicator.children.0.border.width | 0 |
+      | offSwitch     | indicator.children.0.gradient.stops.0.color | "#308cc6" |
+      | round         | background.color         | "#ffffff" |
+      | round         | background.radius        | 16        |
+      | round         | background.gradient.stops.0.color | "#ffffff" |
+      | round         | background.gradient.stops.1.color | "#ececec" |
+      | downRound     | background.color         | "#ffffff" |
+      | downRound     | background.gradient.stops.0.color | "#d3d3d3" |
+      | downRound     | background.gradient.stops.1.color | "#d3d3d3" |
+      | checkedRound  | background.gradient.stops.0.color | "#d3d3d3" |
+      | litRound      | background.color         | "#ffffff" |
+      | litRound      | background.gradient.stops.0.color | "#c1c9ce" |
+      | litRound      | background.border.color  | "#26709e" |
       | upright       | background.x             | 4         |
       | upright       | background.width         | 5         |
       | upright       | background.height        | 160       |

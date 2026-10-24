@@ -43,9 +43,11 @@ Rectangle {
         height: groove.vertical ? (groove.progress - groove.offset) * groove.height : groove.height
         radius: 2
         opacity: groove.fillOpacity
-        visible: opacity > 0 && groove.progress > groove.offset
+        visible: groove.progress > groove.offset
+        // Not enabled, it keeps the highlight but drops its outline, which
+        // reads as the grey one (fusion-states.feature).
         border.width: groove.control.enabled ? 1 : groove.alwaysHighlighted ? 0 : 1
-        border.color: groove.lit ? groove.shade(groove.highlight, 0.728) : groove.shade(groove.button, 0.438)
+        border.color: groove.control.enabled ? groove.shade(groove.highlight, 0.728) : groove.shade(groove.button, 0.438)
         gradient: Gradient {
                 GradientStop {
                 position: 0

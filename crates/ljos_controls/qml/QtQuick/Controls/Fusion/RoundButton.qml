@@ -2,6 +2,7 @@
 // QtQuick.Controls.Fusion.impl: drawings of our own, fitted to what qml6 shows.
 import QtQuick
 import QtQuick.Controls.impl
+import QtQuick.Controls.Fusion
 import QtQuick.Controls.Fusion.impl
 import QtQuick.Templates as T
 
@@ -34,6 +35,7 @@ T.RoundButton {
 
     background: Component {
         ButtonPanel {
+            id: panel
             implicitWidth: 32
             implicitHeight: 32
             control: host
@@ -41,6 +43,22 @@ T.RoundButton {
             visible: !host.flat || host.down || host.checked || host.highlighted
             pressed: host.down || host.checked
             highlighted: host.highlighted
+            // Unlike the other buttons, always a gradient over the
+            // rectangle's own white: flat in the pressed shade while down
+            // (fusion-states.feature).
+            color: "#ffffff"
+            gradient: Gradient {
+                GradientStop {
+                    position: 0
+                    color: panel.pressed ? Fusion.buttonColor(host.palette, host.highlighted, true, false)
+                                         : Fusion.gradientStart(panel.face)
+                }
+                GradientStop {
+                    position: 1
+                    color: panel.pressed ? Fusion.buttonColor(host.palette, host.highlighted, true, false)
+                                         : Fusion.gradientStop(panel.face)
+                }
+            }
         }
     }
 }
