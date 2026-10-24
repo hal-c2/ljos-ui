@@ -225,6 +225,8 @@ pub(crate) fn read_inputs(e: &Engine, view: ObjectId, st: &ViewState) {
             }
         }
     }
+    st.moves_rows
+        .set(super::view_transition::moves_rows(e, view));
     if let Some(n) = st.trigger.get() {
         let _ = e.graph().get(n);
     }
@@ -1416,13 +1418,21 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     let first_shown = slots.iter().find(|s| s.end() > v_now).map(|s| s.line);
     *st.slots.borrow_mut() = slots.into_iter().collect();
     *st.placed.borrow_mut() = items.clone();
-    *st.last_places.borrow_mut() = items
-        .iter()
-        .filter_map(|(row, o, pos, size)| {
-            d.key_at(*row)
-                .map(|k| (k, (*o, dest_of(*row, *o, *pos, *size))))
-        })
-        .collect();
+    // A transition set later runs the pass again (`read_inputs`), which
+    // keeps the places before a change can need them.
+    let mut last_places = st.last_places.borrow_mut();
+    if st.moves_rows.get() {
+        *last_places = items
+            .iter()
+            .filter_map(|(row, o, pos, size)| {
+                d.key_at(*row)
+                    .map(|k| (k, (*o, dest_of(*row, *o, *pos, *size))))
+            })
+            .collect();
+    } else {
+        last_places.clear();
+    }
+    drop(last_places);
     if avg_before == 0.0 && avg > 0.0 && crate::system_prefs::screen_reader_active(e) {
         // The larger cache is so many rows, and now a row has a length.
         st.dirty.set(true);

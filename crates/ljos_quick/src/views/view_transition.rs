@@ -258,6 +258,21 @@ pub(crate) fn forget(e: &Engine, view: ObjectId, item: ObjectId) {
     }
 }
 
+/// Whether the view has a transition that takes a row from where the
+/// last pass put it ([`transition_for`]): without one, no pass needs to
+/// keep where its rows were.
+pub(crate) fn moves_rows(e: &Engine, view: ObjectId) -> bool {
+    [
+        ItemView::MOVE_TRANSITION,
+        ItemView::MOVE_DISPLACED,
+        ItemView::ADD_DISPLACED,
+        ItemView::REMOVE_DISPLACED,
+        ItemView::DISPLACED,
+    ]
+    .into_iter()
+    .any(|p| e.get(view, p).ok().flatten().is_some())
+}
+
 /// The transition of `view` for an item pushed aside by `kind`, or that
 /// moved itself: the one named for the change, the plain displaced one
 /// when there is none of that name.

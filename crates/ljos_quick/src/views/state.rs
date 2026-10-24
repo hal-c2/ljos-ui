@@ -308,6 +308,9 @@ pub(crate) struct ViewState {
     /// Where each row's delegate was put by the last pass, in content
     /// coordinates by the row's key: what a row pushed aside moves from.
     pub last_places: RefCell<FxHashMap<RowKey, (ObjectId, [f64; 2])>>,
+    /// Whether the view has a transition that takes rows from their last
+    /// places, without which they are not kept.
+    pub moves_rows: Cell<bool>,
     /// The delegates a move or displaced transition is on the way to
     /// their place with, and where that place is per axis: a pass does
     /// not put them there before the transition does.
@@ -398,6 +401,7 @@ impl Default for ViewState {
             running: RefCell::default(),
             pending: RefCell::default(),
             last_places: RefCell::default(),
+            moves_rows: Cell::default(),
             vt_places: RefCell::default(),
             vt_counts: RefCell::default(),
             movers: [Cell::new(None), Cell::new(None)],
