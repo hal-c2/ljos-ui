@@ -756,6 +756,28 @@ impl Item {
         point.x >= 0.0 && point.y >= 0.0 && point.x < self.width && point.y < self.height
     }
 
+    /// `childAt(x, y)`: the visible child under a point in this item's
+    /// coordinates, mapped through the child's transform, or null. Like
+    /// Qt, the last child in `children` wins whatever the `z`, and opacity
+    /// does not matter.
+    #[qml(invokable, name = "childAt")]
+    fn child_at(cx: &Cx, x: f64, y: f64) -> Option<ObjectId> {
+        let (e, me) = (cx.engine, cx.this);
+        let under = |c: ObjectId| {
+            if !e.read(c, Item::VISIBLE.index).to_boolean() {
+                return false;
+            }
+            let p = map_point(e, Some(me), Some(c), Point { x, y });
+            let w = e.read(c, Item::WIDTH.index).to_number();
+            let h = e.read(c, Item::HEIGHT.index).to_number();
+            p.x >= 0.0 && p.y >= 0.0 && p.x < w && p.y < h
+        };
+        crate::tree::child_items(e, me)
+            .into_iter()
+            .rev()
+            .find(|c| under(*c))
+    }
+
     /// `forceActiveFocus(reason)`: focus for the item and for every focus
     /// scope around it. Without a reason, `Qt.OtherFocusReason`.
     #[qml(invokable, name = "forceActiveFocus")]

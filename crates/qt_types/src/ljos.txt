@@ -1750,6 +1750,7 @@ module QtQuick
 		method mapToGlobal
 		method mapFromGlobal
 		method contains
+		method childAt
 		method forceActiveFocus
 		method nextItemInFocusChain
 	type QtQuick.KeyEvent KeyEvent
