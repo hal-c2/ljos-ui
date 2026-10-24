@@ -46,6 +46,10 @@ pub struct QmlText<'a> {
     /// The key the text is compiled under: the types it names are looked
     /// for as a file of this key would find them.
     pub key: &'a str,
+    /// The place the text was given, resolved against the calling file:
+    /// a compiler that reads files finds those beside it there, also
+    /// where no file it compiled is.
+    pub url: &'a str,
     pub text: &'a str,
 }
 
@@ -540,7 +544,12 @@ impl Engine {
                 message,
             }])
         };
-        let ir = compiler(QmlText { key: &key, text }).map_err(at)?;
+        let ir = compiler(QmlText {
+            key: &key,
+            url: &url,
+            text,
+        })
+        .map_err(at)?;
         if ir.version != ljos_ir::IR_VERSION {
             return Err(plain(format!(
                 "compiled for IR version {}, this engine reads {}",

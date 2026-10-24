@@ -117,11 +117,13 @@ mod tests {
         let compiler = text_compiler(project());
         let here = compiler(QmlText {
             key: "inline",
+            url: "file:///inline.qml",
             text: "import QtQuick\nPanel { }\n",
         })
         .expect("compiles");
         let there = compiler(QmlText {
             key: "dyn/snippet",
+            url: "file:///dyn/snippet.qml",
             text: "import QtQuick\nPanel { }\n",
         })
         .expect("compiles");
@@ -137,6 +139,7 @@ mod tests {
         let compiler = text_compiler(project());
         let errors = compiler(QmlText {
             key: "inline",
+            url: "file:///inline.qml",
             text: "import QtQuick\nItem { ",
         })
         .expect_err("it does not parse");
@@ -152,6 +155,7 @@ mod tests {
         let compiler = texts.compiler();
         let text = QmlText {
             key: "inline",
+            url: "file:///inline.qml",
             text: "import QtQuick\nPanel { }\n",
         };
         assert!(compiler(text).is_err(), "there is no Panel yet");
