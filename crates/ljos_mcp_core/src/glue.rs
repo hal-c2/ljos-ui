@@ -199,7 +199,15 @@ impl<S: McpSurface> ServerHandler for RmcpServer<S> {
             client,
             ..self.ctx()
         };
-        let out = self.surface.call_tool(&request.name, &ctx, args).await;
+        // A client that went away, or cancelled, leaves no call behind: a
+        // watch it was waiting on is dropped unanswered, which is what
+        // lets go of what that client held at once.
+        let out = tokio::select! {
+            out = self.surface.call_tool(&request.name, &ctx, args) => out,
+            () = context.ct.cancelled() => {
+                return Err(ErrorData::internal_error("the request was cancelled", None));
+            }
+        };
         Ok(tool_result(out).into())
     }
 

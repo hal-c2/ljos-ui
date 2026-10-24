@@ -533,3 +533,78 @@ fn sigint_removes_the_token_file_and_the_socket() {
     assert!(!token, "the token file was left");
     assert!(!socket, "the socket was left");
 }
+
+/// Answers nothing until its call is dropped, and says when it was.
+struct Waits {
+    tools: ToolRegistry,
+    dropped: std::sync::mpsc::SyncSender<()>,
+}
+
+struct Tell(std::sync::mpsc::SyncSender<()>);
+
+impl Drop for Tell {
+    fn drop(&mut self) {
+        let _ = self.0.try_send(());
+    }
+}
+
+impl McpSurface for Waits {
+    fn meta(&self) -> ServerMeta {
+        ServerMeta {
+            name: "waits",
+            version: "0",
+            instructions: String::from("Waits."),
+        }
+    }
+    fn tools(&self) -> &ToolRegistry {
+        &self.tools
+    }
+    fn call_tool<'a>(
+        &'a self,
+        _name: &'a str,
+        _ctx: &'a ljos_mcp_core::CallCtx,
+        _args: Value,
+    ) -> ljos_mcp_core::ToolFuture<'a> {
+        let tell = Tell(self.dropped.clone());
+        Box::pin(async move {
+            std::future::pending::<()>().await;
+            drop(tell);
+            Ok(ToolReply::from(json!({})))
+        })
+    }
+}
+
+#[test]
+fn a_call_whose_client_went_away_is_dropped() {
+    let (dropped, told) = std::sync::mpsc::sync_channel(1);
+    let surface = Arc::new(Waits {
+        tools: ToolRegistry::new().with(
+            ToolDef::new::<Say>("echo", "Waits for ever."),
+            typed(|_, a: Say| Ok(json!({ "said": a.say }))),
+        ),
+        dropped,
+    });
+    let server = HttpServer::start(surface, config()).unwrap();
+    let addr = server.addr().unwrap();
+    let (host, bearer) = (
+        addr.to_string(),
+        format!("Bearer {}", server.token().as_str()),
+    );
+    let mut stream = std::net::TcpStream::connect(addr).unwrap();
+    let mut request = String::from("POST /mcp HTTP/1.1\r\n");
+    for (k, v) in mcp_headers(&host, &bearer) {
+        request.push_str(&format!("{k}: {v}\r\n"));
+    }
+    request.push_str(&format!("Content-Length: {}\r\n\r\n{CALL}", CALL.len()));
+    stream.write_all(request.as_bytes()).unwrap();
+    // Not answered: the call is waiting.
+    let wait = std::time::Duration::from_secs(5);
+    assert!(
+        told.recv_timeout(std::time::Duration::from_millis(200))
+            .is_err()
+    );
+    drop(stream);
+    // A watch dropped is what lets go of what its client held.
+    told.recv_timeout(wait)
+        .expect("the call outlived its client");
+}
