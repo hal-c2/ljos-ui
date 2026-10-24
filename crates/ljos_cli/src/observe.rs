@@ -136,6 +136,10 @@ pub struct InspectorClient {
     /// new port and token is found.
     #[qml(notify)]
     pub token_file: String,
+    /// The name the client gives itself in each call's `_meta`, so that
+    /// the inspector can tell the window's own requests from others'.
+    #[qml(notify)]
+    pub client_name: String,
     /// The address the last call went to.
     #[qml(notify, readonly)]
     pub url: String,
@@ -170,6 +174,7 @@ impl InspectorClient {
         let pending = cx.get(InspectorClient::PENDING)?;
         cx.set(InspectorClient::PENDING, pending + 1)?;
         let file = cx.get(InspectorClient::TOKEN_FILE)?;
+        let name = cx.get(InspectorClient::CLIENT_NAME)?;
         let (e, me) = (cx.engine, cx.this);
         let request = read_token_file(Path::new(&file)).and_then(|target| {
             let args: Json = match arguments.trim() {
@@ -193,11 +198,20 @@ impl InspectorClient {
         // A watch is answered when its wait is over; anything else soon.
         let wait = args["wait_ms"].as_u64().unwrap_or(0);
         let limit = Duration::from_millis(wait) + PATIENCE;
+        let mut params = json!({ "name": &tool, "arguments": args });
+        if !name.is_empty() {
+            params["_meta"] = json!({
+                "io.modelcontextprotocol/clientInfo": {
+                    "name": name,
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+            });
+        }
         let body = json!({
             "jsonrpc": "2.0",
             "id": serial,
             "method": "tools/call",
-            "params": { "name": &tool, "arguments": args },
+            "params": params,
         });
         let reply = Platform::of(e).expect();
         let job = async move {

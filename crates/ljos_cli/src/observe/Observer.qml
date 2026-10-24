@@ -145,6 +145,8 @@ ApplicationWindow {
     InspectorClient {
         id: client
         tokenFile: window.tokenFile
+        // The Frames page tells this window's requests by it.
+        clientName: window.holder
         onAnswered: function(serial, tool, ok, result) {
             var next = window.waiting
             var route = next[serial]
@@ -3306,6 +3308,13 @@ ApplicationWindow {
                     // The longest frame since Clear, and never less than a
                     // frame of a 60 Hz display, so that bars compare.
                     property real scale: 16667
+                    // Every frame kept, shown or not: the frames this
+                    // window's own requests alone woke are hidden while
+                    // `hideOwn`, and come back when it is turned off.
+                    property var kept: []
+                    property int ownCount: 0
+                    property bool hideOwn: true
+                    onHideOwnChanged: refill()
                     readonly property var parts: [
                         { key: "timers", name: "timers", tone: theme.warn },
                         { key: "animations", name: "animations", tone: theme.violet },
@@ -3346,7 +3355,16 @@ ApplicationWindow {
                         var following = frameRows.count === 0 || frameView.atYEnd
                         for (var i = 0; i < s.frames.length; ++i)
                             put(s.frames[i])
-                        var over = frameRows.count - 600
+                        var all = kept
+                        var over = all.length - 600
+                        if (over > 0) {
+                            for (var j = 0; j < over; ++j)
+                                if (all[j].own)
+                                    ownCount -= 1
+                            all.splice(0, over)
+                            kept = all
+                        }
+                        over = frameRows.count - 600
                         if (over > 0)
                             frameRows.remove(0, over)
                         if (s.frames.length > 0 && following)
@@ -3355,10 +3373,25 @@ ApplicationWindow {
                             load()
                     }
 
+                    // Whether only this window's requests woke `f`: no
+                    // input, timer, animation or other thread did, and
+                    // every client that asked was this window.
+                    function own(f) {
+                        if (f.woke.length !== 1 || f.woke[0] !== "message"
+                                || f.thread_messages > 0 || f.asked_by.length === 0)
+                            return false
+                        for (var i = 0; i < f.asked_by.length; ++i)
+                            if (f.asked_by[i] !== window.holder)
+                                return false
+                        return true
+                    }
+
                     function put(f) {
                         var p = f.passes
                         var row = {
                             seq: f.frame,
+                            win: f.window === null ? "main" : f.window,
+                            own: own(f),
                             at: (f.at_ms / 1000).toFixed(3) + " s",
                             woke: f.woke.join(", "),
                             frames: f.scene_frames,
@@ -3376,12 +3409,33 @@ ApplicationWindow {
                             text: f.text_us,
                             layouts: f.text_layouts
                         }
-                        scale = Math.max(scale, row.total)
-                        frameRows.append(row)
+                        var all = kept
+                        all.push(row)
+                        kept = all
+                        if (row.own)
+                            ownCount += 1
+                        if (!(hideOwn && row.own)) {
+                            scale = Math.max(scale, row.total)
+                            frameRows.append(row)
+                        }
+                    }
+
+                    function refill() {
+                        frameRows.clear()
+                        for (var i = 0; i < kept.length; ++i) {
+                            var row = kept[i]
+                            if (hideOwn && row.own)
+                                continue
+                            scale = Math.max(scale, row.total)
+                            frameRows.append(row)
+                        }
+                        frameView.positionViewAtEnd()
                     }
 
                     function clear() {
                         frameRows.clear()
+                        kept = []
+                        ownCount = 0
                         summary = null
                         scale = 16667
                     }
@@ -3410,10 +3464,19 @@ ApplicationWindow {
                         Text {
                             text: (timeline.recording ? "recording" : "not recording") + " · "
                                   + frameRows.count + " frames"
+                                  + (timeline.hideOwn && timeline.ownCount > 0
+                                     ? " · " + timeline.ownCount + " woken by this window hidden" : "")
                                   + (timeline.dropped > 0 ? " · " + timeline.dropped + " older gave way" : "")
                             color: timeline.recording ? theme.good : theme.subtle
                         }
                         Item { Layout.fillWidth: true }
+                        // This window asks the application too; what only
+                        // its asking woke is not the application's work.
+                        CheckBox {
+                            text: "Hide this window's requests"
+                            checked: timeline.hideOwn
+                            onToggled: timeline.hideOwn = checked
+                        }
                         Button {
                             text: timeline.recording ? "Stop" : "Record"
                             onClicked: timeline.record(!timeline.recording)
@@ -3486,6 +3549,7 @@ ApplicationWindow {
                                 id: frameRow
                                 required property int index
                                 required property int seq
+                                required property string win
                                 required property string at
                                 required property string woke
                                 required property int frames
@@ -3502,11 +3566,12 @@ ApplicationWindow {
                                 required property int runs
                                 required property real text
                                 required property int layouts
-                                readonly property real barWidth: Math.max(40, width - 560)
+                                readonly property real barWidth: Math.max(40, width - 630)
                                 width: ListView.view.width
                                 height: 24
                                 Accessible.role: Accessible.ListItem
-                                Accessible.name: "frame " + seq + ", woke by " + (woke === "" ? "nothing" : woke)
+                                Accessible.name: "frame " + seq + " of " + (win === "main" ? "the main window" : win)
+                                                 + ", woke by " + (woke === "" ? "nothing" : woke)
                                                  + ", " + window.ms(total)
                                 Rectangle {
                                     anchors.fill: parent
@@ -3531,6 +3596,16 @@ ApplicationWindow {
                                         horizontalAlignment: Text.AlignRight
                                         text: frameRow.at
                                         color: theme.subtle
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    // Which window's scene ran it.
+                                    Text {
+                                        width: 60
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: frameRow.win
+                                        color: frameRow.win === "main" ? theme.subtle : theme.accent
+                                        elide: Text.ElideRight
                                         font.family: theme.mono
                                         font.pixelSize: 12
                                     }
