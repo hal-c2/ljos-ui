@@ -8,7 +8,7 @@
 //! parser. A shipped application builds without the feature and links
 //! neither (`tests/no_parser.rs`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -26,6 +26,8 @@ type ReportHandler = Box<dyn FnMut(&Report)>;
 /// and what [`Setup::watch`] made.
 pub(crate) struct DevSetup {
     wake: WakeHook,
+    /// The application's import path, as [`Setup::set_qml_dirs`] gave it.
+    qml_dirs: Vec<PathBuf>,
     dev: Option<Dev>,
     on_report: Option<ReportHandler>,
 }
@@ -34,6 +36,7 @@ impl DevSetup {
     pub(crate) fn new(wake: WakeHook) -> Self {
         Self {
             wake,
+            qml_dirs: Vec::new(),
             dev: None,
             on_report: None,
         }
@@ -169,6 +172,52 @@ impl<M> Setup<'_, M> {
             Arc::clone(&self.dev.wake),
         )?;
         self.watched(session)
+    }
+
+    /// Tells the setup the directories the application's QML is
+    /// compiled from, earlier ones first, as `ljos::App::qml_dirs` does
+    /// before the setup closure runs: [`watch_qml_dirs`](Self::watch_qml_dirs)
+    /// follows them without the closure naming them again.
+    pub fn set_qml_dirs(&mut self, dirs: impl IntoIterator<Item = impl Into<PathBuf>>) {
+        self.dev.qml_dirs = dirs.into_iter().map(Into::into).collect();
+    }
+
+    /// The directories [`set_qml_dirs`](Self::set_qml_dirs) gave, earlier
+    /// ones first; empty when none were given.
+    pub fn qml_dirs(&self) -> &[PathBuf] {
+        &self.dev.qml_dirs
+    }
+
+    /// [`watch_roots`](Self::watch_roots) over the application's own
+    /// directories, those of [`set_qml_dirs`](Self::set_qml_dirs).
+    ///
+    /// # Errors
+    /// No directories were given, or as [`watch_roots`](Self::watch_roots).
+    pub fn watch_qml_dirs(&mut self, entries: &[&str]) -> Result<ObjectId, SetupError> {
+        self.watch_qml_dirs_with(entries, Vec::new(), QtTypeOracle)
+    }
+
+    /// As [`watch_qml_dirs`](Self::watch_qml_dirs), with `properties` and
+    /// an `oracle` as for [`watch_with`](Self::watch_with).
+    ///
+    /// # Errors
+    /// As [`watch_qml_dirs`](Self::watch_qml_dirs).
+    pub fn watch_qml_dirs_with<O>(
+        &mut self,
+        entries: &[&str],
+        properties: Vec<(String, Value)>,
+        oracle: O,
+    ) -> Result<ObjectId, SetupError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
+        if self.dev.qml_dirs.is_empty() {
+            return Err("the application gave no QML directories to watch".into());
+        }
+        let dirs = self.dev.qml_dirs.clone();
+        let dirs: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+        self.watch_roots_with(&dirs, entries, properties, oracle)
     }
 
     fn watched(&mut self, session: DevSession) -> Result<ObjectId, SetupError> {

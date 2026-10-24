@@ -288,3 +288,107 @@ Item {
     assert!(w.h.state().reload_overlay().is_none());
     assert_eq!(w.num("box", "width"), 30.0);
 }
+
+/// The issue's application: QML in `user/`, `lib/` and `app/`, told to
+/// the setup once, as `ljos::App::qml_dirs` tells it, and watched without
+/// the setup closure naming them again.
+#[test]
+fn the_directories_the_application_gave_are_all_watched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    let files = [
+        (
+            "app/Main.qml",
+            "import QtQuick\nimport Lib\nItem { objectName: \"main\"; Badge { objectName: \"box\" } }\n",
+        ),
+        ("lib/Lib/qmldir", "module Lib\nBadge 1.0 Badge.qml\n"),
+        (
+            "lib/Lib/Badge.qml",
+            "import QtQuick\nRectangle { width: 10; height: 10 }\n",
+        ),
+    ];
+    for root in ["user", "lib", "app"] {
+        fs::create_dir_all(dir.join(root)).unwrap();
+    }
+    for (name, text) in files {
+        fs::create_dir_all(dir.join(name).parent().unwrap()).unwrap();
+        fs::write(dir.join(name), text).unwrap();
+    }
+    let (tx, woke) = mpsc::channel();
+    let roots = ["user", "lib", "app"].map(|r| dir.join(r));
+    let h = Harness::builder()
+        .with_size(Vec2::new(320.0, 200.0))
+        .with_max_steps(8)
+        .build_eframe(move |cc| {
+            cc.egui_ctx.set_request_repaint_callback(move |_| {
+                let _ = tx.send(());
+            });
+            ShellApp::new(
+                &cc.egui_ctx,
+                &ShellConfig::default(),
+                Arc::new(SystemClock::new()),
+                move |setup| {
+                    setup.set_qml_dirs(roots);
+                    setup.watch_qml_dirs(&["override", "Main"])
+                },
+            )
+            .unwrap()
+        });
+    let mut w = Window {
+        h,
+        woke,
+        dir,
+        _tmp: tmp,
+    };
+    w.h.run();
+    assert!(w.h.state().reload_overlay().is_none());
+    assert_eq!(w.num("box", "width"), 10.0);
+
+    fs::write(
+        w.dir.join("lib/Lib/Badge.qml"),
+        "import QtQuick\nRectangle { width: 30; height: 10 }\n",
+    )
+    .unwrap();
+    w.until(|app| app.reloads() == Some(1));
+    assert_eq!(w.num("box", "width"), 30.0);
+
+    fs::write(
+        w.dir.join("user/override.qml"),
+        "import QtQuick\nItem { objectName: \"override\" }\n",
+    )
+    .unwrap();
+    w.until(|app| app.reloads() == Some(2));
+    assert!(w.find("override").is_some());
+    assert!(w.find("main").is_none());
+}
+
+#[test]
+fn watching_the_application_s_directories_needs_some() {
+    let h: Harness<'static, ShellApp<()>> = Harness::builder().build_eframe(|cc| {
+        let made = ShellApp::<()>::new(
+            &cc.egui_ctx,
+            &ShellConfig::default(),
+            Arc::new(SystemClock::new()),
+            |setup| setup.watch_qml_dirs(&["Main"]),
+        );
+        let Err(e) = made else {
+            panic!("a watch over no directories was made");
+        };
+        assert!(e.to_string().contains("no QML directories"), "{e}");
+        ShellApp::new(
+            &cc.egui_ctx,
+            &ShellConfig::default(),
+            Arc::new(SystemClock::new()),
+            |setup| {
+                let e = setup.engine();
+                let root = e
+                    .create_native(ljos_quick::Item::default(), None)
+                    .map_err(|e| e.to_string())?;
+                e.complete(root).map_err(|e| e.to_string())?;
+                Ok(root)
+            },
+        )
+        .unwrap()
+    });
+    assert_eq!(h.state().reloads(), None);
+}
