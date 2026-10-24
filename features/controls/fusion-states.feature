@@ -39,11 +39,6 @@ Feature: How the Fusion style shows a control's state
         RadioButton { objectName: "offRadio"; text: "Ab"; enabled: false }
         Switch { objectName: "switch"; text: "Ab" }
         Switch { objectName: "offSwitch"; text: "Ab"; enabled: false; checked: true }
-        Switch { objectName: "onSwitch"; text: "Ab"; checked: true }
-        RoundButton { objectName: "round"; text: "A" }
-        RoundButton { objectName: "downRound"; text: "A"; down: true }
-        RoundButton { objectName: "checkedRound"; text: "A"; checkable: true; checked: true }
-        RoundButton { objectName: "litRound"; text: "A"; highlighted: true; down: true }
         Slider { objectName: "slider"; value: 0.5 }
         Slider { objectName: "pressedSlider"; value: 0.5; pressed: true }
         Slider { objectName: "offSlider"; value: 0.5; enabled: false }
@@ -101,28 +96,6 @@ Feature: How the Fusion style shows a control's state
       | offSlider     | handle.color             | "#ffffff" |
       | offSlider     | handle.children.0.border.color | "#ababab" |
       | offSwitch     | indicator.children.1.color | "#ffffff" |
-      | switch        | indicator.children.0.opacity | 0       |
-      | switch        | indicator.children.0.visible | true    |
-      | switch        | indicator.children.0.width | 20        |
-      | onSwitch      | indicator.children.0.opacity | 1       |
-      | onSwitch      | indicator.children.0.width | 40        |
-      | onSwitch      | indicator.children.0.border.color | "#236690" |
-      | onSwitch      | indicator.children.0.gradient.stops.0.color | "#308cc6" |
-      | onSwitch      | indicator.children.0.gradient.stops.1.color | "#3aa8ee" |
-      | offSwitch     | indicator.children.0.border.color | "#696969" |
-      | offSwitch     | indicator.children.0.border.width | 0 |
-      | offSwitch     | indicator.children.0.gradient.stops.0.color | "#308cc6" |
-      | round         | background.color         | "#ffffff" |
-      | round         | background.radius        | 16        |
-      | round         | background.gradient.stops.0.color | "#ffffff" |
-      | round         | background.gradient.stops.1.color | "#ececec" |
-      | downRound     | background.color         | "#ffffff" |
-      | downRound     | background.gradient.stops.0.color | "#d3d3d3" |
-      | downRound     | background.gradient.stops.1.color | "#d3d3d3" |
-      | checkedRound  | background.gradient.stops.0.color | "#d3d3d3" |
-      | litRound      | background.color         | "#ffffff" |
-      | litRound      | background.gradient.stops.0.color | "#c1c9ce" |
-      | litRound      | background.border.color  | "#26709e" |
       | upright       | background.x             | 4         |
       | upright       | background.width         | 5         |
       | upright       | background.height        | 160       |
@@ -145,6 +118,48 @@ Feature: How the Fusion style shows a control's state
       | downSpin      | down.indicator.color     | "#dbdbdb" |
       | offSpin       | background.color         | "#efefef" |
       | offSpin       | background.border.color  | "#ababab" |
+
+  Scenario Outline: The <property> of the <object>, a switch's fill or a round button
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls
+      Column {
+        Switch { objectName: "switch"; text: "Ab" }
+        Switch { objectName: "onSwitch"; text: "Ab"; checked: true }
+        Switch { objectName: "offSwitch"; text: "Ab"; enabled: false; checked: true }
+        RoundButton { objectName: "round"; text: "A" }
+        RoundButton { objectName: "downRound"; text: "A"; down: true }
+        RoundButton { objectName: "checkedRound"; text: "A"; checkable: true; checked: true }
+        RoundButton { objectName: "litRound"; text: "A"; highlighted: true; down: true }
+      }
+      """
+    Then the property "<property>" of "<object>" is <value>
+
+    Examples:
+      | object        | property                 | value     |
+      | switch        | indicator.children.0.opacity | 0       |
+      | switch        | indicator.children.0.visible | true    |
+      | switch        | indicator.children.0.width | 20        |
+      | onSwitch      | indicator.children.0.opacity | 1       |
+      | onSwitch      | indicator.children.0.width | 40        |
+      | onSwitch      | indicator.children.0.border.color | "#236690" |
+      | onSwitch      | indicator.children.0.gradient.stops.0.color | "#308cc6" |
+      | onSwitch      | indicator.children.0.gradient.stops.1.color | "#3aa8ee" |
+      | offSwitch     | indicator.children.0.border.color | "#696969" |
+      | offSwitch     | indicator.children.0.border.width | 0 |
+      | offSwitch     | indicator.children.0.gradient.stops.0.color | "#308cc6" |
+      | round         | background.color         | "#ffffff" |
+      | round         | background.radius        | 16        |
+      | round         | background.gradient.stops.0.color | "#ffffff" |
+      | round         | background.gradient.stops.1.color | "#ececec" |
+      | downRound     | background.color         | "#ffffff" |
+      | downRound     | background.gradient.stops.0.color | "#d3d3d3" |
+      | downRound     | background.gradient.stops.1.color | "#d3d3d3" |
+      | checkedRound  | background.gradient.stops.0.color | "#d3d3d3" |
+      | litRound      | background.color         | "#ffffff" |
+      | litRound      | background.gradient.stops.0.color | "#c1c9ce" |
+      | litRound      | background.border.color  | "#26709e" |
 
   Scenario Outline: With the keyboard, the <object>'s outline is <value>
     Given the QML:
