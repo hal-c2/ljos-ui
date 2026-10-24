@@ -238,6 +238,21 @@ impl<M> ShellApp<M> {
             .is_some_and(|s| s.inspector().records_frames())
     }
 
+    /// Whether a client keeps the UI thread's wakes, so that the loop
+    /// notes what woke it.
+    pub(crate) fn records_wakes(&self) -> bool {
+        self.tools
+            .inspector
+            .as_ref()
+            .is_some_and(|s| s.inspector().records_wakes())
+    }
+
+    pub(crate) fn record_wake(&mut self, wake: &ljos_dev::mcp::HostWake) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().record_wake(wake);
+        }
+    }
+
     /// Before a pass over another window: its scene is timed while a
     /// client records.
     pub(crate) fn time_window(&mut self, view: &mut ljos_egui::QmlView) {

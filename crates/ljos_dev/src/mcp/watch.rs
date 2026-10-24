@@ -26,8 +26,8 @@ use tokio::sync::watch;
 
 pub const WATCH: &str = "\
 Wait until the app changes: frames, passes drawn (`paints`), logs, reloads, `traces`, followed \
-`models`, or passes that drew the `items` given by handle. Give the last answer's `counts` as \
-`since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.";
+`models`, kept `wakes`, passes that drew the `items` given. Give the last `counts` as `since`; it \
+answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.";
 
 /// The longest a watch waits: a client that follows an application at
 /// rest is answered, and asks again, this often.
@@ -59,19 +59,23 @@ pub enum Topic {
     /// Changes of the models clients follow (`app_objects`' `model` with
     /// a `holder`).
     Models,
+    /// Wakes of the UI thread kept for `app_frames`' `wakes` that not only
+    /// an agent's requests caused.
+    Wakes,
     /// Passes that changed the picture where one of the watch's `items`
     /// lies.
     Items,
 }
 
 impl Topic {
-    const ALL: [Topic; 7] = [
+    const ALL: [Topic; 8] = [
         Topic::Frames,
         Topic::Paints,
         Topic::Logs,
         Topic::Reloads,
         Topic::Traces,
         Topic::Models,
+        Topic::Wakes,
         Topic::Items,
     ];
 
@@ -83,6 +87,7 @@ impl Topic {
             Topic::Reloads => "reloads",
             Topic::Traces => "traces",
             Topic::Models => "models",
+            Topic::Wakes => "wakes",
             Topic::Items => "items",
         }
     }
@@ -104,6 +109,8 @@ pub struct Since {
     pub traces: Option<u64>,
     #[serde(default)]
     pub models: Option<u64>,
+    #[serde(default)]
+    pub wakes: Option<u64>,
     /// By handle; an item left out is not compared.
     #[serde(default)]
     pub items: Option<BTreeMap<String, u64>>,
@@ -117,7 +124,7 @@ pub struct WatchArgs {
     #[serde(default)]
     pub since: Option<Since>,
     /// Wait for these only: `frames`, `paints`, `logs`, `reloads`,
-    /// `traces`, `models`, `items`. All by default.
+    /// `traces`, `models`, `wakes`, `items`. All by default.
     #[serde(default)]
     pub topics: Vec<Topic>,
     /// Items to follow, by handle (`@12.3`, as `app_objects` gives them),
@@ -148,6 +155,7 @@ pub(crate) struct Counts {
     pub(crate) reloads: u64,
     pub(crate) traces: u64,
     pub(crate) models: u64,
+    pub(crate) wakes: u64,
     /// Passes counted for any watched item: it moves so that a waiting
     /// watch looks at its own items again.
     pub(crate) items: u64,
@@ -163,6 +171,7 @@ impl Counts {
             Topic::Reloads => Some(self.reloads),
             Topic::Traces => Some(self.traces),
             Topic::Models => Some(self.models),
+            Topic::Wakes => Some(self.wakes),
             Topic::Items => None,
         }
     }
@@ -177,6 +186,7 @@ impl Since {
             Topic::Reloads => self.reloads,
             Topic::Traces => self.traces,
             Topic::Models => self.models,
+            Topic::Wakes => self.wakes,
             Topic::Items => None,
         }
     }
@@ -298,6 +308,10 @@ impl ChangeFeed {
         self.tx.send_modify(|c| c.models += 1);
     }
 
+    pub(crate) fn wake(&self) {
+        self.tx.send_modify(|c| c.wakes += 1);
+    }
+
     #[cfg(test)]
     fn counts(&self) -> Counts {
         *self.tx.borrow()
@@ -377,8 +391,8 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
     };
     let names: Vec<&str> = moved.iter().map(|t| t.name()).collect();
     let mut text = format!(
-        "frames {}, paints {}, logs {}, reloads {}, traces {}, models {}",
-        now.frames, now.paints, now.logs, now.reloads, now.traces, now.models
+        "frames {}, paints {}, logs {}, reloads {}, traces {}, models {}, wakes {}",
+        now.frames, now.paints, now.logs, now.reloads, now.traces, now.models, now.wakes
     );
     for (h, n) in &drawn {
         let _ = write!(text, ", {h} drawn {n}");
@@ -397,6 +411,7 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         "reloads": now.reloads,
         "traces": now.traces,
         "models": now.models,
+        "wakes": now.wakes,
     });
     if !args.items.is_empty() {
         counts["items"] = json!(drawn);

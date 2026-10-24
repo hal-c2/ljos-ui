@@ -172,12 +172,19 @@ impl InspectorSurface {
                 max: Some(1),
                 ..Default::default()
             });
+            let wakes = Kind::Frames(super::timeline::FramesArgs {
+                record: Some(false),
+                holder: Some(holder.clone()),
+                max: Some(1),
+                wakes: true,
+                ..Default::default()
+            });
             let models = Kind::Objects(super::objects::ObjectsArgs {
                 release: true,
                 holder: Some(holder),
                 ..Default::default()
             });
-            for kind in [traces, frames, models] {
+            for kind in [traces, frames, wakes, models] {
                 let (reply, answer) = oneshot::channel();
                 runtime.spawn(async move {
                     let _ = answer.await;

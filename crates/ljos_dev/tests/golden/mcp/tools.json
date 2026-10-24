@@ -408,7 +408,7 @@
     "read_only": true
   },
   {
-    "description": "Wait until the app changes: frames, passes drawn (`paints`), logs, reloads, `traces`, followed `models`, or passes that drew the `items` given by handle. Give the last answer's `counts` as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.",
+    "description": "Wait until the app changes: frames, passes drawn (`paints`), logs, reloads, `traces`, followed `models`, kept `wakes`, passes that drew the `items` given. Give the last `counts` as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.",
     "input_schema": {
       "$defs": {
         "Since": {
@@ -481,6 +481,15 @@
                 "integer",
                 "null"
               ]
+            },
+            "wakes": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           },
           "type": "object"
@@ -516,6 +525,11 @@
             {
               "const": "models",
               "description": "Changes of the models clients follow (`app_objects`' `model` with\na `holder`).",
+              "type": "string"
+            },
+            {
+              "const": "wakes",
+              "description": "Wakes of the UI thread kept for `app_frames`' `wakes` that not only\nan agent's requests caused.",
               "type": "string"
             },
             {
@@ -566,7 +580,7 @@
           "description": "The `counts` of the last answer. Without them the counts are\nanswered at once."
         },
         "topics": {
-          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`, `models`, `items`. All by default.",
+          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`, `models`, `wakes`, `items`. All by default.",
           "items": {
             "$ref": "#/$defs/Topic"
           },
@@ -745,7 +759,7 @@
     "read_only": true
   },
   {
-    "description": "A timeline of every window's frames, for comparing runtimes: `record` starts or stops it. Each says what woke it (input, timer, animation, a message and whose) and where its time went: timers, animations, layout, scene build, bindings, text, render, present. `since` takes `next_since`.",
+    "description": "A timeline of every window's frames, for comparing runtimes: `record` starts or stops it. Each says what woke it and where its time went, pass by pass. With `wakes`, the UI thread's wakes instead: each one's causes and what it led to. `since` takes `next_since`.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -784,6 +798,11 @@
             "integer",
             "null"
           ]
+        },
+        "wakes": {
+          "default": false,
+          "description": "The UI thread's wakes instead of the frames: what woke each (input,\na timer, an animation, a message and its kind, the platform) and\nwhat it led to. `record` starts or stops keeping them, apart from\nthe frames.",
+          "type": "boolean"
         }
       },
       "title": "FramesArgs",

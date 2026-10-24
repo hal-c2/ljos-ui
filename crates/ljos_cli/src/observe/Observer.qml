@@ -148,6 +148,10 @@ ApplicationWindow {
             models.list = s.models
         else if (route === "model-rows")
             models.showRows(ok, s)
+        else if (route === "wakes" && ok)
+            wakes.add(s)
+        else if (route === "wake-due" && ok)
+            wakes.showDue(s)
         else if (route.indexOf("sample-") === 0 && ok)
             overview.part(route.substring(7), s)
     }
@@ -182,7 +186,7 @@ ApplicationWindow {
 
     // The page shown.
     readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace",
-                                   "Supervision", "Frames", "Memory", "Models"]
+                                   "Supervision", "Frames", "Memory", "Models", "Wakes"]
     property int page: 0
     onPageChanged: watcher.start()
 
@@ -207,6 +211,10 @@ ApplicationWindow {
         // Only the model picked is followed, so a change is of it.
         else if (page === 9 && (all || changed.indexOf("models") >= 0 || changed.indexOf("reloads") >= 0))
             models.load()
+        // Only a wake the application had moves the count, not the
+        // asking this page does.
+        else if (page === 10 && (all || changed.indexOf("wakes") >= 0))
+            wakes.load()
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
         if (all || changed.indexOf("traces") >= 0)
@@ -228,8 +236,9 @@ ApplicationWindow {
         property int out: 0
         property string following: ""
         // Whether the newest waits for the model the Models page follows
-        // too: no other page asks for it.
+        // too: no other page asks for it. The Wakes page likewise.
         property bool followsModels: false
+        property bool followsWakes: false
         // When the last answer said nothing changed.
         property string quietSince: ""
 
@@ -244,16 +253,21 @@ ApplicationWindow {
         function start() {
             var item = wanted()
             var withModels = page === 9
-            if (out > 0 && following === item && followsModels === withModels)
+            var withWakes = page === 10
+            if (out > 0 && following === item && followsModels === withModels
+                    && followsWakes === withWakes)
                 return
             following = item
             followsModels = withModels
+            followsWakes = withWakes
             out += 1
             var args = {}
             if (counts !== null) {
                 var since = { logs: counts.logs, reloads: counts.reloads, traces: counts.traces }
                 if (withModels)
                     since.models = counts.models
+                if (withWakes && counts.wakes !== undefined)
+                    since.wakes = counts.wakes
                 var known = item !== "" && counts.items !== undefined && counts.items[item] !== undefined
                 if (item === "")
                     since.paints = counts.paints
@@ -4255,6 +4269,379 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // ----- Wakes -------------------------------------------
+                // Why the UI thread woke, for an application that should
+                // rest: each wake with its causes and what it led to, on
+                // a strip of the last seconds and in a list, beside the
+                // timers and animations that will wake it next. Kept
+                // only while this window holds the recording; the wakes
+                // only this window's requests caused are hidden unless
+                // asked for, and never move the watch.
+                ColumnLayout {
+                    id: wakes
+                    spacing: 10
+                    property var since: null
+                    property bool recording: false
+                    property int dropped: 0
+                    property var kept: []
+                    property int ownCount: 0
+                    property bool hideOwn: true
+                    onHideOwnChanged: refill()
+                    // The timers and animations, from `app_processes`.
+                    property var due: []
+                    // The strip shows this many seconds before the last wake.
+                    readonly property real span: 10000
+                    property real lastAt: 0
+                    readonly property var tones: ({
+                        input: theme.accent, timer: theme.warn, animation: theme.violet,
+                        message: theme.subtle, redraw: theme.bad, window: "#3fa7a0",
+                        dirty: theme.good, deadline: "#d77fae", "requested redraw": theme.rule
+                    })
+
+                    function args() {
+                        var a = { wakes: true, max: 600 }
+                        if (since !== null)
+                            a.since = since
+                        return a
+                    }
+
+                    function load() {
+                        window.ask("app_frames", args(), "wakes")
+                        window.ask("app_processes", {}, "wake-due")
+                    }
+
+                    function record(on) {
+                        var a = args()
+                        a.record = on
+                        a.holder = window.holder
+                        window.ask("app_frames", a, "wakes")
+                    }
+
+                    function tone(causes) {
+                        for (var i = 0; i < causes.length; ++i)
+                            if (causes[i] !== "message")
+                                return tones[causes[i]] || theme.subtle
+                        return theme.subtle
+                    }
+
+                    function add(s) {
+                        recording = s.recording
+                        dropped = s.dropped
+                        since = s.next_since
+                        var following = wakeRows.count === 0 || wakeView.atYEnd
+                        var all = kept
+                        for (var i = 0; i < s.wakes.length; ++i) {
+                            var w = s.wakes[i]
+                            var row = {
+                                seq: w.wake,
+                                atMs: w.at_ms,
+                                at: (w.at_ms / 1000).toFixed(3) + " s",
+                                causes: w.causes.join(", "),
+                                tone: tone(w.causes),
+                                own: w.requests_only,
+                                ledTo: w.led_to,
+                                detail: "passes " + w.passes + " · frames " + w.frames + " · drawn " + w.drawn
+                                        + " · unchanged " + w.unchanged
+                                        + (w.messages.thread > 0 ? " · " + w.messages.thread + " from threads" : "")
+                                        + (w.asked_by.length > 0 ? " · asked by " + w.asked_by.join(", ") : "")
+                            }
+                            all.push(row)
+                            if (row.own)
+                                ownCount += 1
+                            if (!(hideOwn && row.own)) {
+                                wakeRows.append(row)
+                                lastAt = row.atMs
+                            }
+                        }
+                        var over = all.length - 600
+                        if (over > 0) {
+                            for (var j = 0; j < over; ++j)
+                                if (all[j].own)
+                                    ownCount -= 1
+                            all.splice(0, over)
+                        }
+                        kept = all
+                        over = wakeRows.count - 600
+                        if (over > 0)
+                            wakeRows.remove(0, over)
+                        if (s.wakes.length > 0 && following)
+                            wakeView.positionViewAtEnd()
+                        if (s.more)
+                            window.ask("app_frames", args(), "wakes")
+                    }
+
+                    function showDue(s) {
+                        var rows = []
+                        for (var i = 0; i < s.processes.length; ++i) {
+                            var p = s.processes[i]
+                            if (p.kind !== "timer" && p.kind !== "animation")
+                                continue
+                            var next = p.kind === "animation"
+                                ? (p.state === "running" ? "each frame" : "—")
+                                : p.due_in_us === null || p.due_in_us === undefined ? "—"
+                                : "in " + window.ms(p.due_in_us)
+                            rows.push({
+                                kind: p.kind,
+                                name: p.name || "",
+                                state: p.state || "",
+                                next: next,
+                                detail: p.kind === "timer"
+                                        ? "every " + p.interval_ms + " ms" + (p.repeat ? ", repeats" : "")
+                                          + " · fired " + p.wakeups
+                                        : p.locator || ""
+                            })
+                        }
+                        due = rows
+                    }
+
+                    function refill() {
+                        wakeRows.clear()
+                        for (var i = 0; i < kept.length; ++i) {
+                            if (hideOwn && kept[i].own)
+                                continue
+                            wakeRows.append(kept[i])
+                            lastAt = kept[i].atMs
+                        }
+                        wakeView.positionViewAtEnd()
+                    }
+
+                    function clear() {
+                        wakeRows.clear()
+                        kept = []
+                        ownCount = 0
+                        lastAt = 0
+                    }
+
+                    ListModel { id: wakeRows }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text { text: "Wakes"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            text: (wakes.recording ? "keeping" : "not keeping") + " · "
+                                  + wakeRows.count + " wakes"
+                                  + (wakes.hideOwn && wakes.ownCount > 0
+                                     ? " · " + wakes.ownCount + " woken by this window hidden" : "")
+                                  + (wakes.dropped > 0 ? " · " + wakes.dropped + " older gave way" : "")
+                            color: wakes.recording ? theme.good : theme.subtle
+                        }
+                        Item { Layout.fillWidth: true }
+                        CheckBox {
+                            text: "Hide this window's requests"
+                            checked: wakes.hideOwn
+                            onToggled: wakes.hideOwn = checked
+                        }
+                        Button {
+                            text: wakes.recording ? "Stop" : "Record"
+                            onClicked: wakes.record(!wakes.recording)
+                        }
+                        Button {
+                            text: "Clear"
+                            onClicked: wakes.clear()
+                        }
+                    }
+
+                    // What the colours are.
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        Repeater {
+                            model: ["input", "timer", "animation", "message", "redraw", "window", "dirty", "deadline"]
+                            delegate: Row {
+                                required property string modelData
+                                spacing: 5
+                                Rectangle {
+                                    width: 10; height: 10; radius: 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: wakes.tones[modelData]
+                                }
+                                Text { text: modelData; color: theme.subtle; font.pixelSize: 11 }
+                            }
+                        }
+                    }
+
+                    // The last seconds, a tick a wake: a resting
+                    // application leaves it empty.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 34
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+                        Repeater {
+                            model: window.page === 10 ? wakeRows : null
+                            delegate: Rectangle {
+                                required property real atMs
+                                required property color tone
+                                readonly property real ago: wakes.lastAt - atMs
+                                visible: ago <= wakes.span
+                                x: 8 + (parent.width - 16) * (1 - ago / wakes.span)
+                                y: 7
+                                width: 2
+                                height: 20
+                                color: tone
+                            }
+                        }
+                        Text {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 8
+                            anchors.bottom: parent.bottom
+                            text: "last " + (wakes.span / 1000) + " s"
+                            color: theme.subtle
+                            font.pixelSize: 10
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        spacing: 10
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            clip: true
+                            ListView {
+                                id: wakeView
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                model: window.page === 10 ? wakeRows : null
+                                onModelChanged: if (model !== null) Qt.callLater(wakeView.positionViewAtEnd)
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Item {
+                                    id: wakeRow
+                                    required property int index
+                                    required property int seq
+                                    required property string at
+                                    required property string causes
+                                    required property color tone
+                                    required property string ledTo
+                                    required property string detail
+                                    width: ListView.view.width
+                                    height: 24
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: "wake " + seq + ", woke by " + (causes === "" ? "nothing known" : causes)
+                                                     + ", led to " + ledTo
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        color: wakeRow.index % 2 ? theme.cardAlt : "transparent"
+                                    }
+                                    Row {
+                                        x: 6
+                                        height: parent.height
+                                        spacing: 10
+                                        Text {
+                                            width: 50
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            horizontalAlignment: Text.AlignRight
+                                            text: wakeRow.seq
+                                            color: theme.subtle
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                        Text {
+                                            width: 80
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            horizontalAlignment: Text.AlignRight
+                                            text: wakeRow.at
+                                            color: theme.subtle
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                        Text {
+                                            width: 170
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: wakeRow.causes === "" ? "—" : wakeRow.causes
+                                            color: wakeRow.tone
+                                            elide: Text.ElideRight
+                                            font.pixelSize: 12
+                                        }
+                                        Text {
+                                            width: 90
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: wakeRow.ledTo
+                                            color: wakeRow.ledTo === "nothing" ? theme.subtle : theme.text
+                                            font.pixelSize: 12
+                                        }
+                                        Text {
+                                            width: wakeRow.width - 440
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: wakeRow.detail
+                                            color: theme.subtle
+                                            elide: Text.ElideRight
+                                            font.pixelSize: 11
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                visible: wakeRows.count === 0
+                                text: wakes.recording ? "No wake since keeping began: the application is at rest"
+                                                      : "Press Record to keep each wake and its causes"
+                                color: theme.subtle
+                            }
+                        }
+
+                        // What wakes it next.
+                        Rectangle {
+                            Layout.preferredWidth: Math.max(200, Math.min(320, wakes.width * 0.3))
+                            Layout.fillHeight: true
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            clip: true
+                            Text {
+                                x: 10; y: 8
+                                text: "Timers and animations"
+                                color: theme.subtle
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+                            ListView {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                anchors.topMargin: 28
+                                clip: true
+                                model: window.page === 10 ? wakes.due : []
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Column {
+                                    id: dueRow
+                                    required property var modelData
+                                    width: ListView.view.width
+                                    bottomPadding: 6
+                                    Text {
+                                        width: parent.width
+                                        elide: Text.ElideRight
+                                        text: dueRow.modelData.kind + " " + dueRow.modelData.name + " · " + dueRow.modelData.state
+                                        color: dueRow.modelData.kind === "timer" ? theme.warn : theme.violet
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        elide: Text.ElideRight
+                                        text: "next " + dueRow.modelData.next + " · " + dueRow.modelData.detail
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                    }
+                                }
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                visible: wakes.due.length === 0
+                                text: "None"
+                                color: theme.subtle
                             }
                         }
                     }

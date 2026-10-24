@@ -673,6 +673,10 @@ struct Desktop<M> {
     /// answered with the size there is.
     #[cfg(feature = "mcp")]
     resize_due: Option<Instant>,
+    /// What woke the loop in this turn and what it led to, gathered only
+    /// while a client keeps the wakes ([`ShellApp::records_wakes`]).
+    #[cfg(feature = "mcp")]
+    wake: Option<ljos_dev::mcp::HostWake>,
     /// The scripts the windows may run on input were prepared
     /// ([`Engine::prepare_scripts`]).
     scripts_prepared: bool,
@@ -776,6 +780,8 @@ impl<M: Send + 'static> Desktop<M> {
             began: Instant::now(),
             #[cfg(feature = "mcp")]
             resize_due: None,
+            #[cfg(feature = "mcp")]
+            wake: None,
             scripts_prepared: false,
             heap_trim: None,
             collect: AfterRest::default(),
@@ -1339,6 +1345,8 @@ impl<M: Send + 'static> Desktop<M> {
     }
 
     fn run_pass(&mut self, host: &mut Control<'_>, i: usize, paint: bool) {
+        #[cfg(feature = "mcp")]
+        self.note_wake(|w| w.passes += 1);
         let engine = Rc::clone(self.app.engine());
         let sys = WindowSystem::of(&engine);
         let Self {
@@ -1555,6 +1563,10 @@ impl<M: Send + 'static> Desktop<M> {
             );
             slot.not_drawn(now, wake);
             #[cfg(feature = "mcp")]
+            if let Some(w) = self.wake.as_mut() {
+                w.unchanged += 1;
+            }
+            #[cfg(feature = "mcp")]
             if let Some(meter) = meter {
                 let report = meter.report(None, present::Steps::default());
                 match slot.view {
@@ -1612,6 +1624,10 @@ impl<M: Send + 'static> Desktop<M> {
             *screens_stale = true;
         }
         slot.drawn(began, Instant::now());
+        #[cfg(feature = "mcp")]
+        if let Some(w) = self.wake.as_mut() {
+            w.drawn += 1;
+        }
         if !std::mem::replace(&mut self.drawn_once, true) {
             self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
         }
@@ -1627,6 +1643,18 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(i) = self.slot_of(id) else {
             return;
         };
+        #[cfg(feature = "mcp")]
+        if let Some(w) = self.wake.as_mut() {
+            match event {
+                // Not asked by the shell: the platform's own.
+                WindowEvent::RedrawRequested if self.slots[i].redraw_asked.is_none() => {
+                    w.redraws += 1;
+                }
+                WindowEvent::RedrawRequested => w.requested_redraws += 1,
+                event if starts_input(event) => w.input += 1,
+                _ => w.window += 1,
+            }
+        }
         let engine = Rc::clone(self.app.engine());
         let sys = WindowSystem::of(&engine);
         match event {
@@ -1992,6 +2020,10 @@ impl<M: Send + 'static> Desktop<M> {
                 (Some(surface), _) if !slot.out_of_sight() => {
                     host.request_redraw(surface.id);
                     slot.redraw_asked.get_or_insert(now);
+                    #[cfg(feature = "mcp")]
+                    if let Some(w) = self.wake.as_mut() {
+                        w.redraws_asked += 1;
+                    }
                 }
                 (Some(_), _) => slot.want_headless(now),
                 // The root's scene runs without a window: it is where
@@ -2112,6 +2144,26 @@ impl<M: Send + 'static> Desktop<M> {
         host.wake_at(next);
     }
 
+    #[cfg(feature = "mcp")]
+    fn note_wake(&mut self, note: impl FnOnce(&mut ljos_dev::mcp::HostWake)) {
+        if let Some(w) = self.wake.as_mut() {
+            note(w);
+        }
+    }
+
+    /// A turn of the loop ended: what woke it goes to the inspector, and
+    /// the next turn is noted only while a client keeps wakes. Nothing
+    /// else costs anything while none does.
+    #[cfg(feature = "mcp")]
+    fn end_wake(&mut self) {
+        if let Some(w) = self.wake.take() {
+            self.app.record_wake(&w);
+        }
+        if self.app.records_wakes() {
+            self.wake = Some(ljos_dev::mcp::HostWake::default());
+        }
+    }
+
     /// Start-up and a burst of picture loads free most of what they used
     /// (the GPU driver's shader compiles, QML being loaded, pictures being
     /// decoded), but glibc keeps freed memory inside its heaps. A while
@@ -2184,17 +2236,40 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
                 pass,
                 at_once,
             }) => {
+                #[cfg(feature = "mcp")]
+                self.note_wake(|w| w.posted += 1);
                 self.repaint_asked(slot, when, pass, at_once);
             }
-            Event::User(ShellEvent::AccessKit(event)) => self.accesskit_event(event),
+            Event::User(ShellEvent::AccessKit(event)) => {
+                #[cfg(feature = "mcp")]
+                self.note_wake(|w| w.accessibility += 1);
+                self.accesskit_event(event);
+            }
             Event::Reopen {
                 has_visible_windows,
             } => self.reopened(has_visible_windows),
-            Event::AboutToWait => self.settle(host),
+            Event::AboutToWait => {
+                #[cfg(feature = "mcp")]
+                {
+                    let dirty = self.dirty.get();
+                    self.note_wake(|w| w.dirty = dirty);
+                }
+                self.settle(host);
+                #[cfg(feature = "mcp")]
+                self.end_wake();
+            }
             Event::Exiting => self.shut_down(),
             Event::MemoryPressure => self.trim(),
             // Each is followed by `AboutToWait`, which looks at everything.
-            Event::Wake | Event::User(ShellEvent::Wake) | Event::OpenUrl(_) | Event::SaveState => {}
+            Event::Wake => {
+                #[cfg(feature = "mcp")]
+                self.note_wake(|w| w.deadline = true);
+            }
+            Event::User(ShellEvent::Wake) => {
+                #[cfg(feature = "mcp")]
+                self.note_wake(|w| w.posted += 1);
+            }
+            Event::OpenUrl(_) | Event::SaveState => {}
         }
     }
 }

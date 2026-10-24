@@ -53,6 +53,7 @@ mod timeline;
 mod tools;
 mod trace;
 mod values;
+mod wakes;
 mod watch;
 
 use std::cell::RefCell;
@@ -87,6 +88,7 @@ pub use ljos_mcp_core::{
 pub use memory::WindowMemory;
 pub use paint::{Drawn, PaintReport, PainterInfo, StartupStep};
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
+pub use wakes::HostWake;
 
 use args::{Act, Include as Col, Kind, Resource, SnapshotArgs};
 use capture::{Capture, Lease};
@@ -296,6 +298,8 @@ pub struct Inspector {
     frames: FrameLog,
     /// What `app_frames` recorded.
     timeline: timeline::Timeline,
+    /// The UI thread's wakes `app_frames` keeps with `wakes`.
+    wakes: wakes::Wakes,
     /// Properties assigned by `app_set_property`, so that `app_inspect`
     /// can say they were assigned by devtools and not by the application.
     edits: edits::Edits,
@@ -379,6 +383,7 @@ impl Inspector {
             paint: PaintStats::default(),
             frames: FrameLog::default(),
             timeline: timeline::Timeline::default(),
+            wakes: wakes::Wakes::default(),
             edits: edits::Edits::default(),
             models: models::Follows::new(changes_for_models),
             _observing: ljos_runtime::observe::enable(),
@@ -473,6 +478,23 @@ impl Inspector {
     /// passes over other windows.
     pub fn records_frames(&self) -> bool {
         self.timeline.recording()
+    }
+
+    /// Whether a client keeps the UI thread's wakes: only then does the
+    /// host gather what it saw in a turn of its loop for
+    /// [`Inspector::record_wake`].
+    pub fn records_wakes(&self) -> bool {
+        self.wakes.recording()
+    }
+
+    /// A turn of the host's loop ended: what the host saw in it, with what
+    /// the inspector saw since the last ([`Inspector::pump`],
+    /// [`Inspector::record_scene_frames`]). Does nothing while no client
+    /// keeps wakes.
+    pub fn record_wake(&mut self, host: &HostWake) {
+        if self.wakes.record(host) {
+            self.changes.wake();
+        }
     }
 
     /// Whether a client follows items with `app_watch`: only then need the
@@ -723,6 +745,7 @@ impl Inspector {
     /// nobody records, the scene keeps no times and this does nothing.
     pub fn record_scene_frames(&mut self, scene: &mut QuickScene, drained: usize) {
         if let Some(times) = scene.take_frame_times() {
+            self.wakes.ran(&times, drained);
             self.timeline.record(times, drained, None);
         }
     }
@@ -732,14 +755,15 @@ impl Inspector {
     /// [`Inspector::time_window`]).
     pub fn record_window_frames(&mut self, window: Option<ObjectId>, scene: &mut QuickScene) {
         if let Some(times) = scene.take_frame_times() {
+            self.wakes.ran(&times, 0);
             self.timeline.record(times, 0, window);
         }
     }
 
-    /// Times the scene of another window exactly while a client records;
-    /// call it before its frame runs.
+    /// Times the scene of another window exactly while a client records
+    /// frames or keeps wakes; call it before its frame runs.
     pub fn time_window(&self, engine: &Engine, scene: &mut QuickScene) {
-        let on = self.timeline.recording();
+        let on = self.timeline.recording() || self.wakes.recording();
         if on != scene.is_timed() {
             scene.set_timed(engine, on);
         }
@@ -809,6 +833,7 @@ impl Inspector {
             lease.release(engine, scene);
         }
         if answered > 0 {
+            self.wakes.asked(&asked_by);
             self.timeline.asked(asked_by);
             // What the inspector did itself is in the measurements it
             // gives, under its own name: an agent that looks at where the
@@ -832,6 +857,24 @@ impl Inspector {
         if self.has_work() {
             (self.wake)();
         }
+    }
+
+    /// `app_frames` with `wakes`. The scenes are timed while wakes are
+    /// kept: their frames say whether a timer or an animation woke them.
+    fn answer_wakes(
+        &mut self,
+        engine: &Engine,
+        scene: &mut QuickScene,
+        args: &timeline::FramesArgs,
+    ) -> Result<ToolReply, SurfaceError> {
+        if let Some(record) = args.record {
+            self.wakes.ask(record, args.holder.as_deref())?;
+            let on = self.wakes.recording() || self.timeline.recording();
+            if on != scene.is_timed() {
+                scene.set_timed(engine, on);
+            }
+        }
+        Ok(self.wakes.answer(args.since, args.max))
     }
 
     fn next_epoch(&mut self) -> u64 {
@@ -911,7 +954,13 @@ impl Inspector {
             return;
         }
         if let Kind::Frames(args) = &kind {
-            let _ = reply.send(timeline::frames(engine, scene, &mut self.timeline, args));
+            let answer = if args.wakes {
+                self.answer_wakes(engine, scene, args)
+            } else {
+                let keeps = self.wakes.recording();
+                timeline::frames(engine, scene, &mut self.timeline, args, keeps)
+            };
+            let _ = reply.send(answer);
             return;
         }
         let scene: &QuickScene = scene;

@@ -30,8 +30,8 @@ use super::paint::PaintReport;
 
 pub const FRAMES: &str = "\
 A timeline of every window's frames, for comparing runtimes: `record` starts or stops it. Each \
-says what woke it (input, timer, animation, a message and whose) and where its time went: timers, \
-animations, layout, scene build, bindings, text, render, present. `since` takes `next_since`.";
+says what woke it and where its time went, pass by pass. With `wakes`, the UI thread's wakes \
+instead: each one's causes and what it led to. `since` takes `next_since`.";
 
 /// The most frames kept: ten seconds at 60 Hz.
 pub const MAX_KEPT: usize = 600;
@@ -59,6 +59,12 @@ pub struct FramesArgs {
     /// or when it stops it. Others' recordings go on.
     #[serde(default)]
     pub holder: Option<String>,
+    /// The UI thread's wakes instead of the frames: what woke each (input,
+    /// a timer, an animation, a message and its kind, the platform) and
+    /// what it led to. `record` starts or stops keeping them, apart from
+    /// the frames.
+    #[serde(default)]
+    pub wakes: bool,
 }
 
 /// One pass of the host that ran frames of a window's scene.
@@ -305,10 +311,12 @@ pub(crate) fn frames(
     scene: &mut QuickScene,
     timeline: &mut Timeline,
     args: &FramesArgs,
+    keeps_wakes: bool,
 ) -> Result<ToolReply, SurfaceError> {
     if let Some(record) = args.record {
         timeline.ask(record, args.holder.as_deref())?;
-        let on = timeline.recording();
+        // The frames say what woke them for the wakes too.
+        let on = timeline.recording() || keeps_wakes;
         if on != scene.is_timed() {
             scene.set_timed(engine, on);
         }
