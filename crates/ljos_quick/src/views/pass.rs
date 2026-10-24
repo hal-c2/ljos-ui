@@ -1450,9 +1450,10 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
 
     // What the view says about its rows.
     current::sync(e, view, st, &g, content, current.and(current_span));
+    let current = current_index(e, view);
     for &(row, o, ..) in &items {
         if let Some(att) = attached_of(e, view, o) {
-            tell(e, view, st, &d, sections.as_mut(), o, att);
+            tell(e, st, &d, sections.as_mut(), o, att, current);
         }
         // A delegate of a DelegateModel: the entry it stands for is the
         // row it was placed at, also after a use again for another row.
@@ -1533,17 +1534,16 @@ fn announce(
 /// Writes what the attached object of a delegate says about its row.
 fn tell(
     e: &Engine,
-    view: ObjectId,
     st: &ViewState,
     d: &ViewDelegates,
     sections: Option<&mut Sections>,
     item: ObjectId,
     att: ObjectId,
+    current: i64,
 ) {
     let Some(row) = d.index_of(item) else {
         return;
     };
-    let current = e.untrack(|| rd(e, view, ItemView::CURRENT_INDEX.index)) as i64;
     let is_current = current == row as i64 && st.seen_index.get().is_some();
     let names = match sections {
         Some(s) => [
@@ -1553,20 +1553,36 @@ fn tell(
         ],
         None => [String::new(), String::new(), String::new()],
     };
+    let told = (is_current, names);
+    // Every pass tells every placed delegate, and nearly always the same.
+    if e.with(att, |a: &ViewAttached| a.told.as_ref() == Some(&told))
+        .unwrap_or(false)
+    {
+        return;
+    }
     e.batch(|| {
         let write = |p: PropIndex, v: Value| warn(e, "attached", write_computed(e, att, p, v));
-        write(ViewAttached::IS_CURRENT_ITEM.index, Value::Bool(is_current));
-        let [name, before, after] = names;
-        write(ViewAttached::SECTION.index, Value::string(Atom::from(name)));
+        write(ViewAttached::IS_CURRENT_ITEM.index, Value::Bool(told.0));
+        let [name, before, after] = &told.1;
+        write(
+            ViewAttached::SECTION.index,
+            Value::string(Atom::from(name.as_str())),
+        );
         write(
             ViewAttached::PREVIOUS_SECTION.index,
-            Value::string(Atom::from(before)),
+            Value::string(Atom::from(before.as_str())),
         );
         write(
             ViewAttached::NEXT_SECTION.index,
-            Value::string(Atom::from(after)),
+            Value::string(Atom::from(after.as_str())),
         );
     });
+    let _ = e.with_mut(att, |a: &mut ViewAttached| a.told = Some(told));
+}
+
+/// The view's `currentIndex`, untracked, as [`tell`] compares it.
+fn current_index(e: &Engine, view: ObjectId) -> i64 {
+    e.untrack(|| rd(e, view, ItemView::CURRENT_INDEX.index)) as i64
 }
 
 /// What the attached object of one delegate says, for a delegate that
@@ -1576,5 +1592,6 @@ pub(crate) fn tell_row(e: &Engine, view: ObjectId, st: &ViewState, item: ObjectI
         return;
     };
     let mut sections = Sections::read(e, view, st);
-    tell(e, view, st, &d, sections.as_mut(), item, att);
+    let current = current_index(e, view);
+    tell(e, st, &d, sections.as_mut(), item, att, current);
 }

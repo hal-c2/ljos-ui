@@ -467,6 +467,11 @@ pub struct ViewAttached {
     /// While true the delegate of a row that left the model stays.
     #[qml(notify)]
     pub delay_remove: bool,
+    /// What the view last told: `isCurrentItem` and the three section
+    /// names. Only the view writes those, so a pass that would tell the
+    /// same again writes nothing.
+    #[qml(skip)]
+    pub(crate) told: Option<(bool, [String; 3])>,
 }
 
 #[qml_impl]
