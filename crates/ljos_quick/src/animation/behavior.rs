@@ -100,6 +100,16 @@ struct Follower {
     /// What keeps the property at the animated value, over the value a
     /// state gave it, while the animation takes it there.
     hold: Option<OverrideId>,
+    /// For a Behavior on a member of a value: what its animation moves.
+    member: Option<Rc<Member>>,
+}
+
+/// The member of a value a Behavior is on, and the [`MemberValue`] its
+/// animation moves.
+struct Member {
+    proxy: ObjectId,
+    name: Atom,
+    ty: TypeTag,
 }
 
 /// Lets the Behavior of `prop`, if it has one that animates, take the
@@ -116,11 +126,11 @@ pub(crate) fn follow(
     after: &Value,
 ) -> bool {
     let attached = engine.extension::<Attached>();
-    let Some(behavior) = attached
+    let Some((behavior, member)) = attached
         .by_prop
         .borrow()
         .get(&(target, prop))
-        .map(|f| f.behavior)
+        .map(|f| (f.behavior, f.member.clone()))
     else {
         return false;
     };
@@ -137,24 +147,60 @@ pub(crate) fn follow(
     let Some(anim) = anim.filter(|a| engine.is_alive(*a)) else {
         return false;
     };
-    let mut defaults = Defaults {
-        obj: target,
-        prop,
-        to: Some(after.clone()),
-        aimed: None,
+    // A Behavior on a member moves its number from the member's value
+    // before to the state's; the state's other members show at once.
+    let (mut defaults, held, from) = match &member {
+        Some(m) => {
+            let num = |v: &Value| v.member(&m.name).map(|n| n.to_number());
+            let (Some(from), Some(to)) = (num(before), num(after)) else {
+                return false;
+            };
+            if from == to {
+                return false;
+            }
+            let Some(held) = after.with_member(&m.ty, &m.name, &Value::Real(from)) else {
+                return false;
+            };
+            let defaults = Defaults {
+                obj: m.proxy,
+                prop: MemberValue::VALUE.index,
+                to: Some(Value::Real(to)),
+                aimed: None,
+            };
+            (defaults, held, Some((m.proxy, from)))
+        }
+        None => {
+            let defaults = Defaults {
+                obj: target,
+                prop,
+                to: Some(after.clone()),
+                aimed: None,
+            };
+            (defaults, before.clone(), None)
+        }
     };
     if !enabled || !moves(engine, anim, &mut defaults) {
         return false;
     }
     release(engine, target, prop);
-    let Ok(hold) = engine.push_override(target, prop, OverrideContent::Value(before.clone()))
-    else {
+    let Ok(hold) = engine.push_override(target, prop, OverrideContent::Value(held)) else {
         return false;
     };
+    if let Some((proxy, from)) = from {
+        let _ = engine.write_internal(
+            proxy,
+            MemberValue::VALUE.index,
+            Value::Real(from),
+            WriteKind::Animation,
+        );
+    }
     if let Some(f) = attached.by_prop.borrow_mut().get_mut(&(target, prop)) {
         f.hold = Some(hold);
     }
-    note_target(engine, behavior, after);
+    match &defaults.to {
+        Some(to) if member.is_some() => note_target(engine, behavior, to),
+        _ => note_target(engine, behavior, after),
+    }
     // At the end the value underneath shows again: the state's.
     let done: driver::Done = Rc::new(move |e| {
         let attached = e.extension::<Attached>();
@@ -224,6 +270,7 @@ pub(crate) fn attach(engine: &Engine, behavior: ObjectId, target: ObjectId, prop
             Follower {
                 behavior,
                 hold: None,
+                member: None,
             },
         );
     }
@@ -246,9 +293,6 @@ pub(crate) fn attach(engine: &Engine, behavior: ObjectId, target: ObjectId, prop
 
 /// Puts `behavior` in front of the member `member` of the value `prop` of
 /// `target` holds (`Behavior on font.pixelSize`).
-///
-/// DECISION: a change of state does not animate the member (it is not
-/// among the Behaviors [`follow`] finds); the state's value goes in at once.
 pub(crate) fn attach_member(
     engine: &Engine,
     behavior: ObjectId,
@@ -266,6 +310,21 @@ pub(crate) fn attach_member(
         return false;
     };
     let member = Atom::new(member);
+    {
+        let attached = engine.extension::<Attached>();
+        attached.by_prop.borrow_mut().insert(
+            (target, prop),
+            Follower {
+                behavior,
+                hold: None,
+                member: Some(Rc::new(Member {
+                    proxy,
+                    name: member.clone(),
+                    ty: ty.clone(),
+                })),
+            },
+        );
+    }
     for (path, v) in [
         (
             "targetProperty.name",
@@ -330,6 +389,11 @@ fn intercept_member(
         Some(a) => !enabled || !moves(e, a, &mut defaults),
         None => true,
     };
+    if how == Interception::Write {
+        // A value written while the Behavior is on its way to a state's:
+        // it goes on from where the member is, with nothing held.
+        unhold(e, target, prop, RestoreMode::None, false);
+    }
     let shown = e.peek(target, prop).member(member).map(|m| m.to_number());
     let running = anim.is_some_and(|a| driver::has_run(e, a));
     if through {
