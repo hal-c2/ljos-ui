@@ -548,7 +548,14 @@ impl MetaObject {
 
     /// Whether this type is, or derives from, a type called `name`.
     pub fn inherits_name(&self, name: &str) -> bool {
-        self.chain().any(|m| m.name == name)
+        self.chain().any(|m| m.is_called(name))
+    }
+
+    /// Whether QML calls this type `name`. A type written in `Name.ui.qml`
+    /// keeps `Name.ui` as its class name, as Qt's does, and is `Name` to
+    /// the files that use it.
+    pub fn is_called(&self, name: &str) -> bool {
+        *self.name == *name || self.name.strip_suffix(".ui") == Some(name)
     }
 
     /// The value of an enum key (`Ready` of `Component.Status`), searching
