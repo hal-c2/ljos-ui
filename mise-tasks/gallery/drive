@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Use corpus examples as a person would, off-screen in the desktop:cua sandbox: click every enabled control (or a grid of points), and list what each click did and what the app logged: gallery:drive [id…] (default: every example the last gallery run rendered)"
+#MISE description="Use corpus examples as a person would, off-screen in the desktop:cua sandbox: click every enabled control (or a grid of points), type into and edit every text field with keys, and list what each click and key did and what the app logged: gallery:drive [id…] (default: every example the last gallery run rendered)"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 target="${CARGO_TARGET_DIR:-$root/target}"

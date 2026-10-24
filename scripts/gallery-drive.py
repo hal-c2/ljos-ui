@@ -13,7 +13,13 @@ inspector refused it) and what the app logged go in <out>/<id>/report.txt, with 
 <out>/summary.txt lists, per example, whether it started, what its clicks did and the distinct
 lines it logged. <out>/<id>/clicks.json keeps where each control that took its click was, as a
 fraction of the window, in the order clicked: `mise run bench` clicks the same points on every
-runtime."""
+runtime.
+
+A text field (any role ending in `input`) gets keys instead of one click: it is cleared, typed
+into, and edited with the arrows, Shift and the arrows, cut, copy and paste, Backspace, Delete,
+Return and Tab (TYPING below). After each step the report has the field's value and, where a
+plain field would hold something else, what that would be: a validator, a mask or the app's own
+handling (Return adding a task) may be why, so it is a lead, not a verdict."""
 import base64, glob, json, os, re, shutil, signal, struct, subprocess, sys, time, urllib.error, urllib.request, zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,8 +37,28 @@ ROLES = r"button|checkbox|switch|radio|radiobutton|tab|menuitem|link|combobox|sp
 # An outline line of a control: its role, its name if it has one, what else is shown before its
 # reference (a slider's value), the reference and its states.
 CONTROL = re.compile(r'^[ \t]*- (?:' + ROLES + r')[ \t]+("([^"]*)"[ \t]+)?(?:[^\s\[]\S*[ \t]+)*?\[(e\d+)\]([^\n]*)', re.M)
+# A field to type into: the role of an editable text, with its value.
+FIELD = re.compile(r'^[ \t]*- (\w*input)[ \t]+(?:"[^"]*"[ \t]+)?value="((?:[^"\\]|\\.)*)"[^\n]*?\[(e\d+)\]([^\n]*)', re.M)
+# The keys a field gets, step by step, and what a plain field holds after each (None: what the
+# app makes of it, Return accepting a line for one). The text has a character outside ASCII.
+TYPING = [
+    ("clear", "app_press", {"keys": "Ctrl+A Backspace"}, ""),
+    ("type", "app_type", {"text": "Hello wörld"}, "Hello wörld"),
+    ("select three back", "app_press", {"keys": "Shift+Left Shift+Left Shift+Left"}, "Hello wörld"),
+    ("copy", "app_press", {"keys": "Ctrl+C"}, "Hello wörld"),
+    ("paste at the end", "app_press", {"keys": "End Ctrl+V"}, "Hello wörldrld"),
+    ("backspace", "app_press", {"keys": "Left Left Backspace"}, "Hello wörldld"),
+    ("delete at the start", "app_press", {"keys": "Home Delete"}, "ello wörldld"),
+    ("cut two", "app_press", {"keys": "Shift+Right Shift+Right Ctrl+X"}, "lo wörldld"),
+    ("paste them at the end", "app_press", {"keys": "End Ctrl+V"}, "lo wörldldel"),
+    ("select all", "app_press", {"keys": "Ctrl+A"}, "lo wörldldel"),
+    ("typed over", "app_type", {"text": "42"}, "42"),
+    ("return", "app_press", {"keys": "Return"}, None),
+    ("tab", "app_press", {"keys": "Tab"}, None),
+]
 STARTUP = 120
 MAX_CLICKS = 40
+MAX_FIELDS = 6
 # How long the grid waits for the compositor to list the app's window.
 WINDOW_WAIT = 30
 GRID = 5
@@ -177,6 +203,38 @@ def outcome(res, settled):
     return did if settled else did + f" (still moving after {SETTLE:g} s)"
 
 
+def unquote(v):
+    return re.sub(r'\\(.)', lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), v)
+
+
+def type_into(app, w, rep, ref, role, value):
+    """Gives the field `ref` the TYPING keys, clicking it first. Returns the outcome of each step
+    that left a value other than a plain field's, or the reason the field took no keys."""
+    odd = []
+    multi = role.startswith("multiline")
+    for step, tool, args, plain in TYPING:
+        args = dict(args, target=ref) if step == "clear" else args
+        res = app.call(tool, args)
+        if res.startswith("TOOL ERROR"):
+            did = outcome(res, True)
+            w(f"== {step} in {role} [{ref}]: {did}", *app.new_logs())
+            return odd + [did]
+        for m in re.finditer(r'^\s*changed (\w*input)[ \t]+(?:"[^"]*"[ \t]+)?value="((?:[^"\\]|\\.)*)"[^\n]*\[' + ref + r'\]', res, re.M):
+            value = unquote(m.group(2))
+        if multi and plain is None and step == "return":
+            plain = "42\n"
+        note = ""
+        if plain is not None and value != plain:
+            note = f"  (a plain field: {plain!r})"
+            odd.append(f"typing differs from a plain field after {step!r}")
+        w(f"== {step} in {role} [{ref}]: {args.get('keys') or args.get('text')!r} -> {value!r}{note}")
+        for l in res.splitlines()[1:]:
+            if not l.startswith("(snapshot"):
+                print("   " + l, file=rep, flush=True)
+        w(*app.new_logs())
+    return odd
+
+
 def grid_clicks(app, w, d):
     # The inspector answers before the first frame, and the compositor lists a window only once
     # it has one: seconds later for a debug build loading many pictures (photosurface) or a
@@ -231,7 +289,7 @@ def drive(out, eid):
     p = subprocess.Popen([SANDBOX, "exec", "mise", "run", "gallery:run", eid, "--mcp=inspect,input"],
                          cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
     rep = open(os.path.join(d, "report.txt"), "w")
-    said, clicks, outcomes = [], 0, {}
+    said, clicks, typed, outcomes = [], 0, 0, {}
 
     def w(*lines):
         for l in lines:
@@ -278,6 +336,11 @@ def drive(out, eid):
             # The first line is the window's.
             first = BOUNDS.search(outline.split("\n", 1)[0])
             win = (float(first.group(3)), float(first.group(4))) if first else None
+            for m in FIELD.finditer(outline):
+                role, value, ref, states = m.group(1), unquote(m.group(2)), m.group(3), m.group(4)
+                if ("field", ref) in seen or re.search(r"(?:^|\s)(?:disabled|readonly)(?:\s|$)", states):
+                    continue
+                todo.append((ref, "", False, BOUNDS.search(states), (role, value)))
             for m in CONTROL.finditer(outline):
                 ref, name, states = m.group(3), m.group(2) or "", m.group(4)
                 if (name or ref) in seen:
@@ -286,12 +349,30 @@ def drive(out, eid):
                 # later, by another click, and is tried then.
                 if re.search(r"(?:^|\s)disabled(?:\s|$)", states):
                     continue
-                todo.append((ref, name, bool(ENDS.search(name + states)), BOUNDS.search(states)))
+                todo.append((ref, name, bool(ENDS.search(name + states)), BOUNDS.search(states), None))
             if not todo:
                 break
             # A control that may end the app goes last, so that it does not cut the drive short.
             todo.sort(key=lambda t: t[2])
-            ref, name, ends, at = todo[0]
+            ref, name, ends, at, field = todo[0]
+            if field:
+                # A field is typed into once, wherever it is: an outline made again may give it
+                # another reference, but not while its page stays.
+                seen.add(("field", ref))
+                typed += 1
+                try:
+                    for did in type_into(app, w, rep, ref, *field) or ["typing as in a plain field"]:
+                        outcomes[did] = outcomes.get(did, 0) + 1
+                except (OSError, urllib.error.URLError, ValueError):
+                    if not app.ended():
+                        raise
+                    status = p.wait(timeout=10)
+                    w(f"== typing in [{ref}]: the app ended (exit status {status}); see stderr.log")
+                    return {"id": eid, "started": True, "clicks": clicks, "typed": typed, "outcomes": outcomes,
+                            "said": said, "why": [f"the app ended while typing in {ref} (exit status {status})"]}
+                if typed >= MAX_FIELDS:
+                    seen.update(("field", t[0]) for t in todo if t[4])
+                continue
             seen.add(name or ref)
             clicks += 1
             try:
@@ -328,10 +409,10 @@ def drive(out, eid):
         if clicks < 3:
             grid_clicks(app, w, d)
         app.call("app_screenshot", {}, os.path.join(d, "end.png"))
-        return {"id": eid, "started": True, "clicks": clicks, "outcomes": outcomes, "said": said}
+        return {"id": eid, "started": True, "clicks": clicks, "typed": typed, "outcomes": outcomes, "said": said}
     except Exception as x:
         w(f"== driver error {x!r}")
-        return {"id": eid, "started": True, "clicks": clicks, "outcomes": outcomes, "said": said, "why": [repr(x)]}
+        return {"id": eid, "started": True, "clicks": clicks, "typed": typed, "outcomes": outcomes, "said": said, "why": [repr(x)]}
     finally:
         if p.poll() is None:
             os.killpg(p.pid, signal.SIGTERM)
@@ -364,17 +445,17 @@ def main():
             if not r["started"]:
                 head = f"{eid}: did not start"
             else:
-                head = f"{eid}: {r['clicks']} controls clicked"
+                head = f"{eid}: {r['clicks']} controls clicked, {r.get('typed', 0)} fields typed into"
             lines = [head] + ["    " + l for l in r.get("why", [])]
             # What the clicks did: each refusal with its reason, the rest by whether the
             # outline changed (report.txt has each click's changes).
             kinds = {}
             for did, n in r.get("outcomes", {}).items():
-                kind = did if did.startswith(("refused", "nothing")) else "changed the outline"
+                kind = did if did.startswith(("refused", "nothing", "typing")) else "changed the outline"
                 if "still moving" in did:
                     kind += " (still moving after the click)"
                 kinds[kind] = kinds.get(kind, 0) + n
-            lines += [f"    {n:4}x click: {k[:240]}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1])]
+            lines += [f"    {n:4}x {'' if k.startswith('typing') else 'click: '}{k[:240]}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1])]
             counts = {}
             for l in r.get("said", []):
                 counts[l] = counts.get(l, 0) + 1
