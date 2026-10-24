@@ -9,11 +9,13 @@ use std::sync::Arc;
 
 use ljos_render::kurbo::Rect;
 use ljos_render::{Decorations, FontTables, GlyphRun, PositionedGlyph};
+use ljos_runtime::Platform;
 use parley::fontique::{Blob, CharmapIndex, FontWidth, GenericFamily};
+use parley::setting::Tag;
 use parley::{
     Alignment, AlignmentOptions, BaseDirection, BreakReason, FontContext, FontData, FontFamily,
-    FontFamilyName, FontStyle, FontWeight, InlineBox, InlineBoxKind, LayoutContext, OverflowWrap,
-    PositionedLayoutItem, StyleProperty, WordBreak,
+    FontFamilyName, FontStyle, FontVariation, FontVariations, FontWeight, InlineBox, InlineBoxKind,
+    LayoutContext, OverflowWrap, PositionedLayoutItem, StyleProperty, WordBreak,
 };
 use rustc_hash::{FxHashMap, FxHasher};
 
@@ -339,6 +341,29 @@ struct FirstFont {
     charmap: CharmapIndex,
 }
 
+/// The optical size a platform's own text gives a font with an `opsz`
+/// axis at `pixel_size`. CoreText sets the axis to the size in points,
+/// which on macOS is the size in pixels; elsewhere Qt leaves a font at its
+/// default optical size. A font without the axis is not changed.
+fn optical_size(platform: Platform, pixel_size: f32) -> Option<FontVariations<'static>> {
+    (platform == Platform::MacOs).then(|| {
+        FontVariations::List(Cow::Owned(vec![FontVariation {
+            tag: Tag::new(b"opsz"),
+            value: pixel_size,
+        }]))
+    })
+}
+
+/// The generic family `name` stands for: a CSS generic, or the name Qt
+/// gives macOS's system UI font ([`ljos_runtime::platform::SYSTEM_UI_FAMILY`]),
+/// which is `system-ui` whatever the font's file is called.
+fn generic_family(name: &str) -> Option<GenericFamily> {
+    GenericFamily::parse(name).or_else(|| {
+        name.eq_ignore_ascii_case(ljos_runtime::platform::SYSTEM_UI_FAMILY)
+            .then_some(GenericFamily::SystemUi)
+    })
+}
+
 impl Families {
     /// The family list for a style: what it names, then the engine's
     /// defaults, so a misspelt or missing family still shows text.
@@ -354,7 +379,7 @@ impl Families {
                 if name.is_empty() {
                     continue;
                 }
-                match GenericFamily::parse(name) {
+                match generic_family(name) {
                     // Fontique's own reading of the platform's generic
                     // families can miss the rules fontconfig applies (a
                     // user's preferred monospace face among them), so the
@@ -650,6 +675,9 @@ fn shape(
         &names,
     ))));
     b.push_default(StyleProperty::FontSize(size));
+    if let Some(v) = optical_size(Platform::CURRENT, size) {
+        b.push_default(StyleProperty::FontVariations(v));
+    }
     b.push_default(StyleProperty::FontWeight(weight));
     b.push_default(StyleProperty::FontStyle(if style.italic {
         FontStyle::Italic
@@ -687,10 +715,11 @@ fn shape(
                 range.clone(),
             );
         }
-        b.push(
-            StyleProperty::FontSize(usable_size(span.pixel_size)),
-            range.clone(),
-        );
+        let span_size = usable_size(span.pixel_size);
+        b.push(StyleProperty::FontSize(span_size), range.clone());
+        if let Some(v) = optical_size(Platform::CURRENT, span_size) {
+            b.push(StyleProperty::FontVariations(v), range.clone());
+        }
         b.push(
             StyleProperty::FontWeight(FontWeight::new(finite_weight(span.weight))),
             range.clone(),
@@ -2160,6 +2189,36 @@ fn reported_width(width: f32, limit: Option<f64>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_on_macos_takes_the_optical_size_of_its_size() {
+        let Some(FontVariations::List(v)) = optical_size(Platform::MacOs, 13.0) else {
+            panic!("macOS sets an optical size");
+        };
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].tag, Tag::new(b"opsz"));
+        assert_eq!(v[0].value, 13.0);
+        assert!(optical_size(Platform::Other, 13.0).is_none());
+        assert!(optical_size(Platform::Windows, 13.0).is_none());
+    }
+
+    #[test]
+    fn qts_name_for_the_macos_system_font_is_system_ui() {
+        assert_eq!(
+            generic_family(".AppleSystemUIFont"),
+            Some(GenericFamily::SystemUi)
+        );
+        assert_eq!(generic_family("system-ui"), Some(GenericFamily::SystemUi));
+        assert_eq!(generic_family("sans-serif"), Some(GenericFamily::SansSerif));
+        assert_eq!(generic_family("Sans Serif"), None);
+        assert_eq!(generic_family("Helvetica"), None);
+        let e = TextEngine::new();
+        let stack = e.families.stack_of(".AppleSystemUIFont");
+        assert!(matches!(
+            stack[0],
+            FontFamilyName::Generic(GenericFamily::SystemUi)
+        ));
+    }
 
     type Glyphs = Vec<(u64, u32, Vec<(u32, u32, u32)>, Vec<i16>, bool, u32)>;
 

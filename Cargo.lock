@@ -4244,6 +4244,8 @@ version = "0.0.0"
 dependencies = [
  "ljos_render",
  "ljos_runtime",
+ "objc2-core-foundation",
+ "objc2-core-text",
  "parley",
  "proptest",
  "pulldown-cmark",

@@ -25,6 +25,12 @@ unicode-segmentation.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 yeslogic-fontconfig-sys.workspace = true
 
+# The file of the system UI font, which Fontique's names for `system-ui`
+# can miss.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation.workspace = true
+objc2-core-text.workspace = true
+
 [dev-dependencies]
 proptest.workspace = true
 
