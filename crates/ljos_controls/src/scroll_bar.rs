@@ -717,14 +717,19 @@ fn follow(
     kind: Bar,
 ) -> Result<(), EngineError> {
     let link: Rc<RefCell<Option<Link>>> = Rc::default();
+    // Set while the bar is put where the content is. Putting it there can
+    // lay the content out again (a view makes the rows that come into
+    // sight), so the place it was given is already stale when the bar
+    // hears it: the content never follows what it told the bar itself.
+    let echo: Rc<Cell<bool>> = Rc::default();
     {
-        let link = link.clone();
+        let (link, echo) = (link.clone(), echo.clone());
         engine.watch(att, slot, move |e, v| {
             let bar = v.as_object().filter(|b| e.is_alive(*b));
             check(
                 e,
                 "scroll bar",
-                adopt(e, owner, horizontal, kind, &link, bar),
+                adopt(e, owner, horizontal, kind, &link, &echo, bar),
             );
         })?;
     }
@@ -743,6 +748,7 @@ fn follow(
         // brought back from there would move the content to a place it
         // is not at. A handle that grows moves first, one that shrinks
         // after.
+        let was = echo.replace(true);
         e.untrack(|| {
             let now = num(e, bar, kind.position);
             // What the bar itself put the content at comes back as the
@@ -757,6 +763,7 @@ fn follow(
                 put(e, bar, kind.position, Value::Real(s.position));
             }
         });
+        echo.set(was);
     })?;
 
     // A bar is active while the content moves its way. Only a change says
@@ -795,6 +802,7 @@ fn adopt(
     horizontal: bool,
     kind: Bar,
     link: &Rc<RefCell<Option<Link>>>,
+    echo: &Rc<Cell<bool>>,
     bar: Option<ObjectId>,
 ) -> Result<(), EngineError> {
     let old = link.borrow_mut().take();
@@ -836,8 +844,9 @@ fn adopt(
     }
     if kind.moves_content {
         // The content follows the bar.
+        let echo = echo.clone();
         engine.watch(bar, kind.position, move |e, v| {
-            if !is_current() || !e.is_alive(owner) {
+            if echo.get() || !is_current() || !e.is_alive(owner) {
                 return;
             }
             let Some(f) = e.untrack(|| flickable_of(e, owner)) else {
