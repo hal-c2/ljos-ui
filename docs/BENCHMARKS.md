@@ -4091,3 +4091,89 @@ Left:
 - When a page is pushed, the inherited properties (palette, font) cascade through it. This is
   the largest one-off cost in the 35 M.
 - llvmpipe's extra 6 % from drawing whole frames.
+
+### calqlatr's press, eighth pass: the tint ring, a Behavior's new value, read-only reads (2026-10-24)
+
+#### Method
+
+The base is origin at 6bbeb113. `fp.list` is the build from before the tint ring (f497f315,
+"the few tints made last are held"); `b27a` is the base; `b27b` and `b27c` are this pass's
+two cuts. Ir is from callgrind on a release build with line tables, per calqlatr press (one
+click, 140 presses) and per clocks `timeChanged` (700 calls). Wall time alternates `qml6`
+6.11.2 and each Ljós build, eleven rounds, per press over 2 800 presses (calqlatr) and per
+call over 7 000 calls (clocks). The figures are medians, with the fastest round in brackets.
+The load average was 14–20.
+
+#### Numbers
+
+| | qml6 | Ljós `list` | Ljós `b27a` (base) | Ljós `b27b` | Ljós `b27c` (after) |
+|---|---:|---:|---:|---:|---:|
+| calqlatr, Ir per press | | 1.320 M | 1.268 M | 1.243 M | 1.240 M |
+| calqlatr, wall per press | 111.1 µs (106.4) | 118.6 µs (110.1) | 111.3 µs (107.2) | 105.5 µs (102.7) | 107.6 µs (103.3) |
+| clocks, Ir per `timeChanged` | | 16.49 k | 16.35 k | 16.35 k | 16.33 k |
+| clocks, wall per call | 0.71 µs | 1.11 µs | 1.08 µs | 1.09 µs | 1.10 µs |
+
+At this load calqlatr's press is now level with qml6, a little under it in the medians; the
+seventh pass had it 14–17 % above. `b27b` and `b27c` differ by 0.2 % in Ir, so their wall
+difference is noise. qml6 prints clocks' time in whole milliseconds (5 ms for 7 000 calls),
+so its 0.71 µs is coarse; Ljós is still about 50 % above it there, and nothing in this pass
+touches clocks' path.
+
+#### The cuts
+
+- The tint ring (before this pass, measured here): a colour that flips back finds its tint
+  among the few made last. 1.320 M → 1.268 M, −51.7 k (−3.9 %) a press; clocks −0.14 k.
+- A Behavior's new value on the way restarts the timeline it has. Each press starts about
+  twelve Behaviors on the buttons' text colours, and with no frame between clicks each start
+  found a run still going. A start was about 6.5 k Ir: `build_in` 2.5 k (`curve_of` 0.7 k,
+  `duration_of` 0.35 k), the first step 1.8 k, the `running` write 1 k, taking the old run
+  out 1.1 k, allocation 0.5 k. Now a running `PropertyAnimation` whose target, kind, `from`,
+  duration, loops and easing read as they did gets the new `to` and starts again from the
+  value shown. Anything else is built anew. `start_driven` 71 k → 51 k a press;
+  1.268 M → 1.243 M. `features/animation/behavior-new-value-reads-animation.feature`
+  (@qt-parity) pins that a duration or easing changed on the way is taken by the next value.
+- A tracked read of a read-only QML property with no node is not kept in `FieldReads`. Only
+  its making writes it, before anything reads it, and reload leaves read-only properties
+  alone. calqlatr's `readonly property color` literals were about 22 of the 143 field reads a
+  press. `keep_field_read` 24.7 k → 21.6 k; 1.243 M → 1.240 M.
+  `features/language/readonly-value-reads.feature` (@qt-parity) pins a binding on one, also
+  when `createObject` gives it another value.
+
+#### QuickJS's own work by function
+
+QuickJS's interpreter loop (`JS_CallInternal`, exclusive) is 126 k of a press, and QuickJS
+as a whole about 0.33 M. To split it by calqlatr function, each was called on its own from a
+closure, 60 rounds against 10:
+
+| call | Ir per call | interpreter |
+|---|---:|---:|
+| `numberPad.updateDimmed()` (once a press) | 567 k | 119 k |
+| its 31 `applicationState.isButtonDisabled(text)` | 31 × 16.0 k | 31 × 4.2 k |
+| its 31 `children[i].dimmed = …` writes, unchanged | 31 × 1.9 k | 31 × 0.5 k |
+| its 31 `children[i].text` reads | 31 × 1.35 k | 31 × 0.35 k |
+
+So `updateDimmed` is 46 % of a press and nearly all of the interpreter's own 126 k. Of each
+`isButtonDisabled`, about 10.5 k is finding two free names, `CalcEngine` (the script import)
+and `display` (a property of the state object). Each goes through the global proxy
+(`js_proxy_has` 4.6 k, `js_proxy_get` 5.9 k inclusive) into the host's `raw_global` and
+`resolve_id`, on every call. `isOperationDisabled` itself is a few string compares.
+
+#### Next targets
+
+- A function's free names: resolving `CalcEngine` and `display` once per function and scope,
+  not through the proxy on each call, is up to about 325 k a press (26 %).
+- `restart_towards` is 20 k a press, 7.9 k of it `curve_of` re-reading the easing to compare;
+  a change stamp on the animation's settings would make the guard a compare.
+- `keep_field_read` keeps 21.6 k: `dimmable` (a dynamic property that can change) and the
+  native `pressed` and `hovered`, which native code writes. Left to the field-reads work.
+- The graph's flush after the `dimmed` writes is about 0.49 M a press: bindings and
+  layouts recomputing, the work itself.
+
+#### DECISIONs
+
+- A reused timeline goes into a new run, so runs still advance in the order they started.
+- The reuse guard reads exactly what a build reads, so it cannot accept what a build would
+  read differently.
+- `running` is not written again on a reuse: it is already true.
+- The read-only skip covers only properties declared in QML (a dynamic slot). A native
+  read-only field such as `pressed` is written by native code, so its reads stay kept.
