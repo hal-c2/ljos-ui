@@ -162,3 +162,31 @@ Feature: Fusion's shades of a palette
     And the property "background.gradient.stops.0.color" of "button" is "#a5a5a5"
     And the property "background.border.color" of "button" is "#5b5b5b"
     And the property "background.gradient.stops.0.color" of "slider" is "#6c6c6c"
+
+  @api-QtQuick.Controls.Dial
+  Scenario Outline: A dial is lit from its button colour, <button>
+    A dial is shaded from the button colour no darker than a value of 180
+    and no more saturated than 140 of 255, so any darker grey gives the
+    same dial. The light falls from above its top left, with a step down
+    two thirds of the way out.
+
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Fusion
+      Rectangle {
+        width: 200; height: 200; color: "white"
+        Dial { width: 200; height: 200; value: 1; palette.button: "<button>" }
+      }
+      """
+    Then the pixel at 100, 40 of the window is within 3 of "<top>"
+    And the pixel at 100, 100 of the window is within 3 of "<middle>"
+    And the pixel at 100, 160 of the window is within 3 of "<bottom>"
+    And the pixel at 40, 100 of the window is within 3 of "<left>"
+
+    Examples:
+      | button  | top     | middle  | bottom  | left    |
+      | #808080 | #c2c2c2 | #b8b8b8 | #a9a9a9 | #b7b7b7 |
+      | #202020 | #c2c2c2 | #b8b8b8 | #a9a9a9 | #b7b7b7 |
+      | #c04020 | #cf745d | #c46e58 | #b46551 | #c36d58 |
+      | #f0f0f0 | #fcfcfc | #f3f3f3 | #e1e1e1 | #f2f2f2 |
