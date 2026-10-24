@@ -25,9 +25,9 @@ use serde_json::json;
 use tokio::sync::watch;
 
 pub const WATCH: &str = "\
-Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads, `traces`, or \
-passes that drew the `items` given by handle. Give the `counts` of the last answer as `since`; it \
-answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.";
+Wait until the app changes: frames, passes drawn (`paints`), logs, reloads, `traces`, followed \
+`models`, or passes that drew the `items` given by handle. Give the last answer's `counts` as \
+`since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.";
 
 /// The longest a watch waits: a client that follows an application at
 /// rest is answered, and asks again, this often.
@@ -56,18 +56,22 @@ pub enum Topic {
     Reloads,
     /// Events `app_trace` wrote down.
     Traces,
+    /// Changes of the models clients follow (`app_objects`' `model` with
+    /// a `holder`).
+    Models,
     /// Passes that changed the picture where one of the watch's `items`
     /// lies.
     Items,
 }
 
 impl Topic {
-    const ALL: [Topic; 6] = [
+    const ALL: [Topic; 7] = [
         Topic::Frames,
         Topic::Paints,
         Topic::Logs,
         Topic::Reloads,
         Topic::Traces,
+        Topic::Models,
         Topic::Items,
     ];
 
@@ -78,6 +82,7 @@ impl Topic {
             Topic::Logs => "logs",
             Topic::Reloads => "reloads",
             Topic::Traces => "traces",
+            Topic::Models => "models",
             Topic::Items => "items",
         }
     }
@@ -97,6 +102,8 @@ pub struct Since {
     pub reloads: Option<u64>,
     #[serde(default)]
     pub traces: Option<u64>,
+    #[serde(default)]
+    pub models: Option<u64>,
     /// By handle; an item left out is not compared.
     #[serde(default)]
     pub items: Option<BTreeMap<String, u64>>,
@@ -110,7 +117,7 @@ pub struct WatchArgs {
     #[serde(default)]
     pub since: Option<Since>,
     /// Wait for these only: `frames`, `paints`, `logs`, `reloads`,
-    /// `traces`, `items`. All by default.
+    /// `traces`, `models`, `items`. All by default.
     #[serde(default)]
     pub topics: Vec<Topic>,
     /// Items to follow, by handle (`@12.3`, as `app_objects` gives them),
@@ -126,8 +133,8 @@ pub struct WatchArgs {
     /// one answer (at most 5000).
     #[serde(default)]
     pub settle_ms: Option<u64>,
-    /// The name this client gave its traces (`app_trace`'s `holder`):
-    /// they last while it watches.
+    /// The name this client gave its traces (`app_trace`'s `holder`),
+    /// recording and followed model: they last while it watches.
     #[serde(default)]
     pub holder: Option<String>,
 }
@@ -140,6 +147,7 @@ pub(crate) struct Counts {
     pub(crate) logs: u64,
     pub(crate) reloads: u64,
     pub(crate) traces: u64,
+    pub(crate) models: u64,
     /// Passes counted for any watched item: it moves so that a waiting
     /// watch looks at its own items again.
     pub(crate) items: u64,
@@ -154,6 +162,7 @@ impl Counts {
             Topic::Logs => Some(self.logs),
             Topic::Reloads => Some(self.reloads),
             Topic::Traces => Some(self.traces),
+            Topic::Models => Some(self.models),
             Topic::Items => None,
         }
     }
@@ -167,6 +176,7 @@ impl Since {
             Topic::Logs => self.logs,
             Topic::Reloads => self.reloads,
             Topic::Traces => self.traces,
+            Topic::Models => self.models,
             Topic::Items => None,
         }
     }
@@ -284,6 +294,10 @@ impl ChangeFeed {
         self.tx.send_modify(|c| c.traces += 1);
     }
 
+    pub(crate) fn model(&self) {
+        self.tx.send_modify(|c| c.models += 1);
+    }
+
     #[cfg(test)]
     fn counts(&self) -> Counts {
         *self.tx.borrow()
@@ -363,8 +377,8 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
     };
     let names: Vec<&str> = moved.iter().map(|t| t.name()).collect();
     let mut text = format!(
-        "frames {}, paints {}, logs {}, reloads {}, traces {}",
-        now.frames, now.paints, now.logs, now.reloads, now.traces
+        "frames {}, paints {}, logs {}, reloads {}, traces {}, models {}",
+        now.frames, now.paints, now.logs, now.reloads, now.traces, now.models
     );
     for (h, n) in &drawn {
         let _ = write!(text, ", {h} drawn {n}");
@@ -382,6 +396,7 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         "logs": now.logs,
         "reloads": now.reloads,
         "traces": now.traces,
+        "models": now.models,
     });
     if !args.items.is_empty() {
         counts["items"] = json!(drawn);

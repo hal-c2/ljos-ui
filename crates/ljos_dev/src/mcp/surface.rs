@@ -152,10 +152,11 @@ impl InspectorSurface {
     ) -> Self {
         let release = handle.clone();
         let holders = Holders::new(move |holder| {
-            // Whoever held the traces and the recording is gone, so the
-            // answers are awaited here: the UI thread skips a request
-            // nobody waits for. A full inbox drops it; what it held then
-            // stays until stopped, as what has no holder does.
+            // Whoever held the traces, the recording and the followed
+            // model is gone, so the answers are awaited here: the UI
+            // thread skips a request nobody waits for. A full inbox drops
+            // it; what it held then stays until stopped, as what has no
+            // holder does.
             let Ok(runtime) = tokio::runtime::Handle::try_current() else {
                 return;
             };
@@ -166,11 +167,16 @@ impl InspectorSurface {
             });
             let frames = Kind::Frames(super::timeline::FramesArgs {
                 record: Some(false),
-                holder: Some(holder),
+                holder: Some(holder.clone()),
                 max: Some(1),
                 ..Default::default()
             });
-            for kind in [traces, frames] {
+            let models = Kind::Objects(super::objects::ObjectsArgs {
+                release: true,
+                holder: Some(holder),
+                ..Default::default()
+            });
+            for kind in [traces, frames, models] {
                 let (reply, answer) = oneshot::channel();
                 runtime.spawn(async move {
                     let _ = answer.await;
@@ -373,6 +379,7 @@ impl McpSurface for InspectorSurface {
             let holds = match &kind {
                 Kind::Trace(a) if a.target.is_some() && !a.stop => a.holder.clone(),
                 Kind::Frames(a) if a.record == Some(true) => a.holder.clone(),
+                Kind::Objects(a) if a.model.is_some() => a.holder.clone(),
                 _ => None,
             };
             let answer = self.ask(kind, per_copy, ctx).await;

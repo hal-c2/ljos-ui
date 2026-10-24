@@ -812,6 +812,19 @@ impl Hands<'_> {
     fn set_property(&mut self, a: &SetPropertyArgs) -> Result<Done, SurfaceError> {
         let obj = self.object(&a.target, "app_set_property")?;
         let engine = self.engine;
+        if let Some(row) = a.row {
+            let value = to_qml(engine, a.value.as_ref().unwrap_or(&Value::Null))?;
+            let (before, now) =
+                super::models::write_cell(engine, obj, &a.target, row, &a.property, &value)?;
+            return Ok(Done::new(format!(
+                "set `{}` of row {row} of `{}` to {now}",
+                a.property, a.target
+            ))
+            .with("row", json!(row))
+            .with("property", json!(a.property))
+            .with("value", now)
+            .with("previous", before));
+        }
         if let Err(e) = engine.property_index(obj, &a.property) {
             return Err(match e {
                 EngineError::UnknownProperty { .. } => SurfaceError::not_found(format!(

@@ -138,6 +138,10 @@ ApplicationWindow {
             timeline.add(s)
         else if (route === "memory" && ok)
             memory.show(s)
+        else if (route === "models" && ok)
+            models.list = s.models
+        else if (route === "model-rows")
+            models.showRows(ok, s)
         else if (route.indexOf("sample-") === 0 && ok)
             overview.part(route.substring(7), s)
     }
@@ -172,7 +176,7 @@ ApplicationWindow {
 
     // The page shown.
     readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace",
-                                   "Supervision", "Frames", "Memory"]
+                                   "Supervision", "Frames", "Memory", "Models"]
     property int page: 0
     onPageChanged: watcher.start()
 
@@ -194,6 +198,9 @@ ApplicationWindow {
             timeline.load()
         else if (page === 8 && (all || changed.indexOf("paints") >= 0 || changed.indexOf("reloads") >= 0))
             memory.load()
+        // Only the model picked is followed, so a change is of it.
+        else if (page === 9 && (all || changed.indexOf("models") >= 0 || changed.indexOf("reloads") >= 0))
+            models.load()
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
         if (all || changed.indexOf("traces") >= 0)
@@ -214,6 +221,9 @@ ApplicationWindow {
         // that follows something else answers into nothing.
         property int out: 0
         property string following: ""
+        // Whether the newest waits for the model the Models page follows
+        // too: no other page asks for it.
+        property bool followsModels: false
         // When the last answer said nothing changed.
         property string quietSince: ""
 
@@ -227,13 +237,17 @@ ApplicationWindow {
 
         function start() {
             var item = wanted()
-            if (out > 0 && following === item)
+            var withModels = page === 9
+            if (out > 0 && following === item && followsModels === withModels)
                 return
             following = item
+            followsModels = withModels
             out += 1
             var args = {}
             if (counts !== null) {
                 var since = { logs: counts.logs, reloads: counts.reloads, traces: counts.traces }
+                if (withModels)
+                    since.models = counts.models
                 var known = item !== "" && counts.items !== undefined && counts.items[item] !== undefined
                 if (item === "")
                     since.paints = counts.paints
@@ -3896,6 +3910,328 @@ ApplicationWindow {
                             Text { text: windowRow.name; color: theme.text; font.pixelSize: 12; font.bold: true }
                             Text { text: "scene: " + windowRow.scene; color: theme.subtle; font.pixelSize: 12 }
                             Text { text: "renderer: " + windowRow.render; color: theme.subtle; font.pixelSize: 12 }
+                        }
+                    }
+                }
+
+                // ----- Models ------------------------------------------
+                // The application's models, as a table viewer shows a
+                // node's tables: the list, and a page of the rows of the
+                // one picked. The one picked is followed: the watch says
+                // when it changed and the page is asked again then, so a
+                // model at rest asks nothing. Nothing is followed until a
+                // model is picked, and nothing is asked while another
+                // page is shown.
+                ColumnLayout {
+                    id: models
+                    spacing: 10
+                    property var list: []
+                    // The model picked, by handle, and the page of it shown.
+                    property string picked: ""
+                    property var table: null
+                    property int offset: 0
+                    readonly property int limit: 50
+                    // The cell typed in, as "row/role".
+                    property string editing: ""
+                    readonly property var columns: !table ? []
+                        : table.roles.length > 0 ? table.roles : ["modelData"]
+                    readonly property real columnWidth: Math.max(90, (rowsView.width - 70) / Math.max(1, columns.length))
+
+                    function load() {
+                        window.ask("app_objects", { models: true }, "models")
+                        if (picked !== "")
+                            rows()
+                    }
+
+                    function rows() {
+                        window.ask("app_objects",
+                                   { model: picked, offset: offset, limit: limit, holder: window.holder },
+                                   "model-rows")
+                    }
+
+                    function open(handle) {
+                        picked = handle
+                        offset = 0
+                        editing = ""
+                        table = null
+                        rows()
+                    }
+
+                    function turn(by) {
+                        offset = Math.max(0, offset + by * limit)
+                        editing = ""
+                        rows()
+                    }
+
+                    function showRows(ok, s) {
+                        // A model gone, as after a reload, is let go.
+                        if (!ok) {
+                            picked = ""
+                            table = null
+                            return
+                        }
+                        // A page past a model that shrank goes back to its last.
+                        if (s.rows.length === 0 && s.count > 0 && offset > 0) {
+                            offset = Math.floor((s.count - 1) / limit) * limit
+                            rows()
+                            return
+                        }
+                        table = s
+                    }
+
+                    // The text typed as the JSON the cell had: a number
+                    // stays a number and true or false a bool.
+                    function typed(was, text) {
+                        if (typeof was === "boolean")
+                            return text === "true"
+                        if (typeof was === "number" && text.trim() !== "" && !isNaN(Number(text)))
+                            return Number(text)
+                        return text
+                    }
+
+                    // What is shown again comes with the watch, which
+                    // the write moves.
+                    function write(row, role, was, text) {
+                        editing = ""
+                        window.ask("app_set_property",
+                                   { target: picked, row: row, property: role, value: typed(was, text) },
+                                   "model-edited")
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text { text: "Models"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: models.list.length + (models.list.length === 1 ? " model" : " models")
+                            color: theme.subtle
+                        }
+                        Button {
+                            text: "Refresh"
+                            onClicked: models.load()
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        spacing: 10
+
+                        // The models, each with what has it and its rows.
+                        Rectangle {
+                            Layout.preferredWidth: Math.max(180, Math.min(300, models.width * 0.3))
+                            Layout.fillHeight: true
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            clip: true
+                            ListView {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                model: window.page === 9 ? models.list : []
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Rectangle {
+                                    id: modelRow
+                                    required property var modelData
+                                    readonly property string name: modelData.owned_by_view
+                                        ? modelData.type + " of " + (modelData.object_name ? "\"" + modelData.object_name + "\"" : modelData.model)
+                                        : modelData.type + (modelData.object_name ? " \"" + modelData.object_name + "\"" : "")
+                                    width: ListView.view.width
+                                    height: 40
+                                    radius: 6
+                                    color: models.picked === modelData.model ? theme.accentSoft : "transparent"
+                                    Column {
+                                        x: 8
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width - 16
+                                        Text {
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                            text: modelRow.name
+                                            color: models.picked === modelRow.modelData.model ? theme.accent : theme.text
+                                            font.pixelSize: 12
+                                            font.bold: models.picked === modelRow.modelData.model
+                                        }
+                                        Text {
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                            text: modelRow.modelData.count + " rows"
+                                                  + (modelRow.modelData.roles.length > 0 ? " · " + modelRow.modelData.roles.join(", ") : "")
+                                                  + (modelRow.modelData.writable ? " · writable" : "")
+                                            color: theme.subtle
+                                            font.pixelSize: 11
+                                        }
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: modelRow.name + ", " + modelRow.modelData.count + " rows"
+                                        onClicked: models.open(modelRow.modelData.model)
+                                    }
+                                }
+                            }
+                        }
+
+                        // A page of the rows of the model picked.
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            spacing: 6
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Text {
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    color: theme.subtle
+                                    text: !models.table
+                                        ? (models.picked === "" ? "Pick a model to see its rows" : "")
+                                        : models.table.count === 0 ? models.table.type + " · no rows"
+                                        : models.table.type + " · rows " + models.table.offset + " to "
+                                          + (models.table.offset + models.table.rows.length - 1) + " of " + models.table.count
+                                          + (models.table.writable ? " · click a cell to edit it" : "")
+                                }
+                                Button {
+                                    text: "Previous"
+                                    enabled: !!models.table && models.offset > 0
+                                    onClicked: models.turn(-1)
+                                }
+                                Button {
+                                    text: "Next"
+                                    enabled: !!models.table && models.table.next_offset !== null
+                                    onClicked: models.turn(1)
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                radius: 9
+                                color: theme.card
+                                border.color: theme.rule
+                                clip: true
+
+                                // The roles, over their columns.
+                                Row {
+                                    id: header
+                                    x: 12; y: 8
+                                    spacing: 0
+                                    Text {
+                                        width: 60
+                                        text: "row"
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                    }
+                                    Repeater {
+                                        model: window.page === 9 ? models.columns : []
+                                        delegate: Text {
+                                            required property string modelData
+                                            width: models.columnWidth
+                                            elide: Text.ElideRight
+                                            text: modelData
+                                            color: theme.subtle
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                        }
+                                    }
+                                }
+
+                                ListView {
+                                    id: rowsView
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    anchors.topMargin: 28
+                                    clip: true
+                                    model: window.page === 9 && models.table ? models.table.rows : []
+                                    ScrollBar.vertical: ScrollBar {}
+                                    delegate: Item {
+                                        id: tableRow
+                                        required property var modelData
+                                        required property int index
+                                        width: ListView.view.width
+                                        height: 24
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            color: tableRow.index % 2 ? theme.cardAlt : "transparent"
+                                        }
+                                        Row {
+                                            x: 6
+                                            height: parent.height
+                                            Text {
+                                                width: 60
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: tableRow.modelData.index
+                                                color: theme.subtle
+                                                font.family: theme.mono
+                                                font.pixelSize: 12
+                                            }
+                                            Repeater {
+                                                model: models.columns
+                                                delegate: Item {
+                                                    id: cell
+                                                    required property string modelData
+                                                    readonly property var value: tableRow.modelData.values[modelData]
+                                                    readonly property string key: tableRow.modelData.index + "/" + modelData
+                                                    width: models.columnWidth
+                                                    height: tableRow.height
+                                                    Text {
+                                                        anchors.fill: parent
+                                                        anchors.rightMargin: 8
+                                                        verticalAlignment: Text.AlignVCenter
+                                                        elide: Text.ElideRight
+                                                        visible: models.editing !== cell.key
+                                                        text: window.shown(cell.value)
+                                                        color: theme.text
+                                                        font.pixelSize: 12
+                                                    }
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        enabled: !!models.table && models.table.writable
+                                                        Accessible.role: Accessible.Cell
+                                                        Accessible.name: cell.modelData + " " + tableRow.modelData.index
+                                                        onClicked: models.editing = cell.key
+                                                    }
+                                                    Loader {
+                                                        anchors.fill: parent
+                                                        anchors.rightMargin: 8
+                                                        active: models.editing === cell.key
+                                                        // Focus is given once the click that made
+                                                        // the field is over.
+                                                        onLoaded: Qt.callLater(function() {
+                                                            if (!item)
+                                                                return
+                                                            item.forceActiveFocus()
+                                                            item.selectAll()
+                                                        })
+                                                        sourceComponent: TextField {
+                                                            topPadding: 2
+                                                            bottomPadding: 2
+                                                            leftPadding: 4
+                                                            clip: true
+                                                            color: theme.text
+                                                            Accessible.name: cell.modelData + " " + tableRow.modelData.index
+                                                            background: Rectangle {
+                                                                radius: 4
+                                                                color: theme.bg
+                                                                border.color: theme.accent
+                                                            }
+                                                            text: window.shown(cell.value)
+                                                            onAccepted: models.write(tableRow.modelData.index, cell.modelData,
+                                                                                     cell.value, text)
+                                                            Keys.onEscapePressed: models.editing = ""
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

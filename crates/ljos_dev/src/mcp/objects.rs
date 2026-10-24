@@ -22,10 +22,10 @@ use slotmap::{Key, KeyData};
 use super::tools::{flag, text_property};
 
 pub const OBJECTS: &str = "\
-Every object below `root` (a target; default the scene's root), items or not: Timers, models, \
-animations. Each has a `@handle`, type, id, objectName, depth and about its bytes. `depth` \
-limits how far down, `hidden` counts what it left out; a cut answer's `next_cursor`, as \
-`cursor`, lists the rest.";
+Every object below `root` (a target; default the scene's root), items or not, with `@handle`, \
+type, id, objectName, depth, bytes; `depth` limits, `next_cursor` pages. `models` lists \
+models instead; `model` (a target) reads its rows from `offset`, `limit` at a time; a `holder` \
+follows its changes.";
 
 /// The most objects one answer lists unless told otherwise, and at all.
 const DEFAULT_MAX: usize = 500;
@@ -48,6 +48,29 @@ pub struct ObjectsArgs {
     /// same root and to the same depth. Not given with `root` or `depth`.
     #[serde(default)]
     pub cursor: Option<String>,
+    /// List the application's models instead of objects: each with what
+    /// has it, its rows, roles and views.
+    #[serde(default)]
+    pub models: bool,
+    /// Read the rows of this model, or of the one this view shows: a
+    /// `@handle` or a locator.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The first row to read (default 0).
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// The most rows to read (default 50, at most 500).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Follow the model read: each change moves `app_watch`'s `models`
+    /// count while a watch with this `holder` keeps coming back. One
+    /// model per holder.
+    #[serde(default)]
+    pub holder: Option<String>,
+    /// Sent by the surface when a holder lapses: stop following its model.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub release: bool,
 }
 
 /// Where a cut answer goes on: its root, the first object it left out
@@ -143,9 +166,10 @@ fn below(engine: &Engine, obj: ObjectId) -> Vec<ObjectId> {
 /// Whether answering needs the scene looked at: a root given by locator
 /// is found in the outline.
 pub(crate) fn needs_scene(args: &ObjectsArgs) -> bool {
-    args.root
-        .as_deref()
-        .is_some_and(|r| !r.trim_start().starts_with('@'))
+    [&args.root, &args.model]
+        .into_iter()
+        .flatten()
+        .any(|r| !r.trim_start().starts_with('@'))
 }
 
 /// Answers `app_objects`, on the UI thread, from `found`: the object a

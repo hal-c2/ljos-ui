@@ -43,6 +43,7 @@ mod frames;
 mod holders;
 mod logs;
 mod memory;
+mod models;
 mod objects;
 mod observe;
 mod paint;
@@ -298,6 +299,9 @@ pub struct Inspector {
     /// Properties assigned by `app_set_property`, so that `app_inspect`
     /// can say they were assigned by devtools and not by the application.
     edits: edits::Edits,
+    /// The model each client follows (`app_objects`' `model` with a
+    /// `holder`).
+    models: models::Follows,
     /// The mailbox and timer counters move while an inspector is served
     /// (`ljos_runtime::observe`).
     _observing: ljos_runtime::ObserveGuard,
@@ -345,6 +349,7 @@ impl Inspector {
             changes.clone(),
         ));
         let traces = trace::TraceLog::new(changes.clone(), cfg.redact_all);
+        let changes_for_models = changes.clone();
         let inspector = Inspector {
             cfg,
             inbox,
@@ -375,6 +380,7 @@ impl Inspector {
             frames: FrameLog::default(),
             timeline: timeline::Timeline::default(),
             edits: edits::Edits::default(),
+            models: models::Follows::new(changes_for_models),
             _observing: ljos_runtime::observe::enable(),
         };
         (inspector, surface)
@@ -944,6 +950,44 @@ impl Inspector {
                 queued > 0 || ljos_quick::running_animation_count(engine) > 0,
                 args,
             )),
+            (Kind::Objects(args), _) if args.release => {
+                if let Some(holder) = &args.holder {
+                    self.models.end(holder);
+                }
+                Ok(ToolReply::from(json!({})))
+            }
+            (Kind::Objects(args), _) if args.models => Ok(models::list(engine, args.max, per_copy)),
+            (Kind::Objects(args), capture) if args.model.is_some() => {
+                let what = args.model.as_deref().unwrap_or_default();
+                let found = match capture {
+                    Some(capture) if objects::needs_scene(args) => {
+                        let mut look = Look {
+                            engine,
+                            scene,
+                            capture,
+                            refs: &mut self.refs,
+                        };
+                        look.object(what, "app_objects")
+                    }
+                    _ => match objects::parse_handle(engine, what) {
+                        Some(found) => found,
+                        None => Err(SurfaceError::new(
+                            ErrorCode::Internal,
+                            "the scene was not looked at for a target that needs it",
+                        )),
+                    },
+                };
+                found
+                    .and_then(|obj| {
+                        models::rows(engine, obj, what, args.offset, args.limit, per_copy)
+                    })
+                    .map(|(reply, model)| {
+                        if let Some(holder) = &args.holder {
+                            self.models.follow(holder, &model);
+                        }
+                        reply
+                    })
+            }
             (Kind::Objects(args), capture) => {
                 let found = match capture {
                     Some(capture) if objects::needs_scene(args) => {

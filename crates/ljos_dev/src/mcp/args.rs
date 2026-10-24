@@ -135,8 +135,8 @@ is given at the end; each step says what it cost. Every step's capability is nee
 
 pub const SET_PROPERTY: &str = "\
 Assign `value` to `property` of `target` as a script would, or bind it to the JS expression \
-`binding` (needs eval too), replacing a binding; `keep_binding` covers it instead. `revert` takes \
-the edit back. Recorded as devtools' (`app_inspect`). Answers with the value now and before.";
+`binding` (needs eval too); `keep_binding` covers a binding, `revert` takes the edit back. With \
+`row`, writes that row's role `property` of a model as a delegate does. Answers the value now and before.";
 
 pub const INVOKE: &str = "\
 Call the method `name` of `target` with `args`, or send the signal of that name so its handlers \
@@ -435,6 +435,10 @@ pub struct SetPropertyArgs {
     /// covered, or the value it had before.
     #[serde(default)]
     pub revert: bool,
+    /// Write the role `property` of this row of the model `target` has or
+    /// shows, as a delegate writes `model.role`. Only with `value`.
+    #[serde(default)]
+    pub row: Option<usize>,
 }
 
 /// A value that was given, `null` included: absent is `None`.
@@ -870,6 +874,12 @@ fn parse_act(tool: &'static str, args: Value) -> Result<Act, SurfaceError> {
                 (None, None, false) => return Err(bad(tool, "missing field `value`")),
                 _ => {}
             }
+            if a.row.is_some() && (a.binding.is_some() || a.keep_binding || a.revert) {
+                return Err(bad(
+                    tool,
+                    "a model's `row` takes a `value` only: a cell is not bound or reverted",
+                ));
+            }
             if a.binding
                 .as_ref()
                 .is_some_and(|b| b.len() > MAX_SCRIPT_BYTES)
@@ -1080,6 +1090,31 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                      give it without `root` or `depth`",
                 ));
             }
+            let reads = a.models || a.model.is_some();
+            if a.models && a.model.is_some() {
+                return Err(bad(
+                    tool,
+                    "give `models` to list them or `model` to read one, not both",
+                ));
+            }
+            if reads && (a.root.is_some() || a.depth.is_some() || a.cursor.is_some()) {
+                return Err(bad(
+                    tool,
+                    "`models` and `model` read models, not the tree: give them without `root`, \
+                     `depth` or `cursor`",
+                ));
+            }
+            if a.model.is_none() && (a.offset.is_some() || a.limit.is_some() || a.holder.is_some())
+            {
+                return Err(bad(tool, "`offset`, `limit` and `holder` go with `model`"));
+            }
+            let most = super::models::MAX_LIMIT;
+            match a.limit {
+                Some(0) => return Err(bad(tool, "`limit` is at least 1")),
+                Some(l) if l > most => return Err(bad(tool, format!("`limit` is at most {most}"))),
+                _ => {}
+            }
+            holder(tool, a.holder.as_deref())?;
             Kind::Objects(a)
         }
         "app_trace" => {
