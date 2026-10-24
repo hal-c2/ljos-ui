@@ -10,7 +10,7 @@ use parley::{BaseDirection, PositionedLayoutItem};
 
 use super::{
     BreakClass, OwnedRanged, RawLine, Shape, TextEngine, Vertical, break_lines, ceil64, extract,
-    key_hash, reported_width, shape, snapped, snapped_widths,
+    key_hash, reported_width, shape, snapped, snapped_widths_kept,
 };
 use crate::direction::in_right_to_left_block;
 use crate::edit::{
@@ -357,12 +357,13 @@ impl TextEngine {
             BaseDirection::Auto,
         );
         break_lines(&mut shape, None, false);
-        let (_, natural) = snapped_widths(&shape);
+        let ((_, natural), advances) = snapped_widths_kept(&shape);
         // As in `build_layout`: a text that fits as Qt counts it is not
         // broken because the shaper's advances are a touch wider.
         let max = max_advance.filter(|w| natural > *w);
         break_lines(&mut shape, max, false);
-        let lines = extract(&shape, fallback, None, ranged.objects);
+        let known = max.is_none().then_some(&*advances);
+        let lines = extract(&shape, fallback, None, ranged.objects, known);
         let places = carets(&shape, text);
         let lines: Vec<_> = lines.into_iter().zip(places).collect();
         let entry = ParagraphEntry {
@@ -827,8 +828,12 @@ impl TextEngine {
                     .filter(|_| wraps)
                     .map(|w| w as f32)
                     .filter(|w| entry.natural_width > *w);
-                break_lines(&mut entry.shape, max_advance, false);
-                let lines = extract(&entry.shape, fallback, None, ranged.objects);
+                if entry.broken != (max_advance, false) {
+                    break_lines(&mut entry.shape, max_advance, false);
+                    entry.broken = (max_advance, false);
+                }
+                let known = (entry.broken == (None, false)).then_some(&*entry.advances);
+                let lines = extract(&entry.shape, fallback, None, ranged.objects, known);
                 let places = carets(&entry.shape, text);
                 (
                     lines.into_iter().zip(places).collect(),
@@ -1052,6 +1057,23 @@ mod tests {
 
     fn one_line(text: &str) -> EditLayout {
         lay(text, None, WrapMode::NoWrap)
+    }
+
+    #[test]
+    fn a_label_of_the_text_an_editor_wrapped_is_not_wrapped() {
+        // Both share one shape: the editor's breaking must not stay on it
+        // for the label, which has no width to break at.
+        let mut e = TextEngine::new();
+        let style = TextStyle::default();
+        let text = "hello brave world";
+        let params = EditParams {
+            width: Some(40.0),
+            wrap: WrapMode::WordWrap,
+        };
+        assert_eq!(e.edit_layout(text, &style, &params).lines.len(), 3);
+        let label = e.layout(text, &style, &crate::LayoutParams::default());
+        assert_eq!(label.lines.len(), 1);
+        assert_eq!(label.lines[0].width, 105.75);
     }
 
     #[test]
