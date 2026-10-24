@@ -1290,10 +1290,18 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     let running_to: FxHashMap<ObjectId, [Option<f64>; 2]> = st.vt_places.borrow().clone();
     e.batch(|| {
         for &(row, o, pos, size) in &items {
-            let dest = dest_of(row, o, pos, size);
             // An item on its way to this very place is left to its
             // transition; one on its way somewhere else is put here.
             let on_way = running_to.get(&o);
+            // A row of a list is put along the view only, so where it is
+            // across matters only to a transition.
+            let dest = if g.grid || on_way.is_some() {
+                dest_of(row, o, pos, size)
+            } else {
+                let mut dest = [0.0; 2];
+                dest[g.main] = g.in_content(pos, size);
+                dest
+            };
             let holds =
                 |axis: usize| on_way.is_some_and(|to| to[axis].is_some_and(|to| to == dest[axis]));
             if on_way.is_some() && ![X, Y].iter().any(|a| holds(*a)) {
