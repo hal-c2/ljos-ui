@@ -621,6 +621,49 @@ fn material_rows_that_each_give_a_value_cost_what_each_costs() {
     );
 }
 
+/// Makes `rows` buttons one at a time, each with a colour of its own, as
+/// a view does as it scrolls, and returns the effects that ran.
+fn coloured_rows(rows: usize) -> u64 {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Column {
+    id: column
+    property int rows: 0
+    onRowsChanged: row.createObject(column)
+    Component {
+        id: row
+        Button { palette.buttonText: "red" }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    for n in 1..=rows {
+        e.write_by_name(root, "rows", Value::Int(n as i32)).unwrap();
+        settle(&mut s, &e, Time::ZERO);
+    }
+    e.graph().stats().effect_runs
+}
+
+/// A control made with a colour of its own had every control made before
+/// it look again, so a page of buttons that each set one cost many times
+/// many. What it sets is read by the objects made with it as they
+/// resolve; only the first colour set anywhere tells everything to look.
+#[test]
+fn controls_made_one_by_one_with_colours_cost_what_each_costs() {
+    let once = coloured_rows(40);
+    let twice = coloured_rows(80);
+    assert!(
+        twice * 10 < once * 22,
+        "twice the rows ran {twice} effects, against {once}"
+    );
+}
+
 /// Each Material attached object made had every other one made before it
 /// look again: opening a dialog of many delegates cost many times many.
 /// What a new one is given reaches the rest by the writes that give it,

@@ -658,8 +658,7 @@ pub(crate) fn attach(
             .flatten()
             .any(|p| author_set(engine, obj, *p));
     if grouped || roles.iter().any(|p| author_set(engine, obj, *p)) {
-        // The plain items inside it take them.
-        colours_changed(engine, obj);
+        colours_made(engine, obj);
     }
     if has_children {
         for p in roles.iter().copied() {
@@ -1139,6 +1138,24 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
 fn colours_changed(engine: &Engine, obj: ObjectId) {
     engine.extension::<PlainItems>().from.borrow_mut().push(obj);
     bump(engine, Which::Palette);
+}
+
+/// `obj` completed with colours of its own. The first anywhere tells
+/// every object to look. After that, the objects made with it read them
+/// as they resolved, so only the plain items inside it are handed them:
+/// moving the epoch again had every control in the scene look again, and
+/// a page of controls that each set one cost many times many.
+fn colours_made(engine: &Engine, obj: ObjectId) {
+    if !engine.untrack(|| in_use(engine, Which::Palette)) {
+        return colours_changed(engine, obj);
+    }
+    let plain = engine.extension::<PlainItems>();
+    let first = plain.from.borrow().is_empty();
+    plain.from.borrow_mut().push(obj);
+    // Otherwise a hand-down is pending already.
+    if first {
+        engine.after_creation(hand_down_to_plain_items);
+    }
 }
 
 /// As [`colours_changed`], for a colour written on an object that
