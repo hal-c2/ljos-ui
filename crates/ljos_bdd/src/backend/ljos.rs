@@ -27,6 +27,7 @@ use super::{
     Result,
 };
 
+mod disk;
 mod fixtures;
 mod inspect;
 mod lazy;
@@ -178,6 +179,8 @@ struct Live {
     pointer_down: bool,
     /// The reload session of a scenario that changes files while it runs.
     reloads: Option<reload::Rig>,
+    /// The watch over files on disk of a scenario that has one.
+    disk: Option<disk::Disk>,
     /// The `top` overlay; hidden unless a scenario shows it.
     top: ljos_dev::Top,
 }
@@ -427,6 +430,7 @@ impl LjosBackend {
             wake: None,
             pointer_down: false,
             reloads: None,
+            disk: None,
             top: ljos_dev::Top::new(),
         };
         // A decode takes as long as it takes; scenarios see its result when
@@ -1296,6 +1300,14 @@ impl Backend for LjosBackend {
 
     fn put_in_window(&mut self, name: &str, old: &str) -> Result<()> {
         self.live()?.put_in_window(name, old)
+    }
+
+    fn watch_roots(&mut self, roots: &[String], entries: &[String]) -> Result<()> {
+        self.live()?.watch_roots(roots, entries)
+    }
+
+    fn save_on_disk(&mut self, name: &str, text: Option<&str>) -> Result<()> {
+        self.live()?.save_on_disk(name, text)
     }
 
     fn exists(&mut self, object: &str) -> Result<bool> {

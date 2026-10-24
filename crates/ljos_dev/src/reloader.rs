@@ -79,6 +79,13 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         Ok(Self::over(ReloadSession::open(root, oracle)?))
     }
 
+    /// Over every QML file under each of `roots`, the import path of an
+    /// application whose QML is spread over several trees:
+    /// [`ReloadSession::open_roots`].
+    pub fn open_roots(roots: &[&Path], oracle: O) -> Result<Self, ljos_compiler::Error> {
+        Ok(Self::over(ReloadSession::open_roots(roots, oracle)?))
+    }
+
     /// Over the files under `root` that the file `entry` (a key) reaches:
     /// [`ReloadSession::open_reaching`].
     pub fn open_reaching(
@@ -120,6 +127,11 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         self.session.root()
     }
 
+    /// Every directory the files are found in, earlier first.
+    pub fn roots(&self) -> &[PathBuf] {
+        self.session.roots()
+    }
+
     /// Whether the next build reads the directory again: there may be
     /// directories to watch that were not there before.
     pub fn rescan_pending(&self) -> bool {
@@ -157,7 +169,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// wait for the quiet time. A picture is no build's, but it waits for
     /// the quiet time too: [`take_pictures`](Self::take_pictures).
     pub fn touch(&mut self, path: &Path, is_dir: bool) -> bool {
-        let Some(root) = self.session.root() else {
+        let Some(root) = root_of(self.session.roots(), path) else {
             return false;
         };
         match classify(root, path, is_dir) {
@@ -238,7 +250,10 @@ impl<O: TypeOracle + Clone> Reloader<O> {
                 continue;
             };
             self.parked.remove(&path);
-            match std::fs::read_to_string(&path) {
+            // With more than one root, the file that has the key may be
+            // another root's.
+            let read = self.session.path_of(&key).unwrap_or_else(|| path.clone());
+            match std::fs::read_to_string(&read) {
                 Ok(text) if self.half_saved(&key, &text) => {
                     self.parked.insert(path);
                     waiting = true;
@@ -353,6 +368,15 @@ pub enum Touch {
     /// A `qmldir` or a `CMakeLists.txt`: what a module has may differ
     /// although no QML file does.
     Modules,
+}
+
+/// The one of `roots` that `path` is under.
+#[must_use]
+pub fn root_of<'a>(roots: &'a [PathBuf], path: &Path) -> Option<&'a Path> {
+    roots
+        .iter()
+        .find(|root| path.starts_with(root))
+        .map(PathBuf::as_path)
 }
 
 /// Says what `path` is to the project under `root`. `is_dir` is what the

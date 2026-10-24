@@ -596,7 +596,9 @@ impl CompileFault {
 #[derive(Debug)]
 pub struct ReloadSession<O> {
     oracle: O,
-    root: Option<PathBuf>,
+    /// The import path the files are found on, earlier first: one
+    /// directory, or the several an application's QML is spread over.
+    roots: Vec<PathBuf>,
     sources: BTreeMap<String, String>,
     project: Project<O>,
     /// What the application runs.
@@ -634,7 +636,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         Self {
             project: Project::new(oracle.clone()),
             oracle,
-            root: None,
+            roots: Vec::new(),
             sources: BTreeMap::new(),
             live: FileSet::new(),
             live_failed: BTreeSet::new(),
@@ -664,7 +666,18 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// finds them.
     pub fn open(root: &Path, oracle: O) -> Result<Self, Error> {
         let mut session = Self::in_memory(oracle);
-        session.root = Some(root.to_owned());
+        session.roots = vec![root.to_owned()];
+        session.rescan()?;
+        Ok(session)
+    }
+
+    /// A session over every QML file under each of `roots`, as
+    /// [`Project::load_roots`] finds them: a file of one root may import
+    /// a module of another, and where two have a file of one key the
+    /// earlier root's is the one compiled.
+    pub fn open_roots(roots: &[&Path], oracle: O) -> Result<Self, Error> {
+        let mut session = Self::in_memory(oracle);
+        session.roots = roots.iter().map(|r| (*r).to_owned()).collect();
         session.rescan()?;
         Ok(session)
     }
@@ -676,21 +689,27 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// object of when it runs ([`provide`](Self::provide)).
     pub fn open_reaching(root: &Path, entry: &str, oracle: O) -> Result<Self, Error> {
         let mut session = Self::in_memory(oracle);
-        session.root = Some(root.to_owned());
+        session.roots = vec![root.to_owned()];
         session.reached = Some(BTreeSet::from([entry.to_owned()]));
         session.rescan()?;
         Ok(session)
     }
 
-    /// The directory of a session made by [`open`](Self::open).
+    /// The directory of a session made by [`open`](Self::open); the
+    /// first of [`open_roots`](Self::open_roots)'.
     pub fn root(&self) -> Option<&Path> {
-        self.root.as_deref()
+        self.roots.first().map(PathBuf::as_path)
+    }
+
+    /// Every directory the session's files are found in, earlier first.
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
     }
 
     /// Reads the directory again: for a file that was added or removed, and
     /// for a `qmldir` or a `CMakeLists.txt` that changed what a module has.
     pub fn rescan(&mut self) -> Result<(), Error> {
-        let Some(root) = self.root.clone() else {
+        let Some(root) = self.roots.first().cloned() else {
             return Ok(());
         };
         self.project = match &self.reached {
@@ -701,7 +720,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 }
                 project
             }
-            None => Project::load(&root, self.oracle.clone())?,
+            None => {
+                let roots: Vec<&Path> = self.roots.iter().map(PathBuf::as_path).collect();
+                Project::load_roots(&roots, self.oracle.clone())?
+            }
         };
         // A broken script stays refused until it is mended or gone.
         let project = &self.project;
@@ -726,12 +748,34 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// without `.qml`, or with its suffix for a JavaScript file. None for
     /// a path that is neither of the project.
     pub fn key_of(&self, path: &Path) -> Option<String> {
-        let relative = path.strip_prefix(self.root.as_deref()?).ok()?;
+        let relative = self
+            .roots
+            .iter()
+            .find_map(|root| path.strip_prefix(root).ok())?;
         let text = relative.to_string_lossy().replace('\\', "/");
         if is_script(&text) {
             return Some(text);
         }
         text.strip_suffix(".qml").map(str::to_owned)
+    }
+
+    /// The file the text of `key` is read from: under the first root
+    /// that has one, as the compiler finds it, so a save to a file
+    /// another root's hides is no change, and the file that was hidden
+    /// is what a key has once the one before it is gone. None for a
+    /// session over files in memory.
+    pub fn path_of(&self, key: &str) -> Option<PathBuf> {
+        let name = if is_script(key) {
+            key.to_owned()
+        } else {
+            format!("{key}.qml")
+        };
+        let mut paths = self.roots.iter().map(|root| root.join(&name));
+        let first = paths.next()?;
+        if self.roots.len() == 1 || first.exists() {
+            return Some(first);
+        }
+        Some(paths.find(|p| p.exists()).unwrap_or(first))
     }
 
     /// The file `key` now has this text. Whether it is new or not. A key
@@ -859,8 +903,8 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         if self.sources.remove(key).is_none() {
             return;
         }
-        if self.reached.is_some() {
-            // What its tree says of the modules is kept.
+        if self.reached.is_some() || !self.roots.is_empty() {
+            // What its tree or its directories say of the modules is kept.
             self.project.remove(key);
             self.all_dirty = true;
             return;

@@ -29,7 +29,7 @@ use qml_front::TypeOracle;
 
 use crate::{
     debounce::{Debounce, FINISHED_QUIET, QUIET},
-    reloader::{Build, Reloader, Touch, classify, project_dirs},
+    reloader::{Build, Reloader, Touch, classify, project_dirs, root_of},
 };
 
 /// How many file events may wait for the watcher's thread. A burst beyond
@@ -173,11 +173,12 @@ impl Watcher {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
-        let root = lock(&reloader).root().ok_or(WatchError::NoRoot)?.to_owned();
+        let roots = lock(&reloader).roots().to_vec();
+        let root = roots.first().ok_or(WatchError::NoRoot)?.clone();
         let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let overflow = Arc::new(AtomicBool::new(false));
         let events = Events {
-            root: root.clone(),
+            roots: roots.clone(),
             tx: tx.clone(),
             overflow: overflow.clone(),
         };
@@ -189,14 +190,16 @@ impl Watcher {
                 }
             })?;
         let mut watched = BTreeSet::new();
-        for dir in project_dirs(&root) {
+        for dir in roots.iter().flat_map(|root| project_dirs(root)) {
             match fs.watch(&dir, RecursiveMode::NonRecursive) {
                 Ok(()) => {
                     watched.insert(dir);
                 }
-                // The root has to be watched; a directory below that
+                // The roots have to be watched; a directory below that
                 // went away since the walk is no loss.
-                Err(source) if dir == root => return Err(WatchError::Watch { path: dir, source }),
+                Err(source) if roots.contains(&dir) => {
+                    return Err(WatchError::Watch { path: dir, source });
+                }
                 Err(_) => {}
             }
         }
@@ -206,7 +209,7 @@ impl Watcher {
             sink: Box::new(sink),
             fs,
             watched,
-            root,
+            roots,
             overflow,
             wakes: wakes.clone(),
             debounce: Debounce::with_quiet(quiet),
@@ -266,7 +269,7 @@ impl Drop for Watcher {
 /// on only what a build could care about, so a build into a directory
 /// beside the project does not wake the watcher.
 struct Events {
-    root: PathBuf,
+    roots: Vec<PathBuf>,
     tx: SyncSender<Cmd>,
     overflow: Arc<AtomicBool>,
 }
@@ -297,7 +300,8 @@ impl Events {
             _ => (false, Save::Other),
         };
         for path in event.paths {
-            if classify(&self.root, &path, is_dir) != Touch::Ignore {
+            let touch = root_of(&self.roots, &path).map(|root| classify(root, &path, is_dir));
+            if touch.is_some_and(|t| t != Touch::Ignore) {
                 self.post(Cmd::Touched(path, is_dir, save));
             }
         }
@@ -325,7 +329,7 @@ struct Run<O> {
     sink: Box<dyn FnMut(DevMsg) -> bool + Send>,
     fs: notify::RecommendedWatcher,
     watched: BTreeSet<PathBuf>,
-    root: PathBuf,
+    roots: Vec<PathBuf>,
     overflow: Arc<AtomicBool>,
     wakes: Arc<AtomicU64>,
     debounce: Debounce<Instant>,
@@ -497,7 +501,7 @@ impl<O: TypeOracle + Clone> Run<O> {
     /// Watches are per directory, so a directory made after the start
     /// needs its own. One that is gone lost its watch with it.
     fn watch_new_dirs(&mut self) {
-        let now: BTreeSet<PathBuf> = project_dirs(&self.root).into_iter().collect();
+        let now: BTreeSet<PathBuf> = self.roots.iter().flat_map(|r| project_dirs(r)).collect();
         for dir in now.difference(&self.watched) {
             let _ = self.fs.watch(dir, RecursiveMode::NonRecursive);
         }

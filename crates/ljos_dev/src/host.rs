@@ -108,6 +108,9 @@ pub fn component_source<O: TypeOracle + Clone>(
 /// engine waits while the watcher builds.
 struct DevSource<O> {
     urls: MapSource,
+    /// With more than one root, each with its `file://` URL: a file's
+    /// URL is beside it, in whichever root has it.
+    roots: Vec<(PathBuf, String)>,
     reloader: Arc<Mutex<Reloader<O>>>,
 }
 
@@ -121,12 +124,33 @@ impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
     }
 
     fn url(&self, key: &str) -> String {
-        self.urls.url(key)
+        let name = format!("{key}.qml");
+        match self
+            .roots
+            .iter()
+            .find(|(root, _)| root.join(&name).exists())
+        {
+            Some((_, base)) if self.roots.len() > 1 => format!("{base}/{name}"),
+            _ => self.urls.url(key),
+        }
     }
 
     fn key(&self, url: &str) -> String {
-        self.urls.key(url)
+        let below = self.roots.iter().find_map(|(_, base)| {
+            url.strip_prefix(base.as_str())
+                .and_then(|rest| rest.strip_prefix('/'))
+        });
+        match below {
+            Some(rest) if self.roots.len() > 1 => {
+                rest.strip_suffix(".qml").unwrap_or(rest).to_owned()
+            }
+            _ => self.urls.key(url),
+        }
     }
+}
+
+fn base_url(dir: &Path) -> String {
+    format!("file://{}", dir.to_string_lossy().replace('\\', "/"))
 }
 
 /// Applies `patch` to `roots` as [`Engine::reload`] does, and puts the
@@ -220,6 +244,20 @@ pub enum DevError {
     Read(#[from] ljos_compiler::Error),
     #[error(transparent)]
     Watch(#[from] WatchError),
+    #[error("{} is not a directory that can be read", .0.display())]
+    NotDir(PathBuf),
+    #[error("no entry to make")]
+    NoEntry,
+}
+
+/// Whether the files the application runs have a key, as a reload finds
+/// them before it is answered.
+struct Runs(Rc<dyn Fn(&str) -> bool>);
+
+impl std::fmt::Debug for Runs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Runs")
+    }
 }
 
 /// The watcher never has more than one message out, and the watcher's
@@ -242,7 +280,11 @@ const PICTURES_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6578);
 pub struct DevSession {
     watcher: Watcher,
     inbox: UiInbox<DevMsg>,
+    /// The keys the root may be made of, the one wanted most first.
+    entries: Vec<String>,
+    /// The one of `entries` the root is made of.
     entry: String,
+    runs: Runs,
     /// What the root is given when this session makes it.
     properties: Vec<(String, Value)>,
     root: Option<ObjectId>,
@@ -327,38 +369,119 @@ impl DevSession {
         else {
             return Err(DevError::NotQml(main));
         };
-        let dir = dir.as_path();
+        let reloader = Reloader::open_reaching(&dir, &entry, oracle)?;
+        Self::start(engine, reloader, vec![dir], vec![entry], properties, wake)
+    }
+
+    /// As [`open_with`](Self::open_with), over every QML file under each
+    /// of `roots`, the import path of an application whose QML is spread
+    /// over several trees (a file of one may import a module of another,
+    /// and where two have a file of one key the earlier root's is used),
+    /// with every root watched.
+    ///
+    /// The root is made of the first of `entries` (keys, such as
+    /// `override` or `Main`) that compiles and can be made, at the start
+    /// and again at every reload: a file that appears early in the list
+    /// takes the window, and when it goes or no longer compiles the next
+    /// one does. A reload that keeps the entry keeps the application's
+    /// state, as [`open_with`](Self::open_with)'s does; a root that takes
+    /// another's place starts afresh, in the same window.
+    ///
+    /// # Errors
+    /// A root that cannot be read, or no entries.
+    pub fn open_roots<O>(
+        engine: &Engine,
+        roots: &[&Path],
+        entries: &[&str],
+        properties: Vec<(String, Value)>,
+        oracle: O,
+        wake: WakeHook,
+    ) -> Result<Self, DevError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
+        if entries.is_empty() || roots.is_empty() {
+            return Err(DevError::NoEntry);
+        }
+        let roots = roots
+            .iter()
+            .map(|r| std::fs::canonicalize(r).map_err(|_| DevError::NotDir((*r).to_owned())))
+            .collect::<Result<Vec<_>, _>>()?;
+        let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
+        let reloader = Reloader::open_roots(&dirs, oracle)?;
+        let entries = entries.iter().map(|e| (*e).to_owned()).collect();
+        Self::start(engine, reloader, roots, entries, properties, wake)
+    }
+
+    fn start<O>(
+        engine: &Engine,
+        mut reloader: Reloader<O>,
+        roots: Vec<PathBuf>,
+        entries: Vec<String>,
+        properties: Vec<(String, Value)>,
+        wake: WakeHook,
+    ) -> Result<Self, DevError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
         prepare(engine);
-        let mut reloader = Reloader::open_reaching(dir, &entry, oracle)?;
-        let texts = ProjectTexts::new(dir);
+        let texts = ProjectTexts::over(&roots);
         engine.set_qml_text_compiler(Some(texts.compiler()));
-        let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
-        let mut root = None;
-        let mut more_errors = 0;
         reloader.start();
         let failures: Vec<(String, usize)> = reloader
             .session()
             .failures()
             .map(|(key, faults)| (key.to_owned(), faults.len()))
             .collect();
+        let known: Vec<String> = entries
+            .iter()
+            .filter(|e| reloader.session().source(e).is_some())
+            .cloned()
+            .collect();
         let reloader = Arc::new(Mutex::new(reloader));
         engine.set_component_source(DevSource {
-            urls: MapSource::new().with_base_url(base),
+            urls: MapSource::new().with_base_url(base_url(&roots[0])),
+            roots: roots.iter().map(|r| (r.clone(), base_url(r))).collect(),
             reloader: reloader.clone(),
         });
-        match engine.create_from_url(&entry, None, properties.clone()) {
-            Ok(made) => root = Some(made),
-            Err(e) => {
-                let fault = engine.reload_fault(&e);
-                // The entry's own mistakes, when it is the file that did
-                // not compile.
-                more_errors = failures
-                    .iter()
-                    .find(|(key, _)| format!("{key}.qml") == fault.file)
-                    .map_or(0, |(_, faults)| faults.saturating_sub(1));
-                engine.set_last_reload_error(Some(fault));
+        let mut root = None;
+        let mut entry = entries[0].clone();
+        let mut more_errors = 0;
+        let mut first_fault = None;
+        for key in &entries {
+            match engine.create_from_url(key, None, properties.clone()) {
+                Ok(made) => {
+                    root = Some(made);
+                    entry = key.clone();
+                    break;
+                }
+                // An entry with no file is passed over without a word.
+                Err(_) if entries.len() > 1 && !known.contains(key) => {}
+                Err(e) => {
+                    if first_fault.is_none() {
+                        let fault = engine.reload_fault(&e);
+                        // The entry's own mistakes, when it is the file
+                        // that did not compile.
+                        more_errors = failures
+                            .iter()
+                            .find(|(key, _)| format!("{key}.qml") == fault.file)
+                            .map_or(0, |(_, faults)| faults.saturating_sub(1));
+                        first_fault = Some(fault);
+                    }
+                }
             }
         }
+        if let Some(fault) = first_fault {
+            engine.set_last_reload_error(Some(fault));
+        }
+        let runs = {
+            let reloader = reloader.clone();
+            Runs(Rc::new(move |key| {
+                lock(&reloader).session().live().contains_key(key)
+            }))
+        };
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
         inbox.observe_as("reload", Some(DevMsg::kind));
         let pictures: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
@@ -382,7 +505,9 @@ impl DevSession {
         Ok(Self {
             watcher,
             inbox,
+            entries,
             entry,
+            runs,
             properties,
             root,
             settling: false,
@@ -399,6 +524,12 @@ impl DevSession {
     /// compiled.
     pub fn root(&self) -> Option<ObjectId> {
         self.root
+    }
+
+    /// The key the root is made of: the first of the entries that
+    /// compiled and could be made at the last reload.
+    pub fn entry(&self) -> &str {
+        &self.entry
     }
 
     pub fn watcher(&self) -> &Watcher {
@@ -469,6 +600,10 @@ impl DevSession {
                     engine.set_last_reload_error(None);
                     self.more_errors = 0;
                     out.push(Report::Cleared);
+                    // An entry before this one was mended back to what
+                    // the application has: it takes the window again.
+                    let runs = self.runs.0.clone();
+                    let _ = self.choose(engine, host, &*runs, true);
                 }
                 DevMsg::Failed(faults) => {
                     let Some(first) = faults.first() else {
@@ -481,6 +616,16 @@ impl DevSession {
                         fault,
                         more: self.more_errors,
                     });
+                    // The entry no longer compiles: the next one that
+                    // does takes the window, while this one is mended.
+                    let broken = |key: &str| faults.iter().any(|f| f.file == format!("{key}.qml"));
+                    if self.entries.len() > 1 && broken(&self.entry) {
+                        let live = self.runs.0.clone();
+                        let runs = |key: &str| live(key) && !broken(key);
+                        let _ = self.choose(engine, host, &runs, false);
+                        // The overlay says why the entry was left.
+                        engine.set_last_reload_error(Some(fault_of(first)));
+                    }
                 }
                 DevMsg::Reload {
                     patch,
@@ -494,6 +639,54 @@ impl DevSession {
         out
     }
 
+    /// Makes the root of the first entry `has` that can be made and puts
+    /// it in the window, in place of the root there; `keep` when the
+    /// root there may stay, as its entry still runs: an entry after it
+    /// is not tried. The fault of the first entry that could not be
+    /// made, when none could.
+    fn choose(
+        &mut self,
+        engine: &Engine,
+        host: &mut dyn Host,
+        has: &dyn Fn(&str) -> bool,
+        keep: bool,
+    ) -> Result<(), ReloadFault> {
+        let mut fault = None;
+        for key in self.entries.clone() {
+            if keep && self.root.is_some() && key == self.entry {
+                return Ok(());
+            }
+            if !has(&key) {
+                continue;
+            }
+            match engine.create_from_url(&key, None, self.properties.clone()) {
+                Ok(made) => {
+                    let old = self.root.replace(made);
+                    host.show(engine, old, made);
+                    if let Some(old) = old {
+                        engine.destroy(old);
+                    }
+                    self.entry = key;
+                    return Ok(());
+                }
+                Err(e) => {
+                    fault.get_or_insert_with(|| engine.reload_fault(&e));
+                }
+            }
+        }
+        match (fault, self.root) {
+            // What was shown stays until an entry can be made.
+            (_, Some(_)) => Ok(()),
+            (Some(fault), None) => Err(fault),
+            (None, None) => Err(ReloadFault {
+                file: format!("{}.qml", self.entries[0]),
+                line: 0,
+                column: 0,
+                message: "no entry has a file".to_owned(),
+            }),
+        }
+    }
+
     fn reload(
         &mut self,
         engine: &Engine,
@@ -505,7 +698,16 @@ impl DevSession {
     ) -> Report {
         let started = Instant::now();
         let waited = started.duration_since(saved).saturating_sub(quiet + build);
-        let roots: Vec<ObjectId> = self.root.into_iter().collect();
+        let live = self.runs.0.clone();
+        let has = |key: &str| {
+            patch.files.iter().any(|f| f.file.file == key)
+                || (live(key) && !patch.removed.iter().any(|r| r == key))
+        };
+        let staying = self.root.is_some() && has(&self.entry);
+        let wanted = self.entries.iter().find(|e| has(e)).cloned();
+        // The root is made again only when its entry stays; one that goes
+        // leaves its place to the entry chosen below.
+        let roots: Vec<ObjectId> = self.root.filter(|_| staying).into_iter().collect();
         let window = host.window();
         let applied = apply(engine, patch, &roots, window, &mut |e, old, new| {
             host.show(e, Some(old), new);
@@ -533,19 +735,12 @@ impl DevSession {
         if let Some((_, new)) = done.roots.first() {
             self.root = Some(*new);
         }
-        if self.root.is_none() {
-            // The project compiles for the first time, or its root could
-            // not be made from the files before.
-            match engine.create_from_url(&self.entry, None, self.properties.clone()) {
-                Ok(made) => {
-                    host.show(engine, None, made);
-                    self.root = Some(made);
-                }
-                Err(e) => {
-                    let fault = engine.reload_fault(&e);
-                    engine.set_last_reload_error(Some(fault.clone()));
-                    return Report::Failed { fault, more: 0 };
-                }
+        if !staying || wanted.as_deref() != Some(self.entry.as_str()) {
+            // The project compiles for the first time, its root could not
+            // be made from the files before, or another entry is wanted.
+            if let Err(fault) = self.choose(engine, host, &has, staying) {
+                engine.set_last_reload_error(Some(fault.clone()));
+                return Report::Failed { fault, more: 0 };
             }
         }
         // The roots were made again, so what a fault no boundary took had

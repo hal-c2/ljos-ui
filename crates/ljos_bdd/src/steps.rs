@@ -963,6 +963,27 @@ fn cannot_put_in_window(w: &mut LjosWorld, name: String, old: String) -> StepRes
     })
 }
 
+fn list(text: &str) -> Vec<String> {
+    text.split(',').map(|s| s.trim().to_owned()).collect()
+}
+
+#[when(regex = r#"^the application watches the roots "([^"]+)" for the entries "([^"]+)"$"#)]
+fn watches_roots(w: &mut LjosWorld, roots: String, entries: String) -> StepResult {
+    let (roots, entries) = (list(&roots), list(&entries));
+    w.each(|b| b.watch_roots(&roots, &entries))
+}
+
+#[when(regex = r#"^the file "([^"]+)" is saved on disk as:$"#)]
+fn saved_on_disk(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.save_on_disk(&name, Some(&text)))
+}
+
+#[when(regex = r#"^the file "([^"]+)" is removed from disk$"#)]
+fn removed_from_disk(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.save_on_disk(&name, None))
+}
+
 #[when(regex = r#"^the object "([^"]+)" is destroyed$"#)]
 fn object_destroyed(w: &mut LjosWorld, object: String) -> StepResult {
     w.each(|b| {

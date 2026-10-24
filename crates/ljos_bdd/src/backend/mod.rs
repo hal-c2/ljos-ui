@@ -294,6 +294,18 @@ pub trait Backend: fmt::Debug {
     fn put_in_window(&mut self, _name: &str, _old: &str) -> Result<()> {
         Err(BackendError::NotImplemented("another root in a window"))
     }
+    /// The application, in development, watches the loaded files on disk
+    /// under each of `roots` (directories named by the files' paths,
+    /// earlier first) and makes its root of the first of `entries` that
+    /// compiles and can be made, at the start and at every reload.
+    fn watch_roots(&mut self, _roots: &[String], _entries: &[String]) -> Result<()> {
+        Err(BackendError::NotImplemented("a watch over files on disk"))
+    }
+    /// The file `name` of the watched files is written with `text` (None:
+    /// it is removed), and the application takes what the watcher brings.
+    fn save_on_disk(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {
+        Err(BackendError::NotImplemented("a watch over files on disk"))
+    }
     /// Type `text` on the keyboard, one key press per character.
     fn type_text(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("typing text"))

@@ -29,15 +29,21 @@ pub fn text_compiler<O: TypeOracle + 'static>(project: Project<O>) -> QmlTextCom
 /// saved: most programs never make an object from text.
 #[derive(Debug)]
 pub struct ProjectTexts {
-    dir: PathBuf,
+    dirs: Vec<PathBuf>,
     project: RefCell<Option<Project<QtTypeOracle>>>,
 }
 
 impl ProjectTexts {
     #[must_use]
     pub fn new(dir: &Path) -> Rc<Self> {
+        Self::over(&[dir.to_owned()])
+    }
+
+    /// Over the files of every one of `dirs`, an import path.
+    #[must_use]
+    pub fn over(dirs: &[PathBuf]) -> Rc<Self> {
         Rc::new(Self {
-            dir: dir.to_owned(),
+            dirs: dirs.to_vec(),
             project: RefCell::new(None),
         })
     }
@@ -56,7 +62,8 @@ impl ProjectTexts {
             let project = match &mut *project {
                 Some(project) => project,
                 empty => {
-                    let loaded = Project::load(&texts.dir, QtTypeOracle).map_err(|e| {
+                    let dirs: Vec<&Path> = texts.dirs.iter().map(PathBuf::as_path).collect();
+                    let loaded = Project::load_roots(&dirs, QtTypeOracle).map_err(|e| {
                         vec![QmlTextError {
                             line: 0,
                             column: 0,

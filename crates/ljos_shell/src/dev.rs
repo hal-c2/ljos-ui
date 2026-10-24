@@ -108,15 +108,71 @@ impl<M> Setup<'_, M> {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
-        let engine = self.engine;
         let session = DevSession::open_with(
-            engine,
+            self.engine,
             main,
             project,
             properties,
             oracle,
             Arc::clone(&self.dev.wake),
         )?;
+        self.watched(session)
+    }
+
+    /// Watches every one of `roots`, the import path of an application
+    /// whose QML is spread over several trees, earlier roots first: a
+    /// file of one may import a module of another, and where two have a
+    /// file of one key the earlier root's is used, as
+    /// `ljos::App::qml_dirs` compiles them. A file added to any root is
+    /// part of the next reload.
+    ///
+    /// The root is made of the first of `entries` (keys, such as
+    /// `["override", "Main"]`) that compiles and can be made, when the
+    /// window opens and again at every reload: an entry that appears takes
+    /// the window from those after it, and when it goes or no longer
+    /// compiles the next one takes it back. The new root is put in the
+    /// same window at its size. A reload that keeps the entry keeps the
+    /// application's state.
+    ///
+    /// # Errors
+    /// A root cannot be read or watched, or `entries` is empty.
+    pub fn watch_roots(
+        &mut self,
+        roots: &[&Path],
+        entries: &[&str],
+    ) -> Result<ObjectId, SetupError> {
+        self.watch_roots_with(roots, entries, Vec::new(), QtTypeOracle)
+    }
+
+    /// As [`watch_roots`](Self::watch_roots), with `properties` and an
+    /// `oracle` as for [`watch_with`](Self::watch_with).
+    ///
+    /// # Errors
+    /// As [`watch_roots`](Self::watch_roots).
+    pub fn watch_roots_with<O>(
+        &mut self,
+        roots: &[&Path],
+        entries: &[&str],
+        properties: Vec<(String, Value)>,
+        oracle: O,
+    ) -> Result<ObjectId, SetupError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
+        let session = DevSession::open_roots(
+            self.engine,
+            roots,
+            entries,
+            properties,
+            oracle,
+            Arc::clone(&self.dev.wake),
+        )?;
+        self.watched(session)
+    }
+
+    fn watched(&mut self, session: DevSession) -> Result<ObjectId, SetupError> {
+        let engine = self.engine;
         let (root, placeholder) = match session.root() {
             Some(root) => (root, None),
             None => {
