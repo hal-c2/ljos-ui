@@ -1,10 +1,13 @@
-//! The clipboard as a service: text, HTML, an image, and on Linux the
-//! primary selection (what is selected, pasted with the middle button).
+//! The clipboard as a service: text, HTML, an image, files, and on Linux
+//! the primary selection (what is selected, pasted with the middle button).
 //!
 //! Without a host's service the clipboard is one of the application's own
 //! ([`MemoryClipboard`]), which is what tests and headless hosts want.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
+
+use ljos_engine::file_url;
 
 /// Which of the system's clipboards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -66,6 +69,31 @@ pub trait ClipboardService {
     fn image(&self) -> Option<ClipboardImage>;
     fn set_image(&self, image: ClipboardImage) -> Result<(), ClipboardError>;
 
+    /// The files on the clipboard, as a file manager copies them: the
+    /// system's list of files (`text/uri-list` on X11 and Wayland,
+    /// `public.file-url` on macOS, `CF_HDROP` on Windows). Empty when it
+    /// holds none, or for a service that keeps no files.
+    fn files(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    /// Copies `files`, so that a file manager pastes them.
+    fn set_files(&self, files: &[PathBuf]) -> Result<(), ClipboardError> {
+        let _ = files;
+        Err(ClipboardError::Unavailable)
+    }
+
+    /// The `file://` URLs of [`ClipboardService::files`], as Qt's
+    /// `QMimeData::urls()` gives them.
+    fn urls(&self) -> Vec<String> {
+        self.files().iter().map(|p| file_url(p)).collect()
+    }
+
+    /// Whether the clipboard holds files (`QMimeData::hasUrls()`).
+    fn has_urls(&self) -> bool {
+        !self.files().is_empty()
+    }
+
     /// Whether there is a primary selection at all.
     fn has_selection(&self) -> bool {
         cfg!(any(
@@ -85,6 +113,7 @@ struct Held {
     text: Option<String>,
     html: Option<String>,
     image: Option<ClipboardImage>,
+    files: Vec<PathBuf>,
 }
 
 /// A clipboard inside the application, shared by nothing else.
@@ -125,7 +154,7 @@ impl ClipboardService for MemoryClipboard {
         *self.clipboard.borrow_mut() = Held {
             text: Some(alt_text.to_owned()),
             html: Some(html.to_owned()),
-            image: None,
+            ..Held::default()
         };
         Ok(())
     }
@@ -137,6 +166,18 @@ impl ClipboardService for MemoryClipboard {
     fn set_image(&self, image: ClipboardImage) -> Result<(), ClipboardError> {
         *self.clipboard.borrow_mut() = Held {
             image: Some(image),
+            ..Held::default()
+        };
+        Ok(())
+    }
+
+    fn files(&self) -> Vec<PathBuf> {
+        self.clipboard.borrow().files.clone()
+    }
+
+    fn set_files(&self, files: &[PathBuf]) -> Result<(), ClipboardError> {
+        *self.clipboard.borrow_mut() = Held {
+            files: files.to_vec(),
             ..Held::default()
         };
         Ok(())
@@ -182,6 +223,59 @@ mod tests {
         c.clear(ClipboardMode::Selection).unwrap();
         assert_eq!(c.text(ClipboardMode::Selection), None);
         assert_eq!(c.text(ClipboardMode::Clipboard).as_deref(), Some("copied"));
+    }
+
+    #[test]
+    fn copied_files_read_as_file_urls_until_something_else_is_copied() {
+        let c = MemoryClipboard::default();
+        assert!(!c.has_urls());
+        let files = [
+            PathBuf::from("/home/user/rec.mov"),
+            PathBuf::from("/tmp/a b#1"),
+        ];
+        c.set_files(&files).unwrap();
+        assert!(c.has_urls());
+        assert_eq!(c.files(), files);
+        assert_eq!(
+            c.urls(),
+            ["file:///home/user/rec.mov", "file:///tmp/a b%231"]
+        );
+        assert_eq!(c.text(ClipboardMode::Clipboard), None);
+        c.set_text(ClipboardMode::Clipboard, "typed").unwrap();
+        assert!(!c.has_urls());
+    }
+
+    #[test]
+    fn a_service_that_keeps_no_files_has_none_and_takes_none() {
+        struct Plain;
+        impl ClipboardService for Plain {
+            fn text(&self, _: ClipboardMode) -> Option<String> {
+                None
+            }
+            fn set_text(&self, _: ClipboardMode, _: &str) -> Result<(), ClipboardError> {
+                Ok(())
+            }
+            fn html(&self) -> Option<String> {
+                None
+            }
+            fn set_html(&self, _: &str, _: &str) -> Result<(), ClipboardError> {
+                Ok(())
+            }
+            fn image(&self) -> Option<ClipboardImage> {
+                None
+            }
+            fn set_image(&self, _: ClipboardImage) -> Result<(), ClipboardError> {
+                Ok(())
+            }
+            fn clear(&self, _: ClipboardMode) -> Result<(), ClipboardError> {
+                Ok(())
+            }
+        }
+        assert!(Plain.urls().is_empty());
+        assert_eq!(
+            Plain.set_files(&[PathBuf::from("/a")]),
+            Err(ClipboardError::Unavailable)
+        );
     }
 
     #[test]

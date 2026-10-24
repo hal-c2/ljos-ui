@@ -1,7 +1,7 @@
-//! The desktop's own services: the system clipboard through arboard,
-//! file, folder and message dialogs through rfd (the XDG desktop portal on
-//! Linux, the system's panels on macOS and Windows), and the system's
-//! opener of URLs.
+//! The desktop's own services: the system clipboard through arboard, its
+//! files included; file, folder and message dialogs through rfd (the XDG
+//! desktop portal on Linux, the system's panels on macOS and Windows); and
+//! the system's opener of URLs.
 //!
 //! Each dialog waits for its answer on a thread of its own, so the Engine
 //! thread never blocks on the user.
@@ -164,6 +164,14 @@ impl ClipboardService for SystemClipboard {
                 bytes: image.rgba.into(),
             })
         })
+    }
+
+    fn files(&self) -> Vec<PathBuf> {
+        self.with(|c| c.get().file_list()).unwrap_or_default()
+    }
+
+    fn set_files(&self, files: &[PathBuf]) -> Result<(), ClipboardError> {
+        self.write(|c| c.set().file_list(files))
     }
 
     fn has_selection(&self) -> bool {
