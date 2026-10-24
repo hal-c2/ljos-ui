@@ -971,6 +971,14 @@ pub fn scene_transform(engine: &Engine, obj: ObjectId) -> Affine {
     t
 }
 
+/// Where `p`, in the item's coordinates, lies in the scene's, mapped
+/// exactly (perspective and all), as `mapToItem(null, p)`. An item in a
+/// layer maps to the scene of the tree the layer lies above.
+pub fn map_to_scene(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> kurbo::Point {
+    let q = map_point(engine, Some(obj), None, Point { x: p.x, y: p.y });
+    kurbo::Point::new(q.x, q.y)
+}
+
 fn map_point(engine: &Engine, from: Option<ObjectId>, to: Option<ObjectId>, p: Point) -> Point {
     // Exact, perspective and all, as Qt maps: the render tree's affine
     // fit is only for the picture.

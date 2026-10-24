@@ -49,6 +49,11 @@
 //! [`highlights`], and how a stretch of a rich text is set (weight,
 //! italics, family, colour, link) with [`char_formats`].
 //!
+//! A test or a host finds an item and where it is with [`child_items`]
+//! (the visual children, in order), [`overlay`] (the item the window's
+//! popups are in, which is not a child of the root) and [`map_to_scene`]
+//! or [`scene_rect`] (the Rust `mapToItem(null, …)`).
+//!
 //! ```
 //! use std::rc::Rc;
 //!
@@ -127,6 +132,40 @@ pub use ljos_text::{
 /// item that is being destroyed has left to paint.
 pub fn prop<T: QmlValue + Default>(engine: &Engine, obj: ObjectId, p: Prop<T>) -> T {
     engine.get(obj, p).unwrap_or_default()
+}
+
+/// The visual children of `item`, in order: the last is drawn on top.
+pub fn child_items(engine: &Engine, item: ObjectId) -> Vec<ObjectId> {
+    ljos_quick::child_items(engine, item)
+}
+
+/// The overlay of the window `item` is in: the item its open popups (and
+/// drawers, and the shade behind a modal one) are children of. It lies
+/// above the window's content but is not a child of the root, so a walk
+/// from the root does not reach it. `None` until a popup in the window
+/// first needs it.
+pub fn overlay(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+    ljos_quick::layer_of(engine, ljos_quick::window_item(engine, item))
+}
+
+/// Where `point`, in the coordinates of `item`, lies in its window's.
+/// Exact under every transform, as `mapToItem(null, point)` in QML.
+pub fn map_to_scene(engine: &Engine, item: ObjectId, point: kurbo::Point) -> kurbo::Point {
+    ljos_quick::map_to_scene(engine, item, point)
+}
+
+/// The rectangle `item` covers in its window's coordinates: the bounds
+/// of its four corners mapped by [`map_to_scene`], so a rotated item
+/// gives the box around it.
+pub fn scene_rect(engine: &Engine, item: ObjectId) -> kurbo::Rect {
+    let w = engine.read(item, Item::WIDTH.index).to_number();
+    let h = engine.read(item, Item::HEIGHT.index).to_number();
+    let corners = [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)];
+    let mut points = corners
+        .into_iter()
+        .map(|(x, y)| map_to_scene(engine, item, kurbo::Point::new(x, y)));
+    let first = points.next().unwrap_or_default();
+    points.fold(kurbo::Rect::from_points(first, first), |r, p| r.union_pt(p))
 }
 
 /// Makes the scene paint items of type `T`, and of the types derived
