@@ -38,6 +38,7 @@
 mod act;
 mod args;
 mod capture;
+mod components;
 mod edits;
 mod frames;
 mod holders;
@@ -1006,6 +1007,13 @@ impl Inspector {
                 Ok(ToolReply::from(json!({})))
             }
             (Kind::Objects(args), _) if args.models => Ok(models::list(engine, args.max, per_copy)),
+            (Kind::Objects(args), _) if args.components => Ok(components::list(engine, per_copy)),
+            (Kind::Objects(args), _) if args.component.is_some() => components::instances(
+                engine,
+                args.component.as_deref().unwrap_or_default(),
+                args.offset,
+                args.limit,
+            ),
             (Kind::Objects(args), capture) if args.model.is_some() => {
                 let what = args.model.as_deref().unwrap_or_default();
                 let found = match capture {

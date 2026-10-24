@@ -98,6 +98,11 @@ impl Instance {
     fn url(&self) -> &Atom {
         &self.file.url
     }
+
+    /// The instances of component files its objects are made from.
+    pub(crate) fn inner(&self) -> impl Iterator<Item = &Rc<Instance>> {
+        self.inner.iter().flatten()
+    }
 }
 
 /// What a `Component` makes objects from.

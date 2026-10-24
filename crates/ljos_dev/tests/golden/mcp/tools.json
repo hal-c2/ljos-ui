@@ -604,10 +604,23 @@
     "read_only": true
   },
   {
-    "description": "Every object below `root` (a target; default the scene's root), items or not, with `@handle`, type, id, objectName, depth, bytes; `depth` limits, `next_cursor` pages. `models` lists models instead; `model` (a target) reads its rows from `offset`, `limit` at a time; a `holder` follows its changes.",
+    "description": "Every object below `root` (default: the scene's root), with `@handle`, type, id, objectName, depth, bytes; `depth` limits, `next_cursor` pages. `models` lists models; `model` reads rows (`offset`, `limit`), a `holder` follows it. `components` lists loaded ones, `component` (an id) its instances.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
+        "component": {
+          "default": null,
+          "description": "List the instances of this component (its `component` id in the\nlist), `limit` from `offset` on.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "components": {
+          "default": false,
+          "description": "List the components loaded instead of objects: each file, inline\ncomponent, delegate and template, with its instances alive and\nthe bytes they hold.",
+          "type": "boolean"
+        },
         "cursor": {
           "default": null,
           "description": "The `next_cursor` of a cut answer: the objects after it, below the\nsame root and to the same depth. Not given with `root` or `depth`.",
@@ -636,7 +649,7 @@
         },
         "limit": {
           "default": null,
-          "description": "The most rows to read (default 50, at most 500).",
+          "description": "The most rows or instances to read (default 50, at most 500).",
           "format": "uint",
           "minimum": 0,
           "type": [
@@ -669,7 +682,7 @@
         },
         "offset": {
           "default": null,
-          "description": "The first row to read (default 0).",
+          "description": "The first row or instance to read (default 0).",
           "format": "uint",
           "minimum": 0,
           "type": [

@@ -22,10 +22,10 @@ use slotmap::{Key, KeyData};
 use super::tools::{flag, text_property};
 
 pub const OBJECTS: &str = "\
-Every object below `root` (a target; default the scene's root), items or not, with `@handle`, \
-type, id, objectName, depth, bytes; `depth` limits, `next_cursor` pages. `models` lists \
-models instead; `model` (a target) reads its rows from `offset`, `limit` at a time; a `holder` \
-follows its changes.";
+Every object below `root` (default: the scene's root), with `@handle`, type, id, objectName, \
+depth, bytes; `depth` limits, `next_cursor` pages. `models` lists models; `model` reads rows \
+(`offset`, `limit`), a `holder` follows it. `components` lists loaded ones, `component` (an id) \
+its instances.";
 
 /// The most objects one answer lists unless told otherwise, and at all.
 const DEFAULT_MAX: usize = 500;
@@ -56,10 +56,19 @@ pub struct ObjectsArgs {
     /// `@handle` or a locator.
     #[serde(default)]
     pub model: Option<String>,
-    /// The first row to read (default 0).
+    /// List the components loaded instead of objects: each file, inline
+    /// component, delegate and template, with its instances alive and
+    /// the bytes they hold.
+    #[serde(default)]
+    pub components: bool,
+    /// List the instances of this component (its `component` id in the
+    /// list), `limit` from `offset` on.
+    #[serde(default)]
+    pub component: Option<String>,
+    /// The first row or instance to read (default 0).
     #[serde(default)]
     pub offset: Option<usize>,
-    /// The most rows to read (default 50, at most 500).
+    /// The most rows or instances to read (default 50, at most 500).
     #[serde(default)]
     pub limit: Option<usize>,
     /// Follow the model read: each change moves `app_watch`'s `models`

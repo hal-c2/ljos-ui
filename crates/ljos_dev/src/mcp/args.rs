@@ -1090,23 +1090,35 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                      give it without `root` or `depth`",
                 ));
             }
-            let reads = a.models || a.model.is_some();
-            if a.models && a.model.is_some() {
+            let modes = [
+                a.models,
+                a.model.is_some(),
+                a.components,
+                a.component.is_some(),
+            ];
+            if modes.iter().filter(|m| **m).count() > 1 {
                 return Err(bad(
                     tool,
-                    "give `models` to list them or `model` to read one, not both",
+                    "give one of `models`, `model`, `components` and `component`",
                 ));
             }
+            let reads = modes.contains(&true);
             if reads && (a.root.is_some() || a.depth.is_some() || a.cursor.is_some()) {
                 return Err(bad(
                     tool,
-                    "`models` and `model` read models, not the tree: give them without `root`, \
-                     `depth` or `cursor`",
+                    "`models`, `model`, `components` and `component` do not read the tree: give \
+                     them without `root`, `depth` or `cursor`",
                 ));
             }
-            if a.model.is_none() && (a.offset.is_some() || a.limit.is_some() || a.holder.is_some())
-            {
-                return Err(bad(tool, "`offset`, `limit` and `holder` go with `model`"));
+            let paged = a.model.is_some() || a.component.is_some();
+            if !paged && (a.offset.is_some() || a.limit.is_some()) {
+                return Err(bad(
+                    tool,
+                    "`offset` and `limit` go with `model` or `component`",
+                ));
+            }
+            if a.model.is_none() && a.holder.is_some() {
+                return Err(bad(tool, "`holder` goes with `model`"));
             }
             let most = super::models::MAX_LIMIT;
             match a.limit {

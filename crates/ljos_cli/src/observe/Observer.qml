@@ -152,6 +152,10 @@ ApplicationWindow {
             wakes.add(s)
         else if (route === "wake-due" && ok)
             wakes.showDue(s)
+        else if (route === "components" && ok)
+            components.show(s)
+        else if (route === "component")
+            components.showInstances(ok, s)
         else if (route.indexOf("sample-") === 0 && ok)
             overview.part(route.substring(7), s)
     }
@@ -186,7 +190,7 @@ ApplicationWindow {
 
     // The page shown.
     readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace",
-                                   "Supervision", "Frames", "Memory", "Models", "Wakes"]
+                                   "Supervision", "Frames", "Memory", "Models", "Wakes", "Components"]
     property int page: 0
     onPageChanged: watcher.start()
 
@@ -215,6 +219,8 @@ ApplicationWindow {
         // asking this page does.
         else if (page === 10 && (all || changed.indexOf("wakes") >= 0))
             wakes.load()
+        else if (page === 11 && (all || changed.indexOf("paints") >= 0 || changed.indexOf("reloads") >= 0))
+            components.load()
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
         if (all || changed.indexOf("traces") >= 0)
@@ -4642,6 +4648,260 @@ ApplicationWindow {
                                 visible: wakes.due.length === 0
                                 text: "None"
                                 color: theme.subtle
+                            }
+                        }
+                    }
+                }
+
+                // ----- Components --------------------------------------
+                // What the application has loaded, as a module browser
+                // shows it: each component of each file, how it is
+                // written, how many instances of it live and what they
+                // hold. The one picked lists its instances; each opens
+                // on the Objects page. Asked when shown and when a pass
+                // is drawn or a file reloaded, at most once a second as
+                // the watch settles.
+                ColumnLayout {
+                    id: components
+                    spacing: 10
+                    property var list: []
+                    property int live: 0
+                    property int leftOut: 0
+                    property real most: 1
+                    // The component picked, by id, and the page of it shown.
+                    property string picked: ""
+                    property var shown: null
+                    property int offset: 0
+                    readonly property int limit: 50
+
+                    function load() {
+                        window.ask("app_objects", { components: true }, "components")
+                        if (picked !== "")
+                            instances()
+                    }
+
+                    function instances() {
+                        window.ask("app_objects", { component: picked, offset: offset, limit: limit },
+                                   "component")
+                    }
+
+                    function show(s) {
+                        var top = 1
+                        for (var i = 0; i < s.components.length; ++i)
+                            top = Math.max(top, s.components[i].bytes)
+                        most = top
+                        live = s.instances
+                        leftOut = s.left_out
+                        list = s.components
+                    }
+
+                    function open(id) {
+                        picked = id
+                        offset = 0
+                        instances()
+                    }
+
+                    // A component gone with a reload is let go of.
+                    function showInstances(ok, s) {
+                        if (!ok) {
+                            picked = ""
+                            shown = null
+                            return
+                        }
+                        shown = s
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text { text: "Components"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: components.list.length + " loaded · " + components.live + " instances live"
+                                  + (components.leftOut > 0 ? " · " + components.leftOut + " not listed" : "")
+                            color: theme.subtle
+                        }
+                        Button {
+                            text: "Refresh"
+                            onClicked: components.load()
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        spacing: 10
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            clip: true
+                            ListView {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                model: window.page === 11 ? components.list : []
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Item {
+                                    id: compRow
+                                    required property int index
+                                    required property var modelData
+                                    readonly property bool current: modelData.component === components.picked
+                                    width: ListView.view.width
+                                    height: 24
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: 4
+                                        color: compRow.current ? theme.cardAlt
+                                             : compRow.index % 2 ? theme.cardAlt : "transparent"
+                                        border.color: compRow.current ? theme.accent : "transparent"
+                                    }
+                                    Row {
+                                        x: 6
+                                        height: parent.height
+                                        spacing: 10
+                                        Text {
+                                            width: 60
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: compRow.modelData.kind
+                                            color: theme.subtle
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            width: 120
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: compRow.modelData.name
+                                            color: theme.text
+                                            elide: Text.ElideRight
+                                            font.pixelSize: 12
+                                        }
+                                        // A file by its name; anything else
+                                        // by where in its file it is, so that
+                                        // two delegates of one type differ.
+                                        Text {
+                                            width: 200
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: compRow.modelData.kind === "file"
+                                                  ? compRow.modelData.url.substring(compRow.modelData.url.lastIndexOf("/") + 1)
+                                                  : compRow.modelData.component
+                                            color: theme.subtle
+                                            elide: Text.ElideLeft
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            width: 50
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            horizontalAlignment: Text.AlignRight
+                                            text: compRow.modelData.instances
+                                            color: compRow.modelData.instances > 0 ? theme.text : theme.subtle
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                        Text {
+                                            width: 80
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            horizontalAlignment: Text.AlignRight
+                                            text: window.bytes(compRow.modelData.bytes)
+                                            color: theme.text
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                        Rectangle {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            height: 10
+                                            radius: 2
+                                            width: Math.max(1, (compRow.width - 580) * compRow.modelData.bytes / components.most)
+                                            color: theme.accent
+                                        }
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        Accessible.role: Accessible.ListItem
+                                        Accessible.name: compRow.modelData.kind + " " + compRow.modelData.name + ", "
+                                                         + compRow.modelData.instances
+                                                         + (compRow.modelData.instances === 1 ? " instance, " : " instances, ")
+                                                         + window.bytes(compRow.modelData.bytes)
+                                        onClicked: components.open(compRow.modelData.component)
+                                    }
+                                }
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                visible: components.list.length === 0
+                                text: "No component is loaded"
+                                color: theme.subtle
+                            }
+                        }
+
+                        // The instances of the one picked; each opens on
+                        // the Objects page.
+                        Rectangle {
+                            Layout.preferredWidth: 300
+                            Layout.fillHeight: true
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            clip: true
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 6
+                                Text {
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    text: !components.shown ? "Pick a component to list its instances"
+                                        : components.shown.name + " · " + components.shown.count
+                                          + (components.shown.count === 1 ? " instance" : " instances")
+                                    color: components.shown ? theme.text : theme.subtle
+                                    font.bold: components.shown !== null
+                                }
+                                ListView {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    clip: true
+                                    model: window.page === 11 && components.shown ? components.shown.instances : []
+                                    ScrollBar.vertical: ScrollBar {}
+                                    delegate: ItemDelegate {
+                                        id: instRow
+                                        required property var modelData
+                                        width: ListView.view.width
+                                        height: 26
+                                        text: instRow.modelData.handle + "  " + instRow.modelData.type
+                                              + (instRow.modelData.object_name ? "  \"" + instRow.modelData.object_name + "\"" : "")
+                                              + "  " + window.bytes(instRow.modelData.bytes)
+                                        font.pixelSize: 12
+                                        onClicked: {
+                                            window.page = 3
+                                            objects.load(true)
+                                            objects.pick(instRow.modelData.handle,
+                                                         instRow.modelData.object_name || instRow.modelData.handle)
+                                        }
+                                    }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    visible: components.shown !== null && components.shown.count > components.limit
+                                    Button {
+                                        text: "Previous"
+                                        enabled: components.offset > 0
+                                        onClicked: {
+                                            components.offset = Math.max(0, components.offset - components.limit)
+                                            components.instances()
+                                        }
+                                    }
+                                    Button {
+                                        text: "Next"
+                                        enabled: components.shown !== null && components.shown.next_offset !== null
+                                        onClicked: {
+                                            components.offset = components.shown.next_offset
+                                            components.instances()
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

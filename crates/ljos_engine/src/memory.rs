@@ -53,7 +53,7 @@ impl ObjectExt {
 }
 
 impl ObjectHeader {
-    fn bytes(&self) -> usize {
+    pub(crate) fn bytes(&self) -> usize {
         size_of::<ObjectHeader>()
             + size_of_val(&*self.native)
             + self.dynamic.len() * size_of::<Value>()
