@@ -357,7 +357,7 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Given the authoring tools are connected with the capabilities "run" and the features runner "runner.sh"` | the same, started with `--features-runner` naming a file of the scenario |
 | `Given the agent has called the tool "name" with:` + doc string | a call whose answer a later step builds on |
 | `When the agent asks for the prompt "name"` / `When the agent asks for the prompt "name" with:` + doc string | an MCP prompt, with the arguments in the doc string (labelled `json`) |
-| `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` |
+| `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` (or `ljos-fuzz`, the differential fuzzer) |
 | `Then the answer's "/pointer" is:` + doc string | a text of the last answer, whole (a diff, a formatted file) |
 | `Then the prompt contains "text"` | part of the prompt's text |
 | `Then the prompt names the tools "a, b, c"` | the tools the prompt names in backticks, in the order it first names them; each must be a tool the agent is offered |
