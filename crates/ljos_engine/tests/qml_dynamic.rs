@@ -415,7 +415,9 @@ fn a_file_written_while_the_program_runs_that_does_not_compile_says_where() {
     h.engine.set_qml_text_compiler(Some(compiler()));
     let dir = scratch("bad");
     let bad = dir.join("Bad.qml");
-    std::fs::write(&bad, "import QtQuick\nItem { nothing: 3 }\n").unwrap();
+    // A syntax error: an unknown property is only an error where the build
+    // has Qt's type table, and CI builds without it.
+    std::fs::write(&bad, "import QtQuick\nItem { width: ( }\n").unwrap();
     let url = ljos_engine::file_url(&bad);
 
     call(&h, root, "load", &[&url]);
