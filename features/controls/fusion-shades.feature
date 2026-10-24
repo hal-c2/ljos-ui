@@ -47,6 +47,43 @@ Feature: Fusion's shades of a palette
       | offOutline | "#696969" |
       | merged     | "#3f00bf" |
 
+  Scenario Outline: Fusion's highlighted <shade> of <button> under <highlight>
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Fusion
+      Item {
+        Button { id: b; palette.button: "<button>"; palette.highlight: "<highlight>" }
+        QtObject {
+          objectName: "shades"
+          property color plain: Fusion.buttonColor(b.palette, true, false, false)
+          property color down: Fusion.buttonColor(b.palette, true, true, false)
+          property color hovered: Fusion.buttonColor(b.palette, true, false, true)
+          property color both: Fusion.buttonColor(b.palette, true, true, true)
+          property color outline: Fusion.highlightedOutline(b.palette)
+        }
+      }
+      """
+    Then the property "<shade>" of "shades" is <value>
+
+    Examples: A dark highlight, whose outline is the highlight darkened
+      | button  | highlight | shade   | value     |
+      | #808080 | #308cc6   | plain   | "#7c858a" |
+      | #808080 | #308cc6   | down    | "#71797e" |
+      | #808080 | #308cc6   | hovered | "#818a90" |
+      | #808080 | #308cc6   | both    | "#757d83" |
+      | #808080 | #308cc6   | outline | "#26709e" |
+
+    Examples: A light highlight, whose outline keeps to a lightness of 160
+      | button  | highlight | shade   | value     |
+      | #8cf881 | #fa70a4   | plain   | "#abe79d" |
+      | #8cf881 | #fa70a4   | down    | "#9cd28e" |
+      | #8cf881 | #fa70a4   | hovered | "#b2f0a3" |
+      | #8cf881 | #fa70a4   | both    | "#a2da94" |
+      | #8cf881 | #fa70a4   | outline | "#d56b94" |
+      | #808080 | #ffffff   | plain   | "#8a8a8a" |
+      | #808080 | #ffffff   | outline | "#a0a0a0" |
+
   Scenario Outline: A control's <property> with a grey button colour
     Given the application starts with the controls configuration:
       """

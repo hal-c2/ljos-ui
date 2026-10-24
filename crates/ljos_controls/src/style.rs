@@ -1321,10 +1321,8 @@ impl Default for Fusion {
 }
 
 /// Fusion's shades of a palette, which its controls draw with. The maths
-/// is fitted to what qml6 gives for sampled palettes (fusion-shades.feature):
-/// exact for every shade but those of a highlighted button and the
-/// highlighted outline, which are exact for the usual highlights and near
-/// for others.
+/// is fitted to what qml6 gives for sampled palettes (fusion-shades.feature),
+/// and exact for every one of 1500 random button and highlight colours.
 #[ljos_engine::qml_impl]
 impl Fusion {
     #[qml(invokable)]
@@ -1463,8 +1461,8 @@ fn button_hsv(button: Color) -> [f64; 3] {
     ]
 }
 
-/// A highlighted button: the button tinted a tenth of the way to the
-/// highlight, then darkened.
+/// A highlighted button: the button, lit as a plain one is, mixed a tenth
+/// of the way to the highlighted outline brightened, then darkened.
 fn highlighted_button(button: Color, highlight: Color) -> Color {
     let [h, s, v] = lit_button(button);
     let c = Color::WHITE.with_hsv16(
@@ -1472,15 +1470,18 @@ fn highlighted_button(button: Color, highlight: Color) -> Color {
         (f64::from(to8(s)) * 0.75).trunc() * 257.0,
         f64::from(to8(v)) * 257.0,
     );
-    let [r, g, b, a] = merged(c, highlight, 90).to_rgba8();
+    let [r, g, b, a] = highlighted_outline(highlight).lighter(130.0).to_rgba8();
+    let [r, g, b, a] = merged(c, Color::from_rgba8(r, g, b, a), 90).to_rgba8();
     Color::from_rgba8(r, g, b, a).darker(104.0)
 }
 
 /// `a` and `b` mixed `factor` hundredths of `a`, in 8-bit channels, with
-/// the alpha of `a`.
+/// the alpha of `a`. Each part is truncated on its own, as qml6 has it.
 fn merged(a: Color, b: Color, factor: i32) -> Color {
     let (a8, b8) = (a.to_rgba8(), b.to_rgba8());
-    let mix = |x: u8, y: u8| ((i32::from(x) * factor + i32::from(y) * (100 - factor)) / 100) as u8;
+    let mix = |x: u8, y: u8| {
+        (i32::from(x) * factor / 100 + i32::from(y) * (100 - factor) / 100).clamp(0, 255) as u8
+    };
     Color::from_rgba8(
         mix(a8[0], b8[0]),
         mix(a8[1], b8[1]),
@@ -1489,32 +1490,17 @@ fn merged(a: Color, b: Color, factor: i32) -> Color {
     )
 }
 
-/// The highlight darkened for an outline, but no lighter in its HSL
-/// lightness than 160 of 255.
+/// The highlight darkened for an outline; one that would still be lighter
+/// than 160 of 255 is instead the HSL colour of that lightness, with the
+/// highlight's hue in whole degrees and its 8-bit HSV saturation.
 fn highlighted_outline(highlight: Color) -> Color {
     let d = highlight.darker(125.0);
     if to8(d.hsv16()[2]) <= 160 {
         return d;
     }
-    let [r, g, b, a] = highlight.to_rgba_f();
-    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
-    let l = (max + min) / 2.0;
-    let s = if max == min {
-        0.0
-    } else if l < 0.5 {
-        (max - min) / (max + min)
-    } else {
-        (max - min) / (2.0 - max - min)
-    };
-    let h = if max == min {
-        0.0
-    } else if r == max {
-        ((g - b) / (max - min)).rem_euclid(6.0)
-    } else if g == max {
-        (b - r) / (max - min) + 2.0
-    } else {
-        (r - g) / (max - min) + 4.0
-    } / 6.0;
+    let [h, s, _] = highlight.hsv16();
+    let h = (h / 100.0).trunc() / 360.0;
+    let s = f64::from(to8(s)) / 255.0;
     let l = 160.0 / 255.0;
     let q = if l < 0.5 {
         l * (1.0 + s)
@@ -1524,7 +1510,7 @@ fn highlighted_outline(highlight: Color) -> Color {
     let p = 2.0 * l - q;
     let ch = |mut t: f64| {
         t = t.rem_euclid(1.0);
-        if t < 1.0 / 6.0 {
+        let x = if t < 1.0 / 6.0 {
             p + (q - p) * 6.0 * t
         } else if t < 0.5 {
             q
@@ -1532,9 +1518,16 @@ fn highlighted_outline(highlight: Color) -> Color {
             p + (q - p) * (2.0 / 3.0 - t) * 6.0
         } else {
             p
-        }
+        };
+        let x = x * 65535.0;
+        let floor = x.floor();
+        (if x - floor >= 0.5 { floor + 1.0 } else { floor }).clamp(0.0, 65535.0) as u16
     };
-    Color::from_rgba_f(ch(h + 1.0 / 3.0), ch(h), ch(h - 1.0 / 3.0), a)
+    if s == 0.0 {
+        let g = ch(0.25);
+        return Color::rgba16(g, g, g, highlight.a);
+    }
+    Color::rgba16(ch(h + 1.0 / 3.0), ch(h), ch(h - 1.0 / 3.0), highlight.a)
 }
 
 // ============================================================================
