@@ -105,6 +105,11 @@ bitflags::bitflags! {
         /// the object creator sets with
         /// [`Engine::set_alias`](crate::Engine::set_alias).
         const ALIAS = 1 << 7;
+        /// Read-only, and written by nothing but the object's making: a
+        /// `readonly property` a QML file declares. Without a binding it
+        /// holds the value it was made with. Native code that writes a
+        /// read-only property later (a PathView's attributes) leaves it off.
+        const MADE_ONLY = 1 << 8;
     }
 }
 

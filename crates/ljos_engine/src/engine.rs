@@ -1486,9 +1486,15 @@ impl Engine {
             } else {
                 match h.node(prop) {
                     Some(n) => Got::Node(n),
+                    // One only its making writes holds, with no node, the
+                    // value it was made with, before anything reads it: a
+                    // read of it needs no keeping.
                     None if self.inner.tracking.get() == 0
-                        || p.flags
-                            .intersects(PropertyFlags::CONSTANT | PropertyFlags::GROUP) =>
+                        || p.flags.intersects(
+                            PropertyFlags::CONSTANT
+                                | PropertyFlags::GROUP
+                                | PropertyFlags::MADE_ONLY,
+                        ) =>
                     {
                         Got::Value(read_access(&*h.native, &h.dynamic, &p.access))
                     }

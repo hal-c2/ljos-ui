@@ -4163,3 +4163,28 @@ Feature: What a reload changes
       Then the property "held" of "root" is null
       And the object "onea" does not exist
       And the property "x" of "linea" is at least 40
+
+  Rule: A read-only value a reload changes is the new one to what reads it
+
+    Scenario: A binding that reads a read-only value has the new one
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          readonly property int r: 3
+          property int twice: r * 2
+        }
+        """
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          readonly property int r: 4
+          property int twice: r * 2
+        }
+        """
+      And a reload happens
+      Then the property "r" of "root" is 4
+      And the property "twice" of "root" is 8
