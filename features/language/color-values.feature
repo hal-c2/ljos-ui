@@ -327,3 +327,21 @@ Feature: Colour values in JavaScript
     And the property "text" of "root" is "#000000"
     And the property "changes" of "root" is 1
     And the log has no warning matching "assign"
+
+  # Found by ljos-fuzz (bindings), bucket value:color:ref: Qt.lighter of a Text's colour
+  # starts from the eight bits the Text kept.
+  @backlog
+  Scenario: A Text keeps eight bits a channel of its colour, a colour property more
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property color own: Qt.rgba(0, 0.5, 0, 1)
+        Text { id: label; color: Qt.rgba(0, 0.5, 0, 1) }
+        property bool textEight: Math.abs(label.color.g - 128 / 255) < 1e-6
+        property bool ownEight: Math.abs(own.g - 128 / 255) < 1e-6
+      }
+      """
+    Then the property "textEight" of "root" is true
+    And the property "ownEight" of "root" is false

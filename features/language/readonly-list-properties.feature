@@ -52,3 +52,20 @@ Feature: A read-only list property
       | list       | given    | now    |
       | list<int>  | []       | []     |
       | list<real> | ["", ""] | [0, 0] |
+
+  # Found by ljos-fuzz (bindings), bucket value:list<real>:step-set(literal).
+  @backlog
+  Scenario: A script gives a read-only list a list through an alias of it
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        readonly property list<real> values: []
+        property alias all: root.values
+        function give() { all = [1, 2, 3] }
+      }
+      """
+    When the method "give" of "root" is called
+    Then the property "values" of "root" is [1, 2, 3]

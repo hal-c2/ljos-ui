@@ -79,3 +79,21 @@ Feature: An alias of a channel of a colour property
       """
     When the method "give" of "root" is called
     Then the property "seen" of "root" is "TypeError"
+
+  # Found by ljos-fuzz (bindings), bucket warning:RangeError(qt-only):fN.
+  @backlog
+  Scenario: A binding that reads an alias of a channel runs again when the colour changes
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property color tint
+        property alias red: root.tint.r
+        property real seen: red
+        function paint() { tint = "red" }
+      }
+      """
+    When the method "paint" of "root" is called
+    Then the property "seen" of "root" is 1

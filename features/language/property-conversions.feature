@@ -106,7 +106,7 @@ Feature: A value a binding gives a property of another type
   # Bucket warning:assign(ljos-only):Unable_to_assign_QColor_to_rect is the last row.
   # Buckets warning:assign(ljos-only):Unable_to_assign_QJSValue_to_rect, …_to_point and
   # …_to_color (the colour is in features/language/color-values.feature), and
-  # warning:assign(ljos-only):Unable_to_assign_double_to_color.
+  # warning:assign(ljos-only):Unable_to_assign_double_to_color and …_bool_to_color.
   @backlog
   Scenario Outline: A <type> given <value> is empty and not warned about
     Given the QML:
@@ -127,6 +127,7 @@ Feature: A value a binding gives a property of another type
       | point | []        | v.x     |
       | color | (1 + 0)   | v.r     |
       | rect  | Qt.tint("#000000", "#000000") | v.x |
+      | color | ("" == 0) | v.r     |
 
   # Bucket warning:assign(qt-only):Unable_to_assign_QUrl_to_double.
   @backlog
@@ -178,7 +179,6 @@ Feature: A value a binding gives a property of another type
     And the property "same" of "root" is true
 
   # Bucket warning:assign(qt-only):Unable_to_assign_[undefined]_to_int.
-  @backlog
   Scenario: An int bound to undefined is zero and warned about
     Given the QML:
       """qml
@@ -190,3 +190,95 @@ Feature: A value a binding gives a property of another type
       """
     Then the property "n" of "root" is 0
     And the log has a warning matching "Unable to assign .undefined. to int"
+
+  # Bucket warning:assign(ljos-only):Unable_to_assign_QString_to_font.
+  @backlog
+  Scenario: A font given text takes it as its family and is not warned about
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property font f: "a"
+        property string family: f.family
+      }
+      """
+    Then the property "family" of "root" is "a"
+    And the log has no warning matching "assign"
+
+  # Bucket warning:assign(ljos-only):Unable_to_assign_QColor_to_size.
+  @backlog
+  Scenario: A size given a colour is invalid and not warned about
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property size s: Qt.darker("#000000", 1.5)
+        property real w: s.width
+        property real h: s.height
+      }
+      """
+    Then the property "w" of "root" is -1
+    And the property "h" of "root" is -1
+    And the log has no warning matching "assign"
+
+  # Buckets value:list<string>:Qt.darker and value:var(array):ref.
+  @backlog
+  Scenario: A list of strings given a colour holds the colour's name
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property color c
+        property list<string> names: c
+        property string seen: names.length + " " + names[0]
+      }
+      """
+    Then the property "seen" of "root" is "1 #000000"
+
+  # Bucket value:var(array):step-push(literal).
+  @backlog
+  Scenario: A var given a list of strings holds a copy that makes text of what is pushed
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<string> names
+        property var held: names
+        property string seen: ""
+        function add() { held.push(0); seen = typeof held[0] + " " + names.length }
+      }
+      """
+    When the method "add" of "root" is called
+    Then the property "seen" of "root" is "string 0"
+
+  # Bucket result:none/none:call(number-plus-string).
+  @backlog
+  Scenario: An int parameter of a function drops what is after the point
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        function whole(a: int) { return a + "" }
+        property string seen: whole(1.75) + " " + whole(-1.75)
+      }
+      """
+    Then the property "seen" of "root" is "1 -1"
+
+  # Buckets value:string:pair and value:string:ref.
+  @backlog
+  Scenario: A string given a list of numbers is made of those character codes
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<real> codes: [65, 66]
+        property string text: codes
+      }
+      """
+    Then the property "text" of "root" is "AB"

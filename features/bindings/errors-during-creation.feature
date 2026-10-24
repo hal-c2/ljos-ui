@@ -120,3 +120,46 @@ Feature: A binding that fails while its object is made is forgiven if it recover
         """
       Then the property "flag" of "root" is true
       And the log has no warning matching "TypeError"
+
+  # Found by ljos-fuzz (bindings), buckets value:int:size.width and
+  # value:var(bool):default.
+  Rule: Change handlers run while the object is made
+
+    @backlog
+    Scenario: A handler that fails to write a later binding still takes it away
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          property point at: Qt.point(3, 16)
+          property int n: Qt.size(18, 3).width
+          onAtChanged: root.n = "#000000".hslLightness
+        }
+        """
+      Then the property "n" of "root" is 0
+      And the log has a warning matching "Cannot assign .undefined. to int"
+
+    @backlog
+    Scenario: The handlers of a tree run from its last child to its root
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          property string log: ""
+          property list<real> a: []
+          onAChanged: root.log += "root;"
+          QtObject {
+            property rect b: Qt.rect(0, 0, 0, 100)
+            onBChanged: root.log += "first;"
+          }
+          QtObject {
+            property point c: Qt.point(3, 16)
+            onCChanged: root.log += "second;"
+          }
+        }
+        """
+      Then the property "log" of "root" is "second;first;root;"
