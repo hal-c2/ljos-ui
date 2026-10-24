@@ -309,13 +309,13 @@ pub struct Anchors {
     #[qml(notify, write = margins_written)]
     pub margins: f64,
     /// The four side margins follow `margins` until they are set.
-    #[qml(notify, reset = Reset::Follow(all_margins))]
+    #[qml(notify, reset = MARGIN_RESET)]
     pub left_margin: f64,
-    #[qml(notify, reset = Reset::Follow(all_margins))]
+    #[qml(notify, reset = MARGIN_RESET)]
     pub right_margin: f64,
-    #[qml(notify, reset = Reset::Follow(all_margins))]
+    #[qml(notify, reset = MARGIN_RESET)]
     pub top_margin: f64,
-    #[qml(notify, reset = Reset::Follow(all_margins))]
+    #[qml(notify, reset = MARGIN_RESET)]
     pub bottom_margin: f64,
     #[qml(notify)]
     pub horizontal_center_offset: f64,
@@ -502,6 +502,22 @@ fn follow_implicit_size(
 /// What a side margin is while it has no value of its own.
 fn all_margins(engine: &Engine, obj: ObjectId, _side: PropIndex) -> Value {
     engine.read(obj, AnchorProps::get().margins)
+}
+
+/// A side margin taken back is as a new item has it: bound to `margins`
+/// once that has a value, and otherwise its default with nothing bound,
+/// to be bound when `margins` is first written ([`margins_written`]).
+const MARGIN_RESET: Reset = Reset::Custom {
+    apply: take_back_margin,
+    value: all_margins,
+};
+
+fn take_back_margin(engine: &Engine, obj: ObjectId, side: PropIndex) -> Result<(), EngineError> {
+    if is_unset(engine, obj, AnchorProps::get().margins) {
+        engine.reset_to_default(obj, side)
+    } else {
+        engine.bind_computed(obj, side, move |e| all_margins(e, obj, side))
+    }
 }
 
 /// What `antialiasing` is until it is given: on for a rounded rectangle,

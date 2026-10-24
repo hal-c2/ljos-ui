@@ -223,3 +223,39 @@ fn a_line_read_before_its_item_is_complete_follows_it() {
     e.complete(early).unwrap();
     assert!(known.get(), "the reader is told when the line is there");
 }
+
+/// A side margin taken back holds what a new item's does: while
+/// `anchors.margins` was never given, its default with nothing bound
+/// (what a hot reload compares with a fresh load), and once given, the
+/// margins; it follows a later `anchors.margins` either way.
+#[test]
+fn a_side_margin_taken_back_is_as_a_new_item_has_it() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+    Item { objectName: "plain"; anchors.leftMargin: 4 }
+    Item { objectName: "given"; anchors.leftMargin: 4; anchors.margins: 7 }
+}
+"#,
+    );
+    let side = |o| {
+        e.meta_of(o)
+            .unwrap()
+            .property_index("anchors.leftMargin")
+            .unwrap()
+    };
+    let plain = find(&e, root, "plain");
+    e.reset(plain, side(plain)).unwrap();
+    assert_eq!(num(&e, plain, "anchors.leftMargin"), 0.0);
+    assert!(!e.is_bound(plain, side(plain)), "nothing to follow yet");
+    set(&e, plain, "anchors.margins", Value::Real(5.0));
+    assert_eq!(num(&e, plain, "anchors.leftMargin"), 5.0);
+
+    let given = find(&e, root, "given");
+    e.reset(given, side(given)).unwrap();
+    assert_eq!(num(&e, given, "anchors.leftMargin"), 7.0);
+    set(&e, given, "anchors.margins", Value::Real(9.0));
+    assert_eq!(num(&e, given, "anchors.leftMargin"), 9.0);
+}

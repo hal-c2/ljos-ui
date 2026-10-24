@@ -204,3 +204,42 @@ Feature: Anchors
       Then the property "anchors.leftMargin" of "plain" is 5
       And the property "x" of "plain" is 5
       And the property "height" of "plain" is 90
+
+
+  Rule: A side margin taken back with undefined follows anchors.margins again
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 100; height: 100
+          Item {
+            objectName: "c"
+            anchors.fill: parent
+            anchors.margins: 7
+            anchors.leftMargin: 3
+            function takeBack() { anchors.leftMargin = undefined }
+          }
+          Item {
+            objectName: "plain"
+            anchors.fill: parent
+            anchors.leftMargin: 4
+            function takeBack() { anchors.leftMargin = undefined }
+          }
+        }
+        """
+
+    Scenario: A side margin taken back reads anchors.margins
+      When the method "takeBack" of "c" is called
+      Then the property "anchors.leftMargin" of "c" is 7
+      And the property "x" of "c" is 7
+
+    Scenario: A side margin taken back before anchors.margins was given follows it once it is
+      When the method "takeBack" of "plain" is called
+      Then the property "anchors.leftMargin" of "plain" is 0
+      And the property "x" of "plain" is 0
+      When the property "anchors.margins" of "plain" is set to 5
+      Then the property "anchors.leftMargin" of "plain" is 5
+      And the property "x" of "plain" is 5
