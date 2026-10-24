@@ -499,6 +499,42 @@ fn given(engine: &Engine, anim: ObjectId, p: PropIndex) -> Option<Value> {
     (!is_unset(engine, anim, p)).then(|| engine.read(anim, p))
 }
 
+/// `from` and `to` of a PropertyAnimation, `to` from `defaults` if it
+/// has none of its own.
+fn property_ends(
+    engine: &Engine,
+    anim: ObjectId,
+    defaults: Option<&Defaults>,
+) -> (Option<Value>, Option<Value>) {
+    let at = |p: PropIndex| match given(engine, anim, p)? {
+        Value::Undefined => None,
+        v => Some(v),
+    };
+    (
+        at(PropertyAnimation::FROM.index),
+        at(PropertyAnimation::TO.index).or_else(|| defaults.and_then(|d| d.to.clone())),
+    )
+}
+
+/// What a PropertyAnimation moves between.
+fn property_kind(engine: &Engine, anim: ObjectId) -> Kind {
+    if is_a::<RotationAnimation>(engine, anim) {
+        Kind::Rotation(Turn::of(engine.read_by_name(anim, "direction").to_number()))
+    } else if is_a::<NumberAnimation>(engine, anim) {
+        Kind::Number
+    } else if is_a::<ColorAnimation>(engine, anim) {
+        Kind::Color
+    } else {
+        Kind::Any
+    }
+}
+
+/// `loops`, [`FOREVER`] for no end.
+fn loops_of(engine: &Engine, anim: ObjectId) -> i64 {
+    let loops = given(engine, anim, Animation::LOOPS.index).map_or(1.0, |v| v.to_number());
+    if loops < 0.0 { FOREVER } else { loops as i64 }
+}
+
 fn duration_of(engine: &Engine, anim: ObjectId) -> i64 {
     let ms = if is_a::<PropertyAnimation>(engine, anim) {
         engine.read(anim, PropertyAnimation::DURATION.index)
@@ -858,17 +894,7 @@ impl Timed {
             Value::Undefined => None,
             v => Some(v),
         };
-        // Only a PropertyAnimation has them, and each write reads them.
-        let ends = || {
-            let at = |p: PropIndex| match given(engine, anim, p)? {
-                Value::Undefined => None,
-                v => Some(v),
-            };
-            (
-                at(PropertyAnimation::FROM.index),
-                at(PropertyAnimation::TO.index).or_else(|| defaults.and_then(|d| d.to.clone())),
-            )
-        };
+        let ends = || property_ends(engine, anim, defaults);
         let children = |env: Env<'_>| -> Vec<Timed> {
             objects(engine, anim, "animations")
                 .into_iter()
@@ -952,15 +978,7 @@ impl Timed {
             };
             (Node::Prop(node), duration_of(engine, anim))
         } else if is_a::<PropertyAnimation>(engine, anim) {
-            let kind = if is_a::<RotationAnimation>(engine, anim) {
-                Kind::Rotation(Turn::of(engine.read_by_name(anim, "direction").to_number()))
-            } else if is_a::<NumberAnimation>(engine, anim) {
-                Kind::Number
-            } else if is_a::<ColorAnimation>(engine, anim) {
-                Kind::Color
-            } else {
-                Kind::Any
-            };
+            let kind = property_kind(engine, anim);
             let (slots, tos) = aimed(kind);
             let (mut from, mut to) = ends();
             if reversed {
@@ -1034,8 +1052,7 @@ impl Timed {
             // An animation type this module does not know stands still.
             (Node::Pause, 0)
         };
-        let loops = given(engine, anim, Animation::LOOPS.index).map_or(1.0, |v| v.to_number());
-        let loops = if loops < 0.0 { FOREVER } else { loops as i64 };
+        let loops = loops_of(engine, anim);
         Timed {
             // Measured on Qt: a SmoothedAnimation and a SpringAnimation
             // are over when they are there, whatever `loops` says.
@@ -1052,6 +1069,54 @@ impl Timed {
             iter: 0,
             state: State::Idle,
         }
+    }
+
+    /// Takes the timeline [`Timed::build`] made of `anim` back to its
+    /// beginning, towards what `defaults` says now, as a build would: the
+    /// property's value then is where it begins. Only for one property
+    /// animation whose kind, properties, ends, duration, easing and loops
+    /// are still those it was built with; false, and nothing changed,
+    /// for any other, which is built anew.
+    pub(crate) fn restart_towards(
+        &mut self,
+        engine: &Engine,
+        anim: ObjectId,
+        defaults: &Defaults,
+    ) -> bool {
+        let Node::Prop(p) = &mut self.node else {
+            return false;
+        };
+        // An Animator holds what it shows; an AnchorAnimation and a
+        // transition's animation have what a state gives.
+        if p.held.is_some() || !p.tos.is_empty() || !is_a::<PropertyAnimation>(engine, anim) {
+            return false;
+        }
+        let Some(aimed) = defaults.aimed.as_ref().filter(|a| a.anim == anim) else {
+            return false;
+        };
+        let same_slots = aimed.slots.len() == p.slots.len()
+            && aimed
+                .slots
+                .iter()
+                .zip(&p.slots)
+                .all(|(a, b)| a.obj == b.obj && a.prop == b.prop);
+        if !same_slots || property_kind(engine, anim) != p.kind {
+            return false;
+        }
+        let (from, to) = property_ends(engine, anim, Some(defaults));
+        let pass = duration_of(engine, anim);
+        let loops = loops_of(engine, anim);
+        let loops = if pass == 0 { loops.min(1) } else { loops };
+        if from != p.from || pass != self.pass || loops != self.loops {
+            return false;
+        }
+        if curve_of(engine, anim) != p.curve {
+            return false;
+        }
+        p.to = to;
+        self.start = 0;
+        self.reset(true);
+        true
     }
 
     /// A timeline that begins and then does nothing, without end: what

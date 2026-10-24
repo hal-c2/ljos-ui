@@ -238,10 +238,34 @@ pub(crate) fn start_driven(
 ) {
     let d = driver(engine);
     engine.batch(|| {
-        if let Some(old) = d.find(anim) {
-            d.remove(engine, &old);
+        let Some(old) = d.find(anim) else {
+            begin(engine, &d, anim, Some(defaults), true, done);
+            return;
+        };
+        // A Behavior given value after value between two frames: the
+        // timeline the run has is the one a build would make, unless the
+        // animation was changed since.
+        let live = old.driven
+            && !old.silent
+            && !old.cancelled.get()
+            && !old.finishing.get()
+            && !old.paused.get()
+            && !old.rested.get();
+        let reused = live
+            .then(|| old.timeline.try_borrow_mut().ok())
+            .flatten()
+            .and_then(|mut t| {
+                let fits = t
+                    .as_mut()
+                    .is_some_and(|t| t.restart_towards(engine, anim, defaults));
+                if fits { t.take() } else { None }
+            });
+        d.remove(engine, &old);
+        match reused {
+            // `running` shows true already.
+            Some(timeline) => launch(engine, &d, anim, *timeline, true, done, false),
+            None => begin(engine, &d, anim, Some(defaults), true, done),
         }
-        begin(engine, &d, anim, Some(defaults), true, done);
     });
 }
 
@@ -327,7 +351,21 @@ fn begin(
     driven: bool,
     done: Option<Done>,
 ) {
-    let mut timeline = Timed::build(engine, anim, defaults);
+    let timeline = Timed::build(engine, anim, defaults);
+    launch(engine, d, anim, timeline, driven, done, true);
+}
+
+/// Runs `timeline`, built for `anim`, from its beginning.
+/// `show_running`: `running` does not show true yet.
+fn launch(
+    engine: &Engine,
+    d: &Rc<Driver>,
+    anim: ObjectId,
+    mut timeline: Timed,
+    driven: bool,
+    done: Option<Done>,
+    show_running: bool,
+) {
     if timeline.loops() == 0 {
         // Qt runs such an animation without end and without effect.
         timeline = Timed::inert();
@@ -352,7 +390,9 @@ fn begin(
     // `running` must find the two agree.
     d.add(&run);
     engine.batch(|| {
-        show(engine, anim, Animation::RUNNING.index, true);
+        if show_running {
+            show(engine, anim, Animation::RUNNING.index, true);
+        }
         if !driven {
             emit(engine, anim, "started");
         }
