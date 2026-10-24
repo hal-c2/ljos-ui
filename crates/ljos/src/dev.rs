@@ -20,11 +20,17 @@
 //! is made, a file added since the start among them, and a text placed
 //! in a directory none of them is finds the files beside it there;
 //! [`install_text_compiler`] compiles against the directories as they
-//! were at its first text, and the engine loads only what its own
-//! source has. A shipped application has no compiler by design;
-//! there the call is an error the script can catch, and QML the
-//! application loads at run time has to come compiled, or the
-//! application ships with this feature on and links the parser.
+//! were at its first text.
+//!
+//! The same compiler serves a `.qml` file the program was not built
+//! with, such as a page fetched while it runs: `Qt.createComponent` and
+//! `Loader` compile it from the disk when it is first asked for, and keep
+//! it, as Qt keeps a component it loaded. A shipped application has no
+//! compiler by design. There `Qt.createQmlObject` is an error the
+//! script can catch, and a file it was not built with is an error
+//! component that says so. QML the application loads at run time has to
+//! come compiled, or the application ships with this feature on and
+//! links the parser.
 
 pub use crate::compile::{
     Compiled, Diagnostic, EngineOracle, EngineType, OnError, Severity, compile, compile_dir,
