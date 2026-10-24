@@ -671,8 +671,10 @@ fn settings(e: &Engine, obj: ObjectId, kind: Kind) -> Settings {
 ///
 /// Preferred: `Layout.preferredWidth`, else the implicit width rounded up,
 /// else the width the child had when the layout first saw it. The maximum
-/// wins over the minimum, and both bound the preferred size. A child that
-/// does not fill is as large as it prefers, no more and no less.
+/// wins over the minimum, and both bound the preferred size. A nested
+/// layout's maximum is its children's unless told; a told minimum or
+/// preferred size raises it. A child that does not fill is as large as
+/// it prefers, no more and no less.
 fn hint(a: &Attached, axis: usize, implicit: f64, seen: f64, own: Option<Total>) -> Hint {
     let from_implicit = || {
         let v = implicit.ceil();
@@ -680,8 +682,13 @@ fn hint(a: &Attached, axis: usize, implicit: f64, seen: f64, own: Option<Total>)
     };
     let pref = a.pref[axis].unwrap_or_else(from_implicit);
     // A layout is as small and as large as its own children let it be,
-    // and fills unless told not to.
-    let max = a.max[axis].unwrap_or(own.map_or(f64::INFINITY, |t| t.max));
+    // and fills unless told not to. A size it is told to take, smallest
+    // or preferred, raises the largest its children allow; only a
+    // maximum it is told caps it.
+    let max = a.max[axis].unwrap_or_else(|| {
+        let told = a.min[axis].unwrap_or(0.0).max(a.pref[axis].unwrap_or(0.0));
+        own.map_or(f64::INFINITY, |t| t.max.max(told))
+    });
     let min = a.min[axis].unwrap_or(own.map_or(0.0, |t| t.min)).min(max);
     let pref = pref.clamp(min, max);
     if a.fill[axis].unwrap_or(own.is_some()) {
@@ -1189,5 +1196,35 @@ mod tests {
             ..Attached::default()
         };
         assert_eq!(hint(&told, H, 75.0, 0.0, Some(own)), fixed(75.0));
+    }
+
+    #[test]
+    fn a_layout_told_a_size_may_outgrow_its_children() {
+        let own = Total {
+            min: 16.0,
+            pref: 16.0,
+            max: 16.0,
+        };
+        let at = |a: Attached| {
+            let h = hint(&a, H, 16.0, 0.0, Some(own));
+            (h.min, h.pref, h.max)
+        };
+        let pref = |p| Attached {
+            pref: [Some(p); 2],
+            ..Attached::default()
+        };
+        assert_eq!(at(pref(22.0)), (16.0, 22.0, 22.0));
+        // The children's minimum raises a smaller preferred size.
+        assert_eq!(at(pref(10.0)), (16.0, 16.0, 16.0));
+        let capped = Attached {
+            max: [Some(16.0); 2],
+            ..pref(22.0)
+        };
+        assert_eq!(at(capped), (16.0, 16.0, 16.0));
+        let least = Attached {
+            min: [Some(20.0); 2],
+            ..Attached::default()
+        };
+        assert_eq!(at(least), (20.0, 20.0, 20.0));
     }
 }
