@@ -412,6 +412,17 @@ impl<'a, 'c> Module<'a, 'c> {
             }
             out.push('\n');
         }
+        // A group's type, by the group's name, from its leaves.
+        let groups: HashMap<&str, &'static MetaObject> = meta
+            .own_properties()
+            .iter()
+            .filter_map(|p| match &p.access {
+                PropertyAccess::Group { meta: group, .. } => {
+                    Some((p.name.split_once('.')?.0, *group))
+                }
+                _ => None,
+            })
+            .collect();
         for property in meta.own_properties() {
             // `fault.kind` is a property of what `fault` is.
             if let PropertyAccess::Group { meta: group, .. } = &property.access {
@@ -424,6 +435,15 @@ impl<'a, 'c> Module<'a, 'c> {
                 (TypeTag::Object(None), Some(class)) => {
                     self.value(&TypeTag::Object(Some(class.clone())))
                 }
+                // A group whose type a module exports is that type, which
+                // is described there and not again as a class of this one.
+                (TypeTag::Group(_), _) => match groups
+                    .get(&*property.name)
+                    .and_then(|group| self.all.home_of(group))
+                {
+                    Some(home) => format!("{} pointer", home.named()),
+                    None => self.value(&property.ty),
+                },
                 (ty, _) => self.value(ty),
             };
             let _ = write!(out, "\t\tprop {} {value}", property.name);

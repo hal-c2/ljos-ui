@@ -6061,7 +6061,7 @@ module QtQuick.Templates
 		prop enter QtQml.QtObject named pointer
 		prop exit QtQml.QtObject named pointer
 		prop font QtQuick.font named reset
-		prop palette QtQuick.Templates.Palette pointer reset
+		prop palette QtQuick.Palette pointer reset
 		prop locale QtQml.var named reset
 		prop mirrored QtQml.bool named readonly
 		prop anchors QtQuick.Templates.PopupAnchors pointer readonly
