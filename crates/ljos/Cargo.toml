@@ -102,12 +102,17 @@ pdf = ["ljos_quick/pdf"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG
 # on a virtual clock, for screenshot tests and documentation.
 render = []
+# Development only: hot reload. `Setup::watch` and its kin compile the
+# application's QML, watch it and apply every save to the running
+# application (`ljos::reload`). Links the QML compiler; no inspector, MCP
+# SDK or HTTP server. A shipped application leaves it off.
+dev = ["shell", "ljos_shell/dev", "dep:ljos_dev"]
 # Development only: the MCP inspector an agent connects to
 # (ARCHITECTURE.md §19.4), served by `App::run` when `App::inspector`
 # or the `LJOS_MCP` environment variable asks for it (`ljos::mcp`).
 # Links the QML compiler, an MCP SDK and an HTTP server; a shipped
 # application leaves it off.
-mcp = ["shell", "ljos_shell/mcp", "dep:ljos_dev", "ljos_dev/mcp", "dep:thiserror"]
+mcp = ["dev", "ljos_shell/mcp", "ljos_dev/mcp", "dep:thiserror"]
 # For an application's tests (`[dev-dependencies]`): `ljos::testing`, a
 # window without a platform on a virtual clock that a test hands input
 # to, and the host's and the system's part a test plays.

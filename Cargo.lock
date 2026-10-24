@@ -3865,6 +3865,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_facade_dev"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+]
+
+[[package]]
 name = "ljos_folderlistmodel"
 version = "0.0.0"
 dependencies = [

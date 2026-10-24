@@ -59,3 +59,18 @@ fn the_mcp_feature_is_what_brings_it_in() {
         );
     }
 }
+
+#[test]
+fn the_dev_feature_brings_hot_reload_without_the_inspector() {
+    let crates = linked(&["dev"]);
+    assert!(
+        crates.iter().any(|c| c == "ljos_dev"),
+        "`dev` does not link the reload: {crates:?}"
+    );
+    for name in ["rmcp", "ljos_mcp_core", "hyper"] {
+        assert!(
+            !crates.iter().any(|c| c == name),
+            "the `dev` feature links {name}"
+        );
+    }
+}

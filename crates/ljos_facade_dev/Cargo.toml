@@ -1,0 +1,15 @@
+[package]
+name = "ljos_facade_dev"
+description = "A development build of an application with hot reload and without the inspector: the facade with exactly the features `shell`, `dev-qml` and `dev`. Its build is the test that they suffice for `Setup::watch`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos = { path = "../ljos", default-features = false, features = ["shell", "dev-qml", "dev"] }
+
+[lints]
+workspace = true

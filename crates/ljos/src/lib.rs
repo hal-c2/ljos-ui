@@ -188,6 +188,15 @@ pub mod item;
 pub mod locale;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+/// Hot reload in a development build (the `dev` feature): what
+/// [`Setup::watch`](crate::Setup) and its kin tell
+/// [`Setup::on_reload`](crate::Setup), and the type oracles
+/// [`Setup::watch_with`](crate::Setup) compiles against.
+#[cfg(feature = "dev")]
+pub mod reload {
+    pub use ljos_dev::{QtTypeOracle, TypeOracle};
+    pub use ljos_shell::{Overlay, ReloadStats, Report};
+}
 /// Video a program makes or receives itself, shown by a `VideoOutput`,
 /// a `Video` or a `VideoSink` (the `media` feature): a
 /// [`media::VideoFrameInput`] takes frames from any thread and keeps the
