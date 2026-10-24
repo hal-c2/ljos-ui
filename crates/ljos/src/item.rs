@@ -45,7 +45,9 @@
 //! and asks to be painted again ([`repaint`]).
 //!
 //! A `TextEdit` that colours its text takes a [`Highlighter`] instead:
-//! [`set_highlighter`].
+//! [`set_highlighter`]. What an editor then paints is read back with
+//! [`highlights`], and how a stretch of a rich text is set (weight,
+//! italics, family, colour, link) with [`char_formats`].
 //!
 //! ```
 //! use std::rc::Rc;
@@ -94,7 +96,10 @@ pub use ljos_quick::LoadError as ImageLoadError;
 pub use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 pub use ljos_quick::keys::{KeyItem, key};
 pub use ljos_quick::keys::{Surrounding, TextInputClient};
-pub use ljos_quick::text_input::{HighlightSpan, Highlighter, set_highlighter, set_highlights};
+pub use ljos_quick::text_input::{
+    CharFormatSpan, HighlightSpan, Highlighter, char_formats, highlights, set_highlighter,
+    set_highlights,
+};
 pub use ljos_quick::{
     HoverMove, MouseButtons, PointerEvent, PointerId, PointerItem, PointerKind, contains_point,
 };

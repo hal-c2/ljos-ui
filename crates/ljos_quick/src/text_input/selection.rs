@@ -8,7 +8,12 @@
 //! A font given without a selection is the format of what is typed next at
 //! the cursor. In plain text there are no formats: what is read is the
 //! editor's own font and colour, and writing them does nothing.
+//!
+//! A program reads the formats of any stretch, not only the selection's,
+//! with [`char_formats`]: what Qt reads in C++ from the `QTextDocument`
+//! behind `textDocument`.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use ljos_engine::{Atom, Color, Engine, EngineError, Font, ObjectId, QmlObject, Value};
@@ -19,7 +24,7 @@ use super::edit::TextEdit;
 use super::ops::{self, How};
 use super::rich::{color_name, color_of, font_of, format_step};
 use crate::enums::align;
-use crate::text::text_style;
+use crate::text::{editor_css_color, text_style};
 
 /// What `cursorSelection` of a `TextEdit` is. Qt lets QML make one, so
 /// Ljós does too; one that no editor made selects nothing, and what is
@@ -102,12 +107,103 @@ fn format_here(s: &super::base::State) -> Option<Arc<CharFormat>> {
     })
 }
 
-fn current(engine: &Engine, obj: ObjectId, st: &SharedState) -> Shown {
-    let base_font = font_of(engine, obj);
-    let base_color = match engine.untrack(|| engine.read(obj, TextEditor::COLOR.index)) {
+/// The editor's own colour (untracked).
+fn color_of_editor(engine: &Engine, obj: ObjectId) -> Color {
+    match engine.untrack(|| engine.read(obj, TextEditor::COLOR.index)) {
         Value::Color(c) => c,
         _ => Color::BLACK,
+    }
+}
+
+/// How a stretch of an editor's text is set.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CharFormatSpan {
+    /// Bytes of the text (UTF-8), as a [`super::HighlightSpan`] counts
+    /// them.
+    pub range: Range<usize>,
+    /// The editor's font as the stretch has it, which `cursorSelection.font`
+    /// reads: weight, italics, lines, family and size.
+    pub font: Font,
+    /// The colour of the text: the editor's where the document gives none.
+    pub color: Color,
+    /// The colour behind the text, when the document gives one.
+    pub background: Option<Color>,
+    /// The address of the link the stretch belongs to.
+    pub link: Option<Arc<str>>,
+}
+
+impl CharFormatSpan {
+    fn looks_like(&self, other: &Self) -> bool {
+        self.font == other.font
+            && self.color == other.color
+            && self.background == other.background
+            && self.link == other.link
+    }
+}
+
+/// The formats the bytes `range` of an editor's text are set in, in the
+/// order of the text: neighbours set alike are one span, and together they
+/// cover the range, cut to the text. One character's format is that of
+/// `byte..byte + 1`. Plain text has no formats of its own: it reads as one
+/// span in the editor's font and colour, as `cursorSelection` reads it.
+/// Highlighting is not a format; [`super::highlights`] reads it. `item` is
+/// a `TextEdit`, a `TextInput`, a type derived from one, or the
+/// `textDocument` of a `TextEdit`; `None` for anything else.
+pub fn char_formats(
+    engine: &Engine,
+    item: ObjectId,
+    range: Range<usize>,
+) -> Option<Vec<CharFormatSpan>> {
+    let (edit, _) = super::highlight::editor_of(engine, item)?;
+    let st = ops::ready(engine, edit)?;
+    let base_font = font_of(engine, edit);
+    let base_color = color_of_editor(engine, edit);
+    let s = st.borrow();
+    let text = s.model.text();
+    let range = range.start.min(text.len())..range.end.min(text.len());
+    if range.is_empty() {
+        return Some(Vec::new());
+    }
+    let Some(r) = s.rich.as_ref().filter(|r| r.doc.text() == text) else {
+        return Some(vec![CharFormatSpan {
+            range,
+            font: (*base_font).clone(),
+            color: base_color,
+            background: None,
+            link: None,
+        }]);
     };
+    let mut out: Vec<CharFormatSpan> = Vec::new();
+    for (run, f) in r.doc.runs() {
+        let (start, end) = (run.start.max(range.start), run.end.min(range.end));
+        if start >= end {
+            continue;
+        }
+        let span = CharFormatSpan {
+            range: start..end,
+            font: font_with(&base_font, f),
+            color: color_of(f).unwrap_or(base_color),
+            background: f
+                .inline
+                .background
+                .as_deref()
+                .and_then(editor_css_color)
+                .filter(|c| c.a != 0),
+            link: f.inline.link.clone(),
+        };
+        match out.last_mut() {
+            Some(last) if last.range.end == start && last.looks_like(&span) => {
+                last.range.end = end;
+            }
+            _ => out.push(span),
+        }
+    }
+    Some(out)
+}
+
+fn current(engine: &Engine, obj: ObjectId, st: &SharedState) -> Shown {
+    let base_font = font_of(engine, obj);
+    let base_color = color_of_editor(engine, obj);
     let s = st.borrow();
     let selected = s.model.selected_text();
     let Some(r) = s.rich.as_ref() else {

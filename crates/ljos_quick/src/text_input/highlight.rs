@@ -14,7 +14,9 @@
 //!
 //! In Qt a `QSyntaxHighlighter` on the `QTextDocument` behind
 //! `TextEdit.textDocument` does this from C++. Here the document is the
-//! same handle; `highlight` and `clearHighlights` on it are ours.
+//! same handle; `highlight`, `clearHighlights` and `highlights` on it are
+//! ours. What an editor paints is read back with [`highlights`], so a test
+//! checks what was applied rather than what it asked for.
 //!
 //! Nothing runs unless something changed: the highlighter is asked once
 //! for each text the editor comes to show, and what it answered is kept
@@ -29,7 +31,7 @@ use ljos_engine::{
     Atom, Color, Cx, Engine, EngineError, ObjectId, QmlObject, Url, Value, qml_impl,
 };
 use ljos_render::{Decorations, GlyphRun, Rgba};
-use ljos_text::{EditLayout, EditLine, StyleSpan, TextStyle, utf16_to_byte};
+use ljos_text::{EditLayout, EditLine, StyleSpan, TextStyle, byte_to_utf16, utf16_to_byte};
 
 use super::base::{SharedState, bump, check, state_of};
 use super::edit::TextEdit;
@@ -410,7 +412,7 @@ pub(crate) fn lines(st: &SharedState) -> Option<Lines> {
 }
 
 /// The editor `obj` is, or is the document of.
-fn editor_of(engine: &Engine, obj: ObjectId) -> Option<(ObjectId, SharedState)> {
+pub(crate) fn editor_of(engine: &Engine, obj: ObjectId) -> Option<(ObjectId, SharedState)> {
     if let Some(st) = state_of(engine, obj) {
         return Some((obj, st));
     }
@@ -483,10 +485,39 @@ pub fn set_highlighter(engine: &Engine, item: ObjectId, highlighter: Option<High
     true
 }
 
-/// The spans an editor's text is painted with, in the order of the text and
-/// with none overlapping. Empty when `item` is not an editor.
-pub fn highlights(engine: &Engine, item: ObjectId) -> Vec<HighlightSpan> {
-    editor_of(engine, item).map_or_else(Vec::new, |(_, st)| current(&st).to_vec())
+/// The spans an editor draws for its current text: the ones a program
+/// gave and its highlighter's, merged as painting merges them, in the order
+/// of the text with none overlapping. Byte ranges of the text, cut to it.
+/// A highlighter that has not seen the text yet is asked first, so what is
+/// read is what the next frame paints. Empty while `echoMode` masks or
+/// hides the text, which then shows no spans. `None` when `item` is neither
+/// an editor nor the document of one.
+///
+/// It reads what painting keeps, so a read costs no more than the frame
+/// that paints it, and nothing at all when nobody reads.
+pub fn highlights(engine: &Engine, item: ObjectId) -> Option<Rc<[HighlightSpan]>> {
+    let (edit, _) = editor_of(engine, item)?;
+    // What a program wrote to `text` just now is the text read.
+    let st = ops::ready(engine, edit)?;
+    if ops::echo(engine, edit, &st) != super::echo_mode::NORMAL {
+        return Some(Rc::from(Vec::new()));
+    }
+    let spans = current(&st);
+    let len = st.borrow().model.text().len();
+    if spans.iter().all(|s| s.range.end <= len) {
+        return Some(spans);
+    }
+    // Painting ignores what reaches past the text.
+    Some(
+        spans
+            .iter()
+            .filter(|s| s.range.start < len)
+            .map(|s| HighlightSpan {
+                range: s.range.start..s.range.end.min(len),
+                ..s.clone()
+            })
+            .collect(),
+    )
 }
 
 /// `TextEdit.textDocument` (doc.qt.io, `qml-qtquick-textdocument.html`):
@@ -564,6 +595,47 @@ impl TextDocument {
             s.highlights.flat = None;
         }
         repaint(cx.engine, &st, false);
+    }
+
+    /// `highlights()`: the stretches the editor paints, as [`highlights`]
+    /// reads them, in positions of the text: a list of
+    /// `{ start, end, color, background, underline, strikeout, weight,
+    /// italic, family }`. What a stretch leaves as the editor has it is
+    /// `undefined`.
+    #[qml(invokable, name = "highlights")]
+    fn read_highlights(cx: &Cx) -> Value {
+        let spans = highlights(cx.engine, cx.this).unwrap_or_else(|| Rc::from(Vec::new()));
+        let Some((_, st)) = editor_of(cx.engine, cx.this).filter(|_| !spans.is_empty()) else {
+            return Value::List(Arc::default());
+        };
+        let s = st.borrow();
+        let text = s.model.text();
+        let at = |b: usize| Value::Int(i32::try_from(byte_to_utf16(text, b)).unwrap_or(i32::MAX));
+        let or_undefined = |c: Option<Color>| c.map_or(Value::Undefined, Value::Color);
+        let list = spans
+            .iter()
+            .map(|span| {
+                Value::Map(Arc::new(vec![
+                    (Atom::from("start"), at(span.range.start)),
+                    (Atom::from("end"), at(span.range.end)),
+                    (Atom::from("color"), or_undefined(span.color)),
+                    (Atom::from("background"), or_undefined(span.background)),
+                    (Atom::from("underline"), Value::Bool(span.underline)),
+                    (Atom::from("strikeout"), Value::Bool(span.strikeout)),
+                    (
+                        Atom::from("weight"),
+                        span.weight
+                            .map_or(Value::Undefined, |w| Value::Int(w.into())),
+                    ),
+                    (Atom::from("italic"), Value::Bool(span.italic)),
+                    (
+                        Atom::from("family"),
+                        span.family.as_deref().map_or(Value::Undefined, Value::from),
+                    ),
+                ]))
+            })
+            .collect();
+        Value::List(Arc::new(list))
     }
 
     /// `clearHighlights()`: the text is painted as the editor has it.

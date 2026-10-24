@@ -1,8 +1,9 @@
 //! Highlighting from a program's side: the spans it gives an editor come
 //! out as colours on the display list, a span with a font lays the text out
 //! with it, and a highlighter is asked once for each text (ARCHITECTURE
-//! §7.5). What QML
-//! sees of it is in `features/text-input/highlighting.feature`.
+//! §7.5). What the editor paints is read back, and so is how a stretch of
+//! its rich text is set. What QML sees of it is in
+//! `features/text-input/highlighting.feature`.
 
 mod common;
 
@@ -12,7 +13,7 @@ use std::rc::Rc;
 use common::*;
 use ljos_engine::{Color, Engine, ObjectId, Value};
 use ljos_quick::text_input::{
-    HighlightSpan, accept_text, highlights, set_highlighter, set_highlights,
+    HighlightSpan, accept_text, char_formats, highlights, set_highlighter, set_highlights,
 };
 use ljos_quick::{QuickScene, to_rgba};
 use ljos_render::{DrawOp, Paint, Rgba, kurbo};
@@ -283,10 +284,10 @@ fn a_highlighter_can_ask_for_bold() {
     e.invoke_by_name(edit, "insert", &[Value::Int(0), Value::from("one ")])
         .unwrap();
     frame(&mut s, &e);
-    assert_eq!(highlights(&e, edit).len(), 2);
+    assert_eq!(highlights(&e, edit).unwrap().len(), 2);
     assert!(set_highlighter(&e, edit, None));
     frame(&mut s, &e);
-    assert!(highlights(&e, edit).is_empty());
+    assert!(highlights(&e, edit).unwrap().is_empty());
     assert_eq!(faces(&s, edit).0.len(), 1);
 }
 
@@ -332,6 +333,7 @@ fn a_highlighter_is_asked_once_for_each_text() {
     assert_eq!(asked.get(), 4);
     assert_eq!(
         highlights(&e, edit)
+            .unwrap()
             .iter()
             .map(|s| s.range.clone())
             .collect::<Vec<_>>(),
@@ -344,7 +346,7 @@ fn a_highlighter_is_asked_once_for_each_text() {
     frame(&mut s, &e);
     assert_eq!(asked.get(), 4);
     assert_eq!(glyphs(&s, edit, RED), 0);
-    assert!(highlights(&e, edit).is_empty());
+    assert!(highlights(&e, edit).unwrap().is_empty());
 }
 
 #[test]
@@ -359,9 +361,10 @@ fn the_document_of_a_text_edit_is_a_handle_to_its_highlighting() {
     frame(&mut s, &e);
     assert_eq!(glyphs(&s, edit, RED), 3);
     assert_eq!(highlights(&e, edit), highlights(&e, doc));
+    assert!(highlights(&e, edit).is_some());
     // An item that is no editor takes no spans.
     assert!(!set_highlights(&e, root, vec![colored(0..1, RED)]));
-    assert!(highlights(&e, root).is_empty());
+    assert!(highlights(&e, root).is_none());
 }
 
 #[test]
@@ -386,6 +389,15 @@ fn spans_that_overlap_or_reach_past_the_text_are_painted_where_they_can_be() {
     // "one" and "two".
     assert_eq!(glyphs(&s, edit, GREEN), 6);
     assert_eq!(glyphs(&s, edit, Color::BLACK), all - 10);
+    // Read back as painted: merged, and cut to the text's 15 bytes.
+    assert_eq!(
+        highlights(&e, edit).unwrap().to_vec(),
+        vec![
+            colored(0..4, RED),
+            colored(4..7, GREEN),
+            colored(12..15, GREEN),
+        ]
+    );
 }
 
 #[test]
@@ -400,4 +412,96 @@ fn a_field_that_hides_its_text_is_not_painted_in_spans() {
     frame(&mut s, &e);
     assert_eq!(glyphs(&s, secret, RED), 0);
     assert_eq!(glyphs(&s, secret, Color::BLACK), masks);
+    // What is read back is what is painted: nothing.
+    assert_eq!(highlights(&e, secret).unwrap().len(), 0);
+}
+
+const RICH: &str = r##"
+import QtQuick
+Item {
+    width: 300; height: 200
+    TextEdit {
+        objectName: "rich"; width: 300; textFormat: TextEdit.RichText
+        font.pixelSize: 14; color: "#000080"
+        text: "<b>bold</b> plain <a href=\"https://example.com/\">link</a> <span style=\"color:#ff0000; background-color:#00ff00\">red</span>"
+    }
+    TextEdit { objectName: "plain"; text: "plain"; font.pixelSize: 14 }
+}
+"##;
+
+#[test]
+fn how_a_stretch_of_rich_text_is_set_is_read_back() {
+    let e = engine();
+    let root = load(&e, RICH);
+    let rich = find(&e, root, "rich");
+    // "bold plain link red"
+    let all = char_formats(&e, rich, 0..usize::MAX).unwrap();
+    let at = |byte: usize| {
+        all.iter()
+            .find(|s| s.range.contains(&byte))
+            .unwrap_or_else(|| panic!("{byte} is in a span: {all:?}"))
+    };
+    assert_eq!(all.first().unwrap().range.start, 0);
+    assert_eq!(all.last().unwrap().range.end, 19);
+    assert!(all.windows(2).all(|w| w[0].range.end == w[1].range.start));
+
+    assert_eq!(at(0).range, 0..4);
+    assert_eq!(at(0).font.weight, 700);
+    assert_eq!(at(0).font.pixel_size, 14);
+    assert_eq!(at(5).font.weight, 400);
+    // The editor's colour where the document gives none.
+    assert_eq!(at(5).color, Color::from_rgba8(0, 0, 0x80, 0xff));
+    assert_eq!(at(11).link.as_deref(), Some("https://example.com/"));
+    assert_eq!(at(11).range, 11..15);
+    assert_eq!(at(5).link, None);
+    assert_eq!(at(16).range, 16..19);
+    assert_eq!(at(16).color, RED);
+    assert_eq!(at(16).background, Some(GREEN));
+    assert_eq!(at(5).background, None);
+
+    // One character, and a stretch that starts inside a run.
+    let one = char_formats(&e, rich, 1..2).unwrap();
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].range, 1..2);
+    assert_eq!(one[0].font.weight, 700);
+    let over = char_formats(&e, rich, 2..6).unwrap();
+    assert_eq!(
+        over.iter().map(|s| s.range.clone()).collect::<Vec<_>>(),
+        vec![2..4, 4..6]
+    );
+    assert!(char_formats(&e, rich, 3..3).unwrap().is_empty());
+
+    // A format a program gives is read back at once.
+    e.invoke_by_name(rich, "select", &[Value::Int(5), Value::Int(10)])
+        .unwrap();
+    let Value::Object(selection) = get(&e, rich, "cursorSelection") else {
+        panic!("a TextEdit has a cursorSelection");
+    };
+    let Value::Font(font) = get(&e, selection, "font") else {
+        panic!("the selection has a font");
+    };
+    let mut italic = (*font).clone();
+    italic.italic = true;
+    set(&e, selection, "font", Value::Font(italic.into()));
+    let after = char_formats(&e, rich, 5..10).unwrap();
+    assert_eq!(after.len(), 1);
+    assert!(after[0].font.italic);
+}
+
+#[test]
+fn plain_text_is_set_in_the_editors_font_and_colour() {
+    let e = engine();
+    let root = load(&e, RICH);
+    let plain = find(&e, root, "plain");
+    let all = char_formats(&e, plain, 0..400).unwrap();
+    assert_eq!(all.len(), 1);
+    // Cut to the text.
+    assert_eq!(all[0].range, 0..5);
+    assert_eq!(all[0].font.pixel_size, 14);
+    assert_eq!(all[0].color, Color::BLACK);
+    let Value::Object(doc) = get(&e, plain, "textDocument") else {
+        panic!("a TextEdit has a document");
+    };
+    assert_eq!(char_formats(&e, doc, 0..5), Some(all));
+    assert_eq!(char_formats(&e, root, 0..5), None);
 }

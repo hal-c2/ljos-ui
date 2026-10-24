@@ -64,7 +64,7 @@ pub use input::TextInput;
 pub use ops::accept_text;
 pub use ops::last_edit_typed;
 pub use paint::EditorPaint;
-pub use selection::TextSelection;
+pub use selection::{CharFormatSpan, TextSelection, char_formats};
 pub use validator::{
     DoubleValidator, IntValidator, RegularExpressionValidator, Validation, validate,
 };

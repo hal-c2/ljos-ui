@@ -2868,6 +2868,7 @@ module QtQuick
 		signal statusChanged
 		signal errorStringChanged
 		method highlight
+		method highlights
 		method clearHighlights
 		method save
 		method saveAs

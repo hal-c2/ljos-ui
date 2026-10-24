@@ -28,7 +28,6 @@ use ljos_runtime::{Clock as _, TIMER_GRANULARITY, Time, VirtualClock};
 
 pub use ljos_a11y::{AccessibleNode, Contrast, NodeKey, SystemPrefs};
 pub use ljos_controls::ScreenSpec;
-pub use ljos_quick::text_input::highlights;
 
 use crate::drive::Run;
 use crate::item::{KeyEvent, PointerEvent, TextEngine, WheelEvent};

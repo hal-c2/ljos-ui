@@ -161,20 +161,83 @@ fn a_test_plays_the_application_state() {
     assert_eq!(engine.read_by_name(app, "state"), Value::Int(2));
 }
 
+/// A highlighter that sets every `**word**` in bold.
+fn bold_stars(text: &str) -> Vec<item::HighlightSpan> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(start) = text[from..].find("**").map(|i| from + i) {
+        let Some(end) = text[start + 2..].find("**").map(|i| start + 2 + i + 2) else {
+            break;
+        };
+        out.push(item::HighlightSpan {
+            range: start..end,
+            weight: Some(700),
+            ..item::HighlightSpan::default()
+        });
+        from = end;
+    }
+    out
+}
+
 #[test]
-fn a_test_reads_an_editors_highlights() {
+fn a_test_reads_what_an_editors_highlighter_applied() {
     let engine = ljos::engine();
     let edit = engine.create_by_name("QtQuick", "TextEdit", None).unwrap();
     engine
-        .write_by_name(edit, "text", Value::from("hello"))
+        .write_by_name(edit, "text", Value::from("**word** rest"))
         .unwrap();
-    let span = item::HighlightSpan {
-        range: 0..4,
-        underline: true,
-        ..item::HighlightSpan::default()
+    let ranges = |engine: &Engine| -> Vec<std::ops::Range<usize>> {
+        item::highlights(engine, edit)
+            .expect("a TextEdit is an editor")
+            .iter()
+            .map(|s| s.range.clone())
+            .collect()
     };
-    assert!(item::set_highlights(&engine, edit, vec![span]));
-    let read = testing::highlights(&engine, edit);
-    assert_eq!(read.len(), 1);
-    assert_eq!(read[0].range, 0..4);
+    assert!(ranges(&engine).is_empty());
+
+    // The highlighter installed is the one that paints.
+    assert!(item::set_highlighter(
+        &engine,
+        edit,
+        Some(Box::new(bold_stars))
+    ));
+    let spans = item::highlights(&engine, edit).unwrap();
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].range, 0..8);
+    assert_eq!(spans[0].weight, Some(700));
+
+    // It ran again for the new text.
+    engine
+        .write_by_name(edit, "text", Value::from("a **b** and **c**"))
+        .unwrap();
+    assert_eq!(ranges(&engine), vec![2..7, 12..17]);
+
+    // Switched off, nothing is painted.
+    assert!(item::set_highlighter(&engine, edit, None));
+    assert!(ranges(&engine).is_empty());
+
+    let rect = engine.create_by_name("QtQuick", "Rectangle", None).unwrap();
+    assert!(item::highlights(&engine, rect).is_none());
+}
+
+#[test]
+fn a_test_reads_how_a_rich_editor_sets_its_text() {
+    let engine = ljos::engine();
+    let edit = engine.create_by_name("QtQuick", "TextEdit", None).unwrap();
+    engine
+        .write_by_name(edit, "textFormat", Value::Int(1))
+        .unwrap();
+    engine
+        .write_by_name(
+            edit,
+            "text",
+            Value::from("<b>bold</b> <i><a href=\"https://example.com/\">x</a></i>"),
+        )
+        .unwrap();
+    let formats = item::char_formats(&engine, edit, 0..usize::MAX).unwrap();
+    let at = |byte: usize| formats.iter().find(|s| s.range.contains(&byte)).unwrap();
+    assert_eq!(at(0).font.weight, 700);
+    assert!(!at(0).font.italic);
+    assert!(at(5).font.italic);
+    assert_eq!(at(5).link.as_deref(), Some("https://example.com/"));
 }
