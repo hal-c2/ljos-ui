@@ -1,0 +1,28 @@
+[package]
+name = "ljos_fuzz"
+description = "Differential, property-based testing of Ljós against Qt (qml6 as a black box)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "ljos-fuzz"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ljos_bdd = { path = "../ljos_bdd" }
+qt_types = { path = "../qt_types" }
+regex.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -3883,6 +3883,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_fuzz"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ljos_bdd",
+ "qt_types",
+ "regex",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ljos_gallery_backends"
 version = "0.0.0"
 dependencies = [

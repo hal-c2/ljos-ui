@@ -392,11 +392,7 @@ impl QtBackend {
             Some(style) => command.env("QT_QUICK_CONTROLS_STYLE", style),
             None => command.env_remove("QT_QUICK_CONTROLS_STYLE"),
         };
-        super::own_home(&mut command, driver.parent().unwrap_or(driver))?;
-        // The style is the scenario's, never the developer's.
-        command
-            .env_remove("QT_QUICK_CONTROLS_CONF")
-            .env_remove("QT_QUICK_CONTROLS_FALLBACK_STYLE");
+        oracle_env(&mut command, driver.parent().unwrap_or(driver), &platform)?;
         if let Some(text) = &self.controls_conf {
             let path = driver.with_file_name("qtquickcontrols2.conf");
             fs::write(&path, text)?;
@@ -405,19 +401,10 @@ impl QtBackend {
         for (k, v) in &self.controls_vars {
             command.env(k, v);
         }
-        // The developer's own locale stays out: a parity scenario has one
-        // expectation.
-        for k in LOCALE_VARS {
-            command.env_remove(k);
-        }
-        match &self.locale_env {
-            Some(vars) => {
-                for (k, v) in vars {
-                    command.env(k, v);
-                }
-            }
-            None => {
-                command.env("LANG", "en_US.UTF-8");
+        if let Some(vars) = &self.locale_env {
+            command.env_remove("LANG");
+            for (k, v) in vars {
+                command.env(k, v);
             }
         }
         command.arg(driver);
@@ -425,18 +412,6 @@ impl QtBackend {
             command.arg("-style").arg(name);
         }
         let mut child = command
-            .env("QT_FORCE_STDERR_LOGGING", "1")
-            .env("QT_QPA_PLATFORM", platform)
-            .env("QT_QUICK_BACKEND", "software")
-            .env("QT_MESSAGE_PATTERN", "%{type}|%{message}")
-            // A module the scenario writes (`Kit/qmldir`) is found by its
-            // name from the scenario's own directory.
-            .env("QML_IMPORT_PATH", driver.parent().unwrap_or(Path::new(".")))
-            .env("TZ", "UTC")
-            // The desktop's settings stay out: a platform theme that reads
-            // them would give the controls a dark palette on a desktop that
-            // prefers one, and a parity scenario has one expectation.
-            .env("GSETTINGS_BACKEND", "memory")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -565,6 +540,51 @@ fn file_url(p: &Path) -> String {
 }
 
 /// Split Qt's stderr into driver observations and log entries.
+/// The environment every run of the Qt oracle has, whoever runs it (the
+/// scenario backend here, the differential fuzzer in `ljos_fuzz`): one
+/// expectation per program, whatever the developer's desktop, locale or
+/// clock. `dir` is the program's own directory.
+///
+/// # Errors
+/// When the program's home cannot be made in `dir`.
+pub fn oracle_env(command: &mut Command, dir: &Path, platform: &str) -> std::io::Result<()> {
+    super::own_home(command, dir)?;
+    // The style is the scenario's, never the developer's.
+    command
+        .env_remove("QT_QUICK_CONTROLS_CONF")
+        .env_remove("QT_QUICK_CONTROLS_FALLBACK_STYLE");
+    // The developer's own locale stays out.
+    for k in LOCALE_VARS {
+        command.env_remove(k);
+    }
+    command
+        .env("LANG", "en_US.UTF-8")
+        .env("QT_FORCE_STDERR_LOGGING", "1")
+        .env("QT_QPA_PLATFORM", platform)
+        .env("QT_QUICK_BACKEND", "software")
+        .env("QT_MESSAGE_PATTERN", "%{type}|%{message}")
+        // A module the program writes (`Kit/qmldir`) is found by its
+        // name from the program's own directory.
+        .env("QML_IMPORT_PATH", dir)
+        .env("TZ", "UTC")
+        // The desktop's settings stay out: a platform theme that reads
+        // them would give the controls a dark palette on a desktop that
+        // prefers one.
+        .env("GSETTINGS_BACKEND", "memory");
+    Ok(())
+}
+
+/// The level of a line Qt logged under `QT_MESSAGE_PATTERN="%{type}|…"`.
+#[must_use]
+pub fn log_level(kind: &str) -> LogLevel {
+    match kind {
+        "warning" => LogLevel::Warning,
+        "critical" | "fatal" => LogLevel::Critical,
+        "info" => LogLevel::Info,
+        _ => LogLevel::Debug,
+    }
+}
+
 fn parse_stderr(stderr: &str) -> Result<Run> {
     let mut results = None;
     let mut log: Vec<LogEntry> = Vec::new();
@@ -584,14 +604,8 @@ fn parse_stderr(stderr: &str) -> Result<Run> {
                 })?);
             continue;
         }
-        let level = match kind {
-            "warning" => LogLevel::Warning,
-            "critical" | "fatal" => LogLevel::Critical,
-            "info" => LogLevel::Info,
-            _ => LogLevel::Debug,
-        };
         log.push(LogEntry {
-            level,
+            level: log_level(kind),
             message: msg.to_owned(),
         });
     }

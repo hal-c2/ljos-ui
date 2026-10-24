@@ -477,12 +477,16 @@ impl Rig {
 
     fn run(&mut self, line: &str) -> Result<(), String> {
         let mut words = line.split_whitespace();
-        if words.next() != Some("ljos") {
-            return Err(format!(
-                "the author runs `ljos` and nothing else, not {line:?}"
-            ));
+        let bin = match words.next() {
+            Some("ljos") => testrun::ljos_bin(),
+            Some("ljos-fuzz") => testrun::fuzz_bin(),
+            _ => {
+                return Err(format!(
+                    "the author runs `ljos` or `ljos-fuzz` and nothing else, not {line:?}"
+                ));
+            }
         }
-        let bin = testrun::ljos_bin().map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
         // One pipe for the output and the errors keeps them in the order
         // they were written, which is what a terminal shows.
         let out = Command::new("sh")

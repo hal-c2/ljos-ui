@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#MISE description="Differential fuzzing of Ljós against Qt (qml6, offscreen): random programs, shrunk repros, bucketed differences. fuzz:qt [area] [--cases N] [--seed S] [ljos-fuzz options]; exits 1 on a bucket not in crates/ljos_fuzz/known-buckets.txt"
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+qml="${QML6:-qml6}"
+command -v "$qml" >/dev/null || { echo "$qml not found; install Qt 6 or set QML6" >&2; exit 1; }
+
+# Most of a run is the Ljós side, which an optimised build runs several times faster.
+profile="${FUZZ_PROFILE:-release}"
+cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_fuzz --profile "$profile"
+dir="$profile"
+[ "$profile" = dev ] && dir=debug
+
+cd "$root"
+exec "$target/$dir/ljos-fuzz" --qml "$qml" \
+  --known "$root/crates/ljos_fuzz/known-buckets.txt" \
+  --out "${FUZZ_OUT:-$target/fuzz/out}" --work "$target/fuzz/work" "$@"

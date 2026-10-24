@@ -1,0 +1,44 @@
+# Buckets `ljos-fuzz` has found and that are known: a run reports them and does not fail.
+# One per line: the signature, then why it is known, with its issue if there is one.
+# A bucket that goes away when Ljós is fixed should go from here too.
+# A signature that ends in `*` knows every construct after it; use one only where every
+# difference of that kind and type is the one bug.
+
+# Ljós bugs, each with its @backlog scenario.
+error-kind:TypeError/Error:step-push*         push on a readonly list: Qt TypeError, list unchanged (features/language/readonly-list-properties.feature)
+value:list<string>:step-push*                 push on a readonly list changes it (features/language/readonly-list-properties.feature)
+throws:Error/none:step-set*                   a script giving an int a non-numeric string is thrown an Error (features/bindings/string-to-int.feature)
+value:int:url-string                          an int bound to a string is 0 and warned about (features/bindings/string-to-int.feature)
+warning:assign(qt-only):url-string            an int bound to a string is warned about (features/bindings/string-to-int.feature)
+warning:assign(qt-only):color-string          an int bound to a string is warned about (features/bindings/string-to-int.feature)
+warning:assign(qt-only):stringify-array       an int bound to a string is warned about (features/bindings/string-to-int.feature)
+value:bool:isNaN                              NaN given to x/y/width/height is ignored (features/items/geometry-nan.feature)
+value:double:default                          NaN given to x is ignored, no change is told (features/items/geometry-nan.feature)
+value:double:ref                              NaN given to height is ignored (features/items/geometry-nan.feature)
+value:var(number):ref                         NaN given to y is ignored (features/items/geometry-nan.feature)
+value:point:step-set(Qt.point)                NaN given to y is ignored (features/items/geometry-nan.feature)
+value:bool:step-set(Array.isArray)            a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:point:Qt.point                          a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:color:default                           a colour with zero alpha is written #00000000 (features/language/color-values.feature)
+value:bool:default                            a colour given an array is invalid and told as a change (features/language/color-values.feature)
+warning:assign(ljos-only):literal             a colour given an array is not warned about (features/language/color-values.feature)
+value:color:step-set(literal)                 an alias of a colour channel writes the channel (features/language/color-member-aliases.feature)
+warning:other(ljos-only):alias                an alias of a colour's alpha is a valid target (features/language/color-member-aliases.feature)
+warning:TypeError(ljos-only):Qt.size+alias+string-times-one  an alias of a colour's alpha reads it (features/language/color-member-aliases.feature)
+throws:none/Error:step-set(ref)               what an alias of a colour channel reads can be assigned (features/language/color-member-aliases.feature)
+value:font:step-member-write*                 a font pixel size of zero or less is ignored (features/language/font-pixel-size.feature)
+value:double:step-set(string-indexOf)         "".indexOf("") is -1 on Qt (features/bindings/expressions.feature)
+warning:TypeError(ljos-only):startsWith+typeof            a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:TypeError(ljos-only):Array.from+String+reduce     a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:RangeError(ljos-only):function-call+loose-eq+rect.height  a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:TypeError(qt-only):neg+toLowerCase+typeof         unexplained: Qt runs onRotationChanged for rotation: -3 when the case is made by createObject, not when it is loaded as the root; no scenario yet
+warning:binding-loop(qt-only):Math.hypot+color.r          implicitHeight reading height is a loop (features/bindings/loops.feature)
+warning:binding-loop(ljos-only):isNaN                     one font member reading another is not a loop (features/bindings/loops.feature)
+warning:TypeError(qt-only):replace+string-length+typeof   a url is an object to a script (features/language/url-values.feature)
+
+# Qt's own behaviour that Ljós does not copy.
+warning:binding-loop(qt-only):Qt.rect+alias+object-1      Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
+warning:binding-loop(qt-only):Qt.colorEqual+Qt.rgba-computed+alias  Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
+warning:coerce-void(qt-only):*                Qt 6.11 deprecation notice for a call to a function with typed parameters and no return type
+warning:other(qt-only):template               QFont::fromString's own warning for a font given text it cannot read
+throws:TypeError/none:call(stringify-object)  JSON.stringify of an object holding an item: Qt writes every property of the item (TypeError on a cycle), Ljós writes {}

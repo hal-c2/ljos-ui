@@ -159,30 +159,41 @@ fn workspace_root() -> PathBuf {
 /// once for the whole run so that a scenario tests the program as it is.
 pub(crate) fn ljos_bin() -> Result<PathBuf> {
     static BIN: OnceLock<std::result::Result<PathBuf, String>> = OnceLock::new();
-    BIN.get_or_init(|| {
-        if let Some(bin) = std::env::var_os("LJOS_BIN") {
-            return Ok(PathBuf::from(bin));
-        }
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let root = workspace_root();
-        let built = Command::new(cargo)
-            .args(["build", "--quiet", "-p", "ljos_cli"])
-            .current_dir(&root)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run cargo to build `ljos`: {e}"))?;
-        if !built.status.success() {
-            return Err(format!(
-                "`cargo build -p ljos_cli` failed:\n{}",
-                String::from_utf8_lossy(&built.stderr)
-            ));
-        }
-        let target =
-            std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
-        Ok(target.join("debug/ljos"))
-    })
-    .clone()
-    .map_err(failed)
+    BIN.get_or_init(|| workspace_bin("LJOS_BIN", "ljos_cli", "ljos"))
+        .clone()
+        .map_err(failed)
+}
+
+/// The `ljos-fuzz` program, as [`ljos_bin`] finds `ljos`.
+pub(crate) fn fuzz_bin() -> Result<PathBuf> {
+    static BIN: OnceLock<std::result::Result<PathBuf, String>> = OnceLock::new();
+    BIN.get_or_init(|| workspace_bin("LJOS_FUZZ_BIN", "ljos_fuzz", "ljos-fuzz"))
+        .clone()
+        .map_err(failed)
+}
+
+/// The program `name` of the workspace's `package`, or the one `var` names.
+fn workspace_bin(var: &str, package: &str, name: &str) -> std::result::Result<PathBuf, String> {
+    if let Some(bin) = std::env::var_os(var) {
+        return Ok(PathBuf::from(bin));
+    }
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let root = workspace_root();
+    let built = Command::new(cargo)
+        .args(["build", "--quiet", "-p", package])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run cargo to build `{name}`: {e}"))?;
+    if !built.status.success() {
+        return Err(format!(
+            "`cargo build -p {package}` failed:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        ));
+    }
+    let target =
+        std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+    Ok(target.join("debug").join(name))
 }
 
 /// Qt's runner for QML tests. The plain name is Qt 5's on some systems, so
