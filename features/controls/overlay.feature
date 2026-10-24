@@ -78,6 +78,39 @@ Feature: Overlay
         PASS   : Parent::test_parent()
         """
 
+    Scenario: The overlay stays, hidden, after the last popup is destroyed
+      Given the file "tst_stays.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import QtTest
+        Item {
+          id: root
+          width: 300; height: 200
+          Component { id: made; Popup { width: 50; height: 50 } }
+          TestCase {
+            name: "Stays"
+            when: windowShown
+            function test_stays() {
+              var p = made.createObject(root)
+              p.open()
+              var ov = root.Overlay.overlay
+              verify(ov.visible)
+              p.close()
+              p.destroy()
+              wait(0)
+              compare(root.Overlay.overlay, ov)
+              verify(!ov.visible)
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : Stays::test_stays()
+        """
+
   Rule: A popup that dims has a shade under it
 
     Background:

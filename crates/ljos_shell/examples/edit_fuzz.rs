@@ -267,6 +267,15 @@ fn dump(engine: &Engine, root: ObjectId) -> Dump {
             if ty == "ModelRow" {
                 continue;
             }
+            // A window's overlay is made at its first popup and stays, as
+            // in Qt, hidden and empty once the last popup is gone: a fresh
+            // load whose popups were never made has none.
+            if ty == "OverlayItem"
+                && !engine.read_by_name(c, "visible").to_boolean()
+                && below(engine, c).is_empty()
+            {
+                continue;
+            }
             let n = seen.entry(ty.clone()).or_default();
             kids.push((c, format!("{path}/{ty}[{n}]")));
             *n += 1;
