@@ -984,6 +984,27 @@ fn removed_from_disk(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.save_on_disk(&name, None))
 }
 
+#[when(
+    regex = r#"^the file "([^"]+\.qml)" is opened in a window of its own, given a Document titled "([^"]*)"$"#
+)]
+fn file_opened_in_window_given(w: &mut LjosWorld, name: String, title: String) -> StepResult {
+    w.each(|b| b.open_window_given(&name, &title))
+}
+
+#[then(regex = r#"^the Document the application gave is titled "([^"]*)"$"#)]
+fn given_document_titled(w: &mut LjosWorld, title: String) -> StepResult {
+    w.each(|b| {
+        let now = b.given_title()?;
+        if now == title {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the Document is titled {now:?}, not {title:?}"
+            )))
+        }
+    })
+}
+
 #[when(regex = r#"^the object "([^"]+)" is destroyed$"#)]
 fn object_destroyed(w: &mut LjosWorld, object: String) -> StepResult {
     w.each(|b| {

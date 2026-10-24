@@ -164,6 +164,8 @@ struct Live {
     /// Those of `roots` opened in a window of their own: made with no
     /// parent, so no child of the driver.
     windows: Vec<ObjectId>,
+    /// The `Fixtures` `Document` the application made and gave a window.
+    given: Option<ObjectId>,
     /// Shared with the engine's and the scene's log handlers, so the order
     /// of messages across both is kept.
     log: Rc<RefCell<Vec<LogEntry>>>,
@@ -424,6 +426,7 @@ impl LjosBackend {
             driver,
             roots: Vec::new(),
             windows: Vec::new(),
+            given: None,
             log,
             compiled_from: compiled,
             controls_style: None,
@@ -604,6 +607,27 @@ impl Live {
                 self.engine.destroy(old);
             }
         }
+    }
+
+    /// As an application that makes a window's `Document` before the
+    /// window does: the object is made, given to a scope of the window's
+    /// own, and the root is made in that scope.
+    fn open_window_given(&mut self, name: &str, title: &str) -> Result<()> {
+        let made = fixtures::document(&self.engine, title).map_err(failed)?;
+        let window = self.engine.window_scope();
+        self.engine
+            .set_singleton_in::<fixtures::Document>(window, made)
+            .map_err(failed)?;
+        let obj = self
+            .engine
+            .in_window_scope(window, || {
+                self.engine.create_from_url(key_of(name), None, Vec::new())
+            })
+            .map_err(|e| failed(format!("cannot open {name}: {e}")))?;
+        self.given = Some(made);
+        self.roots.push(obj);
+        self.windows.push(obj);
+        self.settle()
     }
 
     /// `"list/row"` finds `list` anywhere below a root, then `row` anywhere
@@ -1237,6 +1261,18 @@ impl Backend for LjosBackend {
 
     fn save_on_disk(&mut self, name: &str, text: Option<&str>) -> Result<()> {
         self.live()?.save_on_disk(name, text)
+    }
+
+    fn open_window_given(&mut self, name: &str, title: &str) -> Result<()> {
+        self.live()?.open_window_given(name, title)
+    }
+
+    fn given_title(&mut self) -> Result<String> {
+        let live = self.live()?;
+        let given = live
+            .given
+            .ok_or_else(|| failed("the application gave no window a Document"))?;
+        fixtures::title(&live.engine, given).map_err(failed)
     }
 
     fn exists(&mut self, object: &str) -> Result<bool> {

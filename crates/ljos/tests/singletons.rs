@@ -151,3 +151,93 @@ fn each_window_reads_its_own_singleton_through_both_tiers() {
     let warnings = engine.take_warnings();
     assert!(warnings.is_empty(), "{warnings:?}");
 }
+
+/// One for each window, which a host makes before the window's QML.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Bridge", uncreatable)]
+#[qml_singleton(scope = "window")]
+pub struct WindowBridge {
+    #[qml(notify)]
+    pub title: Atom,
+}
+
+#[test]
+fn a_window_reads_the_object_its_host_made_before_it() {
+    let engine = ljos::engine();
+    engine.register_singleton::<WindowBridge>("Example", Version::new(1, 0));
+    // The host's per-window object, made and written before the QML.
+    let made = engine
+        .create_native(
+            WindowBridge {
+                title: Atom::from("two"),
+            },
+            None,
+        )
+        .unwrap();
+    let window = engine.window_scope();
+    engine
+        .set_singleton_in::<WindowBridge>(window, made)
+        .unwrap();
+    let source = compile(
+        &engine,
+        "import QtQuick\nimport Example\nItem { property string title: Bridge.title }\n",
+    )
+    .unwrap();
+    let root = engine
+        .in_window_scope(window, || ljos::create_root(&engine, source, "Main"))
+        .unwrap();
+    assert_eq!(engine.singleton_in::<WindowBridge>(root), Ok(made));
+    assert_eq!(
+        engine
+            .to_js_string(&engine.read_by_name(root, "title"))
+            .to_string(),
+        "two"
+    );
+    // The window goes; the host's object stays, for the host to destroy.
+    engine.destroy(root);
+    engine.process_deferred_deletes();
+    assert!(engine.is_alive(made));
+}
+
+#[test]
+fn a_test_with_no_qml_reads_a_window_s_object() {
+    let engine = ljos::engine();
+    engine.register_singleton::<WindowBridge>("Example", Version::new(1, 0));
+    let window = engine.window_scope();
+    let made = engine.singleton_in_scope::<WindowBridge>(window).unwrap();
+    assert_eq!(engine.singleton_in_scope::<WindowBridge>(window), Ok(made));
+    let other = engine.window_scope();
+    assert_ne!(engine.singleton_in_scope::<WindowBridge>(other), Ok(made));
+    // Its end destroys what it made.
+    engine.close_window_scope(window).unwrap();
+    engine.process_deferred_deletes();
+    assert!(!engine.is_alive(made));
+    assert!(engine.singleton_in_scope::<WindowBridge>(window).is_err());
+}
+
+#[test]
+fn a_window_takes_one_object_of_a_type() {
+    let engine = ljos::engine();
+    engine.register_singleton::<WindowBridge>("Example", Version::new(1, 0));
+    let window = engine.window_scope();
+    let first = engine.create_native(WindowBridge::default(), None).unwrap();
+    let second = engine.create_native(WindowBridge::default(), None).unwrap();
+    engine
+        .set_singleton_in::<WindowBridge>(window, first)
+        .unwrap();
+    assert!(
+        engine
+            .set_singleton_in::<WindowBridge>(window, second)
+            .is_err()
+    );
+    let store = engine.create_native(Store::default(), None).unwrap();
+    assert!(
+        engine
+            .set_singleton_in::<WindowBridge>(window, store)
+            .is_err()
+    );
+    // A window's object outlives a scope no root took.
+    engine.close_window_scope(window).unwrap();
+    engine.process_deferred_deletes();
+    assert!(engine.is_alive(first));
+}

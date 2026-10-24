@@ -19,6 +19,13 @@
 //! the compiled program is the same for both kinds. A reload makes the
 //! root again in the scope the old one owned, so the window keeps its
 //! objects.
+//!
+//! **A host's objects.** A host that makes a window's object itself, before
+//! the window's QML, opens the scope first ([`Engine::window_scope`]),
+//! gives it the object ([`Engine::set_singleton_in`]) and makes the root in
+//! it ([`Engine::in_window_scope`]), which takes the scope as a reload's
+//! root does. A scope no root has taken yet is a window without QML, which
+//! a headless test reads with [`Engine::singleton_in_scope`].
 
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
@@ -85,6 +92,11 @@ pub enum ScopedEvent {
     Dropped,
 }
 
+/// A window's set of the objects of [`SingletonScope::Window`] types, opened
+/// by the host before the window's root ([`Engine::window_scope`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WindowScope(ScopeId);
+
 /// One object of a [`SingletonScope::Window`] type and its window.
 #[derive(Clone, Copy, Debug)]
 pub struct ScopedSingleton {
@@ -142,6 +154,9 @@ struct Entry {
     /// The type is one for each window. Its entry without a scope stands
     /// for it where there is no window.
     window: bool,
+    /// The host made the object and gave it to the scope: the scope's end
+    /// leaves it standing.
+    given: bool,
     state: State,
 }
 
@@ -162,7 +177,8 @@ struct Scopes {
 }
 
 struct Owner {
-    root: ObjectId,
+    /// `None` until a root takes a scope the host opened.
+    root: Option<ObjectId>,
     /// The entries made in the scope.
     entries: Vec<usize>,
 }
@@ -348,7 +364,7 @@ impl Engine {
         let scope = self.singleton_scope_at(self.context_of(obj)?)?;
         let all = self.extension::<Singletons>();
         let scopes = all.scopes.borrow();
-        scopes.owners.get(&scope).map(|o| o.root)
+        scopes.owners.get(&scope).and_then(|o| o.root)
     }
 
     /// The objects of the window `root` owns, of the types that are one
@@ -356,7 +372,7 @@ impl Engine {
     pub fn scoped_singletons(&self, root: ObjectId) -> Vec<ObjectId> {
         let all = self.extension::<Singletons>();
         let scopes = all.scopes.borrow();
-        let Some(owner) = scopes.owners.values().find(|o| o.root == root) else {
+        let Some(owner) = scopes.owners.values().find(|o| o.root == Some(root)) else {
             return Vec::new();
         };
         let entries = all.entries.borrow();
@@ -482,6 +498,7 @@ impl Engine {
                     ty: ty.clone(),
                     scope: None,
                     window,
+                    given: false,
                     state: State::Unmade,
                 });
                 let i = entries.len() - 1;
@@ -495,14 +512,23 @@ impl Engine {
         let Some(scope) = ctx.and_then(|c| self.singleton_scope_at(c)) else {
             return base;
         };
+        self.scoped_handle(base, scope)
+    }
+
+    /// The entry of the type whose entry without a scope is `base`, in
+    /// `scope`.
+    fn scoped_handle(&self, base: usize, scope: ScopeId) -> usize {
+        let all = self.extension::<Singletons>();
         if let Some(i) = all.scoped.borrow().get(&(base, scope)) {
             return *i;
         }
         let mut entries = all.entries.borrow_mut();
+        let ty = entries[base].ty.clone();
         entries.push(Entry {
-            ty: ty.clone(),
+            ty,
             scope: Some(scope),
             window: true,
+            given: false,
             state: State::Unmade,
         });
         let i = entries.len() - 1;
@@ -692,7 +718,7 @@ impl Engine {
         };
         all.entries.borrow_mut()[handle].state = state;
         if let (Some(obj), Some(scope), Kind::Native(native)) = (out, scope, &kind) {
-            let root = all.scopes.borrow().owners.get(&scope).map(|o| o.root);
+            let root = all.scopes.borrow().owners.get(&scope).and_then(|o| o.root);
             if let Some(root) = root {
                 self.tell_scoped(&ScopedSingleton {
                     event: ScopedEvent::Made,
@@ -758,11 +784,14 @@ impl Engine {
             Some(p) => self.context_of(p).and_then(|c| self.singleton_scope_at(c)),
             None if !host => match self.calling_context() {
                 Some(c) => self.singleton_scope_at(c),
-                None => Some(self.singleton_scope_open(root)),
+                None => Some(self.singleton_scope_open(Some(root))),
             },
             None => match all.adopt.take() {
-                Some(s) => Some(s),
-                None => Some(self.singleton_scope_open(root)),
+                Some(s) => {
+                    self.singleton_scope_taken(s, root);
+                    Some(s)
+                }
+                None => Some(self.singleton_scope_open(Some(root))),
             },
         };
         if let Some(s) = scope {
@@ -772,7 +801,7 @@ impl Engine {
         }
     }
 
-    fn singleton_scope_open(&self, root: ObjectId) -> ScopeId {
+    fn singleton_scope_open(&self, root: Option<ObjectId>) -> ScopeId {
         let all = self.extension::<Singletons>();
         let mut scopes = all.scopes.borrow_mut();
         let s = scopes.next;
@@ -797,7 +826,7 @@ impl Engine {
                 .members
                 .get(&old)
                 .map(|(_, s)| *s)
-                .filter(|s| scopes.owners.get(s).is_some_and(|o| o.root == old))
+                .filter(|s| scopes.owners.get(s).is_some_and(|o| o.root == Some(old)))
         };
         all.adopt.set(scope);
     }
@@ -812,8 +841,8 @@ impl Engine {
         let all = self.extension::<Singletons>();
         let mut scopes = all.scopes.borrow_mut();
         for o in scopes.owners.values_mut() {
-            if o.root == old {
-                o.root = new;
+            if o.root == Some(old) {
+                o.root = Some(new);
             }
         }
     }
@@ -823,7 +852,7 @@ impl Engine {
     /// given back, to be destroyed once `order` is gone.
     pub(crate) fn singleton_scopes_end(&self, order: &[ObjectId]) -> Vec<ObjectId> {
         let all = self.extension::<Singletons>();
-        let ended: Vec<(ObjectId, Owner)> = {
+        let ended: Vec<(Option<ObjectId>, Owner)> = {
             let mut scopes = all.scopes.borrow_mut();
             if scopes.members.is_empty() {
                 return Vec::new();
@@ -834,32 +863,14 @@ impl Engine {
                     continue;
                 };
                 scopes.by_context.remove(&ctx);
-                if scopes.owners.get(&s).is_some_and(|o| o.root == *id) {
+                if scopes.owners.get(&s).is_some_and(|o| o.root == Some(*id)) {
                     let owner = scopes.owners.remove(&s).expect("looked up above");
-                    ended.push((*id, owner));
+                    ended.push((Some(*id), owner));
                 }
             }
             ended
         };
-        let mut objects = Vec::new();
-        let mut told = Vec::new();
-        {
-            let mut entries = all.entries.borrow_mut();
-            let mut scoped = all.scoped.borrow_mut();
-            for (root, owner) in &ended {
-                for &i in &owner.entries {
-                    let e = &mut entries[i];
-                    if let State::Made { obj, .. } = e.state
-                        && self.is_alive(obj)
-                    {
-                        objects.push(obj);
-                        told.push((*root, obj, e.ty.clone()));
-                    }
-                    e.state = State::Gone;
-                }
-                scoped.retain(|_, i| !owner.entries.contains(i));
-            }
-        }
+        let (objects, told) = self.singleton_scopes_close(&ended);
         for (root, obj, ty) in told {
             if let Some(meta) = self.singleton_native(&ty).map(|n| n.meta) {
                 self.tell_scoped(&ScopedSingleton {
@@ -871,6 +882,221 @@ impl Engine {
             }
         }
         objects
+    }
+
+    /// Marks the entries of `ended` gone. Gives back the objects to destroy
+    /// (those the engine made) and those to tell the listeners of (those
+    /// of a scope a root owned).
+    #[allow(clippy::type_complexity)]
+    fn singleton_scopes_close(
+        &self,
+        ended: &[(Option<ObjectId>, Owner)],
+    ) -> (Vec<ObjectId>, Vec<(ObjectId, ObjectId, TypeRef)>) {
+        let all = self.extension::<Singletons>();
+        let mut objects = Vec::new();
+        let mut told = Vec::new();
+        let mut entries = all.entries.borrow_mut();
+        let mut scoped = all.scoped.borrow_mut();
+        for (root, owner) in ended {
+            for &i in &owner.entries {
+                let e = &mut entries[i];
+                if let State::Made { obj, .. } = e.state
+                    && self.is_alive(obj)
+                {
+                    if !e.given {
+                        objects.push(obj);
+                    }
+                    if let Some(root) = root {
+                        told.push((*root, obj, e.ty.clone()));
+                    }
+                }
+                e.state = State::Gone;
+            }
+            scoped.retain(|_, i| !owner.entries.contains(i));
+        }
+        (objects, told)
+    }
+
+    /// A root took the scope `s`: if the host opened it, the root owns it
+    /// now, and the listeners hear of what the scope made before it.
+    fn singleton_scope_taken(&self, s: ScopeId, root: ObjectId) {
+        let all = self.extension::<Singletons>();
+        let made: Vec<(ObjectId, TypeRef)> = {
+            let mut scopes = all.scopes.borrow_mut();
+            let Some(owner) = scopes.owners.get_mut(&s) else {
+                return;
+            };
+            if owner.root.is_some() {
+                return;
+            }
+            owner.root = Some(root);
+            let entries = all.entries.borrow();
+            owner
+                .entries
+                .iter()
+                .filter_map(|&i| match entries[i].state {
+                    State::Made { obj, .. } if !entries[i].given => {
+                        Some((obj, entries[i].ty.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        for (object, ty) in made {
+            if let Some(meta) = self.singleton_native(&ty).map(|n| n.meta) {
+                self.tell_scoped(&ScopedSingleton {
+                    event: ScopedEvent::Made,
+                    root,
+                    object,
+                    meta,
+                });
+            }
+        }
+    }
+
+    /// Opens a window's scope before its root, for a host that makes the
+    /// window's objects of [`SingletonScope::Window`] types itself
+    /// ([`Engine::set_singleton_in`]), or reads them with no QML at all
+    /// ([`Engine::singleton_in_scope`]). The first root the host makes
+    /// inside [`Engine::in_window_scope`] owns it from then on, and its
+    /// end ends the scope; until then [`Engine::close_window_scope`] does.
+    ///
+    /// ```
+    /// use ljos_engine::{Engine, QmlObject, Version, qml_singleton};
+    ///
+    /// #[derive(Default, QmlObject)]
+    /// #[qml(module = "Example", name = "Document")]
+    /// #[qml_singleton(scope = "window")]
+    /// pub struct Document {
+    ///     #[qml(notify)]
+    ///     title: String,
+    /// }
+    ///
+    /// let engine = Engine::new();
+    /// engine.register_singleton::<Document>("Example", Version::new(1, 0));
+    /// let made = engine
+    ///     .create_native(Document { title: "first".into() }, None)
+    ///     .unwrap();
+    /// let window = engine.window_scope();
+    /// engine.set_singleton_in::<Document>(window, made).unwrap();
+    /// assert_eq!(engine.singleton_in_scope::<Document>(window), Ok(made));
+    /// // A root made in `engine.in_window_scope(window, || ...)` reads `made`.
+    /// ```
+    pub fn window_scope(&self) -> WindowScope {
+        WindowScope(self.singleton_scope_open(None))
+    }
+
+    /// Gives the window `scope` the host's own `obj` as its `T`, which
+    /// everything under the window reads by the type's name. The window
+    /// does not destroy it when it goes; the host does. An error when `T`
+    /// is not one for each window, `obj` is not a `T`, the scope has ended,
+    /// or it already has another `T`.
+    pub fn set_singleton_in<T: QmlSingleton>(
+        &self,
+        scope: WindowScope,
+        obj: ObjectId,
+    ) -> Result<(), EngineError> {
+        let meta = T::static_meta();
+        if T::SCOPE != SingletonScope::Window {
+            return Err(EngineError::Load(format!(
+                "{} is one for the engine, not for each window",
+                meta.name
+            )));
+        }
+        if self.with::<T, _>(obj, |_| ()).is_err() {
+            return Err(EngineError::Load(format!("{obj:?} is not a {}", meta.name)));
+        }
+        let handle = self.scope_handle::<T>(scope)?;
+        let all = self.extension::<Singletons>();
+        let mut entries = all.entries.borrow_mut();
+        let e = &mut entries[handle];
+        match e.state {
+            State::Made { obj: now, .. } if now == obj => return Ok(()),
+            State::Made { obj: now, .. } if self.is_alive(now) => {
+                return Err(EngineError::Load(format!(
+                    "the window already has its {}",
+                    meta.name
+                )));
+            }
+            State::Making(_) => {
+                return Err(EngineError::Load(format!(
+                    "the window's {} is being made",
+                    meta.name
+                )));
+            }
+            _ => {}
+        }
+        e.given = true;
+        e.state = State::Made {
+            obj,
+            file: None,
+            seen: all.sources.get(),
+        };
+        Ok(())
+    }
+
+    /// The `T` of the window `scope`: the object the host gave it, or one
+    /// made now. For a window with no QML, such as in a test.
+    pub fn singleton_in_scope<T: QmlSingleton>(
+        &self,
+        scope: WindowScope,
+    ) -> Result<ObjectId, EngineError> {
+        if T::SCOPE != SingletonScope::Window {
+            return self.singleton::<T>();
+        }
+        let handle = self.scope_handle::<T>(scope)?;
+        self.singleton_made(handle).ok_or_else(|| {
+            EngineError::Load(format!(
+                "{}: the singleton was not made",
+                T::static_meta().name
+            ))
+        })
+    }
+
+    /// Runs `f`, in which the host makes the root of the window `scope`:
+    /// the first root it makes with no parent takes the scope instead of
+    /// opening one of its own. Any creation call can be in `f`.
+    pub fn in_window_scope<R>(&self, scope: WindowScope, f: impl FnOnce() -> R) -> R {
+        let all = self.extension::<Singletons>();
+        let before = all.adopt.replace(Some(scope.0));
+        let r = f();
+        all.adopt.set(before);
+        r
+    }
+
+    /// Ends a window's scope that no root has taken: the objects it made
+    /// are destroyed and those the host gave are left standing. A scope a
+    /// root owns ends with the root.
+    pub fn close_window_scope(&self, scope: WindowScope) -> Result<(), EngineError> {
+        let all = self.extension::<Singletons>();
+        let owner = {
+            let mut scopes = all.scopes.borrow_mut();
+            match scopes.owners.get(&scope.0) {
+                None => return Ok(()),
+                Some(o) if o.root.is_some() => {
+                    return Err(EngineError::Load(
+                        "a root owns the window: destroy the root".into(),
+                    ));
+                }
+                Some(_) => scopes.owners.remove(&scope.0).expect("looked up above"),
+            }
+        };
+        let (objects, _) = self.singleton_scopes_close(&[(None, owner)]);
+        for obj in objects {
+            self.destroy(obj);
+        }
+        Ok(())
+    }
+
+    /// The entry of `T` in the window `scope`, which stands.
+    fn scope_handle<T: QmlSingleton>(&self, scope: WindowScope) -> Result<usize, EngineError> {
+        let all = self.extension::<Singletons>();
+        if !all.scopes.borrow().owners.contains_key(&scope.0) {
+            return Err(EngineError::Load("the window has gone".into()));
+        }
+        let ty = self.singleton_type::<T>()?;
+        let base = self.singleton_handle(&ty, None);
+        Ok(self.scoped_handle(base, scope.0))
     }
 }
 

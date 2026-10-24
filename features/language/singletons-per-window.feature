@@ -12,7 +12,10 @@ Feature: A native singleton for each window
   every window. Everything under a window reads that window's object by the type's name: the
   objects of the window's own file, the components it uses, and the objects its scripts make
   later. The object is made the first time something under the window reads it, and it goes
-  when the window goes. A singleton for the engine is still one object, shared by every window.
+  when the window goes. An application that made a window's object before the window, as a Qt
+  application hands its engine an instance, can give it to the window instead: the window
+  reads that object and leaves it standing when it goes. A singleton for the engine is still
+  one object, shared by every window.
 
   The application gives these scenarios the module `Fixtures`. Its `Document` is one for each
   window and its `Session` is one for the engine. Each has a `title`. The application logs
@@ -193,3 +196,36 @@ Feature: A native singleton for each window
       And a reload happens
       Then the property "title" of "second" is "now kept"
       And the log has no info matching "Document dropped"
+
+  Rule: The application can hand a window an object it made
+
+    Scenario: A window reads the object its application made before it
+      Given the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      When the file "Second.qml" is opened in a window of its own, given a Document titled "made first"
+      Then the property "title" of "second" is "made first"
+      And the log has no info matching "Document made"
+
+    Scenario: A write under the window reaches the application's object
+      Given the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      When the file "Second.qml" is opened in a window of its own, given a Document titled "made first"
+      And the method "name" of "second" is called with "renamed"
+      Then the Document the application gave is titled "renamed"
+
+    Scenario: The object the application gave outlives its window
+      Given the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      When the file "Second.qml" is opened in a window of its own, given a Document titled "made first"
+      And the object "second" is destroyed
+      Then the log has an info matching "^Document dropped$"
+      And the Document the application gave is titled "made first"

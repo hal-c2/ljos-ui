@@ -160,7 +160,7 @@ pub mod prelude {
         ModelSignals, ObjectId, Point, Prop, PropIndex, PropertyMap, QmlList, QmlListModel,
         QmlObject, QmlType, QmlValue, QtObject, Rect, RowKey, ScopedEvent, ScopedSingleton,
         SignalIndex, Size, Timer, TreeChange, TreeListener, TreeListeners, Url, Value, Version,
-        list_model, qml_impl, qml_singleton, tree_model,
+        WindowScope, list_model, qml_impl, qml_singleton, tree_model,
     };
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,

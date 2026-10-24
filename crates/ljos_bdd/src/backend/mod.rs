@@ -240,6 +240,16 @@ pub trait Backend: fmt::Debug {
     fn save_on_disk(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {
         Err(BackendError::NotImplemented("a watch over files on disk"))
     }
+    /// As [`Backend::open_window`], for an application that made the
+    /// window's `Fixtures` `Document` itself, titled `title`, and gives it
+    /// to the window.
+    fn open_window_given(&mut self, _name: &str, _title: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a window given its singleton"))
+    }
+    /// The title of the `Document` the application gave a window.
+    fn given_title(&mut self) -> Result<String> {
+        Err(BackendError::NotImplemented("a window given its singleton"))
+    }
     /// Type `text` on the keyboard, one key press per character.
     fn type_text(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("typing text"))

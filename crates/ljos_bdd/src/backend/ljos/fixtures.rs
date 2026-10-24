@@ -3,7 +3,9 @@
 //! does not import the module sees them.
 
 use ljos::prelude::*;
-use ljos_engine::{Engine, LogLevel, QmlObject, ScopedEvent, Version, qml_singleton};
+use ljos_engine::{
+    Engine, EngineError, LogLevel, ObjectId, QmlObject, ScopedEvent, Version, qml_singleton,
+};
 
 /// One for each window (`features/language/singletons-per-window.feature`).
 #[derive(Debug, Default, QmlObject)]
@@ -69,6 +71,21 @@ impl Browser {
         }
         Some(depth)
     }
+}
+
+/// A `Document` the application made itself, titled `title`.
+pub(super) fn document(engine: &Engine, title: &str) -> Result<ObjectId, EngineError> {
+    engine.create_native(
+        Document {
+            title: title.to_owned(),
+        },
+        None,
+    )
+}
+
+/// The title of the `Document` `obj`.
+pub(super) fn title(engine: &Engine, obj: ObjectId) -> Result<String, EngineError> {
+    engine.with::<Document, _>(obj, |d| d.title.clone())
 }
 
 pub(super) fn register(engine: &Engine) {
