@@ -245,7 +245,7 @@ struct ParkedResize {
     size: [f64; 2],
 }
 
-/// An `app_memory` waiting for the host to say what its windows hold.
+/// An `app_metrics` `memory` waiting for the host to say what its windows hold.
 struct ParkedMemory {
     reply: oneshot::Sender<Answer>,
     args: memory::MemoryArgs,
@@ -403,7 +403,7 @@ impl Inspector {
     }
 
     /// Says that the host draws its windows and tells, when an
-    /// `app_memory` waits ([`waits_for_memory`](Self::waits_for_memory)),
+    /// `app_metrics` `memory` waits ([`waits_for_memory`](Self::waits_for_memory)),
     /// what each one's scene and renderer hold
     /// ([`finish_memory`](Self::finish_memory)). Without it the tool tells
     /// of the inspector's scene alone, with nothing drawing it.
@@ -411,13 +411,13 @@ impl Inspector {
         self.measures_render = true;
     }
 
-    /// Whether an `app_memory` waits for the host to say what its windows
+    /// Whether an `app_metrics` `memory` waits for the host to say what its windows
     /// hold.
     pub fn waits_for_memory(&self) -> bool {
         !self.parked_memory.is_empty()
     }
 
-    /// Answers the `app_memory` requests that wait, with what the host's
+    /// Answers the `app_metrics` `memory` requests that wait, with what the host's
     /// windows hold, the primary one first.
     pub fn finish_memory(&mut self, engine: &Engine, windows: &[WindowMemory]) {
         for parked in std::mem::take(&mut self.parked_memory) {

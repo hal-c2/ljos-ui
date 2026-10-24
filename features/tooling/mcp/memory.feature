@@ -1,12 +1,12 @@
 # Sources:
 #   docs/ARCHITECTURE.md (principle 6: 0 % CPU when idle) and section 19.4
-#   (`app_memory`)
+#   (`app_metrics`, `memory`)
 #   https://www.erlang.org/doc/apps/observer/observer_ug.html
 # The inspector is a Ljós extension: Qt has nothing to compare it with.
 
 @ljos-only @headless
 Feature: An agent reads where the application's memory is
-  `app_memory` breaks down what the application holds, as an observer's
+  `app_metrics` with `memory` breaks down what the application holds, as an observer's
   allocator view does: its objects by type, the script heap, the reactive
   graph, the text caches, and per window the scene's tree and display
   lists and what its renderer keeps, beside the process's resident bytes.
@@ -35,7 +35,10 @@ Feature: An agent reads where the application's memory is
     And the inspector is connected with the capabilities "inspect"
 
   Scenario: The objects are counted by type, the largest first
-    When the agent calls the tool "app_memory"
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
     Then the answer's "/objects/count" is at least 8
     And the answer's "/objects/bytes" is at least 1
     And the answer's "/objects/approximate" is true
@@ -43,29 +46,35 @@ Feature: An agent reads where the application's memory is
     And the answer's text contains "objects"
 
   Scenario: One type is asked for by its name
-    When the agent calls the tool "app_memory" with:
+    When the agent calls the tool "app_metrics" with:
       """json
-      {"type": "Text"}
+      {"memory": {"type": "Text"}}
       """
     Then the answer's "/objects/types" has 1 entry
     And the answer's "/objects/types/0/type" is "Text"
     And the answer's "/objects/types/0/count" is 5
 
   Scenario: The list of types is as long as asked
-    When the agent calls the tool "app_memory" with:
+    When the agent calls the tool "app_metrics" with:
       """json
-      {"max": 2}
+      {"memory": {"max": 2}}
       """
     Then the answer's "/objects/types" has 2 entries
     And the answer's "/objects/types_left_out" is at least 1
 
   Scenario: The script heap is the allocator's own count
-    When the agent calls the tool "app_memory"
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
     Then the answer's "/script/bytes" is at least 1
     And the answer's "/script/approximate" is false
 
   Scenario: The reactive graph, the text caches and the process
-    When the agent calls the tool "app_memory"
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
     Then the answer's "/reactive/nodes" is at least 1
     And the answer's "/reactive/bytes" is at least 1
     And the answer's "/text/layouts" is at least 1
@@ -75,7 +84,10 @@ Feature: An agent reads where the application's memory is
 
   # Headless, nothing renders: the scene is there, a renderer is not.
   Scenario: Each window has its scene, and its renderer where one draws
-    When the agent calls the tool "app_memory"
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
     Then the answer's "/windows" has 1 entry
     And the answer's "/windows/0/scene/nodes" is at least 1
     And the answer's "/windows/0/scene/lists" is at least 1
@@ -87,8 +99,21 @@ Feature: An agent reads where the application's memory is
     Then the answer's "/objects/0/bytes" is at least 1
 
   Scenario: A type that is not there is asked for
-    When the agent calls the tool "app_memory" with:
+    When the agent calls the tool "app_metrics" with:
       """json
-      {"type": "Slider"}
+      {"memory": {"type": "Slider"}}
       """
     Then the answer's "/objects/types" has 0 entries
+
+  Scenario: Without `memory` the metrics are frame work, with a summary
+    When the agent calls the tool "app_metrics"
+    Then the answer's "/memory/objects" is at least 8
+    And the answer's "/frames/count" is at least 0
+
+  Scenario: The list of types is bounded
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {"max": 0}}
+      """
+    Then the agent is refused with "invalid_argument"
+    And the refusal mentions "memory.max"

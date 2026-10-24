@@ -1852,7 +1852,7 @@ impl<M: Send + 'static> Desktop<M> {
     /// Asks the platform for the size an agent wants the primary window
     /// to have (`app_resize`), as for a `Window` whose size the
     /// application wrote; the pass at the size given answers the agent.
-    /// Tells the `app_memory` requests that wait what each window's scene
+    /// Tells the `app_metrics` `memory` requests that wait what each window's scene
     /// and renderer hold, the root's first. A renderer is counted whether
     /// or not its window is on the screen: what it keeps is held all the
     /// same.

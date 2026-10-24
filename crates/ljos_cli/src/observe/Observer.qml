@@ -3687,7 +3687,7 @@ ApplicationWindow {
                     ]
 
                     function load() {
-                        window.ask("app_memory", { max: 200 }, "memory")
+                        window.ask("app_metrics", { memory: { max: 200 } }, "memory")
                     }
 
                     function sum(windows, of) {

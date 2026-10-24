@@ -72,9 +72,21 @@ known, oldest first, at most 100. `level` sets the least severe level listed; `s
 `next_since` of an earlier answer to get only newer lines.";
 
 pub const METRICS: &str = "\
-Frame work since the inspector attached: frames, time over budget, time per scheduler lane, \
-jobs, the owners that took the most time, and `memory` (resident, the process's own, scripts, \
-reactive nodes, objects). Use it to see what ate the frame or the memory.";
+Frame work since the inspector attached: frames, time over budget, time per lane, jobs, the \
+owners that took the most time, and a `memory` summary. With `memory` ({`type`, `max`}) it \
+answers where the memory is instead: objects by type, script heap, graph, text, images, scenes.";
+
+/// `app_metrics`: frame work, or with `memory` where the memory is.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsArgs {
+    /// Answer where the application's memory is instead of frame work:
+    /// objects by type (about how many bytes), the script heap, the
+    /// reactive graph, text caches, images, and per window the scene and
+    /// what its renderer keeps. `{}` lists the 20 largest types.
+    #[serde(default)]
+    pub memory: Option<super::memory::MemoryArgs>,
+}
 
 pub const CLICK: &str = "\
 Click the item `target` (a reference or locator) at its centre: a move, a press and a release \
@@ -603,10 +615,10 @@ impl Kind {
 }
 
 /// Where the tools that act begin in [`TOOLS`]; the ones before only read.
-pub const FIRST_ACT: usize = 13;
+pub const FIRST_ACT: usize = 12;
 
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 26] = [
+pub const TOOLS: [&str; 25] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -619,7 +631,6 @@ pub const TOOLS: [&str; 26] = [
     "app_objects",
     "app_trace",
     "app_frames",
-    "app_memory",
     "app_click",
     "app_type",
     "app_press",
@@ -654,7 +665,7 @@ pub fn registry() -> ToolRegistry {
                 .max_result_bytes(ljos_mcp_core::DEFAULT_RESULT_BYTES),
         ))
         .declare(read(ToolDef::new::<LogsArgs>("app_logs", LOGS)))
-        .declare(read(ToolDef::new::<Nothing>("app_metrics", METRICS)))
+        .declare(read(ToolDef::new::<MetricsArgs>("app_metrics", METRICS)))
         .declare(read(ToolDef::new::<super::observe::ProcessesArgs>(
             "app_processes",
             super::observe::PROCESSES,
@@ -674,10 +685,6 @@ pub fn registry() -> ToolRegistry {
         .declare(read(ToolDef::new::<super::timeline::FramesArgs>(
             "app_frames",
             super::timeline::FRAMES,
-        )))
-        .declare(read(ToolDef::new::<super::memory::MemoryArgs>(
-            "app_memory",
-            super::memory::MEMORY,
         )))
         .declare(input(ToolDef::new::<ClickArgs>("app_click", CLICK)))
         .declare(input(ToolDef::new::<TypeArgs>("app_type", TYPE)))
@@ -1007,8 +1014,22 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
         }
         "app_logs" => Kind::Logs(read(tool, args)?),
         "app_metrics" => {
-            read::<Nothing>(tool, args)?;
-            Kind::Metrics
+            let a: MetricsArgs = read(tool, args)?;
+            let Some(a) = a.memory else {
+                return Ok(Kind::Metrics);
+            };
+            let most = super::memory::MOST_TYPES;
+            match a.max {
+                Some(0) => return Err(bad(tool, "`memory.max` is at least 1")),
+                Some(m) if m > most => {
+                    return Err(bad(tool, format!("`memory.max` is at most {most}")));
+                }
+                _ => {}
+            }
+            if a.r#type.as_deref().is_some_and(str::is_empty) {
+                return Err(bad(tool, "`memory.type` names a type"));
+            }
+            Kind::Memory(a)
         }
         "app_processes" => {
             let a: super::observe::ProcessesArgs = read(tool, args)?;
@@ -1082,19 +1103,6 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             }
             holder(tool, a.holder.as_deref())?;
             Kind::Frames(a)
-        }
-        "app_memory" => {
-            let a: super::memory::MemoryArgs = read(tool, args)?;
-            let most = super::memory::MOST_TYPES;
-            match a.max {
-                Some(0) => return Err(bad(tool, "`max` is at least 1")),
-                Some(m) if m > most => return Err(bad(tool, format!("`max` is at most {most}"))),
-                _ => {}
-            }
-            if a.r#type.as_deref().is_some_and(str::is_empty) {
-                return Err(bad(tool, "`type` names a type"));
-            }
-            Kind::Memory(a)
         }
         other => {
             return Err(SurfaceError::not_found(format!(

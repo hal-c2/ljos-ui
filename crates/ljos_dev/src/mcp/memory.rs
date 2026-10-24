@@ -1,5 +1,5 @@
-//! `app_memory`: where the application's memory is, as an observer's
-//! allocator view shows it.
+//! `app_metrics` with `memory`: where the application's memory is, as an
+//! observer's allocator view shows it.
 //!
 //! What has a running count (the script heap, the process's resident
 //! pages, the image cache) is read; the objects are walked once, and the
@@ -19,11 +19,6 @@ use serde_json::{Value, json};
 
 use super::objects::handle;
 use super::observe::Resident;
-
-pub const MEMORY: &str = "\
-Where the application's memory is: objects by type (count, about how many bytes), the script \
-heap, the reactive graph, text caches, images, and per window the scene and what its renderer \
-keeps, beside the process's resident bytes. `type` keeps one type; `max` bounds the list.";
 
 /// The most types one answer lists unless told otherwise.
 const DEFAULT_MAX: usize = 20;
