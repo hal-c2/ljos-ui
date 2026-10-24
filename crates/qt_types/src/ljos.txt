@@ -6681,14 +6681,14 @@ module QtQuick.Templates
 		signal implicitHandleHeightChanged
 	type QtQuick.Templates.ScrollBarAttached ScrollBarAttached
 		is uncreatable
-		prop horizontal QtQml.QtObject named pointer
-		prop vertical QtQml.QtObject named pointer
+		prop horizontal QtQuick.Templates.ScrollBar named pointer
+		prop vertical QtQuick.Templates.ScrollBar named pointer
 		signal horizontalChanged
 		signal verticalChanged
 	type QtQuick.Templates.ScrollIndicatorAttached ScrollIndicatorAttached
 		is uncreatable
-		prop horizontal QtQml.QtObject named pointer
-		prop vertical QtQml.QtObject named pointer
+		prop horizontal QtQuick.Templates.ScrollIndicator named pointer
+		prop vertical QtQuick.Templates.ScrollIndicator named pointer
 		signal horizontalChanged
 		signal verticalChanged
 	type QtQuick.Templates.SelectionRectangleAttached SelectionRectangleAttached

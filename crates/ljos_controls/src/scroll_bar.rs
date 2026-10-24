@@ -168,9 +168,9 @@ struct Held {
 #[derive(Debug, Default, QmlObject)]
 #[qml(name = "ScrollBarAttached")]
 pub struct ScrollBarAttached {
-    #[qml(notify)]
+    #[qml(notify, holds = "ScrollBar")]
     pub horizontal: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "ScrollBar")]
     pub vertical: Option<ObjectId>,
 }
 
@@ -228,9 +228,9 @@ impl Default for ScrollIndicator {
 #[derive(Debug, Default, QmlObject)]
 #[qml(name = "ScrollIndicatorAttached")]
 pub struct ScrollIndicatorAttached {
-    #[qml(notify)]
+    #[qml(notify, holds = "ScrollIndicator")]
     pub horizontal: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "ScrollIndicator")]
     pub vertical: Option<ObjectId>,
 }
 

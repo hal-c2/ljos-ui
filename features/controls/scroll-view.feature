@@ -230,6 +230,9 @@ Feature: ScrollView
       Then the property "down.visible" of "view" is false
       And the property "effectiveScrollBarWidth" of "view" is 0
 
+    Scenario: A policy is set on the bar the view attaches without a word
+      Then the log has no warnings
+
   Rule: Inside the padding
 
     Background:
