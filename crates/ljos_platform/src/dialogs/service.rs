@@ -69,6 +69,12 @@ impl NameFilter {
             .map(str::to_owned)
             .collect()
     }
+
+    /// Whether a pattern takes every file: `*`, or `*.*`, which file
+    /// dialogs read the same way.
+    pub fn takes_every_file(&self) -> bool {
+        self.patterns.iter().any(|p| p == "*" || p == "*.*")
+    }
 }
 
 /// What a dialog is to show.
@@ -252,6 +258,14 @@ mod tests {
         assert_eq!(f.extensions(), vec!["txt", "md"]);
         assert!(NameFilter::parse("All Files (*)").extensions().is_empty());
         assert_eq!(NameFilter::parse("*.png").extensions(), vec!["png"]);
+    }
+
+    #[test]
+    fn a_filter_of_star_or_star_dot_star_takes_every_file() {
+        assert!(NameFilter::parse("All files (*)").takes_every_file());
+        assert!(NameFilter::parse("Anything (*.txt *.*)").takes_every_file());
+        assert!(!NameFilter::parse("Images (*.png)").takes_every_file());
+        assert!(!NameFilter::parse("plain").takes_every_file());
     }
 
     #[test]

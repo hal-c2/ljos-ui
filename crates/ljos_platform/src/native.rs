@@ -13,8 +13,8 @@ use arboard::{Clipboard, ImageData};
 
 use crate::clipboard::{ClipboardError, ClipboardImage, ClipboardMode, ClipboardService};
 use crate::dialogs::{
-    CANCEL, DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, NO, OK, YES,
-    system_buttons,
+    CANCEL, DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, NO, NameFilter,
+    OK, YES, system_buttons,
 };
 use crate::open_url::OpenUrlService;
 
@@ -247,12 +247,8 @@ async fn ask(request: DialogRequest) -> DialogReply {
     if let Some(name) = &request.file_name {
         dialog = dialog.set_file_name(name);
     }
-    for filter in &request.filters {
-        let extensions = filter.extensions();
-        // A filter of every file is what the dialog shows without one.
-        if !extensions.is_empty() {
-            dialog = dialog.add_filter(&filter.name, &extensions);
-        }
+    for (name, extensions) in system_filters(&request.filters, kind, Panel::HERE) {
+        dialog = dialog.add_filter(name, &extensions);
     }
     let one = |h: Option<rfd::FileHandle>| h.map(|h| vec![h.path().to_path_buf()]);
     let chosen: Option<Vec<PathBuf>> = match kind {
@@ -269,6 +265,64 @@ async fn ask(request: DialogRequest) -> DialogReply {
         Some(paths) if !paths.is_empty() => DialogReply::Files(paths),
         _ => DialogReply::Dismissed,
     }
+}
+
+/// How the system's file dialog takes filters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Panel {
+    /// One set of allowed types: every filter's extensions are merged.
+    MacOs,
+    /// The first filter's first extension is the one a saved name gets.
+    Windows,
+    /// Filters offered as alternatives, the first in force.
+    Other,
+}
+
+impl Panel {
+    const HERE: Panel = if cfg!(target_os = "macos") {
+        Panel::MacOs
+    } else if cfg!(target_os = "windows") {
+        Panel::Windows
+    } else {
+        Panel::Other
+    };
+}
+
+/// The filters to give the system's dialog, as a name and the extensions
+/// it takes, `*` for every file. The first stays first: Qt starts with
+/// the first filter in force.
+///
+/// Where filters cannot be alternatives (macOS), any filter of every file
+/// means no filter, so no file the user could reach in Qt by choosing it
+/// is greyed out. A save dialog on Windows whose first filter takes every
+/// file has none either, so the name the user types gets no extension `*`.
+/// A filter with neither an extension nor every file is left out: the
+/// system's dialogs filter by extension only.
+fn system_filters(
+    filters: &[NameFilter],
+    kind: DialogKind,
+    panel: Panel,
+) -> Vec<(&str, Vec<String>)> {
+    let every = |f: &NameFilter| f.takes_every_file();
+    let none = match panel {
+        Panel::MacOs => filters.iter().any(every),
+        Panel::Windows => kind == DialogKind::SaveFile && filters.first().is_some_and(every),
+        Panel::Other => false,
+    };
+    if none {
+        return Vec::new();
+    }
+    filters
+        .iter()
+        .filter_map(|f| {
+            let extensions = if every(f) {
+                vec!["*".to_owned()]
+            } else {
+                f.extensions()
+            };
+            (!extensions.is_empty()).then_some((f.name.as_str(), extensions))
+        })
+        .collect()
 }
 
 async fn message(request: DialogRequest) -> DialogReply {
@@ -369,6 +423,58 @@ mod tests {
         assert_eq!(c.set_image(image), unavailable);
         assert_eq!(c.clear(ClipboardMode::Clipboard), unavailable);
         assert_eq!(c.text(ClipboardMode::Clipboard), None);
+    }
+
+    fn filters(texts: &[&str]) -> Vec<NameFilter> {
+        texts.iter().map(|t| NameFilter::parse(t)).collect()
+    }
+
+    fn given(texts: &[&str], kind: DialogKind, panel: Panel) -> Vec<(String, Vec<String>)> {
+        let filters = filters(texts);
+        system_filters(&filters, kind, panel)
+            .into_iter()
+            .map(|(n, e)| (n.to_owned(), e))
+            .collect()
+    }
+
+    fn named(pairs: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+        pairs
+            .iter()
+            .map(|(n, e)| (n.to_string(), e.iter().map(|e| e.to_string()).collect()))
+            .collect()
+    }
+
+    #[test]
+    fn a_filter_of_every_file_stays_first_where_filters_are_alternatives() {
+        let texts = ["All files (*)", "Images (*.png *.jpg)", "plain"];
+        let want = named(&[("All files", &["*"]), ("Images", &["png", "jpg"])]);
+        for kind in [DialogKind::OpenFiles, DialogKind::SaveFile] {
+            assert_eq!(given(&texts, kind, Panel::Other), want);
+        }
+        assert_eq!(given(&texts, DialogKind::OpenFile, Panel::Windows), want);
+    }
+
+    #[test]
+    fn a_later_filter_of_every_file_keeps_its_place() {
+        let texts = ["Images (*.png)", "Everything (*.*)"];
+        let want = named(&[("Images", &["png"]), ("Everything", &["*"])]);
+        assert_eq!(given(&texts, DialogKind::OpenFile, Panel::Other), want);
+        assert_eq!(given(&texts, DialogKind::SaveFile, Panel::Windows), want);
+    }
+
+    #[test]
+    fn a_merged_panel_takes_every_file_if_any_filter_does() {
+        let texts = ["Images (*.png)", "All files (*)"];
+        assert!(given(&texts, DialogKind::OpenFile, Panel::MacOs).is_empty());
+        let texts = ["Images (*.png)", "Text (*.txt)"];
+        let want = named(&[("Images", &["png"]), ("Text", &["txt"])]);
+        assert_eq!(given(&texts, DialogKind::OpenFile, Panel::MacOs), want);
+    }
+
+    #[test]
+    fn a_windows_save_dialog_starting_with_every_file_has_no_filter() {
+        let texts = ["All files (*)", "Images (*.png)"];
+        assert!(given(&texts, DialogKind::SaveFile, Panel::Windows).is_empty());
     }
 
     #[test]
