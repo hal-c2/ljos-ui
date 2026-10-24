@@ -975,9 +975,10 @@ fn lay_block(
     let layout = lay_range(engine, block, 0..block.text.len(), style, params, sizes);
     let marker = block.marker.as_deref().map(|marker| {
         let marker = engine.layout(marker, style, &LayoutParams::default());
-        // Right-aligned in the indent, a little before the text, on the
-        // first line's baseline.
-        let gap = f64::from(style.pixel_size) * 0.4;
+        // Right-aligned in the indent, a space before the text as in Qt
+        // 6.11 (features/text-input/rich-text-list-numbering.feature), on
+        // the first line's baseline.
+        let gap = engine.layout(" ", style, &LayoutParams::default()).advance;
         Part {
             x: indent - gap - marker.natural_width,
             y: layout.baseline - marker.baseline,

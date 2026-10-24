@@ -901,9 +901,11 @@ impl TextEngine {
                             indent_right: block.indent_right,
                             marker: block.marker.as_deref().map(|m| {
                                 let marker = self.edit_layout(m, style, &EditParams::default());
-                                // Right-aligned in the indent, a little
-                                // before the text.
-                                let gap = f64::from(style.pixel_size) * 0.4;
+                                // Right-aligned in the indent, a space
+                                // before the text, as in Qt.
+                                let gap = self
+                                    .layout(" ", style, &crate::LayoutParams::default())
+                                    .advance;
                                 (-gap - marker.natural_width, std::rc::Rc::new(marker))
                             }),
                         });
