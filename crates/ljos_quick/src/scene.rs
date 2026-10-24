@@ -62,8 +62,12 @@ use crate::tree::resources;
 pub const POLISH_CATEGORY: &str = "qt.quick.polish";
 /// Log category for scene errors (failed effects, bad trees).
 pub const SCENE_CATEGORY: &str = "qt.quick.scene";
-/// Polish passes per frame before the scene gives up and warns.
-pub const MAX_POLISH_PASSES: usize = 10;
+/// Polish passes per frame before the scene gives up and warns. A child
+/// whose implicit size follows the size its layout gives it (a `Column`
+/// whose last item fills what is left of it) moves part of the way to where it
+/// settles each pass, and Qt lets it get there within the frame; a loop
+/// that never settles stops here, where Qt would spin on.
+pub const MAX_POLISH_PASSES: usize = 100;
 /// Passes per frame in which views lay out the rows they just made, before
 /// those count as passes too.
 pub const MAX_ROW_PASSES: usize = 1024;
