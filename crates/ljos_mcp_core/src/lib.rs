@@ -5,6 +5,8 @@
 //! SDK or absorbing a breaking release touches one file. No egui, no engine.
 
 #[cfg(feature = "http")]
+mod alive;
+#[cfg(feature = "http")]
 mod auth;
 mod caps;
 mod error;
@@ -21,6 +23,8 @@ mod snapshot;
 mod socket;
 mod surface;
 
+#[cfg(feature = "http")]
+pub use alive::process_alive;
 #[cfg(feature = "http")]
 pub use auth::{
     RateLimit, Token, TokenFile, TokenFileError, address_host, loopback_host, loopback_origin,

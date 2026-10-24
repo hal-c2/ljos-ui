@@ -1380,11 +1380,9 @@ fn start_of(path: &Path) -> Option<u32> {
 /// A server removes its own when it stops, but one that was killed (Ctrl-C
 /// in the terminal) could not, and a client that looks in the directory
 /// would find an address where nothing listens. Only files named for a
-/// process that is gone are touched, and only where the system says which
-/// processes there are.
+/// process the system says is gone are touched.
 fn forget_dead_starts(token_file: &Path) {
-    let proc = Path::new("/proc");
-    if start_of(token_file).is_none() || !proc.join("self").exists() {
+    if start_of(token_file).is_none() {
         return;
     }
     let Some(entries) = token_file
@@ -1396,7 +1394,7 @@ fn forget_dead_starts(token_file: &Path) {
     for entry in entries.flatten() {
         let path = entry.path();
         if let Some(pid) = start_of(&path)
-            && !proc.join(pid.to_string()).exists()
+            && ljos_mcp_core::process_alive(pid) == Some(false)
         {
             let _ = std::fs::remove_file(path);
         }

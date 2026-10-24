@@ -28,6 +28,7 @@ http = [
     "dep:getrandom",
     "dep:constant_time_eq",
     "dep:libc",
+    "dep:windows-sys",
 ]
 # A client in the same process, for tests and for hosts that drive a
 # surface themselves (§19.2: "host the inspector in-process").
@@ -52,6 +53,13 @@ constant_time_eq = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, optional = true }
+
+# Whether a token file's process runs (`process_alive`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, optional = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client", "server", "macros", "transport-io", "transport-worker"] }

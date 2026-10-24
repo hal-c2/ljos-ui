@@ -95,8 +95,7 @@ pub fn find_token_file(target: &Path) -> anyhow::Result<PathBuf> {
 
 /// Whether process `pid` runs; where that cannot be told, it is taken to.
 fn running(pid: u32) -> bool {
-    let proc = Path::new("/proc");
-    !proc.is_dir() || proc.join(pid.to_string()).exists()
+    ljos_mcp_core::process_alive(pid) != Some(false)
 }
 
 /// Where a token file's `url` points.
