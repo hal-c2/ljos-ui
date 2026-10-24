@@ -215,6 +215,71 @@ fn close(x: f64, y: f64) -> bool {
     x.to_bits().abs_diff(y.to_bits()) <= ULPS
 }
 
+/// A warning without what changes from case to case: where it is, the
+/// names and numbers in it. Two warnings of one shape are, nearly always,
+/// one behaviour.
+#[must_use]
+pub fn message_shape(text: &str) -> String {
+    let line = text.lines().next().unwrap_or("");
+    // `file:///…/Case.qml:9:5: ` in front, or a URL inside the message.
+    let mut rest = line;
+    if let Some(at) = rest.find(".qml:") {
+        let after = &rest[at + 5..];
+        let skipped = after.trim_start_matches(|c: char| c.is_ascii_digit() || c == ':');
+        if !line[..at].contains(' ') {
+            rest = skipped.trim_start();
+        }
+    }
+    let mut out = String::with_capacity(rest.len());
+    let mut words = rest.split(' ').peekable();
+    while let Some(w) = words.next() {
+        let w = if w.contains("://") { "_" } else { w };
+        out.push_str(w);
+        if words.peek().is_some() {
+            out.push(' ');
+        }
+    }
+    // An error's name is the kind of the warning already.
+    if let Some((name, msg)) = out.split_once(": ")
+        && name.ends_with("Error")
+        && !name.contains(' ')
+    {
+        out = msg.to_owned();
+    }
+    let mut shape = String::with_capacity(out.len());
+    let mut quote = None;
+    let mut digits = false;
+    for c in out.chars() {
+        match quote {
+            Some(q) if c == q => {
+                shape.push('_');
+                shape.push(c);
+                quote = None;
+            }
+            Some(_) => {}
+            None if c == '\'' || c == '"' => {
+                shape.push(c);
+                quote = Some(c);
+            }
+            None if c.is_ascii_digit() => {
+                if !digits {
+                    shape.push('N');
+                }
+                digits = true;
+                continue;
+            }
+            None => shape.push(c),
+        }
+        digits = false;
+    }
+    shape
+        .trim_end_matches(':')
+        .trim()
+        .chars()
+        .take(80)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -316,5 +381,29 @@ mod tests {
             panic!()
         };
         assert_eq!(d[0].kind, DiffKind::Throws);
+    }
+
+    #[test]
+    fn a_warning_is_shaped_without_its_place_and_names() {
+        assert_eq!(
+            message_shape(
+                "file:///w/c12/Case.qml:9: TypeError: Cannot call method 'toFixed' of undefined"
+            ),
+            "Cannot call method '_' of undefined"
+        );
+        assert_eq!(
+            message_shape("file:///Case.qml:7:5: Unable to assign QString to int"),
+            "Unable to assign QString to int"
+        );
+        assert_eq!(
+            message_shape(
+                "QQmlExpression: Expression file:///w/Case.qml:8:5 depends on non-bindable properties:\n  x"
+            ),
+            "QQmlExpression: Expression _ depends on non-bindable properties"
+        );
+        assert_eq!(
+            message_shape("file:///Case.qml:4: RangeError: Invalid array length 42"),
+            "Invalid array length N"
+        );
     }
 }

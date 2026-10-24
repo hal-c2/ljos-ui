@@ -12,7 +12,7 @@ use serde_json::Value;
 use self::ast::{Decl, Program, Stmt};
 use crate::{
     area::Area,
-    compare::{Diff, DiffKind},
+    compare::{Diff, DiffKind, message_shape},
     outcome::Rendered,
     rng::Rng,
 };
@@ -139,12 +139,17 @@ fn describe(p: &Program, d: &Diff) -> (String, String) {
             (ty, construct)
         }
         DiffKind::Warning => {
-            let side = if d.qt.is_null() {
-                "ljos-only"
+            let (side, text) = if d.qt.is_null() {
+                ("ljos-only", &d.ljos)
             } else {
-                "qt-only"
+                ("qt-only", &d.qt)
             };
-            let construct = step.map_or_else(|| features(p), step_label);
+            // A warning says what it is about better than the program does;
+            // only a binding loop's says no more than the property's name.
+            let construct = match text.as_str() {
+                Some(t) if d.key != "binding-loop" => message_shape(t),
+                _ => step.map_or_else(|| features(p), step_label),
+            };
             (format!("{}({side})", d.key), construct)
         }
         DiffKind::LjosRejects | DiffKind::LjosCrash | DiffKind::Phases => ("-".into(), features(p)),
