@@ -18,12 +18,12 @@ mod resize;
 mod select;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use ljos_engine::{
     Cx, Engine, EngineError, ItemSelectionModel, LogLevel, MetaRef, ModelChange, NodeId, ObjectId,
-    OverrideId, QmlObject, QmlType, Value, Version, ViewDelegates, ViewHost, WriteKind, qml_impl,
+    QmlObject, QmlType, Value, Version, ViewDelegates, ViewHost, WriteKind, qml_impl,
 };
 
 use ljos_reactive::NodeKind;
@@ -109,8 +109,9 @@ pub(crate) struct TableState {
     pub model: Cell<Option<ObjectId>>,
     /// Whether the view is a `TreeView`, which tells delegates their row.
     pub tree: Cell<bool>,
-    /// Delegates in the pool, hidden, and the override that hides each.
-    pub hidden: RefCell<HashMap<ObjectId, OverrideId>>,
+    /// Delegates in the pool, which are not shown
+    /// ([`crate::views::cull::pool`]).
+    pub hidden: RefCell<HashSet<ObjectId>>,
     /// How tall each row is, as far as it was measured; `NaN` not yet.
     pub heights: RefCell<Vec<f64>>,
     /// How wide each column's delegates are, as far as they were
@@ -425,7 +426,9 @@ impl ViewHost for Host {
             st.widths.borrow_mut().clear();
         }
         for (_, obj) in gone {
-            st.hidden.borrow_mut().remove(obj);
+            if st.hidden.borrow_mut().remove(obj) {
+                crate::views::cull::pool(e, *obj, false);
+            }
         }
         layout::bump(e, &st);
     }
@@ -435,7 +438,9 @@ impl ViewHost for Host {
             let _ = tree::set_parent_item(e, object, None);
         }
         if let Some(st) = state_of(e, self.0) {
-            st.hidden.borrow_mut().remove(&object);
+            if st.hidden.borrow_mut().remove(&object) {
+                crate::views::cull::pool(e, object, false);
+            }
             edit::forget(e, &st, object);
         }
     }
@@ -509,7 +514,9 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
             source.widths.borrow_mut().clear();
             source.cells.set_tree(tree, root);
             // The delegates go with the old source, hidden or not.
-            source.hidden.borrow_mut().clear();
+            for obj in source.hidden.take() {
+                crate::views::cull::pool(e, obj, false);
+            }
             let as_model: Rc<dyn ljos_engine::ItemModel> = source.cells.clone();
             delegates.set_source(e, Some(as_model), delegate);
             layout::bump(e, &source);

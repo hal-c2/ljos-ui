@@ -4,7 +4,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ljos_engine::{Made, NodeId, ObjectId, OverrideId, PropIndex, RowKey, ViewDelegates};
+use ljos_engine::{Made, NodeId, ObjectId, PropIndex, RowKey, ViewDelegates};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// One line of what a view laid out: a row of a list, or the cells of a
@@ -298,8 +298,8 @@ pub(crate) struct ViewState {
     pub populate: Cell<bool>,
     /// Delegates of rows that left and are still shown.
     pub leaving: RefCell<Vec<ObjectId>>,
-    /// Pooled delegates and what hides each.
-    pub hidden: RefCell<FxHashMap<ObjectId, OverrideId>>,
+    /// Pooled delegates, which are not shown ([`super::cull::pool`]).
+    pub hidden: RefCell<FxHashSet<ObjectId>>,
     /// Transitions that are running, and on which item.
     pub running: RefCell<Vec<(ObjectId, ObjectId)>>,
     /// The change of rows the last word from the model was about, until

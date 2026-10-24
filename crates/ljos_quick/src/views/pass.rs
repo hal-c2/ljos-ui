@@ -18,10 +18,7 @@
 
 use std::collections::VecDeque;
 
-use ljos_engine::{
-    Atom, Engine, Made, ObjectId, OverrideContent, PropIndex, RestoreMode, RowKey, Urgency, Value,
-    ViewDelegates,
-};
+use ljos_engine::{Atom, Engine, Made, ObjectId, PropIndex, RowKey, Urgency, Value, ViewDelegates};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::state::{Extra, Geo, Slot, ViewState, average};
@@ -347,7 +344,7 @@ fn ensure_extra(
     item
 }
 
-/// Gives a delegate back: to the pool with `reuse`, hidden there.
+/// Gives a delegate back: to the pool with `reuse`, not shown there.
 pub(crate) fn release(
     e: &Engine,
     view: ObjectId,
@@ -362,32 +359,15 @@ pub(crate) fn release(
     if let Some(att) = attached_of(e, view, obj) {
         warn(e, "pooled", e.emit_by_name(att, "pooled", &[]));
     }
-    if !e.is_alive(obj) || st.hidden.borrow().contains_key(&obj) {
-        return;
-    }
-    // Not an assignment: what the delegate says about `visible` is there
-    // again when it shows another row.
-    match e.push_override(
-        obj,
-        Item::VISIBLE.index,
-        OverrideContent::Value(Value::Bool(false)),
-    ) {
-        Ok(id) => {
-            st.hidden.borrow_mut().insert(obj, id);
-        }
-        Err(err) => warn(e, "hide", Err(err)),
+    if e.is_alive(obj) && st.hidden.borrow_mut().insert(obj) {
+        super::cull::pool(e, obj, true);
     }
 }
 
 /// A delegate came out of the pool: it is shown again and told.
 fn revive(e: &Engine, view: ObjectId, st: &ViewState, obj: ObjectId) {
-    let hidden = st.hidden.borrow_mut().remove(&obj);
-    if let Some(id) = hidden {
-        warn(
-            e,
-            "show",
-            e.remove_override(obj, Item::VISIBLE.index, id, RestoreMode::BindingOrValue),
-        );
+    if st.hidden.borrow_mut().remove(&obj) {
+        super::cull::pool(e, obj, false);
     }
     if let Some(att) = attached_of(e, view, obj) {
         warn(e, "reused", e.emit_by_name(att, "reused", &[]));

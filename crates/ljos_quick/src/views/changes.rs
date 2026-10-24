@@ -146,7 +146,9 @@ impl ViewHost for Host {
             return;
         };
         st.leaving.borrow_mut().retain(|o| *o != object);
-        st.hidden.borrow_mut().remove(&object);
+        if st.hidden.borrow_mut().remove(&object) {
+            super::cull::pool(e, object, false);
+        }
         if st.current.get() == Some(object) {
             st.current.set(None);
         }

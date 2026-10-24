@@ -184,6 +184,13 @@ impl Kind {
     }
 }
 
+/// Whether an item's node is in the tree: `visible`, or reading false
+/// only because a parent is hidden (`covered`), facing the viewer, and
+/// not waiting in a view's pool.
+fn shown(g: &Geom, covered: bool, pooled: bool) -> bool {
+    (g.visible || covered) && !g.faces_away && !pooled
+}
+
 /// The geometry of one item, as its render node needs it, but for where
 /// it is (`Place`): an item that only moves, as an animated or flicked one
 /// does, reads two properties a frame instead of all of these.
@@ -487,6 +494,9 @@ pub struct QuickScene {
     /// The rows views made and do not show (`views::cull`), and the
     /// generation of that they were read at.
     culled: (FxHashSet<ObjectId>, u64),
+    /// The delegates waiting in views' pools (`views::cull::pool`): not
+    /// shown and not hit, whatever `visible` says. Read with `culled`.
+    pooled: FxHashSet<ObjectId>,
     root: Option<ObjectId>,
     /// The layer above the root item (`crate::layer`), once one was made.
     layer: Option<ObjectId>,
@@ -594,6 +604,7 @@ impl QuickScene {
             layer_base: HashMap::new(),
             hidden: FxHashSet::default(),
             culled: (FxHashSet::default(), 0),
+            pooled: FxHashSet::default(),
             root: None,
             layer: None,
             viewport: kurbo::Rect::from_origin_size((0.0, 0.0), viewport),
@@ -1592,7 +1603,7 @@ impl QuickScene {
             // `MultiEffect` drawing that parent shows it as Qt does.
             let covered = e.inherit.borrow().visible.is_some();
             self.tree
-                .set_visible(node, (g.visible || covered) && !g.faces_away);
+                .set_visible(node, shown(&g, covered, self.pooled.contains(&obj)));
             self.tree.set_drawn(node, self.drawn(obj));
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
@@ -1970,7 +1981,8 @@ impl QuickScene {
     }
 
     /// Stops painting the rows views made and do not show, and paints
-    /// again those they show now.
+    /// again those they show now; and leaves out of the tree what waits
+    /// in a view's pool, and puts back what left it.
     fn refresh_culled(&mut self, engine: &Engine) {
         let generation = crate::views::cull::generation(engine);
         if generation == self.culled.1 {
@@ -1983,6 +1995,21 @@ impl QuickScene {
             if let Some(e) = self.entries.get(&obj) {
                 self.tree.set_drawn(e.node, self.drawn(obj));
             }
+        }
+        let pooled = crate::views::cull::pooled(engine);
+        let changed: Vec<ObjectId> = pooled.symmetric_difference(&self.pooled).copied().collect();
+        self.pooled = pooled;
+        for obj in changed {
+            // Not laid out yet: the geometry, when it comes, reads the pool.
+            let Some((node, Some(g), inherit)) = self
+                .entries
+                .get(&obj)
+                .map(|e| (e.node, e.geom, e.inherit.borrow().visible.is_some()))
+            else {
+                continue;
+            };
+            self.tree
+                .set_visible(node, shown(&g, inherit, self.pooled.contains(&obj)));
         }
     }
 

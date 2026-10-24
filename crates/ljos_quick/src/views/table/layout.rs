@@ -19,8 +19,8 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Engine, ItemModel, ItemSelectionModel, Made, ObjectId, OverrideContent, PropIndex,
-    PropertyFlags, RestoreMode, Urgency, Value, WriteKind,
+    Engine, ItemModel, ItemSelectionModel, Made, ObjectId, PropIndex, PropertyFlags, Urgency,
+    Value, WriteKind,
 };
 
 use super::{TableState, TableView, state_of};
@@ -206,7 +206,7 @@ pub(crate) fn read_sizes(e: &Engine, st: &TableState) {
         return;
     };
     for (_, o) in d.live() {
-        if e.is_alive(o) && !st.hidden.borrow().contains_key(&o) {
+        if e.is_alive(o) && !st.hidden.borrow().contains(&o) {
             let _ = e.read(o, Item::IMPLICIT_WIDTH.index);
             let _ = e.read(o, Item::IMPLICIT_HEIGHT.index);
         }
@@ -735,7 +735,7 @@ pub(crate) fn let_go(e: &Engine, st: &TableState, obj: ObjectId) {
     }
 }
 
-/// Gives a delegate back: to the pool with `reuse`, hidden there.
+/// Gives a delegate back: to the pool with `reuse`, not shown there.
 fn release(
     e: &Engine,
     st: &TableState,
@@ -749,32 +749,15 @@ fn release(
     if let Some(att) = super::attached_of(e, obj) {
         warn(e, "pooled", e.emit_by_name(att, "pooled", &[]));
     }
-    if !e.is_alive(obj) || st.hidden.borrow().contains_key(&obj) {
-        return;
-    }
-    // Not an assignment: what the delegate says about `visible` is there
-    // again when it shows another cell.
-    match e.push_override(
-        obj,
-        Item::VISIBLE.index,
-        OverrideContent::Value(Value::Bool(false)),
-    ) {
-        Ok(id) => {
-            st.hidden.borrow_mut().insert(obj, id);
-        }
-        Err(err) => warn(e, "hide", Err(err)),
+    if e.is_alive(obj) && st.hidden.borrow_mut().insert(obj) {
+        crate::views::cull::pool(e, obj, true);
     }
 }
 
 /// A delegate came out of the pool: it is shown again and told.
 fn revive(e: &Engine, st: &TableState, obj: ObjectId) {
-    let hidden = st.hidden.borrow_mut().remove(&obj);
-    if let Some(id) = hidden {
-        warn(
-            e,
-            "show",
-            e.remove_override(obj, Item::VISIBLE.index, id, RestoreMode::BindingOrValue),
-        );
+    if st.hidden.borrow_mut().remove(&obj) {
+        crate::views::cull::pool(e, obj, false);
     }
     if let Some(att) = super::attached_of(e, obj) {
         warn(e, "reused", e.emit_by_name(att, "reused", &[]));

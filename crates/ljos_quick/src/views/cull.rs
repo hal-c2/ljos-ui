@@ -9,6 +9,12 @@
 //! says which rows those are each time it lays them out, and the scene
 //! leaves them out of the picture; they still take the pointer, as an
 //! item does that only is not painted.
+//!
+//! A delegate waiting in a view's pool (`reuseItems`) is neither drawn
+//! nor given the pointer, and is not told so either: it reads `visible`
+//! as it set it, and so does what is in it, as on qml6. Telling it would
+//! cost each delegate two changes of `visible` through everything in it
+//! on its way to another row.
 
 use std::cell::{Cell, RefCell};
 
@@ -19,6 +25,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 struct Culled {
     /// The rows each view does not show.
     by_view: RefCell<FxHashMap<ObjectId, FxHashSet<ObjectId>>>,
+    /// The delegates in the pools of all views.
+    pooled: RefCell<FxHashSet<ObjectId>>,
     /// Counts the changes, so a scene asks again only after one.
     generation: Cell<u64>,
 }
@@ -43,7 +51,28 @@ pub(crate) fn set(e: &Engine, view: ObjectId, rows: FxHashSet<ObjectId>) {
     c.generation.set(c.generation.get() + 1);
 }
 
-/// How many times what is culled changed.
+/// `row` went to its view's pool, or (`pooled` false) came out of it or
+/// is gone.
+pub(crate) fn pool(e: &Engine, row: ObjectId, pooled: bool) {
+    let c = e.extension::<Culled>();
+    let changed = if pooled {
+        c.pooled.borrow_mut().insert(row)
+    } else {
+        c.pooled.borrow_mut().remove(&row)
+    };
+    if changed {
+        c.generation.set(c.generation.get() + 1);
+    }
+}
+
+/// Every delegate waiting in a pool.
+pub(crate) fn pooled(e: &Engine) -> FxHashSet<ObjectId> {
+    let c = e.extension::<Culled>();
+    c.pooled.borrow_mut().retain(|o| e.is_alive(*o));
+    c.pooled.borrow().clone()
+}
+
+/// How many times what is culled or pooled changed.
 pub(crate) fn generation(e: &Engine) -> u64 {
     e.extension::<Culled>().generation.get()
 }

@@ -281,7 +281,7 @@ pub(crate) fn implicit(e: &Engine, view: ObjectId, axis: usize, i: usize) -> f64
             } else {
                 cell / cols
             };
-            line == i && !st.hidden.borrow().contains_key(o)
+            line == i && !st.hidden.borrow().contains(o)
         })
         .map(|(_, o)| layout::implicit(e, o, p))
         .fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))))
