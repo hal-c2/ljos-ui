@@ -48,6 +48,7 @@ mod pointer_item;
 mod positioners;
 mod press_and_hold;
 mod rectangle;
+mod rectangular_shadow;
 mod repeater;
 pub mod roots;
 mod safe_area;

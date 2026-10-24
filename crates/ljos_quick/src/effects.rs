@@ -243,7 +243,11 @@ impl MultiEffect {
 
 /// Registers module `QtQuick.Effects`.
 pub(crate) fn register(engine: &Engine) {
-    engine.register_module(ljos_engine::module!("QtQuick.Effects" 1.0 => [MultiEffect]));
+    use crate::rectangular_shadow::RectangularShadow;
+    engine.register_module(ljos_engine::module!("QtQuick.Effects" 1.0 => [
+        MultiEffect, RectangularShadow,
+    ]));
+    crate::rectangular_shadow::register_paint(engine);
 }
 
 /// Padding on each side `(left, top, right, bottom)` in item coordinates.

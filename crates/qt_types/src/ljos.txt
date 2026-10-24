@@ -4877,6 +4877,7 @@ module QtQuick.Dialogs
 
 module QtQuick.Effects
 	MultiEffect QtQuick.Effects.MultiEffect
+	RectangularShadow QtQuick.Effects.RectangularShadow
 	type QtQuick.Effects.MultiEffect MultiEffect
 		prototype QtQuick.Item named
 		prop source QtQml.QtObject named pointer
@@ -4940,6 +4941,22 @@ module QtQuick.Effects
 		signal vertexShaderChanged
 		signal hasProxySourceChanged
 		signal shaderChanged
+	type QtQuick.Effects.RectangularShadow RectangularShadow
+		prototype QtQuick.Item named
+		prop blur QtQml.real named
+		prop spread QtQml.real named
+		prop radius QtQml.real named
+		prop color QtQuick.color named
+		prop offset QtQuick.vector2d named
+		prop cached QtQml.bool named
+		prop material QtQml.QtObject named pointer
+		signal blurChanged
+		signal spreadChanged
+		signal radiusChanged
+		signal colorChanged
+		signal offsetChanged
+		signal cachedChanged
+		signal materialChanged
 
 module QtQuick.Layouts
 	ColumnLayout QtQuick.Layouts.ColumnLayout
