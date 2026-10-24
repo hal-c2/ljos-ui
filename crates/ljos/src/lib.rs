@@ -216,8 +216,12 @@ pub use app::{App, create_root};
 /// [`App::on_window`] is handed each window the host opens, as a
 /// [`NativeWindow`] whose handles are `raw-window-handle`'s, re-exported
 /// here at the version the host uses.
+///
+/// [`replace_root`] puts another root in the window of the one shown, for
+/// an application that makes its whole interface again.
 pub mod window {
     pub use ljos_platform::{NativeWindow, raw_window_handle};
+    pub use ljos_quick::roots::{RootError, replace_root};
 }
 
 /// Key events as a host delivers them, and the application-wide key

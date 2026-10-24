@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use ljos_dev::{DevSession, Host, Overlay, QtTypeOracle, Reloader, Report, TypeOracle};
 use ljos_egui::QmlView;
-use ljos_engine::{Engine, LogLevel, ObjectId, Value};
+use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::Item;
 use ljos_runtime::WakeHook;
 
@@ -158,22 +158,7 @@ impl Host for ViewHost<'_> {
 
     fn show(&mut self, engine: &Engine, old: Option<ObjectId>, new: ObjectId) {
         let placeholder = self.placeholder.take();
-        // The view sizes its root when the window's size changes, which
-        // it has not: the new root takes the size the old one was given.
-        if let Some(shown) = old.or(placeholder) {
-            for size in [Item::WIDTH, Item::HEIGHT] {
-                if let Ok(v) = engine.get(shown, size) {
-                    let _ = engine.set(new, size, v);
-                }
-            }
-        }
-        if let Err(e) = self.view.scene_mut().replace_root(engine, new) {
-            engine.log(
-                LogLevel::Warning,
-                "ljos.reload",
-                format!("the new root cannot be shown: {e}"),
-            );
-        }
+        crate::roots::show_root(self.view, engine, old.or(placeholder), new);
         if let Some(empty) = placeholder {
             engine.destroy(empty);
         }

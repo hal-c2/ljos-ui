@@ -42,6 +42,7 @@ mod network;
 mod platform;
 mod present;
 mod repaint;
+mod roots;
 mod screen_reader;
 mod settings;
 mod surface;
@@ -313,12 +314,14 @@ impl<M: Send + 'static> ShellApp<M> {
         ljos_media::register(&engine);
         // Before `setup`: a window knows from its first moment whether it
         // is an item of a scene or a window of the platform.
-        let (tree, waker) = match hosting {
+        let (tree, waker, changed) = match hosting {
             Some(h) => {
-                ljos_controls::WindowSystem::of(&engine).set_host(h.changed);
-                (Some(h.tree), Some(h.wake))
+                let changed: Rc<dyn Fn()> = Rc::from(h.changed);
+                let windows = Rc::clone(&changed);
+                ljos_controls::WindowSystem::of(&engine).set_host(move || windows());
+                (Some(h.tree), Some(h.wake), Some(changed))
             }
-            None => (None, None),
+            None => (None, None, None),
         };
         let wake: Arc<dyn Fn() + Send + Sync> = match &waker {
             Some(waker) => {
@@ -330,6 +333,17 @@ impl<M: Send + 'static> ShellApp<M> {
                 Arc::new(move || ctx.request_repaint())
             }
         };
+        {
+            // A root the application asks for is shown before the next
+            // frame, and before the platform's windows are made to match.
+            let wake = Arc::clone(&wake);
+            ljos_quick::roots::RootSwaps::of(&engine).set_wake(move || {
+                if let Some(changed) = &changed {
+                    changed();
+                }
+                wake();
+            });
+        }
         if tree.is_some() && config.system_locale {
             engine.use_system_locale();
         }
@@ -382,6 +396,7 @@ impl<M: Send + 'static> ShellApp<M> {
             ..
         } = s;
         let mut view = QmlView::new(Rc::clone(&engine), root)?.with_clock(clock);
+        ljos_quick::roots::RootSwaps::of(&engine).shows(None, root);
         if let Some(tree) = tree {
             view = view.with_accessibility_graft(tree);
         }
@@ -461,6 +476,7 @@ impl<M: Send + 'static> ShellApp<M> {
     /// [`ShellApp::show`]: the inbox, then what the watcher and the
     /// inspector of a development build brought.
     pub fn begin_pass(&mut self) {
+        self.swap_roots();
         #[cfg(feature = "dev")]
         self.begin_tools();
         self.drain_inbox();

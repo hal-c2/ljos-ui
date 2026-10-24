@@ -836,6 +836,10 @@ impl<M: Send + 'static> Desktop<M> {
     /// Makes the platform's windows what the application's windows want.
     fn sync(&mut self, host: &mut Control<'_>, engine: &Rc<Engine>, sys: &WindowSystem) {
         self.dirty.set(false);
+        // Before the windows are matched: the root the application put in
+        // the window of the old one takes that platform window, where a
+        // `Window` made and shown on its own would get one of its own.
+        self.app.swap_roots();
         let root = self.app.view().scene().root();
         if root != self.last_root {
             // A scene's timers start in its first pass, and nothing else

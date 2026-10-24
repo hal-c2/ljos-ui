@@ -512,6 +512,7 @@ impl Live {
     /// anchors, deferred deletes and sync, as a host does before the user
     /// sees anything.
     fn settle(&mut self) -> Result<()> {
+        self.swap_roots();
         for _ in 0..MAX_SETTLE_FRAMES {
             let now = self.clock.now();
             let out = self.scene.frame(&self.engine, now);
@@ -559,7 +560,46 @@ impl Live {
             .map_err(|e| failed(format!("cannot open {name}: {e}")))?;
         self.roots.push(obj);
         self.windows.push(obj);
+        ljos_quick::roots::RootSwaps::of(&self.engine).shows(None, obj);
         self.settle()
+    }
+
+    /// What an application does that makes its interface again: a new
+    /// root, put in the window of the old one by the host before its next
+    /// frame.
+    fn put_in_window(&mut self, name: &str, old: &str) -> Result<()> {
+        let old = self.find(old)?;
+        let new = self
+            .engine
+            .create_from_url(key_of(name), None, Vec::new())
+            .map_err(|e| failed(format!("cannot make {name}: {e}")))?;
+        if let Err(e) = ljos_quick::roots::replace_root(&self.engine, old, new) {
+            self.engine.destroy(new);
+            return Err(failed(e));
+        }
+        self.settle()
+    }
+
+    /// The host's part of [`Self::put_in_window`]: each window of its own
+    /// shows the root asked for, at its size, and the old root goes.
+    fn swap_roots(&mut self) {
+        let swaps = ljos_quick::roots::RootSwaps::of(&self.engine);
+        if !swaps.is_pending() {
+            return;
+        }
+        for i in 0..self.windows.len() {
+            while let Some(new) = swaps.take(self.windows[i]) {
+                let old = self.windows[i];
+                ljos_quick::roots::adopt(&self.engine, old, new);
+                self.windows[i] = new;
+                for r in &mut self.roots {
+                    if *r == old {
+                        *r = new;
+                    }
+                }
+                self.engine.destroy(old);
+            }
+        }
     }
 
     /// `"list/row"` finds `list` anywhere below a root, then `row` anywhere
@@ -1252,6 +1292,10 @@ impl Backend for LjosBackend {
 
     fn open_window(&mut self, name: &str) -> Result<()> {
         self.live()?.open_window(name)
+    }
+
+    fn put_in_window(&mut self, name: &str, old: &str) -> Result<()> {
+        self.live()?.put_in_window(name, old)
     }
 
     fn exists(&mut self, object: &str) -> Result<bool> {

@@ -202,6 +202,7 @@ impl Live {
             &mut |engine, old, new| {
                 if windows.contains(&old) {
                     // A window of its own stays one.
+                    ljos_quick::roots::RootSwaps::of(engine).shows(Some(old), new);
                     moved.push(new);
                 } else {
                     // `createObject(driver)`, as the first load did.

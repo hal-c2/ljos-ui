@@ -47,6 +47,7 @@ mod positioners;
 mod press_and_hold;
 mod rectangle;
 mod repeater;
+pub mod roots;
 mod safe_area;
 mod scene;
 mod shader_effect;

@@ -945,6 +945,24 @@ fn file_opened_in_window(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.open_window(&name))
 }
 
+#[when(regex = r#"^the application puts an object of "([^"]+\.qml)" in the window of "([^"]+)"$"#)]
+fn put_in_window(w: &mut LjosWorld, name: String, old: String) -> StepResult {
+    w.each(|b| b.put_in_window(&name, &old))
+}
+
+#[then(
+    regex = r#"^the application cannot put an object of "([^"]+\.qml)" in the window of "([^"]+)"$"#
+)]
+fn cannot_put_in_window(w: &mut LjosWorld, name: String, old: String) -> StepResult {
+    w.each(|b| match b.put_in_window(&name, &old) {
+        Ok(()) => Err(BackendError::Failed(format!(
+            "an object of {name} was put in the window of {old:?}"
+        ))),
+        Err(BackendError::Failed(_)) => Ok(()),
+        Err(e) => Err(e),
+    })
+}
+
 #[when(regex = r#"^the object "([^"]+)" is destroyed$"#)]
 fn object_destroyed(w: &mut LjosWorld, object: String) -> StepResult {
     w.each(|b| {

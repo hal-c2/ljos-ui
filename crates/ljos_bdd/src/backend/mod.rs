@@ -289,6 +289,11 @@ pub trait Backend: fmt::Debug {
     fn open_window(&mut self, _name: &str) -> Result<()> {
         Err(BackendError::NotImplemented("a window of its own"))
     }
+    /// The application makes a root of the loaded file `name` and puts it
+    /// in the window of the root `old`, which goes.
+    fn put_in_window(&mut self, _name: &str, _old: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("another root in a window"))
+    }
     /// Type `text` on the keyboard, one key press per character.
     fn type_text(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("typing text"))

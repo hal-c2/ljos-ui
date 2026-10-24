@@ -2,12 +2,15 @@
 //! another thread, messages are drained at the start of a frame within the
 //! budget, and an idle shell runs nothing.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use egui::{Vec2, ViewportId};
 use egui_kittest::Harness;
 use ljos_engine::{Color, ObjectId, Value};
+use ljos_quick::roots::{RootError, replace_root};
 use ljos_quick::{Item, Rectangle, add_data};
 use ljos_runtime::{DrainBudget, SystemClock};
 use ljos_shell::{Setup, SetupError, ShellApp, ShellConfig};
@@ -180,4 +183,56 @@ fn a_panicking_message_is_a_fault_and_the_rest_are_handled() {
     h.send(Probe::Ok(102)).unwrap_or_else(|_| panic!("room"));
     app.drain_inbox();
     assert_eq!(*handled.borrow(), vec![100, 101, 102]);
+}
+
+/// The application makes its interface again from a handler and puts the
+/// new root where the old one was (issue #100's repro, with a message for
+/// the click).
+#[test]
+fn the_application_puts_another_root_in_its_window() {
+    let current = Rc::new(Cell::new(None::<ObjectId>));
+    let root = current.clone();
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(320.0, 200.0))
+        .build_eframe(move |cc| {
+            ShellApp::new(
+                &cc.egui_ctx,
+                &ShellConfig::default(),
+                Arc::new(SystemClock::new()),
+                move |s: &mut Setup<'_, f64>| {
+                    let e = s.engine();
+                    let first = e
+                        .create_native(Item::default(), None)
+                        .map_err(|e| e.to_string())?;
+                    e.complete(first).map_err(|e| e.to_string())?;
+                    root.set(Some(first));
+                    s.on_message(move |e, _| {
+                        let old = root.get().unwrap();
+                        let next = e.create_native(Item::default(), None).unwrap();
+                        e.complete(next).unwrap();
+                        replace_root(e, old, next).unwrap();
+                        root.set(Some(next));
+                    });
+                    Ok(first)
+                },
+            )
+            .unwrap()
+        });
+    h.run();
+    let first = current.get().unwrap();
+    let handle = h.state().handle();
+    handle.send(1.0).unwrap();
+    handle.send(2.0).unwrap();
+    h.run();
+    let e = h.state().engine();
+    let shown = h.state().view().scene().root().unwrap();
+    assert_eq!(Some(shown), current.get());
+    assert_ne!(shown, first);
+    assert!(!e.is_alive(first), "the old root stays");
+    assert_eq!(e.get(shown, Item::WIDTH).unwrap(), 320.0);
+    assert_eq!(e.get(shown, Item::HEIGHT).unwrap(), 200.0);
+    // Two asked for in one pass: the one between never had the window.
+    assert_eq!(replace_root(e, first, shown), Err(RootError::Gone(first)));
+    h.step();
+    assert!(!h.ctx.has_requested_repaint());
 }
