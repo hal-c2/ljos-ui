@@ -43,6 +43,12 @@ ApplicationWindow {
     palette.dark: theme.subtle
     palette.light: theme.cardAlt
     palette.midlight: theme.rule
+    // A colour set above is the disabled group's too, so a disabled
+    // button would look as the others: these make it look disabled.
+    palette.disabled.button: window.dark ? "#22262d" : "#eceef1"
+    palette.disabled.buttonText: window.dark ? "#5c6370" : "#a3a9b2"
+    palette.disabled.text: window.dark ? "#5c6370" : "#a3a9b2"
+    palette.disabled.windowText: window.dark ? "#5c6370" : "#a3a9b2"
 
     QtObject {
         id: theme
