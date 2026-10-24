@@ -4391,3 +4391,111 @@ DECISIONs:
   is what `is_a` answered before.
 - `read_access`'s part lookup, `FieldReads::new` and the font clone were left: by
   callgrind, each is under 2 k per delegate.
+
+### B19: a reused delegate, a text's advances and a list row's places (2026-10-24)
+
+B18's measures again, on the same machine and in the same way: off-screen in the cua sandbox
+on the GPU, against `qml6` 6.11.2 with the Basic style. The start is a04e45de (B18). The end
+is this batch's four code commits rebased onto 22dcbbc0, which also carries the commits that
+landed on main in between. Both are profiling builds (release, line tables). The `reuseItems`
+bench is bench/listview.qml with `reuseItems: true` on the view.
+
+**Per delegate, by callgrind.** The main thread, with a 40 s warm-up and a 20 s window. For
+listview a delegate is one `TextEngine::build_layout` (one text each). With `reuseItems` it is
+one `views::pass::revive`.
+
+| Bench | Binary | Delegates | Frames | Instructions | Per delegate | `malloc` per delegate |
+|---|---|---:|---:|---:|---:|---:|
+| listview | Start | 9819 | 1075 | 4.18 G | 425.5 k | 205 |
+| listview | End | 9833 | 1005 | 4.05 G | 411.5 k | 199 |
+| `reuseItems` | Start | 9987 | 620 | 2.11 G | 211.0 k | 65 |
+| `reuseItems` | End | 9987 | 761 | 1.59 G | 159.4 k | 58 |
+
+The same measure after each commit: `reuseItems` went from 211.0 k to 162.5 k with the pool,
+then 161.1 k with the advances, 159.8 k with the row places and 159.4 k at the end. listview,
+which the pool does not touch, went from 425.5 k to 420.0 k with the advances, 418.0 k with the
+row places and 411.5 k at the end; the last step also takes in the rebase.
+
+| `reuseItems`, inclusive per reused delegate | Start | End |
+|---|---:|---:|
+| `views::pass::pass` | 90.8 k | 36.6 k |
+| `views::pass::revive` | 27.7 k | 0.8 k |
+| `views::pass::release` (into the pool) | 27.3 k | 1.2 k |
+| `QuickScene::polish` (nearly all text layout) | 63.2 k | 61.0 k |
+| `ViewDelegates::request` (the row's new index and what it moves) | 24.8 k | 23.8 k |
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Start | End | qml6 (same run) |
+|---|---:|---:|---:|
+| listview | 214.1 | 210.2 | 102.9 |
+| listview with `reuseItems: true` | 118.7 | 87.7 | 60.6 |
+| thermostat | 98.1 | 98.0 | 125.3 |
+| rssnews | 43.6 | 43.4 | 112 to 618 |
+
+rssnews was run three more times with each binary (43.5, 44.0 and 43.6 against 43.4, 43.3 and
+43.4); the first pair read 34.9 and 95.1. qml6's figure for it is mostly its network and image
+threads (`QNetworkAccessManager` 68 to 71 M/s, `QQuickPixmapReader` up to 73), so it moves with
+the feed.
+
+| Scroll, CPU % of one core (`ljos bench --gesture scroll`) | End | qml6 (same run) |
+|---|---:|---:|
+| thermostat | 3.91 | 5.33 |
+| rssnews | 12.7 | 5.81 |
+| listview | 7.86 | 4.51 |
+
+Other work on the machine held the load between 18 and 68 for these runs, against 5 to 14 in
+B18. As B18 found, a CPU % at that load moves by half its value from run to run. Read the
+instruction counts instead.
+
+The commits:
+
+- 5f76df35: a delegate in a view's pool is left out of the scene instead of having its
+  `visible` overridden. Taking it out and giving it back changed `visible` for it and
+  everything in it: every effect and binding that read it ran twice per reuse. qml6 does the
+  same: a pooled delegate reads `visible`, is never told it changed, and is neither drawn nor
+  given the pointer (features/views/list-pooled-rows.feature and table-pooled-cells.feature,
+  which also pass on qml6).
+- b89a935f: a text's advances, rounded as Qt counts them, are worked out once, when the text
+  is shaped and measured. Laying it out takes them from the shaped entry instead of walking
+  the glyphs again. This found a bug: an editor that wrapped a shape the cache shares did not
+  record the break, so a label of the same text in the same font was laid out wrapped
+  (features/text/editor-and-label.feature).
+- 771d73cd: a view without a move, add, remove or displaced transition keeps no table of
+  where each row was. One set later makes the pass run again, so it has that table before the
+  next change (features/views/list-late-displaced.feature).
+- 55e06379: a row of a list is put along the view only. Where it sits across is read only
+  when a grid or a running transition needs it.
+
+**listview is still 2.0× qml6's instructions per second, and 1.45× with `reuseItems`.**
+thermostat stays below qml6.
+
+These are left:
+
+- Making a delegate is spread over the reactive graph, about 35 nodes, 6 effects and 200
+  allocations per delegate. Adoption (the first runs of its effects) is 83 k; creation
+  (`ViewDelegates::request`) is 76 k; text layout is 60 k; destruction is 28 k; and the
+  content effects that paint it are 10 k. No single part is large enough to halve the total.
+  Getting near qml6 means fewer nodes and effects per item, not cheaper ones.
+- Taking a released delegate out of the view costs 13 k (`set_parent_item(None)` and the
+  effects that read its parent). qml6 does that too: it sets the parent to null and
+  `visible` to false before the delegate goes (checked with `onParentChanged`), so the step
+  stays.
+- Text shaping of "Row N" is 38 k per text, in parley's builder (28 k), harfrust and
+  fontique; fontique's family-name lookup alone is 1.6 k. A reused delegate pays all of it,
+  because its text changes.
+- A text effect that runs again reads all 19 of its inputs (`TextInputs::read`, 9.2 k), and
+  each read records its dependency again. A new delegate reads them twice: once to measure
+  at completion and once in the polish effect's first run.
+- `Graph::dispose_scope` disposes a scope's nodes one at a time: each is unlinked from
+  observers that die with it, and each flushes. That costs about 11 k per delegate.
+- The sandbox's driver reads the accessibility tree, so the a11y pass runs in these
+  measurements (about 8 k per delegate). A user without assistive technology does not pay it.
+- B18's items under 2 k (`part()` in `read_access`, `FieldReads::new`, the font clone,
+  `try_read`, `free`, `ComputeGuard`) are still flat in this profile and were not done.
+
+DECISIONs:
+
+- A pooled delegate is left out of the scene, as qml6 does, instead of being made
+  invisible.
+- Fontique's family-name lookup is left as it is: parley 0.12 has no family given by id.
+- The a11y cost in the sandbox is noted, not removed: the driver needs the tree.
+- The unparenting of a released delegate is kept, because qml6 does it.
