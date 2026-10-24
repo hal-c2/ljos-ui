@@ -4292,3 +4292,102 @@ What is left:
   button every frame.
 - **DECISION: the painter's step timings are kept.** They are three reads a frame, and a frame
   that draws nothing does not run them.
+
+### B18: what a view tells its delegates, and who hears of an attached object (2026-10-24)
+
+B17's measures again, on the same machine and in the same way: off-screen in the cua sandbox
+on the GPU, against `qml6` 6.11.2 with the Basic style. The start is b70b6f13, the tip this
+batch was rebased onto. The end is this batch's five code commits on it (since rebased onto
+a951ef0a as the commits listed below). Both are profiling builds (release, line tables), and
+each pair ran back to back.
+
+**Per delegate, by callgrind.** listview's main thread, 40 s warm-up, 20 s window;
+delegates are half the `Item` completions.
+
+| Binary | Delegates | Frames | Instructions | Per delegate | Per frame (`QuickScene::frame`) | `malloc` per delegate |
+|---|---:|---:|---:|---:|---:|---:|
+| Start | 9950 | 1909 | 4.27 G | 430 k | 4.08 M | 202 |
+| End | 9970 | 2183 | 4.20 G | 421 k | 3.46 M | 203 |
+
+The start measures 430 k, not B17's 388 k. The difference is how many frames fall to a
+delegate: under callgrind a cheaper frame means more frames in the window, and each frame
+costs the same paint whatever it made. The end drew 14 % more frames than the start for the
+same delegates, so its per-delegate total hides part of the cut. The frame and the functions
+below are the fairer comparison:
+
+| Inclusive, per delegate | Start | End |
+|---|---:|---:|
+| `views::pass::pass` (layout, telling the rows) | 130.6 k | 109.9 k |
+| `ViewDelegates::request` | 78.3 k | 63.6 k |
+| `QuickScene::adopt` | 89.8 k | 82.2 k |
+| `QuickScene::polish` | 64.4 k | 52.9 k |
+| `Graph::recompute` | 226.5 k | 200.0 k |
+| `views::pass::tell` | 12.6 k (2371 per call) | 2.6 k (434 per call) |
+| `Engine::attached_object` | 7.8 k | 4.6 k |
+| `text_style` | 0.50 k | 0.17 k |
+| `try_read` | 51.7 k (134 calls) | 45.1 k (116 calls) |
+
+| Scroll, M instructions/s | Start | End | qml6 (same run) |
+|---|---:|---:|---:|
+| thermostat | 99.4 | 99.2 | 125.1 |
+| rssnews | 44.3 | 43.3 | 102.3 |
+| listview | 227.5 | 215.4 | 102.8 |
+| listview with `reuseItems: true` | 126.5 | 119.5 | 60.6 |
+
+rssnews's qml6 figure includes its network and image threads (62 M/s on
+`QNetworkAccessManager`'s); Ljós does not show the feed's images in this example.
+
+| Scroll, CPU % of one core (`ljos bench --gesture scroll`) | End | qml6 (same run) |
+|---|---:|---:|
+| thermostat | 3.38 | 4.97 |
+| rssnews | 6.48 | 5.32 |
+| listview | 8.38 | 3.74 |
+
+The load was 5 to 14 here, against B17's 32, so these are not B17's percentages and the
+ratios are not B17's either: listview is ×2.24 of qml6. The CPU % of one binary moves by
+half its value from run to run at this load. Twelve listview runs of each binary, taken
+alternately, gave medians of 8.77 % (start) and 9.27 % (end) with the two spreads (6.9 to
+10.6, 6.3 to 15.8) on top of each other, while their instructions per second were 227.3 and
+214.8 M every time. The instruction count is the measure to trust, and it is down 5.5 %.
+
+The commits:
+
+- d883cc3d: what the view last told a delegate (`isCurrentItem` and the three section
+  names) is kept on its attached object. A pass that would tell the same writes nothing.
+  `tell` read the view's `currentIndex` itself on each call; the pass now reads it once.
+- 171b6dfb: `text_style` shares the family name's `Arc<str>` with the last style made
+  when the family is the same, instead of making one per text.
+- ebaa1c94: an object's makers on read carry a 64-bit mask of their properties. Every
+  read asked whether its property had a maker by looking through the list; the mask says
+  no at once.
+- a81086af: what the view told starts as the properties do, so a new row that is not
+  current and has no sections is not written to on its first pass either.
+- 125b29c2: a listener on attached objects can name the type it is for
+  (`Engine::on_attached_created_of::<T>`), and is then called only for that type or one
+  derived from it. Every attached object a delegate got called all twenty-two listeners,
+  each asking whether the object was its type, after cloning the list. ScrollBar's,
+  which is for two types, stays general; Material's and Universal's is now one each.
+
+**listview is still 2.1× qml6's instructions per second, and 2.0× with `reuseItems`.**
+
+These are left:
+
+- `try_read` is 11 k self per delegate over 116 calls. Most of those are the bindings of
+  a new delegate reading its first values, so they go with the number of bindings.
+- `free` is 9 k self per delegate and `malloc` 6.6 k, over about 200 each.
+- anchors' `read_values<9>` costs 6 k per anchored item: 5 k is the binding it evaluates
+  and 2.2 k is `push_override` making the node and its override.
+- `read_access` finds a native part through `part()` and the base chain. That costs about
+  1.7 k per delegate, so it was not worth a cache keyed by type.
+- `FieldReads::new` (8 mallocs per delegate) and `__qml_get_font`'s clone of the font cost
+  0.2 to 0.6 k per delegate together.
+- `reuseItems: true` was not looked at in this batch.
+
+DECISIONs:
+
+- The family is shared through a one-entry memo in `text_style`, not by making
+  `TextStyle.family` an `ArcStr`. That keeps arcstr out of `ljos_text`'s API.
+- A typed listener is called for the type it names and for types derived from it, which
+  is what `is_a` answered before.
+- `read_access`'s part lookup, `FieldReads::new` and the font clone were left: by
+  callgrind, each is under 2 k per delegate.
