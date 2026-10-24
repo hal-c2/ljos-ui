@@ -5,7 +5,8 @@
 //! `__step<i>()` runs step `i` and returns its result the same way. Values
 //! are serialised in QML, by helpers written once here, so the two engines
 //! are compared on what a program sees and not on how each hands a value
-//! to its host.
+//! to its host. A string or url under the case's own directory is written
+//! with `$DIR` for it, as the two sides load the case from different places.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -282,7 +283,8 @@ const HELPERS: &str = r#"    function __num(v) { return isFinite(v) ? v : {"$n":
         if (v === null) return null;
         var t = typeof v;
         if (t === "number") return __num(v);
-        if (t === "string" || t === "boolean") return v;
+        if (t === "string") return __dir(v);
+        if (t === "boolean") return v;
         if (t === "function") return {"$fn": 1};
         if (Array.isArray(v) || typeof v.length === "number") return __list(v);
         if (v.objectName !== undefined) return {"$obj": v.objectName};
@@ -301,6 +303,7 @@ const HELPERS: &str = r#"    function __num(v) { return isFinite(v) ? v : {"$n":
     function __size(v) { return {width: __num(v.width), height: __num(v.height)}; }
     function __rect(v) { return {x: __num(v.x), y: __num(v.y), width: __num(v.width), height: __num(v.height)}; }
     function __font(v) { return {pixelSize: v.pixelSize, bold: v.bold, italic: v.italic, underline: v.underline, strikeout: v.strikeout, weight: v.weight}; }
-    function __url(v) { var s = String(v), b = String(Qt.resolvedUrl(".")); return s.indexOf(b) === 0 ? "$DIR/" + s.slice(b.length) : s; }
+    function __url(v) { return __dir(String(v)); }
+    function __dir(s) { var b = String(Qt.resolvedUrl(".")); return s.indexOf(b) === 0 ? "$DIR/" + s.slice(b.length) : s; }
     function __k(o, k, f) { try { o[k] = f(); } catch (e) { o[k] = {"$err": String(e && e.name)}; } }
 "#;

@@ -198,7 +198,9 @@ const OPS: &[(Kind, &str, &str, &[Arg])] = &[
     (
         Arr,
         "sort-numbers",
-        "$0.slice().sort(function (a, b) { return a - b; })",
+        // Only numbers, and no NaN: a comparator that gives NaN leaves the
+        // order to the engine, and the two engines differ there.
+        "$0.map(Number).filter(function (n) { return n === n; }).sort(function (a, b) { return a - b; })",
         &[Of(Arr)],
     ),
     (Arr, "split", "$0.split(\",\")", &[Of(Str)]),

@@ -9,7 +9,7 @@ use std::{collections::BTreeSet, fmt::Write};
 
 use serde_json::Value;
 
-use self::ast::{Decl, Program, Stmt};
+use self::ast::{Decl, Expr, Program, Stmt};
 use crate::{
     area::Area,
     compare::{Diff, DiffKind, message_shape},
@@ -145,15 +145,66 @@ fn describe(p: &Program, d: &Diff) -> (String, String) {
                 ("qt-only", &d.qt)
             };
             // A warning says what it is about better than the program does;
-            // only a binding loop's says no more than the property's name.
+            // only a binding loop's says no more than the property's name,
+            // which is worth keeping where it is an item's own, and Qt's loop
+            // for a binding reading an alias and its target together is one
+            // bug whatever else the program does.
             let construct = match text.as_str() {
                 Some(t) if d.key != "binding-loop" => message_shape(t),
-                _ => step.map_or_else(|| features(p), step_label),
+                Some(t) => looped_builtin(t)
+                    .or_else(|| reads_alias_and_target(p).then(|| "alias-and-target".into()))
+                    .unwrap_or_else(|| step.map_or_else(|| features(p), step_label)),
+                None => step.map_or_else(|| features(p), step_label),
             };
             (format!("{}({side})", d.key), construct)
         }
         DiffKind::LjosRejects | DiffKind::LjosCrash | DiffKind::Phases => ("-".into(), features(p)),
     }
+}
+
+/// The property a binding loop names, when it is not one the generator made
+/// (`p3`, `a7`): `implicitHeight` reading `height` is one bucket however the
+/// program around it reads.
+fn looped_builtin(text: &str) -> Option<String> {
+    let rest = text.split_once("property \"")?.1;
+    let name = rest.split_once('"')?.0;
+    let generated = name.len() > 1
+        && name.starts_with(['p', 'a'])
+        && name[1..].bytes().all(|b| b.is_ascii_digit());
+    (!generated && !name.is_empty()).then(|| name.to_owned())
+}
+
+/// An object's id and one of its properties.
+type Named<'a> = (&'a str, &'a str);
+
+/// Whether some binding reads both an alias and the property it is of.
+fn reads_alias_and_target(p: &Program) -> bool {
+    let objs = p.root.all();
+    let aliases: Vec<(Named, Named)> = objs
+        .iter()
+        .flat_map(|o| {
+            o.props.iter().filter_map(|prop| match &prop.decl {
+                Decl::Alias { target, .. } => {
+                    let mut parts = target.split('.');
+                    let (obj, name) = (parts.next()?, parts.next()?);
+                    Some(((o.id.as_str(), prop.name.as_str()), (obj, name)))
+                }
+                _ => None,
+            })
+        })
+        .collect();
+    objs.iter()
+        .flat_map(|o| o.props.iter().filter_map(|prop| prop.init.as_ref()))
+        .any(|e| {
+            let mut refs = BTreeSet::new();
+            e.visit(&mut |n| {
+                if let Expr::Ref { obj, prop, .. } = n {
+                    refs.insert((obj.clone(), prop.clone()));
+                }
+            });
+            let has = |(o, n): (&str, &str)| refs.contains(&(o.to_owned(), n.to_owned()));
+            aliases.iter().any(|&(a, t)| has(a) && has(t))
+        })
 }
 
 fn json_kind(v: &Value) -> &'static str {
@@ -330,5 +381,24 @@ fn catalogue_step(st: &Stmt) -> String {
             }
         }
         _ => format!("# When (no catalogue step): {}", print::step(st)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looped_builtin;
+
+    #[test]
+    fn a_loop_is_keyed_by_an_items_own_property_only() {
+        let loop_on = |name: &str| {
+            looped_builtin(&format!(
+                "file:///C.qml:7:5: QML Item: Binding loop detected for property \"{name}\":"
+            ))
+        };
+        assert_eq!(loop_on("implicitHeight").as_deref(), Some("implicitHeight"));
+        assert_eq!(loop_on("font.italic").as_deref(), Some("font.italic"));
+        assert_eq!(loop_on("p12"), None);
+        assert_eq!(loop_on("a3"), None);
+        assert_eq!(loop_on("p"), Some("p".to_owned()));
     }
 }
