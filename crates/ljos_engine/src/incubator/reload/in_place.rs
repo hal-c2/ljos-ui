@@ -1128,11 +1128,17 @@ impl Engine {
         edits: &[Edit],
         patch: &ReloadPatch,
     ) -> Result<Vec<(String, Vec<String>)>, String> {
+        // Before the loader is held: finding a type may load its file.
+        let bases: Vec<Option<MetaRef>> = edits
+            .iter()
+            .map(|e| {
+                let od = &file.ir.component(e.comp).objects[e.was];
+                self.type_meta(file, &od.ty).ok()
+            })
+            .collect();
         let loader = self.inner.loader.borrow();
         let mut rebind: Vec<(String, Vec<String>)> = Vec::new();
-        for e in edits {
-            let od = &file.ir.component(e.comp).objects[e.was];
-            let base = self.type_meta(file, &od.ty).ok();
+        for (e, base) in edits.iter().zip(bases) {
             for (from, to) in &e.renamed {
                 let names = [from.clone(), to.clone()];
                 let signals = [
