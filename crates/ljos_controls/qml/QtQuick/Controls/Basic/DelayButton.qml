@@ -30,7 +30,16 @@ T.DelayButton {
         Rectangle {
             implicitWidth: 100
             implicitHeight: 40
-            color: control.down ? control.palette.mid : control.palette.button
+            // Held down, it and its fill are half way to `mid`, as a
+            // button is (basic-states.feature).
+            function held(c) {
+                const mid = control.palette.mid
+                return Qt.rgba(Math.round((c.r + mid.r) * 127.5 + 0.001) / 255,
+                               Math.round((c.g + mid.g) * 127.5 + 0.001) / 255,
+                               Math.round((c.b + mid.b) * 127.5 + 0.001) / 255, 1)
+            }
+
+            color: control.down ? held(control.palette.button) : control.palette.button
             border.color: control.palette.highlight
             border.width: control.visualFocus ? 2 : 0
 
@@ -38,7 +47,7 @@ T.DelayButton {
                 width: control.progress * parent.width
                 height: parent.height
                 x: control.mirrored ? parent.width - width : 0
-                color: control.palette.dark
+                color: control.down ? parent.held(control.palette.dark) : control.palette.dark
             }
         }
     }

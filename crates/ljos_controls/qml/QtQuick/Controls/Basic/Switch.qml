@@ -27,9 +27,8 @@ T.Switch {
             y: control.topPadding + (control.availableHeight - height) / 2
             radius: 8
             color: control.checked ? control.palette.dark : control.palette.midlight
-            // Where the keyboard is, when a key brought it there.
-            border.color: control.palette.highlight
-            border.width: control.visualFocus ? 2 : 0
+            border.color: control.palette.dark
+            border.width: 0
 
             Rectangle {
                 x: control.visualPosition * (parent.width - width)
@@ -37,8 +36,11 @@ T.Switch {
                 height: 28
                 radius: 16
                 color: control.down ? control.palette.light : control.palette.window
-                border.width: 1
-                border.color: control.palette.mid
+                // Where the keyboard is, when a key brought it there: on the
+                // knob, not the track (basic-states.feature).
+                border.width: control.visualFocus ? 2 : 1
+                border.color: control.visualFocus ? control.palette.highlight
+                            : control.enabled ? control.palette.mid : control.palette.midlight
             }
         }
     }

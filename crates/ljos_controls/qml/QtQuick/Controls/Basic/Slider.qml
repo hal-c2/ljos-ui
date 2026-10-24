@@ -27,9 +27,9 @@ T.Slider {
             radius: width / 2
             color: control.pressed ? control.palette.light : control.palette.window
             border.width: control.visualFocus ? 2 : 1
-            border.color: control.visualFocus ? control.palette.highlight
-                                              : control.enabled ? control.palette.mid
-                                                                : control.palette.midlight
+            // With the keyboard the outline grows, but keeps its colour
+            // (basic-states.feature).
+            border.color: control.enabled ? control.palette.mid : control.palette.midlight
         }
     }
 

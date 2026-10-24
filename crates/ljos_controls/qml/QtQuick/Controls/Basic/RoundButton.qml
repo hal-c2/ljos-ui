@@ -36,9 +36,17 @@ T.RoundButton {
             implicitHeight: 40
             radius: control.radius
             visible: !control.flat || control.down || control.checked || control.highlighted
-            color: control.down ? control.palette.mid
-                   : control.checked || control.highlighted ? control.palette.dark
-                                                            : control.palette.button
+            // Held down, the colour is half way to `mid`, as a button's.
+            color: {
+                const base = control.checked || control.highlighted ? control.palette.dark
+                                                                    : control.palette.button
+                if (!control.down)
+                    return base
+                const mid = control.palette.mid
+                return Qt.rgba(Math.round((base.r + mid.r) * 127.5 + 0.001) / 255,
+                               Math.round((base.g + mid.g) * 127.5 + 0.001) / 255,
+                               Math.round((base.b + mid.b) * 127.5 + 0.001) / 255, 1)
+            }
             border.color: control.palette.highlight
             border.width: control.visualFocus ? 2 : 0
         }
