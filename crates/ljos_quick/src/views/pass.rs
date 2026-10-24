@@ -1555,7 +1555,7 @@ fn tell(
     };
     let told = (is_current, names);
     // Every pass tells every placed delegate, and nearly always the same.
-    if e.with(att, |a: &ViewAttached| a.told.as_ref() == Some(&told))
+    if e.with(att, |a: &ViewAttached| a.told == told)
         .unwrap_or(false)
     {
         return;
@@ -1577,7 +1577,7 @@ fn tell(
             Value::string(Atom::from(after.as_str())),
         );
     });
-    let _ = e.with_mut(att, |a: &mut ViewAttached| a.told = Some(told));
+    let _ = e.with_mut(att, |a: &mut ViewAttached| a.told = told);
 }
 
 /// The view's `currentIndex`, untracked, as [`tell`] compares it.

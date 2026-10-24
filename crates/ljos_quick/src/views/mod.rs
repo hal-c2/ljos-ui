@@ -469,9 +469,10 @@ pub struct ViewAttached {
     pub delay_remove: bool,
     /// What the view last told: `isCurrentItem` and the three section
     /// names. Only the view writes those, so a pass that would tell the
-    /// same again writes nothing.
+    /// same again writes nothing. It starts as the properties do, so a
+    /// row told nothing new on its first pass is not written either.
     #[qml(skip)]
-    pub(crate) told: Option<(bool, [String; 3])>,
+    pub(crate) told: (bool, [String; 3]),
 }
 
 #[qml_impl]
