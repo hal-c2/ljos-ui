@@ -153,7 +153,9 @@ pub(crate) fn parse_font(s: &str) -> Option<TextStyle> {
                 let px = if let Some(v) = sz.strip_suffix("px") {
                     v.parse::<f64>().ok()
                 } else if let Some(v) = sz.strip_suffix("pt") {
-                    v.parse::<f64>().ok().map(|p| (p * 4.0 / 3.0).round())
+                    v.parse::<f64>()
+                        .ok()
+                        .map(|p| ljos_runtime::points_to_pixels(p).round())
                 } else {
                     None
                 };

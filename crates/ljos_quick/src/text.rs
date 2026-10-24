@@ -438,10 +438,12 @@ const SIDES: [ljos_engine::PropIndex; 4] = [
 
 /// Font size used when neither `pixelSize` nor `pointSize` is set: the
 /// application font's ([`Font::DEFAULT_POINT_SIZE`]) in pixels.
-pub const DEFAULT_PIXEL_SIZE: f64 = Font::DEFAULT_POINT_SIZE * 4.0 / 3.0;
+pub const DEFAULT_PIXEL_SIZE: f64 =
+    Font::DEFAULT_POINT_SIZE * ljos_runtime::Platform::CURRENT.logical_dpi() / 72.0;
 
 /// A QML `font` as the text engine wants it. `pixelSize` wins over
-/// `pointSize` (1 pt = 4/3 px at 96 dpi).
+/// `pointSize` (a point is a pixel on macOS, 4/3 px elsewhere:
+/// [`ljos_runtime::points_to_pixels`]).
 ///
 /// Qt sets a point size at the nearest whole pixel size (11 pt is 15 px,
 /// 10 pt is 13 px), and so does this.
@@ -449,7 +451,9 @@ pub fn text_style(f: &Font) -> TextStyle {
     let pixel_size = if f.pixel_size > 0 {
         f64::from(f.pixel_size)
     } else if f.point_size > 0.0 {
-        (f.point_size * 4.0 / 3.0).round().max(1.0)
+        ljos_runtime::points_to_pixels(f.point_size)
+            .round()
+            .max(1.0)
     } else {
         DEFAULT_PIXEL_SIZE
     };

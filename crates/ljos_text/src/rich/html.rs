@@ -911,16 +911,16 @@ pub(crate) fn scale_keyword(scale: f32) -> Option<&'static str> {
     NAMES.get(i).copied()
 }
 
-/// A length of `px` or `pt` (a point is four thirds of a pixel), within
-/// sizes a font can have.
+/// A length of `px` or `pt` (a point at the platform's logical DPI,
+/// [`ljos_runtime::points_to_pixels`]), within sizes a font can have.
 fn css_pixels(value: &str) -> Option<f32> {
     let value = value.trim().to_ascii_lowercase();
-    let (number, factor) = if let Some(n) = value.strip_suffix("px") {
-        (n, 1.0)
+    let px = if let Some(n) = value.strip_suffix("px") {
+        n.trim().parse::<f32>().ok()?
     } else {
-        (value.strip_suffix("pt")?, 4.0 / 3.0)
+        let pt = value.strip_suffix("pt")?.trim().parse::<f32>().ok()?;
+        ljos_runtime::points_to_pixels(f64::from(pt)) as f32
     };
-    let px = number.trim().parse::<f32>().ok()? * factor;
     (px.is_finite() && px > 0.0).then(|| px.min(1000.0))
 }
 

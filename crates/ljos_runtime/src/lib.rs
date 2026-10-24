@@ -14,6 +14,7 @@
 //! | [`pool`] | `ComputePool`: bounded worker threads for decode and parse | 3.3 |
 //! | [`memory`] | `MemoryPressure`, `Evictable`, byte budgets, `ByteLru` | 8.5 |
 //! | [`observe`] | named mailboxes and their counters, for an observer | 3.4, 19.4 |
+//! | [`platform`] | points to pixels and the starting font, per platform | 7 |
 //!
 //! Nothing in this crate polls or sleeps: the only things that wake the UI
 //! thread are the shell's event loop and the inbox's wake hook.
@@ -26,6 +27,7 @@ pub mod job;
 pub mod lane;
 pub mod memory;
 pub mod observe;
+pub mod platform;
 pub mod pool;
 pub mod scheduler;
 pub mod supervisor;
@@ -47,6 +49,7 @@ pub use memory::{
     usable_memory, usable_memory_under,
 };
 pub use observe::{MailboxProbe, MailboxSample, ObserveGuard};
+pub use platform::{Platform, pixels_to_points, points_to_pixels};
 pub use pool::{ComputePool, PoolFull};
 pub use scheduler::{FrameReport, Scheduler};
 pub use supervisor::{

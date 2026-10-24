@@ -128,14 +128,15 @@ fn screen_values(spec: &ScreenSpec) -> [(ljos_engine::PropIndex, Value); 10] {
         ),
         (ScreenInfo::DEVICE_PIXEL_RATIO.index, Value::Real(scale)),
         // 96 logical pixels to the inch, the desktop's convention, when
-        // the display does not say how large it is.
+        // the display does not say how large it is. The logical density
+        // is the platform's logical DPI, as points are (72 on macOS).
         (
             ScreenInfo::PIXEL_DENSITY.index,
             Value::Real(96.0 / 25.4 * scale),
         ),
         (
             ScreenInfo::LOGICAL_PIXEL_DENSITY.index,
-            Value::Real(96.0 / 25.4),
+            Value::Real(ljos_runtime::Platform::CURRENT.logical_dpi() / 25.4),
         ),
     ]
 }

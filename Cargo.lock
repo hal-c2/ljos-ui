@@ -4243,6 +4243,7 @@ name = "ljos_text"
 version = "0.0.0"
 dependencies = [
  "ljos_render",
+ "ljos_runtime",
  "parley",
  "proptest",
  "pulldown-cmark",

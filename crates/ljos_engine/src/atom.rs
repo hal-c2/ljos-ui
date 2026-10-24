@@ -38,7 +38,11 @@ impl Atom {
     pub const EMPTY: Atom = Atom(ArcStr::new());
 
     /// [`crate::Font::DEFAULT_FAMILY`], made without allocating: every
-    /// default font holds it.
+    /// default font holds it. A literal per platform, as the macro wants
+    /// one; a test holds it to [`ljos_runtime::Platform::default_family`].
+    #[cfg(target_os = "macos")]
+    pub(crate) const DEFAULT_FONT_FAMILY: Atom = Atom(arcstr::literal!(".AppleSystemUIFont"));
+    #[cfg(not(target_os = "macos"))]
     pub(crate) const DEFAULT_FONT_FAMILY: Atom = Atom(arcstr::literal!("Sans Serif"));
 
     /// A fresh, uninterned atom. Use for runtime data.
@@ -189,6 +193,14 @@ mod tests {
         assert!(!Atom::ptr_eq(&a, &c));
         assert_eq!(a, c);
         assert_eq!(std::mem::size_of::<Atom>(), 8);
+    }
+
+    #[test]
+    fn the_default_font_family_is_the_platforms() {
+        assert_eq!(
+            Atom::DEFAULT_FONT_FAMILY.as_str(),
+            ljos_runtime::Platform::CURRENT.default_family()
+        );
     }
 
     #[test]

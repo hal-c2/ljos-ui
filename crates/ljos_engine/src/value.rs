@@ -27,6 +27,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+use ljos_runtime::{Platform, pixels_to_points, points_to_pixels};
+
 use crate::atom::Atom;
 use crate::ids::ObjectId;
 use crate::number::{number_to_string, string_to_number};
@@ -449,8 +451,8 @@ impl Font {
         font
     }
 
-    /// The application font when no desktop names one: Qt's on a generic
-    /// Unix platform, [`Font::DEFAULT_FAMILY`] at
+    /// The application font when no desktop names one: Qt's for the
+    /// platform, [`Font::DEFAULT_FAMILY`] at
     /// [`Font::DEFAULT_POINT_SIZE`].
     pub fn fallback() -> Self {
         Font {
@@ -530,13 +532,16 @@ impl Font {
     pub const SMALL_CAPS: i32 = 3;
     pub const CAPITALIZE: i32 = 4;
 
-    /// The family of the application font. It is a name for the system's
+    /// The family of the application font when no desktop names one, as
+    /// Qt has it ([`Platform::default_family`]). On macOS it is the system
+    /// UI font. Elsewhere it is Sans Serif, a name for the system's
     /// sans-serif face, which the platform's font configuration resolves
     /// when text is laid out (fontconfig on Unix, a bundled face where
-    /// there is none). Qt's generic Unix platform uses this name.
-    pub const DEFAULT_FAMILY: &str = "Sans Serif";
-    /// The point size of the application font: 9 pt, 12 px at 96 dpi.
-    pub const DEFAULT_POINT_SIZE: f64 = 9.0;
+    /// there is none).
+    pub const DEFAULT_FAMILY: &str = Platform::CURRENT.default_family();
+    /// The point size of the application font: 13 pt on macOS (13 px at
+    /// its 72 dpi), 9 pt elsewhere (12 px at 96 dpi).
+    pub const DEFAULT_POINT_SIZE: f64 = Platform::CURRENT.default_point_size();
 
     /// `font.pixelSize` as a script reads it: the pixel size asked for, or
     /// the point size in whole pixels (cut, not rounded, as Qt reads it;
@@ -545,7 +550,7 @@ impl Font {
         if self.pixel_size > 0 {
             self.pixel_size
         } else if self.point_size > 0.0 {
-            (self.point_size * 4.0 / 3.0) as i32
+            points_to_pixels(self.point_size) as i32
         } else {
             -1
         }
@@ -555,7 +560,7 @@ impl Font {
     /// a point size, in points, else the point size asked for.
     pub fn read_point_size(&self) -> f64 {
         if self.pixel_size > 0 {
-            f64::from(self.pixel_size) * 0.75
+            pixels_to_points(f64::from(self.pixel_size))
         } else {
             self.point_size
         }

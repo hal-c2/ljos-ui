@@ -122,13 +122,15 @@ pub(crate) fn color_of(f: &CharFormat) -> Option<Color> {
     f.inline.color.as_deref().and_then(editor_css_color)
 }
 
-/// Measured on Qt 6.11: two thirds of the point size between paragraphs
-/// of Markdown, and nothing for a font sized in pixels.
+/// Measured on Qt 6.11 (Linux): two thirds of the point size between
+/// paragraphs of Markdown, and nothing for a font sized in pixels. Taken
+/// as half the point size in pixels, which is the same at 96 dpi and
+/// follows a platform's own DPI.
 fn options(font: &Font) -> ParseOptions {
     let paragraph_spacing = if font.pixel_size > 0 {
         0.0
     } else if font.point_size > 0.0 {
-        (font.point_size * 2.0 / 3.0) as f32
+        (ljos_runtime::points_to_pixels(font.point_size) / 2.0) as f32
     } else {
         7.0
     };

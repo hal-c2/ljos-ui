@@ -73,6 +73,7 @@ pub(crate) fn font_base_changed(host: &JsHost) -> Result<(), JsFault> {
     host.enter("value-types", host.config().slice, |scope| {
         let faces: Object = scope.globals().get("__ljos_faces")?;
         let font: Object = faces.get("font")?;
+        font.set("dpi", ljos_runtime::Platform::CURRENT.logical_dpi())?;
         font.set("base", scope.to_value(&base)?)
     })
 }
@@ -461,8 +462,8 @@ pub(crate) const FACES: &str = r##"
       o.italic = italic;
       o.underline = underline;
       o.strikeout = strikeout;
-      o.pointSize = pixelSize > 0 ? pixelSize * 0.75 : pointSize;
-      o.pixelSize = pixelSize > 0 ? pixelSize : pointSize > 0 ? Math.trunc(pointSize * 4 / 3) : -1;
+      o.pointSize = pixelSize > 0 ? pixelSize * 72 / font.dpi : pointSize;
+      o.pixelSize = pixelSize > 0 ? pixelSize : pointSize > 0 ? Math.trunc(pointSize * font.dpi / 72) : -1;
       hide(o, "__ljos_pointSize", pointSize);
       hide(o, "__ljos_pixelSize", pixelSize);
       o.capitalization = capitalization;
@@ -507,6 +508,9 @@ pub(crate) const FACES: &str = r##"
     "pixelSize", "letterSpacing", "wordSpacing", "scaleWithSystem", "capitalization",
     "hintingPreference", "styleName", "overline", "kerning", "preferShaping", "features", "variableAxes",
     "contextFontMerging", "preferTypoLineMetrics"];
+  // The screen's logical DPI a point is taken at: 72 on macOS, 96
+  // elsewhere. The engine sets it before any font is made.
+  font.dpi = 96;
   // `font.base`, the font a `Qt.font` call starts from, is set by the engine.
   const makeFont = function (settings) {
     if (arguments.length < 1) throw new Error("Insufficient arguments");

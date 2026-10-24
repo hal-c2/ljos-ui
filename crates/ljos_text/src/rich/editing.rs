@@ -1470,7 +1470,7 @@ fn span_style(f: &CharFormat) -> String {
     if let Some(px) = i.pixel_size {
         if i.in_points {
             // Back from pixels without the error of the way there.
-            let pt = (f64::from(px * i.scale) * 0.75 * 1e4).round() / 1e4;
+            let pt = (ljos_runtime::pixels_to_points(f64::from(px * i.scale)) * 1e4).round() / 1e4;
             let _ = write!(s, " font-size:{}pt;", num(pt as f32));
         } else {
             let _ = write!(s, " font-size:{}px;", num(px * i.scale));
