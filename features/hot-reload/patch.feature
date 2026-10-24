@@ -4075,3 +4075,91 @@ Feature: What a reload changes
       And the property "palette.inactive.button" of "root" is "#efefef"
       And the property "palette.disabled.button" of "root" is "#efefef"
       And the property "palette.active.highlight" of "root" is "#308cc6"
+
+    Scenario: A window made from another file keeps that file's style when a control in it goes
+      Given the application starts with the controls configuration:
+        """
+        [Controls]
+        Style=Fusion
+        """
+      And the file "Shell.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        ApplicationWindow {
+          objectName: "root"
+          Button { text: "close" }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Shell {}
+        """
+      Then the property "palette.button" of "root" is "#efefef"
+      When the file "Shell.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        ApplicationWindow {
+          objectName: "root"
+        }
+        """
+      And a reload happens
+      Then the property "palette.button" of "root" is "#efefef"
+      And the property "palette.active.highlight" of "root" is "#308cc6"
+
+  Rule: A delegate written inline that a reload removes takes its Component with it
+
+    A fresh load of the new file never makes the `Component` the view's
+    delegate was; one held elsewhere is null after the reload.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          ListView {
+            id: first; objectName: "first"; width: 50; height: 100; model: things
+            delegate: Rectangle { objectName: "one" + name; width: 10; height: 10 }
+          }
+          ListView {
+            objectName: "second"; width: 50; height: 100; model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            }
+          }
+          property QtObject held
+          function grab() { held = first.delegate }
+        }
+        """
+      When 500 milliseconds pass
+
+    Scenario: A view's delegate removed takes its Component with it
+      When the method "grab" of "root" is called
+      Then the property "held" of "root" is not null
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          ListView { id: first; objectName: "first"; width: 50; height: 100; model: things }
+          ListView {
+            objectName: "second"; width: 50; height: 100; model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            }
+          }
+          property QtObject held
+          function grab() { held = first.delegate }
+        }
+        """
+      And a reload happens
+      Then the property "held" of "root" is null
+      And the object "onea" does not exist
+      And the property "x" of "linea" is at least 40

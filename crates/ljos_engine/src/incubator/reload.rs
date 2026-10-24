@@ -382,7 +382,7 @@ pub(crate) struct ReloadState {
     /// Every component instance made while tracking, in the order made:
     /// where a reload that only gives objects other values finds them
     /// (in_place.rs). Held until their objects are gone and a sweep sees it.
-    instances: RefCell<Vec<Rc<Instance>>>,
+    pub(crate) instances: RefCell<Vec<Rc<Instance>>>,
     /// `Component` objects given a template while tracking.
     templates: RefCell<Vec<ObjectId>>,
     /// The code of every binding, handler and method made while tracking,

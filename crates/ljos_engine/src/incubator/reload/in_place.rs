@@ -2073,8 +2073,26 @@ impl Engine {
         }
         .map_err(|_| "a member no longer given is not found")?;
         if apply {
+            // A template written in the member goes with it: a fresh load
+            // never makes its `Component`.
+            let inline = held_in(old, name).is_some_and(|(m, leaf)| {
+                m.objects.iter().any(|a| {
+                    a.name == leaf
+                        && !a.values.is_empty()
+                        && a.values
+                            .iter()
+                            .all(|v| matches!(v, ObjectValue::Component(_)))
+                })
+            });
+            let template = inline
+                .then(|| self.untrack(|| self.read(at.obj, at.prop)).as_object())
+                .flatten()
+                .filter(|c| self.inner.reload.templates.borrow().contains(c));
             self.reset_fresh(&at);
             self.forget_assigned(&at);
+            if let Some(c) = template.filter(|c| self.is_alive(*c)) {
+                self.destroy_now(c);
+            }
         }
         Ok(())
     }

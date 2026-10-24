@@ -833,6 +833,8 @@ impl Engine {
     /// After a reload, the modules are those of the files the objects that
     /// stand were declared in, as a fresh load of the new files loads
     /// them: a file edited or no longer used takes back what it used.
+    /// The root of a component file carries its user's location, so the
+    /// files of the instances that stand are counted too.
     pub(crate) fn recount_modules(&self) {
         let urls: HashSet<Atom> = {
             let store = self.inner.store.borrow();
@@ -842,11 +844,26 @@ impl Engine {
                 .filter_map(|h| Some(h.ext.as_ref()?.location.as_ref()?.url.clone()))
                 .collect()
         };
+        let keys: HashSet<String> = {
+            let store = self.inner.store.borrow();
+            self.inner
+                .reload
+                .instances
+                .borrow()
+                .iter()
+                .filter(|i| {
+                    i.objects
+                        .first()
+                        .is_some_and(|o| store.objects.contains_key(*o))
+                })
+                .map(|i| i.file.key.clone())
+                .collect()
+        };
         let mut l = self.inner.loader.borrow_mut();
         let now: HashSet<String> = l
             .files
             .values()
-            .filter(|f| urls.contains(&f.url))
+            .filter(|f| urls.contains(&f.url) || keys.contains(&f.key))
             .flat_map(|f| modules_of(&f.ir))
             .collect();
         if now == l.used_modules {
