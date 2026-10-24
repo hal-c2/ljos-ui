@@ -224,7 +224,7 @@ Feature: Loader
       Then the property "status" of "loader" is 3
       And the property "item" of "loader" is null
       And the object "kid" does not exist
-      And the log has a warning matching "Missing.qml"
+      And the log has a warning matching "/Missing\.qml: No such file or directory$"
 
     Scenario: setSource gives the new item its first property values
       When the method "withProps" of "root" is called

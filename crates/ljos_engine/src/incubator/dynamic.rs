@@ -493,8 +493,10 @@ impl Engine {
         let full = join_url(base, url);
         let error = match self.file_template(&full) {
             Ok(template) => return self.make_component_object(owner, template),
-            // The loader's words for a file its source does not have.
-            Err(EngineError::Load(m)) if m.ends_with(": No such file") => {
+            // The loader's words for a file that is not there.
+            Err(EngineError::Load(m))
+                if m.ends_with(": No such file") || m.ends_with(": No such file or directory") =>
+            {
                 format!("{full}: No such file or directory\n")
             }
             Err(e) => format!("{e}\n"),
@@ -514,6 +516,39 @@ impl Engine {
             WriteKind::Initial,
         )?;
         Ok(c)
+    }
+
+    /// The file at `path`, which no compiled source has, compiled under
+    /// `key` with the text compiler; `None` when the program has none. A
+    /// mistake in it is told as Qt tells one: `url:line:column: message`.
+    pub(crate) fn compile_from_disk(
+        &self,
+        key: &str,
+        url: &str,
+        path: &std::path::Path,
+    ) -> Option<Result<CompiledFile, String>> {
+        let compiler = self.extension::<Dynamic>().compiler.borrow().clone()?;
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => return Some(Err(format!("{url}: {e}"))),
+        };
+        Some(
+            compiler(QmlText {
+                key,
+                url,
+                text: &text,
+            })
+            .map_err(|errors| {
+                errors
+                    .iter()
+                    .map(|e| match e.line {
+                        0 => format!("{url}: {}", e.message),
+                        line => format!("{url}:{line}:{}: {}", e.column, e.message),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
+        )
     }
 
     /// `Qt.createQmlObject(text, parent, place)` from a script of the file

@@ -791,18 +791,57 @@ impl Engine {
                 None => format!("{}: No such file", source.url(key)),
             })
         })?;
+        self.add_loaded(key, source.url(key), ir, source.bytecode(key))
+    }
+
+    /// A file the source lacks, at `url`, which a script or the host asked
+    /// for by its address: read from the disk and compiled with the text
+    /// compiler when the program has one (a development build), as Qt
+    /// loads any file it is given. `why` is what the source said.
+    pub(crate) fn load_file_from_disk(
+        &self,
+        key: &str,
+        url: &str,
+        why: String,
+    ) -> Result<Rc<LoadedFile>, EngineError> {
+        let url = strip_query(url);
+        let Some(path) = url_path(url) else {
+            return Err(EngineError::Load(why));
+        };
+        // Only a file that is there is read: one stat, and only for an
+        // address the source does not know.
+        if !path.is_file() {
+            return Err(EngineError::Load(format!(
+                "{url}: No such file or directory"
+            )));
+        }
+        let Some(compiled) = self.compile_from_disk(key, url, &path) else {
+            return Err(EngineError::Load(format!(
+                "{url}: this program runs compiled QML and has no compiler for a file \
+                 it was not built with"
+            )));
+        };
+        let ir = compiled.map_err(EngineError::Load)?;
+        self.add_loaded(key, url.to_owned(), Arc::new(ir), None)
+    }
+
+    fn add_loaded(
+        &self,
+        key: &str,
+        url: String,
+        ir: Arc<CompiledFile>,
+        bytecode: Option<Bytecode>,
+    ) -> Result<Rc<LoadedFile>, EngineError> {
         if ir.version != ljos_ir::IR_VERSION {
             return Err(EngineError::Load(format!(
-                "{}: compiled for IR version {}, this engine reads {}",
-                source.url(key),
+                "{url}: compiled for IR version {}, this engine reads {}",
                 ir.version,
                 ljos_ir::IR_VERSION
             )));
         }
-        let url = source.url(key);
         self.check_imports(&url, &ir)?;
         let used = modules_of(&ir);
-        let file = Rc::new(LoadedFile::new(key, url, ir, source.bytecode(key)));
+        let file = Rc::new(LoadedFile::new(key, url, ir, bytecode));
         file.epoch.set(self.inner.reload.epoch.get());
         let mut loader = self.inner.loader.borrow_mut();
         let len = loader.used_modules.len();

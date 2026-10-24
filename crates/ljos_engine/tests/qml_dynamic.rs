@@ -363,3 +363,95 @@ fn a_pass_of_deferred_deletes_takes_the_dead_out_of_a_list_once() {
         assert_eq!(made, Value::Int(n + 2), "{made:?} changes for {n}");
     }
 }
+
+/// A directory of its own for a test that writes files while it runs.
+fn scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("ljos-dynamic-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn error_string(h: &Harness, comp: ljos_engine::ObjectId) -> String {
+    h.engine
+        .invoke_by_name(comp, "errorString", &[])
+        .unwrap()
+        .to_js_string()
+        .to_string()
+}
+
+#[test]
+fn a_file_written_while_the_program_runs_is_compiled_when_a_script_asks() {
+    let (h, root) = made();
+    h.engine.set_qml_text_compiler(Some(compiler()));
+    let dir = scratch("late");
+    let late = dir.join("Late.qml");
+    std::fs::write(
+        &late,
+        "import QtQuick\nItem { objectName: \"late\"; property int n: 4 }\n",
+    )
+    .unwrap();
+    let url = ljos_engine::file_url(&late);
+
+    call(&h, root, "load", &[&url]);
+    let comp = object(&h, root, "comp");
+    assert_eq!(h.num(comp, "status"), 1.0, "{}", error_string(&h, comp));
+    assert_eq!(string(&h, comp, "url"), url);
+    h.engine.invoke_by_name(root, "make", &[]).unwrap();
+    let kid = object(&h, root, "kid");
+    assert_eq!(string(&h, kid, "objectName"), "late");
+    assert_eq!(h.num(kid, "n"), 4.0);
+    // Its own address is where it is.
+    assert_eq!(
+        h.engine.resolve_url(kid, "art.png"),
+        ljos_engine::file_url(&dir.join("art.png"))
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_file_written_while_the_program_runs_that_does_not_compile_says_where() {
+    let (h, root) = made();
+    h.engine.set_qml_text_compiler(Some(compiler()));
+    let dir = scratch("bad");
+    let bad = dir.join("Bad.qml");
+    std::fs::write(&bad, "import QtQuick\nItem { nothing: 3 }\n").unwrap();
+    let url = ljos_engine::file_url(&bad);
+
+    call(&h, root, "load", &[&url]);
+    let comp = object(&h, root, "comp");
+    assert_eq!(h.num(comp, "status"), 3.0);
+    let said = error_string(&h, comp);
+    assert!(said.starts_with(&format!("{url}:2:")), "{said}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn without_a_compiler_a_file_the_program_was_not_built_with_says_so() {
+    let (h, root) = made();
+    let dir = scratch("built");
+    let late = dir.join("Late.qml");
+    std::fs::write(&late, "import QtQuick\nItem { }\n").unwrap();
+    let url = ljos_engine::file_url(&late);
+
+    call(&h, root, "load", &[&url]);
+    let comp = object(&h, root, "comp");
+    assert_eq!(h.num(comp, "status"), 3.0);
+    assert_eq!(
+        error_string(&h, comp),
+        format!(
+            "{url}: this program runs compiled QML and has no compiler for a file it was not \
+             built with\n"
+        )
+    );
+
+    // A file that is not there is what Qt says of one, compiler or not.
+    let gone = ljos_engine::file_url(&dir.join("Gone.qml"));
+    call(&h, root, "load", &[&gone]);
+    let comp = object(&h, root, "comp");
+    assert_eq!(
+        error_string(&h, comp),
+        format!("{gone}: No such file or directory\n")
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

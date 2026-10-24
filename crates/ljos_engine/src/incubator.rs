@@ -372,7 +372,14 @@ impl Engine {
 
     fn file_template(&self, url: &str) -> Result<Template, EngineError> {
         let key = self.url_key(url);
-        let file = self.load_file(&key)?;
+        let file = match self.load_file(&key) {
+            // A file written since the program was built, or one of the
+            // user's: Qt loads whatever is at the address.
+            Err(EngineError::Load(why)) if why.ends_with(": No such file") => {
+                self.load_file_from_disk(&key, url, why)?
+            }
+            loaded => loaded?,
+        };
         let comp = file
             .find_component(None)
             .ok_or_else(|| EngineError::Load(format!("{}: no component", file.url)))?;
