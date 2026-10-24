@@ -1481,9 +1481,14 @@ impl Engine {
             } else {
                 match h.node(prop) {
                     Some(n) => Got::Node(n),
+                    // A read-only QML property with no node holds the value it
+                    // was made with: only its making writes it, before anything
+                    // reads it, so a read of it needs no keeping.
                     None if self.inner.tracking.get() == 0
                         || p.flags
-                            .intersects(PropertyFlags::CONSTANT | PropertyFlags::GROUP) =>
+                            .intersects(PropertyFlags::CONSTANT | PropertyFlags::GROUP)
+                        || (p.is_readonly()
+                            && matches!(p.access, PropertyAccess::Dynamic { .. })) =>
                     {
                         Got::Value(read_access(&*h.native, &h.dynamic, &p.access))
                     }
