@@ -356,10 +356,13 @@ impl Platform {
 
     fn deliver_now(&self, engine: &Engine) -> usize {
         let mut jobs = Vec::new();
-        self.inbox
-            .drain(DrainBudget::UNLIMITED, &SystemClock::new(), |j| {
-                jobs.push(j)
-            });
+        // Most passes find it empty, and a clock is not made for nothing.
+        if !self.inbox.is_empty() {
+            self.inbox
+                .drain(DrainBudget::UNLIMITED, &SystemClock::new(), |j| {
+                    jobs.push(j)
+                });
+        }
         // The Engine thread's own answers past the bound came after the
         // inbox filled.
         jobs.append(

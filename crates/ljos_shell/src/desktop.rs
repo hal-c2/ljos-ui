@@ -1390,7 +1390,7 @@ impl<M: Send + 'static> Desktop<M> {
                 }
             }
         };
-        raw.time = Some(slot.started.elapsed().as_secs_f64());
+        raw.time = Some(began.duration_since(slot.started).as_secs_f64());
 
         IN_PASS.set(Some(slot.key));
         let output = match slot.view.as_mut() {
@@ -2049,6 +2049,7 @@ impl<M: Send + 'static> Desktop<M> {
         }
         let engine = Rc::clone(self.app.engine());
         let sys = WindowSystem::of(&engine);
+        let mut last = None;
         for _ in 0..ROUNDS {
             if self.unsettled() {
                 self.sync(host, &engine, &sys);
@@ -2063,6 +2064,7 @@ impl<M: Send + 'static> Desktop<M> {
             #[cfg(feature = "mcp")]
             self.serve_resize(host, &engine, &sys);
             let now = Instant::now();
+            last = Some(now);
             for slot in &mut self.slots {
                 if slot.size_check.is_some_and(|t| t <= now) {
                     slot.size_check = None;
@@ -2094,7 +2096,9 @@ impl<M: Send + 'static> Desktop<M> {
             engine.prepare_scripts();
         }
         self.trim_heap_when_done(&engine);
-        self.collect_scripts_when_resting(&engine);
+        // The last round's time: what ran since is too short to matter
+        // to a rest of seconds, and a pass reads no clock it need not.
+        self.collect_scripts_when_resting(&engine, last.unwrap_or_else(Instant::now));
         let mut next = earlier(self.next_wake(), self.collect.next());
         if self.unsettled() {
             // Applying what the windows want keeps changing what they
@@ -2134,8 +2138,7 @@ impl<M: Send + 'static> Desktop<M> {
     /// of work left behind is collected once the loop has rested a while
     /// instead, and only once it grew. Telling whether it grew walks the
     /// whole script heap, so it is not done at every rest of a scroll.
-    fn collect_scripts_when_resting(&mut self, engine: &Engine) {
-        let now = Instant::now();
+    fn collect_scripts_when_resting(&mut self, engine: &Engine, now: Instant) {
         let soon = now + REST_BEFORE_COLLECTING;
         let busy = self.unsettled() || self.next_wake().is_some_and(|t| t < soon);
         if self.collect.settled(busy, now, REST_BEFORE_COLLECTING) {

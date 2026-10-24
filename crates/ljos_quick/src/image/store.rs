@@ -734,6 +734,9 @@ impl ImageStore {
     /// changes the picture frame after frame: there a stalled frame is
     /// lag, and the picture filling in a frame later is not noticed.
     pub fn wait_for_later_frame(&self, engine: &Engine, moving: bool) -> usize {
+        if !self.has_waits() {
+            return self.deliver_now(engine);
+        }
         let now = Instant::now();
         let budget = if moving {
             Duration::ZERO
@@ -753,6 +756,9 @@ impl ImageStore {
     /// blank where Qt would show the picture. It sleeps until a result
     /// arrives or the time is up: nothing polls.
     pub fn wait_for_frame(&self, engine: &Engine, budget: Duration) -> usize {
+        if !self.has_waits() {
+            return self.deliver_now(engine);
+        }
         let deadline = Instant::now() + budget;
         self.request_deferred(engine);
         let mut delivered = 0;
@@ -786,6 +792,14 @@ impl ImageStore {
         // What has not come by now fills in later, as any other.
         self.state.borrow_mut().fresh.clear();
         delivered
+    }
+
+    /// Whether a frame has anything to wait for: a decode started since
+    /// the last, or a picture still to be asked for. Most frames have
+    /// neither, and only deliver what came in, reading no clock.
+    fn has_waits(&self) -> bool {
+        let s = self.state.borrow();
+        !s.fresh.is_empty() || !s.deferred.is_empty()
     }
 
     /// Whether large pictures wait to be asked for until the frame is about
@@ -1320,10 +1334,13 @@ impl ImageStore {
 
     fn deliver_now(&self, engine: &Engine) -> usize {
         let mut done = Vec::new();
-        self.inbox
-            .drain(DrainBudget::UNLIMITED, &SystemClock::new(), |d| {
-                done.push(d);
-            });
+        // Most passes find it empty, and a clock is not made for nothing.
+        if !self.inbox.is_empty() {
+            self.inbox
+                .drain(DrainBudget::UNLIMITED, &SystemClock::new(), |d| {
+                    done.push(d);
+                });
+        }
         let count = done.len();
         for Done { key, result } in done {
             let (waiters, next) = {

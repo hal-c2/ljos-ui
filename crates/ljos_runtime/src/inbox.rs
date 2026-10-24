@@ -546,12 +546,16 @@ impl<M> UiInbox<M> {
         clock: &dyn Clock,
         mut handle: impl FnMut(M),
     ) -> DrainReport {
-        let start = clock.now();
+        // The clock is read from the first message on: a drain that finds
+        // the queue empty, as most of a UI thread's do, reads nothing, and
+        // one without a time limit reads it only to say how long it took.
+        let mut start = None;
         let mut drained = 0usize;
         let remaining;
         loop {
             if drained >= budget.max_messages
-                || (drained > 0 && clock.now() - start >= budget.max_time)
+                || (budget.max_time != Duration::MAX
+                    && start.is_some_and(|t| clock.now() - t >= budget.max_time))
             {
                 remaining = self.len();
                 break;
@@ -559,6 +563,7 @@ impl<M> UiInbox<M> {
             let next = self.shared.pop();
             match next {
                 Some(m) => {
+                    start.get_or_insert_with(|| clock.now());
                     Counts::bump(&self.shared.counts.drained);
                     handle(m);
                     drained += 1;
@@ -577,7 +582,7 @@ impl<M> UiInbox<M> {
         DrainReport {
             drained,
             remaining,
-            elapsed: clock.now() - start,
+            elapsed: start.map_or(Duration::ZERO, |t| clock.now() - t),
         }
     }
 }
