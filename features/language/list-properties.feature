@@ -220,3 +220,23 @@ Feature: A list property declared in QML
     When the method "run" of "root" is called
     Then the property "seen" of "root" is "true:2,4,0:2:[1,2]:1,2"
     And the property "changes" of "root" is 1
+
+  # Found by ljos-fuzz (bindings), buckets value:bool:step-set(Array.isArray) and
+  # value:point:Qt.point.
+  @backlog
+  Scenario: The list property itself is not an array to Array.isArray
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<string> names: ["a"]
+        property list<real> sizes
+        property bool namesAre: Array.isArray(names)
+        property bool sizesAre: Array.isArray(sizes)
+        property bool copyIs: Array.isArray(names.slice())
+      }
+      """
+    Then the property "namesAre" of "root" is false
+    And the property "sizesAre" of "root" is false
+    And the property "copyIs" of "root" is true

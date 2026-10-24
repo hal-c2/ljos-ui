@@ -291,3 +291,39 @@ Feature: Colour values in JavaScript
       """
     Then the property "same" of "root" is false
     And the property "sameText" of "root" is true
+
+  # Found by ljos-fuzz (bindings), bucket value:color:default.
+  @backlog
+  Scenario: A colour with no alpha at all is written with its alpha
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property string hsla: Qt.hsla(0, 0, 0, 0)
+        property string rgba: Qt.rgba(0, 0, 0, 0)
+      }
+      """
+    Then the property "hsla" of "root" is "#00000000"
+    And the property "rgba" of "root" is "#00000000"
+
+  # Found by ljos-fuzz (bindings), buckets warning:assign(ljos-only):literal and
+  # value:bool:default.
+  @backlog
+  Scenario: A colour given an array is an invalid colour and is not reported
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property color c: []
+        property int changes: 0
+        onCChanged: changes++
+        property bool ok: c.valid
+        property string text: c
+      }
+      """
+    Then the property "ok" of "root" is false
+    And the property "text" of "root" is "#000000"
+    And the property "changes" of "root" is 1
+    And the log has no warning matching "assign"

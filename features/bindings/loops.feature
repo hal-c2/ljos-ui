@@ -170,3 +170,73 @@ Feature: Binding loops
       Item { property int p: }
       """
     Then loading "Broken.qml" is rejected
+
+  # Found by ljos-fuzz (bindings), bucket warning:binding-loop(qt-only):Math.hypot+color.r.
+  @backlog
+  Scenario: An implicit height that reads the height is a loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        implicitHeight: height + 1
+      }
+      """
+    Then the log has a warning matching "Binding loop detected for property .implicitHeight."
+
+  # Found by ljos-fuzz (bindings), bucket warning:binding-loop(ljos-only):isNaN.
+  # A font member that reads another is a loop (giving it a value changes the font it read),
+  # unless the member it reads was given a size the font ignores.
+  Scenario: One member of a font that reads another is a loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        Text {
+          id: label
+          font.pixelSize: 12
+          font.italic: label.font.pixelSize > 10
+        }
+      }
+      """
+    Then the log has a warning matching "Binding loop detected for property .font.italic."
+
+  @backlog
+  Scenario: One member of a font that reads a size the font ignored is not a loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        Text {
+          id: label
+          objectName: "label"
+          font.pixelSize: 0
+          font.italic: isNaN(label.font.pixelSize)
+        }
+      }
+      """
+    Then the property "font.italic" of "label" is false
+    And the log has no warning matching "Binding loop"
+
+  # Found by ljos-fuzz (bindings), buckets warning:binding-loop(qt-only):Qt.rect+alias+object-1
+  # and warning:binding-loop(qt-only):Qt.colorEqual+Qt.rgba-computed+alias.
+  # Qt 6.11 reports a loop for a binding of a child that reads both an alias and the bound
+  # property it names, and keeps the value the binding had before the alias was read (1 here,
+  # not 2). Nothing loops: Ljós computes the binding once and says nothing.
+  @qt-diverges
+  Scenario: An alias and the property it names read together are not a loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        property real p: 1 + 0
+        property alias a: root.p
+        Item {
+          objectName: "child"
+          property real both: root.a + root.p
+        }
+      }
+      """
+    Then the property "both" of "child" is 2
+    And the log has no warning matching "Binding loop"

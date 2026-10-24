@@ -85,3 +85,38 @@ Feature: A binding that fails while its object is made is forgiven if it recover
       When the property "gs" of "root" is bound to "({x: 1})"
       Then the property "b" of "root" is true
       And the log has a warning matching "Scenario.qml:6: TypeError: Cannot read property 'x' of undefined"
+
+  # Found by ljos-fuzz (bindings), buckets warning:TypeError(ljos-only):startsWith+typeof,
+  # warning:TypeError(ljos-only):Array.from+String+reduce and
+  # warning:RangeError(ljos-only):function-call+loose-eq+rect.height.
+  Rule: A binding replaced before the creation is complete is not logged
+
+    @backlog
+    Scenario: A binding Component.onCompleted replaces is not logged
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string text: "x".toPrecision(3)
+          Component.onCompleted: text = ""
+        }
+        """
+      Then the property "text" of "root" is ""
+      And the log has no warning matching "TypeError"
+
+    @backlog
+    Scenario: A binding a change handler replaces while the object is made is not logged
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          property list<int> numbers: []
+          property bool flag: typeof ({}).startsWith("")
+          onNumbersChanged: root.flag = true
+        }
+        """
+      Then the property "flag" of "root" is true
+      And the log has no warning matching "TypeError"
