@@ -415,6 +415,26 @@ fn shadow_blurs_outside_the_caster() {
 }
 
 #[test]
+fn a_shadow_spreads_outward() {
+    let mut s = Scene::new(60.0, 60.0);
+    let n = s.node(None, 20.0, 20.0, 20.0, 20.0);
+    s.paint(n, |b| {
+        b.shadow(
+            Rect::new(0.0, 0.0, 20.0, 20.0),
+            [0.0; 4],
+            0.0,
+            10.0,
+            Rgba::BLACK,
+        );
+    });
+    let img = s.render(WHITE_BG, 1.0);
+    // The caster grown by 10 on every side: 10..50.
+    assert_eq!(img.pixel(12, 30), [0, 0, 0, 255], "inside the spread");
+    assert_eq!(img.pixel(47, 30), [0, 0, 0, 255], "inside the spread");
+    assert_eq!(img.pixel(7, 30), [255, 255, 255, 255], "past the spread");
+}
+
+#[test]
 fn text_stopgap_boxes_mode() {
     let mut s = Scene::new(20.0, 10.0);
     let n = s.node(None, 0.0, 0.0, 20.0, 10.0);

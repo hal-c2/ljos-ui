@@ -521,7 +521,7 @@ impl VelloCpuReference {
                     return;
                 }
                 let s = f64::from(*spread);
-                let grown = rect.inset(-s);
+                let grown = rect.inset(s);
                 let radius = radii.iter().copied().fold(0.0_f32, f32::max) + *spread;
                 ctx.set_paint(alpha_color(c));
                 // Gaussian sigma is half the CSS-style blur width.
