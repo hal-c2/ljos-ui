@@ -2819,6 +2819,72 @@ On the full path, thermostat also holds about 97 MB where in place holds 76 MB.
   default colours where a fresh load gives the style's (alarms, android-splashscreen). The
   baseline build does the same.
 
+### Hot reload: renames read elsewhere, and the palette after a reload (2026-10-24)
+
+The same fuzzer: 25 edits to every corpus example, at seeds 7, 13 and 29. "before" is the
+"after" build of the section above, and "after" is this one. The steps:
+
+1. **The modules in use are counted again after a reload.** The style's palette follows, so
+   removing the last Popup or Button gives the colours a fresh load gives, in every colour
+   group. The files counted are those of the objects that stand, and of the instances: the
+   root of a component file carries its user's location.
+2. **The alias guard matches the object that has the alias, not its name.** At these seeds it
+   changes no count: the two edits it holds back are the two that diverge without it.
+3. **A renamed property that another file reads goes in place.** That file's bindings that read
+   either name are bound again, as on a fresh load. So does a rename whose user declares members.
+4. **A delegate written inline that is removed takes its `Component`.**
+5. **A file that compiles again, which no loaded file names, goes in place.** This is FileAdded.
+6. **A crash is fixed.** The rename check panicked with "RefCell already borrowed" when finding
+   a type loaded a file (maroon, edit 3 at seed 7). Every build in these tables stopped maroon
+   there, at 3 of its 25 edits.
+
+| Reason | 7 before | 7 after | 13 before | 13 after | 29 before | 29 after |
+|---|---:|---:|---:|---:|---:|---:|
+| a renamed property is read or set in another file | 7 | 3 | 8 | 5 | 8 | 7 |
+| a renamed property's object has members its user declares | 5 | – | 6 | – | 6 | – |
+| a component's signature changed | 4 | 4 | 8 | 8 | 4 | 4 |
+| an element is not in a model that stays | 3 | 3 | 1 | 1 | – | – |
+| an object's members given objects changed | 2 | – | – | – | 3 | 1 |
+| a state or a Binding holds the edited object, or one made again | 1 | 1 | 3 | 3 | 3 | 3 |
+| FileAdded | 1 | – | 1 | – | 1 | – |
+| the component an object is made from gives a part of it | – | – | 2 | 2 | 2 | 3 |
+| an object is given through an alias of an object made again | – | – | – | – | 1 | 1 |
+| a member no longer given is an alias | – | 1 | – | – | – | 1 |
+| other | 3 | 3 | 1 | 1 | – | – |
+| **full path** | **26** | **15** | **30** | **20** | **28** | **20** |
+| **in place** | **581** | **592** | **584** | **594** | **598** | **606** |
+| **diverged** | **41** | **39** | **49** | **48** | **29** | **29** |
+
+The renames that stay on the full path are set by another file, or connected to through their
+signal, or read by a script file. A fresh load refuses those, or connects them differently.
+
+**Diverged.** Before steps 1 and 4 were added, this build took the palette edits (alarms, seed 7)
+and a removed delegate (alarms, seed 29) in place and diverged on them. A window made from another
+file also lost Fusion's palette (robotarm, seed 29). None of these diverge now. The rest of the
+count moves with photosurface's and clocks' timing from run to run.
+
+**Save to frame**, median of 20 saves 2.5 s apart, at a load average of 15–20. qml6 ran through
+`qmlpreview` as above.
+
+| Edit | Ljós before | Ljós after | qml6 |
+|---|---:|---:|---:|
+| clocks, a binding's value | 17.4 ms | 17.6 ms | 119.5 ms |
+| calqlatr, a binding's value | 24.7 ms | 18.7 ms | 131 ms |
+| thermostat, a singleton's colour | 34.2 ms | 33.1 ms | 270 ms |
+| thermostat, a state's `PropertyChanges` value | 35.0 ms | 33.6 ms | 301 ms |
+| thermostat, a property another file reads, renamed | 110.7 ms (full path) | 37.9 ms | 223.5 ms |
+
+After the rename, thermostat holds 81 MB in place against 99 MB on the full path.
+
+**Not fixed:**
+
+- **The overlay after the last popup is removed.** The window's hidden overlay item stays, where a
+  fresh load of a window without popups makes none (alarms, seed 7). Nothing in it is drawn.
+- **A moved object made again binds an anchor margin** that a fresh load leaves unbound. The value
+  is the same (maroon's BuildButton).
+- **A Text on a SwipeView page that isn't shown** is not measured again after a font change
+  (thermostat). This is a scene bug.
+
 ### Clicks on a settled window, and a press that arrives (2026-10-18)
 
 `BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench samegame --profile desktop --settle 3 --idle 4
