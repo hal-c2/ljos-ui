@@ -31,6 +31,7 @@ T.RangeSlider {
             rotation: host.horizontal ? 0 : -90
             control: host
             visualFocus: activeFocus && host.visualFocus
+            pressed: host.first.pressed
             readonly property real value: host.first.value
             readonly property real minimumValue: Math.min(host.from, host.to)
             readonly property real maximumValue: Math.max(host.from, host.to)
@@ -46,6 +47,7 @@ T.RangeSlider {
             rotation: host.horizontal ? 0 : -90
             control: host
             visualFocus: activeFocus && host.visualFocus
+            pressed: host.second.pressed
             readonly property real value: host.second.value
             readonly property real minimumValue: Math.min(host.from, host.to)
             readonly property real maximumValue: Math.max(host.from, host.to)

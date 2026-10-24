@@ -25,6 +25,7 @@ T.Slider {
             rotation: host.horizontal ? 0 : -90
             control: host
             visualFocus: host.visualFocus
+            pressed: host.pressed
         }
     }
 

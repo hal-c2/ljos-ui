@@ -3,7 +3,7 @@
 // towards the highlight while the control has the keyboard, in an outline
 // of its own that is the window's colour darker, or the highlight's while
 // it has the keyboard. Unlike a button's it keeps its outline when not
-// enabled. What qml6 shows (fusion-states.feature).
+// enabled, and its gradient while held. What qml6 shows (fusion-states.feature).
 import QtQuick
 import QtQuick.Templates as T
 import QtQuick.Controls.Fusion
@@ -13,9 +13,12 @@ Rectangle {
 
     property T.Control control
     property bool visualFocus: false
+    // Darker while held, lighter under the pointer (fusion-hover.feature).
+    property bool pressed: false
+    property bool hovered: control.enabled && control.hovered
 
     // Fusion's shade of a button, or a highlighted one's with the keyboard.
-    readonly property color face: Fusion.buttonColor(control.palette, visualFocus, false, false)
+    readonly property color face: Fusion.buttonColor(control.palette, visualFocus, pressed, hovered)
 
     implicitWidth: 13
     implicitHeight: 13

@@ -24,5 +24,7 @@ SliderGroove {
         height: 16
         control: indicator.control
         visualFocus: indicator.control.visualFocus
+        // Held, not merely down (fusion-hover.feature).
+        pressed: indicator.control.pressed
     }
 }

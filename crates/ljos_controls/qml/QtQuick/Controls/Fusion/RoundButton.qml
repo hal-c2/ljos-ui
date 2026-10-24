@@ -50,12 +50,12 @@ T.RoundButton {
             gradient: Gradient {
                 GradientStop {
                     position: 0
-                    color: panel.pressed ? Fusion.buttonColor(host.palette, host.highlighted, true, false)
+                    color: panel.pressed ? Fusion.buttonColor(host.palette, host.highlighted, true, panel.hovered)
                                          : Fusion.gradientStart(panel.face)
                 }
                 GradientStop {
                     position: 1
-                    color: panel.pressed ? Fusion.buttonColor(host.palette, host.highlighted, true, false)
+                    color: panel.pressed ? Fusion.buttonColor(host.palette, host.highlighted, true, panel.hovered)
                                          : Fusion.gradientStop(panel.face)
                 }
             }
