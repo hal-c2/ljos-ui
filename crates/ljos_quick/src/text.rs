@@ -453,7 +453,7 @@ pub fn text_style(f: &Font) -> TextStyle {
         DEFAULT_PIXEL_SIZE
     };
     TextStyle {
-        family: Arc::from(f.family.as_str()),
+        family: family_of(&f.family),
         pixel_size: pixel_size as f32,
         weight: f.weight.clamp(1, 1000) as f32,
         italic: f.italic,
@@ -462,6 +462,22 @@ pub fn text_style(f: &Font) -> TextStyle {
         letter_spacing: f.letter_spacing as f32,
         word_spacing: f.word_spacing as f32,
     }
+}
+
+/// `family` as the text engine wants it. Nearly every font on a thread
+/// names the same family, so the last one made is handed out again
+/// instead of a new allocation per text.
+fn family_of(family: &Atom) -> Arc<str> {
+    thread_local! {
+        static LAST: RefCell<(Atom, Arc<str>)> = RefCell::new((Atom::EMPTY, Arc::from("")));
+    }
+    LAST.with(|last| {
+        let mut last = last.borrow_mut();
+        if !Atom::ptr_eq(&last.0, family) && last.0 != *family {
+            *last = (family.clone(), Arc::from(family.as_str()));
+        }
+        last.1.clone()
+    })
 }
 
 /// Reads a `font` property as a style (tracked).
