@@ -4177,3 +4177,118 @@ and `display` (a property of the state object). Each goes through the global pro
 - `running` is not written again on a reuse: it is already true.
 - The read-only skip covers only properties declared in QML (a dynamic slot). A native
   read-only field such as `pressed` is written by native code, so its reads stay kept.
+
+### B20: a click's wakes, the redraw's loop turn, clocks and Material's press (2026-10-24)
+
+"The cost of a click's passes, and alarms' slow clicks" above left the static snippets at
+about twice qml6's CPU while driven, with a click costing a few wakes and no frame, and
+alarms' p95 at 47 against 34 ms. This pass cut the wakes and the clock reads, and gave
+Material buttons a press of their own. It does what that section left for later: the redraw's
+loop turn, Material's press and the epoch an author's write bumped.
+
+**The clipboard's thread.** egui-winit kept a clipboard thread on the window's own Wayland
+connection, so it woke on every event the window got: about five times a click. egui's copies
+and pastes now go to the platform's clipboard, which reads and writes the system's only when
+asked. `features/window/passes-per-click.feature` counts the wakes of the application's threads
+over a click. The accessibility adapter's thread woke on every pass too, for the same root
+update; a pass that does not change egui's tree now sends nothing.
+
+**The redraw's loop turn.** Asking the platform to redraw costs a turn of the event loop to
+hear yes. A window the platform has let draw since its last frame now runs its pass at once.
+A drawn frame makes the next one ask again, so frames that follow one another still wait for
+the compositor. Pacing was measured against the compositor with the binary before and after,
+three runs each, medians (`--settle 3 --idle 4 --load 5`, drag and scroll `--idle 2`):
+
+| | before | after |
+|---|---:|---:|
+| samegame frame interval p50 / p95 ms | 16.12 / 16.15 | 16.11 / 16.15 |
+| samegame input-to-frame p50 / p95 ms | 8.15 / 16.08 | 8.17 / 15.68 |
+| alarms input-to-frame p50 / p95 ms | 1.87 / 49.34 | 1.37 / 48.77 |
+| listview drag interval p50 / p95 ms, fps | 16.17 / 16.20, 61.85 | 16.16 / 16.20, 61.92 |
+| listview drag input-to-frame p50 / p95 ms | 8.08 / 15.19 | 8.08 / 15.22 |
+| listview scroll interval p50 / p95 ms, fps | 16.17 / 16.20, 61.94 | 16.16 / 16.20, 61.60 |
+| listview scroll input-to-frame p50 / p95 ms | 8.18 / 15.42 | 8.48 / 15.23 |
+| focus-column, 25 clicks: CPU ms, main thread M instructions | 20.82, 5.81 | 18.86, 5.42 |
+
+Frame intervals are the same in every case, and input-to-frame latency is the same or lower.
+
+**Clock reads.** An LD_PRELOAD counter of `clock_gettime` and `getpid` on the main thread,
+symbolized by backtrace, on focus-column with 25 clicks: `clock_gettime` went from 87–92 a click
+to 44. An inbox drain now starts its budget clock at the first message; the image store and the
+platform skip draining an empty inbox; the image store waits for no frame when nothing waits;
+and settle hands its last read to the script collector. What is left belongs to winit, calloop
+and polling, egui's input, one or two reads a pass for the pass's own clock, and the painter's
+three step timings a frame. `getpid` is 0 a click: all of it comes from libEGL loading GL
+function pointers at startup.
+
+**Material's press.** qml6's Material Button and RoundButton were watched black-box on a
+compositor. A pressed button is covered by a layer of the theme's text colour, about
+`#10000000` in the light theme (214 → 201 on the button's grey). A RoundButton takes it at
+once and drops it at once; a Button's comes in over about 100 ms and fades over about 400 ms
+after release. A raised button's shadow, about 4 px deep at rest, is about 10 px deep while
+held, at once. Ljós now draws the same layer, timings and a deeper shadow while held, so a
+press draws a frame of its own. `features/controls/material-press.feature` pins the colours and
+timings; it is `@ljos-only`, because qml6's vnc platform, the one that takes input, draws no
+Material button.
+
+**Delegates that each give a Material value.** An author's write bumped one epoch for the
+whole style, so every attached object looked its values up again. A walk for an inherited value
+now notes the items it passed that had no attached object, and only a value given there later
+bumps. 80 rows that each give a background ran 5900 effects against 2160 for 40, and now run
+within 2.2 times of 40's.
+
+**Against qml6 again.** alarms and the 18 static snippets were run against qml6 back to back on
+ca9ba3ec (rebased on the branch), with `--warm-up --repeat 3`, two apps a chunk, at load
+averages of 3.3–51.3. Medians:
+
+| example | driven CPU % (Qt) | busiest thread % (Qt) | main thread ms (Qt) | lag p95 ms (Qt) |
+|---|---:|---:|---:|---:|
+| alarms | 0.29 (5.87) | 0.25 (1.10) | 25.9 (20.1) | 3.2 (34.2) |
+
+alarms' presses on the round "+" and "−" now draw a frame of their own. Its input-to-frame p95
+went from 47.3 to 3.2 ms, against qml6's 34.2. The rest of its numbers barely moved.
+
+| example | driven CPU % (Qt) | busiest thread % (Qt) | main thread ms (Qt) | lag p95 ms (Qt) |
+|---|---:|---:|---:|---:|
+| snippet-focus-column | 0.12 (0.07) | 0.12 (0.04) | 14.1 (5.1) | — (—) |
+| snippet-borderimage-defaults | 0.12 (0.08) | 0.12 (0.05) | 14.1 (5.4) | — (—) |
+| snippet-vertical-positioner-transition | 0.19 (0.11) | 0.19 (0.07) | 22.2 (7.9) | 42.0 (40.9) |
+| snippet-flow-diagram | 0.15 (0.08) | 0.16 (0.05) | 18.3 (6.3) | — (—) |
+| snippet-focus-scopes | 0.29 (0.44) | 0.27 (0.09) | 31.6 (9.6) | 456.3 (461.0) |
+| snippet-rectangle-smooth | 0.14 (0.09) | 0.14 (0.05) | 16.1 (6.4) | — (—) |
+| snippet-texteditor | 0.39 (0.77) | 0.38 (0.19) | 44.2 (14.9) | 456.4 (465.0) |
+| snippet-text-lines | 0.10 (0.06) | 0.10 (0.03) | 11.8 (4.0) | — (—) |
+| snippet-components-application | 0.17 (0.08) | 0.16 (0.06) | 19.3 (6.8) | — (—) |
+| snippet-properties-application | 0.13 (0.09) | 0.13 (0.05) | 15.7 (6.3) | — (—) |
+| snippet-alias-application | 0.09 (0.06) | 0.09 (0.03) | 11.1 (4.1) | — (—) |
+| snippet-property-signals | 0.10 (0.07) | 0.10 (0.04) | 11.9 (4.4) | — (—) |
+| snippet-signals-basic | 0.15 (0.09) | 0.15 (0.06) | 17.5 (6.8) | — (—) |
+| snippet-signals-parameters | 0.19 (0.10) | 0.18 (0.07) | 21.7 (8.2) | — (—) |
+| snippet-signals-no-parameters | 0.20 (0.10) | 0.20 (0.07) | 23.3 (8.2) | — (—) |
+| snippet-signals-connectslots | 0.16 (0.09) | 0.15 (0.07) | 17.9 (7.7) | — (—) |
+| snippet-signals-connectdynamic | 0.18 (0.11) | 0.17 (0.08) | 19.9 (9.2) | — (—) |
+| snippet-methods-app | 0.20 (0.11) | 0.19 (0.07) | 22.8 (8.6) | — (—) |
+
+The static snippets now use 0.09–0.39 % of a core while driven, against qml6's 0.06–0.77 %
+(B19: 0.12–0.38 against 0.07–0.77). Ljós still wins focus-scopes and texteditor. On the
+others it went from about twice qml6's CPU to 1.4–2.1 times. Its main thread spends 11–44 ms on
+25 clicks against qml6's 4–15 ms, still 2.3–3.0 times.
+
+What is left:
+
+| loss | cause | owner |
+|---|---|---|
+| static snippets, 1.4–2.1 times qml6's CPU while driven | About 44 clock reads a click remain, most of them in winit, calloop and egui's input. Each wake costs more on the main thread than qml6's does. | shell |
+| Material Button's shape | qml6's Material Button is a pill (radius 20) and about 8 px wider; Ljós's has radius 4. | controls |
+| the press layer grows as a circle in qml6 | Ljós covers the whole background at once, because it clips only to rectangles. | render |
+
+- **DECISION: the platform clipboard is the only one.** egui's own is not kept as a fallback; a
+  compositor without data-control falls back to XWayland's X11 clipboard.
+- **DECISION: the window becoming active on its first click still wakes the accessibility
+  thread.** A screen reader is told of that.
+- **DECISION: the press layer covers the whole background** rather than growing as a circle from
+  the press point. Ljós clips to rectangles, and after 100 ms the two look the same.
+- **DECISION: the shadow is layered faint rectangles, not a blur.** A blur costs a pass over the
+  button every frame.
+- **DECISION: the painter's step timings are kept.** They are three reads a frame, and a frame
+  that draws nothing does not run them.
