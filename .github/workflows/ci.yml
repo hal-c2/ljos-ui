@@ -143,3 +143,16 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: mise run gallery:reference
       - run: mise run gallery
+      # Differential fuzzing against the same Qt: a fixed budget, a seed from the run (printed, so a
+      # failure can be run again), failing only on a bucket not in crates/ljos_fuzz/known-buckets.txt.
+      # It runs whatever the gallery found.
+      - run: mise run fuzz:qt bindings --cases 2000 --seed "$GITHUB_RUN_ID"
+        if: ${{ !cancelled() }}
+        env:
+          FUZZ_OUT: ${{ runner.temp }}/fuzz
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: fuzz-repros
+          path: ${{ runner.temp }}/fuzz
+          if-no-files-found: ignore
