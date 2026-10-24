@@ -27,3 +27,50 @@ Feature: A font's pixel size is more than zero
       | size |
       | 0    |
       | -3   |
+
+  # Found by ljos-fuzz (bindings), buckets throws:Error/none:step-member-write(mod) and (parseInt).
+  @backlog
+  Scenario Outline: A script that gives the <member> of a font NaN is thrown an error
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property font f: Qt.font({pixelSize: 10, weight: 400})
+        property string seen: ""
+        function give() {
+          try { f.<member> = NaN } catch (e) { seen = e.message }
+        }
+      }
+      """
+    When the method "give" of "root" is called
+    Then the property "seen" of "root" is "Cannot assign double to int"
+
+    Examples:
+      | member    |
+      | pixelSize |
+      | weight    |
+
+  Scenario: An int property a script gives NaN is zero
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property int n: 5
+        function give() { n = NaN }
+      }
+      """
+    When the method "give" of "root" is called
+    Then the property "n" of "root" is 0
+
+  Scenario: A font Qt.font makes has the pixel size it was given
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property real size: Qt.font({pixelSize: 10}).pixelSize
+      }
+      """
+    Then the property "size" of "root" is 10

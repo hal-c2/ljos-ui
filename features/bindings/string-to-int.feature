@@ -61,3 +61,23 @@ Feature: A string given to an int property
       """
     When the method "give" of "root" is called
     Then the property "n" of "root" is 7
+
+  # Found by ljos-fuzz (bindings), bucket value:int:reduce.
+  @backlog
+  Scenario Outline: A number with a half given to an int as a string is rounded up
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property int n: (<whole> + ".5")
+      }
+      """
+    Then the property "n" of "root" is <n>
+    And the log has no warning matching "(?i)assign"
+
+    Examples:
+      | whole | n |
+      | "3"   | 4 |
+      | "03"  | 4 |
+      | "2"   | 3 |

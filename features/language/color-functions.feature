@@ -356,3 +356,9 @@ Feature: Making one colour from another
         | Qt.alpha("#80336699", 2)                   | #336699   |
         | Qt.alpha("#80336699", 0)                   | #00336699 |
         | Qt.tint("red", "blue")                     | #0000ff   |
+
+      # Found by ljos-fuzz (bindings), bucket value:color:Qt.darker.
+      @backlog
+      Examples: Rounded as Qt rounds
+        | expression                                     | colour    |
+        | Qt.darker(Qt.hsla(0.25, 1, 0.75, 0), 1.5)      | #0080aa55 |

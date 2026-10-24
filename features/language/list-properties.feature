@@ -240,3 +240,20 @@ Feature: A list property declared in QML
     Then the property "namesAre" of "root" is false
     And the property "sizesAre" of "root" is false
     And the property "copyIs" of "root" is true
+
+  # Found by ljos-fuzz (bindings), bucket value:double:step-set(literal).
+  @backlog
+  Scenario: An empty list given an empty list is told as a change
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<string> names
+        property int changes: 0
+        onNamesChanged: changes++
+        function clear() { names = [] }
+      }
+      """
+    When the method "clear" of "root" is called
+    Then the property "changes" of "root" is 1

@@ -41,3 +41,25 @@ Feature: An item's geometry is never NaN
     When the method "spoil" of "root" is called
     Then the property "width" of "root" is 20
     And the property "height" of "root" is 0
+
+  # Found by ljos-fuzz (bindings), bucket value:double:step-set(ref).
+  @backlog
+  Scenario Outline: <property> given NaN is NaN
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property bool nan: isNaN(<property>)
+        function give() { <property> = NaN }
+      }
+      """
+    When the method "give" of "root" is called
+    Then the property "nan" of "root" is true
+
+    Examples:
+      | property |
+      | rotation |
+      | scale    |
+      | opacity  |
+      | z        |

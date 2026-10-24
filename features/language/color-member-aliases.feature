@@ -59,3 +59,23 @@ Feature: An alias of a channel of a colour property
       """
     When the method "move" of "root" is called
     Then the property "x" of "root" is 1
+
+  # Found by ljos-fuzz (bindings), bucket throws:TypeError/none:step-set(literal).
+  @backlog
+  Scenario: Writing an alias of a channel of a read-only colour is a TypeError
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        readonly property color c: "#000000"
+        property alias red: root.c.r
+        property string seen: ""
+        function give() {
+          try { red = 0.5 } catch (e) { seen = e.name }
+        }
+      }
+      """
+    When the method "give" of "root" is called
+    Then the property "seen" of "root" is "TypeError"

@@ -240,3 +240,25 @@ Feature: Binding loops
       """
     Then the property "both" of "child" is 2
     And the log has no warning matching "Binding loop"
+
+  # Found by ljos-fuzz (bindings), bucket
+  # warning:binding-loop(qt-only):Qt.lighter+array-includes+color.r.
+  # While the object is made, a handler of the first binding writes what a later binding
+  # reads; Qt reports the later binding.
+  @backlog
+  Scenario: A handler run while the object is made that writes what a binding reads is a loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        property real a: Qt.lighter("steelblue").r
+        onAChanged: { other.l = [] }
+        Item {
+          id: other
+          property list<real> l
+          property bool has: l.includes(root.a)
+        }
+      }
+      """
+    Then the log has a warning matching "Binding loop detected for property .has."

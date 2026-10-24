@@ -58,3 +58,22 @@ Feature: A url as a script sees it
       """
     Then the property "kind" of "root" is "object"
     And the property "same" of "root" is false
+
+  # Found by ljos-fuzz (bindings), bucket value:url:string-as-url.
+  @backlog
+  Scenario Outline: A url given <text>, which is no address, is empty
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property url address: <text>
+        property string seen: address
+      }
+      """
+    Then the property "seen" of "root" is ""
+
+    Examples:
+      | text           |
+      | ("0" + ":0")   |
+      | ("a b" + ":c") |
