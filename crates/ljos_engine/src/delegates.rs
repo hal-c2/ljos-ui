@@ -232,6 +232,7 @@ impl Delegates {
         component: Option<ObjectId>,
     ) {
         let s = &self.shared;
+        engine.note_shown_model(s.owner, model.as_ref());
         let model = model.filter(|_| component.is_some());
         engine.batch(|| {
             // Measured on Qt 6.11: a new delegate takes the old objects
@@ -980,6 +981,7 @@ impl ViewDelegates {
         component: Option<ObjectId>,
     ) {
         let s = &self.shared;
+        engine.note_shown_model(s.owner, model.as_ref());
         let model =
             model.filter(|m| component.is_some() || m.delegate_source() != DelegateSource::View);
         s.destroy_all(engine);

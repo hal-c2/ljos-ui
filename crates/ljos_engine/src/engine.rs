@@ -133,6 +133,8 @@ pub(crate) struct Inner {
     pub(crate) delayed: crate::delayed_errors::DelayedErrors,
     /// The objects an inspector traces (trace.rs).
     pub(crate) traces: crate::trace::Traces,
+    /// The model each view was given, for an inspector (model.rs).
+    pub(crate) shown: crate::model::Shown,
     /// What a frame timeline counts (timing.rs); one flag while off.
     pub(crate) timing: crate::timing::Timing,
     /// The properties whose setters (those that get a `Cx`) are running,
@@ -297,6 +299,7 @@ impl Engine {
             slow: Default::default(),
             delayed: Default::default(),
             traces: Default::default(),
+            shown: Default::default(),
             timing: Default::default(),
             setters: RefCell::new(SmallVec::new()),
             frozen: Cell::new(0),
@@ -836,6 +839,7 @@ impl Engine {
         }
         crate::qtqml::forget_timers(self, &order);
         self.inner.hooks.forget(&order);
+        self.inner.shown.forget(&order);
         if self.inner.reload.tracking.get() {
             self.reload_forget(&order);
         }

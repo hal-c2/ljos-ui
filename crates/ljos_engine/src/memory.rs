@@ -73,6 +73,12 @@ impl Engine {
         Some(self.inner.store.borrow().objects.get(obj)?.bytes())
     }
 
+    /// Every object alive, in the order of their places in the store:
+    /// for a tool that looks at each once (an inspector's model list).
+    pub fn object_ids(&self) -> Vec<ObjectId> {
+        self.inner.store.borrow().objects.keys().collect()
+    }
+
     /// The objects by type, the most bytes first.
     pub fn object_memory(&self) -> Vec<TypeMemory> {
         let store = self.inner.store.borrow();

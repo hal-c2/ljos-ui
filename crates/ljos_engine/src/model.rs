@@ -15,7 +15,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use ljos_reactive::{NodeId, NodeKind, NodeState};
 
@@ -173,6 +173,23 @@ pub trait ItemModel {
     /// ([`crate::ItemTree`]): what a `TreeView` shows.
     fn tree(&self) -> Option<Rc<dyn crate::ItemTree>> {
         None
+    }
+}
+
+/// Which model each view shows (`Engine::shown_models`). Weak, so that
+/// it keeps no model alive; an entry goes with its view.
+#[derive(Default)]
+pub(crate) struct Shown(RefCell<HashMap<ObjectId, Weak<dyn ItemModel>>>);
+
+impl Shown {
+    pub(crate) fn forget(&self, gone: &[ObjectId]) {
+        let mut shown = self.0.borrow_mut();
+        if shown.is_empty() {
+            return;
+        }
+        for o in gone {
+            shown.remove(o);
+        }
     }
 }
 
@@ -1049,6 +1066,36 @@ impl Engine {
         let (model, signals) = list_model(model);
         self.set_object_model(obj, Some(model))?;
         Ok(signals)
+    }
+
+    /// Whether `obj` is a `ListModel`: its rows are written by role.
+    pub fn is_list_model(&self, obj: ObjectId) -> bool {
+        self.list_model_state(obj).is_some()
+    }
+
+    /// Each view, repeater or instantiator alive and the model it was
+    /// last given, in no set order: what an inspector lists as the
+    /// application's models. A number or an array is a model only there.
+    pub fn shown_models(&self) -> Vec<(ObjectId, Rc<dyn ItemModel>)> {
+        let shown = self.inner.shown.0.borrow();
+        shown
+            .iter()
+            .filter(|(o, _)| self.is_alive(**o))
+            .filter_map(|(o, m)| Some((*o, m.upgrade()?)))
+            .collect()
+    }
+
+    /// The model `view` was last given ([`Engine::shown_models`]).
+    pub fn shown_model(&self, view: ObjectId) -> Option<Rc<dyn ItemModel>> {
+        self.inner.shown.0.borrow().get(&view)?.upgrade()
+    }
+
+    pub(crate) fn note_shown_model(&self, view: ObjectId, model: Option<&Rc<dyn ItemModel>>) {
+        let mut shown = self.inner.shown.0.borrow_mut();
+        match model {
+            Some(m) => shown.insert(view, Rc::downgrade(m)),
+            None => shown.remove(&view),
+        };
     }
 
     /// The model `obj` is, when it is one.

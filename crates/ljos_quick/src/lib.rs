@@ -169,7 +169,7 @@ pub use tree::{
 pub use views::table::{CellBlock, CellSelector, cell_block_rect, select_by, set_cell_selector};
 pub use views::{
     DelegateModel, DelegateModelAttached, DelegateModelGroup, ObjectModel, drive_delegate_model,
-    object_model_changed, object_model_rows,
+    model_of_object, object_model_changed, object_model_rows,
 };
 pub use views::{
     GridView, ItemView, ListView, TableView, TableViewAttached, TreeView, ViewAttached,

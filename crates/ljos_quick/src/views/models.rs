@@ -94,6 +94,13 @@ pub fn object_model_rows(e: &Engine, model: ObjectId) -> Option<Rc<ObjectRows>> 
     e.with(model, |m: &ObjectModel| m.rows.clone()).ok()
 }
 
+/// The model `obj` is to a view that names it, when it is one: an
+/// `ObjectModel`'s or a `DelegateModel`'s rows, or what the engine knows
+/// ([`Engine::object_model`]). For an inspector that lists the models.
+pub fn model_of_object(e: &Engine, obj: ObjectId) -> Option<Rc<dyn ItemModel>> {
+    model_of(e, &Value::Object(obj)).or_else(|| e.object_model(obj))
+}
+
 /// Brings what QML reads of the `ObjectModel` `model` (`count`,
 /// `children`) in step after its rows were changed natively.
 pub fn object_model_changed(e: &Engine, model: ObjectId) {

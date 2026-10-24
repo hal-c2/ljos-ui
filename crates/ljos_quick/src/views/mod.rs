@@ -44,7 +44,7 @@ use crate::item::{is_a, write_computed};
 pub(crate) use changes::{incubation_begins, incubation_ends, polish_ends};
 pub use models::{
     DelegateModel, DelegateModelAttached, DelegateModelGroup, ObjectModel, drive_delegate_model,
-    object_model_changed, object_model_rows,
+    model_of_object, object_model_changed, object_model_rows,
 };
 pub use path_view::{PathView, PathViewAttached};
 pub(crate) use state::ViewState;
