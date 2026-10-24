@@ -88,12 +88,16 @@ pub(crate) fn lap(laps: &mut Option<Laps>, into: &mut Duration) {
 impl QuickScene {
     /// Times each frame from now on, with the bindings and the text laid
     /// out in it, for [`QuickScene::take_frame_times`]; or stops. The
-    /// engine and the thread's text engine are timed with the scene.
+    /// engine and the thread's text engine are timed with the scene; they
+    /// are shared by every scene of the thread, so a second scene timed
+    /// leaves what they gathered for the first.
     pub fn set_timed(&mut self, engine: &Engine, on: bool) {
         self.timing = on.then(FrameTimes::default);
         self.saw_input.set(false);
-        engine.set_timed(on);
-        self.text_engine().borrow_mut().set_timed(on);
+        if engine.is_timed() != on {
+            engine.set_timed(on);
+            self.text_engine().borrow_mut().set_timed(on);
+        }
     }
 
     pub fn is_timed(&self) -> bool {

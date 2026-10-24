@@ -229,6 +229,47 @@ impl<M> ShellApp<M> {
         }
     }
 
+    /// Whether a client records frames, so that the other windows' passes
+    /// are timed too.
+    pub(crate) fn records_frames(&self) -> bool {
+        self.tools
+            .inspector
+            .as_ref()
+            .is_some_and(|s| s.inspector().records_frames())
+    }
+
+    /// Before a pass over another window: its scene is timed while a
+    /// client records.
+    pub(crate) fn time_window(&mut self, view: &mut ljos_egui::QmlView) {
+        if let Some(served) = self.tools.inspector.as_ref() {
+            let engine = std::rc::Rc::clone(view.engine());
+            served.inspector().time_window(&engine, view.scene_mut());
+        }
+    }
+
+    /// After a pass over another window: the frames its scene ran.
+    pub(crate) fn record_window_frames(
+        &mut self,
+        window: Option<ljos_engine::ObjectId>,
+        view: &mut ljos_egui::QmlView,
+    ) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served
+                .inspector_mut()
+                .record_window_frames(window, view.scene_mut());
+        }
+    }
+
+    pub(crate) fn record_window_paint(
+        &mut self,
+        window: Option<ljos_engine::ObjectId>,
+        report: &ljos_dev::mcp::PaintReport,
+    ) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().record_window_paint(window, report);
+        }
+    }
+
     /// Whether a client follows items, so that each pass says where it
     /// changed the picture.
     pub(crate) fn watches_items(&self) -> bool {

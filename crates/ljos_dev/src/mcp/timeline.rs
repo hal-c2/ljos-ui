@@ -1,7 +1,8 @@
 //! `app_frames`: a timeline of the frames, while a client asks for one.
 //!
-//! Each pass of the host that ran frames of the scene is an entry: where
-//! its time went, by the engine's passes (timers, animations, layout,
+//! Each pass of the host that ran frames of a window's scene is an entry:
+//! which window, where
+//! the time went, by the engine's passes (timers, animations, layout,
 //! creating, building the scene), inside bindings and laying out text
 //! wherever they ran, painting and presenting; and what woke it. It is for
 //! comparing one runtime with another frame by frame, which totals hide.
@@ -16,7 +17,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use ljos_engine::Engine;
+use ljos_engine::{Engine, ObjectId};
 use ljos_mcp_core::{SurfaceError, ToolReply};
 use ljos_quick::{FrameTimes, QuickScene};
 use schemars::JsonSchema;
@@ -24,12 +25,13 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::frames::{ms, paint_json, spread, us};
+use super::objects::handle;
 use super::paint::PaintReport;
 
 pub const FRAMES: &str = "\
-A timeline of the frames, for comparing runtimes: `record` starts or stops it. Each frame says \
-what woke it (input, timer, animation, message) and where its time went: timers, animations, \
-layout, scene build, bindings, text, render, present. `since` takes `next_since`.";
+A timeline of every window's frames, for comparing runtimes: `record` starts or stops it. Each \
+says what woke it (input, timer, animation, a message and whose) and where its time went: timers, \
+animations, layout, scene build, bindings, text, render, present. `since` takes `next_since`.";
 
 /// The most frames kept: ten seconds at 60 Hz.
 pub const MAX_KEPT: usize = 600;
@@ -59,14 +61,18 @@ pub struct FramesArgs {
     pub holder: Option<String>,
 }
 
-/// One pass of the host that ran frames of the scene.
+/// One pass of the host that ran frames of a window's scene.
 struct Entry {
     seq: u64,
     at: Duration,
+    /// The QML `Window` whose scene it was; `None` for the main window.
+    window: Option<ObjectId>,
     times: FrameTimes,
-    /// The inspector answered a request, or the host took messages from
-    /// other threads, since the frame before.
-    message: bool,
+    /// The clients whose requests the inspector answered since the frame
+    /// before, by the names they gave (`None`: one gave none).
+    asked_by: Vec<Option<String>>,
+    /// The messages the host took from other threads since then.
+    messages: usize,
     paint: Option<PaintReport>,
 }
 
@@ -77,7 +83,7 @@ impl Entry {
             (w.input, "input"),
             (w.timer, "timer"),
             (w.animation, "animation"),
-            (self.message, "message"),
+            (!self.asked_by.is_empty() || self.messages > 0, "message"),
         ]
         .into_iter()
         .filter_map(|(on, name)| on.then_some(name))
@@ -105,8 +111,11 @@ impl Entry {
         let t = &self.times;
         json!({
             "frame": self.seq,
+            "window": self.window.map(handle),
             "at_ms": (self.at.as_secs_f64() * 10_000.0).round() / 10.0,
             "woke": self.woke(),
+            "asked_by": self.asked_by,
+            "thread_messages": self.messages,
             "scene_frames": t.frames,
             "total_us": us(self.total()),
             "passes": {
@@ -131,10 +140,11 @@ impl Entry {
         let t = &self.times;
         let woke = self.woke();
         let mut line = format!(
-            "{:>5} {:>10.1} ms  {:<24} {}: timers {}, animations {}, layout {}, create {}, \
+            "{:>5} {:>10.1} ms {:<8} {:<24} {}: timers {}, animations {}, layout {}, create {}, \
              scene {}; bindings {} ({}), text {} ({})",
             self.seq,
             self.at.as_secs_f64() * 1000.0,
+            self.window.map_or_else(|| "main".to_owned(), handle),
             if woke.is_empty() {
                 "-".to_owned()
             } else {
@@ -157,6 +167,14 @@ impl Entry {
         if let Some(present) = self.present() {
             let _ = write!(line, ", present {}", ms(present));
         }
+        if !self.asked_by.is_empty() {
+            let names: Vec<&str> = self
+                .asked_by
+                .iter()
+                .map(|c| c.as_deref().unwrap_or("?"))
+                .collect();
+            let _ = write!(line, "; asked by {}", names.join(", "));
+        }
         line
     }
 }
@@ -171,10 +189,10 @@ pub(crate) struct Timeline {
     /// Asked for by a client that named no holder: it lasts until stopped.
     unheld: bool,
     held: HashSet<String>,
-    /// A request was answered since the last frame recorded.
-    asked: bool,
-    /// The last frame waits for the paint of its pass.
-    unpainted: bool,
+    /// Who asked what was answered since the last frame recorded.
+    asked: Vec<Option<String>>,
+    /// The frames, by window, that wait for the paint of their pass.
+    unpainted: Vec<(Option<ObjectId>, u64)>,
 }
 
 impl Default for Timeline {
@@ -186,8 +204,8 @@ impl Default for Timeline {
             dropped: 0,
             unheld: false,
             held: HashSet::new(),
-            asked: false,
-            unpainted: false,
+            asked: Vec::new(),
+            unpainted: Vec::new(),
         }
     }
 }
@@ -197,14 +215,22 @@ impl Timeline {
         self.unheld || !self.held.is_empty()
     }
 
-    /// The inspector answered requests: the next frame was woken by them.
-    pub(crate) fn asked(&mut self) {
-        self.asked = self.recording();
+    /// The inspector answered requests of these clients: the next frame
+    /// was woken by them.
+    pub(crate) fn asked(&mut self, by: impl IntoIterator<Item = Option<String>>) {
+        if !self.recording() {
+            return;
+        }
+        for client in by {
+            if !self.asked.contains(&client) && self.asked.len() < MAX_HOLDERS {
+                self.asked.push(client);
+            }
+        }
     }
 
-    /// The frames of a pass of the host, with the messages it took from
-    /// other threads.
-    pub(crate) fn record(&mut self, times: FrameTimes, drained: usize) {
+    /// The frames of a pass of the host over `window`'s scene (`None`: the
+    /// main window's), with the messages it took from other threads.
+    pub(crate) fn record(&mut self, times: FrameTimes, drained: usize, window: Option<ObjectId>) {
         if !self.recording() {
             return;
         }
@@ -215,22 +241,27 @@ impl Timeline {
         self.frames.push_back(Entry {
             seq: self.next,
             at: self.started.elapsed(),
+            window,
             times,
-            message: std::mem::take(&mut self.asked) || drained > 0,
+            asked_by: std::mem::take(&mut self.asked),
+            messages: drained,
             paint: None,
         });
+        self.unpainted.retain(|(w, _)| *w != window);
+        self.unpainted.push((window, self.next));
         self.next += 1;
-        self.unpainted = true;
     }
 
-    /// The paint of the pass whose frames were recorded last; a pass that
-    /// ran no frame paints what an earlier one made, and is not an entry.
-    pub(crate) fn record_paint(&mut self, report: &PaintReport) {
-        if !std::mem::take(&mut self.unpainted) {
+    /// The paint of the pass over `window` whose frames were recorded last;
+    /// a pass that ran no frame paints what an earlier one made, and is not
+    /// an entry.
+    pub(crate) fn record_paint(&mut self, window: Option<ObjectId>, report: &PaintReport) {
+        let Some(at) = self.unpainted.iter().position(|(w, _)| *w == window) else {
             return;
-        }
-        if let Some(last) = self.frames.back_mut() {
-            last.paint = Some(*report);
+        };
+        let (_, seq) = self.unpainted.swap_remove(at);
+        if let Some(entry) = self.frames.iter_mut().rev().find(|e| e.seq == seq) {
+            entry.paint = Some(*report);
         }
     }
 
@@ -256,8 +287,8 @@ impl Timeline {
             }
         }
         if !self.recording() {
-            self.asked = false;
-            self.unpainted = false;
+            self.asked.clear();
+            self.unpainted.clear();
         }
         Ok(())
     }
@@ -388,11 +419,11 @@ mod tests {
     #[test]
     fn nothing_is_recorded_until_asked_and_the_ring_keeps_the_latest() {
         let mut t = Timeline::default();
-        t.record(frame(), 0);
+        t.record(frame(), 0, None);
         assert_eq!(t.kept(), 0);
         t.ask(true, None).unwrap();
         for _ in 0..MAX_KEPT + 5 {
-            t.record(frame(), 0);
+            t.record(frame(), 0, None);
         }
         assert_eq!(t.kept(), MAX_KEPT);
         assert_eq!(t.dropped, 5);
@@ -417,23 +448,55 @@ mod tests {
     fn a_frame_after_an_answer_was_woken_by_a_message_and_takes_its_paint() {
         let mut t = Timeline::default();
         t.ask(true, None).unwrap();
-        t.asked();
-        t.record(frame(), 0);
-        t.record(frame(), 0);
-        t.record(frame(), 2);
+        t.asked([
+            Some("observer".to_owned()),
+            None,
+            Some("observer".to_owned()),
+        ]);
+        t.record(frame(), 0, None);
+        t.record(frame(), 0, None);
+        t.record(frame(), 2, None);
         let woke: Vec<Vec<&str>> = t.frames.iter().map(Entry::woke).collect();
         assert_eq!(woke, [vec!["message"], vec![], vec!["message"]]);
+        assert_eq!(t.frames[0].asked_by, [Some("observer".to_owned()), None]);
+        assert!(t.frames[2].asked_by.is_empty());
         let paint = PaintReport {
             build: Duration::from_micros(100),
             paint: Duration::from_micros(300),
             present: Some(Duration::from_micros(200)),
             ..PaintReport::default()
         };
-        t.record_paint(&paint);
-        t.record_paint(&paint);
+        t.record_paint(None, &paint);
+        t.record_paint(None, &paint);
         let last = t.frames.back().unwrap();
         assert_eq!(last.render(), Some(Duration::from_micros(200)));
         assert_eq!(last.present(), Some(Duration::from_micros(200)));
         assert!(t.frames[1].paint.is_none());
+    }
+
+    #[test]
+    fn each_window_takes_the_paint_of_its_own_pass() {
+        let mut t = Timeline::default();
+        t.ask(true, None).unwrap();
+        let other = super::super::objects::object_of("@7.1");
+        assert!(other.is_some());
+        t.record(frame(), 0, None);
+        t.record(frame(), 0, other);
+        let paint = |us| PaintReport {
+            paint: Duration::from_micros(us),
+            ..PaintReport::default()
+        };
+        t.record_paint(None, &paint(100));
+        t.record_paint(other, &paint(300));
+        t.record_paint(other, &paint(900));
+        let painted: Vec<_> = t.frames.iter().map(|e| e.render()).collect();
+        assert_eq!(
+            painted,
+            [
+                Some(Duration::from_micros(100)),
+                Some(Duration::from_micros(300))
+            ]
+        );
+        assert_eq!(t.frames[1].window, other);
     }
 }

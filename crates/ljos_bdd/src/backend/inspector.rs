@@ -68,6 +68,12 @@ pub enum Ask {
         tool: String,
         args: Value,
     },
+    /// A tool, with the client naming itself `client` in the request.
+    CallAs {
+        client: String,
+        tool: String,
+        args: Value,
+    },
     /// `app_snapshot` with the cursor of the last cut snapshot.
     NextPart,
     /// A tool with what the last answer has at `pointer` as its `field`,

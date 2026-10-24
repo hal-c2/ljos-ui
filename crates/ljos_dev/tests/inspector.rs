@@ -1478,9 +1478,7 @@ fn waiting() -> tokio::runtime::Runtime {
 }
 
 fn ctx() -> CallCtx {
-    CallCtx {
-        caps: CapSet::of([Cap::Inspect]),
-    }
+    CallCtx::new(CapSet::of([Cap::Inspect]))
 }
 
 #[test]

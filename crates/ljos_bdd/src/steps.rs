@@ -2158,6 +2158,19 @@ fn agent_calls_with(w: &mut LjosWorld, tool: String, step: &Step) -> StepResult 
     inspector_call(w, &tool, args)
 }
 
+#[when(regex = r#"^the agent, naming itself "([^"]+)", calls the tool "([^"]+)" with:$"#)]
+fn agent_named_calls_with(
+    w: &mut LjosWorld,
+    client: String,
+    tool: String,
+    step: &Step,
+) -> StepResult {
+    let args = inspector_doc(step)?;
+    let args =
+        serde_json::from_str(&args).map_err(|e| format!("the arguments are not JSON: {e}"))?;
+    inspector_ask(w, Ask::CallAs { client, tool, args })
+}
+
 #[when(regex = r#"^the agent calls the tool "([^"]+)" with the answer's "(/[^"]*)" as "([^"]+)"$"#)]
 fn agent_calls_with_the_answer(
     w: &mut LjosWorld,

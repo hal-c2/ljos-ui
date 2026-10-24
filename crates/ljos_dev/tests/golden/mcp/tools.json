@@ -643,7 +643,7 @@
     "read_only": true
   },
   {
-    "description": "A timeline of the frames, for comparing runtimes: `record` starts or stops it. Each frame says what woke it (input, timer, animation, message) and where its time went: timers, animations, layout, scene build, bindings, text, render, present. `since` takes `next_since`.",
+    "description": "A timeline of every window's frames, for comparing runtimes: `record` starts or stops it. Each says what woke it (input, timer, animation, a message and whose) and where its time went: timers, animations, layout, scene build, bindings, text, render, present. `since` takes `next_since`.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {

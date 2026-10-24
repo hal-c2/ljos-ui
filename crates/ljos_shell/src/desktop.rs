@@ -1385,9 +1385,16 @@ impl<M: Send + 'static> Desktop<M> {
                 app.begin_pass();
                 app.show(ui);
             }),
-            Some(view) => slot.ctx.run_ui(raw, |ui| {
-                view.show(ui);
-            }),
+            Some(view) => {
+                #[cfg(feature = "mcp")]
+                app.time_window(view);
+                let output = slot.ctx.run_ui(raw, |ui| {
+                    view.show(ui);
+                });
+                #[cfg(feature = "mcp")]
+                app.record_window_frames(slot.window, view);
+                output
+            }
         };
         IN_PASS.set(None);
         let egui::FullOutput {
@@ -1491,10 +1498,15 @@ impl<M: Send + 'static> Desktop<M> {
             change.whole()
         };
         let frame = painter.frame(change, &slot.pending, pixels_per_point);
+        // The root's always: its view is the application's. Another
+        // window's only while a client records frames.
         #[cfg(feature = "mcp")]
-        let mut meter =
-            // The root's: its view is the application's.
-            (slot.view.is_none() && app.inspected()).then(|| Meter::new(&frame, &slot.pending));
+        let mut meter = if slot.view.is_none() {
+            app.inspected()
+        } else {
+            app.records_frames()
+        }
+        .then(|| Meter::new(&frame, &slot.pending));
         #[cfg(feature = "mcp")]
         let asked = slot.asked.take();
         if frame == Frame::Nothing {
@@ -1509,7 +1521,11 @@ impl<M: Send + 'static> Desktop<M> {
             slot.not_drawn(now, wake);
             #[cfg(feature = "mcp")]
             if let Some(meter) = meter {
-                app.record_paint(&meter.report(None, present::Steps::default()));
+                let report = meter.report(None, present::Steps::default());
+                match slot.view {
+                    None => app.record_paint(&report),
+                    Some(_) => app.record_window_paint(slot.window, &report),
+                }
             }
             return;
         }
@@ -1539,6 +1555,10 @@ impl<M: Send + 'static> Desktop<M> {
         #[cfg(feature = "mcp")]
         if let Some(changed) = changed {
             app.record_changed(&engine, changed.as_deref());
+        }
+        #[cfg(feature = "mcp")]
+        if let Some(meter) = meter.take_if(|_| slot.view.is_some()) {
+            app.record_window_paint(slot.window, &meter.report(asked, steps));
         }
         #[cfg(feature = "mcp")]
         if let Some(meter) = meter {

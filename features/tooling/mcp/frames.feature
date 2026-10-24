@@ -11,9 +11,13 @@ Feature: An agent reads a timeline of the frames
   frame went: the engine's passes (timers, animations, layout, creating,
   building the scene), the time inside bindings and laying out text
   wherever they ran, drawing and presenting, and what woke the frame:
-  input, a timer, an animation or a message. Nothing is timed until a
-  client asks to record, and an application at rest records nothing. The
-  frames kept are a ring: the oldest give way.
+  input, a timer, an animation or a message, and whose: the clients whose
+  requests it answered, by the names they gave in the request's `_meta`
+  or when they connected, so that a client can tell its own looking from
+  the application's work. Each window's frames are kept, and say which
+  window they were. Nothing is timed until a client asks to record, and
+  an application at rest records nothing. The frames kept are a ring: the
+  oldest give way.
 
   Background:
     Given the QML:
@@ -132,4 +136,44 @@ Feature: An agent reads a timeline of the frames
       """json
       {"record": false, "holder": "second"}
       """
+    Then the answer's "/recording" is false
+
+  Scenario: A frame says which client's request woke it
+    When the agent calls the tool "app_frames" with:
+      """json
+      {"record": true}
+      """
+    And the agent, naming itself "observer", calls the tool "app_click" with:
+      """json
+      {"target": "#area"}
+      """
+    And the agent calls the tool "app_frames" with:
+      """json
+      {"max": 1}
+      """
+    Then the answer's "/frames/0/woke" is ["input", "message"]
+    And the answer's "/frames/0/asked_by" is ["observer"]
+    And the answer's "/frames/0/thread_messages" is 0
+    And the answer's "/frames/0/window" is null
+    And the answer's text contains "asked by"
+
+  # As held traces end: a client is known to be there only while it waits
+  # with `app_watch`, and one that has not asked again within the time its
+  # last watch said it would wait, and at least a second, is gone.
+  Scenario: A recording ends once its holder goes away without stopping it
+    When the agent calls the tool "app_frames" with:
+      """json
+      {"record": true, "holder": "observer"}
+      """
+    And the agent calls the tool "app_watch" with:
+      """json
+      {"since": {"traces": 0}, "topics": ["traces"], "wait_ms": 50, "holder": "observer"}
+      """
+    And the agent calls the tool "app_frames"
+    Then the answer's "/recording" is true
+    When the agent calls the tool "app_watch" with:
+      """json
+      {"since": {"traces": 0}, "topics": ["traces"], "wait_ms": 1500}
+      """
+    And the agent calls the tool "app_frames"
     Then the answer's "/recording" is false

@@ -62,7 +62,7 @@ impl<S: McpSurface> RmcpServer<S> {
     }
 
     fn ctx(&self) -> CallCtx {
-        CallCtx { caps: self.caps }
+        CallCtx::new(self.caps)
     }
 
     /// Serves over any rmcp transport (stdio, in-process duplex, worker).
@@ -184,10 +184,21 @@ impl<S: McpSurface> ServerHandler for RmcpServer<S> {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        // A client may name itself in each request, as one without a
+        // session must; else it did when it connected.
+        let client = context
+            .meta
+            .client_info()
+            .or_else(|| request.meta.as_ref().and_then(|m| m.client_info()))
+            .map(|info| info.name)
+            .or_else(|| context.peer.peer_info().map(|p| p.client_info.name.clone()));
         let args = request.arguments.map_or(Value::Null, Value::Object);
-        let ctx = self.ctx();
+        let ctx = CallCtx {
+            client,
+            ..self.ctx()
+        };
         let out = self.surface.call_tool(&request.name, &ctx, args).await;
         Ok(tool_result(out).into())
     }

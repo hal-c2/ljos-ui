@@ -121,9 +121,19 @@ impl ToolDef {
 }
 
 /// Per-call context: who is calling and with which rights.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct CallCtx {
     pub caps: CapSet,
+    /// The name the client gave itself: in the request's `_meta`
+    /// (`io.modelcontextprotocol/clientInfo`), else when it connected.
+    pub client: Option<String>,
+}
+
+impl CallCtx {
+    /// A call from a client that gave no name.
+    pub fn new(caps: CapSet) -> Self {
+        CallCtx { caps, client: None }
+    }
 }
 
 /// A tool's result before capping. `Ok` values are JSON objects (anything
@@ -344,9 +354,7 @@ mod tests {
     #[test]
     fn denial_names_the_missing_capability() {
         let r = registry();
-        let ctx = CallCtx {
-            caps: CapSet::EMPTY,
-        };
+        let ctx = CallCtx::new(CapSet::EMPTY);
         let (out, _) = r.call("write", &ctx, Value::Null);
         let err = out.unwrap_err();
         assert_eq!(err.code, ErrorCode::CapabilityDenied);
@@ -356,9 +364,7 @@ mod tests {
     #[test]
     fn bad_arguments_are_invalid_argument() {
         let r = registry();
-        let ctx = CallCtx {
-            caps: CapSet::EMPTY,
-        };
+        let ctx = CallCtx::new(CapSet::EMPTY);
         let (out, _) = r.call("echo", &ctx, json!({"nope": 1}));
         assert_eq!(out.unwrap_err().code, ErrorCode::InvalidArgument);
     }
@@ -366,13 +372,7 @@ mod tests {
     #[test]
     fn unknown_tool_is_not_found() {
         let r = registry();
-        let (out, def) = r.call(
-            "x",
-            &CallCtx {
-                caps: CapSet::EMPTY,
-            },
-            Value::Null,
-        );
+        let (out, def) = r.call("x", &CallCtx::new(CapSet::EMPTY), Value::Null);
         assert_eq!(out.unwrap_err().code, ErrorCode::NotFound);
         assert!(def.is_none());
     }

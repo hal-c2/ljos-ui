@@ -80,6 +80,9 @@ pub(crate) struct DevReq {
     pub(crate) per_copy: usize,
     /// What the connection that asked may do: `app_status` lists it.
     pub(crate) caps: CapSet,
+    /// The name the client gave itself; `None` for one that gave none and
+    /// for the inspector's own requests.
+    pub(crate) client: Option<String>,
 }
 
 /// The inspector as an MCP server sees it. `Send + Sync`: it holds the
@@ -179,6 +182,7 @@ impl InspectorSurface {
                     slot: None,
                     per_copy: ljos_mcp_core::DEFAULT_RESULT_BYTES / 2,
                     caps: CapSet::of([Cap::Inspect]),
+                    client: None,
                 });
             }
         });
@@ -222,7 +226,7 @@ impl InspectorSurface {
         true
     }
 
-    async fn ask(&self, kind: Kind, per_copy: usize, caps: CapSet) -> Answer {
+    async fn ask(&self, kind: Kind, per_copy: usize, ctx: &CallCtx) -> Answer {
         let slot = if kind.is_snapshot() {
             Some(SlotGuard::take(&self.snapshots)?)
         } else {
@@ -235,7 +239,8 @@ impl InspectorSurface {
             deadline: Instant::now() + self.timeout,
             slot,
             per_copy,
-            caps,
+            caps: ctx.caps,
+            client: ctx.client.clone(),
         };
         if let Err(e) = self.handle.send(request) {
             return Err(if e.is_full() {
@@ -370,7 +375,7 @@ impl McpSurface for InspectorSurface {
                 Kind::Frames(a) if a.record == Some(true) => a.holder.clone(),
                 _ => None,
             };
-            let answer = self.ask(kind, per_copy, ctx.caps).await;
+            let answer = self.ask(kind, per_copy, ctx).await;
             if let Some(a) = processes {
                 return match answer {
                     Ok(reply) => Ok(super::observe::with_mailboxes(reply, &a)),
@@ -429,7 +434,7 @@ impl McpSurface for InspectorSurface {
                 .ask(
                     Kind::Resource(resource),
                     ljos_mcp_core::DEFAULT_RESULT_BYTES / 2,
-                    ctx.caps,
+                    ctx,
                 )
                 .await?;
             let text = match reply.text {

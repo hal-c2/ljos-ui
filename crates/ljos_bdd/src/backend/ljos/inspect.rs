@@ -439,11 +439,21 @@ impl Rig {
     }
 
     fn call(&mut self, live: &mut Live, tool: &str, args: Value) -> Result<()> {
+        self.call_as(live, None, tool, args)
+    }
+
+    fn call_as(
+        &mut self,
+        live: &mut Live,
+        client: Option<&str>,
+        tool: &str,
+        args: Value,
+    ) -> Result<()> {
         let mut fault = None;
         let inspector = &mut self.inspector;
-        let reply = self
-            .agent
-            .call(tool, args, &mut || pump(inspector, live, &mut fault));
+        let reply = self.agent.call_as(client, tool, args, &mut || {
+            pump(inspector, live, &mut fault)
+        });
         if let Some(e) = fault {
             return Err(e);
         }
@@ -661,6 +671,9 @@ impl Rig {
                 self.call(live, tool, args)
             }
             Ask::Call { tool, args } => self.call(live, tool, args.clone()),
+            Ask::CallAs { client, tool, args } => {
+                self.call_as(live, Some(client), tool, args.clone())
+            }
             Ask::NextPart => {
                 let cursor = self.cursor.clone().ok_or_else(|| {
                     failed("the last snapshot was whole: there is no next part to ask for")

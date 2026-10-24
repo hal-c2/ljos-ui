@@ -62,7 +62,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ljos_engine::{Engine, LogEntry};
+use ljos_engine::{Engine, LogEntry, ObjectId};
 use ljos_mcp_core::{
     ErrorCode, LineOptions, OutlineOptions, OutlineWriter, RefTable, SurfaceError, ToolReply, delta,
 };
@@ -454,7 +454,19 @@ impl Inspector {
         }
         self.paint.record(report);
         self.frames.record_paint(report);
-        self.timeline.record_paint(report);
+        self.timeline.record_paint(None, report);
+    }
+
+    /// Records a pass of another window the host painted, for `app_frames`
+    /// only: the paint totals are the main window's.
+    pub fn record_window_paint(&mut self, window: Option<ObjectId>, report: &PaintReport) {
+        self.timeline.record_paint(window, report);
+    }
+
+    /// Whether a client records frames: only then does the host time the
+    /// passes over other windows.
+    pub fn records_frames(&self) -> bool {
+        self.timeline.recording()
     }
 
     /// Whether a client follows items with `app_watch`: only then need the
@@ -705,7 +717,25 @@ impl Inspector {
     /// nobody records, the scene keeps no times and this does nothing.
     pub fn record_scene_frames(&mut self, scene: &mut QuickScene, drained: usize) {
         if let Some(times) = scene.take_frame_times() {
-            self.timeline.record(times, drained);
+            self.timeline.record(times, drained, None);
+        }
+    }
+
+    /// As [`Inspector::record_scene_frames`], for the scene of another
+    /// window, which `app_frames` does not reach (see
+    /// [`Inspector::time_window`]).
+    pub fn record_window_frames(&mut self, window: Option<ObjectId>, scene: &mut QuickScene) {
+        if let Some(times) = scene.take_frame_times() {
+            self.timeline.record(times, 0, window);
+        }
+    }
+
+    /// Times the scene of another window exactly while a client records;
+    /// call it before its frame runs.
+    pub fn time_window(&self, engine: &Engine, scene: &mut QuickScene) {
+        let on = self.timeline.recording();
+        if on != scene.is_timed() {
+            scene.set_timed(engine, on);
         }
     }
 
@@ -751,6 +781,7 @@ impl Inspector {
                 requests.push(r)
             });
         let answered = requests.len();
+        let asked_by: Vec<_> = requests.iter().map(|r| r.client.clone()).collect();
         let mut lease: Option<Lease> = None;
         let mut capture: Option<Rc<Capture>> = None;
         for request in requests {
@@ -772,7 +803,7 @@ impl Inspector {
             lease.release(engine, scene);
         }
         if answered > 0 {
-            self.timeline.asked();
+            self.timeline.asked(asked_by);
             // What the inspector did itself is in the measurements it
             // gives, under its own name: an agent that looks at where the
             // time went must be able to tell its own looking apart.
@@ -828,6 +859,7 @@ impl Inspector {
             slot,
             per_copy,
             caps,
+            client: _,
         } = request;
         if let Kind::Act(act) = &kind {
             if matches!(act, Act::Reload) {

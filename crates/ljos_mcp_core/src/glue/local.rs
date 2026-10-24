@@ -14,7 +14,10 @@ use std::sync::Arc;
 
 use rmcp::{
     RoleClient, ServiceExt as _,
-    model::{CallToolRequestParams, ReadResourceRequestParams, ResourceContents},
+    model::{
+        CallToolRequestParams, Implementation, ReadResourceRequestParams, RequestMetaObject,
+        ResourceContents,
+    },
     service::{RunningService, ServiceError},
 };
 use serde_json::Value;
@@ -202,7 +205,24 @@ impl LocalClient {
         args: Value,
         pump: &mut dyn FnMut(),
     ) -> Result<LocalReply, LocalError> {
+        self.call_as(None, name, args, pump)
+    }
+
+    /// As [`LocalClient::call`], with the client naming itself `client` in
+    /// the request's `_meta`, as a client without a session does.
+    pub fn call_as(
+        &mut self,
+        client: Option<&str>,
+        name: &str,
+        args: Value,
+        pump: &mut dyn FnMut(),
+    ) -> Result<LocalReply, LocalError> {
         let mut params = CallToolRequestParams::new(name.to_string());
+        if let Some(client) = client {
+            let mut meta = RequestMetaObject::new();
+            meta.set_client_info(Implementation::new(client, env!("CARGO_PKG_VERSION")));
+            params.meta = Some(meta);
+        }
         match args {
             Value::Null => {}
             Value::Object(map) => params = params.with_arguments(map),
