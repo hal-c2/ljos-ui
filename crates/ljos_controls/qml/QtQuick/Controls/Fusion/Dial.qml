@@ -47,15 +47,17 @@ T.Dial {
             y: (control.height - height) / 2
 
             Repeater {
-                model: control.enabled ? 4 : 0
+                // Two rings, each twice as dark, shade as four did and cost
+                // half the objects.
+                model: control.enabled ? 2 : 0
                 Rectangle {
-                    readonly property real grow: (index + 1) * control.side / 200
-                    x: disc.shift * (index + 1) / 4 - grow
+                    readonly property real grow: (2 * index + 1.5) * control.side / 200
+                    x: disc.shift * (2 * index + 1.5) / 4 - grow
                     y: x
                     width: disc.width + 2 * grow
                     height: width
                     radius: width / 2
-                    color: "#08000000"
+                    color: "#10000000"
                 }
             }
 
@@ -88,22 +90,6 @@ T.Dial {
                         centerX: disc.radius
                         centerY: disc.radius
                         radiusX: disc.radius - disc.edge / 2
-                        radiusY: radiusX
-                        startAngle: 0
-                        sweepAngle: 360
-                    }
-                }
-
-                // A faint light line inside the rim.
-                ShapePath {
-                    strokeWidth: control.enabled ? 1 : 0
-                    strokeColor: "#26ffffff"
-                    fillColor: "transparent"
-
-                    PathAngleArc {
-                        centerX: disc.radius
-                        centerY: disc.radius
-                        radiusX: disc.radius - disc.edge - 0.5
                         radiusY: radiusX
                         startAngle: 0
                         sweepAngle: 360
