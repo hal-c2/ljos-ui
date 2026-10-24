@@ -575,3 +575,212 @@ Item {
     assert_eq!(e.read_by_name(p, "opacity").to_number(), 1.0);
     assert_eq!(format!("{:?}", e.take_log()), "[]", "a warning");
 }
+
+/// A dialog centred in the overlay of its window, the usual way.
+fn centred(name: &str) -> String {
+    format!(
+        r#"Popup {{
+            objectName: "{name}"
+            parent: Overlay.overlay
+            x: Math.round((parent.width - width) / 2)
+            y: Math.round((parent.height - height) / 2)
+            width: 200; height: 100
+            modal: true
+        }}"#
+    )
+}
+
+/// What was logged as a warning or worse since the last look.
+fn warnings(e: &Engine) -> Vec<String> {
+    e.take_log()
+        .into_iter()
+        .filter(|l| l.level >= ljos_engine::LogLevel::Warning)
+        .map(|l| l.to_string())
+        .collect()
+}
+
+/// Shows `root` in a 640 × 480 view.
+fn window_scene(e: &Engine, root: ObjectId) -> QuickScene {
+    let mut s = QuickScene::new(kurbo::Size::new(640.0, 480.0));
+    s.set_root(e, root).unwrap();
+    settle(&mut s, e, Time::ZERO);
+    s
+}
+
+/// Opens each of `popups` in turn, and closes them all again: each of the
+/// `centred` ones is in the middle of the window when it opens.
+fn opens_centred(s: &mut QuickScene, e: &Engine, root: ObjectId, popups: &[&str]) {
+    for name in popups {
+        let p = find(e, root, name);
+        e.invoke_by_name(p, "open", &[]).unwrap();
+        settle(s, e, Time::ZERO);
+        if text(e, p, "modal") == "true" {
+            let at = (text(e, p, "x"), text(e, p, "y"));
+            assert_eq!(at, ("220".into(), "190".into()), "{name}");
+        }
+    }
+    for name in popups.iter().rev() {
+        e.invoke_by_name(find(e, root, name), "close", &[]).unwrap();
+        settle(s, e, Time::ZERO);
+    }
+    assert_eq!(warnings(e), Vec::<String>::new(), "once shown");
+}
+
+#[test]
+fn the_overlay_of_a_window_is_there_while_its_tree_is_made() {
+    for window in ["Window", "ApplicationWindow"] {
+        let e = engine();
+        let root = load(
+            &e,
+            &format!(
+                r#"
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Window
+{window} {{
+    width: 640; height: 480
+    Item {{
+        anchors.fill: parent
+        {top}
+        Column {{ Item {{ Item {{ {deep} }} }} }}
+    }}
+    Popup {{
+        objectName: "outer"; width: 300; height: 300
+        Item {{ {inner} }}
+    }}
+}}
+"#,
+                top = centred("top"),
+                deep = centred("deep"),
+                inner = centred("inner"),
+            ),
+        );
+        assert_eq!(warnings(&e), Vec::<String>::new(), "{window}");
+        let mut s = window_scene(&e, root);
+        opens_centred(&mut s, &e, root, &["top"]);
+        opens_centred(&mut s, &e, root, &["deep"]);
+        opens_centred(&mut s, &e, root, &["outer", "inner"]);
+    }
+}
+
+#[test]
+fn a_window_made_later_has_its_overlay_while_its_tree_is_made() {
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Window
+Window {{
+    id: root
+    width: 640; height: 480
+    Component {{
+        id: later
+        Window {{ width: 300; height: 200; visible: true; Item {{ {made} }} }}
+    }}
+    Loader {{
+        objectName: "loader"; active: false
+        sourceComponent: Window {{ width: 300; height: 200; visible: true; Item {{ {loaded} }} }}
+    }}
+    function make() {{ return later.createObject(root) }}
+}}
+"#,
+            made = centred("made"),
+            loaded = centred("loaded"),
+        ),
+    );
+    let mut s = window_scene(&e, root);
+    assert_eq!(warnings(&e), Vec::<String>::new(), "at the start");
+    let made = e.invoke_by_name(root, "make", &[]).unwrap();
+    assert!(made.as_object().is_some(), "createObject made nothing");
+    assert_eq!(warnings(&e), Vec::<String>::new(), "after createObject");
+    let loader = find(&e, root, "loader");
+    e.write_by_name(loader, "active", Value::Bool(true))
+        .unwrap();
+    assert_eq!(warnings(&e), Vec::<String>::new(), "after the Loader");
+    // Without a host a window declared in another one's tree is shown in
+    // that tree, and so are its popups.
+    settle(&mut s, &e, Time::ZERO);
+    opens_centred(&mut s, &e, root, &["made"]);
+    opens_centred(&mut s, &e, root, &["loaded"]);
+}
+
+#[test]
+fn a_hosted_window_has_its_overlay_while_its_tree_is_made() {
+    let e = engine();
+    ljos_controls::WindowSystem::of(&e).set_host(|| {});
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Window
+Window {{
+    width: 640; height: 480
+    Item {{ {main} }}
+    Window {{ objectName: "toolWindow"; width: 300; height: 200; Item {{ {tool} }} }}
+}}
+"#,
+            main = centred("main"),
+            tool = centred("tool"),
+        ),
+    );
+    assert_eq!(warnings(&e), Vec::<String>::new());
+    // Each window is a tree of its own, with an overlay of its own.
+    let overlay = |name: &str| e.read_by_name(find(&e, root, name), "parent").as_object();
+    let window = find(&e, root, "toolWindow");
+    let (main, tool) = (overlay("main"), overlay("tool"));
+    assert!(main.is_some() && tool.is_some(), "{main:?} {tool:?}");
+    assert_ne!(main, tool);
+    assert_eq!(ljos_quick::window_item(&e, tool.unwrap()), window);
+    let x = |name: &str| text(&e, find(&e, root, name), "x");
+    assert_eq!((x("main"), x("tool")), ("220".into(), "50".into()));
+}
+
+#[test]
+fn a_loose_window_takes_the_overlay_of_the_tree_it_is_put_in() {
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Window
+Item {{
+    id: root
+    width: 640; height: 480
+    Component {{
+        id: later
+        Window {{ width: 300; height: 200; visible: true; Item {{ {loose} }}
+            Popup {{
+                objectName: "outer"; width: 300; height: 300
+                Item {{ {inner} }}
+            }}
+        }}
+    }}
+    function make() {{ return later.createObject(null) }}
+}}
+"#,
+            loose = centred("loose"),
+            inner = centred("inner"),
+        ),
+    );
+    let mut s = window_scene(&e, root);
+    let made = e.invoke_by_name(root, "make", &[]).unwrap();
+    let made = made.as_object().expect("createObject made nothing");
+    assert_eq!(warnings(&e), Vec::<String>::new(), "after createObject");
+    // The window is put in once the work that made it is over: at the
+    // engine's present time, which runs on the wall clock here.
+    settle(&mut s, &e, e.now());
+    assert_eq!(
+        e.visual_parent(made),
+        Some(root),
+        "the window was not put in"
+    );
+    assert_eq!(warnings(&e), Vec::<String>::new(), "once put in");
+    opens_centred(&mut s, &e, made, &["loose", "outer", "inner"]);
+}

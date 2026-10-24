@@ -1,7 +1,9 @@
 //! The overlay of a window: the item above its content that the popups
 //! are in, and `Overlay`, the attached type that names it.
 //!
-//! There is one per window, made when the first popup needs it. It is
+//! There is one per window, made when the first popup or the first
+//! `Overlay.overlay` needs it: for a `Window`, that can be while its tree
+//! is still made, before a scene shows it. It is
 //! the layer of its scene (`ljos_quick::set_layer`): drawn over the root
 //! item, asked first by the pointer, and not a child of the root, which
 //! may be a positioner. Its children are the items of the popups in the
@@ -9,7 +11,7 @@
 //!
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-overlay.html and
 //! the `closePolicy` of doc.qt.io/qt-6/qml-qtquick-controls-popup.html;
-//! pinned by `features/controls/overlay.feature`,
+//! pinned by `features/controls/overlay.feature`, `overlay-window.feature`,
 //! `popup-close-policy.feature` and `popup-pointer.feature`.
 
 use ljos_engine::{
@@ -392,6 +394,39 @@ fn release(engine: &Engine, overlay: ObjectId, ev: &PointerEvent) {
     });
 }
 
+/// The top item of the window whose overlay `item` sees: the tree a scene
+/// shows it in, or else, while none does yet, the top of its tree when
+/// that is a `Window`. Qt makes a window's items in the window, so its
+/// overlay is there before their bindings first run; here a scene or a
+/// host takes the window only once its tree is made. An item tree with no
+/// `Window` above it has no window until a scene shows it, as in Qt.
+///
+/// An item in a popup, open or not, is in the window of the popup's
+/// parent. The walk goes there rather than up from the popup's item: that
+/// item is moved into the overlay by the popup's own effect once the
+/// parent has a window, and following it would run this again in the same
+/// update. Tracks the parents, so a window moved later (one made loose and
+/// put in a shown tree) is followed.
+fn window_top(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+    let mut cur = item;
+    for _ in 0..1024 {
+        if let Some(popup) = popup_of(engine, cur) {
+            cur = object(engine, popup, Popup::PARENT.index)
+                .or_else(|| super::default_parent(engine, popup))
+                .filter(|p| is_item(engine, *p))?;
+            continue;
+        }
+        match engine.visual_parent(cur) {
+            Some(p) => cur = p,
+            None => {
+                return ljos_quick::window_of(engine, cur)
+                    .or_else(|| is_a::<crate::Window>(engine, cur).then_some(cur));
+            }
+        }
+    }
+    None
+}
+
 pub(super) fn register(engine: &Engine) {
     ljos_quick::set_layer_hooks(
         engine,
@@ -408,17 +443,21 @@ pub(super) fn register(engine: &Engine) {
             // parent is peeked, not read: `parent: Overlay.overlay` is
             // this binding's reader. A popup with no parent yet (before
             // there is a window) goes by where it is declared, so the
-            // window that appears there is what gives it one.
+            // window that appears there is what gives it one. So does one
+            // whose parent is the overlay this gave it: that says nothing
+            // of where it is now, and a window taken out of the tree it
+            // was declared in (by a host) has an overlay of its own.
             let from = if is_a::<Popup>(e, owner) {
+                let given = e.peek(att, OverlayAttached::OVERLAY.index).as_object();
                 e.peek(owner, Popup::PARENT.index)
                     .as_object()
-                    .filter(|p| e.is_alive(*p))
+                    .filter(|p| e.is_alive(*p) && Some(*p) != given)
                     .or_else(|| super::default_parent(e, owner))
             } else {
                 Some(owner)
             };
             from.filter(|f| is_item(e, *f))
-                .and_then(|f| ljos_quick::window_of(e, f))
+                .and_then(|f| window_top(e, f))
                 .and_then(|top| ensure(e, top).ok())
                 .map_or(Value::Null, Value::Object)
         });
