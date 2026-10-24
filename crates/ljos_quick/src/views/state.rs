@@ -271,6 +271,10 @@ pub(crate) struct ViewState {
     pub follow: Cell<bool>,
     /// The view has been put at its beginning.
     pub positioned: Cell<bool>,
+    /// A method put the view at its end (`true`) or its beginning, at
+    /// this position: it stays at that edge while the rows it made there
+    /// take their length, unless something else moves it.
+    pub at_edge: Cell<Option<(bool, f64)>>,
     /// The items the layout effect read the lengths of when it last ran:
     /// a pass that leaves the same ones needs no run of it to watch them.
     pub sized: RefCell<Vec<ObjectId>>,
@@ -380,6 +384,7 @@ impl Default for ViewState {
             current_span: Cell::new(None),
             follow: Cell::new(false),
             positioned: Cell::new(false),
+            at_edge: Cell::new(None),
             sized: RefCell::default(),
             carried: Cell::new(None),
             carried_anchor: Cell::new(None),

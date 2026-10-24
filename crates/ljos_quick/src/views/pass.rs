@@ -607,8 +607,16 @@ impl Fill<'_> {
                     // them out: it is measured once a polish has run since
                     // it was made and none is running, and the view lays
                     // its rows out again then.
+                    // Nor is a row just made 0 long for good: its height
+                    // may be bound to what is in it (a text's implicit
+                    // height), which has none until the scene lays it out.
+                    // Once a polish has run it is as long as it is then,
+                    // 0 or not.
+                    let empty = !follows && size <= 0.0;
+                    let follows = follows || empty;
                     let polishing = follows && crate::scene::polishing();
-                    if !follows || (!polishing && size > 0.0 && self.st.settled(o, made)) {
+                    if !follows || (!polishing && (size > 0.0 || empty) && self.st.settled(o, made))
+                    {
                         (size, true)
                     } else {
                         super::changes::polished_later(e, self.view);
@@ -1357,6 +1365,22 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         if inside != b.position {
             flickable::scroll_to(e, view, g.main, inside);
         }
+    }
+    if over.is_none()
+        && let Some((end, at)) = st.at_edge.get()
+    {
+        // Rows a method made at an edge take their length after it put
+        // the view there: the edge moves, and the view goes with it until
+        // they all have one. Moved by anything else, it stays.
+        let b = flickable::bounds(e, view, g.main);
+        let settled = !fill.waiting && !fill.held && slots.iter().all(|s| s.measured);
+        let edge = if end != g.reversed { b.max } else { b.min };
+        let kept = (b.position - at).abs() < 0.5;
+        if kept && edge != b.position {
+            flickable::scroll_to(e, view, g.main, edge);
+            st.bounds.set((b.min, b.max, 0.0));
+        }
+        st.at_edge.set((kept && !settled).then_some((end, edge)));
     }
     let v_now = match over {
         Some(v) => v,

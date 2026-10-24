@@ -131,6 +131,7 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
             stayed = !guessed && at == p0 && g.viewport(at) == lay_at;
             st.bounds.set((b.min, b.max, 0.0));
             flickable::scroll_to(e, view, g.main, at);
+            st.at_edge.set(edge.map(|end| (end, at)));
         });
     });
     // What is shown now has its delegates when this returns. The layout
