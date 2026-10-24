@@ -276,11 +276,50 @@
     "read_only": true
   },
   {
-    "description": "Frame work since the inspector attached: frames, time over budget, time per scheduler lane, jobs, the owners that took the most time, and `memory` (resident, the process's own, scripts, reactive nodes, objects). Use it to see what ate the frame or the memory.",
+    "description": "Frame work since the inspector attached: frames, time over budget, time per lane, jobs, the owners that took the most time, and a `memory` summary. With `memory` ({`type`, `max`}) it answers where the memory is instead: objects by type, script heap, graph, text, images, scenes.",
     "input_schema": {
+      "$defs": {
+        "MemoryArgs": {
+          "additionalProperties": false,
+          "properties": {
+            "max": {
+              "default": null,
+              "description": "The most types to list, the most bytes first (default 20, at most\n1000). The rest are counted in `types_left_out`.",
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "type": {
+              "default": null,
+              "description": "Only the objects of this type, by the name `app_objects` gives it.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
       "additionalProperties": false,
-      "description": "No arguments.",
-      "title": "Nothing",
+      "description": "`app_metrics`: frame work, or with `memory` where the memory is.",
+      "properties": {
+        "memory": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemoryArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Answer where the application's memory is instead of frame work:\nobjects by type (about how many bytes), the script heap, the\nreactive graph, text caches, images, and per window the scene and\nwhat its renderer keeps. `{}` lists the 20 largest types."
+        }
+      },
+      "title": "MetricsArgs",
       "type": "object"
     },
     "name": "app_metrics",
@@ -369,7 +408,7 @@
     "read_only": true
   },
   {
-    "description": "Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads, `traces`, or passes that drew the `items` given by handle. Give the `counts` of the last answer as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.",
+    "description": "Wait until the app changes: frames, passes drawn (`paints`), logs, reloads, `traces`, followed `models`, or passes that drew the `items` given by handle. Give the last answer's `counts` as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.",
     "input_schema": {
       "$defs": {
         "Since": {
@@ -399,6 +438,15 @@
               ]
             },
             "logs": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "models": {
               "default": null,
               "format": "uint64",
               "minimum": 0,
@@ -466,6 +514,11 @@
               "type": "string"
             },
             {
+              "const": "models",
+              "description": "Changes of the models clients follow (`app_objects`' `model` with\na `holder`).",
+              "type": "string"
+            },
+            {
               "const": "items",
               "description": "Passes that changed the picture where one of the watch's `items`\nlies.",
               "type": "string"
@@ -477,7 +530,7 @@
       "properties": {
         "holder": {
           "default": null,
-          "description": "The name this client gave its traces (`app_trace`'s `holder`):\nthey last while it watches.",
+          "description": "The name this client gave its traces (`app_trace`'s `holder`),\nrecording and followed model: they last while it watches.",
           "type": [
             "string",
             "null"
@@ -513,7 +566,7 @@
           "description": "The `counts` of the last answer. Without them the counts are\nanswered at once."
         },
         "topics": {
-          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`, `items`. All by default.",
+          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`, `models`, `items`. All by default.",
           "items": {
             "$ref": "#/$defs/Topic"
           },
@@ -537,7 +590,7 @@
     "read_only": true
   },
   {
-    "description": "Every object below `root` (a target; default the scene's root), items or not: Timers, models, animations. Each has a `@handle`, type, id, objectName, depth and about its bytes. `depth` limits how far down, `hidden` counts what it left out; a cut answer's `next_cursor`, as `cursor`, lists the rest.",
+    "description": "Every object below `root` (a target; default the scene's root), items or not, with `@handle`, type, id, objectName, depth, bytes; `depth` limits, `next_cursor` pages. `models` lists models instead; `model` (a target) reads its rows from `offset`, `limit` at a time; a `holder` follows its changes.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -559,9 +612,50 @@
             "null"
           ]
         },
+        "holder": {
+          "default": null,
+          "description": "Follow the model read: each change moves `app_watch`'s `models`\ncount while a watch with this `holder` keeps coming back. One\nmodel per holder.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "description": "The most rows to read (default 50, at most 500).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "max": {
           "default": null,
           "description": "The most objects to list (default 500, at most 5000).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "model": {
+          "default": null,
+          "description": "Read the rows of this model, or of the one this view shows: a\n`@handle` or a locator.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "models": {
+          "default": false,
+          "description": "List the application's models instead of objects: each with what\nhas it, its rows, roles and views.",
+          "type": "boolean"
+        },
+        "offset": {
+          "default": null,
+          "description": "The first row to read (default 0).",
           "format": "uint",
           "minimum": 0,
           "type": [
@@ -585,7 +679,7 @@
     "read_only": true
   },
   {
-    "description": "Trace objects over time, like Erlang's observer: `target` (a ref, locator or @handle) starts one; from then its signals, property changes and end are written down with the app's time, and with `bindings` each binding run, its cause and cost. `since` takes `next_since`; `stop` ends one or all.",
+    "description": "Trace objects like Erlang's observer: `target` starts one; its signals, changes and end (or only `names`) are written down with the app's time, and with `bindings` each binding run and its cause. A `holder` reads a ring of its own. `since` takes `next_since`; `stop` ends one or all.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -611,6 +705,14 @@
             "integer",
             "null"
           ]
+        },
+        "names": {
+          "default": [],
+          "description": "With `target`: write down only these of its properties and\nsignals, by name, and its end. All by default.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "since": {
           "default": null,
@@ -688,36 +790,6 @@
       "type": "object"
     },
     "name": "app_frames",
-    "read_only": true
-  },
-  {
-    "description": "Where the application's memory is: objects by type (count, about how many bytes), the script heap, the reactive graph, text caches, images, and per window the scene and what its renderer keeps, beside the process's resident bytes. `type` keeps one type; `max` bounds the list.",
-    "input_schema": {
-      "additionalProperties": false,
-      "properties": {
-        "max": {
-          "default": null,
-          "description": "The most types to list, the most bytes first (default 20, at most\n1000). The rest are counted in `types_left_out`.",
-          "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "type": {
-          "default": null,
-          "description": "Only the objects of this type, by the name `app_objects` gives it.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "title": "MemoryArgs",
-      "type": "object"
-    },
-    "name": "app_memory",
     "read_only": true
   },
   {
@@ -1073,7 +1145,7 @@
     "read_only": false
   },
   {
-    "description": "Assign `value` to `property` of `target` as a script would, or bind it to the JS expression `binding` (needs eval too), replacing a binding; `keep_binding` covers it instead. `revert` takes the edit back. Recorded as devtools' (`app_inspect`). Answers with the value now and before.",
+    "description": "Assign `value` to `property` of `target` as a script would, or bind it to the JS expression `binding` (needs eval too); `keep_binding` covers a binding, `revert` takes the edit back. With `row`, writes that row's role `property` of a model as a delegate does. Answers the value now and before.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -1097,6 +1169,16 @@
           "default": false,
           "description": "Take back what devtools did to the property: the binding it\ncovered, or the value it had before.",
           "type": "boolean"
+        },
+        "row": {
+          "default": null,
+          "description": "Write the role `property` of this row of the model `target` has or\nshows, as a delegate writes `model.role`. Only with `value`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "target": {
           "description": "A reference or a locator that matches exactly one object.",

@@ -394,8 +394,143 @@ Feature: Tracing what happens to an object over time
         """json
         {"stop": true, "holder": "observer"}
         """
+      And the agent calls the tool "app_trace"
       Then the answer's "/tracing" has 1 entries
       And the answer's "/tracing/0/name" is "Item \"other\""
+
+  Rule: A trace keeps to the names it was given, and each client reads its own
+
+    # A client that names itself with `holder` has a ring of its own: what
+    # the objects it traces are told goes there, and to no other client,
+    # and goes with the client when it is gone. Traces without a holder
+    # share one ring.
+    Scenario: A trace keeps to the properties and signals it was given
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "names": ["poked"]}
+        """
+      And the method "poke" of "root" is called
+      And the agent calls the tool "app_trace"
+      Then the answer's "/tracing/0/names" is ["poked"]
+      And the answer's "/events" has 1 entries
+      And the answer's "/events/0/kind" is "signal"
+
+    Scenario: A name the object does not have is refused
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "names": ["nothing"]}
+        """
+      Then the agent is refused with "invalid_argument"
+      And the refusal mentions "nothing"
+
+    Scenario: A holder reads only what it traces
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "one"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#other", "holder": "two"}
+        """
+      And the method "poke" of "root" is called
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"holder": "two"}
+        """
+      Then the answer's "/events" has 0 entries
+      And the answer's "/tracing" has 1 entries
+
+    Scenario: Two holders of one object are each told what they asked for
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "one"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "two", "names": ["count"]}
+        """
+      And the method "poke" of "root" is called
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"holder": "two"}
+        """
+      Then the answer's "/events" has 1 entries
+      And the answer's "/events/0/name" is "count"
+
+    Scenario: A holder that stops tracing leaves another's trace of the object
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "one"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "two"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "one", "stop": true}
+        """
+      And the method "poke" of "root" is called
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"holder": "two"}
+        """
+      Then the answer's "/events" has 2 entries
+
+    Scenario: A holder that stopped tracing is told nothing more
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "one"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "two"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "one", "stop": true}
+        """
+      And the method "poke" of "root" is called
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"holder": "one"}
+        """
+      Then the answer's "/tracing" has 0 entries
+      And the answer's "/events" has 0 entries
+
+    Scenario: A holder's ring keeps the newest and counts what gave way
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "one"}
+        """
+      And the method "many" of "root" is called
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"holder": "one", "max": 5}
+        """
+      Then the answer's "/dropped" is 100
+      And the answer's "/events/0/seq" is 101
+
+    Scenario: What a gone holder was told goes with it
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "observer"}
+        """
+      And the method "poke" of "root" is called
+      And the agent calls the tool "app_watch" with:
+        """json
+        {"since": {"traces": 0}, "topics": ["traces"], "wait_ms": 50, "holder": "observer"}
+        """
+      And the agent calls the tool "app_watch" with:
+        """json
+        {"since": {"traces": 2}, "topics": ["traces"], "wait_ms": 1500}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"holder": "observer"}
+        """
+      Then the answer's "/tracing" has 0 entries
+      And the answer's "/events" has 0 entries
 
   Rule: What a field hides is not told by its trace
 

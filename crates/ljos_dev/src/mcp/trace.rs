@@ -4,9 +4,12 @@
 //! The engine tells a sink what a traced object is told (its signals, its
 //! properties changing, its end; `ljos_engine::Engine::trace`). The sink
 //! writes it down here as it happens, with the application's clock, as
-//! JSON, so an event holds no object or script value alive. The list is a
-//! ring: the oldest give way and are counted. Nothing is written down for
-//! an object that is not traced, and while nothing is, nothing here runs.
+//! JSON, so an event holds no object or script value alive. Each client
+//! that names itself with a holder has a ring of its own, which only the
+//! objects it traces write to and which goes when the client does; traces
+//! without a holder share one. A ring's oldest give way and are counted.
+//! Nothing is written down for an object that is not traced, and while
+//! nothing is, nothing here runs.
 //!
 //! Asked with `bindings`, a trace also writes down each time a binding of
 //! the object runs again, with what it read that changed and whether it
@@ -29,9 +32,9 @@ use super::objects::handle;
 use super::watch::ChangeFeed;
 
 pub const TRACE: &str = "\
-Trace objects over time, like Erlang's observer: `target` (a ref, locator or @handle) starts one; \
-from then its signals, property changes and end are written down with the app's time, and with \
-`bindings` each binding run, its cause and cost. `since` takes `next_since`; `stop` ends one or all.";
+Trace objects like Erlang's observer: `target` starts one; its signals, changes and end (or only \
+`names`) are written down with the app's time, and with `bindings` each binding run and its cause. \
+A `holder` reads a ring of its own. `since` takes `next_since`; `stop` ends one or all.";
 
 /// The most events kept; older ones give way and are counted.
 pub const MAX_KEPT: usize = 1_000;
@@ -40,6 +43,8 @@ const DEFAULT_MAX: usize = 100;
 pub const MAX_EVENTS: usize = 500;
 /// The most objects traced at once: each costs a connection per property.
 pub const MAX_TRACED: usize = 16;
+/// The most names one trace keeps to.
+pub const MAX_NAMES: usize = 64;
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -68,8 +73,17 @@ pub struct TraceArgs {
     /// `target`, stops the traces of this holder only.
     #[serde(default)]
     pub holder: Option<String>,
+    /// With `target`: write down only these of its properties and
+    /// signals, by name, and its end. All by default.
+    #[serde(default)]
+    pub names: Vec<String>,
+    /// Sent by the surface when a holder lapses: its ring goes too.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub release: bool,
 }
 
+#[derive(Clone)]
 struct Event {
     seq: u64,
     at_us: u64,
@@ -86,45 +100,88 @@ struct Event {
     run: Option<Run>,
 }
 
+#[derive(Clone)]
 struct Run {
     cause: Vec<(ObjectId, String, String)>,
     us: u64,
     same: bool,
 }
 
+/// What one client was told, newest last.
+#[derive(Default)]
+struct Ring {
+    events: VecDeque<Event>,
+    dropped: u64,
+}
+
+/// One client's trace of an object.
+struct Watch {
+    holder: Option<String>,
+    /// The properties and signals it keeps to; all when empty.
+    names: Vec<String>,
+    bindings: bool,
+}
+
+impl Watch {
+    fn wants(&self, event: &Event) -> bool {
+        event.kind == "destroyed" || self.names.is_empty() || self.names.contains(&event.name)
+    }
+}
+
 /// What was written down, shared by every sink the inspector made.
 pub(crate) struct TraceLog {
-    events: VecDeque<Event>,
+    /// By holder; the traces without one share the ring of `None`.
+    rings: HashMap<Option<String>, Ring>,
     /// The number the next event gets; the first is 1.
     next: u64,
-    dropped: u64,
     changes: Arc<ChangeFeed>,
     /// Every string of every event is masked (`--mcp-redact`).
     redact_all: bool,
-    /// The client each object's trace is held by, if one is.
-    held: HashMap<ObjectId, String>,
+    /// Who traces each object.
+    watches: HashMap<ObjectId, Vec<Watch>>,
 }
 
 impl TraceLog {
     pub(crate) fn new(changes: Arc<ChangeFeed>, redact_all: bool) -> Rc<RefCell<TraceLog>> {
         Rc::new(RefCell::new(TraceLog {
-            events: VecDeque::new(),
+            rings: HashMap::new(),
             next: 1,
-            dropped: 0,
             changes,
             redact_all,
-            held: HashMap::new(),
+            watches: HashMap::new(),
         }))
     }
 
+    /// Writes `event` into the ring of each client that wants it.
     fn push(&mut self, event: Event) {
-        if self.events.len() == MAX_KEPT {
-            self.events.pop_front();
-            self.dropped += 1;
+        let to: Vec<Option<String>> = self
+            .watches
+            .get(&event.object)
+            .into_iter()
+            .flatten()
+            .filter(|w| w.wants(&event))
+            .map(|w| w.holder.clone())
+            .collect();
+        if to.is_empty() {
+            return;
         }
-        self.events.push_back(event);
+        for holder in to {
+            let ring = self.rings.entry(holder).or_default();
+            if ring.events.len() == MAX_KEPT {
+                ring.events.pop_front();
+                ring.dropped += 1;
+            }
+            ring.events.push_back(event.clone());
+        }
         self.next += 1;
         self.changes.trace();
+    }
+
+    /// Whether any client of `obj` asked for its bindings.
+    fn bindings(&self, obj: ObjectId) -> bool {
+        self.watches
+            .get(&obj)
+            .is_some_and(|ws| ws.iter().any(|w| w.bindings))
     }
 }
 
@@ -233,7 +290,7 @@ pub(crate) fn trace(
     }
     let traced = engine.traced();
     // An object that ended is traced no longer, whoever held it.
-    log.borrow_mut().held.retain(|o, _| traced.contains(o));
+    log.borrow_mut().watches.retain(|o, _| traced.contains(o));
     match (target, args.stop) {
         (Some(obj), false) => {
             if !traced.contains(&obj) && traced.len() >= MAX_TRACED {
@@ -241,37 +298,89 @@ pub(crate) fn trace(
                     "`app_trace`: {MAX_TRACED} objects are traced already; stop one first"
                 )));
             }
-            engine
-                .trace(obj, sink(log))
-                .map_err(|e| SurfaceError::invalid_argument(format!("`app_trace`: {e}")))?;
-            engine.trace_bindings(obj, args.bindings);
-            let mut log = log.borrow_mut();
-            match &args.holder {
-                Some(h) => log.held.insert(obj, h.clone()),
-                None => log.held.remove(&obj),
+            if let Some(name) = args.names.iter().find(|n| {
+                engine.property_index(obj, n).is_err() && engine.signal_index(obj, n).is_err()
+            }) {
+                return Err(SurfaceError::invalid_argument(format!(
+                    "`app_trace`: {} has no property or signal `{name}`",
+                    super::observe::label(engine, obj).0
+                )));
+            }
+            // An object traced already keeps its connections, so another
+            // client's trace of it loses nothing.
+            if !traced.contains(&obj) {
+                engine
+                    .trace(obj, sink(log))
+                    .map_err(|e| SurfaceError::invalid_argument(format!("`app_trace`: {e}")))?;
+            }
+            let bindings = {
+                let mut log = log.borrow_mut();
+                let ws = log.watches.entry(obj).or_default();
+                ws.retain(|w| w.holder != args.holder);
+                ws.push(Watch {
+                    holder: args.holder.clone(),
+                    names: args.names.clone(),
+                    bindings: args.bindings,
+                });
+                log.bindings(obj)
             };
+            engine.trace_bindings(obj, bindings);
         }
         (Some(obj), true) => {
-            engine.untrace(obj);
-            log.borrow_mut().held.remove(&obj);
-        }
-        (None, true) => {
-            let stop: Vec<ObjectId> = {
-                let held = &mut log.borrow_mut().held;
+            let left = {
+                let mut log = log.borrow_mut();
+                // Without a holder the agent stops the object for everyone.
                 match &args.holder {
                     Some(h) => {
-                        let by_h: Vec<ObjectId> = held
-                            .iter()
-                            .filter(|(_, by)| *by == h)
-                            .map(|(o, _)| *o)
-                            .collect();
-                        for o in &by_h {
-                            held.remove(o);
+                        if let Some(ws) = log.watches.get_mut(&obj) {
+                            ws.retain(|w| w.holder.as_ref() != Some(h));
                         }
-                        by_h
                     }
                     None => {
-                        held.clear();
+                        log.watches.remove(&obj);
+                    }
+                }
+                let left = log.watches.get(&obj).is_some_and(|ws| !ws.is_empty());
+                if !left {
+                    log.watches.remove(&obj);
+                }
+                left.then(|| log.bindings(obj))
+            };
+            match left {
+                Some(bindings) => {
+                    engine.trace_bindings(obj, bindings);
+                }
+                None => {
+                    engine.untrace(obj);
+                }
+            }
+        }
+        (None, true) => {
+            let mut rebind = Vec::new();
+            let stop = {
+                let mut log = log.borrow_mut();
+                match &args.holder {
+                    Some(h) => {
+                        let mut gone = Vec::new();
+                        for (o, ws) in &mut log.watches {
+                            let before = ws.len();
+                            ws.retain(|w| w.holder.as_ref() != Some(h));
+                            if ws.is_empty() {
+                                gone.push(*o);
+                            } else if ws.len() != before {
+                                rebind.push(*o);
+                            }
+                        }
+                        for o in &gone {
+                            log.watches.remove(o);
+                        }
+                        if args.release {
+                            log.rings.remove(&Some(h.clone()));
+                        }
+                        gone
+                    }
+                    None => {
+                        log.watches.clear();
                         traced
                     }
                 }
@@ -279,27 +388,53 @@ pub(crate) fn trace(
             for obj in stop {
                 engine.untrace(obj);
             }
+            for obj in rebind {
+                let bindings = log.borrow().bindings(obj);
+                engine.trace_bindings(obj, bindings);
+            }
         }
         (None, false) => {}
     }
-    let mut tracing: Vec<(ObjectId, String)> = engine
+    let log = log.borrow();
+    // A holder is shown what it traces; an agent without one, everything.
+    let names_of = |o: ObjectId| -> Option<Vec<String>> {
+        match log.watches.get(&o) {
+            Some(ws) => ws
+                .iter()
+                .find(|w| w.holder == args.holder)
+                .map(|w| w.names.clone())
+                .or_else(|| args.holder.is_none().then(Vec::new)),
+            None => args.holder.is_none().then(Vec::new),
+        }
+    };
+    let mut tracing: Vec<(ObjectId, String, Vec<String>)> = engine
         .traced()
         .into_iter()
-        .map(|o| (o, super::observe::label(engine, o).0))
+        .filter_map(|o| names_of(o).map(|names| (o, super::observe::label(engine, o).0, names)))
         .collect();
     let follows = |o: ObjectId| engine.traces_bindings(o);
     tracing.sort_by(|a, b| a.1.cmp(&b.1));
-    let log = log.borrow();
     let since = args.since.unwrap_or(0);
     let max = args.max.unwrap_or(DEFAULT_MAX);
-    let after: Vec<&Event> = log.events.iter().filter(|e| e.seq > since).collect();
+    let ring = log.rings.get(&args.holder);
+    let dropped = ring.map_or(0, |r| r.dropped);
+    let after: Vec<&Event> = ring
+        .into_iter()
+        .flat_map(|r| r.events.iter())
+        .filter(|e| e.seq > since)
+        .collect();
     let shown = &after[..after.len().min(max)];
     let more = after.len() > shown.len();
     let next_since = shown.last().map_or(log.next - 1, |e| e.seq);
     let mut text = String::new();
-    for (o, label) in &tracing {
+    for (o, label, names) in &tracing {
         let too = if follows(*o) { ", bindings too" } else { "" };
-        let _ = writeln!(text, "tracing {label}{too}");
+        let only = if names.is_empty() {
+            String::new()
+        } else {
+            format!(", only {}", names.join(", "))
+        };
+        let _ = writeln!(text, "tracing {label}{only}{too}");
     }
     let events: Vec<Value> = shown
         .iter()
@@ -390,20 +525,25 @@ pub(crate) fn trace(
     if events.is_empty() {
         text.push_str("nothing written down since then\n");
     }
-    if log.dropped > 0 {
-        let _ = writeln!(text, "{} older events gave way", log.dropped);
+    if dropped > 0 {
+        let _ = writeln!(text, "{dropped} older events gave way");
     }
     let value = json!({
         "tracing": tracing
             .iter()
-            .map(|(o, label)| {
-                json!({ "handle": handle(*o), "name": label, "bindings": follows(*o) })
+            .map(|(o, label, names)| {
+                json!({
+                    "handle": handle(*o),
+                    "name": label,
+                    "bindings": follows(*o),
+                    "names": names,
+                })
             })
             .collect::<Vec<_>>(),
         "events": events,
         "next_since": next_since,
         "more": more,
-        "dropped": log.dropped,
+        "dropped": dropped,
     });
     Ok(ToolReply::from(value).with_text(text))
 }

@@ -162,6 +162,7 @@ impl InspectorSurface {
             };
             let traces = Kind::Trace(super::trace::TraceArgs {
                 stop: true,
+                release: true,
                 holder: Some(holder.clone()),
                 ..Default::default()
             });

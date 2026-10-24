@@ -1125,6 +1125,13 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                 Some(m) if m > most => return Err(bad(tool, format!("`max` is at most {most}"))),
                 _ => {}
             }
+            if !a.names.is_empty() && (a.target.is_none() || a.stop) {
+                return Err(bad(tool, "`names` go with a `target` to start tracing"));
+            }
+            let most = super::trace::MAX_NAMES;
+            if a.names.len() > most {
+                return Err(bad(tool, format!("at most {most} `names`")));
+            }
             holder(tool, a.holder.as_deref())?;
             Kind::Trace(a)
         }

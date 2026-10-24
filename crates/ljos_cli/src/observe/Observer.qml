@@ -2705,12 +2705,21 @@ ApplicationWindow {
                     property var tracing: []
                     property int dropped: 0
                     property int unread: 0
+                    // The properties and signals a trace started from now
+                    // on keeps to, as typed; blank keeps to none.
+                    property string only: ""
 
+                    // This window reads its own ring: what the objects it
+                    // traces were told, and nobody else's.
                     function args() {
-                        var a = { max: 500 }
+                        var a = { max: 500, holder: window.holder }
                         if (since !== null)
                             a.since = since
                         return a
+                    }
+
+                    function onlyNames() {
+                        return only.split(/[\s,]+/).filter(function(n) { return n !== "" })
                     }
 
                     function load() {
@@ -2729,7 +2738,8 @@ ApplicationWindow {
                         if (handle !== undefined) {
                             a.target = handle
                             a.stop = traces(handle)
-                            a.holder = window.holder
+                            if (!a.stop && onlyNames().length > 0)
+                                a.names = onlyNames()
                         } else
                             a.stop = true
                         window.ask("app_trace", a, "trace")
@@ -2737,11 +2747,12 @@ ApplicationWindow {
 
                     // Traced again, with or without its bindings: what was
                     // written down stays.
-                    function follow(handle, bindings) {
+                    function follow(handle, bindings, names) {
                         var a = args()
                         a.target = handle
                         a.bindings = bindings
-                        a.holder = window.holder
+                        if (names.length > 0)
+                            a.names = names
                         window.ask("app_trace", a, "trace")
                     }
 
@@ -2816,6 +2827,12 @@ ApplicationWindow {
                             color: theme.subtle
                         }
                         Item { Layout.fillWidth: true }
+                        TextField {
+                            Layout.preferredWidth: 230
+                            placeholderText: "Only these names (blank: all)"
+                            Accessible.name: "Trace only these properties and signals"
+                            onTextChanged: trace.only = text
+                        }
                         Button {
                             text: "Stop all"
                             enabled: trace.tracing.length > 0
@@ -2854,6 +2871,7 @@ ApplicationWindow {
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: chip.modelData.name
+                                              + (chip.modelData.names.length > 0 ? " · only " + chip.modelData.names.join(", ") : "")
                                         color: theme.accent
                                         font.pixelSize: 12
                                     }
@@ -2872,7 +2890,7 @@ ApplicationWindow {
                                             Accessible.name: (chip.modelData.bindings ? "Stop following the bindings of "
                                                                                       : "Follow the bindings of ")
                                                              + chip.modelData.name
-                                            onClicked: trace.follow(chip.modelData.handle, !chip.modelData.bindings)
+                                            onClicked: trace.follow(chip.modelData.handle, !chip.modelData.bindings, chip.modelData.names)
                                         }
                                     }
                                     Text {
