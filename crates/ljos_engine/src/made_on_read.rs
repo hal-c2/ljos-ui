@@ -26,6 +26,63 @@ pub(crate) enum Maker {
 /// Binds `prop` of `obj`; see [`Engine::bind_on_read`].
 pub type BindOnRead = fn(&Engine, ObjectId, PropIndex) -> Result<(), EngineError>;
 
+/// The makers of an object's properties. Every read of a property asks
+/// whether it has one, and nearly always it has not: a bit per property
+/// (modulo 64) says no without looking through them.
+#[derive(Default)]
+pub(crate) struct Makers {
+    mask: u64,
+    list: Vec<(PropIndex, Maker)>,
+}
+
+fn bit(prop: PropIndex) -> u64 {
+    1 << (prop.0 % 64)
+}
+
+impl Makers {
+    /// Whether `prop` has a maker.
+    pub(crate) fn has(&self, prop: PropIndex) -> bool {
+        self.mask & bit(prop) != 0 && self.list.iter().any(|(p, _)| *p == prop)
+    }
+
+    /// Whether `prop` is still to be bound ([`Engine::bind_on_read`]).
+    pub(crate) fn binds(&self, prop: PropIndex) -> bool {
+        self.mask & bit(prop) != 0
+            && self
+                .list
+                .iter()
+                .any(|(p, m)| *p == prop && matches!(m, Maker::Bind(_)))
+    }
+
+    /// What the list holds, for [`Engine::object_memory`].
+    pub(crate) fn bytes(&self) -> usize {
+        self.list.capacity() * std::mem::size_of::<(PropIndex, Maker)>()
+    }
+
+    /// Gives `prop` the maker `m`, in place of the one it had.
+    fn set(&mut self, prop: PropIndex, m: Maker) {
+        drop(self.take(prop));
+        // A type that binds one default on a read binds several (a Text
+        // binds six), so they go in one allocation.
+        if self.list.capacity() == 0 {
+            self.list.reserve_exact(8);
+        }
+        self.list.push((prop, m));
+        self.mask |= bit(prop);
+    }
+
+    /// Takes the maker of `prop` away, if it has one.
+    fn take(&mut self, prop: PropIndex) -> Option<Maker> {
+        if self.mask & bit(prop) == 0 {
+            return None;
+        }
+        let at = self.list.iter().position(|(p, _)| *p == prop)?;
+        let (_, m) = self.list.swap_remove(at);
+        self.mask = self.list.iter().fold(0, |mask, (p, _)| mask | bit(*p));
+        Some(m)
+    }
+}
+
 impl Engine {
     /// Makes the value of `prop` when it is next read, by `make`, instead
     /// of now. The value it makes is given without a change notification:
@@ -45,9 +102,9 @@ impl Engine {
             .objects
             .get_mut(obj)
             .ok_or_else(|| EngineError::dead(obj))?;
-        let makers = &mut h.ext_mut().made_on_read;
-        makers.retain(|(p, _)| *p != prop);
-        makers.push((prop, Maker::Value(Box::new(make))));
+        h.ext_mut()
+            .made_on_read
+            .set(prop, Maker::Value(Box::new(make)));
         Ok(())
     }
 
@@ -75,14 +132,7 @@ impl Engine {
             if h.node(prop).is_some() || h.read_without_node(prop) {
                 true
             } else {
-                let makers = &mut h.ext_mut().made_on_read;
-                makers.retain(|(p, _)| *p != prop);
-                // A type that binds one default on a read binds several
-                // (a Text binds six), so they go in one allocation.
-                if makers.capacity() == 0 {
-                    makers.reserve_exact(8);
-                }
-                makers.push((prop, Maker::Bind(bind)));
+                h.ext_mut().made_on_read.set(prop, Maker::Bind(bind));
                 false
             }
         };
@@ -103,11 +153,7 @@ impl Engine {
                 .objects
                 .get(obj)
                 .and_then(|h| h.ext.as_ref())
-                .is_some_and(|x| {
-                    x.made_on_read
-                        .iter()
-                        .any(|(p, m)| *p == prop && matches!(m, Maker::Bind(_)))
-                })
+                .is_some_and(|x| x.made_on_read.binds(prop))
         };
         if due {
             self.keep_field_read(obj, prop);
@@ -125,7 +171,7 @@ impl Engine {
             .objects
             .get(obj)
             .and_then(|h| h.ext.as_ref())
-            .is_some_and(|x| x.made_on_read.iter().any(|(p, _)| *p == prop))
+            .is_some_and(|x| x.made_on_read.has(prop))
     }
 
     /// What observes `prop` (bindings, handlers of its change signal,
@@ -163,11 +209,7 @@ impl Engine {
     fn take_maker(&self, obj: ObjectId, prop: PropIndex) -> Option<Maker> {
         let mut store = self.inner.store.borrow_mut();
         let x = store.objects.get_mut(obj)?.ext.as_mut()?;
-        if x.made_on_read.is_empty() {
-            return None;
-        }
-        let at = x.made_on_read.iter().position(|(p, _)| *p == prop)?;
-        Some(x.made_on_read.swap_remove(at).1)
+        x.made_on_read.take(prop)
     }
 
     /// A write or binding is about to give `prop` its value: what was to be

@@ -509,19 +509,15 @@ impl ObjectHeader {
     /// Whether `prop` has a value still to be made on its next read
     /// ([`Engine::make_on_read`]).
     pub(crate) fn makes_on_read(&self, prop: PropIndex) -> bool {
-        self.ext
-            .as_ref()
-            .is_some_and(|x| x.made_on_read.iter().any(|(p, _)| *p == prop))
+        self.ext.as_ref().is_some_and(|x| x.made_on_read.has(prop))
     }
 
     /// Whether `prop` is still to be bound on its next read
     /// ([`Engine::bind_on_read`]).
     pub(crate) fn binds_on_read(&self, prop: PropIndex) -> bool {
-        self.ext.as_ref().is_some_and(|x| {
-            x.made_on_read
-                .iter()
-                .any(|(p, m)| *p == prop && matches!(m, crate::made_on_read::Maker::Bind(_)))
-        })
+        self.ext
+            .as_ref()
+            .is_some_and(|x| x.made_on_read.binds(prop))
     }
 
     pub(crate) fn set_node(&mut self, prop: PropIndex, n: NodeId) {
@@ -640,7 +636,7 @@ pub(crate) struct ObjectExt {
     pub(crate) model_node: Option<NodeId>,
     /// Values made when the property is next read
     /// ([`Engine::make_on_read`]).
-    pub(crate) made_on_read: Vec<(PropIndex, crate::made_on_read::Maker)>,
+    pub(crate) made_on_read: crate::made_on_read::Makers,
 }
 
 /// See [`ObjectExt::write_hook`].

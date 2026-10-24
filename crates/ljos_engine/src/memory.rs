@@ -48,7 +48,7 @@ impl ObjectExt {
             + vec_bytes(&self.binding_locs)
             + vec_bytes(&self.contexts)
             + vec_bytes(&self.keep)
-            + vec_bytes(&self.made_on_read)
+            + self.made_on_read.bytes()
     }
 }
 
