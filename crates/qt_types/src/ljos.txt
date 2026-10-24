@@ -4213,7 +4213,11 @@ module QtQuick.Controls.Fusion
 	type QtQuick/Controls/Fusion/Dial.qml Dial
 		prototype QtQuick.Templates.Dial named
 		prop side QtQml.real named readonly
+		prop face QtQuick.color named readonly
+		prop rim QtQuick.color named readonly
 		signal sideChanged
+		signal faceChanged
+		signal rimChanged
 	type QtQuick/Controls/Fusion/Dialog.qml Dialog
 		prototype QtQuick.Templates.Dialog named
 	type QtQuick/Controls/Fusion/DialogButtonBox.qml DialogButtonBox
@@ -4308,11 +4312,13 @@ module QtQuick.Controls.Fusion.impl
 		prop pressed QtQml.bool named
 		prop highlighted QtQml.bool named
 		prop outlinesFocus QtQml.bool named
+		prop hovered QtQml.bool named readonly
 		prop face QtQuick.color named readonly
 		signal controlChanged
 		signal pressedChanged
 		signal highlightedChanged
 		signal outlinesFocusChanged
+		signal hoveredChanged
 		signal faceChanged
 	type QtQuick/Controls/Fusion/impl/CheckIndicator.qml CheckIndicator
 		prototype QtQuick.Rectangle named
@@ -4354,9 +4360,13 @@ module QtQuick.Controls.Fusion.impl
 		prototype QtQuick.Rectangle named
 		prop control QtQuick.Controls.Basic.Control named pointer
 		prop visualFocus QtQml.bool named
+		prop pressed QtQml.bool named
+		prop hovered QtQml.bool named
 		prop face QtQuick.color named readonly
 		signal controlChanged
 		signal visualFocusChanged
+		signal pressedChanged
+		signal hoveredChanged
 		signal faceChanged
 	type QtQuick/Controls/Fusion/impl/SwitchIndicator.qml SwitchIndicator
 		prototype QtQuick.Controls.Fusion.impl.SliderGroove named
