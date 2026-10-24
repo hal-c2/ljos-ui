@@ -56,7 +56,7 @@ struct List {
     count: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Marker {
     Disc,
     Circle,

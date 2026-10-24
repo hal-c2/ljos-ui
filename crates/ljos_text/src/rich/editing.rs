@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use super::doc::HAlign;
 use super::html::scale_keyword;
+use super::styled::{Marker, marker_text};
 use super::{Block, BlockKind, Inline, ParseOptions, TextFormat, parse};
 use crate::style::{BoxAlign, InlineObject, StyleSpan, TextStyle};
 
@@ -96,11 +97,90 @@ pub struct BlockFormat {
     pub block_indent: u8,
     /// The bullet or number of a list item.
     pub marker: Option<Arc<str>>,
+    /// The list a list item is of, which it keeps out of the list as long
+    /// as it stands between the list's items.
+    pub list: Option<Arc<ListFormat>>,
     /// The colour behind the paragraph, as written.
     pub background: Option<Arc<str>>,
     pub align: Option<HAlign>,
     /// The paragraph is a row of a table: its cells are set apart by [`CELL`].
     pub table: Option<TableRow>,
+}
+
+/// A list. Its items share it and are numbered one after another however
+/// far apart they stand, as in Qt 6.11: an item taken out of the list
+/// leaves the items after it a number less
+/// (features/text-input/rich-text-list-numbering.feature).
+#[derive(Debug, PartialEq)]
+pub struct ListFormat {
+    /// How the items are numbered and the first one's number; `None` for
+    /// bullets.
+    numbered: Option<(Marker, u32)>,
+}
+
+impl ListFormat {
+    /// The list `marker`, the first item's bullet or number, starts.
+    fn starting(marker: &str) -> Self {
+        let Some(n) = marker.strip_suffix('.') else {
+            return Self { numbered: None };
+        };
+        // A list read starts at 1, so "i." is a numeral, not the ninth letter.
+        let numbered = match n.as_bytes() {
+            b"i" => (Marker::LowerRoman, 1),
+            b"I" => (Marker::UpperRoman, 1),
+            [c @ b'a'..=b'z'] => (Marker::LowerAlpha, u32::from(c - b'a') + 1),
+            [c @ b'A'..=b'Z'] => (Marker::UpperAlpha, u32::from(c - b'A') + 1),
+            _ => (Marker::Decimal, n.parse().unwrap_or(1)),
+        };
+        Self {
+            numbered: Some(numbered),
+        }
+    }
+
+    /// The marker of the list's `n`th item, from 0.
+    fn marker(&self, n: u32) -> Option<String> {
+        self.numbered
+            .map(|(kind, first)| marker_text(kind, first.saturating_add(n)))
+    }
+}
+
+/// Gives a list item read the list it is of: the list open at its indent
+/// when its marker is the one that comes next there, else a new list.
+/// `open` holds the lists open, innermost last, with their items so far.
+fn join_list(
+    open: &mut Vec<(f32, Arc<ListFormat>, u32)>,
+    bf: Arc<BlockFormat>,
+) -> Arc<BlockFormat> {
+    let item = bf.kind == BlockKind::List && bf.table.is_none();
+    // Text between items ends the lists it is no deeper than, and a
+    // list of bullets at its own depth.
+    open.retain(|(indent, list, _)| {
+        *indent < bf.indent || (*indent == bf.indent && (item || list.numbered.is_some()))
+    });
+    let Some(marker) = bf.marker.as_deref().filter(|_| item) else {
+        return bf;
+    };
+    let next = ListFormat::starting(marker);
+    let list = match open.last_mut() {
+        Some((indent, list, n))
+            if *indent == bf.indent
+                && list.numbered.map(|(k, _)| k) == next.numbered.map(|(k, _)| k)
+                && list.marker(*n).is_none_or(|m| m == marker) =>
+        {
+            *n += 1;
+            Arc::clone(list)
+        }
+        _ => {
+            open.retain(|(indent, ..)| *indent < bf.indent);
+            let list = Arc::new(next);
+            open.push((bf.indent, Arc::clone(&list), 1));
+            list
+        }
+    };
+    Arc::new(BlockFormat {
+        list: Some(list),
+        ..(*bf).clone()
+    })
 }
 
 /// A row of a table. The rows of one table share its [`TableFormat`].
@@ -161,6 +241,7 @@ impl Default for BlockFormat {
             indent_right: 0.0,
             block_indent: 0,
             marker: None,
+            list: None,
             background: None,
             align: None,
             table: None,
@@ -186,6 +267,7 @@ impl BlockFormat {
                 kind: BlockKind::Paragraph,
                 marker: None,
                 block_indent: 1,
+                // Still between the list's items, it is still of the list.
                 ..self.clone()
             });
         }
@@ -205,6 +287,7 @@ impl BlockFormat {
             indent_right: block.indent_right,
             block_indent: 0,
             marker: block.marker.clone(),
+            list: None,
             background: block.background.clone(),
             align: block.align,
             table: None,
@@ -349,6 +432,7 @@ impl RichText {
         };
         let plain = Arc::new(CharFormat::default());
         let mut after_table = false;
+        let mut lists = Vec::new();
         for (bi, block) in blocks.iter().enumerate() {
             let rows = BlockFormat::rows_of(block, resolve);
             let bf = rows.first().cloned().unwrap_or_else(|| {
@@ -356,6 +440,7 @@ impl RichText {
                 bf.background = bf.background.as_deref().and_then(resolve);
                 Arc::new(bf)
             });
+            let bf = join_list(&mut lists, bf);
             let table = block.table.as_ref();
             // Measured: Qt has an empty paragraph before a table that starts
             // the document and between two tables.
@@ -634,6 +719,7 @@ impl RichText {
         for block in &mut self.blocks[a..=b] {
             *block = Arc::new(f(block));
         }
+        self.renumber();
     }
 
     /// The part of the text in `range`, with its formats.
@@ -700,7 +786,41 @@ impl RichText {
         self.runs.len()
     }
 
+    /// Numbers the items of each numbered list one after another.
+    fn renumber(&mut self) {
+        let mut counts: Vec<(&ListFormat, u32)> = Vec::new();
+        let mut markers = Vec::new();
+        for (i, block) in self.blocks.iter().enumerate() {
+            let Some(list) = block
+                .list
+                .as_deref()
+                .filter(|_| block.kind == BlockKind::List)
+            else {
+                continue;
+            };
+            let n = match counts.iter_mut().find(|(l, _)| std::ptr::eq(*l, list)) {
+                Some((_, n)) => {
+                    *n += 1;
+                    *n
+                }
+                None => {
+                    counts.push((list, 0));
+                    0
+                }
+            };
+            if let Some(m) = list.marker(n)
+                && block.marker.as_deref() != Some(m.as_str())
+            {
+                markers.push((i, m));
+            }
+        }
+        for (i, m) in markers {
+            Arc::make_mut(&mut self.blocks[i]).marker = Some(Arc::from(m));
+        }
+    }
+
     fn normalize(&mut self) {
+        self.renumber();
         let mut out: Vec<Run> = Vec::with_capacity(self.runs.len());
         for run in self.runs.drain(..) {
             if run.len == 0 {
@@ -822,7 +942,18 @@ impl RichText {
             }
             let in_list = block.kind == BlockKind::List;
             let ordered = block.ordered();
+            // Measured: a paragraph out of a list stays in it while items of
+            // the list follow.
+            let between = !in_list
+                && list.is_some()
+                && block.list.as_ref().is_some_and(|l| {
+                    self.blocks[index + 1..].iter().any(|b| {
+                        b.kind == BlockKind::List
+                            && b.list.as_ref().is_some_and(|o| Arc::ptr_eq(o, l))
+                    })
+                });
             if let Some(was) = list
+                && !between
                 && (!in_list || was != ordered)
             {
                 out.push_str(if was { "</ol>" } else { "</ul>" });
@@ -1598,6 +1729,30 @@ mod tests {
     fn markdown_lists_and_headings() {
         let t = md("# Title\n\n- one\n- two\n\nafter");
         assert_eq!(t.markdown(), "# Title\n\n- one\n- two\n\nafter\n\n");
+    }
+
+    #[test]
+    fn items_after_one_out_of_its_list_are_numbered_again() {
+        let mut t = rich("<ol><li>a</li><li>b</li><li>c</li></ol><ol><li>d</li></ol>");
+        let markers = |t: &RichText| -> Vec<Option<String>> {
+            t.blocks()
+                .iter()
+                .map(|b| b.marker.as_deref().map(str::to_owned))
+                .collect()
+        };
+        let m = |v: &[Option<&str>]| -> Vec<Option<String>> {
+            v.iter().map(|m| m.map(str::to_owned)).collect()
+        };
+        assert_eq!(
+            markers(&t),
+            m(&[Some("1."), Some("2."), Some("3."), Some("1.")])
+        );
+        t.set_block_format(2..2, |b| b.outdented().expect("an item"));
+        assert_eq!(markers(&t), m(&[Some("1."), None, Some("2."), Some("1.")]));
+        t.set_block_format(0..0, |b| b.outdented().expect("an item"));
+        assert_eq!(markers(&t), m(&[None, None, Some("1."), Some("1.")]));
+        let nested = rich("<ol type='a'><li>a<ol><li>x</li></ol></li><li>b</li></ol>");
+        assert_eq!(markers(&nested), m(&[Some("a."), Some("1."), Some("b.")]));
     }
 
     #[test]
