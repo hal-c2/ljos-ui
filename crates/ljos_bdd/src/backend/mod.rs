@@ -613,6 +613,21 @@ pub trait Backend: fmt::Debug {
             what: "counting the passes a window runs",
         })
     }
+    /// Starts counting how many times Text items are laid out to say what
+    /// they measure. The oracle does not say when it lays text out.
+    fn count_text_measures(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the times text is measured",
+        })
+    }
+    /// The times text was measured since [`Backend::count_text_measures`].
+    fn text_measures_counted(&mut self) -> Result<u64> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the times text is measured",
+        })
+    }
     /// Starts `ljos observe` on the running application. Only a shell is
     /// observed: the observer is a window of its own.
     fn observe(&mut self) -> Result<()> {

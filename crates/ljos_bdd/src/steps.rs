@@ -1154,6 +1154,25 @@ fn ran_at_most_passes(w: &mut LjosWorld, most: u64) -> StepResult {
     })
 }
 
+#[when("the times text is measured are counted")]
+fn text_measures_are_counted(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.count_text_measures())
+}
+
+#[then(regex = r"^text was measured at most (\d+) times? since that was counted$")]
+fn text_measured_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
+    w.each(|b| {
+        let measured = b.text_measures_counted()?;
+        if measured <= most {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "text was measured {measured} times, not at most {most}"
+            )))
+        }
+    })
+}
+
 #[when("the application is observed")]
 fn application_observed(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.observe())

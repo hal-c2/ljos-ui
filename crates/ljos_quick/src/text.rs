@@ -19,7 +19,7 @@ pub use rich::RichHandle;
 pub(crate) use rich::{editor_css_color, editor_image, table_frame};
 pub use scope::SelectionScope;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -49,6 +49,13 @@ thread_local! {
     static ENGINE: RefCell<Option<SharedTextEngine>> = const { RefCell::new(None) };
     // One being made on another thread, which the first use waits for.
     static COMING: RefCell<Option<JoinHandle<TextEngine>>> = const { RefCell::new(None) };
+    static MEASURES: Cell<u64> = const { Cell::new(0) };
+}
+
+/// How many times this thread's Text items were laid out to say what they
+/// measure: a test of how often that is redone counts them.
+pub fn texts_measured() -> u64 {
+    MEASURES.get()
 }
 
 /// The UI thread's text engine. Until [`set_text_engine`] installs another it
@@ -889,6 +896,7 @@ fn write_measured(
     t: &TextInputs,
     te: &SharedTextEngine,
 ) -> Result<(), EngineError> {
+    MEASURES.set(MEASURES.get() + 1);
     // Borrowed for the layout only: the writes below run bindings.
     let m = t.measure(&mut te.borrow_mut());
     let [left, top, right, bottom] = t.pad;

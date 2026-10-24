@@ -2800,6 +2800,13 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             // A new text was measured as it was completed; laid out as it
             // still is, it is not polished to be measured again.
             let polish = !text::completion_measured(e, obj, &t);
+            // Something it reads changed and it came out the same (the width
+            // its own measuring gave it, where it does not elide to it):
+            // neither what it measures nor how it looks moves. A document
+            // changes inside (a picture arrives) without changing the inputs.
+            if t.rich.is_none() && shared.borrow().text_inputs.get(&obj) == Some(&t) {
+                return;
+            }
             let shown = shared.borrow().texts_shown.contains(&obj);
             if !polish && !shown {
                 // Nothing for a frame to do.

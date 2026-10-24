@@ -225,6 +225,8 @@ pub struct LjosBackend {
     /// Tree models in Rust the QML is given, by name, before it is loaded.
     lazy_trees: Vec<(String, lazy::LazyTree)>,
     paged_models: Vec<(String, paged::PagedModel)>,
+    /// [`ljos_quick::texts_measured`] when the scenario started counting.
+    measures_from: Option<u64>,
 }
 
 impl Drop for LjosBackend {
@@ -1845,6 +1847,20 @@ impl Backend for LjosBackend {
         let live = self.live()?;
         let obj = live.find(object)?;
         Ok(ljos_quick::kept_pixels(&live.engine, obj))
+    }
+
+    fn count_text_measures(&mut self) -> Result<()> {
+        self.live()?.settle()?;
+        self.measures_from = Some(ljos_quick::texts_measured());
+        Ok(())
+    }
+
+    fn text_measures_counted(&mut self) -> Result<u64> {
+        let from = self
+            .measures_from
+            .ok_or_else(|| BackendError::Failed("text measures were not being counted".into()))?;
+        self.live()?.settle()?;
+        Ok(ljos_quick::texts_measured() - from)
     }
 
     fn pointer_cursor(&mut self) -> Result<i64> {
