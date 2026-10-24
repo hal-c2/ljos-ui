@@ -399,6 +399,24 @@ impl std::fmt::Debug for MapSource {
     }
 }
 
+impl MapSource {
+    /// `url` from the root of the tree a file with its own URL is in: a
+    /// file no compile saw (the text of `Qt.createQmlObject` given a
+    /// place) is keyed as a file of that tree, so it finds what is beside
+    /// it. Where trees nest, the innermost one is taken.
+    fn beside_own<'a>(&self, url: &'a str) -> Option<&'a str> {
+        self.urls
+            .iter()
+            .filter_map(|(key, own)| {
+                let root = own.strip_suffix(".qml")?.strip_suffix(key.as_str())?;
+                root.ends_with('/').then_some(root)
+            })
+            .filter_map(|root| Some((root.len(), url.strip_prefix(root)?)))
+            .max_by_key(|(len, _)| *len)
+            .map(|(_, rest)| rest)
+    }
+}
+
 impl ComponentSource for MapSource {
     fn load(&self, key: &str) -> Option<Arc<CompiledFile>> {
         self.files.get(key).cloned()
@@ -427,7 +445,7 @@ impl ComponentSource for MapSource {
             .as_deref()
             .and_then(|b| url.strip_prefix(b.trim_end_matches('/')))
             .and_then(|rest| rest.strip_prefix('/'));
-        match under_base {
+        match under_base.or_else(|| self.beside_own(strip_query(url))) {
             Some(rest) => rest.strip_suffix(".qml").unwrap_or(rest).to_owned(),
             None => plain_key(url),
         }
@@ -1097,6 +1115,21 @@ mod tests {
         source.insert_url("Main", "file:///home/b/Main.qml");
         assert_eq!(source.key("file:///home/b/Main.qml"), "Main");
         assert_ne!(source.key("file:///home/a/Main.qml"), "Main");
+    }
+
+    #[test]
+    fn a_url_no_file_has_is_keyed_in_the_tree_beside_it() {
+        let mut source = MapSource::new();
+        source.insert_url("Main", "file:///home/a/Main.qml");
+        source.insert_url("Lib/Brick", "file:///opt/shared/Lib/Brick.qml");
+        source.insert_url("Inner", "file:///opt/shared/Lib/inner/Inner.qml");
+        assert_eq!(
+            source.key("file:///home/a/parts/inline.qml"),
+            "parts/inline"
+        );
+        assert_eq!(source.key("file:///opt/shared/Lib/made.qml"), "Lib/made");
+        assert_eq!(source.key("file:///opt/shared/Lib/inner/x.qml"), "x");
+        assert_eq!(source.key("file:///elsewhere/x.qml"), "elsewhere/x");
     }
 
     #[test]
