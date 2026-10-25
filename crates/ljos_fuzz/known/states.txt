@@ -1,0 +1,27 @@
+# Buckets of ljos-fuzz states that are known: as known/bindings.txt, one per line, the
+# signature then why.
+# Triaged from seeds 101 and 202 (2000 cases each).
+
+# The order of a state change (features/states/state-change-order.feature).
+value:onChanged:text      a state given where the item is made is told before its script runs (state-change-order.feature)
+value:load:number      a state a when picks where the item is made runs the transition to it (state-change-order.feature)
+value:load:text-nan-qt      a state a when picks where the item is made runs the transition to it (state-change-order.feature)
+value:load:invalid-ljos      a state a when picks where the item is made runs the transition to it (state-change-order.feature)
+value:log:text      a state a when picks where the item is made runs the transition to it (state-change-order.feature)
+value:step:invalid-ljos      a PropertyAction value is read before the state's changes are made (state-change-order.feature)
+value:step:invalid-qt      a change of a colour to a bool makes it invalid (state-change-order.feature)
+value:step:text      a change an extended state keeps is restored when the default state is set (state-change-order.feature)
+warning:assign(ljos-only):QML_Case:_Unable_to_assign_*      a change of a colour to a bool or a number is not warned of, and one to no number is warned of in Qt's words (state-change-order.feature)
+warning:assign(qt-only):Unable_to_assign_QJSValue_to_int      a change of an int to an array is warned of (state-change-order.feature)
+warning:binding-loop(ljos-only):*      two changes that read each other through a binding are no loop (state-change-order.feature)
+warning:binding-loop(qt-only):load      NaN given to a NaN is a change, so a change giving it NaN through a binding of it is a loop (features/language/nan-is-a-change.feature)
+warning:binding-loop(qt-only):step-set      a change of a colour that reads it is a loop to Qt, and is warned of as a bool given a colour by Ljós (state-change-order.feature)
+
+# Qt's own quirk, which Ljós is not to copy: a `when` that a change of its state makes false
+# again, while a transition runs, sends Qt back to the default state with a warning that it
+# cannot apply a state change within one; Ljós stays in the state, or stops the loop and says so.
+value:step:empty-ljos      a when its own state makes false: Qt leaves the state partway, Ljós settles
+value:step:empty-qt      a when its own state makes false, with a transition: Qt goes back to the default state
+warning:binding-loop(qt-only):when      a when its own state makes false is a loop to Qt
+warning:other(qt-only):<Unknown_File>:_QML_StateGroup:_Can'      Qt cannot apply a state change within one
+warning:other(ljos-only):QML_State:_property_"_"_handlers_re-ran_N_times_in_one_update      a when its own state toggles: Ljós stops the loop and says so
