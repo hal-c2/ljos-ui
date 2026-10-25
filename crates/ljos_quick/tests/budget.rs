@@ -198,29 +198,30 @@ Item {
 fn ten_listview_delegates() {
     let (b, made) = listview_delegates();
     assert_eq!(made, 10);
-    // Per delegate: 4 objects (the Rectangle, the Text and what they hold
-    // attached or grouped), 8 values, 7 bindings, 16 effects, 2 scopes,
-    // 4 member lookups (the view's row, found by name for each delegate)
-    // and no type lookups, 179.6 allocations. What the component writes
-    // and binds goes by index once its plan is linked, and its id
-    // (`row`) is found by slot without being written down.
+    // Per delegate: 3 objects (the Rectangle, the Text and what they hold
+    // attached or grouped), 9 values, 6 bindings, 16 effects, 2 scopes,
+    // no member or type lookups, 166.7 allocations. What the component
+    // writes and binds goes by index once its plan is linked, and its id
+    // (`row`) is found by slot without being written down. The row plan
+    // writes `index` on the delegate itself: no row object, and no
+    // binding to one.
     assert_eq!(
         b,
         Budget {
-            objects: 40,
+            objects: 30,
             graph: Census {
-                values: 80,
-                bindings: 70,
+                values: 90,
+                bindings: 60,
                 effects: 160,
                 scopes: 20,
             },
             lookups: Lookups {
-                members: 40,
+                members: 0,
                 types: 0,
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1796,
+            allocations: 1667,
         }
     );
 }

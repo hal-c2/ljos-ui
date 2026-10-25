@@ -11,8 +11,13 @@
 //!   context object, so `index`, `model`, `modelData` and the role names
 //!   are in scope;
 //! - a delegate that declares required properties gets nothing in scope.
-//!   Each required property named like something the row has is bound
-//!   to it, as Qt does.
+//!   Each required property named like something the row has follows
+//!   it, as Qt does.
+//!
+//! A [`RowPlan`] says which, once per delegate type and set of roles.
+//! When every required property is the row's `index`, `modelData` or a
+//! role, the view writes them on the delegate itself and no row object is
+//! made: nothing else could read one.
 //!
 //! The view says what it wants done with the objects through a
 //! [`DelegateHost`].
@@ -22,18 +27,18 @@ use std::rc::Rc;
 
 use ljos_runtime::{Lane, ProcId};
 
-use crate::WriteKind;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId, PropIndex};
 use crate::incubator::{CreationHandle, CreationJob, SharedCreation};
 use crate::log::LogLevel;
-use crate::meta::PropertyFlags;
+use crate::meta::{MetaObject, MetaRef, PropertyFlags};
 use crate::model::{
     DelegateSource, ItemModel, ModelChange, ModelRow, RowKey, RowKind, RowObject, RowShape,
     row_hook, row_shape,
 };
 use crate::value::Value;
+use crate::{Provenance, WriteKind};
 
 /// What a view does with its delegates. Called with nothing borrowed:
 /// an implementation may call back into its [`Delegates`].
@@ -79,7 +84,7 @@ pub enum RemovalOrder {
 struct Row {
     /// Finds the row again after user code ran, whatever moved.
     id: u64,
-    data: Option<RowObject>,
+    data: Option<Given>,
     object: Option<ObjectId>,
     pending: Option<CreationHandle>,
 }
@@ -183,6 +188,7 @@ struct Shared {
     host: Rc<dyn DelegateHost>,
     removal: RemovalOrder,
     state: RefCell<State>,
+    plans: RowPlans,
 }
 
 impl Drop for Shared {
@@ -219,6 +225,7 @@ impl Delegates {
                 host,
                 removal,
                 state: RefCell::new(State::default()),
+                plans: RowPlans::default(),
             }),
         }
     }
@@ -251,6 +258,7 @@ impl Delegates {
             if let Some((m, id)) = old {
                 m.unsubscribe(id);
             }
+            s.plans.clear();
             if let Some(m) = &model {
                 let weak = Rc::downgrade(s);
                 let id = m.subscribe(Rc::new(move |e: &Engine, c: &ModelChange| {
@@ -339,12 +347,7 @@ impl Shared {
         }
         for row in &gone {
             if let Some(d) = &row.data {
-                // Before the index: what runs because the index changed
-                // already finds the roles gone, as in Qt.
-                engine.empty_row(d, row.object);
-                if let Some(p) = d.shape.index {
-                    let _ = engine.write_internal(d.id, p, Value::Int(-1), WriteKind::Imperative);
-                }
+                d.leave(engine, row.object);
             }
         }
         self.reindex(engine, first, n);
@@ -434,7 +437,7 @@ impl Shared {
         let Some((index, model, before)) = found else {
             return;
         };
-        if let Some(data) = give_row(engine, &model, index, root, ctx, false) {
+        if let Some(data) = give_row(engine, &self.plans, &model, index, root, ctx, false) {
             let mut st = self.state.borrow_mut();
             if let Some(i) = st.position(id) {
                 st.rows[i].data = Some(data);
@@ -541,8 +544,12 @@ impl Shared {
                     s.refresh(engine, *first, *count, roles);
                 }
             }
-            ModelChange::RolesChanged => s.reshape(engine),
+            ModelChange::RolesChanged => {
+                s.plans.clear();
+                s.reshape(engine);
+            }
             ModelChange::ModelReset => engine.batch(|| {
+                s.plans.clear();
                 s.remove_all(engine);
                 Shared::populate(s, engine);
             }),
@@ -585,24 +592,21 @@ impl Shared {
 
     /// Tells the rows in `from..to` where they are now.
     fn reindex(&self, engine: &Engine, from: usize, to: usize) {
-        let writes: Vec<(ObjectId, PropIndex, usize)> = {
+        let rows: Vec<(Given, usize)> = {
             let st = self.state.borrow();
             let to = to.min(st.rows.len());
             (from..to)
-                .filter_map(|i| {
-                    let d = st.rows[i].data.as_ref()?;
-                    Some((d.id, d.shape.index?, i))
-                })
+                .filter_map(|i| Some((st.rows[i].data.clone()?, i)))
                 .collect()
         };
-        for (obj, p, i) in writes {
-            let _ = engine.write_internal(obj, p, Value::Int(i as i32), WriteKind::Imperative);
+        for (d, i) in rows {
+            d.set_index(engine, i as i32);
         }
     }
 
     /// Brings the row objects of `count` rows from `first` up to date.
     fn refresh(&self, engine: &Engine, first: usize, count: usize, roles: &[crate::Atom]) {
-        let (model, rows): (_, Vec<(usize, RowObject)>) = {
+        let (model, rows): (_, Vec<(usize, Given)>) = {
             let st = self.state.borrow();
             let Some(model) = st.model.clone() else {
                 return;
@@ -610,12 +614,11 @@ impl Shared {
             let end = (first + count).min(st.rows.len());
             let rows = (first.min(end)..end)
                 .filter_map(|i| Some((i, st.rows[i].data.clone()?)))
-                .filter(|(_, d)| !d.aliased)
                 .collect();
             (model, rows)
         };
         for (i, d) in rows {
-            refresh_row(engine, &model, i, &d, roles);
+            d.refresh(engine, &model, i, roles);
         }
     }
 
@@ -630,7 +633,7 @@ impl Shared {
                 .rows
                 .iter()
                 .enumerate()
-                .filter_map(|(i, r)| Some((r.id, i, r.data.clone()?)))
+                .filter_map(|(i, r)| Some((r.id, i, r.data.as_ref()?.row()?.clone())))
                 .filter(|(_, _, d)| !d.aliased)
                 .collect();
             (model, rows)
@@ -642,7 +645,7 @@ impl Shared {
             }
             let mut st = self.state.borrow_mut();
             if let Some(pos) = st.position(id)
-                && let Some(d) = &mut st.rows[pos].data
+                && let Some(Given::Row(d)) = &mut st.rows[pos].data
             {
                 d.shape = shape.clone();
             }
@@ -650,30 +653,235 @@ impl Shared {
     }
 }
 
+/// What a delegate of one type is given of a row, worked out once per
+/// model and set of roles: the row type, and where each of its required
+/// properties comes from.
+pub(crate) struct RowPlan {
+    /// The delegate's type, which the plan is found by.
+    root: MetaRef,
+    shape: Rc<RowShape>,
+    required: Box<[Required]>,
+    /// Whether every required property is fed straight from the model and
+    /// nothing reads the row any other way: then no row object is made.
+    direct: bool,
+}
+
+struct Required {
+    prop: PropIndex,
+    name: String,
+    /// The same name on the row type.
+    from: Option<PropIndex>,
+    feed: Option<Feed>,
+}
+
+#[derive(Clone, Copy)]
+enum Feed {
+    Index,
+    ModelData,
+    Role(usize),
+}
+
+impl RowPlan {
+    fn new(root: MetaRef, model: &Rc<dyn ItemModel>, roles_in_context: bool) -> Self {
+        let shape = row_shape(RowKind::Delegate, &model.role_names());
+        let required: Box<[Required]> = required_properties(&root)
+            .map(|(prop, name)| {
+                let from = shape.meta.property_index(&name);
+                let feed = match name.as_str() {
+                    "index" => shape.index.map(|_| Feed::Index),
+                    "modelData" => shape.model_data.map(|_| Feed::ModelData),
+                    "model" => None,
+                    _ => shape
+                        .roles
+                        .iter()
+                        .position(|(n, _)| n.as_str() == name)
+                        .map(Feed::Role),
+                };
+                Required {
+                    prop,
+                    name,
+                    from,
+                    feed,
+                }
+            })
+            .collect();
+        let direct =
+            !required.is_empty() && !roles_in_context && required.iter().all(|r| r.feed.is_some());
+        Self {
+            root,
+            shape,
+            required,
+            direct,
+        }
+    }
+
+    /// What row `i` gives `r`.
+    fn value(&self, engine: &Engine, model: &Rc<dyn ItemModel>, i: usize, feed: Feed) -> Value {
+        match feed {
+            Feed::Index => Value::Int(i as i32),
+            Feed::ModelData => model.model_data(engine, i).unwrap_or_default(),
+            Feed::Role(k) => model.data(engine, i, &self.shape.roles[k].0),
+        }
+    }
+}
+
+/// The plans of one view, by delegate type: a chooser makes several.
+#[derive(Default)]
+struct RowPlans(RefCell<Vec<Rc<RowPlan>>>);
+
+impl RowPlans {
+    fn get(&self, root: MetaRef, model: &Rc<dyn ItemModel>, roles_in_context: bool) -> Rc<RowPlan> {
+        let found = self
+            .0
+            .borrow()
+            .iter()
+            .find(|p| std::ptr::eq::<MetaObject>(&*p.root, &*root))
+            .cloned();
+        found.unwrap_or_else(|| {
+            let plan = Rc::new(RowPlan::new(root, model, roles_in_context));
+            self.0.borrow_mut().push(plan.clone());
+            plan
+        })
+    }
+
+    /// Called when the model or its roles are other than the plans were
+    /// made for.
+    fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
+}
+
+/// What a delegate was given of its row.
+#[derive(Clone)]
+enum Given {
+    /// A row object, which the delegate reads or binds to.
+    Row(RowObject),
+    /// Its required properties, written on the delegate `root` itself.
+    Fed(ObjectId, Rc<RowPlan>),
+}
+
+impl Given {
+    fn row(&self) -> Option<&RowObject> {
+        match self {
+            Given::Row(d) => Some(d),
+            Given::Fed(..) => None,
+        }
+    }
+
+    /// Whether a view may keep the delegate to show another row: a row
+    /// object that is another object's properties can not be pointed
+    /// elsewhere.
+    fn poolable(&self) -> bool {
+        self.row().is_none_or(|d| !d.aliased)
+    }
+
+    fn set_index(&self, engine: &Engine, i: i32) {
+        match self {
+            Given::Row(d) => {
+                if let Some(p) = d.shape.index {
+                    let _ = engine.write_internal(d.id, p, Value::Int(i), WriteKind::Imperative);
+                }
+            }
+            Given::Fed(root, plan) => {
+                for r in &plan.required {
+                    if matches!(r.feed, Some(Feed::Index)) {
+                        feed(engine, *root, r.prop, Value::Int(i));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Brings what row `i` gave up to date in `roles` (all of them when
+    /// there are none) and in `modelData`.
+    fn refresh(&self, engine: &Engine, model: &Rc<dyn ItemModel>, i: usize, roles: &[crate::Atom]) {
+        match self {
+            Given::Row(d) => refresh_row(engine, model, i, d, roles),
+            Given::Fed(root, plan) => {
+                for r in &plan.required {
+                    let fresh = match r.feed {
+                        Some(Feed::ModelData) => true,
+                        Some(Feed::Role(k)) => {
+                            roles.is_empty() || roles.contains(&plan.shape.roles[k].0)
+                        }
+                        _ => false,
+                    };
+                    if let (true, Some(f)) = (fresh, r.feed) {
+                        feed(engine, *root, r.prop, plan.value(engine, model, i, f));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The row left the model: its roles read `undefined` from here on and
+    /// its index is -1. Before the index: what runs because the index
+    /// changed already finds the roles gone, as in Qt.
+    fn leave(&self, engine: &Engine, delegate: Option<ObjectId>) {
+        if let Given::Row(d) = self {
+            engine.empty_row(d, delegate);
+        }
+        // A required property already holds what it was given, as one bound
+        // to a row object that is emptied without telling anyone does.
+        self.set_index(engine, -1);
+    }
+}
+
+/// Writes `v` on the required property `p` of `root`, unless the delegate
+/// gave it a value or a binding of its own: then, as in Qt (6.11, found by
+/// running qml6), it no longer follows its row.
+fn feed(engine: &Engine, root: ObjectId, p: PropIndex, v: Value) {
+    if matches!(
+        engine.provenance(root, p),
+        Some(Provenance::Assigned | Provenance::Bound)
+    ) {
+        return;
+    }
+    let _ = engine.write_internal(root, p, v, WriteKind::Host);
+}
+
 /// Gives the delegate `root`, just allocated in context `ctx`, row
-/// `index` of `model`: a row object as its context object, or bound to
-/// its required properties.
+/// `index` of `model`: its required properties, or a row object as its
+/// context object or for them to bind to.
 fn give_row(
     engine: &Engine,
+    plans: &RowPlans,
     model: &Rc<dyn ItemModel>,
     index: usize,
     root: ObjectId,
     ctx: ContextId,
     roles_in_context: bool,
-) -> Option<RowObject> {
+) -> Option<Given> {
     engine.reload_note_row(root, index);
-    let shape = row_shape(RowKind::Delegate, &model.role_names());
+    let plan = plans.get(engine.meta_of(root)?, model, roles_in_context);
+    if plan.direct && model.row_object(index).is_none() {
+        for r in &plan.required {
+            if let Some(f) = r.feed {
+                let v = plan.value(engine, model, index, f);
+                let _ = engine.write_internal(root, r.prop, v, WriteKind::Host);
+            }
+        }
+        return Some(Given::Fed(root, plan));
+    }
     // Owned by the delegate: it lives exactly as long.
-    let data = engine.make_row(model, &shape, index, Some(root)).ok()?;
-    let required = required_properties(engine, root);
-    if required.is_empty() || roles_in_context {
+    let data = engine
+        .make_row(model, &plan.shape, index, Some(root))
+        .ok()?;
+    if plan.required.is_empty() || roles_in_context {
         engine.set_context_object(ctx, Some(data.id));
     }
-    if !required.is_empty() {
+    if !plan.required.is_empty() {
         let mut members = None;
-        for (p, name) in required {
+        let same = Rc::ptr_eq(&data.shape, &plan.shape);
+        for r in &plan.required {
+            let (p, name) = (r.prop, r.name.clone());
             let row = data.id;
-            if let Some(from) = data.shape.meta.property_index(&name) {
+            let from = if same {
+                r.from
+            } else {
+                data.shape.meta.property_index(&name)
+            };
+            if let Some(from) = from {
                 let _ = engine.bind(root, p, move |e| e.read(row, from));
                 continue;
             }
@@ -692,7 +900,7 @@ fn give_row(
             }
         }
     }
-    Some(data)
+    Some(Given::Row(data))
 }
 
 /// The names a row of an array of JS objects gives required properties,
@@ -719,17 +927,13 @@ fn object_members(engine: &Engine, model: &Rc<dyn ItemModel>, index: usize) -> V
     names
 }
 
-/// The required properties of a delegate's root.
-fn required_properties(engine: &Engine, root: ObjectId) -> Vec<(PropIndex, String)> {
-    let Some(meta) = engine.meta_of(root) else {
-        return Vec::new();
-    };
+/// The required properties of a delegate of type `meta`.
+fn required_properties(meta: &MetaObject) -> impl Iterator<Item = (PropIndex, String)> + '_ {
     meta.properties
         .iter()
         .enumerate()
         .filter(|(_, p)| p.flags.contains(PropertyFlags::REQUIRED))
         .map(|(i, p)| (PropIndex(i as u32), p.name.to_string()))
-        .collect()
 }
 
 /// Brings the row object `d`, which shows row `i`, up to date in `roles`
@@ -799,7 +1003,10 @@ impl Engine {
         allocated: impl FnOnce(&Engine, ObjectId),
     ) -> Result<ObjectId, EngineError> {
         self.create_delegate(component, owner, |e, root, ctx| {
-            let required = required_properties(e, root);
+            let required: Vec<_> = e
+                .meta_of(root)
+                .map(|m| required_properties(&m).collect())
+                .unwrap_or_default();
             if required.is_empty() && !values.is_empty() {
                 let roles: Vec<crate::Atom> =
                     values.iter().map(|(n, _)| crate::Atom::intern(n)).collect();
@@ -895,7 +1102,7 @@ struct Held {
     /// `None`: the row left the model and the view still holds the
     /// delegate (a removal that is delayed or animated).
     index: Option<usize>,
-    data: Option<RowObject>,
+    data: Option<Given>,
     /// The delegate, once complete.
     object: Option<ObjectId>,
     /// The delegate from the moment it is allocated: what runs inside it
@@ -926,6 +1133,7 @@ struct ViewShared {
     owner: ObjectId,
     host: Rc<dyn ViewHost>,
     state: RefCell<ViewState>,
+    plans: RowPlans,
     /// A delegate is being finished because the view asked for it now:
     /// the view has it from the call and needs no [`ViewHost::ready`].
     forcing: Cell<bool>,
@@ -967,6 +1175,7 @@ impl ViewDelegates {
                 owner,
                 host,
                 state: RefCell::new(ViewState::default()),
+                plans: RowPlans::default(),
                 forcing: Cell::new(false),
             }),
         }
@@ -993,6 +1202,7 @@ impl ViewDelegates {
         if let Some((m, id)) = old {
             m.unsubscribe(id);
         }
+        s.plans.clear();
         if let Some(m) = &model {
             let weak = Rc::downgrade(s);
             let id = m.subscribe(Rc::new(move |e: &Engine, c: &ModelChange| {
@@ -1179,11 +1389,8 @@ impl ViewDelegates {
             };
             if let Some((Some(object), Some(data))) = reused {
                 engine.batch(|| {
-                    if let Some(p) = data.shape.index {
-                        let v = Value::Int(index as i32);
-                        let _ = engine.write_internal(data.id, p, v, WriteKind::Imperative);
-                    }
-                    refresh_row(engine, &model, index, &data, &[]);
+                    data.set_index(engine, index as i32);
+                    data.refresh(engine, &model, index, &[]);
                 });
                 return Some((object, Made::Reused));
             }
@@ -1263,7 +1470,7 @@ impl ViewDelegates {
                 .is_some_and(|c| crate::chooser::is_chooser(engine, c));
             let mut h = st.live.swap_remove(i);
             let poolable =
-                reuse && !chooser && !h.own && h.data.as_ref().is_some_and(|d| !d.aliased);
+                reuse && !chooser && !h.own && h.data.as_ref().is_some_and(Given::poolable);
             if poolable {
                 h.index = None;
                 st.pool.push(h);
@@ -1391,6 +1598,7 @@ impl ViewShared {
         };
         let data = give_row(
             engine,
+            &self.plans,
             &model,
             index,
             root,
@@ -1472,7 +1680,7 @@ impl ViewShared {
 
     /// Moves every delegate to the row `to` says its row now is.
     fn remap(&self, engine: &Engine, to: impl Fn(usize) -> usize) {
-        let writes: Vec<(ObjectId, PropIndex, usize)> = {
+        let writes: Vec<(Given, usize)> = {
             let mut st = self.state.borrow_mut();
             let mut writes = Vec::new();
             for h in &mut st.live {
@@ -1484,16 +1692,14 @@ impl ViewShared {
                     continue;
                 }
                 h.index = Some(new);
-                if let Some(d) = &h.data
-                    && let Some(p) = d.shape.index
-                {
-                    writes.push((d.id, p, new));
+                if let Some(d) = &h.data {
+                    writes.push((d.clone(), new));
                 }
             }
             writes
         };
-        for (obj, p, i) in writes {
-            let _ = engine.write_internal(obj, p, Value::Int(i as i32), WriteKind::Imperative);
+        for (d, i) in writes {
+            d.set_index(engine, i as i32);
         }
     }
 
@@ -1537,17 +1743,7 @@ impl ViewShared {
                 }
                 for (_, object, data) in &leaving {
                     if let Some(d) = data {
-                        // Before the index: what runs because the index
-                        // changed already finds the roles gone, as in Qt.
-                        engine.empty_row(d, Some(*object));
-                        if let Some(p) = d.shape.index {
-                            let _ = engine.write_internal(
-                                d.id,
-                                p,
-                                Value::Int(-1),
-                                WriteKind::Imperative,
-                            );
-                        }
+                        d.leave(engine, Some(*object));
                     }
                 }
                 s.remap(engine, |i| if i >= end { i - count } else { i });
@@ -1607,7 +1803,7 @@ impl ViewShared {
                     }
                     chooser_remade = true;
                 } else {
-                    let (model, rows): (_, Vec<(usize, RowObject)>) = {
+                    let (model, rows): (_, Vec<(usize, Given)>) = {
                         let st = s.state.borrow();
                         let Some(model) = st.model.clone() else {
                             return;
@@ -1621,11 +1817,12 @@ impl ViewShared {
                         (model, rows)
                     };
                     for (i, d) in rows {
-                        refresh_row(engine, &model, i, &d, roles);
+                        d.refresh(engine, &model, i, roles);
                     }
                 }
             }
             ModelChange::RolesChanged => {
+                s.plans.clear();
                 let (model, rows, pool): (_, Vec<(u64, usize, RowObject)>, Vec<Held>) = {
                     let mut st = s.state.borrow_mut();
                     let Some(model) = st.model.clone() else {
@@ -1634,7 +1831,7 @@ impl ViewShared {
                     let rows = st
                         .live
                         .iter()
-                        .filter_map(|h| Some((h.id, h.index?, h.data.clone()?)))
+                        .filter_map(|h| Some((h.id, h.index?, h.data.as_ref()?.row()?.clone())))
                         .filter(|(_, _, d)| !d.aliased)
                         .collect();
                     // A pooled delegate has the narrower row: simpler to
@@ -1651,13 +1848,16 @@ impl ViewShared {
                     }
                     let mut st = s.state.borrow_mut();
                     if let Some(h) = st.live.iter_mut().find(|h| h.id == id)
-                        && let Some(d) = &mut h.data
+                        && let Some(Given::Row(d)) = &mut h.data
                     {
                         d.shape = shape.clone();
                     }
                 }
             }
-            ModelChange::ModelReset => s.destroy_all(engine),
+            ModelChange::ModelReset => {
+                s.plans.clear();
+                s.destroy_all(engine);
+            }
         });
         s.host.changed(engine, change, &gone);
         if chooser_remade {
