@@ -12,6 +12,26 @@ pub const MODIFIER_KEYS: [(Modifiers, i32); 4] = [
     (Modifiers::META, key::META),
 ];
 
+/// The modifiers of `"Ctrl+Shift"`: `Ctrl`, `Shift`, `Alt` and `Meta`,
+/// and the other names people give them, joined by `+`.
+pub fn parse_modifiers(mods: &str) -> Result<Modifiers, String> {
+    let mut modifiers = Modifiers::empty();
+    for m in mods.split('+').filter(|m| !m.is_empty()) {
+        modifiers |= match m.to_ascii_lowercase().as_str() {
+            "shift" => Modifiers::SHIFT,
+            "ctrl" | "control" => Modifiers::CONTROL,
+            "alt" => Modifiers::ALT,
+            "meta" | "super" | "cmd" => Modifiers::META,
+            _ => {
+                return Err(format!(
+                    "unknown modifier {m:?}; the modifiers are Ctrl, Shift, Alt and Meta"
+                ));
+            }
+        };
+    }
+    Ok(modifiers)
+}
+
 /// One key with the modifiers held around it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chord {
@@ -34,21 +54,7 @@ impl Chord {
                 _ => ("", text),
             },
         };
-        let mut modifiers = Modifiers::empty();
-        for m in mods.split('+').filter(|m| !m.is_empty()) {
-            modifiers |= match m.to_ascii_lowercase().as_str() {
-                "shift" => Modifiers::SHIFT,
-                "ctrl" | "control" => Modifiers::CONTROL,
-                "alt" => Modifiers::ALT,
-                "meta" | "super" | "cmd" => Modifiers::META,
-                _ => {
-                    return Err(format!(
-                        "unknown modifier {m:?} in the chord {text:?}; the modifiers are Ctrl, \
-                         Shift, Alt and Meta"
-                    ));
-                }
-            };
-        }
+        let modifiers = parse_modifiers(mods).map_err(|e| format!("{e} in the chord {text:?}"))?;
         // The spellings the Qt oracle's keyboard also takes.
         let name = match name {
             n if n.eq_ignore_ascii_case("PageUp") => "PgUp",

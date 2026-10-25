@@ -625,7 +625,10 @@ impl Rig {
             ),
             (self.inspector.has_work(), "the inspector has work waiting"),
             (live.scene.needs_frame(), "the scene asks for a frame"),
-            (live.wake.is_some(), "the scene asks to be woken later"),
+            (
+                live.drive.wake.is_some(),
+                "the scene asks to be woken later",
+            ),
         ];
         match busy.iter().find(|(is, _)| *is) {
             Some((_, why)) => Err(failed(format!("the application is not idle: {why}"))),

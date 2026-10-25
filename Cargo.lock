@@ -3597,6 +3597,7 @@ dependencies = [
  "ljos_controls",
  "ljos_design",
  "ljos_dev",
+ "ljos_drive",
  "ljos_engine",
  "ljos_folderlistmodel",
  "ljos_i18n",

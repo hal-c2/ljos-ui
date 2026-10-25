@@ -19,14 +19,14 @@ use std::{
     time::Duration,
 };
 
-use ljos_a11y::{NodeKey, role_word};
+use ljos_a11y::NodeKey;
 use ljos_compiler::{Project, compile_file, failure_reason};
+use ljos_drive::{Advance, Chord, DriveError, DriveState, Driver, Host, Wheel, parse_modifiers};
 use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value as QmlValue};
-use ljos_quick::{
-    KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, keys::key,
-};
-use ljos_render::{FrameView, RasterConfig, VelloCpuReference, kurbo};
-use ljos_runtime::{Clock as _, Time, VirtualClock};
+use ljos_quick::{Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene};
+use ljos_render::RasterConfig;
+use ljos_render::kurbo::{self, Point};
+use ljos_runtime::{Clock as _, VirtualClock};
 use qml_front::project::ControlsStyle;
 use serde_json::{Map, Number, Value, json};
 
@@ -72,11 +72,6 @@ Item {
 }
 "#;
 
-/// Frames run per settle before the scene is reported as never idle.
-const MAX_SETTLE_FRAMES: usize = 64;
-/// Timer firings per `advance` before a zero-interval repeating timer is
-/// reported instead of hanging the run.
-const MAX_TIMER_STEPS: usize = 100_000;
 /// The time one call into JS may take, as a wall clock measures it. A
 /// frame-driven host interrupts a dispatch after 100 ms, but a scenario
 /// must mean the same whatever the machine's speed (the clock is virtual
@@ -88,84 +83,6 @@ const MAX_TIMER_STEPS: usize = 100_000;
 /// past any handler that means to finish and still ends one that never
 /// would, at the price of those few scenarios taking that long.
 const JS_BUDGET: Duration = Duration::from_secs(5);
-
-/// The modifier keys in the order a chord presses them.
-const MODIFIER_KEYS: [(Modifiers, i32); 4] = [
-    (Modifiers::CONTROL, key::CONTROL),
-    (Modifiers::SHIFT, key::SHIFT),
-    (Modifiers::ALT, key::ALT),
-    (Modifiers::META, key::META),
-];
-
-/// The modifiers of `"Ctrl+Shift"`.
-fn parse_modifiers(mods: &str) -> std::result::Result<Modifiers, String> {
-    let mut modifiers = Modifiers::empty();
-    for m in mods.split('+').filter(|m| !m.is_empty()) {
-        modifiers |= match m.to_ascii_lowercase().as_str() {
-            "shift" => Modifiers::SHIFT,
-            "ctrl" => Modifiers::CONTROL,
-            "alt" => Modifiers::ALT,
-            "meta" => Modifiers::META,
-            _ => return Err(format!("unknown modifier {m:?} in {mods:?}")),
-        };
-    }
-    Ok(modifiers)
-}
-
-/// One key with the modifiers held around it, as a step names it
-/// (`"Ctrl+Shift+S"`, `"Tab"`, `"Ctrl++"`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Chord {
-    modifiers: Modifiers,
-    key: i32,
-    /// What the key types with those modifiers.
-    text: String,
-}
-
-impl Chord {
-    fn parse(text: &str) -> std::result::Result<Self, String> {
-        let (mods, name) = match text.strip_suffix("++") {
-            Some(mods) => (mods, "+"),
-            None => match text.rsplit_once('+') {
-                Some((mods, name)) if !name.is_empty() => (mods, name),
-                _ => ("", text),
-            },
-        };
-        let modifiers = parse_modifiers(mods)?;
-        // The spellings the Qt oracle's keyboard also takes.
-        let name = match name {
-            n if n.eq_ignore_ascii_case("PageUp") => "PgUp",
-            n if n.eq_ignore_ascii_case("PageDown") => "PgDown",
-            n => n,
-        };
-        let code = key::from_name(name)
-            .ok_or_else(|| format!("unknown key {name:?} in the chord {text:?}"))?;
-        let shift = modifiers.contains(Modifiers::SHIFT);
-        // A desktop sends Shift+Tab as the Backtab key.
-        let code = if code == key::TAB && shift {
-            key::BACKTAB
-        } else {
-            code
-        };
-        let commands = Modifiers::CONTROL | Modifiers::ALT | Modifiers::META;
-        let mut chars = name.chars();
-        let typed = match (chars.next(), chars.next()) {
-            (Some(_), None) if modifiers.intersects(commands) => String::new(),
-            _ if modifiers.intersects(commands) => key::control_text(code).to_owned(),
-            (Some(c), None) if shift => c.to_uppercase().collect(),
-            (Some(c), None) => c.to_lowercase().collect(),
-            _ if code == key::SPACE => " ".to_owned(),
-            // A Qt key event carries the control character its key types:
-            // Tab's, which a `TextEdit` types, and Return's.
-            _ => key::control_text(code).to_owned(),
-        };
-        Ok(Self {
-            modifiers,
-            key: code,
-            text: typed,
-        })
-    }
-}
 
 /// The live parts, made by the first `load`.
 struct Live {
@@ -188,11 +105,9 @@ struct Live {
     /// The style behind `import QtQuick.Controls`, chosen before the first
     /// load as a program chooses it when it starts.
     controls_style: Option<ControlsStyle>,
-    /// When the scene last said it next needs a frame (a running
-    /// animation's next tick). `advance` wakes it then, as a host would.
-    wake: Option<Time>,
-    /// Whether a pointer step pressed the button and none released it.
-    pointer_down: bool,
+    /// What the scene driver keeps between steps: when the scene next
+    /// asks to be woken, and the buttons held down.
+    drive: DriveState,
     /// The reload session of a scenario that changes files while it runs.
     reloads: Option<reload::Rig>,
     /// The watch over files on disk of a scenario that has one.
@@ -456,8 +371,7 @@ impl LjosBackend {
             log,
             compiled_from: compiled,
             controls_style: None,
-            wake: None,
-            pointer_down: false,
+            drive: DriveState::default(),
             reloads: None,
             disk: None,
             top: ljos_dev::Top::new(),
@@ -548,19 +462,23 @@ impl Live {
     /// anchors, deferred deletes and sync, as a host does before the user
     /// sees anything.
     fn settle(&mut self) -> Result<()> {
-        self.swap_roots();
-        for _ in 0..MAX_SETTLE_FRAMES {
-            let now = self.clock.now();
-            let out = self.scene.frame(&self.engine, now);
-            self.note_frame();
-            if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
-                self.wake = out.next_wake;
-                return Ok(());
-            }
-        }
-        Err(failed(format!(
-            "the scene did not settle in {MAX_SETTLE_FRAMES} frames"
-        )))
+        self.drive(|d| d.settle())
+    }
+
+    /// Runs `act` on the scene driver, with this backend playing the
+    /// host's part around each settle.
+    fn drive<R>(
+        &mut self,
+        act: impl FnOnce(&mut Driver<'_>) -> std::result::Result<R, DriveError>,
+    ) -> Result<R> {
+        let mut host = Hosting {
+            windows: &mut self.windows,
+            roots: &mut self.roots,
+            top: &mut self.top,
+        };
+        let mut driver = Driver::new(&self.engine, &mut self.scene, &*self.clock, &mut self.drive)
+            .hosted(&mut host);
+        act(&mut driver).map_err(failed)
     }
 
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
@@ -616,28 +534,6 @@ impl Live {
         self.settle()
     }
 
-    /// The host's part of [`Self::put_in_window`]: each window of its own
-    /// shows the root asked for, at its size, and the old root goes.
-    fn swap_roots(&mut self) {
-        let swaps = ljos_quick::roots::RootSwaps::of(&self.engine);
-        if !swaps.is_pending() {
-            return;
-        }
-        for i in 0..self.windows.len() {
-            while let Some(new) = swaps.take(self.windows[i]) {
-                let old = self.windows[i];
-                ljos_quick::roots::adopt(&self.engine, old, new);
-                self.windows[i] = new;
-                for r in &mut self.roots {
-                    if *r == old {
-                        *r = new;
-                    }
-                }
-                self.engine.destroy(old);
-            }
-        }
-    }
-
     /// As an application that makes a window's `Document` before the
     /// window does: the object is made, given to a scope of the window's
     /// own, and the root is made in that scope.
@@ -659,40 +555,9 @@ impl Live {
         self.settle()
     }
 
-    /// `"list/row"` finds `list` anywhere below a root, then `row` anywhere
-    /// below it, depth first in declaration order.
+    /// An object path below the loaded roots ([`ljos_drive::find`]).
     fn find(&self, path: &str) -> Result<ObjectId> {
-        let mut cur: Option<ObjectId> = None;
-        for part in path.split('/') {
-            let starts = match cur {
-                Some(c) => vec![c],
-                None => self.roots.clone(),
-            };
-            cur = starts.iter().find_map(|r| self.deep(*r, part));
-            if cur.is_none() {
-                return Err(failed(format!("no object named \"{part}\"")));
-            }
-        }
-        cur.ok_or_else(|| failed("empty object path"))
-    }
-
-    fn deep(&self, root: ObjectId, name: &str) -> Option<ObjectId> {
-        let e = &self.engine;
-        let mut stack = vec![root];
-        while let Some(o) = stack.pop() {
-            if !e.is_alive(o) {
-                continue;
-            }
-            if let QmlValue::String(s) = e.read_by_name(o, "objectName")
-                && s.as_str() == name
-            {
-                return Some(o);
-            }
-            let mut kids = e.children(o);
-            kids.reverse();
-            stack.extend(kids);
-        }
-        None
+        ljos_drive::find(&self.engine, &self.roots, path).map_err(failed)
     }
 
     /// The object and property a dotted path names: `anchors.margins` is
@@ -859,128 +724,24 @@ impl Live {
         }
     }
 
+    /// Lets `ms` pass on the test clock as the scene driver does, also
+    /// stopping when a saved file's quiet time ends, to reload it there.
     fn advance(&mut self, ms: u64) -> Result<()> {
-        let images = ljos_quick::ImageStore::of(&self.engine);
-        // Pictures asked for before now have arrived by the time any time
-        // has passed: waited for, not slept for.
-        images.finish(&self.engine);
-        ljos_platform::Platform::of(&self.engine).finish(&self.engine);
-        let end = self.clock.now() + Duration::from_millis(ms);
-        // Each timer fires at its own deadline, and the scene is settled in
-        // between, as a host woken at each deadline would. The scene's own
-        // wakes (the frames of a running animation) are kept the same way.
-        for _ in 0..MAX_TIMER_STEPS {
-            // An answer promised on the way (the next picture of a video
-            // stream) has come by the next deadline, and may set one.
-            ljos_platform::Platform::of(&self.engine).finish(&self.engine);
-            let next = [
-                self.engine.next_timer_deadline(),
-                self.wake,
-                self.reload_due(),
-            ]
-            .into_iter()
-            .flatten()
-            .min();
-            match next {
-                Some(t) if t <= end => {
-                    if t > self.clock.now() {
-                        self.clock.set(t);
-                    }
-                    self.engine.advance_timers(self.clock.now());
-                    self.reload_if_due()?;
-                    self.settle()?;
-                }
-                _ => {
-                    self.clock.set(end);
-                    self.engine.advance_timers(end);
-                    // And so have those a timer asked for on the way.
-                    images.finish(&self.engine);
-                    ljos_platform::Platform::of(&self.engine).finish(&self.engine);
-                    return self.settle();
-                }
+        let mut advance = Advance::new(&*self.clock, ms).map_err(failed)?;
+        self.settle()?;
+        self.drive(|d| d.finish_promised())?;
+        loop {
+            let due = self.reload_due();
+            let stop = advance
+                .stop(&self.engine, &*self.clock, self.drive.wake, due)
+                .map_err(failed)?;
+            if stop.is_none() {
+                return Ok(());
             }
+            self.reload_if_due()?;
+            self.settle()?;
+            self.drive(|d| d.finish_promised())?;
         }
-        Err(failed(format!(
-            "timers fired more than {MAX_TIMER_STEPS} times in {ms} ms"
-        )))
-    }
-
-    /// Types a chord as a keyboard does: the modifier keys go down one by
-    /// one, then the key, held until it has repeated `repeats` times, and
-    /// everything comes up in reverse.
-    fn type_chord(&mut self, chord: &Chord, repeats: u32) -> Result<()> {
-        let mut held = Modifiers::empty();
-        for (modifier, code) in MODIFIER_KEYS {
-            if chord.modifiers.contains(modifier) {
-                self.scene
-                    .key_event(&self.engine, &KeyEvent::press(code).with_modifiers(held));
-                held |= modifier;
-            }
-        }
-        let press = KeyEvent::press(chord.key)
-            .with_modifiers(held)
-            .with_text(chord.text.clone());
-        self.scene.key_event(&self.engine, &press);
-        for _ in 0..repeats {
-            self.scene
-                .key_event(&self.engine, &press.clone().repeated());
-        }
-        let release = KeyEvent::release(chord.key)
-            .with_modifiers(held)
-            .with_text(chord.text.clone());
-        self.scene.key_event(&self.engine, &release);
-        for (modifier, code) in MODIFIER_KEYS.into_iter().rev() {
-            if chord.modifiers.contains(modifier) {
-                held -= modifier;
-                self.scene
-                    .key_event(&self.engine, &KeyEvent::release(code).with_modifiers(held));
-            }
-        }
-        self.settle()
-    }
-
-    /// Types `text`, one key per character, as a keyboard with a key for
-    /// each would.
-    fn type_text(&mut self, text: &str) -> Result<()> {
-        for c in text.chars() {
-            let code = key::from_char(c).unwrap_or(0);
-            let held = if c.is_uppercase() {
-                Modifiers::SHIFT
-            } else {
-                Modifiers::empty()
-            };
-            let typed = c.to_string();
-            let press = KeyEvent::press(code)
-                .with_modifiers(held)
-                .with_text(typed.clone());
-            self.scene.key_event(&self.engine, &press);
-            let release = KeyEvent::release(code)
-                .with_modifiers(held)
-                .with_text(typed);
-            self.scene.key_event(&self.engine, &release);
-        }
-        self.settle()
-    }
-
-    /// Press at `from`, move to `to` in steps a hand would make, release.
-    fn drag(&mut self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
-        const STEP: f64 = 8.0;
-        let now = self.clock.now();
-        self.scene
-            .pointer_event(&self.engine, &PointerEvent::press(from.0, from.1, now));
-        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
-        let steps = (dx.hypot(dy) / STEP).ceil().max(1.0) as u32;
-        for i in 1..=steps {
-            let t = f64::from(i) / f64::from(steps);
-            let (x, y) = (from.0 + dx * t, from.1 + dy * t);
-            self.scene.pointer_event(
-                &self.engine,
-                &PointerEvent::moved(x, y, MouseButtons::LEFT, now),
-            );
-        }
-        self.scene
-            .pointer_event(&self.engine, &PointerEvent::release(to.0, to.1, now));
-        self.settle()
     }
 
     /// Each frame as one touch event of what changed since the last, as
@@ -1018,86 +779,31 @@ impl Live {
         Ok(())
     }
 
-    fn tap(&mut self, x: f64, y: f64) -> Result<()> {
-        self.tap_holding(Modifiers::empty(), x, y)
-    }
-
+    /// A click of the left button with `held` down, where it is: no
+    /// move first, as a test's click is.
     fn tap_holding(&mut self, held: Modifiers, x: f64, y: f64) -> Result<()> {
-        let now = self.clock.now();
-        self.scene.pointer_event(
-            &self.engine,
-            &PointerEvent::press(x, y, now).with_modifiers(held),
-        );
-        self.scene.pointer_event(
-            &self.engine,
-            &PointerEvent::release(x, y, now).with_modifiers(held),
-        );
-        self.settle()
-    }
-
-    fn click_button(&mut self, button: super::OtherButton, x: f64, y: f64) -> Result<()> {
-        let b = match button {
-            super::OtherButton::Right => MouseButtons::RIGHT,
-            super::OtherButton::Middle => MouseButtons::MIDDLE,
-        };
-        let now = self.clock.now();
-        self.scene
-            .pointer_event(&self.engine, &PointerEvent::press(x, y, now).with_button(b));
-        self.scene.pointer_event(
-            &self.engine,
-            &PointerEvent::release(x, y, now).with_button(b),
-        );
-        self.settle()
+        self.drive(|d| {
+            let now = d.now();
+            d.send_pointer(&PointerEvent::press(x, y, now).with_modifiers(held));
+            d.send_pointer(&PointerEvent::release(x, y, now).with_modifiers(held));
+            d.settle()
+        })
     }
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
-        let now = self.clock.now();
-        let event = match step {
-            PointerStep::Press => {
-                self.pointer_down = true;
-                PointerEvent::press(x, y, now)
+        let at = Point::new(x, y);
+        self.drive(|d| {
+            match step {
+                PointerStep::Press => d.press(at, MouseButtons::LEFT),
+                PointerStep::Move => d.move_to(at),
+                PointerStep::Release => d.release(at, MouseButtons::LEFT),
             }
-            PointerStep::Move => {
-                let held = if self.pointer_down {
-                    MouseButtons::LEFT
-                } else {
-                    MouseButtons::empty()
-                };
-                PointerEvent::moved(x, y, held, now)
-            }
-            PointerStep::Release => {
-                self.pointer_down = false;
-                PointerEvent::release(x, y, now)
-            }
-        };
-        self.scene.pointer_event(&self.engine, &event);
-        self.settle()
-    }
-
-    fn wheel(&mut self, at: (f64, f64), by: super::WheelBy) -> Result<()> {
-        let now = self.clock.now();
-        let event = match by {
-            super::WheelBy::Notches(x, y) => ljos_quick::WheelEvent::notches(at.0, at.1, x, y, now),
-            super::WheelBy::Pixels(x, y) => ljos_quick::WheelEvent::pixels(at.0, at.1, x, y, now),
-        };
-        self.scene.wheel_event(&self.engine, &event);
-        self.settle()
-    }
-
-    /// The scene builds its accessibility tree only while something reads
-    /// it. The first question about the tree starts that, as an assistive
-    /// technology starting up would; from then on the tree follows changes.
-    fn listen(&mut self) -> Result<()> {
-        if !self.scene.accessibility_active() {
-            self.scene.set_accessibility_active(&self.engine, true);
-            self.settle()?;
-        }
-        Ok(())
+            .map(|_| ())
+        })
     }
 
     /// The tree as steps see it: role words, names and nesting.
     fn a11y(&self) -> A11yNode {
-        let focus = self.scene.accessible_focus_node();
         // The window is named by its title, as the shell tells it.
         let sys = ljos_controls::WindowSystem::of(&self.engine);
         let name = self
@@ -1106,39 +812,57 @@ impl Live {
             .find_map(|r| sys.spec(&self.engine, *r))
             .map(|s| s.title)
             .unwrap_or_default();
-        A11yNode::window(self.scene.accessibility_tree(), name, focus)
+        ljos_drive::a11y::tree(&self.scene, name)
     }
 
     /// The first node, in tree order, with this role and name.
     fn accessible_key(&self, role: &str, name: &str) -> Option<NodeKey> {
-        let mut found = None;
-        self.scene.accessibility_tree().walk(|key, _, d| {
-            if found.is_none() && role_word(d.role) == role && d.name == name {
-                found = Some(key);
-            }
-        });
-        found
-    }
-
-    /// Where the first node, in tree order, with this role and name is.
-    fn accessible_centre(&self, role: &str, name: &str) -> Option<(f64, f64)> {
-        let mut found = None;
-        self.scene.accessibility_tree().walk(|_, _, d| {
-            if found.is_none() && role_word(d.role) == role && d.name == name {
-                found = Some(d.bounds.center());
-            }
-        });
-        found
+        ljos_drive::a11y::node(&self.scene, role, name)
     }
 
     fn grab(&mut self) -> Result<Vec<u8>> {
-        self.settle()?;
-        let out = self.scene.frame(&self.engine, self.clock.now());
-        let mut r = VelloCpuReference::new(RasterConfig::default());
-        let image = r
-            .render(&FrameView::new(&out.snapshot, 1.0))
-            .map_err(failed)?;
-        image.to_png().map_err(failed)
+        self.drive(|d| d.grab(RasterConfig::default()))
+    }
+}
+
+/// The host's part a scenario plays around each settle.
+struct Hosting<'a> {
+    windows: &'a mut Vec<ObjectId>,
+    roots: &'a mut Vec<ObjectId>,
+    top: &'a mut ljos_dev::Top,
+}
+
+impl Host for Hosting<'_> {
+    /// The host's part of [`Live::put_in_window`]: each window of its own
+    /// shows the root asked for, at its size, and the old root goes.
+    fn before_settle(&mut self, engine: &Engine, _: &mut QuickScene) {
+        let swaps = ljos_quick::roots::RootSwaps::of(engine);
+        if !swaps.is_pending() {
+            return;
+        }
+        for i in 0..self.windows.len() {
+            while let Some(new) = swaps.take(self.windows[i]) {
+                let old = self.windows[i];
+                ljos_quick::roots::adopt(engine, old, new);
+                self.windows[i] = new;
+                for r in self.roots.iter_mut() {
+                    if *r == old {
+                        *r = new;
+                    }
+                }
+                engine.destroy(old);
+            }
+        }
+    }
+
+    /// After a frame: what its creation jobs cost goes to the `top`
+    /// overlay while it is shown. Hidden, the report is left where it is,
+    /// for the inspector's measurements.
+    fn after_frame(&mut self, engine: &Engine, scene: &mut QuickScene) {
+        if self.top.visible() {
+            let report = scene.take_incubation_report().unwrap_or_default();
+            self.top.record(engine, &report);
+        }
     }
 }
 
@@ -1376,24 +1100,24 @@ impl Backend for LjosBackend {
     }
 
     fn click(&mut self, role: &str, name: &str) -> Result<()> {
-        let live = self.live()?;
-        live.listen()?;
         // A user's click: a pointer in the middle of the control, so
-        // whatever covers it there takes the click, as on screen.
-        let (x, y) = live
-            .accessible_centre(role, name)
-            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
-        live.tap(x, y)
+        // whatever covers it there takes the click, as on screen. One a
+        // user could not click there (disabled, outside the window) is
+        // not clicked, and the step goes on, as the user would.
+        self.live()?
+            .drive(|d| match d.click_accessible(role, name) {
+                Err(DriveError::Refused { .. }) => Ok(()),
+                r => r,
+            })
     }
 
     fn key(&mut self, chord: &str) -> Result<()> {
-        let chord = Chord::parse(chord).map_err(failed)?;
-        self.live()?.type_chord(&chord, 0)
+        self.key_hold(chord, 0)
     }
 
     fn key_hold(&mut self, chord: &str, repeats: u32) -> Result<()> {
         let chord = Chord::parse(chord).map_err(failed)?;
-        self.live()?.type_chord(&chord, repeats)
+        self.live()?.drive(|d| d.chord(&chord, repeats))
     }
 
     fn window_active(&mut self, active: bool) -> Result<()> {
@@ -1403,7 +1127,8 @@ impl Backend for LjosBackend {
     }
 
     fn touch(&mut self, x: f64, y: f64) -> Result<()> {
-        self.live()?.tap(x, y)
+        self.live()?
+            .drive(|d| d.touch(Point::new(x, y), kurbo::Vec2::ZERO))
     }
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
@@ -1420,25 +1145,34 @@ impl Backend for LjosBackend {
     }
 
     fn wheel(&mut self, at: (f64, f64), by: super::WheelBy) -> Result<()> {
-        self.live()?.wheel(at, by)
+        let by = match by {
+            super::WheelBy::Notches(x, y) => Wheel::Notches(x, y),
+            super::WheelBy::Pixels(x, y) => Wheel::Pixels(x, y),
+        };
+        self.live()?
+            .drive(|d| d.wheel(Point::new(at.0, at.1), by).map(|_| ()))
     }
 
     fn type_text(&mut self, text: &str) -> Result<()> {
-        self.live()?.type_text(text)
+        self.live()?.drive(|d| d.type_text(text))
     }
 
     fn click_button(&mut self, button: super::OtherButton, x: f64, y: f64) -> Result<()> {
-        self.live()?.click_button(button, x, y)
+        let b = match button {
+            super::OtherButton::Right => MouseButtons::RIGHT,
+            super::OtherButton::Middle => MouseButtons::MIDDLE,
+        };
+        self.live()?.drive(|d| d.click(Point::new(x, y), b, 1))
     }
 
     fn double_click(&mut self, x: f64, y: f64) -> Result<()> {
-        let live = self.live()?;
-        live.tap(x, y)?;
-        live.tap(x, y)
+        self.live()?
+            .drive(|d| d.click(Point::new(x, y), MouseButtons::LEFT, 2))
     }
 
     fn drag(&mut self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
-        self.live()?.drag(from, to)
+        let (from, to) = (Point::new(from.0, from.1), Point::new(to.0, to.1));
+        self.live()?.drive(|d| d.drag(from, to))
     }
 
     fn set_clipboard(&mut self, text: &str) -> Result<()> {
@@ -1676,25 +1410,22 @@ impl Backend for LjosBackend {
         let live = self.live()?;
         // With no editor in focus the input method has nowhere to compose;
         // the scenario says what it expects of that.
-        live.scene.ime_preedit(&live.engine, text, None);
-        live.settle()
+        live.drive(|d| d.preedit(text, None).map(|_| ()))
     }
 
     fn commit(&mut self, text: &str) -> Result<()> {
-        let live = self.live()?;
-        live.scene.ime_commit(&live.engine, text);
-        live.settle()
+        self.live()?.drive(|d| d.commit(text).map(|_| ()))
     }
 
     fn a11y_tree(&mut self) -> Result<A11yNode> {
         let live = self.live()?;
-        live.listen()?;
+        live.drive(|d| d.listen())?;
         Ok(live.a11y())
     }
 
     fn a11y_focus(&mut self, role: &str, name: &str) -> Result<()> {
         let live = self.live()?;
-        live.listen()?;
+        live.drive(|d| d.listen())?;
         let key = live
             .accessible_key(role, name)
             .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
@@ -1815,7 +1546,7 @@ impl Backend for LjosBackend {
     fn a11y_act(&mut self, role: &str, name: &str, action: super::A11yAction) -> Result<()> {
         use ljos_quick::AccessibleAction as To;
         let live = self.live()?;
-        live.listen()?;
+        live.drive(|d| d.listen())?;
         let key = live
             .accessible_key(role, name)
             .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
@@ -1846,7 +1577,7 @@ impl Backend for LjosBackend {
     fn a11y_text(&mut self, role: &str, name: &str, action: super::A11yTextAction) -> Result<()> {
         use ljos_quick::AccessibleTextAction as To;
         let live = self.live()?;
-        live.listen()?;
+        live.drive(|d| d.listen())?;
         let key = live
             .accessible_key(role, name)
             .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
@@ -1988,7 +1719,7 @@ impl Backend for LjosBackend {
                 t.saturating_since(now).as_millis()
             ));
         }
-        if let Some(t) = live.wake {
+        if let Some(t) = live.drive.wake {
             what.push(format!(
                 "a frame in {} ms",
                 t.saturating_since(now).as_millis()
@@ -2386,26 +2117,6 @@ Item {
             b.click("button", "Open"),
             Err(BackendError::Failed(_))
         ));
-    }
-
-    #[test]
-    fn chords_name_modifiers_then_a_key() {
-        let c = Chord::parse("Ctrl+Shift+S").unwrap();
-        assert_eq!(c.modifiers, Modifiers::CONTROL | Modifiers::SHIFT);
-        assert_eq!((c.key, c.text.as_str()), (0x53, ""));
-        let c = Chord::parse("a").unwrap();
-        assert_eq!((c.key, c.text.as_str()), (key::A, "a"));
-        let c = Chord::parse("Shift+A").unwrap();
-        assert_eq!((c.key, c.text.as_str()), (key::A, "A"));
-        let c = Chord::parse("Ctrl++").unwrap();
-        assert_eq!((c.modifiers, c.key), (Modifiers::CONTROL, key::PLUS));
-        assert_eq!(Chord::parse("+").unwrap().key, key::PLUS);
-        assert_eq!(Chord::parse("Shift+Tab").unwrap().key, key::BACKTAB);
-        assert_eq!(Chord::parse("PageUp").unwrap().key, key::PAGE_UP);
-        assert_eq!(Chord::parse("Space").unwrap().text, " ");
-        assert_eq!(Chord::parse("F12").unwrap().text, "");
-        assert!(Chord::parse("Hyper+A").is_err());
-        assert!(Chord::parse("Nonsense").is_err());
     }
 
     const KEYS: &str = r#"import QtQuick

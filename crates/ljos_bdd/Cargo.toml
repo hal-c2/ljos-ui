@@ -45,6 +45,7 @@ ljos_compiler = { path = "../ljos_compiler" }
 ljos_controls = { path = "../ljos_controls" }
 # The files of Ljos.Design, as `ljos design export` writes them.
 ljos_design = { path = "../ljos_design" }
+ljos_drive = { path = "../ljos_drive" }
 # Hot reload scenarios run the dev loop's own pipeline (in memory, on the
 # virtual clock).
 ljos_dev = { path = "../ljos_dev", features = ["mcp"] }

@@ -1,24 +1,11 @@
 //! The `top` overlay in a scenario: the model a development build paints
 //! (`ljos_dev::Top`), given the frames the scenario's host runs anyway.
 
-use super::{Live, LjosBackend, Result};
+use super::{LjosBackend, Result};
 use crate::backend::top::{TopSeen, TopSheet};
 
 /// How many owners a scenario can ask about.
 const OWNERS: usize = 16;
-
-impl Live {
-    /// After a frame: what its creation jobs cost goes to the overlay
-    /// while it is shown. Hidden, the report is left where it is, for the
-    /// inspector's measurements.
-    pub(super) fn note_frame(&mut self) {
-        if !self.top.visible() {
-            return;
-        }
-        let report = self.scene.take_incubation_report().unwrap_or_default();
-        self.top.record(&self.engine, &report);
-    }
-}
 
 impl LjosBackend {
     /// Shows or hides the overlay. No frame is run for it: it shows the
@@ -50,7 +37,8 @@ impl LjosBackend {
         let frame_wanted = if live.scene.needs_frame() {
             Some("the scene asks for a frame".to_owned())
         } else {
-            live.wake
+            live.drive
+                .wake
                 .map(|at| format!("the scene asks to be woken at {at:?}"))
         };
         Ok(TopSeen {

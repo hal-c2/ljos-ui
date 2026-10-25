@@ -85,7 +85,7 @@ use ljos_runtime::{TIMER_GRANULARITY, Time, VirtualClock};
 
 pub use aim::{Refusal, aim};
 pub use clock::{RealClock, SETTLE_WALL, SceneClock};
-pub use keys::{Chord, MODIFIER_KEYS};
+pub use keys::{Chord, MODIFIER_KEYS, parse_modifiers};
 pub use steps::{
     Advance, MAX_ANSWER_ROUNDS, MAX_SETTLE_FRAMES, MAX_TIMER_STEPS, Settling, finish_promised,
 };
