@@ -5076,3 +5076,82 @@ DECISIONs:
   `AnchorChanges`) already writes those fields, so they stay the tracked reads.
 - A move stops after 32 in a row (`MAX_MOVES`), so float error from repeated translation
   does not build up.
+
+### Lottie: a mid-sized animation against qml6 (2026-10-25)
+
+`bench/lottie.qml` is a 512×512 black `Rectangle` with one `LottieAnimation` that loops
+`bench/lottie/mid.json` for ever. `bench/lottie/gen.py` writes that file: 57 kB, 60 fps, 180
+frames, 40 shape layers, and a precomp used four times. Every layer moves, so each frame is
+new and nothing can be cached. Both sides draw the same file: Ljós with `ljos_lottie`, qml6
+with `Qt.labs.lottieqt` 1.0.
+
+To reproduce:
+
+```sh
+python3 bench/lottie/gen.py
+BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench lottie
+cargo run --release -p ljos_lottie --example frame_time -- bench/lottie/mid.json
+```
+
+The figures are medians of 3 runs. Ljós was 166b4d96, a release build with thin LTO, and Qt was
+6.11.2. Both ran in headless sway with pixman (llvmpipe), off-screen, on an AMD Ryzen AI Max+ 395.
+Load average was 3.9 to 39.6.
+
+Desktop profile:
+
+| Measure | Ljós | Qt | Ljós/Qt |
+|---|---:|---:|---:|
+| Time to first frame | 182 ms | 651 ms | ×0.28 |
+| CPU to first frame | 131 ms | 285 ms | ×0.46 |
+| Peak memory while starting | 106 MiB | 478 MiB | ×0.22 |
+| Settled memory | 73.7 MiB | 130 MiB | ×0.57 |
+| Settled private PSS | 48.9 MiB | 98.2 MiB | ×0.50 |
+| Settled PSS | 121 MiB | 220 MiB | ×0.55 |
+| Memory after idling | 61.8 MiB | 129 MiB | ×0.48 |
+| CPU while animating | 40.5 % | 54.1 % of a core | ×0.75 |
+| Wakeups | 1308/s | 39226/s | ×0.03 |
+| Frames | 62.1/s | 61.9/s | ×1.00 |
+| 95th percentile frame interval | 16.1 ms | 16.2 ms | ×1.00 |
+| CPU while driven | 41.5 % | 53.7 % | ×0.77 |
+| Input-to-frame latency, median | 8.26 ms | 7.18 ms | ×1.15 |
+| Mapped install | 387 MiB | 487 MiB | ×0.80 |
+
+pi-zero profile (256 MiB, 20 % of one core):
+
+| Measure | Ljós | Qt | Ljós/Qt |
+|---|---:|---:|---:|
+| Time to first frame | 526 ms | 1140 ms | ×0.46 |
+| CPU to first frame | 106 ms | 213 ms | ×0.50 |
+| Peak memory while starting | 70.4 MiB | 151 MiB | ×0.47 |
+| Settled memory | 53.6 MiB | 108 MiB | ×0.50 |
+| Settled PSS | 153 MiB | 157 MiB | ×0.98 |
+| CPU, animating untouched | 18.8 % | 19.1 % | both at the quota |
+| Frames, animating untouched | 30.0/s | 33.0/s | ×0.91 |
+| 95th percentile frame interval, untouched | 45.9 ms | 40.0 ms | ×1.15 |
+| Slowest frame interval, untouched | 56.1 ms | 78.8 ms | ×0.71 |
+| Frames while driven | 31.1/s | 25.8/s | ×1.21 |
+| Slowest frame interval while driven | 60.2 ms | 110 ms | ×0.55 |
+| Wakeups | 756/s | 17353/s | ×0.04 |
+
+`frame_time` times only Ljós's own work, without drawing: parsing the file, and turning one
+frame into paths.
+
+| Step | Time |
+|---|---:|
+| Parse `mid.json` | 0.96–1.11 ms |
+| One frame to paths, mean | 29.7–29.8 µs |
+| One frame to paths, worst | 57–79 µs |
+| Paths per frame | 83.7 |
+
+- Interpreting the Lottie costs about 30 µs of a 16.7 ms frame. Most of Ljós's 40 % of a core
+  goes to filling those paths in software under llvmpipe, which is the same fill that Shapes and
+  SVG use.
+- On the desktop both keep 62 frames a second. Ljós does it on three quarters of qml6's CPU,
+  with half its memory and 3 % of its wakeups.
+- On the pi-zero profile both hit the 20 % quota. Left alone, qml6 keeps three more frames a
+  second. Under input, Ljós keeps five more, and its slowest interval is half of qml6's.
+- Input-to-frame latency is 1 ms slower on Ljós. The click lands on a `Rectangle` with no
+  handler, so this measures how long a full redraw takes to reach the screen.
+- qml6 never stops its frame clock while the animation runs. Ljós sets one deadline a frame,
+  and none once a finite animation has stopped or while it is hidden. The "nothing scheduled"
+  scenarios in `features/lottie/` pin that.
