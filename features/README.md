@@ -199,6 +199,8 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user double-clicks at X, Y` | two clicks at one place in quick succession |
 | `When the user clicks the right button at X, Y` | a click of the right (or `middle`) button, for a context menu |
 | `When the user drags from X, Y to X, Y` | press, move with the button held, release |
+| `When the user pinches at X, Y from D1 to D2 pixels apart` | two fingers on a line across, the second down a frame after the first, at most 4 pixels a finger a frame, then lifted |
+| `When the user turns two fingers D pixels apart at X, Y by A degrees` | two fingers about X, Y turned clockwise on the screen, at most 5 degrees a frame, then lifted |
 | `When the user turns the wheel N notch(es) down at X, Y` | a mouse wheel turns with the pointer at a position; `down` (or `up`, `left`, `right`) is where the view goes over the content, so `down` is towards the content's end (`@ljos-only`: the oracle's input channel has no wheel) |
 | `When the user scrolls N pixels down at X, Y` | a touchpad, or another device that scrolls by the pixel, scrolls that far, in the same four directions (`@ljos-only`) |
 | `When the input method composes "text"` | an input method shows the text at the cursor as what is being composed; `""` ends the composition with nothing typed (`@ljos-only`: the oracle has no input method) |

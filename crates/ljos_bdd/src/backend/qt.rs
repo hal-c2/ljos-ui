@@ -873,6 +873,23 @@ impl Backend for QtBackend {
         Ok(())
     }
 
+    /// QtTest's touch events, which go through the window as a touch
+    /// screen's do; the input platform carries one pointer only.
+    fn touch_frames(&mut self, frames: &[super::TouchFrame]) -> Result<()> {
+        let mut out = Vec::new();
+        for frame in frames {
+            let mut points = Vec::new();
+            for &(id, x, y) in frame {
+                let (x, y) = on_screen(x, y)?;
+                points.push(json!([id, x, y]));
+            }
+            out.push(Value::Array(points));
+        }
+        self.not_held()?;
+        self.push(json!({"op": "touches", "frames": out}));
+        Ok(())
+    }
+
     fn wheel(&mut self, _: (f64, f64), _: super::WheelBy) -> Result<()> {
         // RFB has wheel buttons (4 and 5), and Qt's `vnc` platform makes no
         // event of them (checked on Qt 6.11).

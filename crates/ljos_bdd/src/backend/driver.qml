@@ -130,12 +130,44 @@ Item {
                 return
             }
             if (op.op === "active") { out.push({}); activate(op.value); return }
+            if (op.op === "touches") {
+                try { touches(op.frames); out.push({}) } catch (e) { out.push({ error: String(e.message || e) }) }
+                continue
+            }
             try { out.push({ value: exec(op) }) } catch (e) { out.push({ error: String(e.message || e) }) }
         }
         finish()
     }
 
     Timer { id: pause; repeat: false; onTriggered: driver.run() }
+
+    // Fingers, frame by frame, 16 ms apart, through QtTest's touch events:
+    // a finger that stays where it was is told as stationary, which a
+    // PinchArea needs. Made when used, so that only these programs import
+    // QtTest.
+    property var tester: null
+    function touches(frames) {
+        if (!tester) tester = Qt.createQmlObject("import QtTest; TestCase { when: false; running: false }", driver)
+        var c = driver.Window.window.contentItem
+        var seq = tester.touchEvent(c)
+        var down = {}
+        frames.push([])
+        for (var f = 0; f < frames.length; f++) {
+            var now = {}
+            for (var i = 0; i < frames[f].length; i++) now[frames[f][i][0]] = frames[f][i]
+            var any = false
+            for (var id in down) if (!(id in now)) { seq.release(Number(id), c, down[id][1], down[id][2]); any = true }
+            for (var id2 in now) {
+                var p = now[id2], was = down[id2]
+                if (!was) seq.press(p[0], c, p[1], p[2])
+                else if (was[1] !== p[1] || was[2] !== p[2]) seq.move(p[0], c, p[1], p[2])
+                else seq.stationary(p[0])
+                any = true
+            }
+            if (any) { seq.commit(); tester.wait(16) }
+            down = now
+        }
+    }
 
     // The clipboard has no QML API of its own; an editor that is never
     // shown copies into it and pastes out of it.

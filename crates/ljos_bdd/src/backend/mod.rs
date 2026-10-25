@@ -95,6 +95,9 @@ pub struct BackdropAsked {
     pub look: &'static str,
 }
 
+/// The fingers down in one frame of touch input: `(id, x, y)`.
+pub type TouchFrame = Vec<(u32, f64, f64)>;
+
 /// What a pointer does in one step of a press, drag and release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerStep {
@@ -289,6 +292,13 @@ pub trait Backend: fmt::Debug {
     /// Press at `from`, move to `to` with the button held, release there.
     fn drag(&mut self, _from: (f64, f64), _to: (f64, f64)) -> Result<()> {
         Err(BackendError::NotImplemented("a drag"))
+    }
+    /// Fingers on the screen, frame by frame: in each, every finger down
+    /// then, as `(id, x, y)`. A finger new in a frame comes down, one gone
+    /// from it is lifted, and after the last frame every finger is. Frames
+    /// are some milliseconds apart, as a touch screen reports them.
+    fn touch_frames(&mut self, _frames: &[TouchFrame]) -> Result<()> {
+        Err(BackendError::NotImplemented("fingers on a touch screen"))
     }
     /// The wheel turns, or a touchpad scrolls, with the pointer at `at`.
     fn wheel(&mut self, _at: (f64, f64), _by: WheelBy) -> Result<()> {

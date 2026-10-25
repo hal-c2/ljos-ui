@@ -22,7 +22,9 @@ use std::{
 use ljos_a11y::{NodeKey, role_word};
 use ljos_compiler::{Project, compile_file, failure_reason};
 use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value as QmlValue};
-use ljos_quick::{KeyEvent, Modifiers, MouseButtons, PointerEvent, QuickScene, keys::key};
+use ljos_quick::{
+    KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, keys::key,
+};
 use ljos_render::{FrameView, RasterConfig, VelloCpuReference, kurbo};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
 use qml_front::project::ControlsStyle;
@@ -975,6 +977,41 @@ impl Live {
         self.settle()
     }
 
+    /// Each frame as one touch event of what changed since the last, as
+    /// the shell gives the scene a pass's touches.
+    fn touch_frames(&mut self, frames: &[super::TouchFrame]) -> Result<()> {
+        use ljos_quick::touch::{TouchEvent, TouchPhase};
+        let mut down: Vec<(u32, f64, f64)> = Vec::new();
+        for frame in frames.iter().chain(std::iter::once(&Vec::new())) {
+            let now = self.clock.now();
+            let event = |id: u32, phase, x, y| TouchEvent {
+                id: PointerId(u64::from(id) + 1),
+                phase,
+                pos: kurbo::Point::new(x, y),
+                time: now,
+            };
+            let mut events = Vec::new();
+            for &(id, x, y) in &down {
+                if !frame.iter().any(|f| f.0 == id) {
+                    events.push(event(id, TouchPhase::End, x, y));
+                }
+            }
+            for &(id, x, y) in frame {
+                match down.iter().find(|d| d.0 == id) {
+                    Some(d) if (d.1, d.2) == (x, y) => {}
+                    Some(_) => events.push(event(id, TouchPhase::Move, x, y)),
+                    None => events.push(event(id, TouchPhase::Begin, x, y)),
+                }
+            }
+            if !events.is_empty() {
+                self.scene.touch_event(&self.engine, &events);
+                self.settle()?;
+            }
+            down.clone_from(frame);
+        }
+        Ok(())
+    }
+
     fn tap(&mut self, x: f64, y: f64) -> Result<()> {
         let now = self.clock.now();
         self.scene
@@ -1357,6 +1394,10 @@ impl Backend for LjosBackend {
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
         self.live()?.pointer(step, x, y)
+    }
+
+    fn touch_frames(&mut self, frames: &[super::TouchFrame]) -> Result<()> {
+        self.live()?.touch_frames(frames)
     }
 
     fn wheel(&mut self, at: (f64, f64), by: super::WheelBy) -> Result<()> {

@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::backend::OutsideDrag;
 use crate::backend::SystemDialogAnswer;
 use crate::backend::SystemSetting;
+use crate::backend::TouchFrame;
 use crate::backend::testrun::{TestRun, expected_lines};
 use crate::{
     backend::{
@@ -886,6 +887,50 @@ fn user_double_clicks(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
 #[when(regex = r"^the user drags from ([-\d.]+), ([-\d.]+) to ([-\d.]+), ([-\d.]+)$")]
 fn user_drags(w: &mut LjosWorld, x1: f64, y1: f64, x2: f64, y2: f64) -> StepResult {
     w.each(|b| b.drag((x1, y1), (x2, y2)))
+}
+
+/// Two fingers come down one after the other at `ends(0)`, go through
+/// `ends(k)` for each of `steps` frames, and are lifted. Positions are
+/// whole pixels, as a touch screen and QtTest give them.
+fn two_fingers(steps: u32, ends: impl Fn(f64) -> [(f64, f64); 2]) -> Vec<TouchFrame> {
+    let frame = |t: f64| -> TouchFrame {
+        ends(t)
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i as u32, p.0.round(), p.1.round()))
+            .collect()
+    };
+    let start = frame(0.0);
+    let mut frames = vec![start[..1].to_vec(), start];
+    frames.extend((1..=steps).map(|k| frame(f64::from(k) / f64::from(steps))));
+    frames
+}
+
+// At most 4 pixels a finger a frame, as a quick pinch goes.
+#[when(
+    regex = r"^the user pinches at ([-\d.]+), ([-\d.]+) from ([\d.]+) to ([\d.]+) pixels apart$"
+)]
+fn user_pinches(w: &mut LjosWorld, x: f64, y: f64, from: f64, to: f64) -> StepResult {
+    let steps = ((to - from).abs() / 8.0).ceil().max(1.0) as u32;
+    let frames = two_fingers(steps, |t| {
+        let h = (from + (to - from) * t) / 2.0;
+        [(x - h, y), (x + h, y)]
+    });
+    w.each(|b| b.touch_frames(&frames))
+}
+
+// Clockwise on the screen, at most 5 degrees a frame, from a line across.
+#[when(
+    regex = r"^the user turns two fingers ([\d.]+) pixels apart at ([-\d.]+), ([-\d.]+) by (-?[\d.]+) degrees$"
+)]
+fn user_turns_fingers(w: &mut LjosWorld, apart: f64, x: f64, y: f64, deg: f64) -> StepResult {
+    let steps = (deg.abs() / 5.0).ceil().max(1.0) as u32;
+    let r = apart / 2.0;
+    let frames = two_fingers(steps, |t| {
+        let (sin, cos) = (deg * t).to_radians().sin_cos();
+        [(x - r * cos, y - r * sin), (x + r * cos, y + r * sin)]
+    });
+    w.each(|b| b.touch_frames(&frames))
 }
 
 // "Down" is towards the end of the content, as the user means it: the
