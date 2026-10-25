@@ -11,6 +11,7 @@ pub mod area;
 pub mod bindings;
 pub mod bucket;
 pub mod compare;
+pub mod geometry;
 pub mod outcome;
 pub mod report;
 pub mod rng;

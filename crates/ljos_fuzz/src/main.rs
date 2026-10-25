@@ -9,6 +9,7 @@ use ljos_fuzz::{
     area::Area,
     bindings::Bindings,
     bucket::Known,
+    geometry::Geometry,
     rng::Rng,
     run::{Config, Oracle, Report, run},
     shrink::Budget,
@@ -17,6 +18,7 @@ use ljos_fuzz::{
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum AreaName {
     Bindings,
+    Geometry,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -77,6 +79,7 @@ fn main() -> Result<ExitCode> {
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from));
     match args.area {
         AreaName::Bindings => fuzz(&Bindings, args, seed, jobs),
+        AreaName::Geometry => fuzz(&Geometry, args, seed, jobs),
     }
 }
 

@@ -1,0 +1,51 @@
+# Buckets of ljos-fuzz geometry that are known: as known/bindings.txt, one per line, the
+# signature then why. A value's context ends in what places the item that differs: free,
+# anchors, fill, center-in, positioner or in-positioner.
+# Triaged from seeds 101 and 202 (2000 cases each).
+
+# A write to what anchors place wins on Ljós; on Qt the anchors keep it (features/layouts/placed-geometry-writes.feature).
+value:step-anchors:number       a write of an anchored y or height wins over the anchors (features/layouts/placed-geometry-writes.feature)
+value:step-anchors:int-range    a write of a height that two vertical anchors set wins over them (features/layouts/placed-geometry-writes.feature)
+value:step-anchors:rounding     a write of an anchored y wins over the anchors (features/layouts/placed-geometry-writes.feature)
+value:step-fill:number          a write of a filled item's size wins over anchors.fill (features/layouts/placed-geometry-writes.feature)
+value:step-center-in:number     a write of a centred item's y wins over anchors.centerIn (features/layouts/placed-geometry-writes.feature)
+value:onChanged:text            a handler's write of an anchored y is told once, not as a move and a move back (features/layouts/placed-geometry-writes.feature); or a child of negative width in a filled Column is told fewer times
+
+# A positioner's implicit size is read-only on Qt and written on Ljós (features/layouts/placed-geometry-writes.feature).
+throws:TypeError/none:step-set      a positioner's implicitWidth or implicitHeight written does not throw (features/layouts/placed-geometry-writes.feature)
+error-kind:TypeError/Error:step-set a positioner's implicit size written throws Error, not TypeError (features/layouts/placed-geometry-writes.feature)
+value:step-positioner:int-range     a positioner's implicitHeight written takes the value (features/layouts/placed-geometry-writes.feature)
+
+# A child's negative size counts in its positioner's size on Qt (features/layouts/placed-geometry-writes.feature).
+value:load-in-positioner:rounding   a Column's implicitHeight leaves out a child's negative height, read by a sibling's x (features/layouts/placed-geometry-writes.feature)
+value:step-positioner:rounding      a Column's height leaves out a child of negative width (features/layouts/placed-geometry-writes.feature); or anchors.fill's width differs in its last bits
+value:load-positioner:rounding      a Row's implicitWidth leaves out a child's negative width, read by its right anchor (features/layouts/placed-geometry-writes.feature)
+
+# NaN given to geometry is ignored on Qt (features/items/geometry-nan.feature).
+value:load-free:nan-ljos            NaN given to height or y is ignored (features/items/geometry-nan.feature)
+value:load-positioner:nan-ljos      NaN given to a Row's x is ignored (features/items/geometry-nan.feature)
+value:step-positioner:nan-ljos      NaN given to a Column's height is ignored (features/items/geometry-nan.feature)
+value:onChanged:empty-qt            NaN given to y is ignored, so no change is told (features/items/geometry-nan.feature)
+value:step-free:nan-qt              NaN given to implicitHeight reaches an item's bound height on Qt, which geometry-nan.feature does not cover yet
+value:step-fill:nan-qt              a NaN anchors.leftMargin makes a filled item's x NaN on Qt, which geometry-nan.feature does not cover yet
+
+# A size binding runs after the literal implicit size it follows, and the change is told (features/layouts/placed-geometry-writes.feature).
+value:onChanged:empty-ljos          a width or height bound to 0 next to a literal implicit size is not told (features/layouts/placed-geometry-writes.feature)
+
+# Anchors are applied while the item is made on Qt, after onCompleted on Ljós.
+value:onChanged+onCompleted:text    a centred item's x is told after the root's onCompleted, not before it (no scenario yet)
+
+# A size bound through its own position or implicit size is a binding loop. Qt warns
+# "Binding loop detected" and settles on another value; Ljós warns that the handlers re-ran
+# or that polish did not settle (no scenario yet: the values a loop settles on are Qt's own).
+warning:binding-loop(qt-only):*     a size bound to its own x, height or implicit size loops; Ljós warns in its own words
+warning:other(ljos-only):QML_Item:_property_"_"_handlers_re-ran_N_times_in_one_update   a size bound to its own x under anchors.centerIn loops; Qt warns "Binding loop detected"
+warning:other(ljos-only):QML_Rectangle:_property_"_"_handlers_re-ran_N_times_in_one_update   a size bound to its own x under anchors.centerIn loops; Qt warns "Binding loop detected"
+warning:other(ljos-only):QML_Column:_property_"_"_handlers_re-ran_N_times_in_one_update   a size bound to its own x under anchors.centerIn loops; Qt warns "Binding loop detected"
+warning:other(ljos-only):QML_Row:_property_"_"_handlers_re-ran_N_times_in_one_update   a size bound to its own x under anchors.centerIn loops; Qt warns "Binding loop detected"
+warning:other(ljos-only):Possible_polish_loop:_N_item(s)_still_dirty_after_N_passes  a size bound to its positioner's x or implicit size loops; Qt warns "Binding loop detected"
+warning:RangeError(qt-only):Maximum_call_stack_size_exceeded.   a handler of width that writes implicitWidth recurses on Qt; Ljós stops it
+value:load-free:int-range           a height bound through its own implicitHeight loops; Qt settles on another value
+value:load-center-in:number         a width bound to its own x under anchors.centerIn loops; Qt settles on another value
+value:load-center-in:int-range      a huge item centred: Qt's whole-pixel centring holds x to an int's range
+warning:assign(ljos-only):Unable_to_assign_[undefined]_to_real  a colour's .a given to a margin is told as an assign error on Ljós; Qt gives it as undefined silently (no scenario yet)
