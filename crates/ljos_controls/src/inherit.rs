@@ -661,11 +661,17 @@ pub(crate) fn attach(
         colours_made(engine, obj);
     }
     if has_children {
-        for p in roles.iter().copied() {
+        for (i, p) in roles.iter().copied().enumerate() {
+            let was = Cell::new(author_set(engine, obj, p));
             engine.watch(obj, p, move |e, _| {
                 // The colours this module hands down change too; only the
                 // author's are news to the items below.
-                if author_set(e, obj, p) {
+                let mine = author_set(e, obj, p);
+                if !mine {
+                    was.set(false);
+                } else if was.replace(true) {
+                    e.after_creation(move |e| hand_down(e, vec![obj], Some(i)));
+                } else {
                     colours_changed(e, obj);
                 }
             })?;
@@ -1016,6 +1022,14 @@ fn resolve_palette(
     Ok(())
 }
 
+/// Which role `p` of an object of kind `kind` is, on its palette or in
+/// one of its groups.
+fn role_index(kind: Kind, p: PropIndex) -> Option<usize> {
+    std::iter::once(roles_of(kind))
+        .chain(groups_of(kind))
+        .find_map(|props| props.iter().position(|q| *q == p))
+}
+
 /// Whether `obj`, of kind `kind`, may have colours to hand down: a plain
 /// item that never set one has no palette to look in.
 fn hands_down(engine: &Engine, obj: ObjectId, kind: Kind) -> bool {
@@ -1056,6 +1070,7 @@ fn group_written(engine: &Engine, obj: ObjectId) {
         // It hears the write about to be stored. A colour of the palette
         // that is bound is written over as it resolves, which is no news.
         let role = roles_of(kind).contains(&p);
+        let was = Cell::new(author_set(engine, obj, p));
         let watched = engine.watch(obj, p, move |e, v| {
             let given = match e.provenance(obj, p) {
                 Some(Provenance::Assigned) => true,
@@ -1064,7 +1079,9 @@ fn group_written(engine: &Engine, obj: ObjectId) {
             };
             if given {
                 over_groups(e, obj, kind, p, v);
-                colours_written(e, obj);
+                colour_written(e, obj, role_index(kind, p), was.replace(true));
+            } else {
+                was.set(author_set(e, obj, p));
             }
         });
         check(engine, "palette", watched.map(|_| ()));
@@ -1114,11 +1131,14 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
     // A colour being written is not yet stored nor marked as the author's.
     if written || own && roles.iter().any(|p| author_set(engine, item, *p)) {
         plain.watched.borrow_mut().insert(item);
-        for p in roles.iter().copied() {
+        for (i, p) in roles.iter().copied().enumerate() {
+            let was = Cell::new(author_set(engine, item, p));
             let watched = engine.watch(item, p, move |e, v| {
                 if author_set(e, item, p) {
                     over_groups(e, item, Kind::Item, p, v);
-                    colours_written(e, item);
+                    colour_written(e, item, Some(i), was.replace(true));
+                } else {
+                    was.set(false);
                 }
             });
             check(engine, "palette", watched.map(|_| ()));
@@ -1129,7 +1149,7 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
         colours_changed(engine, item);
     } else if !own {
         // Made inside items that hand colours down: they did so before it was.
-        engine.untrack(|| take_from_above(engine, item));
+        engine.untrack(|| take_from_above(engine, item, None));
     }
 }
 
@@ -1160,16 +1180,30 @@ fn colours_made(engine: &Engine, obj: ObjectId) {
 
 /// As [`colours_changed`], for a colour written on an object that
 /// completed: what reads it next sees it, as on qml6, also from an
-/// `onCompleted` handler of the creation it was made in.
-fn colours_written(engine: &Engine, obj: ObjectId) {
-    colours_changed(engine, obj);
-    move_pending(engine);
+/// `onCompleted` handler of the creation it was made in. `was` says the
+/// colour was the author's before: then each control that took it read it
+/// as it resolved and runs again on its own, and only the plain items
+/// below are handed it. Moving the epoch for it had every control in the
+/// scene look again for each colour of a theme bound on a menu bar.
+fn colour_written(engine: &Engine, obj: ObjectId, role: Option<usize>, was: bool) {
+    if was {
+        hand_down(engine, vec![obj], role);
+    } else {
+        colours_changed(engine, obj);
+        move_pending(engine);
+    }
 }
 
 /// Hands the colours of the objects an author changed down to the plain
 /// items below them.
 fn hand_down_to_plain_items(engine: &Engine) {
     let from = std::mem::take(&mut *engine.extension::<PlainItems>().from.borrow_mut());
+    hand_down(engine, from, None);
+}
+
+/// Hands the colours of `from` down to the plain items below them: role
+/// `only` of them, or all.
+fn hand_down(engine: &Engine, from: Vec<ObjectId>, only: Option<usize>) {
     let mut seen = HashSet::new();
     let mut stack: Vec<ObjectId> = Vec::new();
     for obj in from {
@@ -1184,7 +1218,7 @@ fn hand_down_to_plain_items(engine: &Engine) {
             }
             stack.extend(engine.visual_children(item));
             if kind_of(engine, item) == Some(Kind::Item) {
-                engine.untrack(|| take_from_above(engine, item));
+                engine.untrack(|| take_from_above(engine, item, only));
             }
         }
     }
@@ -1193,8 +1227,9 @@ fn hand_down_to_plain_items(engine: &Engine) {
 /// Gives a plain item the colours of the items it is in, for each role
 /// and each group's it did not set itself: on its next read, or now if
 /// something observes it. A colour nobody above set is the style's
-/// again, where it had another.
-fn take_from_above(engine: &Engine, item: ObjectId) {
+/// again, where it had another. `only` is the one role to look for, in
+/// each group, where the others are as they were.
+fn take_from_above(engine: &Engine, item: ObjectId, only: Option<usize>) {
     // Each role, then each group's: a colour set on a palette is set in
     // each of its groups, and one set in a group there alone, so the
     // groups too are the nearest ancestor's (checked on qml6).
@@ -1207,9 +1242,11 @@ fn take_from_above(engine: &Engine, item: ObjectId) {
     let mut inherited: [Option<Color>; SLOTS] = [None; SLOTS];
     // A group's colour the item gave on its palette is its own too.
     let groups = has_groups(engine, item);
+    // A role not looked for is as good as the item's own.
     let mine: Vec<bool> = (0..SLOTS)
         .map(|at| {
-            (at < ROLE_COUNT || groups) && author_set(engine, item, prop(at))
+            only.is_some_and(|i| at % ROLE_COUNT != i)
+                || (at < ROLE_COUNT || groups) && author_set(engine, item, prop(at))
                 || author_set(engine, item, own_roles[at % ROLE_COUNT])
         })
         .collect();

@@ -61,3 +61,32 @@ Feature: The look of a control made after others set theirs
     Then the property "font.pixelSize" of "made" is 20
     And the property "font.bold" of "made" is true
     And the property "font.italic" of "made" is false
+
+  Scenario: A colour bound on a control reaches what it holds each time it changes
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        objectName: "root"
+        width: 300; height: 200
+        property bool dark: false
+        Pane {
+          palette.button: parent.dark ? "#000000" : "#ffffff"
+          Column {
+            Button { objectName: "inside" }
+            Item { objectName: "plain" }
+            Pane { palette.button: "#00aa00"; Button { objectName: "nested" } }
+          }
+        }
+        Button { objectName: "outside"; y: 150 }
+      }
+      """
+    When the property "dark" of "root" is set to true
+    Then the property "palette.button" of "inside" is "#000000"
+    And the property "palette.button" of "plain" is "#000000"
+    And the property "palette.button" of "nested" is "#00aa00"
+    And the property "palette.button" of "outside" is "#e0e0e0"
+    When the property "dark" of "root" is set to false
+    Then the property "palette.button" of "inside" is "#ffffff"
+    And the property "palette.button" of "plain" is "#ffffff"

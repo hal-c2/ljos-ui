@@ -677,3 +677,60 @@ fn material_items_made_one_by_one_cost_what_each_costs() {
         "twice the rows ran {twice} effects, against {once}"
     );
 }
+
+/// Switches the colours bound on a pane of four buttons, beside `others`
+/// buttons that set none, and returns the effects the switch ran and what
+/// a button in the pane and a label in it read after.
+fn switched_beside(others: usize) -> (u64, Value, Value) {
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Column {{
+    property bool dark: false
+    Pane {{
+        palette.button: dark ? "black" : "white"
+        palette.text: dark ? "white" : "black"
+        Row {{
+            Repeater {{ model: 4; Button {{}} }}
+            Button {{ objectName: "inside" }}
+            Item {{ objectName: "plain" }}
+        }}
+    }}
+    Repeater {{ model: {others}; Button {{}} }}
+}}
+"#
+        ),
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let before = e.graph().stats().effect_runs;
+    e.write_by_name(root, "dark", Value::Bool(true)).unwrap();
+    settle(&mut s, &e, Time::ZERO);
+    let ran = e.graph().stats().effect_runs - before;
+    let inside = find(&e, root, "inside");
+    let plain = find(&e, root, "plain");
+    let button = e.read_by_name(inside, "palette.button");
+    let text = e.read_by_name(plain, "palette.text");
+    (ran, button, text)
+}
+
+/// A colour bound on a control changed its value, and every control in
+/// the scene resolved its palette again: a theme bound on a menu bar cost
+/// each switch milliseconds. The controls that took the colour read it as
+/// they resolved and run again on their own; only a colour that was not
+/// the author's before is news to the rest.
+#[test]
+fn a_bound_colour_that_changes_costs_what_is_below_it() {
+    let (few, button, text) = switched_beside(10);
+    let (many, ..) = switched_beside(80);
+    assert_eq!(button, Value::Color(ljos_engine::Color::BLACK));
+    assert_eq!(text, Value::Color(ljos_engine::Color::WHITE));
+    assert!(
+        many < few + 20,
+        "beside 80 buttons the switch ran {many} effects, beside 10 {few}"
+    );
+}

@@ -4777,3 +4777,67 @@ DECISIONs:
 
 - samegame's new game is left as it is: a release build is within the budget, and what it
   costs is the creation of objects, H2's.
+
+### mediaplayer's theme radio: colours bound on a menu bar (2026-10-25)
+
+The radio's handler is one write, `Config.activeTheme = Config.Theme.Light`, to a file singleton.
+In release it took 3.9–4.5 ms in the desktop:cua sandbox (llvmpipe).
+
+#### Where the time went
+
+Measured with the observer's hot bindings (`app_frames {"bindings": true}`) on the click, and by
+editing copies of the app:
+- **The bindings, 0.3 ms.** About 100 of them run, at 0.04 ms or less each. The handler's own
+  time was 4.08 ms of its 4.39 ms.
+- **Writes and dirtying, about 3 ms.** These are the menu bar's colours. `PlayerMenuBar.qml` binds
+  `palette.base`, `.text`, `.highlightedText` and `.highlight` to the singleton, on the `MenuBar` and
+  on each `Menu`. With those lines made constant, the handler took 0.9–1.5 ms. The images and the
+  colour bindings elsewhere cost 0.12–0.2 ms a switch in a repro of 24 SVG `Image`s and 70
+  `Rectangle`s.
+- **Drawing.** The frames after the click are the ones playback draws (p50 4.0–4.6 ms, from the
+  media slider), not the switch's.
+
+The cause was in `ljos_controls`' palette inheritance:
+- **Every control looked again.** A bound colour changed its value, and it moved the epoch that
+  tells every control in the scene to resolve its palette. That happened once for each colour, and
+  each resolve walks the control's ancestors for every role and group.
+- **Every plain item recomputed every slot.** Each colour then handed down all 84 slots of every
+  plain item below the bar, not only the role that changed.
+
+#### The fix
+
+- **A colour that was already the author's does not move the epoch.** A control that took it read
+  it as it resolved, so it runs again on its own. Only a colour that was not the author's before is
+  news to the rest of the scene.
+- **The plain items below are handed only the role that changed.**
+
+`a_bound_colour_that_changes_costs_what_is_below_it` (`crates/ljos_controls/tests/controls.rs`)
+pins this. A switch beside 80 buttons ran 181 effects before, against 41 beside 10. The
+scenario in `features/controls/control-look-later.feature` checks against qml6 that the colours
+still reach the controls and plain items below.
+
+#### Numbers
+
+Release. The repro is a Fusion window with the app's `MenuBar` (5 bound colours), 3 `Menu`s of 4
+items (3 bound colours each) and 40 `Button`s and 40 `Label`s (`frame_profile --start`, one switch,
+then three more):
+
+| | switch | effect runs |
+|---|---|---|
+| before | 12.4 ms | 1929 |
+| the epoch kept | 3.5–3.9 ms | 184–210 |
+| and one role handed down | 1.2–1.7 ms | 184–210 |
+| without the menu bar | 0.08–0.49 ms | 1 |
+
+The same scene as a `tst_*.qml`, 400 switches with nothing drawn: **qml6 0.50 ms a switch, Ljós
+1.12 ms.**
+
+mediaplayer's radio, from the hot bindings in the sandbox: **3.9–4.5 ms before; 2.7 ms on the
+first switch after, then 1.41–1.42 ms.**
+
+#### Left
+
+The rest is each `Menu`'s colours. A popup copies the colours set on it to its item, and the
+item's colours back to the popup (`popup/item.rs` `mirror_look`). Each copy runs the item's
+resolve again. This accounts for most of the 210 effects. `Engine::provenance` is 12 % of what
+is left in callgrind.
