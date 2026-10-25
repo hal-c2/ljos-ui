@@ -1695,16 +1695,19 @@ fn app_processes_counts_the_inspectors_own_requests_without_waking_the_ui_thread
     );
     // Each test's inspector has a mailbox of its own; this one is the
     // one that has drained the two status requests above (and its own
-    // `app_snapshot`-free start). Others run beside it.
+    // `app_snapshot`-free start). Others run beside it, and one of them
+    // may have drained as many and still hold a request, so the one
+    // looked for is the empty one; this test's always is.
     let mine = reply.structured["mailboxes"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|m| m["capacity"] == INBOX_CAPACITY && m["drained"].as_u64() >= Some(2))
-        .unwrap_or_else(|| panic!("no inspector mailbox in {}", reply.text))
+        .find(|m| {
+            m["capacity"] == INBOX_CAPACITY && m["drained"].as_u64() >= Some(2) && m["depth"] == 0
+        })
+        .unwrap_or_else(|| panic!("no empty inspector mailbox in {}", reply.text))
         .clone();
     assert_eq!(mine["name"], "inspector");
-    assert_eq!(mine["depth"], 0);
     assert!(mine["peek"].as_array().unwrap().is_empty());
     assert!(
         reply.text.contains("mailbox inspector: 0/16 queued"),
