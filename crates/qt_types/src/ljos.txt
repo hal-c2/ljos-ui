@@ -68,6 +68,48 @@ module Ljos
 		signal fileChanged
 		signal lineChanged
 
+module Qt.labs.folderlistmodel
+	FolderListModel Qt.labs.folderlistmodel.FolderListModel
+	type Qt.labs.folderlistmodel.FolderListModel FolderListModel
+		prototype QtQml.QtObject named
+		enum SortField Unsorted=0 Name=1 Time=2 Size=3 Type=4
+		enum Status Null=0 Ready=1 Loading=2
+		prop folder QtQml.url named
+		prop rootFolder QtQml.url named
+		prop parentFolder QtQml.url named readonly
+		prop nameFilters QtQml.var named list
+		prop showDirs QtQml.bool named
+		prop showDirsFirst QtQml.bool named
+		prop showDotAndDotDot QtQml.bool named
+		prop showFiles QtQml.bool named
+		prop showHidden QtQml.bool named
+		prop showOnlyReadable QtQml.bool named
+		prop caseSensitive QtQml.bool named
+		prop sortCaseSensitive QtQml.bool named
+		prop sortField SortField
+		prop sortReversed QtQml.bool named
+		prop count QtQml.int named readonly
+		prop status Status readonly
+		signal folderChanged
+		signal rootFolderChanged
+		signal parentFolderChanged
+		signal nameFiltersChanged
+		signal showDirsChanged
+		signal showDirsFirstChanged
+		signal showDotAndDotDotChanged
+		signal showFilesChanged
+		signal showHiddenChanged
+		signal showOnlyReadableChanged
+		signal caseSensitiveChanged
+		signal sortCaseSensitiveChanged
+		signal sortFieldChanged
+		signal sortReversedChanged
+		signal countChanged
+		signal statusChanged
+		method get
+		method indexOf
+		method isFolder
+
 module Qt.labs.qmlmodels
 	DelegateChoice QtQml.Models.DelegateChoice
 	DelegateChooser QtQml.Models.DelegateChooser
@@ -911,6 +953,35 @@ module QtQml.Models
 		signal inPersistedItemsChanged
 		signal itemsIndexChanged
 		signal persistedItemsIndexChanged
+
+module QtQml.XmlListModel
+	XmlListModel QtQml.XmlListModel.XmlListModel
+	XmlListModelRole QtQml.XmlListModel.XmlListModelRole
+	type QtQml.XmlListModel.XmlListModel XmlListModel
+		prototype QtQml.QtObject named
+		default roles
+		enum Status Null=0 Ready=1 Loading=2 Error=3
+		prop source QtQml.url named
+		prop query QtQml.string named
+		prop roles QtQml.var named list readonly
+		prop count QtQml.int named readonly
+		prop progress QtQml.real named readonly
+		prop status Status readonly
+		signal sourceChanged
+		signal queryChanged
+		signal countChanged
+		signal progressChanged
+		signal statusChanged
+		method reload
+		method errorString
+	type QtQml.XmlListModel.XmlListModelRole XmlListModelRole
+		prototype QtQml.QtObject named
+		prop name QtQml.string named
+		prop elementName QtQml.string named
+		prop attributeName QtQml.string named
+		signal nameChanged
+		signal elementNameChanged
+		signal attributeNameChanged
 
 module QtQuick
 	import QtQml
