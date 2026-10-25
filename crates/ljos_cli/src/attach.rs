@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::Args;
 use serde_json::{Value as Json, json};
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::Mutex;
 
 use crate::inspector::{self, Answer, Trust, find_token_file, read_token_file};
@@ -58,30 +58,103 @@ impl Attach {
 }
 
 async fn bridge(token_file: PathBuf, trust: Trust) -> anyhow::Result<()> {
-    let out = Arc::new(Mutex::new(tokio::io::stdout()));
-    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    bridge_io(
+        tokio::io::BufReader::new(tokio::io::stdin()),
+        tokio::io::stdout(),
+        move |line| {
+            let token_file = token_file.clone();
+            async move { relay(&token_file, trust, line).await }
+        },
+    )
+    .await
+}
+
+// DECISION: use the observer's 16-call limit, including responses waiting
+// for stdout. Acquire a slot before reading so neither slow peers nor a
+// client that stops reading can grow a queue of requests or responses.
+async fn bridge_io<R, W, F, Fut>(mut input: R, output: W, relay: F) -> anyhow::Result<()>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin + Send + 'static,
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Vec<String>> + Send + 'static,
+{
+    let out = Arc::new(Mutex::new(output));
     let mut running = tokio::task::JoinSet::new();
-    while let Some(line) = lines.next_line().await? {
+    loop {
+        while running.try_join_next().is_some() {}
+        if running.len() >= inspector::IN_FLIGHT {
+            running.join_next().await;
+        }
+        let Some(line) = read_line(&mut input).await? else {
+            break;
+        };
         if line.trim().is_empty() {
             continue;
         }
-        let (out, token_file) = (Arc::clone(&out), token_file.clone());
+        let out = Arc::clone(&out);
+        let response = relay(line);
         running.spawn(async move {
-            let said = relay(&token_file, trust, line).await;
+            let said = response.await;
             let mut out = out.lock().await;
             for message in said {
-                // A closed stdout is a client gone; stdin ends next.
-                let _ = out.write_all(message.as_bytes()).await;
-                let _ = out.write_all(b"\n").await;
+                out.write_all(message.as_bytes()).await?;
+                out.write_all(b"\n").await?;
             }
-            let _ = out.flush().await;
+            out.flush().await
         });
-        // What has ended is let go, so that a long session holds nothing.
-        while running.try_join_next().is_some() {}
     }
     // The client has closed stdin: what it asked last is still answered.
     while running.join_next().await.is_some() {}
     Ok(())
+}
+
+// DECISION: stdin JSON-RPC lines have the same 1 MiB cap as HTTP bodies.
+// Stop the relay on overflow, without draining an unending hostile line.
+async fn read_line<R: AsyncBufRead + Unpin>(input: &mut R) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let available = input.fill_buf().await?;
+        if available.is_empty() {
+            return if line.is_empty() {
+                Ok(None)
+            } else {
+                decode_line(line).map(Some)
+            };
+        }
+        let end = available.iter().position(|b| *b == b'\n');
+        let count = end.unwrap_or(available.len());
+        if count > inspector::MAX_BODY_BYTES.saturating_sub(line.len()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "JSON-RPC line exceeds 1 MiB",
+            ));
+        }
+        line.extend_from_slice(&available[..count]);
+        input.consume(count + usize::from(end.is_some()));
+        if end.is_some() {
+            return decode_line(line).map(Some);
+        }
+    }
+}
+
+fn decode_line(mut line: Vec<u8>) -> std::io::Result<String> {
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    String::from_utf8(line).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+// DECISION: app_watch allows one hour; arbitrary wait_ms must not extend
+// relay retention beyond that protocol maximum plus transport patience.
+fn request_limit(parsed: &Json) -> Duration {
+    let wait = parsed["params"]["arguments"]["wait_ms"]
+        .as_u64()
+        .unwrap_or(0)
+        .min(3_600_000);
+    Duration::from_millis(wait)
+        .checked_add(PATIENCE)
+        .unwrap_or(PATIENCE)
 }
 
 /// The lines `message` is answered with: the inspector's messages, or a
@@ -90,14 +163,9 @@ async fn bridge(token_file: PathBuf, trust: Trust) -> anyhow::Result<()> {
 async fn relay(token_file: &std::path::Path, trust: Trust, message: String) -> Vec<String> {
     let parsed: Json = serde_json::from_str(&message).unwrap_or(Json::Null);
     let id = parsed.get("id").cloned();
-    let wait = parsed["params"]["arguments"]["wait_ms"]
-        .as_u64()
-        .unwrap_or(0);
+    let limit = request_limit(&parsed);
     let got = match read_token_file(token_file, trust) {
-        Ok(target) => {
-            let limit = Duration::from_millis(wait) + PATIENCE;
-            inspector::post(&target, message, limit).await
-        }
+        Ok(target) => inspector::post(&target, message, limit).await,
         Err(why) => Err(format!("{why:#}")),
     };
     answer_lines(id, got)
@@ -135,6 +203,101 @@ fn answer_lines(id: Option<Json>, got: Result<Answer, String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stdin_lines_are_bounded_including_without_a_newline() {
+        for suffix in ["", "\n"] {
+            let input = format!("{}{suffix}", "x".repeat(inspector::MAX_BODY_BYTES + 1));
+            let mut input = input.as_bytes();
+            assert_eq!(
+                read_line(&mut input).await.unwrap_err().kind(),
+                std::io::ErrorKind::InvalidData
+            );
+        }
+        let text = "x".repeat(inspector::MAX_BODY_BYTES);
+        let mut input = text.as_bytes();
+        assert_eq!(read_line(&mut input).await.unwrap(), Some(text));
+        let mut input = b"one\r\ntwo\nlast".as_slice();
+        for expected in ["one", "two", "last"] {
+            assert_eq!(
+                read_line(&mut input).await.unwrap().as_deref(),
+                Some(expected)
+            );
+        }
+        assert!(read_line(&mut input).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn wait_retention_is_clamped_without_overflow() {
+        let limit = |wait| request_limit(&json!({"params":{"arguments":{"wait_ms":wait}}}));
+        assert_eq!(request_limit(&Json::Null), PATIENCE);
+        assert_eq!(limit(50), PATIENCE + Duration::from_millis(50));
+        assert_eq!(limit(3_600_000), Duration::from_secs(3630));
+        assert_eq!(limit(u64::MAX), Duration::from_secs(3630));
+    }
+
+    #[tokio::test]
+    async fn slow_targets_bound_tasks_and_backpressure_input() {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (started, mut calls) = tokio::sync::mpsc::unbounded_channel();
+        let input = "request\n".repeat(inspector::IN_FLIGHT + 1);
+        let held = Arc::clone(&gate);
+        let bridge = tokio::spawn(async move {
+            bridge_io(input.as_bytes(), tokio::io::sink(), move |_| {
+                let gate = Arc::clone(&held);
+                let started = started.clone();
+                async move {
+                    started.send(()).unwrap();
+                    gate.acquire().await.unwrap().forget();
+                    Vec::new()
+                }
+            })
+            .await
+        });
+        for _ in 0..inspector::IN_FLIGHT {
+            calls.recv().await.unwrap();
+        }
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(calls.try_recv().is_err());
+        gate.add_permits(inspector::IN_FLIGHT + 1);
+        bridge.await.unwrap().unwrap();
+        assert_eq!(calls.recv().await, Some(()));
+        assert_eq!(calls.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn blocked_stdout_holds_slots_and_valid_traffic_is_written() {
+        use tokio::io::AsyncReadExt as _;
+        let (output, mut client) = tokio::io::duplex(1);
+        let (started, mut calls) = tokio::sync::mpsc::unbounded_channel();
+        let request = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).to_string();
+        let response = json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}).to_string();
+        let expected = format!("{response}\n").repeat(inspector::IN_FLIGHT + 1);
+        let input = format!("{request}\n").repeat(inspector::IN_FLIGHT + 1);
+        let bridge = tokio::spawn(async move {
+            bridge_io(input.as_bytes(), output, move |line| {
+                let parsed: Json = serde_json::from_str(&line).unwrap();
+                assert_eq!(parsed["method"], "tools/list");
+                started.send(()).unwrap();
+                let response = response.clone();
+                async move { answer_lines(Some(json!(1)), answer(200, &response)) }
+            })
+            .await
+        });
+        for _ in 0..inspector::IN_FLIGHT {
+            calls.recv().await.unwrap();
+        }
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(calls.try_recv().is_err());
+        let mut received = String::new();
+        client.read_to_string(&mut received).await.unwrap();
+        bridge.await.unwrap().unwrap();
+        assert_eq!(received, expected);
+    }
 
     fn answer(status: u16, body: &str) -> Result<Answer, String> {
         Ok(Answer {

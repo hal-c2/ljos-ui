@@ -345,6 +345,14 @@ async fn post_now(target: &Target, message: String) -> Result<Answer, String> {
     }
 }
 
+struct AbortConnection(tokio::task::AbortHandle);
+
+impl Drop for AbortConnection {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn exchange<S>(
     stream: S,
     host: &str,
@@ -358,8 +366,9 @@ where
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
         .map_err(|e| e.to_string())?;
-    // Ends when `sender` is dropped and the answer is read.
-    tokio::spawn(connection);
+    // A timeout or oversized body must also stop the HTTP driver.
+    let connection = tokio::spawn(connection);
+    let _connection = AbortConnection(connection.abort_handle());
     let request = http::Request::post(path)
         .header(http::header::HOST, host)
         .header(http::header::AUTHORIZATION, format!("Bearer {token}"))
@@ -372,16 +381,30 @@ where
         .await
         .map_err(|e| e.to_string())?;
     let status = response.status().as_u16();
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .map_err(|e| e.to_string())?
-        .to_bytes();
-    Ok(Answer {
-        status,
-        body: body.to_vec(),
-    })
+    let body = read_body(response.into_body()).await?;
+    Ok(Answer { status, body })
+}
+
+// DECISION: match the server's 1 MiB request cap for inspector responses.
+// Count streaming frames rather than trusting Content-Length.
+pub const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+async fn read_body<B>(mut body: B) -> Result<Vec<u8>, String>
+where
+    B: hyper::body::Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Display,
+{
+    let mut bytes = Vec::new();
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|e| e.to_string())?;
+        if let Ok(data) = frame.into_data() {
+            if data.len() > MAX_BODY_BYTES.saturating_sub(bytes.len()) {
+                return Err("inspector response exceeds 1 MiB".into());
+            }
+            bytes.extend_from_slice(&data);
+        }
+    }
+    Ok(bytes)
 }
 
 /// Calls in flight on the client thread at most; one more is refused
@@ -448,6 +471,41 @@ fn start() -> Result<Thread, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn response_frames_are_capped_even_without_content_length() {
+        use hyper::body::Frame;
+        use std::collections::VecDeque;
+        struct Frames(VecDeque<Bytes>);
+        impl hyper::body::Body for Frames {
+            type Data = Bytes;
+            type Error = std::convert::Infallible;
+            fn poll_frame(
+                mut self: Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+                std::task::Poll::Ready(self.0.pop_front().map(|data| Ok(Frame::data(data))))
+            }
+        }
+        let exact = Bytes::from(vec![b'x'; MAX_BODY_BYTES]);
+        assert_eq!(
+            read_body(Full::new(exact.clone())).await.unwrap().len(),
+            MAX_BODY_BYTES
+        );
+        let oversized = Frames(VecDeque::from([exact, Bytes::from_static(b"x")]));
+        assert!(
+            read_body(oversized)
+                .await
+                .unwrap_err()
+                .contains("exceeds 1 MiB")
+        );
+        assert_eq!(
+            read_body(Full::new(Bytes::from_static(b"valid")))
+                .await
+                .unwrap(),
+            b"valid"
+        );
+    }
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const NAMED: Trust = Trust {
