@@ -20,6 +20,7 @@ use slotmap::{SlotMap, new_key_type};
 mod answer;
 mod direct;
 mod live_list;
+mod signal_fn;
 pub use direct::{DirectCall, DirectParam};
 
 use crate::{
@@ -109,6 +110,12 @@ pub(crate) struct HostState {
     list_class: rquickjs::qjs::JSClassID,
     list_proto: RefCell<Option<(Persistent<Object<'static>>, Persistent<Object<'static>>)>>,
     length_atom: rquickjs::qjs::JSAtom,
+    /// The class of what a script reads of a signal (signal_fn.rs), and
+    /// whether `Function.prototype` has `connect` and `disconnect` yet:
+    /// they are given with the first host type, so a host without objects
+    /// is left as QuickJS makes it.
+    signal_class: rquickjs::qjs::JSClassID,
+    connect_installed: Cell<bool>,
     /// The functions of [`JsHost::set_global_function`], by the `magic`
     /// QuickJS calls them with.
     globals: RefCell<Vec<HostFn>>,
@@ -1279,6 +1286,10 @@ impl JsHost {
         // SAFETY: as above.
         let list_class = unsafe { live_list::register(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) }
             .ok_or(rquickjs::Error::Allocation)?;
+        // SAFETY: as above.
+        let signal_class =
+            unsafe { signal_fn::register(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) }
+                .ok_or(rquickjs::Error::Allocation)?;
         // One of the atoms QuickJS is made with, so it is never freed.
         // SAFETY: the context is alive.
         let length_atom = unsafe { rquickjs::qjs::JS_NewAtom(raw.as_ptr(), c"length".as_ptr()) };
@@ -1308,6 +1319,8 @@ impl JsHost {
             list_class,
             list_proto: RefCell::default(),
             length_atom,
+            signal_class,
+            connect_installed: Cell::new(false),
         });
         // SAFETY: the context is alive; the raw accessors read it back as a
         // `Weak` (raw_state), and `Drop` takes it out before the context goes.
@@ -1614,6 +1627,9 @@ impl JsHost {
             let proto = Object::new(scope.ctx.clone())?;
             let weak = Rc::downgrade(&scope.state);
             let ctx = &scope.ctx;
+            if !scope.state.connect_installed.replace(true) {
+                signal_fn::install_connect(ctx)?;
+            }
             // A base's entries are its type's too. They are listed first,
             // as Qt lists what a base has before what a type adds; the
             // accessors are the base's, not made again.
@@ -1664,7 +1680,7 @@ impl JsHost {
             if let Some((from, names)) = &base {
                 for name in &names.members {
                     if let Some(sig) = take(&mut own_signals, name, |s| s.name.as_str()) {
-                        install_signal(&proto, weak.clone(), sig)?;
+                        signal_fn::install(&proto, sig)?;
                     } else if let Some(m) = take(&mut own_methods, name, |m| m.name.as_str()) {
                         install_method(&proto, weak.clone(), m.id, &m.name)?;
                     } else {
@@ -1674,7 +1690,7 @@ impl JsHost {
                 }
             }
             for sig in own_signals.into_iter().flatten() {
-                install_signal(&proto, weak.clone(), sig)?;
+                signal_fn::install(&proto, sig)?;
                 listing.members.push(sig.name.clone());
             }
             for m in own_methods.into_iter().flatten() {
@@ -2321,67 +2337,6 @@ unsafe fn raw_entry<'js>(
             qjs::JS_EXCEPTION
         }
     }
-}
-
-/// A signal reads as a function bound to its object: calling it emits, and
-/// it carries `connect` and `disconnect`. A fresh function per read keeps the
-/// prototype free of per-object state; signals are read rarely enough that
-/// the allocation does not matter.
-fn install_signal<'js>(
-    proto: &Object<'js>,
-    state: Weak<HostState>,
-    sig: &SignalDef,
-) -> rquickjs::Result<()> {
-    let signal = sig.id;
-    let name = sig.name.clone();
-    let getter =
-        move |ctx: Ctx<'js>, This(this): This<Value<'js>>| -> rquickjs::Result<Function<'js>> {
-            let id = this_id(&ctx, &this)?;
-            let st = state.clone();
-            let emit = Function::new(
-                ctx.clone(),
-                move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
-                    let (scope, host) = callback_scope(&ctx, &st)?;
-                    let argv = args
-                        .0
-                        .iter()
-                        .map(|a| scope.script_value(a))
-                        .collect::<rquickjs::Result<Vec<_>>>()?;
-                    scope.back(
-                        host.emit(&scope, id, signal, &argv)
-                            .map_err(|e| e.into_js(&ctx)),
-                    )
-                },
-            )?
-            .with_name(name.as_str())?;
-            for (verb, connect) in [("connect", true), ("disconnect", false)] {
-                let st = state.clone();
-                let f = Function::new(
-                    ctx.clone(),
-                    move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
-                        let (scope, host) = callback_scope(&ctx, &st)?;
-                        let argv = args
-                            .0
-                            .iter()
-                            .map(|a| scope.from_value(a))
-                            .collect::<rquickjs::Result<Vec<_>>>()?;
-                        let r = if connect {
-                            host.connect(&scope, id, signal, &argv)
-                        } else {
-                            host.disconnect(&scope, id, signal, &argv)
-                        };
-                        scope.back(r.map_err(|e| e.into_js(&ctx)))
-                    },
-                )?
-                .with_name(verb)?;
-                emit.set(verb, f)?;
-            }
-            Ok(emit)
-        };
-    proto.prop(
-        sig.name.as_str(),
-        Accessor::new_get(getter).configurable().enumerable(),
-    )
 }
 
 fn make_global<'js>(scope: &Scope<'js>, f: HostFn, name: &str) -> rquickjs::Result<Function<'js>> {
