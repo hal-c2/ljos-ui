@@ -572,9 +572,12 @@ impl Engine {
         self.singleton_scope_enter(&inst, parent);
         // The instance (and so its contexts) lives as long as its root.
         self.keep_with(root, inst);
+        // A parent without a default property (a Loader) places what it
+        // makes itself, when it is done.
         if append
             && let Some(p) = parent
             && self.default_property(p).is_ok()
+            && !self.offer_placed_under(root, p)
         {
             self.list_append_default(p, root)?;
         }

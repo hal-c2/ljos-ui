@@ -229,6 +229,30 @@ pub fn register(engine: &Engine) {
             );
         }
     });
+    // An object made under an item goes in it only when it is an item
+    // itself, as its visual child, and in no property of the item's own:
+    // not in a default property a component declares, nor in `resources`.
+    // As Qt's `createObject` and `Qt.createQmlObject` do.
+    engine.on_placed_under(|e, made, parent| {
+        let is_item = |o| {
+            e.meta_of(o)
+                .is_some_and(|m| m.inherits(<Item as ljos_engine::QmlType>::static_meta()))
+        };
+        if !is_item(parent) {
+            return false;
+        }
+        // The item's own `data`, which a Loader also hears of.
+        if is_item(made)
+            && let Err(err) = tree::add_data(e, parent, made)
+        {
+            e.log(
+                ljos_engine::LogLevel::Warning,
+                scene::SCENE_CATEGORY,
+                format!("cannot place a made item: {err}"),
+            );
+        }
+        true
+    });
     // After the listener above: focus reads the lists it keeps.
     focus::register(engine);
     keys::register(engine);

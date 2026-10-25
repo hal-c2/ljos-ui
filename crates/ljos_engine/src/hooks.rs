@@ -60,6 +60,9 @@ pub(crate) type Script = Rc<dyn Fn(&Engine)>;
 /// What [`Engine::on_js_started`] keeps.
 type JsStartedListener = Rc<dyn Fn(&Engine)>;
 
+/// What [`Engine::on_placed_under`] keeps.
+type Placer = Rc<dyn Fn(&Engine, ObjectId, ObjectId) -> bool>;
+
 #[derive(Default)]
 pub(crate) struct Hooks {
     extensions: RefCell<FxHashMap<TypeId, Rc<dyn Any>>>,
@@ -71,6 +74,7 @@ pub(crate) struct Hooks {
     scripts: RefCell<FxHashMap<ObjectId, Vec<(PropIndex, Script)>>>,
     /// Called when the JS host has started.
     js_started: RefCell<Vec<JsStartedListener>>,
+    placers: RefCell<Vec<Placer>>,
 }
 
 impl Hooks {
@@ -138,6 +142,23 @@ impl Engine {
         for l in listeners {
             l(self);
         }
+    }
+
+    /// Registers for objects made from a component under a parent that has
+    /// a default property (`createObject(parent)`, `Qt.createQmlObject`).
+    /// `f(made, parent)`
+    /// returns whether it put `made` in its place, as Qt puts an item made
+    /// under an item in it, without a property of `parent` being involved.
+    /// When none does, `made` goes to `parent`'s default property.
+    pub fn on_placed_under(&self, f: impl Fn(&Engine, ObjectId, ObjectId) -> bool + 'static) {
+        self.inner.hooks.placers.borrow_mut().push(Rc::new(f));
+    }
+
+    /// Offers an object made under `parent` to [`Engine::on_placed_under`]'s
+    /// listeners.
+    pub(crate) fn offer_placed_under(&self, made: ObjectId, parent: ObjectId) -> bool {
+        let listeners = self.inner.hooks.placers.borrow().clone();
+        listeners.iter().any(|f| f(self, made, parent))
     }
 
     /// Puts `f` in front of `prop` of `obj`: it sees every value QML or JS
