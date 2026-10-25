@@ -133,15 +133,15 @@ impl Decoder {
     /// budget failure in the same input: that failure is reported by the
     /// next push, poll or finish, and permanently ends the stream.
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<VideoFrame>, DecodeError> {
-        let mut units = self
-            .splitter
-            .push(bytes)
-            .map_err(|e| DecodeError::Codec(e.into()))?;
+        let mut units = match self.splitter.push(bytes) {
+            Ok(units) => units,
+            Err(e) => return self.drain_before_error(e),
+        };
         if self.live && !self.splitter.has_failed() {
             match self.splitter.finish() {
                 Ok(last) => units.extend(last),
                 Err(_) if !units.is_empty() => {}
-                Err(e) => return Err(DecodeError::Codec(e.into())),
+                Err(e) => return self.drain_before_error(e),
             }
         }
         let mut out = self.decode_units(units)?;
@@ -155,19 +155,17 @@ impl Decoder {
     /// since it was last called; see [`Decoder::finishes_later`].
     pub fn poll(&mut self) -> Result<Vec<VideoFrame>, DecodeError> {
         if self.splitter.has_failed() {
-            return Err(DecodeError::Codec(
-                "media unit exceeds byte or NAL budget".into(),
-            ));
+            return self.drain_before_error("media unit exceeds byte or NAL budget");
         }
         self.decode(&[])
     }
 
     /// The stream ended: the last picture, and any the decoder held.
     pub fn finish(&mut self) -> Result<Vec<VideoFrame>, DecodeError> {
-        let units = self
-            .splitter
-            .finish()
-            .map_err(|e| DecodeError::Codec(e.into()))?;
+        let units = match self.splitter.finish() {
+            Ok(units) => units,
+            Err(e) => return self.drain_before_error(e),
+        };
         let mut out = self.decode_units(units)?;
         out.extend(self.flush());
         Ok(out)
@@ -181,6 +179,17 @@ impl Decoder {
     /// come out of the push that decodes them.
     pub fn finishes_later(&self) -> bool {
         !self.decoder.intra_only()
+    }
+
+    fn drain_before_error(&mut self, error: &str) -> Result<Vec<VideoFrame>, DecodeError> {
+        // A framing failure must not strand pictures from earlier pushes.
+        // The splitter stays failed, so the next call reports the error.
+        let out = if self.held { self.flush() } else { Vec::new() };
+        if out.is_empty() {
+            Err(DecodeError::Codec(error.into()))
+        } else {
+            Ok(out)
+        }
     }
 
     fn decode_units(&mut self, units: Vec<Vec<u8>>) -> Result<Vec<VideoFrame>, DecodeError> {
@@ -322,6 +331,101 @@ mod tests {
                 assert!(d.finish().is_err());
                 assert!(d.poll().is_err());
                 assert!(d.push(&picture).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn held_h264_frames_precede_terminal_errors_across_transport_boundaries() {
+        let nals = filmcraft_bitstream::annexb_nals(include_bytes!(
+            "../../../features/multimedia/media/high-bframes.h264"
+        ));
+        let sps = nals.iter().find(|nal| nal[0] & 0x1f == 7).unwrap();
+        let pps = nals.iter().find(|nal| nal[0] & 0x1f == 8).unwrap();
+        let mut config = vec![1, sps[1], sps[2], sps[3], 0xff, 0xe1];
+        config.extend((sps.len() as u16).to_be_bytes());
+        config.extend(*sps);
+        config.push(1);
+        config.extend((pps.len() as u16).to_be_bytes());
+        config.extend(*pps);
+        for format in [StreamFormat::H264AnnexB, StreamFormat::H264Avcc { config }] {
+            let annex = matches!(format, StreamFormat::H264AnnexB);
+            let mut valid = Vec::new();
+            for nal in &nals {
+                if annex {
+                    valid.extend([0, 0, 0, 1]);
+                } else {
+                    valid.extend((nal.len() as u32).to_be_bytes());
+                }
+                valid.extend(*nal);
+            }
+            let pixels = |frames: Vec<VideoFrame>| {
+                frames
+                    .into_iter()
+                    .map(|f| f.into_rgba().unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let mut normal = Decoder::new(&format).unwrap();
+            let mut expected = normal.push(&valid).unwrap();
+            expected.extend(normal.finish().unwrap());
+            let expected = pixels(expected);
+            assert_eq!(expected.len(), 6);
+            assert!(normal.finish().unwrap().is_empty());
+
+            // Complete the last valid picture before the failing NAL begins.
+            if annex {
+                valid.extend([0, 0, 0, 1, 9, 0xf0, 0, 0, 0, 1, 12]);
+            } else {
+                valid.extend([0, 0, 0, 2, 9, 0xf0]);
+            }
+            let mut overflow = if annex {
+                vec![1; crate::container_bytes::LIMIT]
+            } else {
+                (crate::container_bytes::LIMIT as u32)
+                    .to_be_bytes()
+                    .to_vec()
+            };
+            let mut combined = valid.clone();
+            combined.append(&mut overflow);
+            for split in [0, valid.len()] {
+                let mut d = Decoder::new(&format).unwrap();
+                let mut frames = d.push(&combined[..split]).unwrap();
+                if split != 0 {
+                    assert!(d.held);
+                    assert!(
+                        frames.len() < expected.len(),
+                        "fixture must hold decoded pictures"
+                    );
+                }
+                frames.extend(d.push(&combined[split..]).unwrap());
+                assert_eq!(pixels(frames), expected, "format {format:?}, split {split}");
+                assert!(!d.held);
+                for error in [d.poll(), d.finish(), d.push(&valid)] {
+                    assert_eq!(
+                        error.unwrap_err().to_string(),
+                        "media unit exceeds byte or NAL budget"
+                    );
+                }
+            }
+            // A latched splitter error must also leave a drain path through
+            // every public entry point, before that point reports the error.
+            for entry in 0..3 {
+                let mut d = Decoder::new(&format).unwrap();
+                let mut frames = d.push(&valid).unwrap();
+                assert!(d.held);
+                assert!(d.splitter.push(&combined[valid.len()..]).is_err());
+                frames.extend(
+                    match entry {
+                        0 => d.poll(),
+                        1 => d.finish(),
+                        _ => d.push(&[]),
+                    }
+                    .unwrap(),
+                );
+                assert_eq!(pixels(frames), expected);
+                assert!(d.poll().is_err());
+                assert!(d.finish().is_err());
+                assert!(d.push(&valid).is_err());
             }
         }
     }
