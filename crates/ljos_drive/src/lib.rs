@@ -257,8 +257,9 @@ impl<'a> Driver<'a> {
             {
                 return Ok(false);
             }
-            self.settle()?;
+            // What arrived on the way is in the frames of this stop.
             self.finish_promised()?;
+            self.settle()?;
             if after(self)? {
                 return Ok(true);
             }

@@ -141,7 +141,9 @@ impl Advance {
 /// by the time any time has passed, as they would by the time a user
 /// looks: waited for, not slept for. `serve` is called while waiting,
 /// for what this thread serves that they wait on (a fake server);
-/// `settle` brings the scene to rest after each round.
+/// `settle` brings the scene to rest after each round of answers. News
+/// that was never promised (a position fix, a sensor's reading) is
+/// delivered too, held or not, and left for the caller's settle.
 pub fn finish_promised<'f, E>(
     engine: &Engine,
     mut serve: Option<&mut (dyn FnMut() + 'f)>,
@@ -149,8 +151,17 @@ pub fn finish_promised<'f, E>(
 ) -> Result<(), E> {
     let images = ImageStore::of(engine);
     let platform = Platform::of(engine);
-    for _ in 0..MAX_ANSWER_ROUNDS {
+    for round in 0..MAX_ANSWER_ROUNDS {
         if images.pending() == 0 && platform.pending() == 0 {
+            // What was posted without a promise is not counted as
+            // pending, and only `finish` delivers it while the platform
+            // holds answers back.
+            // The caller settles after it: a frame here, with nothing new
+            // to show, would take back the next frame the one before it
+            // asked for (a held press's).
+            if round == 0 {
+                platform.finish(engine);
+            }
             return Ok(());
         }
         match serve.as_deref_mut() {

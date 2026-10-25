@@ -728,7 +728,9 @@ impl Live {
     /// stopping when a saved file's quiet time ends, to reload it there.
     fn advance(&mut self, ms: u64) -> Result<()> {
         let mut advance = Advance::new(&*self.clock, ms).map_err(failed)?;
-        self.settle()?;
+        // Every step ends settled, so the scene's next wake is known: a
+        // settle here would make a frame with nothing new, and take back
+        // the next frame a held press asked for.
         self.drive(|d| d.finish_promised())?;
         loop {
             let due = self.reload_due();
@@ -739,8 +741,8 @@ impl Live {
                 return Ok(());
             }
             self.reload_if_due()?;
-            self.settle()?;
             self.drive(|d| d.finish_promised())?;
+            self.settle()?;
         }
     }
 

@@ -245,8 +245,8 @@ impl Host {
             if stop.is_none() {
                 return Ok(false);
             }
-            self.settle(engine)?;
             self.finish_promised(engine)?;
+            self.settle(engine)?;
             if done()? {
                 return Ok(true);
             }
