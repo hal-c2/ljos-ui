@@ -34,7 +34,7 @@ pub struct Animation {
     pub object: QtObject,
     #[qml(notify)]
     pub running: bool,
-    #[qml(notify)]
+    #[qml(notify, write = paused_written)]
     pub paused: bool,
     /// How many passes; negative ([`Animation.Infinite`](animation_enums))
     /// for no end.
@@ -46,6 +46,9 @@ pub struct Animation {
     /// starts by itself and animates that property unless told otherwise.
     #[qml(skip)]
     pub(crate) on: Option<(ObjectId, PropIndex)>,
+    /// `paused: true` was written while `running` was not true yet.
+    #[qml(skip)]
+    paused_first: bool,
 }
 
 impl Default for Animation {
@@ -57,8 +60,19 @@ impl Default for Animation {
             loops: 1,
             always_run_to_end: false,
             on: None,
+            paused_first: false,
         }
     }
+}
+
+/// Qt gives an object's written values in the order opposite to the one
+/// they are written in, and a pause given before the run is refused: of
+/// `running` and `paused`, only `paused: true; running: true` starts
+/// paused. Values are given here in the order written, so the order is
+/// kept for [`Animation::completed`].
+fn paused_written(cx: &Cx, v: bool) -> Option<bool> {
+    let _ = cx.with_mut(|a: &mut Animation| a.paused_first = v && !a.running);
+    Some(v)
 }
 
 #[qml_impl]
@@ -115,6 +129,16 @@ impl Animation {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let me = cx.this;
         let engine = cx.engine;
+        let managed = is_managed(engine, me);
+        let source = cx.with(|a: &Animation| a.on.is_some())?;
+        let running = cx.get(Animation::RUNNING)?;
+        let paused = cx.get(Animation::PAUSED)?;
+        let start_paused = cx.with(|a: &Animation| a.paused_first)? && running && !managed;
+        if paused && !start_paused {
+            // What Qt says of the pause it gives before the run.
+            driver::set_paused(engine, me, true);
+            cx.set(Animation::PAUSED, false)?;
+        }
         // A write is the method call, with the method's order of signals;
         // the animation stores the value itself.
         engine.set_interceptor(
@@ -162,13 +186,14 @@ impl Animation {
                 driver::set_paused(e, me, want);
             }
         })?;
-        if is_managed(engine, me) {
+        if managed {
             return Ok(());
         }
-        let source = cx.with(|a: &Animation| a.on.is_some())?;
-        let running = cx.get(Animation::RUNNING)?;
         if running || (source && is_unset(engine, me, Animation::RUNNING.index)) {
             driver::start(engine, me);
+            if start_paused {
+                driver::set_paused(engine, me, true);
+            }
         }
         Ok(())
     }
