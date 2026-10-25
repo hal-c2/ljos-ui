@@ -29,6 +29,8 @@
 //! - `PositionSource` and its `Position` ([`source`]), fed by a
 //!   [`PositionService`]. Without one a source is not valid and starting
 //!   it does nothing.
+//! - `PluginParameter` ([`parameter`]), a source's `parameters` and the
+//!   children of QtLocation's `Plugin`.
 //!
 //! A value is frozen, as every value type is in Ljós: a member is written
 //! (`r.width = 4`), but the methods that change a value in place in Qt
@@ -36,10 +38,12 @@
 
 pub mod geo;
 pub mod helpers;
+pub mod parameter;
 pub mod source;
 pub mod values;
 
 pub use geo::GeoCoordinate;
+pub use parameter::PluginParameter;
 pub use source::{
     FixedPosition, NoPosition, Position, PositionFix, PositionService, PositionSink,
     PositionSource, service, set_service,
@@ -51,7 +55,9 @@ pub fn register(engine: &ljos::Engine) {
     for ty in values::all() {
         engine.register_value_type(ty);
     }
-    engine.register_module(ljos::module!("QtPositioning" 6.0 => [PositionSource, Position]));
+    engine.register_module(
+        ljos::module!("QtPositioning" 6.0 => [PositionSource, Position, PluginParameter]),
+    );
     engine.register_singleton::<helpers::QtPositioning>(
         "QtPositioning",
         ljos::prelude::Version::new(6, 0),

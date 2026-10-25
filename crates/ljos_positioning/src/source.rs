@@ -282,7 +282,7 @@ pub fn service(engine: &Engine) -> Rc<dyn PositionService> {
 /// `Position` (doc.qt.io/qt-6/qml-qtpositioning-position.html): what a
 /// source last knew. Until a fix it knows nothing.
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtPositioning", name = "Position", extends = QtObject, uncreatable)]
+#[qml(module = "QtPositioning", name = "Position", extends = QtObject)]
 pub struct Position {
     #[qml(base)]
     pub object: QtObject,
@@ -387,11 +387,15 @@ impl std::fmt::Debug for Link {
     module = "QtPositioning",
     name = "PositionSource",
     extends = QtObject,
-    enums = source_enums
+    enums = source_enums,
+    default = "parameters"
 )]
 pub struct PositionSource {
     #[qml(base)]
     pub object: QtObject,
+    /// Kept for a backend; no service reads them.
+    #[qml(list)]
+    pub parameters: QmlList,
     #[qml(notify)]
     pub active: bool,
     #[qml(notify)]
@@ -427,6 +431,7 @@ impl Default for PositionSource {
             source_error: source_error::NONE,
             update_interval: 0,
             valid: false,
+            parameters: QmlList::default(),
             link: None,
         }
     }
