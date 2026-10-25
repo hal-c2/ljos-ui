@@ -2830,6 +2830,27 @@ impl Engine {
         })
     }
 
+    /// [`Engine::effect_in`] whose first run is before this returns
+    /// ([`Graph::effect_now`]): for an owner that needs what it reads now,
+    /// in a batch or in another run, and would otherwise read it twice.
+    ///
+    /// [`Graph::effect_now`]: ljos_reactive::Graph::effect_now
+    pub fn effect_now_in(
+        &self,
+        obj: ObjectId,
+        mut f: impl FnMut(&Engine) + 'static,
+    ) -> Result<NodeId, EngineError> {
+        let scope = self.ensure_scope(obj)?;
+        let weak = Rc::downgrade(&self.inner);
+        Ok(self.inner.graph.effect_now(scope, move |_g| {
+            run_effect(&weak, &mut |e: &Engine| {
+                if !e.destruction_told(obj) {
+                    f(e);
+                }
+            })
+        })?)
+    }
+
     /// [`Engine::effect_in`] that, once `f` has run, is told of a change of
     /// what it read instead of running again ([`Graph::effect_told`]): for
     /// an owner that reads the values itself when it next has use for them.

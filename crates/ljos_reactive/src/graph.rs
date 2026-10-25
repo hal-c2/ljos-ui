@@ -867,6 +867,38 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(n)
     }
 
+    /// [`Graph::effect`] whose first run is now, before this returns, even
+    /// inside a batch or another node's run, as a binding read there is
+    /// evaluated. For an owner that has use for what the run reads at once
+    /// and would otherwise read it a second time, untracked. In a frozen
+    /// scope it waits for the thaw as any effect does.
+    pub fn effect_now(
+        &self,
+        scope: ScopeId,
+        f: impl FnMut(&Graph<V>) + 'static,
+    ) -> Result<NodeId, ReactiveError> {
+        let (n, now) = {
+            let mut i = self.inner.borrow_mut();
+            let n = i.insert_node(
+                scope,
+                Kind::Effect(Some(Box::new(f))),
+                None,
+                NodeState::Dirty,
+            )?;
+            let now = !i.scopes[scope].frozen;
+            if !now {
+                let Inner { nodes, queues, .. } = &mut *i;
+                enqueue(queues, n, &mut nodes[n]);
+            }
+            (n, now)
+        };
+        if now {
+            self.recompute(n);
+        }
+        self.flush_if_idle();
+        Ok(n)
+    }
+
     /// Subscribes to changes of one property, like `onXChanged` or a Rust
     /// subscriber. Unlike [`Graph::effect`] it does not run on creation, and
     /// reads inside `handler` are not tracked. Returns the effect node;

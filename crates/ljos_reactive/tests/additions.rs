@@ -747,3 +747,63 @@ fn settled_reads_what_try_get_does_and_records_nothing() {
     let e = g.effect(r, |_| {}).unwrap();
     assert_eq!(g.settled(e), None, "an effect has no value");
 }
+
+#[test]
+fn an_effect_made_now_runs_before_it_returns_even_in_a_batch() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let s = seen.clone();
+    g.batch(|| {
+        g.effect_now(r, move |g| s.borrow_mut().push(g.get(a)))
+            .unwrap();
+        // Its first run is done here, where `effect` would wait for the
+        // batch to end.
+        assert_eq!(*seen.borrow(), vec![1]);
+    });
+    assert_eq!(*seen.borrow(), vec![1], "it does not run a second time");
+    // What the first run read is followed.
+    g.set(a, 2);
+    assert_eq!(*seen.borrow(), vec![1, 2]);
+}
+
+#[test]
+fn an_effect_made_now_inside_a_run_tracks_its_own_reads() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let (a, b) = (g.property(r, 1).unwrap(), g.property(r, 10).unwrap());
+    let outer = Rc::new(Cell::new(0));
+    let inner = Rc::new(RefCell::new(Vec::new()));
+    let made = Rc::new(Cell::new(false));
+    let (o, i, m) = (outer.clone(), inner.clone(), made.clone());
+    g.effect(r, move |g| {
+        o.set(o.get() + 1);
+        let _ = g.get(a);
+        if !m.replace(true) {
+            let i = i.clone();
+            g.effect_now(r, move |g| i.borrow_mut().push(g.get(b)))
+                .unwrap();
+        }
+    })
+    .unwrap();
+    assert_eq!((outer.get(), inner.borrow().clone()), (1, vec![10]));
+    // The outer run did not read `b`: only the inner effect runs.
+    g.set(b, 11);
+    assert_eq!((outer.get(), inner.borrow().clone()), (1, vec![10, 11]));
+    g.set(a, 2);
+    assert_eq!((outer.get(), inner.borrow().clone()), (2, vec![10, 11]));
+}
+
+#[test]
+fn an_effect_made_now_in_a_frozen_scope_waits_for_the_thaw() {
+    let g: Graph<i64> = Graph::new();
+    let s = g.create_scope(g.root()).unwrap();
+    g.set_frozen(s, true).unwrap();
+    let runs = Rc::new(Cell::new(0));
+    let r = runs.clone();
+    g.effect_now(s, move |_| r.set(r.get() + 1)).unwrap();
+    assert_eq!(runs.get(), 0);
+    g.set_frozen(s, false).unwrap();
+    assert_eq!(runs.get(), 1);
+}
