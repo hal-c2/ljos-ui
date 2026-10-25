@@ -14,23 +14,23 @@ Feature: Comparing Ljós with Qt on random programs
   a new one does, and its program is written out to be looked at.
 
   Scenario: A known difference is shrunk and reported as known
-    Given the file "known.txt":
+    Given the file "known/bindings.txt":
       """
       # signature  reason
-      value:int:default  planted: the oracle adds one to every int
+      value:load:number  planted: the oracle adds one to every int
       """
-    When the author runs "ljos-fuzz bindings --oracle planted --cases 12 --seed 7 --jobs 2 --known known.txt --out out"
+    When the author runs "ljos-fuzz bindings --oracle planted --cases 12 --seed 7 --jobs 2 --known known --out out"
     Then the command exits with status 0
     And the command's output mentions "seed 7, 12 cases"
-    And the command's output mentions "known value:int:default  (1 object, 1 property, 0 steps;"
-    And the command's output mentions "out/value_int_default"
+    And the command's output mentions "known value:load:number  (1 object, 1 property, 0 steps;"
+    And the command's output mentions "out/value_load_number"
     And the command's output does not mention "NEW"
 
   Scenario: A difference not on the known list fails the run
-    Given the file "known.txt":
+    Given the file "known/bindings.txt":
       """
       # nothing is known yet
       """
-    When the author runs "ljos-fuzz bindings --oracle planted --cases 12 --seed 7 --jobs 2 --known known.txt --out out"
+    When the author runs "ljos-fuzz bindings --oracle planted --cases 12 --seed 7 --jobs 2 --known known --out out"
     Then the command exits with status 1
-    And the command's output mentions "NEW   value:int:default"
+    And the command's output mentions "NEW   value:load:number"
