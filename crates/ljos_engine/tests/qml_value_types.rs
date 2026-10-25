@@ -228,3 +228,40 @@ fn a_font_draws_the_letters_its_capitalization_asks_for() {
         std::borrow::Cow::Borrowed(_)
     ));
 }
+
+/// A theme switch writes a member back and forth, and a value keeps the
+/// answer it last gave. What each write leaves is still the value the
+/// members say, whatever was written before it.
+#[test]
+fn a_member_written_back_and_forth_leaves_the_value_it_says() {
+    let h = engine();
+    let root = h.load(
+        r##"import QtQuick
+Item {
+  property font face: Qt.font({ family: "Arial", pixelSize: 12 })
+  property point spot: Qt.point(1, 2)
+  property var seen: []
+  Component.onCompleted: {
+    var out = []
+    for (var i = 0; i < 4; ++i) {
+      face.bold = (i & 1) == 0
+      out.push(face.bold + "/" + face.pixelSize)
+      face.pixelSize = 12 + (i & 1)
+      out.push(face.bold + "/" + face.pixelSize)
+    }
+    var first = spot
+    spot.x = 5
+    spot.x = 1
+    out.push(spot === first, spot.x)
+    seen = out
+  }
+}
+"##,
+    );
+    let seen = h.get(root, "seen").to_js_string();
+    assert_eq!(
+        seen.as_str(),
+        "true/12,true/12,false/12,false/13,true/13,true/12,false/12,false/13,true,1"
+    );
+    assert!(h.warnings().is_empty(), "{:?}", h.warnings());
+}

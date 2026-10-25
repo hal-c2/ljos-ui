@@ -305,12 +305,23 @@ pub(crate) const FACES: &str = r##"
     hide(proto, "toString", function toString() { return text(this); });
     // This value with one member changed; `undefined` when it has no such
     // member to write, which a script cannot tell from a write that worked.
+    // The last value each one gave, by the member and what it was given:
+    // a script that sets a member back and forth, as a theme switch does,
+    // finds both values here and not by their fields. A value is frozen
+    // and its fields decide what it is, so the answer cannot change.
+    const lastWith = new WeakMap();
     hide(proto, "__ljos_with", function (member, value) {
+      const last = lastWith.get(this);
+      if (last !== undefined && last.member === member && Object.is(last.value, value)) {
+        return last.next;
+      }
       const i = fields.indexOf(member);
       if (i < 0) return undefined;
-      const vals = fields.map((f) => this[f]);
-      vals[i] = value;
-      return of(vals);
+      const vals = new Array(fields.length);
+      for (let j = 0; j < fields.length; ++j) vals[j] = j === i ? value : this[fields[j]];
+      const next = of(vals);
+      lastWith.set(this, { member, value, next });
+      return next;
     });
     return { make, of, proto, fields };
   };
