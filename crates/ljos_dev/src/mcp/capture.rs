@@ -92,6 +92,15 @@ impl Capture {
         &self.tree.nodes()[index]
     }
 
+    /// [`secrets`](Self::secrets), longest first, as the masks of
+    /// [`super::redact`] want them.
+    pub(crate) fn masks(&self) -> Vec<String> {
+        let mut all: Vec<String> = self.secrets.iter().cloned().collect();
+        all.sort_unstable();
+        all.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        all
+    }
+
     /// `text`, or the mask when it is something that must not be shown.
     pub(crate) fn shown<'a>(&self, text: &'a str) -> &'a str {
         if !text.is_empty() && self.secrets.contains(text) {

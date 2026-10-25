@@ -22,6 +22,7 @@ use super::args::{
     DEFAULT_MATCHES, FindArgs, InspectArgs, MAX_MATCHES, MAX_SCREENSHOT_SIDE, ScreenshotArgs,
 };
 use super::capture::{Capture, REDACTED, all_objects};
+use super::redact::{mask_json, mask_text};
 use super::surface::Answer;
 use crate::top::{FrameStats, LANE_NAMES, owner_name};
 
@@ -527,6 +528,7 @@ impl Look<'_> {
         let key = report.as_ref().and_then(|r| r.key.clone());
         let source = report.as_ref().and_then(|r| r.declared_at.clone());
         let secret = self.capture.secret_items.contains(&obj);
+        let masks = self.capture.masks();
         let (object_name, geometry, state, properties) = engine.untrack(|| {
             let object_name = text_property(engine, obj, "objectName");
             let geometry = ljos_quick::is_item(engine, obj).then(|| {
@@ -766,8 +768,20 @@ impl Look<'_> {
                 line.push_str(", read-only");
             }
             line.push(')');
-            rows.push((Value::Object(row), line));
+            // A value is masked inside too: a map or a script's object that
+            // holds a secret, as a value or as a key, and an expression or
+            // a value that repeats one within other text.
+            let mut row = Value::Object(row);
+            mask_json(&mut row, &masks);
+            mask_text(&mut line, &masks);
+            rows.push((row, line));
         }
+        let mut out = Value::Object(out);
+        mask_json(&mut out, &masks);
+        let Value::Object(out) = out else {
+            unreachable!("masking keeps an object an object")
+        };
+        mask_text(&mut head, &masks);
 
         let all_rows = rows.len();
         loop {

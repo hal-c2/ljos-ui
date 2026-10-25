@@ -990,6 +990,85 @@ fn inspect_never_shows_what_a_password_field_holds() {
     assert_eq!(echo.structured["name"], "<redacted>");
 }
 
+/// Two hidden fields, and what the application makes of their text.
+const MIRRORS: &str = r#"
+import QtQuick
+Item {
+    objectName: "root"; width: 300; height: 200
+    property var creds: ({ password: pw.text, nested: { again: [pw.text] } })
+    property var keyed: ({ [pw.text]: 1, [other.text]: 2, plain: 3 })
+    property string shout: pw.text + "!"
+    TextInput {
+        id: pw; objectName: "pw"; width: 120; height: 20
+        echoMode: TextInput.Password; text: "hunter2"
+    }
+    TextInput {
+        id: other; objectName: "other"; y: 30; width: 120; height: 20
+        echoMode: TextInput.Password; text: "swordfish"
+    }
+}
+"#;
+
+fn tells_neither(reply: &LocalReply) {
+    for secret in ["hunter2", "swordfish"] {
+        assert!(!reply.text.contains(secret), "{secret} in {}", reply.text);
+        let data = reply.structured.to_string();
+        assert!(!data.contains(secret), "{secret} in {data}");
+    }
+}
+
+#[test]
+fn inspect_masks_a_secret_inside_a_value_and_a_key() {
+    let mut app = app_with(MIRRORS, InspectorConfig::default());
+    // A record the host wrote (a model's row, say) is shown field by field.
+    let record = QmlValue::map([
+        ("password", QmlValue::from("hunter2")),
+        (
+            "swordfish",
+            QmlValue::map([("again", QmlValue::from("swordfish"))]),
+        ),
+    ]);
+    app.set("root", "creds", record);
+    let reply = app.call(
+        "app_inspect",
+        json!({ "target": "#root", "bindings": true }),
+    );
+    tells_neither(&reply);
+    let shout = property(&reply.structured, "shout")["value"].clone();
+    assert_eq!(shout, "<redacted>!");
+    let creds = property(&reply.structured, "creds")["value"].clone();
+    assert_eq!(
+        creds,
+        "{password: <redacted>, <redacted>: {again: <redacted>}}"
+    );
+}
+
+#[test]
+fn eval_masks_secret_keys_without_merging_them() {
+    let mut app = app_granted(
+        MIRRORS,
+        InspectorConfig::default(),
+        CapSet::of([Cap::Inspect, Cap::Eval]),
+    );
+    let reply = app.call(
+        "app_eval",
+        json!({ "target": "#root", "source": "({[pw.text]: 1, [other.text]: 2, plain: 3})" }),
+    );
+    tells_neither(&reply);
+    let value = reply.structured["value"].as_object().expect("an object");
+    assert_eq!(value.len(), 3, "{value:?}");
+    assert_eq!(value["plain"], 3);
+    let mut masked: Vec<i64> = ["<redacted>", "<redacted>#2"]
+        .iter()
+        .map(|k| value[*k].as_i64().unwrap())
+        .collect();
+    masked.sort_unstable();
+    assert_eq!(masked, [1, 2]);
+    // A script that reads them back from a property is masked the same way.
+    let kept = app.call("app_eval", json!({ "target": "#root", "source": "keyed" }));
+    tells_neither(&kept);
+}
+
 // ----------------------------------------------------------- app_screenshot
 
 #[test]

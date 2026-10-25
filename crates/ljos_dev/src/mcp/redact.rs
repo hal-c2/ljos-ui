@@ -22,13 +22,64 @@ const MAX_SECRET_BYTES: usize = 1 << 20;
 
 /// Replaces every secret that is in `v`, inside strings too, by the mask.
 /// `secrets` is longest first so that a secret that contains another is
-/// masked whole.
+/// masked whole. The keys are the answer's own and are left as they are;
+/// what the application made is masked with [`mask_data`].
 pub(crate) fn mask_json(v: &mut Value, secrets: &[String]) {
     match v {
         Value::String(s) => mask_text(s, secrets),
         Value::Array(items) => items.iter_mut().for_each(|i| mask_json(i, secrets)),
         Value::Object(map) => map.values_mut().for_each(|i| mask_json(i, secrets)),
         _ => {}
+    }
+}
+
+/// [`mask_json`] for a value the application made (what a script or a
+/// method answered), whose keys are its too: a script may build
+/// `{[pw.text]: 1}`.
+pub(crate) fn mask_data(v: &mut Value, secrets: &[String]) {
+    match v {
+        Value::String(s) => mask_text(s, secrets),
+        Value::Array(items) => items.iter_mut().for_each(|i| mask_data(i, secrets)),
+        Value::Object(map) => {
+            map.values_mut().for_each(|i| mask_data(i, secrets));
+            mask_keys(map, secrets);
+        }
+        _ => {}
+    }
+}
+
+/// Masks the keys of `map`. Two keys that mask alike must not become one,
+/// which would drop a value and tell that the secrets were the same, so a
+/// masked key that is taken is numbered (`<redacted>#2`). The keys that
+/// keep their text are placed first: a masked key never takes the place
+/// of one of them.
+fn mask_keys(map: &mut serde_json::Map<String, Value>, secrets: &[String]) {
+    let masked = |k: &str| {
+        let mut m = k.to_string();
+        mask_text(&mut m, secrets);
+        m
+    };
+    if !map.keys().any(|k| masked(k) != *k) {
+        return;
+    }
+    let old = std::mem::take(map);
+    let mut hidden = Vec::new();
+    for (k, v) in old {
+        let m = masked(&k);
+        if m == k {
+            map.insert(k, v);
+        } else {
+            hidden.push((m, v));
+        }
+    }
+    for (m, v) in hidden {
+        let mut key = m.clone();
+        let mut n = 2usize;
+        while map.contains_key(&key) {
+            key = format!("{m}#{n}");
+            n += 1;
+        }
+        map.insert(key, v);
     }
 }
 
@@ -133,6 +184,41 @@ mod tests {
         let mut s = "was hunter2, is swordfish".to_string();
         book.mask_text(&mut s);
         assert_eq!(s, "was <redacted>, is <redacted>");
+    }
+
+    #[test]
+    fn keys_are_masked_without_two_becoming_one() {
+        let secrets = vec!["swordfish".to_string(), "hunter2".to_string()];
+        let mut v = serde_json::json!({
+            "hunter2": 1,
+            "swordfish": 2,
+            "<redacted>": 3,
+            "is hunter2": { "swordfish": ["hunter2"] },
+            "plain": "kept",
+        });
+        mask_data(&mut v, &secrets);
+        let text = v.to_string();
+        assert!(
+            !text.contains("hunter2") && !text.contains("swordfish"),
+            "{text}"
+        );
+        let map = v.as_object().unwrap();
+        assert_eq!(map.len(), 5, "{text}");
+        assert_eq!(
+            map["<redacted>"], 3,
+            "the application's own key keeps its place"
+        );
+        assert_eq!(map["plain"], "kept");
+        let mut numbers: Vec<_> = ["<redacted>#2", "<redacted>#3"]
+            .iter()
+            .map(|k| map[*k].as_i64().unwrap())
+            .collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, [1, 2]);
+        assert_eq!(
+            map["is <redacted>"],
+            serde_json::json!({ "<redacted>": ["<redacted>"] })
+        );
     }
 
     #[test]

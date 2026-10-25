@@ -33,7 +33,7 @@ use super::args::{
 };
 use super::capture::{self, Capture, REDACTED};
 use super::edits::{Edit, Edits};
-use super::redact::{mask_error, mask_json, mask_text};
+use super::redact::{mask_data, mask_error, mask_json, mask_text};
 use super::surface::Answer;
 use super::tools::{Look, TYPED, Target, clip, flag, num, visible_to_the_top, window_box};
 use super::values::number;
@@ -320,8 +320,25 @@ fn secrets_of_all(captures: &[&Capture]) -> Vec<String> {
     all
 }
 
+/// Masks what a script, a method or a set answered, keys and all: it is
+/// the application's, not the answer's own (a step of a batch too).
+fn mask_answered(fields: &mut Map<String, Value>, secrets: &[String]) {
+    for key in ["value", "previous"] {
+        if let Some(answered) = fields.get_mut(key) {
+            mask_data(answered, secrets);
+        }
+    }
+    if let Some(Value::Array(steps)) = fields.get_mut("steps") {
+        for step in steps {
+            if let Some(Value::Object(result)) = step.get_mut("result") {
+                mask_answered(result, secrets);
+            }
+        }
+    }
+}
+
 fn secrets_of(capture: &Capture) -> Vec<String> {
-    secrets_of_all(&[capture])
+    capture.masks()
 }
 
 // ----- the hands -------------------------------------------------------------
@@ -1136,7 +1153,7 @@ impl Hands<'_> {
         // A script may have changed what the fields hold.
         self.settle();
         self.refresh();
-        mask_json(&mut value, &secrets_of(&self.capture));
+        mask_data(&mut value, &secrets_of(&self.capture));
         // The serialiser bounded what it wrote; this is for the sum of it
         // with the escaping of both copies.
         if value.to_string().len() > self.per_copy / 2 {
@@ -1252,6 +1269,7 @@ impl Inspector {
         fields.insert("removed".into(), json!(changes.removed));
         fields.insert("delta".into(), json!(changes.text));
         fields.insert("settled".into(), json!(!unsettled));
+        mask_answered(&mut fields, &secrets);
         let mut value = Value::Object(fields);
         mask_json(&mut value, &secrets);
         let mut text = summary;
