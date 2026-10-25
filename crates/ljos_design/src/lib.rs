@@ -12,6 +12,7 @@
 
 use serde::Serialize;
 
+pub mod color;
 pub mod limits;
 
 /// How sure a check is that a finding hurts a user.
