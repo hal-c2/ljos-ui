@@ -772,10 +772,55 @@
     "read_only": true
   },
   {
-    "description": "A timeline of every window's frames, for comparing runtimes: `record` starts or stops it. Each says what woke it and where its time went, pass by pass. With `wakes`, the UI thread's wakes instead: each one's causes and what it led to. `since` takes `next_since`.",
+    "description": "A timeline of every window's frames: `record` starts or stops it; each says what woke it and where its time went, pass by pass. Modes instead: `wakes`, `bindings` (hot bindings, loops), `growth` (instances per component over time), `export` (a trace file). `since` takes `next_since`.",
     "input_schema": {
+      "$defs": {
+        "HotSort": {
+          "description": "How `bindings` orders its rows.",
+          "oneOf": [
+            {
+              "const": "total",
+              "description": "The most time in all runs, nested runs included.",
+              "type": "string"
+            },
+            {
+              "const": "own",
+              "description": "The most time in all runs less the runs nested in them.",
+              "type": "string"
+            },
+            {
+              "const": "runs",
+              "description": "The most runs.",
+              "type": "string"
+            },
+            {
+              "const": "longest",
+              "description": "The longest single run.",
+              "type": "string"
+            }
+          ]
+        }
+      },
       "additionalProperties": false,
       "properties": {
+        "bindings": {
+          "default": false,
+          "description": "The bindings and handlers that ran instead: per each where it is\nwritten, what it writes, its runs, their time and what set them\noff; and the binding loops met. `record` starts or stops profiling.",
+          "type": "boolean"
+        },
+        "export": {
+          "default": null,
+          "description": "Writes the frames, wakes and runs of bindings recorded to a trace\nfile of this name (letters, digits, `.`, `_`, `-`) in the\napplication's trace folder, for a trace viewer (Perfetto); the\nanswer says where.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "growth": {
+          "default": false,
+          "description": "The instances and bytes of each component over time instead, those\nthat keep growing first. `record` starts or stops sampling.",
+          "type": "boolean"
+        },
         "holder": {
           "default": null,
           "description": "A name for the client: with `record`, the recording it asked for\nends once no `app_watch` with this `holder` has waited for a while,\nor when it stops it. Others' recordings go on.",
@@ -811,6 +856,17 @@
             "integer",
             "null"
           ]
+        },
+        "sort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HotSort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "With `bindings`: the rows by `total` time (default), `own` time\n(less what ran nested in them), `runs` or the `longest` run."
         },
         "wakes": {
           "default": false,

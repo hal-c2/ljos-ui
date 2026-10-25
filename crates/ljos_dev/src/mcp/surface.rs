@@ -152,7 +152,7 @@ impl InspectorSurface {
     ) -> Self {
         let release = handle.clone();
         let holders = Holders::new(move |holder| {
-            // Whoever held the traces, the recording and the followed
+            // Whoever held the traces, the recordings and the followed
             // model is gone, so the answers are awaited here: the UI
             // thread skips a request nobody waits for. A full inbox drops
             // it; what it held then stays until stopped, as what has no
@@ -179,12 +179,26 @@ impl InspectorSurface {
                 wakes: true,
                 ..Default::default()
             });
+            let bindings = Kind::Frames(super::timeline::FramesArgs {
+                record: Some(false),
+                holder: Some(holder.clone()),
+                max: Some(1),
+                bindings: true,
+                ..Default::default()
+            });
+            let growth = Kind::Frames(super::timeline::FramesArgs {
+                record: Some(false),
+                holder: Some(holder.clone()),
+                max: Some(1),
+                growth: true,
+                ..Default::default()
+            });
             let models = Kind::Objects(super::objects::ObjectsArgs {
                 release: true,
                 holder: Some(holder),
                 ..Default::default()
             });
-            for kind in [traces, frames, wakes, models] {
+            for kind in [traces, frames, wakes, bindings, growth, models] {
                 let (reply, answer) = oneshot::channel();
                 runtime.spawn(async move {
                     let _ = answer.await;

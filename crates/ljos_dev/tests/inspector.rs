@@ -1882,3 +1882,173 @@ fn app_watch_counts_the_passes_that_drew_an_item_again() {
     assert_eq!(told.structured["changed"], json!(["items"]));
     assert_eq!(app.pumps, 0, "a watch is answered on the server's thread");
 }
+
+const HOT: &str = r#"import QtQuick
+Item {
+    id: root
+    objectName: "root"
+    property int base: 1
+    property int doubled: base * 2
+    property int sum: doubled + 1
+    property int n: 1
+    Repeater { model: root.n; Item {} }
+    // Read at each frame: a binding nothing reads does not run.
+    Text { text: "sum " + root.sum }
+}
+"#;
+
+#[test]
+fn app_frames_bindings_says_which_ran_most_where_and_what_set_them_off() {
+    let mut app = app_with(HOT, InspectorConfig::default());
+    let off = app.call("app_frames", json!({ "bindings": true }));
+    assert_eq!(off.structured["recording"], false, "{}", off.text);
+    assert!(!app.engine.is_profiled());
+    app.call("app_frames", json!({ "bindings": true, "record": true }));
+    assert!(app.engine.is_profiled());
+    for v in 2..6 {
+        app.set("root", "base", QmlValue::Int(v));
+    }
+    let hot = app.call("app_frames", json!({ "bindings": true, "sort": "runs" }));
+    let rows = hot.structured["bindings"].as_array().unwrap();
+    let sum = rows
+        .iter()
+        .find(|r| r["name"] == "sum")
+        .unwrap_or_else(|| panic!("sum is listed: {}", hot.text));
+    assert_eq!(sum["kind"], "binding");
+    assert_eq!(sum["runs"], 4, "{}", hot.text);
+    assert!(
+        sum["at"].as_str().unwrap().ends_with("/Main.qml:7:5"),
+        "{sum}"
+    );
+    assert!(sum["object"].as_str().unwrap().starts_with('@'), "{sum}");
+    assert_eq!(sum["causes"][0]["name"], "doubled", "{sum}");
+    let runs: Vec<u64> = rows.iter().map(|r| r["runs"].as_u64().unwrap()).collect();
+    assert!(runs.windows(2).all(|w| w[0] >= w[1]), "by runs: {runs:?}");
+    assert!(hot.text.contains("set off by"), "{}", hot.text);
+    app.call("app_frames", json!({ "bindings": true, "record": false }));
+    assert!(
+        !app.engine.is_profiled(),
+        "profiling ends with the recording"
+    );
+}
+
+#[test]
+fn app_frames_growth_marks_the_component_that_keeps_growing() {
+    let mut app = app_with(HOT, InspectorConfig::default());
+    app.call("app_frames", json!({ "growth": true, "record": true }));
+    for n in 2..5 {
+        app.set("root", "n", QmlValue::Int(n));
+        app.call("app_frames", json!({ "growth": true }));
+    }
+    let grown = app.call("app_frames", json!({ "growth": true }));
+    let first = &grown.structured["components"][0];
+    assert_eq!(first["growing"], true, "{}", grown.text);
+    assert_eq!(
+        (first["first"].as_u64(), first["last"].as_u64()),
+        (Some(1), Some(4))
+    );
+    assert_eq!(first["name"], "Item", "the delegate: {}", grown.text);
+    assert_eq!(grown.structured["growing"], 1, "{}", grown.text);
+    // Asking again with nothing changed keeps a run of equal samples as
+    // its first and its last.
+    let samples = grown.structured["samples"].as_u64().unwrap();
+    app.call("app_frames", json!({ "growth": true }));
+    let again = app.call("app_frames", json!({ "growth": true }));
+    assert_eq!(again.structured["samples"].as_u64().unwrap(), samples);
+    // One that comes back down no longer keeps growing.
+    app.set("root", "n", QmlValue::Int(1));
+    let down = app.call("app_frames", json!({ "growth": true }));
+    assert_eq!(down.structured["growing"], 0, "{}", down.text);
+}
+
+#[test]
+fn app_frames_export_writes_a_trace_file_a_trace_viewer_reads() {
+    let traces = tempfile::tempdir().unwrap();
+    let mut app = app_with(
+        HOT,
+        InspectorConfig {
+            exports: Some(traces.path().to_owned()),
+            ..InspectorConfig::default()
+        },
+    );
+    let (code, message, _) = app.refused("app_frames", json!({ "export": "run" }));
+    assert_eq!(code, "invalid_argument", "nothing recorded: {message}");
+    app.call("app_frames", json!({ "bindings": true, "record": true }));
+    app.call("app_frames", json!({ "wakes": true, "record": true }));
+    for v in 2..4 {
+        app.set("root", "base", QmlValue::Int(v));
+    }
+    let wrote = app.call("app_frames", json!({ "export": "run" }));
+    let path = Path::new(wrote.structured["path"].as_str().unwrap());
+    assert_eq!(path, traces.path().canonicalize().unwrap().join("run.json"));
+    let trace: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let events = trace["traceEvents"].as_array().unwrap();
+    let sums: Vec<&Value> = events.iter().filter(|e| e["name"] == "Main.sum").collect();
+    assert_eq!(sums.len(), 2, "{trace}");
+    for e in &sums {
+        assert_eq!(e["ph"], "X");
+        assert_eq!(e["tid"], 3);
+        assert!(
+            e["ts"].as_f64().unwrap() >= 0.0 && e["dur"].as_f64().is_some(),
+            "{e}"
+        );
+    }
+    assert!(
+        events
+            .iter()
+            .any(|e| e["ph"] == "M" && e["args"]["name"] == "bindings and handlers"),
+        "the tracks are named"
+    );
+    // On each track a slice lies wholly inside the one it starts in, or
+    // a viewer cannot nest it.
+    for tid in 1..=3 {
+        let mut slices: Vec<(f64, f64)> = events
+            .iter()
+            .filter(|e| e["tid"] == tid && e["ph"] == "X")
+            .map(|e| {
+                let ts = e["ts"].as_f64().unwrap();
+                (ts, ts + e["dur"].as_f64().unwrap())
+            })
+            .collect();
+        slices.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.total_cmp(&a.1)));
+        let mut open: Vec<f64> = Vec::new();
+        for (start, end) in slices {
+            while open.last().is_some_and(|&e| e <= start + 1e-6) {
+                open.pop();
+            }
+            if let Some(&outer) = open.last() {
+                assert!(
+                    end <= outer + 1e-6,
+                    "track {tid}: {start}..{end} leaves {outer}"
+                );
+            }
+            open.push(end);
+        }
+    }
+    assert_eq!(
+        wrote.structured["runs"].as_u64(),
+        Some(
+            events
+                .iter()
+                .filter(|e| e["tid"] == 3 && e["ph"] == "X")
+                .count() as u64
+        )
+    );
+    // A name is a file's name, never a place.
+    for bad in ["../run", "/tmp/run", "a/b"] {
+        let (code, _, _) = app.refused("app_frames", json!({ "export": bad }));
+        assert_eq!(code, "invalid_argument", "{bad}");
+    }
+    assert!(!traces.path().join("..").join("run.json").exists());
+    let (code, _, _) = app.refused("app_frames", json!({ "export": "run", "bindings": true }));
+    assert_eq!(code, "invalid_argument");
+}
+
+#[test]
+fn app_frames_export_without_a_place_for_traces_is_unavailable() {
+    let mut app = app_with(HOT, InspectorConfig::default());
+    app.call("app_frames", json!({ "bindings": true, "record": true }));
+    app.set("root", "base", QmlValue::Int(2));
+    let (code, message, _) = app.refused("app_frames", json!({ "export": "run" }));
+    assert_eq!(code, "unavailable", "{message}");
+}

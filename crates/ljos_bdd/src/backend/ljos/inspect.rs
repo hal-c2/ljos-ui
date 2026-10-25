@@ -114,6 +114,8 @@ pub(super) struct Rig {
     log_read: Option<u64>,
     /// The token of the start before this one.
     old_token: Option<String>,
+    /// Where `app_frames`' `export` writes, gone with the scenario.
+    _exports: tempfile::TempDir,
 }
 
 fn no_inspector() -> BackendError {
@@ -230,9 +232,14 @@ impl Rig {
                 bell.ring();
             })
         };
+        let exports = tempfile::Builder::new()
+            .prefix("ljos-traces-")
+            .tempdir()
+            .map_err(|e| failed(format!("no folder for trace files: {e}")))?;
         let cfg = InspectorConfig {
             redact_all,
             virtual_clock: true,
+            exports: Some(exports.path().to_owned()),
             ..InspectorConfig::default()
         };
         let (inspector, surface) = Inspector::new(cfg, wake);
@@ -259,6 +266,7 @@ impl Rig {
             cursor: None,
             log_read: None,
             old_token: None,
+            _exports: exports,
         })
     }
 

@@ -40,8 +40,11 @@ mod args;
 mod capture;
 mod components;
 mod edits;
+mod export;
 mod frames;
+mod growth;
 mod holders;
+mod hot;
 mod logs;
 mod memory;
 mod models;
@@ -130,6 +133,9 @@ pub struct InspectorConfig {
     pub virtual_clock: bool,
     /// What a picture is drawn on where the application draws nothing.
     pub background: [u8; 3],
+    /// Where `app_frames`' `export` writes trace files; without it there
+    /// is nowhere to write them.
+    pub exports: Option<std::path::PathBuf>,
 }
 
 impl Default for InspectorConfig {
@@ -139,6 +145,7 @@ impl Default for InspectorConfig {
             timeout: Duration::from_secs(5),
             virtual_clock: false,
             background: [0xff, 0xff, 0xff],
+            exports: None,
         }
     }
 }
@@ -301,6 +308,10 @@ pub struct Inspector {
     timeline: timeline::Timeline,
     /// The UI thread's wakes `app_frames` keeps with `wakes`.
     wakes: wakes::Wakes,
+    /// Who asked the engine to profile bindings (`app_frames`' `bindings`).
+    hot: hot::Hot,
+    /// The components' instances sampled for `app_frames`' `growth`.
+    growth: growth::Growth,
     /// Properties assigned by `app_set_property`, so that `app_inspect`
     /// can say they were assigned by devtools and not by the application.
     edits: edits::Edits,
@@ -385,6 +396,8 @@ impl Inspector {
             frames: FrameLog::default(),
             timeline: timeline::Timeline::default(),
             wakes: wakes::Wakes::default(),
+            hot: hot::Hot::default(),
+            growth: growth::Growth::default(),
             edits: edits::Edits::default(),
             models: models::Follows::new(changes_for_models),
             _observing: ljos_runtime::observe::enable(),
@@ -801,6 +814,7 @@ impl Inspector {
     /// looks at the scene leaves it asking for a frame.
     pub fn pump(&mut self, engine: &Engine, scene: &mut QuickScene, clock: &dyn Clock) {
         self.observe(engine);
+        self.growth.tick(engine);
         if !self.has_work() {
             return;
         }
@@ -955,12 +969,34 @@ impl Inspector {
             return;
         }
         if let Kind::Frames(args) = &kind {
-            let answer = if args.wakes {
-                self.answer_wakes(engine, scene, args)
-            } else {
-                let keeps = self.wakes.recording();
-                timeline::frames(engine, scene, &mut self.timeline, args, keeps)
-            };
+            let answer = args.mode().and_then(|mode| match mode {
+                timeline::Mode::Frames => {
+                    let keeps = self.wakes.recording();
+                    timeline::frames(engine, scene, &mut self.timeline, args, keeps)
+                }
+                timeline::Mode::Wakes => self.answer_wakes(engine, scene, args),
+                timeline::Mode::Bindings => {
+                    if let Some(record) = args.record {
+                        self.hot.ask(engine, record, args.holder.as_deref())?;
+                    }
+                    Ok(self
+                        .hot
+                        .answer(engine, args.sort.unwrap_or_default(), args.max))
+                }
+                timeline::Mode::Growth => {
+                    if let Some(record) = args.record {
+                        self.growth.ask(engine, record, args.holder.as_deref())?;
+                    }
+                    Ok(self.growth.answer(engine, args.max))
+                }
+                timeline::Mode::Export(name) => export::export(
+                    engine,
+                    self.cfg.exports.as_deref(),
+                    name,
+                    &self.timeline,
+                    &self.wakes,
+                ),
+            });
             let _ = reply.send(answer);
             return;
         }

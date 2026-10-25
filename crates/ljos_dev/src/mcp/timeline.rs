@@ -29,9 +29,9 @@ use super::objects::handle;
 use super::paint::PaintReport;
 
 pub const FRAMES: &str = "\
-A timeline of every window's frames, for comparing runtimes: `record` starts or stops it. Each \
-says what woke it and where its time went, pass by pass. With `wakes`, the UI thread's wakes \
-instead: each one's causes and what it led to. `since` takes `next_since`.";
+A timeline of every window's frames: `record` starts or stops it; each says what woke it and \
+where its time went, pass by pass. Modes instead: `wakes`, `bindings` (hot bindings, loops), \
+`growth` (instances per component over time), `export` (a trace file). `since` takes `next_since`.";
 
 /// The most frames kept: ten seconds at 60 Hz.
 pub const MAX_KEPT: usize = 600;
@@ -65,6 +65,65 @@ pub struct FramesArgs {
     /// the frames.
     #[serde(default)]
     pub wakes: bool,
+    /// The bindings and handlers that ran instead: per each where it is
+    /// written, what it writes, its runs, their time and what set them
+    /// off; and the binding loops met. `record` starts or stops profiling.
+    #[serde(default)]
+    pub bindings: bool,
+    /// With `bindings`: the rows by `total` time (default), `own` time
+    /// (less what ran nested in them), `runs` or the `longest` run.
+    #[serde(default)]
+    pub sort: Option<super::hot::HotSort>,
+    /// The instances and bytes of each component over time instead, those
+    /// that keep growing first. `record` starts or stops sampling.
+    #[serde(default)]
+    pub growth: bool,
+    /// Writes the frames, wakes and runs of bindings recorded to a trace
+    /// file of this name (letters, digits, `.`, `_`, `-`) in the
+    /// application's trace folder, for a trace viewer (Perfetto); the
+    /// answer says where.
+    #[serde(default)]
+    pub export: Option<String>,
+}
+
+impl FramesArgs {
+    /// The mode asked for, or a refusal when more than one is.
+    pub(crate) fn mode(&self) -> Result<Mode<'_>, SurfaceError> {
+        let modes = [
+            self.wakes.then_some(Mode::Wakes),
+            self.bindings.then_some(Mode::Bindings),
+            self.growth.then_some(Mode::Growth),
+            self.export.as_deref().map(Mode::Export),
+        ];
+        let mut asked = modes.into_iter().flatten();
+        let mode = asked.next().unwrap_or(Mode::Frames);
+        if asked.next().is_some() {
+            return Err(SurfaceError::invalid_argument(
+                "`app_frames`: ask for one of `wakes`, `bindings`, `growth` and `export` at a time",
+            ));
+        }
+        if self.sort.is_some() && !matches!(mode, Mode::Bindings) {
+            return Err(SurfaceError::invalid_argument(
+                "`app_frames`: `sort` goes with `bindings`",
+            ));
+        }
+        if matches!(mode, Mode::Export(_)) && self.record.is_some() {
+            return Err(SurfaceError::invalid_argument(
+                "`app_frames`: `export` writes what is recorded; `record` goes without it",
+            ));
+        }
+        Ok(mode)
+    }
+}
+
+/// What `app_frames` is asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Mode<'a> {
+    Frames,
+    Wakes,
+    Bindings,
+    Growth,
+    Export(&'a str),
 }
 
 /// One pass of the host that ran frames of a window's scene.
@@ -299,8 +358,79 @@ impl Timeline {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn kept(&self) -> usize {
+    /// The frames kept, for a trace file: each a slice on the frames'
+    /// track, its passes slices in it one after another (the timeline
+    /// keeps how long each took, not when it began), and its painting
+    /// after them.
+    pub(crate) fn trace_events(&self, out: &mut Vec<super::export::Event>) {
+        use super::export::{Event, TID_FRAMES};
+        for e in &self.frames {
+            let t = &e.times;
+            let end = self.started + e.at;
+            let start = end.checked_sub(t.total).unwrap_or(end);
+            let window = e.window.map_or_else(|| "main".to_owned(), handle);
+            out.push(Event::slice(
+                start,
+                e.total(),
+                TID_FRAMES,
+                format!("frame {}", e.seq),
+                "frame",
+                json!({
+                    "window": window,
+                    "woke": e.woke(),
+                    "asked_by": e.asked_by,
+                    "scene_frames": t.frames,
+                    "bindings_us": us(t.bindings),
+                    "binding_runs": t.binding_runs,
+                    "text_layouts": t.text_layouts,
+                }),
+            ));
+            let mut at = start;
+            for (name, d) in [
+                ("timers", t.timers),
+                ("animations", t.animations),
+                ("layout", t.layout),
+                ("create", t.create),
+                ("scene", t.scene),
+                ("other", t.other),
+            ] {
+                if d.is_zero() {
+                    continue;
+                }
+                out.push(Event::slice(
+                    at,
+                    d,
+                    TID_FRAMES,
+                    name.to_owned(),
+                    "pass",
+                    json!({}),
+                ));
+                at += d;
+            }
+            if let Some(render) = e.render() {
+                out.push(Event::slice(
+                    end,
+                    render,
+                    TID_FRAMES,
+                    "render".to_owned(),
+                    "paint",
+                    json!({}),
+                ));
+                if let Some(present) = e.present() {
+                    out.push(Event::slice(
+                        end + render,
+                        present,
+                        TID_FRAMES,
+                        "present".to_owned(),
+                        "paint",
+                        json!({}),
+                    ));
+                }
+            }
+        }
+    }
+
+    pub(crate) fn kept(&self) -> usize {
         self.frames.len()
     }
 }

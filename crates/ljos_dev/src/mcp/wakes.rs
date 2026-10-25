@@ -323,6 +323,33 @@ impl Wakes {
         Ok(())
     }
 
+    /// The wakes kept, for a trace file: each an instant on the wakes'
+    /// track, at the end of its turn.
+    pub(crate) fn trace_events(&self, out: &mut Vec<super::export::Event>) {
+        use super::export::{Event, TID_WAKES};
+        for e in &self.wakes {
+            let causes = e.causes();
+            out.push(Event::instant(
+                self.started + e.at,
+                TID_WAKES,
+                format!(
+                    "wake: {}",
+                    if causes.is_empty() {
+                        "nothing known".to_owned()
+                    } else {
+                        causes.join(", ")
+                    }
+                ),
+                "wake",
+                e.json(),
+            ));
+        }
+    }
+
+    pub(crate) fn kept(&self) -> usize {
+        self.wakes.len()
+    }
+
     /// Answers `app_frames` with `wakes`.
     pub(crate) fn answer(&self, since: Option<u64>, max: Option<usize>) -> ToolReply {
         let max = max.unwrap_or(DEFAULT_MAX);
