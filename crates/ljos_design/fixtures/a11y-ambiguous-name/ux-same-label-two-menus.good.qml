@@ -1,0 +1,22 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+Item {
+    width: 400; height: 160
+    Row {
+        spacing: 12
+        ToolButton {
+            text: "More options"
+            Accessible.name: "More file options"
+            onClicked: fileMenu.open()
+            Menu { id: fileMenu; MenuItem { text: "Rename" } MenuItem { text: "Delete" } }
+        }
+        ToolButton {
+            text: "More options"
+            Accessible.name: "More view options"
+            onClicked: viewMenu.open()
+            Menu { id: viewMenu; MenuItem { text: "Zoom in" } MenuItem { text: "Zoom out" } }
+        }
+    }
+}
