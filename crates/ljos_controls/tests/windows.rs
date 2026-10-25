@@ -416,6 +416,36 @@ fn the_host_says_which_screens_there_are() {
 }
 
 #[test]
+fn a_binding_on_the_screen_follows_the_display_it_reads() {
+    let (e, _) = hosted();
+    // Not an item: its Screen is the primary display's, looked up again
+    // as the display changes, by a binding something follows.
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+QtObject {
+    property int w: Screen.width
+    property string told: ""
+    onWChanged: told += w + " "
+}
+"#,
+    );
+    assert_eq!(int(&e, root, "w"), 800);
+    let laptop = ScreenSpec {
+        size: [1440.0, 900.0],
+        ..ScreenSpec::default()
+    };
+    WindowSystem::of(&e).set_screens(&e, &[laptop]);
+    // As qml6, it is told of the first display as it starts.
+    assert_eq!(
+        e.read_by_name(root, "told").to_js_string().as_str(),
+        "800 1440 "
+    );
+    assert_eq!(int(&e, root, "w"), 1440);
+}
+
+#[test]
 fn the_application_says_what_the_host_says() {
     let (e, _) = hosted();
     let root = load(

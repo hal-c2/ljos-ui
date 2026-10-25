@@ -398,21 +398,24 @@ impl WindowSystem {
     /// The host says which displays there are, the primary one first.
     /// Each keeps its object while it is in the list at the same place.
     pub fn set_screens(&self, engine: &Engine, specs: &[ScreenSpec]) {
-        let mut screens = self.screens.borrow_mut();
         let mut removed = Vec::new();
         let mut added = Vec::new();
+        // The list is not borrowed while a display says what it is now:
+        // a binding on `Screen` runs then, and looks displays up here.
         for (i, spec) in specs.iter().enumerate() {
-            match screens.get_mut(i) {
-                Some((old, obj)) if engine.is_alive(*obj) => {
-                    if old != spec {
-                        app::update_screen(engine, *obj, spec);
-                        *old = spec.clone();
+            let held = self.screens.borrow().get(i).cloned();
+            match held {
+                Some((old, obj)) if engine.is_alive(obj) => {
+                    if old != *spec {
+                        self.screens.borrow_mut()[i].0 = spec.clone();
+                        app::update_screen(engine, obj, spec);
                     }
                 }
                 _ => {
                     let Ok(obj) = app::make_screen(engine, spec) else {
                         continue;
                     };
+                    let mut screens = self.screens.borrow_mut();
                     if i < screens.len() {
                         screens[i] = (spec.clone(), obj);
                     } else {
@@ -422,12 +425,14 @@ impl WindowSystem {
                 }
             }
         }
-        while screens.len() > specs.len().max(1) {
-            if let Some((_, obj)) = screens.pop() {
-                removed.push(obj);
+        {
+            let mut screens = self.screens.borrow_mut();
+            while screens.len() > specs.len().max(1) {
+                if let Some((_, obj)) = screens.pop() {
+                    removed.push(obj);
+                }
             }
         }
-        drop(screens);
         if let Some(app) = self.app.get().filter(|a| engine.is_alive(*a)) {
             for obj in &removed {
                 let _ = engine.list_remove(app, Application::SCREENS.index, *obj);
