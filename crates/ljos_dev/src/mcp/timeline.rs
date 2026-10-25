@@ -65,6 +65,14 @@ pub struct FramesArgs {
     /// the frames.
     #[serde(default)]
     pub wakes: bool,
+    /// With `wakes`: what this wake (its `wake` number) did, in order: the
+    /// handlers and bindings that ran, the properties that changed (old
+    /// and new), the items laid out, placed and redrawn, and their times.
+    #[serde(default)]
+    pub wake: Option<u64>,
+    /// With `wakes`: as `wake`, for the latest wake input caused.
+    #[serde(default)]
+    pub last_input: bool,
     /// The bindings and handlers that ran instead: per each where it is
     /// written, what it writes, its runs, their time and what set them
     /// off; and the binding loops met. `record` starts or stops profiling.
@@ -100,6 +108,16 @@ impl FramesArgs {
         if asked.next().is_some() {
             return Err(SurfaceError::invalid_argument(
                 "`app_frames`: ask for one of `wakes`, `bindings`, `growth` and `export` at a time",
+            ));
+        }
+        if (self.wake.is_some() || self.last_input) && !matches!(mode, Mode::Wakes) {
+            return Err(SurfaceError::invalid_argument(
+                "`app_frames`: `wake` and `last_input` go with `wakes`",
+            ));
+        }
+        if self.wake.is_some() && self.last_input {
+            return Err(SurfaceError::invalid_argument(
+                "`app_frames`: give `wake` or `last_input`, not both",
             ));
         }
         if self.sort.is_some() && !matches!(mode, Mode::Bindings) {

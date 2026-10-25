@@ -142,10 +142,13 @@ fn pump(inspector: &mut Inspector, live: &mut Live, fault: &mut Option<BackendEr
     inspector.record_scene_frames(&mut live.scene, 0);
     // Each pump is a turn of a host's loop: one pass, which the scene's
     // frames say more of.
-    inspector.record_wake(&ljos_dev::mcp::HostWake {
-        passes: 1,
-        ..Default::default()
-    });
+    inspector.record_wake(
+        &live.engine,
+        &ljos_dev::mcp::HostWake {
+            passes: 1,
+            ..Default::default()
+        },
+    );
     let mut report = live.scene.take_incubation_report().unwrap_or_default();
     report.elapsed = started.elapsed();
     inspector.record_frame(&report);

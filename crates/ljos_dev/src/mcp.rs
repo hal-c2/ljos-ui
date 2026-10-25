@@ -52,6 +52,7 @@ mod memory;
 mod models;
 mod objects;
 mod observe;
+mod one_wake;
 mod paint;
 mod reload;
 mod rust_heap;
@@ -516,8 +517,8 @@ impl Inspector {
     /// the inspector saw since the last ([`Inspector::pump`],
     /// [`Inspector::record_scene_frames`]). Does nothing while no client
     /// keeps wakes.
-    pub fn record_wake(&mut self, host: &HostWake) {
-        if self.wakes.record(host) {
+    pub fn record_wake(&mut self, engine: &Engine, host: &HostWake) {
+        if self.wakes.record(host, engine.take_journal()) {
             self.changes.wake();
         }
     }
@@ -908,6 +909,10 @@ impl Inspector {
             if on != scene.is_timed() {
                 scene.set_timed(engine, on);
             }
+            engine.set_journaled(self.wakes.recording());
+        }
+        if args.wake.is_some() || args.last_input {
+            return self.wakes.answer_one(engine, args.wake, args.max);
         }
         Ok(self.wakes.answer(args.since, args.max))
     }

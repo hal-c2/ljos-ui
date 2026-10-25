@@ -12,11 +12,18 @@
 //! [`Inspector::records_wakes`](super::Inspector::records_wakes) once a
 //! turn and gathers nothing otherwise. The wakes are a ring of
 //! [`MAX_KEPT`], held as `app_frames`' recording is.
+//!
+//! While wakes are kept the engine journals each turn, and the latest
+//! [`MAX_DETAILED`] wakes that were not only an agent's requests keep
+//! what they did, in order (`wake`, `one_wake.rs`): the handlers and
+//! bindings that ran, the properties that changed, the items laid out,
+//! placed and redrawn, and the time each took.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
+use ljos_engine::{Engine, Journal};
 use ljos_mcp_core::{SurfaceError, ToolReply};
 use ljos_quick::FrameTimes;
 use serde_json::{Value, json};
@@ -27,6 +34,8 @@ pub const MAX_KEPT: usize = 600;
 const DEFAULT_MAX: usize = 60;
 /// The most clients that hold the wakes at once.
 const MAX_HOLDERS: usize = 16;
+/// The most wakes that keep what they did.
+pub const MAX_DETAILED: usize = 16;
 /// How long after a wake only requests caused the loop's own follow-up
 /// (a redraw it asked for, a deadline it set) is still the requests'.
 const ECHO: Duration = Duration::from_millis(250);
@@ -75,9 +84,11 @@ struct Seen {
     timer: bool,
     animation: bool,
     frames: u32,
+    /// The frames' steps, added up.
+    steps: FrameTimes,
 }
 
-struct Entry {
+pub(super) struct Entry {
     seq: u64,
     at: Duration,
     host: HostWake,
@@ -85,9 +96,27 @@ struct Entry {
     /// Only an agent's requests caused it, or the loop's follow-up to such
     /// a wake.
     requests_only: bool,
+    /// What it did, for the latest [`MAX_DETAILED`].
+    pub(super) journal: Option<Box<Journal>>,
 }
 
 impl Entry {
+    pub(super) fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    pub(super) fn at(&self) -> Duration {
+        self.at
+    }
+
+    pub(super) fn steps(&self) -> &FrameTimes {
+        &self.seen.steps
+    }
+
+    pub(super) fn input(&self) -> bool {
+        self.host.input > 0 || self.seen.input
+    }
+
     fn messages(&self) -> u64 {
         u64::from(self.seen.answered)
             + self.seen.thread as u64
@@ -95,7 +124,7 @@ impl Entry {
             + u64::from(self.host.accessibility)
     }
 
-    fn causes(&self) -> Vec<&'static str> {
+    pub(super) fn causes(&self) -> Vec<&'static str> {
         let (h, s) = (&self.host, &self.seen);
         [
             (h.input > 0 || s.input, "input"),
@@ -113,7 +142,7 @@ impl Entry {
         .collect()
     }
 
-    fn led_to(&self) -> &'static str {
+    pub(super) fn led_to(&self) -> &'static str {
         let h = &self.host;
         if h.drawn > 0 {
             "drawn"
@@ -150,6 +179,7 @@ impl Entry {
             "unchanged": h.unchanged,
             "redraws_asked": h.redraws_asked,
             "led_to": self.led_to(),
+            "detailed": self.journal.is_some(),
         })
     }
 
@@ -194,6 +224,8 @@ pub(crate) struct Wakes {
     unheld: bool,
     held: HashSet<String>,
     seen: Seen,
+    /// The wakes that keep what they did, oldest first.
+    detailed: VecDeque<u64>,
     /// Until when the loop's own follow-up is the requests'.
     echo_until: Option<Duration>,
 }
@@ -208,6 +240,7 @@ impl Default for Wakes {
             unheld: false,
             held: HashSet::new(),
             seen: Seen::default(),
+            detailed: VecDeque::new(),
             echo_until: None,
         }
     }
@@ -243,11 +276,25 @@ impl Wakes {
         s.timer |= times.woke.timer;
         s.animation |= times.woke.animation;
         s.thread += drained;
+        let t = &mut s.steps;
+        t.frames += times.frames;
+        t.timers += times.timers;
+        t.animations += times.animations;
+        t.layout += times.layout;
+        t.create += times.create;
+        t.scene += times.scene;
+        t.other += times.other;
+        t.total += times.total;
+        t.bindings += times.bindings;
+        t.binding_runs += times.binding_runs;
+        t.text += times.text;
+        t.text_layouts += times.text_layouts;
     }
 
-    /// The host's turn ended. Whether it was the application's and not
-    /// only an agent's requests: only then is a watch told.
-    pub(crate) fn record(&mut self, host: &HostWake) -> bool {
+    /// The host's turn ended, having done what `journal` says. Whether
+    /// it was the application's and not only an agent's requests: only
+    /// then is a watch told.
+    pub(crate) fn record(&mut self, host: &HostWake, journal: Journal) -> bool {
         if !self.recording() {
             return false;
         }
@@ -259,8 +306,14 @@ impl Wakes {
             host: *host,
             seen,
             requests_only: false,
+            journal: None,
         };
         entry.requests_only = self.requests_only(&entry);
+        // An agent's own requests are not what it asks about.
+        if !entry.requests_only {
+            entry.journal = Some(Box::new(journal));
+            self.detailed.push_back(entry.seq);
+        }
         if entry.seen.answered > 0 && entry.requests_only {
             self.echo_until = Some(at + ECHO);
         }
@@ -271,7 +324,36 @@ impl Wakes {
         }
         self.wakes.push_back(entry);
         self.next += 1;
+        while self.detailed.len() > MAX_DETAILED {
+            if let Some(seq) = self.detailed.pop_front()
+                && let Some(e) = self.get_mut(seq)
+            {
+                e.journal = None;
+            }
+        }
         told
+    }
+
+    fn get_mut(&mut self, seq: u64) -> Option<&mut Entry> {
+        let first = self.wakes.front()?.seq;
+        let i = usize::try_from(seq.checked_sub(first)?).ok()?;
+        self.wakes.get_mut(i)
+    }
+
+    /// The wake `seq`, or the latest that input woke.
+    pub(super) fn pick(&self, seq: Option<u64>) -> Option<&Entry> {
+        match seq {
+            Some(seq) => {
+                let first = self.wakes.front()?.seq;
+                self.wakes
+                    .get(usize::try_from(seq.checked_sub(first)?).ok()?)
+            }
+            None => self
+                .wakes
+                .iter()
+                .rev()
+                .find(|e| e.input() && e.journal.is_some()),
+        }
     }
 
     /// Nothing but the requests woke it: no input, timer, animation,
@@ -321,6 +403,16 @@ impl Wakes {
             self.echo_until = None;
         }
         Ok(())
+    }
+
+    /// Answers `app_frames` with `wakes` and `wake` or `last_input`.
+    pub(crate) fn answer_one(
+        &self,
+        engine: &Engine,
+        seq: Option<u64>,
+        max: Option<usize>,
+    ) -> Result<ToolReply, SurfaceError> {
+        super::one_wake::answer(self, engine, seq, max)
     }
 
     /// The wakes kept, for a trace file: each an instant on the wakes'
@@ -411,11 +503,15 @@ impl Wakes {
 mod tests {
     use super::*;
 
+    fn rec(w: &mut Wakes, host: &HostWake) -> bool {
+        w.record(host, Journal::default())
+    }
+
     #[test]
     fn nothing_is_kept_until_asked_and_the_ring_keeps_the_latest() {
         let mut w = Wakes::default();
         w.asked(&[None]);
-        assert!(!w.record(&HostWake::default()));
+        assert!(!rec(&mut w, &HostWake::default()));
         assert!(w.wakes.is_empty());
         assert_eq!(w.seen.answered, 0);
         w.ask(true, None).unwrap();
@@ -424,7 +520,7 @@ mod tests {
             ..HostWake::default()
         };
         for _ in 0..MAX_KEPT + 3 {
-            w.record(&tick);
+            rec(&mut w, &tick);
         }
         assert_eq!(w.wakes.len(), MAX_KEPT);
         assert_eq!(w.dropped, 3);
@@ -444,23 +540,51 @@ mod tests {
             ..FrameTimes::default()
         };
         w.ran(&frames, 2);
-        assert!(w.record(&HostWake {
-            requested_redraws: 1,
-            passes: 1,
-            unchanged: 1,
-            ..HostWake::default()
-        }));
+        assert!(rec(
+            &mut w,
+            &HostWake {
+                requested_redraws: 1,
+                passes: 1,
+                unchanged: 1,
+                ..HostWake::default()
+            }
+        ));
         let e = &w.wakes[0];
         assert_eq!(e.causes(), ["timer", "message", "requested_redraw"]);
         assert_eq!(e.led_to(), "unchanged");
         assert_eq!(e.json()["messages"]["thread"], 2);
         // A message that dirtied nothing runs no pass on a host.
-        assert!(w.record(&HostWake {
-            posted: 1,
-            ..HostWake::default()
-        }));
+        assert!(rec(
+            &mut w,
+            &HostWake {
+                posted: 1,
+                ..HostWake::default()
+            }
+        ));
         assert_eq!(w.wakes[1].led_to(), "nothing");
         assert_eq!(w.answer(None, None).structured["idle"], 1);
+    }
+
+    #[test]
+    fn only_the_latest_wakes_keep_what_they_did_and_not_an_agents_own() {
+        let mut w = Wakes::default();
+        w.ask(true, None).unwrap();
+        let input = HostWake {
+            input: 1,
+            ..HostWake::default()
+        };
+        for _ in 0..MAX_DETAILED + 2 {
+            rec(&mut w, &input);
+        }
+        let kept: Vec<bool> = w.wakes.iter().map(|e| e.journal.is_some()).collect();
+        assert_eq!(kept.iter().filter(|k| **k).count(), MAX_DETAILED);
+        assert!(!kept[0] && !kept[1] && kept[2]);
+        assert_eq!(w.pick(None).map(Entry::seq), Some(MAX_DETAILED as u64 + 2));
+        w.asked(&[None]);
+        rec(&mut w, &HostWake::default());
+        assert!(w.wakes.back().is_some_and(|e| e.journal.is_none()));
+        assert_eq!(w.pick(Some(1)).map(Entry::seq), Some(1));
+        assert!(w.pick(Some(99)).is_none());
     }
 
     #[test]
@@ -468,15 +592,21 @@ mod tests {
         let mut w = Wakes::default();
         w.ask(true, Some("observer")).unwrap();
         w.asked(&[Some("observer".to_owned())]);
-        assert!(!w.record(&HostWake {
-            posted: 1,
-            ..HostWake::default()
-        }));
-        assert!(!w.record(&HostWake {
-            requested_redraws: 1,
-            drawn: 1,
-            ..HostWake::default()
-        }));
+        assert!(!rec(
+            &mut w,
+            &HostWake {
+                posted: 1,
+                ..HostWake::default()
+            }
+        ));
+        assert!(!rec(
+            &mut w,
+            &HostWake {
+                requested_redraws: 1,
+                drawn: 1,
+                ..HostWake::default()
+            }
+        ));
         let timer = FrameTimes {
             frames: 1,
             woke: ljos_quick::Woke {
@@ -486,7 +616,7 @@ mod tests {
             ..FrameTimes::default()
         };
         w.ran(&timer, 0);
-        assert!(w.record(&HostWake::default()));
+        assert!(rec(&mut w, &HostWake::default()));
         let only: Vec<bool> = w.wakes.iter().map(|e| e.requests_only).collect();
         assert_eq!(only, [true, true, false]);
     }

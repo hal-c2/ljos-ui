@@ -249,7 +249,7 @@ impl<M> ShellApp<M> {
 
     pub(crate) fn record_wake(&mut self, wake: &ljos_dev::mcp::HostWake) {
         if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().record_wake(wake);
+            served.inspector_mut().record_wake(self.view.engine(), wake);
         }
     }
 

@@ -857,6 +857,11 @@
             "null"
           ]
         },
+        "last_input": {
+          "default": false,
+          "description": "With `wakes`: as `wake`, for the latest wake input caused.",
+          "type": "boolean"
+        },
         "max": {
           "default": null,
           "description": "The most frames to list (default 60, at most 600).",
@@ -895,6 +900,16 @@
             }
           ],
           "description": "With `bindings`: the rows by `total` time (default), `own` time\n(less what ran nested in them), `runs` or the `longest` run."
+        },
+        "wake": {
+          "default": null,
+          "description": "With `wakes`: what this wake (its `wake` number) did, in order: the\nhandlers and bindings that ran, the properties that changed (old\nand new), the items laid out, placed and redrawn, and their times.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "wakes": {
           "default": false,
