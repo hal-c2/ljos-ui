@@ -270,14 +270,20 @@ fn scrolled(before: &[ClippedShape], now: &[ClippedShape], ppp: f32, drawn: f32)
         }
     }
     found.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
-    found
-        .iter()
-        .take(TRIED)
-        .filter_map(|&((rect, by), _)| {
-            let budget = drawn - scroll_cost(rect);
-            moved_in(before, now, (head, tail), rect, by, ppp, budget)
-        })
-        .min_by(|p, q| covered(&p.areas).total_cmp(&covered(&q.areas)))
+    // Each one tried after a scroll is found has to leave less to draw
+    // than it does, and is given up on once it does not: the shapes of a
+    // row moved by a row are compared no further than that.
+    let mut best: Option<Scroll> = None;
+    for &((rect, by), _) in found.iter().take(TRIED) {
+        let mut budget = drawn - scroll_cost(rect);
+        if let Some(b) = &best {
+            budget = budget.min(covered(&b.areas));
+        }
+        if let Some(s) = moved_in(before, now, (head, tail), rect, by, ppp, budget) {
+            best = Some(s);
+        }
+    }
+    best
 }
 
 /// What moving the pixels of `rect` costs, as pixels drawn.
