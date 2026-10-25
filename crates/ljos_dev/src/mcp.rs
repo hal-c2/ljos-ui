@@ -33,7 +33,9 @@
 //! so is any name or string property that is exactly that text, and the
 //! text wherever it is part of a property's value, an expression or what
 //! a script answers (a key of an object included). A title, a name, an
-//! objectName and an id are masked where a secret is part of them. A script
+//! objectName and an id are masked where a secret is part of them. A
+//! picture paints over the field and every item whose value, name or
+//! description was masked, not only the field. A script
 //! cannot be held to the mask, so `app_eval` is refused under `redact_all`
 //! and in a field that hides its text; elsewhere what it returns has the
 //! secrets masked wherever they occur in a string. A method or signal

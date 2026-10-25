@@ -8,9 +8,9 @@
 Feature: A secret is masked wherever the application repeats it
   What a field that hides its text holds may turn up elsewhere: inside a
   longer text, in a record or a script's object, as one of its keys. The
-  inspector masks it there too, and two secrets that are keys of one
-  object stay two keys, so that neither a value nor the fact that the
-  secrets differ is lost or told.
+  inspector masks it there too, in a picture as in words, and two secrets
+  that are keys of one object stay two keys, so that neither a value nor
+  the fact that the secrets differ is lost or told.
 
   Background:
     Given the QML:
@@ -26,6 +26,11 @@ Feature: A secret is masked wherever the application repeats it
         TextInput {
           id: other; objectName: "other"; y: 30; width: 120; height: 20
           echoMode: TextInput.Password; text: "swordfish"
+        }
+        Text {
+          objectName: "said"; y: 60; width: 200; height: 30
+          text: "it is " + pw.text; font.pixelSize: 24
+          Accessible.role: Accessible.StaticText; Accessible.name: text
         }
       }
       """
@@ -49,3 +54,20 @@ Feature: A secret is masked wherever the application repeats it
       And the answer's "/value/<redacted>#2" is 2
       And the answer does not contain "hunter2"
       And the answer does not contain "swordfish"
+
+  Rule: A picture paints over what shows a secret, not only the field
+
+    Scenario: A label that repeats a secret is painted over in a screenshot
+      Given the inspector is connected
+      When the agent calls the tool "app_screenshot"
+      Then the answer's "/masked" is 3
+      And the pixel at 150, 75 of the picture is "#808080"
+
+    Scenario: The picture a snapshot carries is painted over the same way
+      Given the inspector is connected
+      When the agent calls the tool "app_snapshot" with:
+        """json
+        {"image": true}
+        """
+      Then the pixel at 150, 75 of the picture is "#808080"
+      And the answer does not contain "hunter2"

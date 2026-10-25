@@ -4,6 +4,7 @@
 //! program. Each is kept under the size its tool allows by leaving out the
 //! end of a list and saying so, never by cutting in the middle of a line.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use ljos_engine::{
@@ -877,14 +878,29 @@ impl Look<'_> {
         };
         // What is typed into a masked field is not in the picture either: a
         // field may show the last character typed, or all of it while it is
-        // being edited.
+        // being edited. Nor is what any item that repeats it shows (a label
+        // bound to its text).
         let covered: Vec<[f64; 4]> = engine.untrack(|| {
-            self.capture
-                .secret_items
-                .iter()
-                .filter(|o| engine.is_alive(**o))
-                .map(|o| window_box(engine, *o))
-                .collect()
+            let mut seen = HashSet::new();
+            let mut out = Vec::new();
+            for o in &self.capture.secret_items {
+                if engine.is_alive(*o) && seen.insert(*o) {
+                    out.push(window_box(engine, *o));
+                }
+            }
+            for &index in &self.capture.redacted {
+                match self.capture.items.get(index).copied().flatten() {
+                    Some(o) if engine.is_alive(o) => {
+                        if seen.insert(o) {
+                            out.push(window_box(engine, o));
+                        }
+                    }
+                    // No item behind it (or gone since): where the outline
+                    // says it is, in the window.
+                    _ => out.push(self.capture.node(index).bounds),
+                }
+            }
+            out
         });
         let limit = args
             .max_size
@@ -934,7 +950,7 @@ impl Look<'_> {
             if !covered.is_empty() {
                 let _ = write!(
                     text,
-                    "; {} field(s) whose text must not be shown are painted over",
+                    "; {} item(s) that show what must not be shown are painted over",
                     covered.len()
                 );
             }

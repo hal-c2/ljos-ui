@@ -660,7 +660,8 @@ fn an_inspector_told_to_mask_every_editable_value_shows_none() {
     assert_eq!(property(&reply.structured, "text")["value"], "<redacted>");
     assert!(!reply.text.contains("milk"), "{}", reply.text);
     let shot = app.call("app_screenshot", json!({}));
-    assert_eq!(shot.structured["masked"], 2);
+    // The two fields, and the label that shows the password's text.
+    assert_eq!(shot.structured["masked"], 3);
 }
 
 const CALLS: &str = r##"import QtQuick
@@ -1150,13 +1151,68 @@ fn a_screenshot_is_drawn_without_a_window() {
 fn a_screenshot_paints_over_a_password_field() {
     let mut app = app();
     let reply = app.call("app_screenshot", json!({}));
-    assert_eq!(reply.structured["masked"], 1);
+    // The field and `echo`, which shows its text.
+    assert_eq!(reply.structured["masked"], 2);
     let image = decode(&reply);
     for (x, y) in [(1, 151), (60, 160), (118, 168)] {
         assert_eq!(rgb(&image, x, y), [128, 128, 128], "at {x},{y}");
     }
     // The field next to it is drawn as it is.
     assert_ne!(rgb(&image, 130, 160), [128, 128, 128]);
+}
+
+/// Labels that show what a field hides, whole or as part of their text.
+const SHOWN_ELSEWHERE: &str = r#"
+import QtQuick
+Item {
+    width: 300; height: 200
+    TextInput {
+        id: pw; objectName: "pw"; width: 120; height: 20
+        echoMode: TextInput.Password; text: "hunter2"
+    }
+    Text {
+        objectName: "whole"; y: 40; width: 100; height: 30
+        text: pw.text; font.pixelSize: 24
+        Accessible.role: Accessible.StaticText; Accessible.name: text
+    }
+    Text {
+        objectName: "part"; y: 80; width: 200; height: 30
+        text: "it is " + pw.text; font.pixelSize: 24
+        Accessible.role: Accessible.StaticText; Accessible.name: text
+    }
+    Text {
+        objectName: "other"; y: 120; width: 100; height: 30
+        text: "plain"; font.pixelSize: 24
+        Accessible.role: Accessible.StaticText; Accessible.name: text
+    }
+}
+"#;
+
+#[test]
+fn a_screenshot_paints_over_a_label_that_shows_a_secret() {
+    let mut app = app_with(SHOWN_ELSEWHERE, InspectorConfig::default());
+    let outline = app.outline(json!({}));
+    assert!(!outline.contains("hunter2"), "{outline}");
+    let reply = app.call("app_screenshot", json!({}));
+    assert_eq!(
+        reply.structured["masked"], 3,
+        "the field and both labels: {outline}"
+    );
+    let image = decode(&reply);
+    for (x, y) in [(5, 45), (50, 55), (95, 65), (5, 85), (150, 95), (195, 105)] {
+        assert_eq!(rgb(&image, x, y), [128, 128, 128], "at {x},{y}");
+    }
+    // A label that shows no secret is drawn as it is: a cover would make
+    // every pixel of it gray, the edges of its letters only make a few.
+    let gray = (0..100)
+        .flat_map(|x| (120..150).map(move |y| (x, y)))
+        .filter(|&(x, y)| rgb(&image, x, y) == [128, 128, 128])
+        .count();
+    assert!(gray < 100 * 30 / 2, "{gray} gray pixels");
+    // The picture `app_snapshot` carries is painted over the same way.
+    let shot = app.call("app_snapshot", json!({ "image": true }));
+    let image = decode(&shot);
+    assert_eq!(rgb(&image, 50, 55), [128, 128, 128]);
 }
 
 #[test]

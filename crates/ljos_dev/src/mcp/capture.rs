@@ -81,6 +81,10 @@ pub(crate) struct Capture {
     /// Whether the items that take the pointer and have no node of their
     /// own are listed too ([`POINTER_ROLE`]).
     pub(crate) pointer: bool,
+    /// The nodes of `tree` whose value, name or description was masked
+    /// (a field, or a label that shows what one holds): what a picture
+    /// paints over.
+    pub(crate) redacted: Vec<usize>,
 }
 
 /// The role word of a line for an item the accessibility tree has no node
@@ -243,6 +247,7 @@ fn capture_untracked(
         }
     }
 
+    let mut redacted = Vec::new();
     let a11y = scene.accessibility_tree();
     let focus_key = scene.accessible_focus_node();
     let viewport = scene.viewport();
@@ -334,13 +339,23 @@ fn capture_untracked(
             Some(if secrets.contains(&text.value) && !text.value.is_empty() {
                 NodeValue::Redacted
             } else {
-                NodeValue::Text(text.value.clone())
+                NodeValue::Text(mask_part(&text.value))
             })
         } else {
             d.range.map(|r| NodeValue::Number(r.value))
         };
+        let masked = node.name != d.name
+            || node.description != d.description
+            || match &node.value {
+                Some(NodeValue::Redacted) => true,
+                Some(NodeValue::Text(t)) => d.text.as_ref().is_some_and(|x| *t != x.value),
+                _ => false,
+            };
         node.hidden_below = hidden.get(&key.0).copied().unwrap_or(0);
         let index = tree.push(Some(parent), node);
+        if masked {
+            redacted.push(index);
+        }
         index_of.insert(key.0, index);
         items.push(obj);
         open.push(key.0);
@@ -370,6 +385,7 @@ fn capture_untracked(
         secrets,
         secret_items,
         pointer,
+        redacted,
     }
 }
 
