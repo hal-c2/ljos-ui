@@ -160,6 +160,46 @@ impl<M> App<M> {
         self
     }
 
+    /// Gives the application an icon of its own, for the desktop to show
+    /// for it and for its windows: the Dock's on macOS, the title bar's
+    /// and the task bar's on Windows and X11, and on Wayland the one a
+    /// compositor with `xdg-toplevel-icon-v1` shows. Elsewhere, and
+    /// without one, the desktop finds the icon by the desktop entry
+    /// ([`App::desktop_file_name`]), or by the bundle on macOS. A window
+    /// can have its own in place of it
+    /// ([`Platform::set_window_icon`](crate::prelude::Platform::set_window_icon)).
+    #[must_use]
+    pub fn icon(mut self, icon: crate::window::Icon) -> Self {
+        self.modules.push(Box::new(move |engine: &Engine| {
+            ljos_platform::Platform::of(engine).set_application_icon(Some(icon.clone()));
+        }));
+        self
+    }
+
+    /// [`App::icon`] from a picture file, in any format `Image` shows. It
+    /// is decoded off the UI thread, and given to the desktop when it is
+    /// ready; one that cannot be read is a warning in the log, and the
+    /// desktop's icon stays. A relative path is from the working
+    /// directory.
+    #[must_use]
+    pub fn icon_file(self, path: impl AsRef<std::path::Path>) -> Self {
+        let path = path.as_ref();
+        let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+        self.icon_url(ljos_engine::file_url(&path))
+    }
+
+    /// [`App::icon_file`] from a URL `Image` reads: a resource compiled
+    /// in (`qrc:`, or one the program registered), `data:`, `file:` or
+    /// `http(s):`.
+    #[must_use]
+    pub fn icon_url(mut self, url: impl Into<String>) -> Self {
+        let url = url.into();
+        self.modules.push(Box::new(move |engine: &Engine| {
+            crate::window::load_application_icon(engine, &url);
+        }));
+        self
+    }
+
     /// Whether closing the last window ends the application, as
     /// `QGuiApplication::setQuitOnLastWindowClosed` says; true unless this
     /// says otherwise. Without it the application runs on with no window,
