@@ -75,7 +75,7 @@ const RUNNER: &str = r#"(function (self, src, depthMax, itemsMax, charsMax, node
   var result;
   try {
     result = (function () {
-      with (self ? __ljos_scopeOf(self, false) : {}) with (self || {})
+      with (__ljos_scopeOf(self || null, false)) with (self || {})
         with (self ? __ljos_scopeOf(self, true) : {}) { return eval(src); }
     }).call(self);
   } catch (e) {
@@ -167,21 +167,40 @@ impl Engine {
         let err = |e: ljos_js::JsFault| EngineError::Js(e.to_string());
         let w = Rc::downgrade(&self.inner);
         let name: HostFn = Rc::new(move |_scope, args| {
-            let (Some(inner), [JsValue::Object(o), JsValue::String(name), ids, ..]) =
-                (w.upgrade(), args)
-            else {
+            let (Some(inner), [me, JsValue::String(name), ids, ..]) = (w.upgrade(), args) else {
                 return Ok(JsValue::Null);
             };
             let engine = Engine::from_inner(inner);
-            let Some(ctx) = engine.context_of(u64_to_obj(*o)) else {
-                return Ok(JsValue::Null);
+            let me = match me {
+                JsValue::Object(o) => {
+                    let o = u64_to_obj(*o);
+                    let Some(ctx) = engine.context_of(o) else {
+                        return Ok(JsValue::Null);
+                    };
+                    Some((o, ctx))
+                }
+                // The global scope: only what the application's types are.
+                _ => None,
             };
             // Tracked: a binding that names a property of a context object
             // follows it, as one written in the file does.
-            let found = match ids {
-                JsValue::Bool(true) => engine.resolve_id(ctx, name).map(Value::Object),
-                _ => engine.context_name(ctx, name),
+            let found = match (ids, me) {
+                (JsValue::Bool(true), Some((_, ctx))) => {
+                    engine.resolve_id(ctx, name).map(Value::Object)
+                }
+                (JsValue::Bool(true), None) => None,
+                (_, Some((_, ctx))) => engine.context_name(ctx, name),
+                (_, None) => None,
             };
+            let found = found.or_else(|| {
+                if matches!(ids, JsValue::Bool(true)) {
+                    return None;
+                }
+                let from = me.and_then(|(o, _)| engine.document_key(o));
+                engine
+                    .singleton_for_tool(name, me.map(|(_, c)| c), from.as_deref())
+                    .map(Value::Object)
+            });
             Ok(found.map_or(JsValue::Null, |v| JsValue::Array(vec![engine.to_js(&v)])))
         });
         js.host

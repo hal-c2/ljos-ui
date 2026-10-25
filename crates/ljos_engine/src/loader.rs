@@ -786,6 +786,14 @@ impl Engine {
         Some(location.url.clone())
     }
 
+    /// The key of the file that declares `obj`, as the component source
+    /// names it.
+    pub(crate) fn document_key(&self, obj: ObjectId) -> Option<String> {
+        let url = self.document_url(obj)?;
+        let source = self.inner.loader.borrow().source.clone()?;
+        Some(source.key(&url))
+    }
+
     /// Whether the file `key` is loaded: an object of it was made since the
     /// files were last given. What a program reaches, for a development
     /// host that tells what the compiler says of those files only.

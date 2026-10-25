@@ -3,6 +3,8 @@
 
 mod support;
 
+use std::time::Duration;
+
 use ljos_compiler::{Project, compile_file};
 use ljos_engine::{Engine, MapSource, QmlObject, Value, Version, qml_impl, qml_singleton};
 use qml_front::QtTypeOracle;
@@ -390,4 +392,36 @@ Item {
     let wired = h.engine.singleton::<Wired>().unwrap();
     assert_eq!(h.engine.with::<Wired, _>(wired, |w| w.limit).ok(), Some(40));
     assert_eq!(made.get(), 1);
+}
+
+/// A tool's script names a singleton as the application's code does,
+/// though no compiler saw it: in an object and in the global scope, a
+/// file one no code has read yet, and a native one.
+#[test]
+fn a_tool_script_names_singletons_by_their_type() {
+    let h = with_settings();
+    h.files(&[
+        ("ui/Theme", THEME),
+        (
+            "ui/Tints",
+            "pragma Singleton\nimport QtQuick\nQtObject { property int deep: 9 }\n",
+        ),
+        (
+            "ui/Main",
+            "import QtQuick\nItem { property int base: Theme.base }\n",
+        ),
+    ]);
+    let root = h.engine.create_from_url("ui/Main", None, vec![]).unwrap();
+    let eval = |this, src| {
+        h.engine
+            .eval_js_in(this, src, Duration::from_secs(1), [4, 16, 64, 64, 1024])
+            .unwrap()
+    };
+    assert!(eval(Some(root), "Theme.twice + base").contains("\"value\":12"));
+    assert!(eval(None, "Theme.base").contains("\"value\":4"));
+    assert!(eval(None, "Tints.deep").contains("\"value\":9"));
+    assert!(eval(None, "Settings.louder(2)").contains("\"value\":2"));
+    assert!(eval(None, "Nowhere").contains("ReferenceError"));
+    // Not a type's name, so not a singleton's either.
+    assert!(eval(None, "typeof base").contains("\"value\":\"undefined\""));
 }

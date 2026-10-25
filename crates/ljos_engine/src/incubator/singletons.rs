@@ -33,7 +33,7 @@ use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ljos_ir::TypeRef;
+use ljos_ir::{Arg, TypeRef};
 use ljos_js::JsValue;
 
 use super::Instance;
@@ -453,6 +453,74 @@ impl Engine {
             }
         };
         self.singleton_object(&ty, Some(ctx))
+    }
+
+    /// The singleton `name` is to a script no compiler saw, run by a tool
+    /// in `ctx` (none for the global scope) as code written in the
+    /// application's files: the type a loaded file resolved the name to,
+    /// the file `from` first; else a native singleton of the name; else a
+    /// file that says `pragma Singleton`, named `name` in the directory of
+    /// a loaded file. A singleton for each window needs `ctx`.
+    pub(crate) fn singleton_for_tool(
+        &self,
+        name: &str,
+        ctx: Option<ContextId>,
+        from: Option<&str>,
+    ) -> Option<ObjectId> {
+        fn singleton(arg: &Arg) -> Option<&TypeRef> {
+            match arg {
+                Arg::Singleton(t) => Some(t),
+                Arg::Context {
+                    fallback: Some(f), ..
+                } => singleton(f),
+                _ => None,
+            }
+        }
+        // A type's name: anything else is a name of the script's own.
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return None;
+        }
+        let mut files: Vec<_> = self.inner.loader.borrow().files.values().cloned().collect();
+        files.sort_by(|a, b| {
+            (Some(a.key.as_str()) != from, &a.key).cmp(&(Some(b.key.as_str()) != from, &b.key))
+        });
+        let resolved = files.iter().find_map(|f| {
+            f.ir.exprs
+                .iter()
+                .flat_map(|b| &b.params)
+                .find_map(|p| (p.name == name).then(|| singleton(&p.arg)).flatten())
+                .cloned()
+        });
+        let ty = resolved.or_else(|| {
+            let all = self.extension::<Singletons>();
+            let natives = all.natives.borrow();
+            let (module, _) = natives.keys().find(|(_, n)| n == name)?;
+            Some(TypeRef::Native {
+                module: module.clone(),
+                name: name.to_owned(),
+            })
+        });
+        if let Some(ty) = ty {
+            let handle = self.singleton_handle(&ty, ctx);
+            if ctx.is_none() && self.extension::<Singletons>().entries.borrow()[handle].window {
+                return None;
+            }
+            return self.singleton_made(handle);
+        }
+        let source = self.inner.loader.borrow().source.clone()?;
+        let mut seen = Vec::new();
+        files.iter().find_map(|f| {
+            let key = match f.key.rsplit_once('/') {
+                Some((dir, _)) => format!("{dir}/{name}"),
+                None => name.to_owned(),
+            };
+            if seen.contains(&key) || !source.contains(&key) {
+                return None;
+            }
+            let found = self.singleton_by_name("", &key);
+            seen.push(key);
+            found
+        })
     }
 
     /// The files the engine loads from changed: a QML singleton is looked
