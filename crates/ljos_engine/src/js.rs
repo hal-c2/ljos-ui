@@ -2418,6 +2418,85 @@ const PRELUDE: &str = r##"
     darkBlue: 15, darkCyan: 16, darkMagenta: 17, darkYellow: 18, transparent: 19,
   };
   Object.defineProperty(g, "Qt", { value: Qt, writable: true, configurable: true });
+
+  // JSON.stringify as Qt's: a QObject is written with the properties a
+  // for-in sees, in its order, its signals and methods aside; walking into
+  // an object it is already inside throws, unless the replacer keeps the
+  // walk out of it; a list of keys for a replacer is not heeded. Data with
+  // no QObject in it takes the engine's own path: a first pass stops at
+  // the first QObject, and only then a walk that tracks its place runs.
+  {
+    const realStringify = JSON.stringify;
+    const STOP = {};
+    // 1: the first pass; 2: the walk.
+    let mode = 0;
+    const met = new WeakSet();
+    // What was written in place of a QObject, and the holder of what was written.
+    const standsFor = new WeakMap();
+    const holderOf = new WeakMap();
+    // An item's anchor lines are [item, edge] here, an opaque value in Qt,
+    // which writes them as {}.
+    const LINES = new Set(["left", "right", "top", "bottom", "horizontalCenter", "verticalCenter", "baseline"]);
+    const isLine = (k, v) =>
+      LINES.has(k) && Array.isArray(v) && v.length === 2 && Qt.isQtObject(v[0]) && typeof v[1] === "number";
+    const snapshot = (o) => {
+      const s = {};
+      for (const k in o) {
+        // A grouped property's own keys ("anchors.left") are not the object's.
+        if (k.includes(".")) continue;
+        let v;
+        try { v = o[k]; } catch (e) { continue; }
+        if (typeof v === "function") continue;
+        if (isLine(k, v)) v = {};
+        else if (Object.prototype.toString.call(v) === "[object QML List]") v = Array.from(v);
+        s[k] = v;
+      }
+      return s;
+    };
+    Object.defineProperty(g, "__ljos_qobjectJSON", {
+      value(o) {
+        if (mode === 1) throw STOP;
+        if (mode === 2) { met.add(o); return o; }
+        return snapshot(o);
+      },
+    });
+    const circular = () => new TypeError("Cannot convert circular structure to JSON");
+    const walk = (replacer) => function (key, value) {
+      const self = standsFor.get(this);
+      const v = replacer ? replacer.call(self ?? this, key, value) : value;
+      if (v === null || typeof v !== "object") return v;
+      for (let h = this; h !== undefined; h = holderOf.get(h))
+        if ((standsFor.get(h) ?? h) === v) throw circular();
+      if (!met.has(v) && Qt.isQtObject(v) && typeof v.toJSON === "function") v.toJSON(key);
+      if (!met.has(v)) {
+        holderOf.set(v, this);
+        return v;
+      }
+      const s = snapshot(v);
+      standsFor.set(s, v);
+      holderOf.set(s, this);
+      return s;
+    };
+    const stringify = function stringify(value, replacer, space) {
+      const f = typeof replacer === "function" ? replacer : undefined;
+      const before = mode;
+      try {
+        if (!f) {
+          mode = 1;
+          try {
+            return realStringify(value, undefined, space);
+          } catch (e) {
+            if (e !== STOP) throw e instanceof TypeError && e.message === "circular reference" ? circular() : e;
+          }
+        }
+        mode = 2;
+        return realStringify(value, walk(f), space);
+      } finally {
+        mode = before;
+      }
+    };
+    Object.defineProperty(JSON, "stringify", { value: stringify, writable: true, configurable: true });
+  }
 })();
 "##;
 

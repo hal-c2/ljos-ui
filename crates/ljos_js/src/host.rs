@@ -3409,20 +3409,24 @@ fn install_to_string<'js>(
 }
 
 /// Gives `proto` a `toJSON` for `JSON.stringify` of an object of its type.
-/// On Qt an object is written with its properties, and an object whose
-/// parent or children lead back to it throws for the circular structure.
-/// One that does not is written as it is.
+/// On Qt an object is written with its properties. The prelude's
+/// `__ljos_qobjectJSON` writes them when there is one; without it an
+/// object whose parent or children lead back to it throws for the circular
+/// structure, and one that does not is written as it is.
 fn install_to_json<'js>(ctx: &Ctx<'js>, proto: &Object<'js>) -> rquickjs::Result<()> {
     let to_json = Function::new(
         ctx.clone(),
-        |ctx: Ctx<'js>, This(this): This<Object<'js>>| -> rquickjs::Result<Object<'js>> {
+        |ctx: Ctx<'js>, This(this): This<Object<'js>>| -> rquickjs::Result<Value<'js>> {
+            if let Ok(write) = ctx.globals().get::<_, Function<'js>>("__ljos_qobjectJSON") {
+                return write.call((this,));
+            }
             if in_a_cycle(&this) {
                 return Err(rquickjs::Exception::throw_type(
                     &ctx,
                     "Cannot convert circular structure to JSON",
                 ));
             }
-            Ok(this)
+            Ok(this.into_value())
         },
     )?
     .with_name("toJSON")?;
