@@ -187,13 +187,15 @@ pub struct NoNetwork;
 
 impl Fetcher for NoNetwork {
     fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
-        Err(FetchError::NoNetwork(url.to_owned()))
+        Err(FetchError::NoNetwork(ljos_engine::diagnostic_url(url)))
     }
 
     fn request(&self, request: &Request) -> Result<Response, FetchError> {
         // The default would call a POST unsendable; here the network
         // itself is what is missing, whatever the method.
-        Err(FetchError::NoNetwork(request.url.clone()))
+        Err(FetchError::NoNetwork(ljos_engine::diagnostic_url(
+            &request.url,
+        )))
     }
 }
 

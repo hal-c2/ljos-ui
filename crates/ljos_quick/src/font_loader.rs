@@ -155,7 +155,10 @@ fn loaded(e: &Engine, me: ObjectId, url: &str, bytes: Option<Vec<u8>>) {
         e.log(
             LogLevel::Warning,
             CATEGORY,
-            format!("QML FontLoader: Cannot load font: \"{url}\""),
+            format!(
+                "QML FontLoader: Cannot load font: \"{}\"",
+                ljos_engine::diagnostic_url(url)
+            ),
         );
         e.batch(|| {
             set(e, me, FontLoader::NAME.index, Value::String(Atom::EMPTY));

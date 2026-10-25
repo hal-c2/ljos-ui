@@ -67,11 +67,13 @@ impl HttpFetcher {
 
 impl Fetcher for HttpFetcher {
     fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
-        let failed = |why: String| FetchError::Failed(format!("fetching {url} failed: {why}"));
+        let display_url = ljos_engine::diagnostic_url(url);
+        let failed =
+            |why: String| FetchError::Failed(format!("fetching {display_url} failed: {why}"));
         let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
         if !matches!(scheme.as_deref(), Some("http" | "https")) {
             return Err(FetchError::Failed(format!(
-                "cannot fetch {url}: only http and https URLs can be fetched"
+                "cannot fetch {display_url}: only http and https URLs can be fetched"
             )));
         }
         let response = self
@@ -102,11 +104,13 @@ impl Fetcher for HttpFetcher {
     }
 
     fn stream(&self, url: &str) -> Result<Incoming, FetchError> {
-        let failed = |why: String| FetchError::Failed(format!("fetching {url} failed: {why}"));
+        let display_url = ljos_engine::diagnostic_url(url);
+        let failed =
+            |why: String| FetchError::Failed(format!("fetching {display_url} failed: {why}"));
         let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
         if !matches!(scheme.as_deref(), Some("http" | "https")) {
             return Err(FetchError::Failed(format!(
-                "cannot fetch {url}: only http and https URLs can be fetched"
+                "cannot fetch {display_url}: only http and https URLs can be fetched"
             )));
         }
         // A stream may never end, so only reaching the server and its
@@ -140,11 +144,13 @@ impl Fetcher for HttpFetcher {
     fn request(&self, request: &Request) -> Result<Response, FetchError> {
         let url = &request.url;
         let method = request.method;
-        let failed = |why: String| FetchError::Failed(format!("{method} {url} failed: {why}"));
+        let display_url = ljos_engine::diagnostic_url(url);
+        let failed =
+            |why: String| FetchError::Failed(format!("{method} {display_url} failed: {why}"));
         let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
         if !matches!(scheme.as_deref(), Some("http" | "https")) {
             return Err(FetchError::Failed(format!(
-                "cannot fetch {url}: only http and https URLs can be fetched"
+                "cannot fetch {display_url}: only http and https URLs can be fetched"
             )));
         }
         if request.body.len() as u64 > self.max_bytes {
@@ -214,16 +220,18 @@ impl Fetcher for HttpFetcher {
 /// Anything else is said by `failed`.
 fn transport(url: &str, err: ureq::Error, failed: impl Fn(String) -> FetchError) -> FetchError {
     match &err {
+        ureq::Error::BadUri(_) => failed("invalid request URL".to_owned()),
+        ureq::Error::RequireHttpsOnly(_) => failed("HTTPS is required".to_owned()),
         ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => {
             FetchError::Failed("Connection refused".to_owned())
         }
         ureq::Error::HostNotFound => {
-            let host = url
-                .split_once("://")
-                .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(rest))
-                .map(|authority| authority.rsplit('@').next().unwrap_or(authority))
-                .map(|host| host.rsplit_once(':').map_or(host, |(h, _)| h))
-                .unwrap_or(url);
+            let display_url = ljos_engine::diagnostic_url(url);
+            let parsed = display_url.parse::<ureq::http::Uri>().ok();
+            let host = parsed
+                .as_ref()
+                .and_then(|url| url.host())
+                .unwrap_or("[invalid host]");
             FetchError::Failed(format!("Host {host} not found"))
         }
         ureq::Error::Rustls(tls) => handshake(tls),
@@ -358,6 +366,63 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         )
+    }
+
+    #[test]
+    fn diagnostic_failures_never_expose_url_credentials() {
+        for (response, cap, expected) in [
+            (
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_owned(),
+                1024,
+                "HTTP 404",
+            ),
+            (ok("too large"), 2, "larger than 2 bytes"),
+            ("not HTTP\r\n\r\n".to_owned(), 1024, "failed"),
+        ] {
+            let plain = serve(vec![response]);
+            let url = plain.replace("http://", "http://private-user:private-password@")
+                + "?token=private-token#private-fragment";
+            let err = HttpFetcher::with_limits(Duration::from_secs(5), cap, 0)
+                .fetch(&url)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(expected), "{err}");
+            assert!(err.contains(&plain), "{err}");
+            for secret in [
+                "private-user",
+                "private-password",
+                "private-token",
+                "private-fragment",
+            ] {
+                assert!(!err.contains(secret), "{err}");
+            }
+        }
+        let url =
+            "https://private-user:private-password@example.com/file?private-token#private-fragment";
+        let (plain, requests) = serve_capturing(vec![ok("ok")]);
+        let requested = plain + "?token=private-token";
+        assert_eq!(HttpFetcher::new().fetch(&requested).unwrap(), b"ok");
+        assert!(requests.lock().unwrap()[0].contains("/first?token=private-token"));
+        let request = Request::get(url).body(vec![0; 3]);
+        let err = HttpFetcher::with_limits(Duration::from_secs(5), 2, 0)
+            .request(&request)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("https://example.com/file"), "{err}");
+        assert!(!err.contains("private-"), "{err}");
+        assert_eq!(request.url, url);
+    }
+
+    #[test]
+    fn diagnostic_sanitizing_does_not_change_the_request_target() {
+        let (plain, seen) = serve_capturing(vec![ok("hello")]);
+        let url = plain.replace("http://", "http://private-user:private-password@")
+            + "?token=private-token#private-fragment";
+        HttpFetcher::with_limits(Duration::from_secs(5), 1024, 0)
+            .fetch(&url)
+            .unwrap();
+        assert!(seen.lock().unwrap()[0].starts_with("GET /first?token=private-token HTTP/1.1"));
     }
 
     #[test]

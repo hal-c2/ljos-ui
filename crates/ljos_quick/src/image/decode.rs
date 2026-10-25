@@ -107,7 +107,7 @@ pub enum LoadError {
 impl LoadError {
     fn decode(url: &str, reason: impl Into<String>) -> Self {
         Self::Decode {
-            url: url.to_owned(),
+            url: ljos_engine::diagnostic_url(url),
             reason: reason.into(),
         }
     }
@@ -2567,5 +2567,22 @@ mod tests {
         assert!(!fits((u32::MAX, u32::MAX)), "a count that overflows");
         let png = claiming(&png_of(1, 1, png::ColorType::Rgba, &[0; 4]), 8192, 8192);
         assert_eq!(cost(&png, Request::default()), MOST_DECODE_COST);
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    #[test]
+    fn decode_error_keeps_only_the_public_resource_url() {
+        let error = super::load_bytes(
+            "https://private-user:private-password@example.com/image.png?private-token#private-fragment",
+            b"not an image",
+            super::Request::default(),
+        )
+        .unwrap_err();
+        for text in [error.to_string(), format!("{error:?}")] {
+            assert!(text.contains("https://example.com/image.png"), "{text}");
+            assert!(!text.contains("private-"), "{text}");
+        }
     }
 }

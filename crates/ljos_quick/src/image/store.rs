@@ -1319,7 +1319,7 @@ impl ImageStore {
                 }))
                 .unwrap_or_else(|_| {
                     Err(LoadError::Decode {
-                        url: key.url.clone(),
+                        url: ljos_engine::diagnostic_url(&key.url),
                         reason: "the decoder failed".to_owned(),
                     })
                 })?;
@@ -1499,7 +1499,8 @@ fn fetch(fetcher: &dyn Fetcher, url: &str) -> Result<Vec<u8>, LoadError> {
     match fetcher.request(&ljos_platform::Request::get(url)) {
         Ok(reply) if reply.ok() => Ok(reply.body),
         Ok(reply) => Err(LoadError::Network(format!(
-            "Error transferring {url} - server replied: {}",
+            "Error transferring {} - server replied: {}",
+            ljos_engine::diagnostic_url(url),
             reason_phrase(reply.status)
         ))),
         Err(err) => Err(LoadError::Network(err.to_string())),

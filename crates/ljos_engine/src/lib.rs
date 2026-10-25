@@ -51,6 +51,8 @@ mod delayed_errors;
 mod delegates;
 mod describe;
 mod devtools;
+mod diagnostic_url;
+pub use diagnostic_url::diagnostic_url;
 mod engine;
 mod error;
 mod fault;
