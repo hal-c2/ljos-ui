@@ -367,11 +367,13 @@ fn end(engine: &Engine, att: ObjectId, dropping: bool, how: WriteKind) -> i32 {
     if !st.active.get() {
         return drop_area::IGNORE_ACTION;
     }
+    let mut took = None;
     let action = if dropping {
         // Qt tells the last move before the drop.
         if st.pending.get() {
             flush(engine, att, &st);
         }
+        took = st.tracker.target();
         match offer(engine, att) {
             Some(o) => drop_area::drop(engine, &st.tracker, &o),
             None => {
@@ -385,7 +387,10 @@ fn end(engine: &Engine, att: ObjectId, dropping: bool, how: WriteKind) -> i32 {
     };
     st.active.set(false);
     st.pending.set(false);
-    show_target(engine, att, &st);
+    // An area that took the drop stays the target, as in Qt.
+    if action == drop_area::IGNORE_ACTION || took.is_none() {
+        show_target(engine, att, &st);
+    }
     show_active(engine, att, false, how);
     if st.automatic.replace(false) {
         let _ = engine.emit_by_name(att, "dragFinished", &[Value::Int(action)]);

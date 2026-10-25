@@ -4,9 +4,12 @@
 //!
 //! What an area hears, and in which order, was read on qml6
 //! (`features/input/drag-drop.feature`): `entered` comes before
-//! `containsDrag` turns true; an area that sets `drag.accepted = false` in
-//! `entered` hears nothing more of that drag; a drop is told with
-//! `dropped` and no `exited`.
+//! `containsDrag` turns true; a drop is told with `dropped` and no
+//! `exited`. The areas under the drag are asked from the top down until
+//! one takes it (`features/input/drag-turned-down.feature`): one that sets
+//! `drag.accepted = false` in `entered` passes it on, and hears nothing
+//! more of it unless an area beneath holds it, when every move asks the
+//! areas above that one again.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -251,9 +254,8 @@ pub(crate) struct Offer {
 pub(crate) struct Tracker {
     /// The area that took the drag in `entered`.
     over: Cell<Option<ObjectId>>,
-    /// The area that turned it down: it hears no more of the drag while
-    /// the drag stays over it.
-    refused: Cell<Option<ObjectId>>,
+    /// The areas that turned it down and that it is still over.
+    refused: RefCell<Vec<ObjectId>>,
 }
 
 impl Tracker {
@@ -322,21 +324,22 @@ fn stack_key(engine: &Engine, item: ObjectId) -> Vec<(f64, usize)> {
     key
 }
 
-/// The topmost area under `pos` that would take a drag with `keys`.
-fn area_at(
+/// The areas under `pos` that would take a drag with `keys`, the topmost
+/// first.
+fn areas_at(
     engine: &Engine,
     pos: kurbo::Point,
     window: Option<ObjectId>,
     source: Option<ObjectId>,
     keys: &[String],
-) -> Option<ObjectId> {
+) -> Vec<ObjectId> {
     let reg = engine.extension::<Areas>();
     let areas: Vec<ObjectId> = {
         let mut a = reg.0.borrow_mut();
         a.retain(|o| engine.is_alive(*o));
         a.clone()
     };
-    areas
+    let mut under: Vec<(Vec<(f64, usize)>, ObjectId)> = areas
         .into_iter()
         .filter(|&a| {
             is_a::<DropArea>(engine, a)
@@ -351,8 +354,9 @@ fn area_at(
                 && source.is_none_or(|s| !crate::focus::tree::is_under(engine, a, s))
         })
         .map(|a| (stack_key(engine, a), a))
-        .max_by(|(x, _), (y, _)| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(_, a)| a)
+        .collect();
+    under.sort_by(|(x, _), (y, _)| y.partial_cmp(x).unwrap_or(std::cmp::Ordering::Equal));
+    under.into_iter().map(|(_, a)| a).collect()
 }
 
 fn put(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex, v: Value) {
@@ -457,9 +461,10 @@ fn exit(engine: &Engine, area: ObjectId) {
 /// The drag is at `offer.pos`: the areas it left and entered are told,
 /// and the one it is over hears where it is.
 pub(crate) fn track(engine: &Engine, t: &Tracker, offer: &Offer) {
-    let now = area_at(engine, offer.pos, offer.window, offer.source, &offer.keys);
+    let under = areas_at(engine, offer.pos, offer.window, offer.source, &offer.keys);
+    t.refused.borrow_mut().retain(|a| under.contains(a));
     let over = t.over.get().filter(|a| engine.is_alive(*a));
-    if let Some(area) = now.filter(|a| Some(*a) == over) {
+    if let Some(area) = over.filter(|a| under.first() == Some(a)) {
         show_position(
             engine,
             area,
@@ -468,43 +473,46 @@ pub(crate) fn track(engine: &Engine, t: &Tracker, offer: &Offer) {
         emit_event(engine, area, "positionChanged", offer);
         return;
     }
-    if now.is_some() && now == t.refused.get() {
-        return;
-    }
-    t.refused.set(None);
     if let Some(area) = over {
+        // Left, or under an area above that turned the drag down: the
+        // areas are asked again from the top, as Qt does.
         t.over.set(None);
+        t.refused.borrow_mut().clear();
         exit(engine, area);
     }
     t.over.set(None);
-    let Some(area) = now else { return };
-    show_position(
-        engine,
-        area,
-        crate::handlers::local(engine, area, offer.pos),
-    );
-    show_source(engine, area, offer.source);
-    let (accepted, _) = emit_event(engine, area, "entered", offer);
-    if !engine.is_alive(area) {
-        return;
-    }
-    if accepted {
-        t.over.set(Some(area));
-        put(
+    for area in under {
+        if !engine.is_alive(area) || t.refused.borrow().contains(&area) {
+            continue;
+        }
+        show_position(
             engine,
             area,
-            DropArea::CONTAINS_DRAG.index,
-            Value::Bool(true),
+            crate::handlers::local(engine, area, offer.pos),
         );
-    } else {
-        t.refused.set(Some(area));
+        show_source(engine, area, offer.source);
+        let (accepted, _) = emit_event(engine, area, "entered", offer);
+        if !engine.is_alive(area) {
+            continue;
+        }
+        if accepted {
+            t.over.set(Some(area));
+            put(
+                engine,
+                area,
+                DropArea::CONTAINS_DRAG.index,
+                Value::Bool(true),
+            );
+            return;
+        }
+        t.refused.borrow_mut().push(area);
         show_source(engine, area, None);
     }
 }
 
 /// The drag ended without a drop: the area it was over hears `exited`.
 pub(crate) fn leave(engine: &Engine, t: &Tracker) {
-    t.refused.set(None);
+    t.refused.borrow_mut().clear();
     if let Some(area) = t.over.take() {
         exit(engine, area);
     }
@@ -513,7 +521,7 @@ pub(crate) fn leave(engine: &Engine, t: &Tracker) {
 /// The drag was let go at `offer.pos`. What the area that took it did with
 /// it; `Qt.IgnoreAction` when none did.
 pub(crate) fn drop(engine: &Engine, t: &Tracker, offer: &Offer) -> i32 {
-    t.refused.set(None);
+    t.refused.borrow_mut().clear();
     let Some(area) = t.over.take().filter(|a| engine.is_alive(*a)) else {
         return IGNORE_ACTION;
     };
