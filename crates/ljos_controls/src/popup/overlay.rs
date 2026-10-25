@@ -5,8 +5,9 @@
 //! `Overlay.overlay` needs it: for a `Window`, that can be while its tree
 //! is still made, before a scene shows it. It is
 //! the layer of its scene (`ljos_quick::set_layer`): drawn over the root
-//! item, asked first by the pointer, and not a child of the root, which
-//! may be a positioner. Its children are the items of the popups in the
+//! item, asked first by the pointer, and not among the root's children,
+//! as the root may be a positioner; its `parent` reads the root, as in Qt.
+//! Its children are the items of the popups in the
 //! order they were opened, each shade right before the popup it is for.
 //!
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-overlay.html and
@@ -115,6 +116,17 @@ pub(super) fn ensure(engine: &Engine, top: ObjectId) -> Result<ObjectId, EngineE
             engine.write(o, prop, v, WriteKind::Imperative)?;
         }
         engine.complete(o)?;
+        // QML reads the window's item as its parent, as in Qt, where it
+        // is that item's last child; here it stays out of the item's
+        // `children`, which a positioner or a layout would place it by.
+        // After completion, which would make the declared parent the
+        // item's parent in the tree too.
+        engine.write_internal(
+            o,
+            Item::PARENT.index,
+            Value::Object(top),
+            WriteKind::Imperative,
+        )?;
         // A popup that is destroyed while open leaves without a word.
         engine.effect_in(o, move |e| {
             let _ = e.read(o, Item::CHILDREN.index);

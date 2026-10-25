@@ -918,23 +918,20 @@ fn window_for(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
 
 /// Binds what `Window.` tells an item of its window beyond focus, which
 /// `ljos_quick` binds. A window that is no `Window` (the top of what a
-/// scene shows) is its own content item and reads as shown while it is.
+/// scene shows) reads as shown while it is.
+///
+/// The content item is the item every other item of the window hangs
+/// from, which the overlay names as its parent: the window itself. For an
+/// `ApplicationWindow` that is not its `contentItem`, which lies between
+/// the header and the footer (Qt 6.11.2 reads the same).
 fn bind_attached(engine: &Engine, item: ObjectId, att: ObjectId) -> Result<(), EngineError> {
     let e = engine;
     e.bind_initial(att, WindowAttached::WINDOW.index, move |e| {
         window_for(e, item).map_or(Value::Null, Value::Object)
     })?;
-    e.bind_initial(
-        att,
-        WindowAttached::CONTENT_ITEM.index,
-        move |e| match window_for(e, item) {
-            Some(w) if is_a::<Window>(e, w) => {
-                object(e, w, Window::CONTENT_ITEM.index).map_or(Value::Null, Value::Object)
-            }
-            Some(w) => Value::Object(w),
-            None => Value::Null,
-        },
-    )?;
+    e.bind_initial(att, WindowAttached::CONTENT_ITEM.index, move |e| {
+        window_for(e, item).map_or(Value::Null, Value::Object)
+    })?;
     for (prop, size) in [
         (WindowAttached::WIDTH.index, Item::WIDTH.index),
         (WindowAttached::HEIGHT.index, Item::HEIGHT.index),

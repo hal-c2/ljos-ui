@@ -855,10 +855,12 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
                 Value::Rect(std::sync::Arc::new(children_rect(e, obj)))
             })
         })?;
-        // Assigning `parent` reparents the item.
+        // Assigning `parent` reparents the item. A layer's `parent` names
+        // the item it lies above, which it is drawn over and not in.
         engine.watch(obj, Item::PARENT.index, move |e, v| {
             let p = v.as_object();
             if e.visual_parent(obj) != p
+                && crate::layer::layer_host(e, obj).is_none()
                 && let Err(err) = crate::tree::set_parent_item(e, obj, p)
             {
                 e.log(

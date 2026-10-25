@@ -111,6 +111,69 @@ Feature: Overlay
         PASS   : Stays::test_stays()
         """
 
+    @api-QtQuick.Window.contentItem
+    Scenario: The overlay's parent is the item the window's items hang from
+      Given the file "tst_overlay_parent.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import QtTest
+        Item {
+          id: root
+          width: 300; height: 200
+          TestCase {
+            name: "OverlayParent"
+            when: windowShown
+            function test_parent() {
+              var ov = root.Overlay.overlay
+              compare(ov.parent, root.Window.contentItem)
+              compare(ov.parent.width, 300)
+              var at = ov.mapToItem(root, 0, 0)
+              compare([at.x, at.y, ov.width, ov.height], [0, 0, 300, 200])
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : OverlayParent::test_parent()
+        """
+
+    # qmltestrunner takes an Item root only, so the oracle cannot run this
+    # file; qml6 reads the same of an ApplicationWindow it shows (6.11.2,
+    # offscreen).
+    @ljos-only @api-QtQuick.Window.contentItem
+    Scenario: In an application window the overlay's parent holds the bars too
+      Given the file "tst_overlay_bars.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import QtTest
+        ApplicationWindow {
+          id: w
+          width: 300; height: 200
+          visible: true
+          header: Item { height: 20 }
+          Item { id: a }
+          TestCase {
+            name: "OverlayBars"
+            when: windowShown
+            function test_parent() {
+              var ov = a.Overlay.overlay
+              compare(ov.parent, a.Window.contentItem)
+              verify(a.Window.contentItem !== w.contentItem)
+              compare([ov.y, ov.height], [0, 200])
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : OverlayBars::test_parent()
+        """
+
   Rule: A popup that dims has a shade under it
 
     Background:
