@@ -958,8 +958,18 @@ fn extract(
         for b in &boxes {
             vertical = vertical.with_box(f64::from(b.height), b.align);
         }
+        // A line holding only an inline object has no text, and its range
+        // comes back inverted (`usize::MAX..0`): it stands, empty, where
+        // the line before it ended.
+        let range = line.text_range();
+        let range = if range.start > range.end {
+            let at = out.last().map_or(0, |l: &RawLine| l.range.end);
+            at..at
+        } else {
+            range
+        };
         out.push(RawLine {
-            range: line.text_range(),
+            range,
             width: match justify_width {
                 Some(w) if justified => w,
                 _ => width,
