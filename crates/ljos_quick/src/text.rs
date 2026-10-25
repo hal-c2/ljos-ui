@@ -126,8 +126,8 @@ pub fn font_families() -> Vec<String> {
 /// and Return activates the one it is on; the links are children of the
 /// `Text` in the accessibility tree.
 ///
-/// Not implemented: `fontSizeMode`. `renderType` is kept and
-/// not applied; there is one way of drawing text.
+/// `fontSizeMode` fits plain text; text with markup keeps its size.
+/// `renderType` is kept and not applied; there is one way of drawing text.
 /// `font.capitalization` applies to plain text only; small capitals are a
 /// small letter's capital at seven tenths of the size, as Qt draws them.
 #[derive(Debug, QmlObject)]
@@ -174,6 +174,16 @@ pub struct Text {
     /// At most this many lines are shown.
     #[qml(notify, reset)]
     pub maximum_line_count: i32,
+    /// `Text.FixedSize` (0), or the room the font shrinks to fit:
+    /// `HorizontalFit` (1), `VerticalFit` (2) or `Fit` (3), both.
+    #[qml(notify, enumeration = "FontSizeMode")]
+    pub font_size_mode: i32,
+    /// The smallest size a fitted font sized in pixels shrinks to.
+    #[qml(notify)]
+    pub minimum_pixel_size: i32,
+    /// The smallest size a fitted font sized in points shrinks to.
+    #[qml(notify)]
+    pub minimum_point_size: i32,
     #[qml(notify)]
     pub line_height: f64,
     /// [`crate::enums::line_height_mode`].
@@ -244,6 +254,18 @@ fn text_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
         .collect(),
     ));
     table.push((
+        "FontSizeMode",
+        [
+            ("FixedSize", font_size_mode::FIXED_SIZE),
+            ("HorizontalFit", font_size_mode::HORIZONTAL_FIT),
+            ("VerticalFit", font_size_mode::VERTICAL_FIT),
+            ("Fit", font_size_mode::FIT),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, i64::from(v)))
+        .collect(),
+    ));
+    table.push((
         "TextStyle",
         [("Normal", 0), ("Outline", 1), ("Raised", 2), ("Sunken", 3)]
             .into_iter()
@@ -286,6 +308,10 @@ impl Default for Text {
             elide: elide::NONE,
             // Qt's "no limit".
             maximum_line_count: i32::MAX,
+            font_size_mode: font_size_mode::FIXED_SIZE,
+            // Qt's, as documented.
+            minimum_pixel_size: 12,
+            minimum_point_size: 12,
             line_height: 1.0,
             line_height_mode: line_height_mode::PROPORTIONAL,
             render_type: 0,
@@ -437,6 +463,14 @@ pub(crate) fn init_text(engine: &Engine, obj: ObjectId) -> Result<(), EngineErro
     )
 }
 
+/// `Text.fontSizeMode`.
+pub mod font_size_mode {
+    pub const FIXED_SIZE: i32 = 0;
+    pub const HORIZONTAL_FIT: i32 = 1;
+    pub const VERTICAL_FIT: i32 = 2;
+    pub const FIT: i32 = 3;
+}
+
 /// A `Text`'s side paddings, in the order `TextInputs` keeps them.
 const SIDES: [ljos_engine::PropIndex; 4] = [
     Text::LEFT_PADDING.index,
@@ -584,6 +618,20 @@ pub struct TextInputs {
     /// What a [`SelectionScope`] has selected of the item, in the offsets
     /// of its document, and the colour behind it.
     pub selection: Option<(std::ops::Range<usize>, Color)>,
+    /// The room `fontSizeMode` fits the font to, when it does.
+    pub fit: Option<Fit>,
+}
+
+/// Where a font is fitted to, inside the padding.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fit {
+    /// The width the text fits in without wrapping (`HorizontalFit`), or
+    /// as it wraps (`Fit` of text that wraps).
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    /// `minimumPixelSize`, or `minimumPointSize` in pixels for a font
+    /// sized in points.
+    pub smallest: f64,
 }
 
 /// How `text` is read under a `textFormat` (measured on qml6: `AutoText`
@@ -718,6 +766,7 @@ impl TextInputs {
         } else {
             None
         };
+        let fit = read_fit(engine, obj, pad, &own);
         let top = v_align & (align::BOTTOM | align::V_CENTER) == 0;
         let color = |v: Value, or: Color| match v {
             Value::Color(c) => c,
@@ -775,6 +824,7 @@ impl TextInputs {
             rich: document.map(|(d, _)| d),
             focused,
             selection,
+            fit,
             style: shown_text_style(engine, &font.unwrap_or_default()),
             h_align,
             v_align,
@@ -821,19 +871,68 @@ impl TextInputs {
             && self.pad == other.pad
             && self.v_align == other.v_align
             && self.align_height == other.align_height
+            && self.fit == other.fit
     }
 
+    /// The layout at the size the text is drawn at.
     fn layout(&self, te: &mut TextEngine) -> Arc<TextLayout> {
+        let style = self.fitted(te);
+        self.layout_at(te, &style)
+    }
+
+    /// The font at the largest whole pixel size, up to its own, at which
+    /// the text fits [`Self::fit`]; the smallest size if none does.
+    fn fitted(&self, te: &mut TextEngine) -> std::borrow::Cow<'_, TextStyle> {
+        use std::borrow::Cow;
+        let Some(fit) = &self.fit else {
+            return Cow::Borrowed(&self.style);
+        };
+        let at = |px: f64| TextStyle {
+            pixel_size: px as f32,
+            ..self.style.clone()
+        };
+        let fits = |te: &mut TextEngine, style: &TextStyle| {
+            let l = self.layout_at(te, style);
+            let wide = if self.params.wrap != WrapMode::NoWrap && fit.height.is_some() {
+                l.content_width
+            } else {
+                l.natural_width
+            };
+            // A height is room up to the whole pixel above it: on qml6 a
+            // line 23 px high fits in 22.5.
+            fit.width.is_none_or(|w| wide <= w)
+                && fit.height.is_none_or(|h| l.implicit_height <= h.ceil())
+        };
+        let own = f64::from(self.style.pixel_size);
+        let smallest = fit.smallest.max(1.0);
+        if smallest >= own || fits(te, &self.style) {
+            return Cow::Borrowed(&self.style);
+        }
+        let (mut low, mut high) = (smallest.ceil(), own.ceil() - 1.0);
+        let mut best = smallest;
+        while low <= high {
+            let mid = ((low + high) / 2.0).floor();
+            if fits(te, &at(mid)) {
+                best = mid;
+                low = mid + 1.0;
+            } else {
+                high = mid - 1.0;
+            }
+        }
+        Cow::Owned(at(best))
+    }
+
+    fn layout_at(&self, te: &mut TextEngine, style: &TextStyle) -> Arc<TextLayout> {
         if self.small_caps {
-            let (drawn, spans) = Ranged::small_caps(self.text.as_str(), &self.style);
+            let (drawn, spans) = Ranged::small_caps(self.text.as_str(), style);
             let ranged = Ranged {
                 spans: &spans,
                 strut: true,
                 ..Ranged::NONE
             };
-            return te.layout_ranged(&drawn, &self.style, &ranged, &self.params);
+            return te.layout_ranged(&drawn, style, &ranged, &self.params);
         }
-        te.layout(self.text.as_str(), &self.style, &self.params)
+        te.layout(self.text.as_str(), style, &self.params)
     }
 
     /// Lays the text out and says what it measures.
@@ -842,17 +941,65 @@ impl TextInputs {
             return d.layout(te, self);
         }
         let l = self.layout(te);
+        // A fitted text wants the room of its font's own size.
+        let wants = match &self.fit {
+            Some(_) => self.layout_at(te, &self.style),
+            None => Arc::clone(&l),
+        };
         DocMetrics {
-            natural_width: l.natural_width,
+            natural_width: wants.natural_width,
             content_width: l.content_width,
             content_height: l.content_height,
-            implicit_height: l.implicit_height,
+            implicit_height: wants.implicit_height,
             line_count: l.line_count(),
             truncated: l.truncated,
             baseline: l.baseline,
             rtl: l.rtl,
         }
     }
+}
+
+/// The room `fontSizeMode` fits the font to (tracked): the item's own
+/// width and height, inside the padding, as far as the mode asks for
+/// them. None for a fixed size or an item that has neither.
+fn read_fit(
+    engine: &Engine,
+    obj: ObjectId,
+    pad: [f64; 4],
+    own: &dyn Fn(bool, PropIndex) -> Option<f64>,
+) -> Option<Fit> {
+    let mode = engine.read(obj, Text::FONT_SIZE_MODE.index).to_number() as i32;
+    let (across, down) = match mode {
+        font_size_mode::HORIZONTAL_FIT => (true, false),
+        font_size_mode::VERTICAL_FIT => (false, true),
+        font_size_mode::FIT => (true, true),
+        _ => return None,
+    };
+    let width = across
+        .then(|| own(true, Item::WIDTH.index))
+        .flatten()
+        .map(|w| (w - pad[0] - pad[2]).max(0.0));
+    let height = down
+        .then(|| own(false, Item::HEIGHT.index))
+        .flatten()
+        .map(|h| (h - pad[1] - pad[3]).max(0.0));
+    if width.is_none() && height.is_none() {
+        return None;
+    }
+    let font = engine.read(obj, Text::FONT.index);
+    let sized_in_pixels = matches!(&font, Value::Font(f) if f.pixel_size > 0);
+    let smallest = if sized_in_pixels {
+        engine.read(obj, Text::MINIMUM_PIXEL_SIZE.index).to_number()
+    } else {
+        // At the whole pixel size the point size is set at, as a font is.
+        let points = engine.read(obj, Text::MINIMUM_POINT_SIZE.index).to_number();
+        ljos_runtime::points_to_pixels(points).round()
+    };
+    Some(Fit {
+        width,
+        height,
+        smallest,
+    })
 }
 
 /// Where the copies of the text in `styleColor` go for a `Text.style`:

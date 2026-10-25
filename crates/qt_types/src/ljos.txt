@@ -2798,6 +2798,7 @@ module QtQuick
 		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 Wrap=4
 		enum LineHeightMode ProportionalHeight=0 FixedHeight=1
 		enum RenderType QtRendering=0 NativeRendering=1 CurveRendering=2
+		enum FontSizeMode FixedSize=0 HorizontalFit=1 VerticalFit=2 Fit=3
 		enum TextStyle Normal=0 Outline=1 Raised=2 Sunken=3
 		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3 StyledText=4
 		prop text QtQml.string named
@@ -2811,6 +2812,9 @@ module QtQuick
 		prop wrapMode WrapMode
 		prop elide TextElideMode
 		prop maximumLineCount QtQml.int named reset
+		prop fontSizeMode FontSizeMode
+		prop minimumPixelSize QtQml.int named
+		prop minimumPointSize QtQml.int named
 		prop lineHeight QtQml.real named
 		prop lineHeightMode LineHeightMode
 		prop renderType RenderType
@@ -2838,6 +2842,9 @@ module QtQuick
 		signal wrapModeChanged
 		signal elideChanged
 		signal maximumLineCountChanged
+		signal fontSizeModeChanged
+		signal minimumPixelSizeChanged
+		signal minimumPointSizeChanged
 		signal lineHeightChanged
 		signal lineHeightModeChanged
 		signal renderTypeChanged
