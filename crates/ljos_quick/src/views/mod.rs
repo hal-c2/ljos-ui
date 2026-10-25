@@ -636,6 +636,19 @@ fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
         pass::read_sizes(e, me, &layout);
     })?;
 
+    // Where the view is along its rows, apart from the rest: a scroll
+    // that keeps the same rows needs no pass.
+    let scroll = st.clone();
+    let mut first = true;
+    e.effect_in(me, move |e| {
+        for axis in [flickable::X, flickable::Y] {
+            let _ = e.read(me, flickable::dir(axis).position);
+        }
+        if !std::mem::take(&mut first) {
+            e.untrack(|| pass::scrolled(e, me, &scroll));
+        }
+    })?;
+
     // `snapMode`: the content comes to rest on a row.
     e.connect_by_name(me, "movementEnded", move |e, _| position::snap(e, me))?;
     // A view the user moves stops following its highlight.

@@ -21,7 +21,7 @@ use std::collections::VecDeque;
 use ljos_engine::{Atom, Engine, Made, ObjectId, PropIndex, RowKey, Urgency, Value, ViewDelegates};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::state::{Extra, Geo, Slot, ViewState, average};
+use super::state::{Extra, Geo, Slot, Steady, ViewState, average};
 use super::{
     GridView, ItemView, ListView, Part, ViewAttached, attached_of, changes, current, enrol,
     grid_flow, orientation, put, section_criteria, stack, state_of, strike,
@@ -204,7 +204,6 @@ pub(crate) fn read_inputs(e: &Engine, view: ObjectId, st: &ViewState) {
     let g = read_geo(e, view, st);
     let d = flickable::dir(g.main);
     for p in [
-        d.position,
         d.lead,
         d.trail,
         ItemView::HEADER.index,
@@ -898,6 +897,7 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     let (Some(d), Some(content)) = (st.delegates(), flickable::content_item(e, view)) else {
         return;
     };
+    st.steady.set(None);
     let g = read_geo(e, view, st);
     let dir = flickable::dir(g.main);
     let first_pass = st.seen_index.get().is_none();
@@ -1424,6 +1424,16 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         }
     }
     let first_shown = slots.iter().find(|s| s.end() > v_now).map(|s| s.line);
+    let keeps = over.is_none()
+        && !g.grid
+        && !fill.waiting
+        && !fill.held
+        && slots.len() < MAX_LINES
+        && slots
+            .iter()
+            .all(|s| s.measured && s.size > 0.0 && items.iter().any(|i| i.0 == s.line))
+        && vt_start.is_empty()
+        && running_to.is_empty();
     *st.slots.borrow_mut() = slots.into_iter().collect();
     *st.placed.borrow_mut() = items.clone();
     // A transition set later runs the pass again (`read_inputs`), which
@@ -1447,7 +1457,8 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     }
 
     // What the view says about its rows.
-    current::sync(e, view, st, &g, content, current.and(current_span));
+    let span = current.and(current_span);
+    current::sync(e, view, st, &g, content, span);
     let current = current_index(e, view);
     for &(row, o, ..) in &items {
         if let Some(att) = attached_of(e, view, o) {
@@ -1476,6 +1487,130 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         Value::Int(i32::from(effective_rtl(e, view))),
     );
     announce(e, view, st, &d, &items);
+    let keeps = keeps
+        && st.positioned.get()
+        && st.at_edge.get().is_none()
+        && st.pending.borrow().is_none()
+        && st.added.borrow().is_empty()
+        && !st.populate.get()
+        && d.pending().is_empty();
+    if keeps && let Some(trigger) = st.trigger.get() {
+        st.steady.set(Some(Steady {
+            g,
+            rows,
+            trigger: e.graph().get_untracked(trigger).to_number() as i32,
+            reuse,
+            span,
+        }));
+    }
+}
+
+/// The view moved along its rows. Where the rows the last pass laid out
+/// are the ones a pass would lay out again, at the places they have, only
+/// what follows from where the view is changes: which of them are drawn,
+/// the row the next pass starts from, the current section and the
+/// highlight. Anything else is a pass.
+pub(crate) fn scrolled(e: &Engine, view: ObjectId, st: &ViewState) {
+    if st.in_pass.replace(true) {
+        st.dirty.set(true);
+        return;
+    }
+    let kept = keep_rows(e, view, st);
+    st.in_pass.set(false);
+    if !kept || st.dirty.replace(false) {
+        bump(e, st);
+        return;
+    }
+    fetch_at_end(e, view, st);
+}
+
+/// What [`scrolled`] does where the rows stay: false where they do not,
+/// and nothing changed then.
+fn keep_rows(e: &Engine, view: ObjectId, st: &ViewState) -> bool {
+    let (Some(s), Some(d)) = (st.steady.get(), st.delegates()) else {
+        return false;
+    };
+    if !e.is_alive(view) {
+        return false;
+    }
+    let Some(content) = flickable::content_item(e, view) else {
+        return false;
+    };
+    let g = read_geo(e, view, st);
+    let trigger = st
+        .trigger
+        .get()
+        .map(|n| e.graph().get_untracked(n).to_number() as i32);
+    if g != s.g
+        || d.count() != s.rows
+        || trigger != Some(s.trigger)
+        || st.at_edge.get().is_some()
+        || !d.pending().is_empty()
+    {
+        return false;
+    }
+    let dir = flickable::dir(g.main);
+    let v = g.viewport(rd(e, view, dir.position));
+    let shown = (v - g.margin_begin, v + g.view_main + g.margin_end);
+    let window = if d.rows_show_themselves() {
+        (f64::NEG_INFINITY, f64::INFINITY)
+    } else {
+        (shown.0 - g.buffer, shown.1 + g.buffer)
+    };
+    let lines = g.lines(s.rows);
+    let slots = st.slots.borrow();
+    let (Some(first), Some(last)) = (slots.first(), slots.last()) else {
+        return false;
+    };
+    // A pass starts at the row at `v`, lays rows out after it until the
+    // next would start past the window and before it until one starts
+    // before it: the same rows, where none of those inside stops it.
+    let ends = |s: &Slot| s.line + 1 >= lines || s.end() + g.spacing > window.1;
+    let begins = |s: &Slot| s.line == 0 || s.top() <= window.0;
+    let n = slots.len();
+    if v < first.top()
+        || v > last.end()
+        || !ends(last)
+        || !begins(first)
+        || (n > 1 && (ends(&slots[n - 2]) || begins(&slots[1])))
+    {
+        return false;
+    }
+    let current = st.seen_index.get().and_then(|i| usize::try_from(i).ok());
+    let placed = st.placed.borrow();
+    let outside = |p: &(usize, ObjectId, f64, f64)| p.2 + p.3 <= window.0 || p.2 > window.1;
+    if s.reuse && placed.iter().any(|p| outside(p) && Some(p.0) != current) {
+        // The pass would give it back to the pool first.
+        return false;
+    }
+    let unshown = placed
+        .iter()
+        .filter(|(_, _, pos, size)| pos + size < shown.0 || *pos > shown.1)
+        .map(|(_, o, ..)| *o)
+        .collect();
+    drop(placed);
+    super::cull::set(e, view, unshown);
+    let anchor = slots
+        .iter()
+        .find(|s| s.end() > v)
+        .or_else(|| slots.iter().find(|s| s.top() >= v))
+        .or(slots.last())
+        .map_or((0, 0.0), |s| (s.line, s.top()));
+    st.anchor.set(anchor);
+    let first_shown = slots.iter().find(|s| s.end() > v).map(|s| s.line);
+    drop(slots);
+    current::sync(e, view, st, &g, content, s.span);
+    let name = match Sections::read(e, view, st).as_mut() {
+        Some(sections) => sections.of(e, &d, first_shown),
+        None => String::new(),
+    };
+    put(
+        e,
+        view,
+        ListView::CURRENT_SECTION.index,
+        Value::string(name),
+    );
+    true
 }
 
 /// Tells the rows that arrived, and shows the first rows of a model the

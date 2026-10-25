@@ -24,6 +24,21 @@ pub(crate) struct Slot {
     pub measured: bool,
 }
 
+/// What the last pass laid out with, as long as a scroll that keeps the
+/// same rows in its window would lay them out the same again: such a
+/// scroll only changes what is drawn of them and where the view is along
+/// them (`pass::scrolled`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Steady {
+    pub g: Geo,
+    pub rows: usize,
+    /// The layout effect's trigger then: another value is a pass to come.
+    pub trigger: i32,
+    pub reuse: bool,
+    /// What the pass gave `current::sync`.
+    pub span: Option<(f64, f64)>,
+}
+
 impl Slot {
     pub fn top(&self) -> f64 {
         self.pos - self.lead
@@ -275,6 +290,8 @@ pub(crate) struct ViewState {
     /// this position: it stays at that edge while the rows it made there
     /// take their length, unless something else moves it.
     pub at_edge: Cell<Option<(bool, f64)>>,
+    /// Set by a pass whose rows a scroll can keep (see [`Steady`]).
+    pub steady: Cell<Option<Steady>>,
     /// The items the layout effect read the lengths of when it last ran:
     /// a pass that leaves the same ones needs no run of it to watch them.
     pub sized: RefCell<Vec<ObjectId>>,
@@ -388,6 +405,7 @@ impl Default for ViewState {
             follow: Cell::new(false),
             positioned: Cell::new(false),
             at_edge: Cell::new(None),
+            steady: Cell::new(None),
             sized: RefCell::default(),
             carried: Cell::new(None),
             carried_anchor: Cell::new(None),
@@ -442,6 +460,7 @@ impl ViewState {
 
     /// Forgets everything that was said about the rows of a model.
     pub fn forget_rows(&self) {
+        self.steady.set(None);
         self.anchor.set((0, 0.0));
         self.sizes.borrow_mut().clear();
         self.places.borrow_mut().clear();

@@ -700,11 +700,11 @@ ListView {
     settle(&mut s, &e, 1000);
     let before = view_layout_passes(&e, root);
     e.invoke_by_name(root, "add", &[]).unwrap();
-    // The model's change lays the rows out once, when its batch ends.
-    // Going to the end lays them out where the new row is guessed to be,
-    // which measures it, then where it is; the view moving there runs
-    // the layout effect, which is not run once more after it.
-    assert_eq!(view_layout_passes(&e, root) - before, 4);
+    // The model's change lays the rows out once, when its batch ends,
+    // and again where that takes the view: the end it is kept at. Going
+    // to the end lays them out there, where the new row is measured
+    // already; the view stays, and no pass follows.
+    assert_eq!(view_layout_passes(&e, root) - before, 3);
     assert_eq!(num(&e, root, "contentY"), 13.0 * 20.0 - 100.0);
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
@@ -745,5 +745,55 @@ ListView {
     assert_eq!(num(&e, root, "contentY"), 12.0 * 20.0 - 100.0);
     assert_eq!(passes(&e, "positionViewAtEnd"), 1);
     assert_eq!(num(&e, root, "contentY"), 12.0 * 20.0 - 100.0);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
+
+/// A scroll that keeps the same rows in the window around what is shown
+/// lays nothing out: the rows are where they were. One that brings a row
+/// in lays them out.
+#[test]
+fn a_scroll_inside_the_cache_buffer_lays_no_rows_out() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+ListView {
+  id: v
+  width: 200; height: 100
+  cacheBuffer: 1000
+  model: 30
+  property int created: 0
+  delegate: Item { width: 200; height: 20; Component.onCompleted: v.created++ }
+}
+"##,
+    );
+    let mut s = settled(&e, root);
+    let created = num(&e, root, "created");
+    assert_eq!(created, 30.0);
+    let before = view_layout_passes(&e, root);
+    for (i, y) in [50.0, 120.0, 400.0, 0.0].into_iter().enumerate() {
+        e.write_by_name(root, "contentY", Value::Real(y)).unwrap();
+        settle(&mut s, &e, 1000 + i as u64 * 1000);
+        assert_eq!(num(&e, root, "contentY"), y);
+        let at = e
+            .invoke_by_name(root, "indexAt", &[Value::Real(10.0), Value::Real(y + 30.0)])
+            .unwrap();
+        assert_eq!(at.to_number(), ((y + 30.0) / 20.0).floor());
+    }
+    assert_eq!(view_layout_passes(&e, root), before);
+    assert_eq!(num(&e, root, "created"), created);
+
+    // A row outside the buffer: the rows are laid out.
+    e.write_by_name(root, "cacheBuffer", Value::Int(0)).unwrap();
+    settle(&mut s, &e, 9000);
+    let before = view_layout_passes(&e, root);
+    e.write_by_name(root, "contentY", Value::Real(300.0))
+        .unwrap();
+    settle(&mut s, &e, 10_000);
+    assert!(view_layout_passes(&e, root) > before);
+    let at = e
+        .invoke_by_name(root, "indexAt", &[Value::Real(10.0), Value::Real(330.0)])
+        .unwrap();
+    assert_eq!(at.to_number(), 16.0);
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
