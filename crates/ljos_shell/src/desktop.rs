@@ -36,7 +36,9 @@ use ljos_runtime::{MemoryPressure, SystemClock};
 use crate::present::{self, Frame, LastPicture};
 use crate::repaint::RepaintSchedule;
 use crate::surface::{self, Gpu, Painter, Starting, Surface};
-use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, wayland_drag, windows};
+use crate::{
+    Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, drags, wayland_drag, windows,
+};
 
 /// The log category of what the shell has to say.
 const CATEGORY: &str = "ljos.shell";
@@ -102,8 +104,8 @@ pub(crate) enum ShellEvent {
     },
     AccessKit(accesskit_winit::Event),
     /// A step of a drag from another application, which the shell follows
-    /// itself where winit does not (`wayland_drag`).
-    Drag(wayland_drag::DragStep),
+    /// itself where winit does not (`drags`).
+    Drag(drags::DragStep),
 }
 
 impl std::fmt::Debug for ShellEvent {
@@ -752,7 +754,7 @@ struct Desktop<M> {
     collect: AfterRest,
     /// What follows drags from other applications, where the shell does
     /// that itself.
-    drags: Option<wayland_drag::Drags>,
+    drags: Option<drags::Drags>,
     /// The window a drag from another application is over, by its key.
     drag_over: Option<u64>,
 }
@@ -1181,6 +1183,9 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(window) = host.window(id).cloned() else {
             return;
         };
+        if let Some(drags) = &self.drags {
+            drags.window_opened(&window);
+        }
         let display = host.event_loop().owned_display_handle();
         if self.gpu.is_none() {
             // The drivers are still starting: the first frame's layout
@@ -1857,20 +1862,17 @@ impl<M: Send + 'static> Desktop<M> {
     }
 
     /// A step of a drag from another application: the view of the window
-    /// it is over is told, and the compositor hears the view's answer.
-    fn drag_step(&mut self, step: wayland_drag::DragStep) {
-        use wayland_drag::DragStep;
-        let by_surface = |slots: &[Slot], surface: usize| {
+    /// it is over is told, and the window system hears the view's answer.
+    fn drag_step(&mut self, step: drags::DragStep) {
+        use drags::{At, DragStep};
+        let by_target = |slots: &[Slot], target: usize| {
             slots.iter().position(|s| {
-                s.surface
-                    .as_ref()
-                    .and_then(|x| wayland_drag::surface_of(&x.window))
-                    == Some(surface)
+                s.surface.as_ref().and_then(|x| drags::target_of(&x.window)) == Some(target)
             })
         };
         let i = match &step {
-            DragStep::Entered { surface, .. } => {
-                let i = by_surface(&self.slots, *surface);
+            DragStep::Entered { target, .. } => {
+                let i = by_target(&self.slots, *target);
                 self.drag_over = i.map(|i| self.slots[i].key);
                 i
             }
@@ -1891,10 +1893,20 @@ impl<M: Send + 'static> Desktop<M> {
         };
         let slot = &mut self.slots[i];
         let key = slot.key;
-        // The compositor's logical pixels; egui's points are those over
-        // the zoom.
+        // Wayland says logical pixels and X11 the window's own; egui's
+        // points are logical pixels over the zoom.
         let zoom = slot.ctx.zoom_factor();
-        let point = |(x, y): (f64, f64)| egui::pos2(x as f32 / zoom, y as f32 / zoom);
+        let scale = slot
+            .surface
+            .as_ref()
+            .map_or(1.0, |x| x.window.scale_factor());
+        let point = |at: At| {
+            let (x, y) = match at {
+                At::Logical(x, y) => (x, y),
+                At::Physical(x, y) => (x / scale, y / scale),
+            };
+            egui::pos2(x as f32 / zoom, y as f32 / zoom)
+        };
         let view = match slot.view.as_mut() {
             Some(view) => view,
             None => self.app.view_mut(),
@@ -2567,7 +2579,7 @@ pub(crate) fn run<M: Send + 'static>(
     {
         desktop.began = began;
     }
-    desktop.drags = wayland_drag::start(&host.display_handle(), {
+    desktop.drags = drags::Drags::start(&host.display_handle(), {
         let proxy = Arc::clone(&desktop.proxy);
         Arc::new(move |step| {
             if let Ok(proxy) = proxy.lock() {

@@ -88,6 +88,9 @@ glutin.workspace = true
 # connection winit opened: libwayland's, as winit's is.
 wayland-client = { workspace = true, features = ["system"] }
 libc.workspace = true
+# Drags from other applications on X11 (src/x11_drag.rs): winit's XDND
+# takes files only and keeps the position to itself.
+x11rb.workspace = true
 
 [features]
 default = ["media", "media-audio"]

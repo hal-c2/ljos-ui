@@ -34,6 +34,7 @@ pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 mod badge;
 mod desktop;
 mod desktop_font;
+mod drags;
 #[cfg(target_os = "linux")]
 mod drivers;
 #[cfg(gl_painter)]
@@ -55,6 +56,7 @@ mod system_fonts;
 mod test_bus;
 mod wayland_drag;
 mod windows;
+mod x11_drag;
 
 use std::rc::Rc;
 use std::sync::Arc;

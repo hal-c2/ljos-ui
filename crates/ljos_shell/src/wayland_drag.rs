@@ -16,26 +16,8 @@ use std::sync::Arc;
 
 use egui_winit::winit::event_loop::OwnedDisplayHandle;
 use egui_winit::winit::window::Window;
-use ljos_platform::DragData;
 
-/// One step of a drag, for the window whose surface is `surface`.
-pub(crate) enum DragStep {
-    Entered {
-        surface: usize,
-        /// In the surface's logical pixels.
-        at: (f64, f64),
-        data: DragData,
-        answer: imp::Answer,
-    },
-    Moved {
-        at: (f64, f64),
-        answer: imp::Answer,
-    },
-    Left,
-    Dropped {
-        answer: imp::Answer,
-    },
-}
+use crate::drags::DragStep;
 
 /// The surface of a window, as a drag names it; `None` off Wayland.
 pub(crate) fn surface_of(window: &Window) -> Option<usize> {
@@ -103,7 +85,7 @@ mod imp {
         Connection, Dispatch, EventQueue, Proxy, QueueHandle, event_created_child,
     };
 
-    use super::DragStep;
+    use crate::drags::{At, DragStep, Reply};
 
     /// The most of one format that is read; a larger one is left out, as
     /// a source that offers a film as a drag would otherwise be held in
@@ -123,9 +105,9 @@ mod imp {
         format: Option<String>,
     }
 
-    impl Answer {
+    impl Reply for Answer {
         /// Tells the source whether a drop here would be taken.
-        pub(crate) fn taken(&self, taken: bool) {
+        fn taken(&self, taken: bool) {
             self.offer
                 .accept(self.serial, taken.then(|| self.format.clone()).flatten());
             if self.offer.version() >= 3 {
@@ -141,7 +123,7 @@ mod imp {
         }
 
         /// After the drop: what was taken is done with, and the offer goes.
-        pub(crate) fn dropped(self, taken: bool) {
+        fn dropped(self: Box<Self>, taken: bool) {
             if taken && self.offer.version() >= 3 {
                 self.offer.finish();
             }
@@ -278,10 +260,10 @@ mod imp {
                                     read(&conn, &answer.offer, f).map(|bytes| (f, bytes))
                                 }));
                                 post(DragStep::Entered {
-                                    surface,
-                                    at,
+                                    target: surface,
+                                    at: At::Logical(at.0, at.1),
                                     data,
-                                    answer,
+                                    answer: Box::new(answer),
                                 });
                             }
                             Job::Post(step) => post(step),
@@ -395,7 +377,10 @@ mod imp {
                 }
                 wl_data_device::Event::Motion { x, y, .. } => {
                     if let Some(answer) = state.answer() {
-                        state.post(DragStep::Moved { at: (x, y), answer });
+                        state.post(DragStep::Moved {
+                            at: At::Logical(x, y),
+                            answer: Box::new(answer),
+                        });
                     }
                 }
                 wl_data_device::Event::Leave => {
@@ -409,7 +394,9 @@ mod imp {
                     // The loop finishes the offer and lets it go.
                     if let Some(answer) = state.answer() {
                         state.current = None;
-                        state.post(DragStep::Dropped { answer });
+                        state.post(DragStep::Dropped {
+                            answer: Box::new(answer),
+                        });
                     }
                 }
                 // A selection's offer: the clipboard is the platform's.
@@ -508,24 +495,15 @@ mod imp {
     use egui_winit::winit::event_loop::OwnedDisplayHandle;
     use egui_winit::winit::window::Window;
 
-    use super::DragStep;
-
-    /// Never made: there is no Wayland here.
-    pub(crate) enum Answer {}
-
-    impl Answer {
-        pub(crate) fn taken(&self, _taken: bool) {
-            match *self {}
-        }
-
-        pub(crate) fn dropped(self, _taken: bool) {
-            match self {}
-        }
-    }
+    use crate::drags::DragStep;
 
     pub(crate) enum Thread {}
 
     impl Thread {
+        pub(crate) fn dispatch(&mut self) {
+            match *self {}
+        }
+
         pub(crate) fn stop(self) {
             match self {}
         }
