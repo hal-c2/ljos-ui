@@ -10,7 +10,6 @@ Feature: An object made by a binding
   A binding that makes an object depends on nothing the object does while it is made, and
   the object is completed before what holds it.
 
-  @backlog
   Scenario: A binding that makes an object is not run again by what the object wrote
     Given the QML:
       """qml

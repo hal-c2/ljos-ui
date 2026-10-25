@@ -31,7 +31,7 @@ use crate::meta::MetaRef;
 use crate::object::QmlType;
 use crate::qtqml::Component;
 use crate::types::{TypeTag, Url};
-use crate::value::Value;
+use crate::value::{Color, Value};
 
 /// The function of a compiled module the runtime calls with the module's
 /// address, once, before any other. The compiler writes it.
@@ -90,23 +90,41 @@ fn object(e: &Engine, a: Option<&JsValue>) -> Option<ObjectId> {
     }
 }
 
-/// Whether Qt takes `v` as the initial value of a property of type `ty`.
-/// It converts less than an assignment in a script does: a text that is no
-/// number is not 0 (Qt 6.11.2, by running qml6).
-fn initial_fits(ty: &TypeTag, v: &Value) -> bool {
+/// What Qt makes of `v` as the initial value of a property of type `ty`,
+/// or `None` when it takes nothing. It converts less than an assignment in
+/// a script does: a text that is no number is not 0. `createObject`
+/// converts as a value from outside QML is: a text "0" is no bool, a
+/// number is rounded to an int, and what is no colour an invalid one
+/// (Qt 6.11.2, by running qml6).
+fn initial_value(ty: &TypeTag, v: &Value, created: bool) -> Option<Value> {
+    let number = |s: &Atom| s.trim().parse::<f64>().ok().filter(|n| n.is_finite());
+    let plain = || Some(v.clone());
     match (ty, v) {
-        (TypeTag::Var | TypeTag::Data, _) => true,
-        (_, Value::Undefined) => false,
-        (TypeTag::Int | TypeTag::Real, Value::String(s)) => s.trim().parse::<f64>().is_ok(),
-        (TypeTag::Int | TypeTag::Real, v) => {
-            matches!(
-                v,
-                Value::Bool(_) | Value::Int(_) | Value::Real(_) | Value::Enum(_)
-            )
+        (TypeTag::Var | TypeTag::Data, _) => plain(),
+        (_, Value::Undefined) => None,
+        (TypeTag::Bool, Value::String(s)) if created => Some(Value::Bool(
+            !(s.is_empty() || &**s == "0" || s.eq_ignore_ascii_case("false")),
+        )),
+        (TypeTag::Bool, Value::Real(n)) if created => Some(Value::Bool(n.round() != 0.0)),
+        (TypeTag::Bool, Value::Null | Value::List(_) | Value::Map(_) | Value::Js(_)) if created => {
+            None
         }
-        (TypeTag::Url, v) => matches!(v, Value::String(_) | Value::Url(_)),
-        (TypeTag::Object(_), v) => matches!(v, Value::Object(_) | Value::Null),
-        _ => true,
+        (TypeTag::Int, Value::String(s)) if created => number(s).map(|n| Value::Real(n.round())),
+        (TypeTag::Int, Value::Real(n)) if created => Some(*n)
+            .filter(|n| !n.is_nan())
+            .map(|n| Value::Real(n.round())),
+        (TypeTag::Int | TypeTag::Real, Value::String(s)) => number(s).map(|_| v.clone()),
+        (TypeTag::Int | TypeTag::Real, v) => matches!(
+            v,
+            Value::Bool(_) | Value::Int(_) | Value::Real(_) | Value::Enum(_)
+        )
+        .then(|| v.clone()),
+        (TypeTag::Color, Value::List(_)) if created => None,
+        (TypeTag::Color, Value::String(_) | Value::Color(_)) => plain(),
+        (TypeTag::Color, _) if created => Some(Value::Color(Color::INVALID)),
+        (TypeTag::Url, v) => matches!(v, Value::String(_) | Value::Url(_)).then(|| v.clone()),
+        (TypeTag::Object(_), v) => matches!(v, Value::Object(_) | Value::Null).then(|| v.clone()),
+        _ => plain(),
     }
 }
 
@@ -226,13 +244,22 @@ impl Engine {
             let set = match &member {
                 Some(member) => self.initial_member(obj, p, member, v, at.is_some()),
                 None => {
-                    let fits = ty.as_ref().is_none_or(|ty| initial_fits(ty, v));
-                    match self.initial_binding(obj, p, v) {
-                        Some(bound) => bound.is_ok(),
-                        None => {
-                            fits && self
-                                .write_internal(obj, p, v.clone(), WriteKind::Imperative)
-                                .is_ok()
+                    let given = match &ty {
+                        Some(ty) => initial_value(ty, v, at.is_none()),
+                        None => Some(v.clone()),
+                    };
+                    match (self.initial_binding(obj, p, v), given) {
+                        (Some(bound), _) => bound.is_ok(),
+                        (None, Some(v)) => self
+                            .write_internal(obj, p, v, WriteKind::Imperative)
+                            .is_ok(),
+                        // createObject has taken the binding away before it
+                        // finds it cannot convert: the type's default is left.
+                        (None, None) => {
+                            if at.is_none() && self.is_bound(obj, p) {
+                                let _ = self.reset_to_default(obj, p);
+                            }
+                            false
                         }
                     }
                 }

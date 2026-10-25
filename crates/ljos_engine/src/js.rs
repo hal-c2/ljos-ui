@@ -1290,12 +1290,14 @@ impl Engine {
 
     /// Runs native work a script asked for (compiling a component, making
     /// objects): its time is not the script's, and does not use up the
-    /// slice of the dispatch it is in (`ljos_js::JsHost::native`).
+    /// slice of the dispatch it is in (`ljos_js::JsHost::native`). Nor
+    /// is what it reads: a binding that makes an object does not depend on
+    /// what the object's own bindings and handlers read while it is made.
     pub(crate) fn native_for_script<R>(&self, f: impl FnOnce() -> R) -> R {
         let js = self.inner.js.borrow().clone();
         match js {
-            Some(js) => js.host.native(f),
-            None => f(),
+            Some(js) => js.host.native(|| self.untrack(f)),
+            None => self.untrack(f),
         }
     }
 

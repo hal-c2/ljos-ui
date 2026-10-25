@@ -43,28 +43,27 @@ Feature: What createObject makes of its initial properties
       }
       """
 
-  @backlog
   Scenario Outline: An initial <type> given <given> is converted
     When the method "give" of "root" is called with {"<prop>": <given>}
     Then the property "seen" of "root" is "<seen>"
     And the log has no warning matching "Could not set initial property"
 
     Examples:
-      | type   | prop | given | seen            |
-      | bool   | b    | "0"   | false,0,true,6  |
-      | bool   | b    | 0.1   | false,0,true,6  |
-      | int    | i    | 2.5   | true,3,true,6   |
-      | int    | i    | -2.5  | true,-3,true,6  |
-      | colour | c    | false | true,0,false,6  |
-      | colour | c    | 3     | true,0,false,6  |
+      | type   | prop | given   | seen           |
+      | bool   | b    | "0"     | false,0,true,6 |
+      | bool   | b    | 0.1     | false,0,true,6 |
+      | bool   | b    | "false" | false,0,true,6 |
+      | int    | i    | "2.5"   | true,3,true,6  |
+      | int    | i    | 2.5     | true,3,true,6  |
+      | int    | i    | -2.5    | true,-3,true,6 |
+      | colour | c    | false   | true,0,false,6 |
+      | colour | c    | 3       | true,0,false,6 |
 
-  @backlog
   Scenario: An initial int given NaN is told, and stays 0
     When the method "giveNaN" of "root" is called
     Then the property "seen" of "root" is "true,0,true,6"
     And the log has a warning matching "Could not set initial property i"
 
-  @backlog
   Scenario: An initial property that cannot be converted leaves its type's default
     When the method "give" of "root" is called with {"r": ""}
     Then the property "seen" of "root" is "true,0,true,0"
