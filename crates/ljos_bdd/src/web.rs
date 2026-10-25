@@ -10,7 +10,9 @@
 //! `/echo` answers any method with what it was sent, for a script that
 //! sends requests of its own (XMLHttpRequest): the method, the
 //! content type and the `x-` headers, one per line by name, a blank line, then
-//! the body.
+//! the body. `/headers` answers with every header it was sent, the same
+//! way. `/status/<code>/<reason>` answers that status, with that reason
+//! phrase (`%20` a space) and no body.
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
@@ -129,8 +131,8 @@ impl Drop for WebServer {
     }
 }
 
-/// Reads one request and answers it: the file, what `/echo` was sent, or
-/// 404 for a name nobody served. The connection closes after it.
+/// Reads one request and answers it: the file, what `/echo` or `/headers`
+/// was sent, the status `/status/…` names, or 404 for a name nobody served. The connection closes after it.
 fn answer(stream: TcpStream, files: &Files) {
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
@@ -163,10 +165,10 @@ fn answer(stream: TcpStream, files: &Files) {
     if (&mut reader).take(length).read_to_end(&mut sent).is_err() {
         return;
     }
+    // By name: clients send headers in orders of their own.
+    headers.sort();
     let (status, content_type, body) = if path == "/echo" {
         let mut text = format!("{method}\n");
-        // By name: clients send headers in orders of their own.
-        headers.sort();
         for (name, value) in &headers {
             if name == "content-type" || name.starts_with("x-") {
                 text.push_str(&format!("{name}: {value}\n"));
@@ -175,7 +177,21 @@ fn answer(stream: TcpStream, files: &Files) {
         text.push('\n');
         let mut body = text.into_bytes();
         body.extend_from_slice(&sent);
-        ("200 OK", "text/plain", body)
+        ("200 OK".to_owned(), "text/plain", body)
+    } else if path == "/headers" {
+        let text: String = headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\n"))
+            .collect();
+        ("200 OK".to_owned(), "text/plain", text.into_bytes())
+    } else if let Some(status) = path
+        .strip_prefix("/status/")
+        .and_then(|rest| rest.split_once('/'))
+        .filter(|(code, _)| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()))
+    {
+        let (code, reason) = status;
+        let status = format!("{code} {}", reason.replace("%20", " "));
+        (status, "text/plain", Vec::new())
     } else {
         let served = files
             .lock()
@@ -218,9 +234,13 @@ fn answer(stream: TcpStream, files: &Files) {
             return;
         }
         match served {
-            Some(Body::Bytes(bytes)) => ("200 OK", content_type_of(&path), bytes),
+            Some(Body::Bytes(bytes)) => ("200 OK".to_owned(), content_type_of(&path), bytes),
             Some(Body::Repeated(..)) => unreachable!(),
-            None => ("404 Not Found", "text/plain", b"Not Found".to_vec()),
+            None => (
+                "404 Not Found".to_owned(),
+                "text/plain",
+                b"Not Found".to_vec(),
+            ),
         }
     };
     let head = format!(
@@ -267,6 +287,20 @@ mod tests {
         assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
         assert!(reply.ends_with("\r\n\r\nhello"), "{reply}");
         assert!(get(&server, "/b.txt").starts_with("HTTP/1.1 404 Not Found\r\n"));
+    }
+
+    #[test]
+    fn headers_answers_with_every_header_and_status_with_its_reason() {
+        let server = WebServer::start().unwrap();
+        let reply = get(&server, "/headers");
+        assert!(reply.ends_with("\r\n\r\nhost: x\n"), "{reply}");
+        let reply = get(&server, "/status/418/Short%20and%20Stout");
+        assert!(
+            reply.starts_with("HTTP/1.1 418 Short and Stout\r\n"),
+            "{reply}"
+        );
+        assert!(reply.contains("Content-Length: 0\r\n"), "{reply}");
+        assert!(get(&server, "/status/x/y").starts_with("HTTP/1.1 404 Not Found\r\n"));
     }
 
     #[test]

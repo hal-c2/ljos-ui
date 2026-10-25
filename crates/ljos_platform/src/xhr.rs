@@ -8,8 +8,10 @@
 //! not asynchronous is sent on the Engine thread and waited for, as Qt
 //! waits for it.
 //!
-//! Qt's reply has the server's own reason phrase; this one has the
-//! standard phrase of its status. A local file is not read, as Qt reads
+//! A request says what Qt's says of itself (`User-Agent`,
+//! `Accept-Language`). Qt's reply has the server's own reason phrase; this
+//! one has the standard phrase of its status, as the fetcher's HTTP client
+//! does not keep the server's. A local file is not read, as Qt reads
 //! none unless `QML_XHR_ALLOW_FILE_READ` is set. `responseXML` is the
 //! read-only DOM Qt has, read out of a reply of an XML type when a script
 //! first asks for it (`crate::xml_dom`).
@@ -53,7 +55,22 @@ impl XhrHelper {
         bytes: Value,
         wait: Value,
     ) -> i32 {
-        let request = request(&method, &url, &headers, &body, bytes.to_boolean());
+        let mut request = request(&method, &url, &headers, &body, bytes.to_boolean());
+        let named = |n: &str| {
+            request
+                .headers
+                .iter()
+                .any(|(h, _)| h.eq_ignore_ascii_case(n))
+        };
+        let (agent, language) = (named("user-agent"), named("accept-language"));
+        // Qt says it is a browser, unless the script says otherwise.
+        if !agent {
+            request = request.header("User-Agent", "Mozilla/5.0");
+        }
+        if !language {
+            let accepted = accept_language(&cx.engine.locale_name());
+            request = request.header("Accept-Language", accepted);
+        }
         let replies = cx.engine.extension::<Replies>();
         let id = replies.next.get() + 1;
         replies.next.set(id);
@@ -164,6 +181,22 @@ fn request(method: &Value, url: &Value, headers: &Value, body: &Value, bytes: bo
     request.body(body)
 }
 
+/// The languages Qt's network access says a request accepts: the
+/// locale's, then English when it is another, then any.
+fn accept_language(locale: &str) -> String {
+    let tag = locale.replace('_', "-");
+    let mut accepted = String::new();
+    if tag != "C" && !tag.is_empty() {
+        accepted.push_str(&tag);
+        accepted.push(',');
+    }
+    if tag.split('-').next() != Some("en") {
+        accepted.push_str("en,");
+    }
+    accepted.push('*');
+    accepted
+}
+
 fn reply_value(response: &Response, bytes: bool) -> Value {
     let headers: String = response
         .headers
@@ -212,8 +245,7 @@ const INSTALL: &str = r#"(function (helper) {
   // What a script may not set; the network sets these itself.
   const FORBIDDEN = ["accept-charset", "accept-encoding", "connection", "content-length",
     "cookie", "cookie2", "content-transfer-encoding", "date", "expect", "host",
-    "keep-alive", "referer", "te", "trailer", "transfer-encoding", "upgrade",
-    "user-agent", "via"];
+    "keep-alive", "referer", "te", "trailer", "transfer-encoding", "upgrade", "via"];
   const waiting = new Map();
   helper.replied.connect(function (id) {
     const done = waiting.get(id);
@@ -407,7 +439,10 @@ const INSTALL: &str = r#"(function (helper) {
       } else {
         body = String(body);
       }
-      const headers = s.headers.map(([n, v]) => {
+      const typed = s.headers.some(([n]) => n.toLowerCase() === "content-type");
+      // A body without a type is said to be text, as Qt says it is.
+      const own = body !== undefined && !typed ? [["Content-Type", "text/plain;charset=UTF-8"]] : [];
+      const headers = s.headers.concat(own).map(([n, v]) => {
         // Text goes as UTF-8, and Qt says so.
         if (body !== undefined && !bytes && n.toLowerCase() === "content-type" && !/charset=/i.test(v))
           v += ";charset=UTF-8";
@@ -476,7 +511,11 @@ const INSTALL: &str = r#"(function (helper) {
         s.ready = DONE;
         return;
       }
-      for (const ready of [HEADERS_RECEIVED, LOADING, DONE]) {
+      // Qt says LOADING once more for an error status, and an error that
+      // has no body is not said to have its headers first.
+      const steps = reply.status < 400 ? [HEADERS_RECEIVED, LOADING, DONE]
+        : reply.text === "" ? [LOADING, DONE] : [HEADERS_RECEIVED, LOADING, LOADING, DONE];
+      for (const ready of steps) {
         s.ready = ready;
         this.#changed();
         if (state.get(this) !== s) return;
@@ -497,3 +536,15 @@ const INSTALL: &str = r#"(function (helper) {
   Object.defineProperty(globalThis, "XMLHttpRequest",
     { value: XMLHttpRequest, writable: true, configurable: true });
 })"#;
+
+#[cfg(test)]
+mod tests {
+    use super::accept_language;
+
+    #[test]
+    fn a_request_accepts_its_locale_then_english_then_any() {
+        assert_eq!(accept_language("de_DE"), "de-DE,en,*");
+        assert_eq!(accept_language("en_GB"), "en-GB,*");
+        assert_eq!(accept_language("C"), "en,*");
+    }
+}

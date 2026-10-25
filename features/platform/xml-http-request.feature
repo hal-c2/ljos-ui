@@ -4,8 +4,8 @@
 #   https://xhr.spec.whatwg.org/
 # Verified on Qt 6.11.2 (qmltestrunner and qml6, offscreen).
 #
-# Qt says readyState 3 once more for a reply with an error status (and
-# once for each redirect it follows); these scenarios do not count it.
+# Qt also says readyState 3 for each redirect that has a body; these
+# scenarios do not follow one.
 
 @qt-parity
 Feature: XMLHttpRequest
@@ -204,3 +204,112 @@ Feature: XMLHttpRequest
       }
       """
     Then the property "got" of "root" is "4 200 3"
+
+  @api-QtQml.XMLHttpRequest.readyState
+  Scenario Outline: An error status says LOADING twice, or once when it has no body
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string got: ""
+        Component.onCompleted: {
+          let http = new XMLHttpRequest(), seen = []
+          http.onreadystatechange = function () { seen.push(http.readyState) }
+          http.onload = function () { seen.push("load " + http.status) }
+          http.onerror = function () { seen.push("error") }
+          http.onloadend = function () { root.got = seen.join(" ") }
+          http.open("GET", "$SERVER/<path>")
+          http.send()
+        }
+      }
+      """
+    When 1 second passes
+    Then the property "got" of "root" is "<seen>"
+
+    Examples:
+      | path                 | seen                 |
+      | act.json             | 1 2 3 4 load 200     |
+      | missing.json         | 1 2 3 3 4 load 404   |
+      | status/500/Broken    | 1 3 4 load 500       |
+      | status/204/Nothing   | 1 2 3 4 load 204     |
+
+  @api-QtQml.XMLHttpRequest.send
+  Scenario: A request says it is a browser that reads the application's language, unless the script says otherwise
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string mine: ""
+        property string own: ""
+        // The locale's language and territory, English after another one, then any.
+        readonly property string tag: Qt.locale().name.replace("_", "-")
+        readonly property string accepted: (tag === "C" ? "" : tag + ",")
+          + (tag.split("-")[0] === "en" ? "" : "en,") + "*"
+        function fetch(headers, done) {
+          let http = new XMLHttpRequest()
+          http.onload = function () {
+            const sent = http.responseText.split("\n")
+            done(sent.find(l => l.startsWith("user-agent: ")).slice(12),
+                 sent.find(l => l.startsWith("accept-language: ")).slice(17))
+          }
+          http.open("GET", "$SERVER/headers")
+          for (const name in headers) http.setRequestHeader(name, headers[name])
+          http.send()
+        }
+        Component.onCompleted: {
+          fetch({}, (agent, language) => root.mine = agent + " " + (language === accepted))
+          fetch({ "User-Agent": "Mine", "Accept-Language": "is" }, (a, l) => root.own = a + " " + l)
+        }
+      }
+      """
+    When 1 second passes
+    Then the property "mine" of "root" is "Mozilla/5.0 true"
+    And the property "own" of "root" is "Mine is"
+
+  @api-QtQml.XMLHttpRequest.send
+  Scenario: A body sent without a type is said to be text
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string text: ""
+        property string bytes: ""
+        function post(body, done) {
+          let http = new XMLHttpRequest()
+          http.onload = function () { done(http.responseText) }
+          http.open("POST", "$SERVER/echo")
+          http.send(body)
+        }
+        Component.onCompleted: {
+          post("hi", r => root.text = r)
+          post(new Uint8Array([65, 66]).buffer, r => root.bytes = r)
+        }
+      }
+      """
+    When 1 second passes
+    Then the property "text" of "root" is "POST\ncontent-type: text/plain;charset=UTF-8\n\nhi"
+    And the property "bytes" of "root" is "POST\ncontent-type: text/plain;charset=UTF-8\n\nAB"
+
+  # The fetcher's HTTP client keeps the status and not the phrase the
+  # server sent with it, so Ljós has the standard phrase.
+  @backlog @api-QtQml.XMLHttpRequest.statusText
+  Scenario: statusText is the reason phrase the server sent
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string got: ""
+        Component.onCompleted: {
+          let http = new XMLHttpRequest()
+          http.onloadend = function () { root.got = http.status + " " + http.statusText }
+          http.open("GET", "$SERVER/status/404/Gone%20Away")
+          http.send()
+        }
+      }
+      """
+    When 1 second passes
+    Then the property "got" of "root" is "404 Gone Away"
