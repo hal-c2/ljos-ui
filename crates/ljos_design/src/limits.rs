@@ -12,34 +12,44 @@ pub const LARGE_TEXT_PX: f32 = 24.0;
 pub const LARGE_BOLD_TEXT_PX: f32 = 18.66;
 /// Weight from which text counts as bold.
 pub const BOLD_WEIGHT: u16 = 700;
+/// The smallest text in logical pixels: the smallest of Apple's minimum
+/// text sizes (10 pt on macOS; 11 pt on iOS, as Material's smallest style
+/// is 11 px), so anything below is too small on every platform.
+pub const TEXT_MIN_PX: f32 = 10.0;
 /// Boundaries, icons and state indicators, WCAG 2.2 SC 1.4.11.
 pub const NONTEXT_CONTRAST: f32 = 3.0;
 
 /// APCA lightness contrast, told beside the WCAG ratio as advice and
 /// never failed on: body text, large or bold text, and non-text marks.
-/// From the APCA readability guidance (WCAG 3 working draft).
-pub const APCA_BODY_LC: f32 = 60.0;
+/// From "APCA in a Nutshell" (git.apcacontrast.com): Lc 75 is the least for
+/// columns of body text (Lc 60 is for short content text that is not body
+/// text), Lc 45 for headlines and large text, Lc 30 for solid icons and
+/// placeholder text.
+pub const APCA_BODY_LC: f32 = 75.0;
 pub const APCA_LARGE_LC: f32 = 45.0;
 pub const APCA_NONTEXT_LC: f32 = 30.0;
 
 /// The least opacity a popup, menu or dialog surface may have without a
-/// blur behind it.
+/// blur behind it. Ljós's own number: no guideline publishes one; at 0.95 what
+/// is behind shows through at a twentieth, too faint to read as text.
 pub const SURFACE_MIN_ALPHA: f32 = 0.95;
 /// The least OKLab distance between a floating surface and what is behind
-/// it when it has neither a border nor a shadow.
+/// it when it has neither a border nor a shadow: about one just noticeable
+/// difference in OKLab.
 pub const SURFACE_MIN_DELTA_E: f32 = 0.02;
 
 /// Pointer targets in logical pixels: the WCAG 2.2 SC 2.5.8 floor on
-/// desktop, and the touch size of Apple's and Material's guidelines.
+/// desktop, and Apple's default touch size (44 pt; Material asks 48 dp).
 pub const TARGET_MIN_DESKTOP: f32 = 24.0;
 pub const TARGET_MIN_TOUCH: f32 = 44.0;
 
 /// A popup whose content fills less than this share of it is too large.
+/// Ljós's own heuristic, like the two numbers below it.
 pub const POPUP_MIN_FILL: f32 = 0.5;
 /// Controls that start this many pixels apart or fewer, but not 0, read as
 /// misaligned rather than placed apart on purpose.
 pub const MISALIGN_MAX_PX: f32 = 8.0;
-/// The spacing scale's unit.
+/// The spacing scale's unit: Material's 4 dp grid.
 pub const SPACING_UNIT_PX: f32 = 4.0;
 
 /// Interface motion in milliseconds, by how often a user meets it. After
@@ -49,23 +59,29 @@ pub mod motion {
     /// Done many times a day (selection, tab switch, focus): instant, or at
     /// most this.
     pub const FREQUENT_MAX_MS: u32 = 100;
-    /// Small feedback (press, check, tooltip, dropdown).
+    /// Small feedback (press, check, toggle, tooltip).
     pub const MICRO_MAX_MS: u32 = 200;
-    /// Panels, dialogs, drawers, page changes.
+    /// Menus and dropdowns (150 to 250 at animations.dev), panels,
+    /// dialogs, drawers, page changes.
     pub const STANDARD_MAX_MS: u32 = 350;
     /// Rare moments that are allowed to be watched.
     pub const EMPHASIS_MAX_MS: u32 = 500;
-    /// Shorter than this and not 0 reads as a flicker.
-    pub const MIN_VISIBLE_MS: u32 = 60;
-    /// One step of a stagger, and the whole stagger.
+    /// Shorter than this and not 0 reads as a flicker: Material 3's
+    /// shortest duration token (`short1`).
+    pub const MIN_VISIBLE_MS: u32 = 50;
+    /// One step of a stagger (30 to 50 at ui-ux-pro-max; 30 to 80 at
+    /// animations.dev), and the whole stagger: what is left of the 400 ms
+    /// Doherty threshold once the last item's own micro animation has run.
     pub const STAGGER_STEP_MAX_MS: u32 = 50;
     pub const STAGGER_TOTAL_MAX_MS: u32 = 200;
-    /// An entrance that scales starts at or above this.
+    /// An entrance that scales starts at or above this. Lower than any
+    /// guideline (0.8 to 0.97) so that a finding is certain.
     pub const ENTER_SCALE_MIN: f32 = 0.5;
     /// The scale the guidelines recommend an entrance start from.
     pub const ENTER_SCALE_RECOMMENDED: f32 = 0.95;
     /// A spring for interface motion is damped at least this much (1 is
-    /// critical damping: no overshoot).
+    /// critical damping: no overshoot). SwiftUI's bounce is one less the
+    /// ratio, and animations.dev keeps bounce within 0.1 to 0.3.
     pub const SPRING_MIN_DAMPING_RATIO: f32 = 0.7;
     /// One frame at 60 Hz.
     pub const FRAME_BUDGET_MS: f32 = 16.7;

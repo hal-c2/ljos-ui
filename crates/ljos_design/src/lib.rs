@@ -211,6 +211,38 @@ pub const RULES: &[Rule] = &[
         "The current or selected item of a list, menu or combo box popup looks like the others.",
         "Mark it with a check, an indicator or a highlight with 3:1 against its neighbours, and set `highlighted` or `checked` so it is exposed.",
     ),
+    r(
+        "a11y-name-mismatch",
+        A11y,
+        Warning,
+        Both,
+        "A control's accessible name does not contain the text it shows, so someone who speaks what they see cannot reach it (WCAG 2.2 2.5.3).",
+        "Start `Accessible.name` with the visible text, or leave it unset so the control names itself from its `text`.",
+    ),
+    r(
+        "a11y-ignored-focusable",
+        A11y,
+        Error,
+        Both,
+        "An item left out of the accessibility tree (`Accessible.ignored: true`) takes keyboard focus or holds a control, so focus lands where a screen reader says nothing.",
+        "Set `Accessible.ignored` only on decoration; leave it off anything a user can operate and off what holds it.",
+    ),
+    r(
+        "a11y-nested-interactive",
+        A11y,
+        Warning,
+        Both,
+        "A control sits inside another item that also reacts to a click or a key, so the pointer, Tab and a screen reader disagree about which one acts.",
+        "Put the two side by side, or make the outer one a plain container with no handler of its own.",
+    ),
+    r(
+        "a11y-unnamed-dialog",
+        A11y,
+        Warning,
+        Both,
+        "A dialog or modal popup has no title and no accessible name, so a screen reader announces only that a dialog opened.",
+        "Set `title` on a `Dialog`, or `Accessible.name` on a `Popup`, saying what it is for.",
+    ),
     // Colour.
     r(
         "color-text-contrast",
@@ -308,6 +340,14 @@ pub const RULES: &[Rule] = &[
         Static,
         "A text item sets `font.family` to a literal, so it stops following the application's font.",
         "Leave `font.family` unset to inherit it, or bind it to the theme's font.",
+    ),
+    r(
+        "text-too-small",
+        Text,
+        Warning,
+        Both,
+        "Text is drawn smaller than the smallest size any platform allows for reading.",
+        "Use a step of the type scale at or above the limit; set secondary text apart by weight or a muted text colour that still passes contrast, not by size.",
     ),
     // Layout.
     r(
