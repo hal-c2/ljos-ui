@@ -147,6 +147,22 @@ pub enum SystemSetting {
     ScreenReader(bool),
 }
 
+/// A step of a drag that comes from another application.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OutsideDrag {
+    /// It comes over the window at this point, offering these MIME types
+    /// with these contents.
+    Enter {
+        formats: Vec<(String, String)>,
+        at: (f64, f64),
+    },
+    Move((f64, f64)),
+    /// It leaves the window, or is given up.
+    Leave,
+    /// It is let go where it was last seen.
+    Drop,
+}
+
 /// What the user does with a dialog the system shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SystemDialogAnswer {
@@ -431,6 +447,20 @@ pub trait Backend: fmt::Debug {
     /// The system cannot take away a dialog it shows, from now on.
     fn system_dialogs_stay(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+    /// A step of a drag from another application, as the window system
+    /// reports it.
+    fn drag_from_outside(&mut self, _step: &OutsideDrag) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "drags from other applications",
+        ))
+    }
+    /// What the application answered the last step: whether a drop target
+    /// under the drag takes it (after `Drop`, whether one took the drop).
+    fn outside_drag_taken(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "drags from other applications",
+        ))
     }
     /// Another application copies `text` while this one runs, and nobody
     /// tells it. Where the clipboard tells every application of a change,

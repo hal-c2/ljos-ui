@@ -185,6 +185,9 @@ struct Live {
     disk: Option<disk::Disk>,
     /// The `top` overlay; hidden unless a scenario shows it.
     top: ljos_dev::Top,
+    /// What the application answered the last step of a drag from
+    /// another application.
+    outside_taken: bool,
 }
 
 #[derive(Default)]
@@ -438,6 +441,7 @@ impl LjosBackend {
             reloads: None,
             disk: None,
             top: ljos_dev::Top::new(),
+            outside_taken: false,
         };
         // A decode takes as long as it takes; scenarios see its result when
         // time is advanced and not before, whatever the machine's speed.
@@ -1465,6 +1469,31 @@ impl Backend for LjosBackend {
     fn system_dialogs_stay(&mut self) -> Result<()> {
         self.platform.dialogs_stay();
         Ok(())
+    }
+
+    fn drag_from_outside(&mut self, step: &super::OutsideDrag) -> Result<()> {
+        use super::OutsideDrag;
+        use ljos_platform::{DragData, ExternalDrag};
+        let live = self.live()?;
+        let drag = match step {
+            OutsideDrag::Enter { formats, at } => ExternalDrag::Entered {
+                data: DragData::from_formats(formats.iter().map(|(f, d)| (f, d.as_bytes()))),
+                at: Some(*at),
+            },
+            OutsideDrag::Move(at) => ExternalDrag::Moved { at: *at },
+            OutsideDrag::Leave => ExternalDrag::Left,
+            // What it carries was said when it came in.
+            OutsideDrag::Drop => ExternalDrag::Dropped {
+                data: DragData::default(),
+                at: None,
+            },
+        };
+        live.outside_taken = ljos_platform::external_drag(&live.engine, &drag);
+        live.settle()
+    }
+
+    fn outside_drag_taken(&mut self) -> Result<bool> {
+        Ok(self.live()?.outside_taken)
     }
 
     fn copy_elsewhere(&mut self, text: &str) -> Result<()> {

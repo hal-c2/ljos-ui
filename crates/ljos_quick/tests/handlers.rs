@@ -169,7 +169,8 @@ fn files_are_not_offered_to_an_area_that_wants_text() {
 
 /// The platform seam (`ljos_platform::external_drag`): DropArea installs
 /// itself as the drop handler, so a host's file drags reach it with the
-/// same log the platform drags above give.
+/// same log the platform drags above give. Whether an area took the drag
+/// is the answer to each step.
 #[test]
 fn external_file_drags_reach_the_drop_area() {
     let e = engine();
@@ -184,28 +185,19 @@ fn external_file_drags_reach_the_drop_area() {
 
     // Came in where the host knows, moved, and was let go where it was
     // last seen (the drop itself carries no position).
-    assert!(!external_drag(
+    assert!(external_drag(
         &e,
-        &ExternalDrag::Entered {
-            files: paths(),
-            at: Some((10.0, 20.0)),
-        }
+        &ExternalDrag::files_entered(paths(), Some((10.0, 20.0)))
     ));
     assert_eq!(log(&e, root), "entered(10,20 true true 1) ");
     assert_eq!(
         get(&e, area, "containsDrag"),
         ljos_engine::Value::Bool(true)
     );
-    assert!(!external_drag(
-        &e,
-        &ExternalDrag::Moved { at: (30.0, 20.0) }
-    ));
+    assert!(external_drag(&e, &ExternalDrag::Moved { at: (30.0, 20.0) }));
     assert!(external_drag(
         &e,
-        &ExternalDrag::Dropped {
-            files: paths(),
-            at: None,
-        }
+        &ExternalDrag::files_dropped(paths(), None)
     ));
     assert_eq!(
         log(&e, root),
@@ -221,15 +213,9 @@ fn external_file_drags_reach_the_drop_area() {
     // and leaving the window leaves the area.
     assert!(!external_drag(
         &e,
-        &ExternalDrag::Entered {
-            files: paths(),
-            at: None,
-        }
+        &ExternalDrag::files_entered(paths(), None)
     ));
-    assert!(!external_drag(
-        &e,
-        &ExternalDrag::Moved { at: (10.0, 10.0) }
-    ));
+    assert!(external_drag(&e, &ExternalDrag::Moved { at: (10.0, 10.0) }));
     assert!(!external_drag(&e, &ExternalDrag::Left));
     assert_eq!(
         log(&e, root),
@@ -242,11 +228,100 @@ fn external_file_drags_reach_the_drop_area() {
     // text, is not taken.
     assert!(!external_drag(
         &e,
-        &ExternalDrag::Dropped {
-            files: paths(),
-            at: Some((150.0, 10.0)),
+        &ExternalDrag::files_dropped(paths(), Some((150.0, 10.0)))
+    ));
+}
+
+const LINKS: &str = r#"
+import QtQuick
+Item {
+    width: 200; height: 200
+    property string log: ""
+    DropArea {
+        objectName: "local"
+        width: 200; height: 200
+        // Only files on this machine.
+        onEntered: (drag) => {
+            drag.accepted = drag.hasUrls
+                && drag.urls.every(u => u.toString().startsWith("file:"))
+            parent.log += "entered(" + drag.urls + " " + drag.accepted + ") "
+        }
+        onDropped: (drop) => {
+            parent.log += "dropped(" + drop.urls + " [" + drop.text + "] "
+                + drop.formats.join(",") + " "
+                + drop.getDataAsString("application/x-ljos-test") + ") "
+            drop.accept()
+        }
+    }
+}
+"#;
+
+/// #115: a drag from another application carries what that application
+/// offers, not only files. A link is offered to the area, which turns it
+/// down, and the host is told no area took it.
+#[test]
+fn an_area_that_takes_only_files_turns_down_a_dragged_link() {
+    let e = engine();
+    let root = load(&e, LINKS);
+    let area = find(&e, root, "local");
+    let link = DragData::urls(["https://example.com/page"]);
+    assert!(!external_drag(
+        &e,
+        &ExternalDrag::Entered {
+            data: link.clone(),
+            at: Some((10.0, 10.0)),
         }
     ));
+    assert_eq!(
+        get(&e, area, "containsDrag"),
+        ljos_engine::Value::Bool(false)
+    );
+    assert!(!external_drag(
+        &e,
+        &ExternalDrag::Dropped {
+            data: link,
+            at: None,
+        }
+    ));
+    assert_eq!(log(&e, root), "entered(https://example.com/page false) ");
+}
+
+#[test]
+fn a_drag_from_another_application_carries_text_and_any_format() {
+    let e = engine();
+    let root = load(&e, LINKS);
+    let data = DragData::from_formats([
+        (
+            "text/uri-list",
+            &b"# a comment\r\nfile:///data/a.txt\r\n"[..],
+        ),
+        ("UTF8_STRING", b"a.txt"),
+        ("text/plain", b"not this one"),
+        ("application/x-ljos-test", b"payload\0"),
+    ]);
+    assert!(external_drag(
+        &e,
+        &ExternalDrag::Entered {
+            data: data.clone(),
+            at: Some((10.0, 10.0)),
+        }
+    ));
+    assert!(external_drag(&e, &ExternalDrag::Dropped { data, at: None }));
+    assert_eq!(
+        log(&e, root),
+        "entered(file:///data/a.txt true) \
+         dropped(file:///data/a.txt [a.txt] \
+         text/uri-list,text/plain,application/x-ljos-test payload) "
+    );
+}
+
+#[test]
+fn text_a_source_writes_as_utf_16_is_read() {
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend("<b>ljós</b>".encode_utf16().flat_map(u16::to_le_bytes));
+    let d = DragData::from_formats([("text/html", bytes)]);
+    assert_eq!(d.html.as_deref(), Some("<b>ljós</b>"));
+    assert_eq!(d.formats(), vec!["text/html"]);
 }
 
 #[test]

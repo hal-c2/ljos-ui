@@ -308,12 +308,7 @@ fn data_of(engine: &Engine, mime: &Value) -> DragData {
             "text/uri-list" => {
                 data.urls = match &v {
                     Value::List(l) => l.iter().map(text).collect(),
-                    other => text(other)
-                        .lines()
-                        .map(str::trim)
-                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-                        .map(str::to_string)
-                        .collect(),
+                    other => ljos_platform::uri_list(&text(other)),
                 }
             }
             _ => data.other.push((format, text(&v))),

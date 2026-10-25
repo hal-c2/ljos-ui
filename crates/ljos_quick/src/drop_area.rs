@@ -28,69 +28,9 @@ pub const MOVE_ACTION: i32 = 2;
 /// `Qt.LinkAction`.
 pub const LINK_ACTION: i32 = 4;
 
-/// What a drag carries, by MIME type.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct DragData {
-    /// Files and other addresses (`text/uri-list`).
-    pub urls: Vec<String>,
-    /// `text/plain`.
-    pub text: Option<String>,
-    /// `text/html`.
-    pub html: Option<String>,
-    /// Anything else, as text, by MIME type.
-    pub other: Vec<(String, String)>,
-}
-
-impl DragData {
-    /// Files, as a file manager drags them.
-    pub fn files<I: IntoIterator<Item = std::path::PathBuf>>(paths: I) -> Self {
-        Self {
-            urls: paths
-                .into_iter()
-                .map(|p| ljos_engine::file_url(&p))
-                .collect(),
-            ..Self::default()
-        }
-    }
-
-    /// The MIME types it has, as `DragEvent.formats` and `keys` tell
-    /// them.
-    pub fn formats(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        if !self.urls.is_empty() {
-            out.push("text/uri-list".to_string());
-        }
-        if self.text.is_some() {
-            out.push("text/plain".to_string());
-        }
-        if self.html.is_some() {
-            out.push("text/html".to_string());
-        }
-        out.extend(self.other.iter().map(|(k, _)| k.clone()));
-        out
-    }
-
-    fn get(&self, format: &str) -> Option<String> {
-        match format {
-            // The list leaves the process, so each address in it is written
-            // the strict way a reader can parse without guessing.
-            "text/uri-list" if !self.urls.is_empty() => Some(
-                self.urls
-                    .iter()
-                    .map(|u| ljos_engine::encoded_url(u))
-                    .collect::<Vec<_>>()
-                    .join("\r\n"),
-            ),
-            "text/plain" => self.text.clone(),
-            "text/html" => self.html.clone(),
-            _ => self
-                .other
-                .iter()
-                .find(|(k, _)| k == format)
-                .map(|(_, v)| v.clone()),
-        }
-    }
-}
+/// What a drag carries: the platform's, so that a drag from another
+/// application carries the same.
+pub use ljos_platform::DragData;
 
 /// The `drag` group of a `DropArea`: the drag over it.
 #[derive(Debug, Default, QmlObject)]
@@ -244,7 +184,7 @@ impl DragEvent {
     fn get_data_as_string(cx: &Cx, format: Value) -> String {
         let format = format.to_js_string().as_str().to_string();
         cx.engine
-            .with(cx.this, |e: &DragEvent| e.data.get(&format))
+            .with(cx.this, |e: &DragEvent| e.data.data(&format))
             .ok()
             .flatten()
             .unwrap_or_default()
@@ -255,7 +195,7 @@ impl DragEvent {
     fn get_data_as_array_buffer(cx: &Cx, format: Value) -> Value {
         let format = format.to_js_string().as_str().to_string();
         cx.engine
-            .with(cx.this, |e: &DragEvent| e.data.get(&format))
+            .with(cx.this, |e: &DragEvent| e.data.data(&format))
             .ok()
             .flatten()
             .map_or(Value::Undefined, |s| Value::String(Atom::new(&s)))
@@ -701,23 +641,21 @@ pub fn platform_drag_target(engine: &Engine) -> Option<ObjectId> {
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [DropArea, DragEvent]));
 
-    // One drag at a time, as the egui view keeps one: the files it
-    // carries are said once (when it comes in, or only when it is let
-    // go), so the drag and where it was last seen are kept here for the
-    // events that have neither.
+    // One drag at a time, as the egui view keeps one: what it carries is
+    // said once (when it comes in, or only when it is let go), so the
+    // drag and where it was last seen are kept here for the events that
+    // have neither.
     let current: RefCell<Option<PlatformDrag>> = RefCell::new(None);
     let last: Cell<Option<kurbo::Point>> = Cell::new(None);
     ljos_platform::Platform::of(engine).set_drop_handler(move |engine, drag| {
         use ljos_platform::ExternalDrag;
         let point = |at: (f64, f64)| kurbo::Point::new(at.0, at.1);
         match drag {
-            ExternalDrag::Entered { files, at } => {
+            ExternalDrag::Entered { data, at } => {
                 // Cloned out: no borrow is held while the areas are told.
                 let drag = current
                     .borrow_mut()
-                    .get_or_insert_with(|| {
-                        PlatformDrag::new(DragData::files(files.iter().cloned()))
-                    })
+                    .get_or_insert_with(|| PlatformDrag::new(data.clone()))
                     .clone();
                 // Where it is is not always known when it comes in; the
                 // areas hear of it when a position is.
@@ -726,7 +664,7 @@ pub(crate) fn register(engine: &Engine) {
                     last.set(Some(pos));
                     platform_drag(engine, &drag, &PlatformDragKind::Move(pos));
                 }
-                false
+                platform_drag_target(engine).is_some()
             }
             ExternalDrag::Moved { at } => {
                 let Some(drag) = current.borrow().clone() else {
@@ -735,7 +673,7 @@ pub(crate) fn register(engine: &Engine) {
                 let pos = point(*at);
                 last.set(Some(pos));
                 platform_drag(engine, &drag, &PlatformDragKind::Move(pos));
-                false
+                platform_drag_target(engine).is_some()
             }
             ExternalDrag::Left => {
                 last.set(None);
@@ -744,13 +682,13 @@ pub(crate) fn register(engine: &Engine) {
                 }
                 false
             }
-            ExternalDrag::Dropped { files, at } => {
+            ExternalDrag::Dropped { data, at } => {
                 // Let go where it was last seen when the drop itself has
                 // no position, as the egui view drops them.
                 let drag = current
                     .borrow_mut()
                     .take()
-                    .unwrap_or_else(|| PlatformDrag::new(DragData::files(files.iter().cloned())));
+                    .unwrap_or_else(|| PlatformDrag::new(data.clone()));
                 let at = at.map(point).or_else(|| last.take());
                 last.set(None);
                 match at {
@@ -778,7 +716,7 @@ mod tests {
             std::path::PathBuf::from("/data/ljós#1.txt"),
         ]);
         assert_eq!(
-            d.get("text/uri-list").as_deref(),
+            d.data("text/uri-list").as_deref(),
             Some("file:///data/b%20c.png\r\nfile:///data/lj%C3%B3s%231.txt")
         );
     }

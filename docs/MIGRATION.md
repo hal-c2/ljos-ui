@@ -635,8 +635,10 @@ and answering through its `DialogAnswer` with a `DialogReply`) or a
 `PermissionService` (a `Permission`, a `PermissionStatus`, a
 `PermissionAnswer`) with the prelude's names; the `PathEnv` of
 `Platform::env()` is the home and environment the standard paths come
-from; and a host hands a drag of files from another application on as
-an `ExternalDrag` to `external_drag(engine, &drag)`.
+from; and a host hands a drag from another application on as an
+`ExternalDrag` to `external_drag(engine, &drag)`, with what it carries
+(files, other URLs, text, any MIME type) as a `DragData`, and is told
+whether a `DropArea` took it.
 
 A clipboard write says whether it happened: `set_text`, `set_html`,
 `set_image` and `clear` return `Result<(), ClipboardError>`, `Ok` only

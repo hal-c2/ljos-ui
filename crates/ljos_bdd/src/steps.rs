@@ -6,6 +6,7 @@ use gherkin::Step;
 use regex::Regex;
 use serde_json::Value;
 
+use crate::backend::OutsideDrag;
 use crate::backend::SystemDialogAnswer;
 use crate::backend::SystemSetting;
 use crate::backend::testrun::{TestRun, expected_lines};
@@ -384,6 +385,77 @@ fn user_dismisses(w: &mut LjosWorld) -> StepResult {
 #[when(regex = r#"^"([^"]*)" is copied in another application$"#)]
 fn copied_elsewhere(w: &mut LjosWorld, text: String) -> StepResult {
     w.each(|b| b.copy_elsewhere(&text))
+}
+
+// A drag from another application, step by step as the window system
+// tells it.
+#[when(regex = r#"^another application drags the (URL|text) "([^"]*)" over ([-\d.]+), ([-\d.]+)$"#)]
+fn outside_drag_one(w: &mut LjosWorld, what: String, data: String, x: f64, y: f64) -> StepResult {
+    let format = if what == "URL" {
+        "text/uri-list"
+    } else {
+        "text/plain"
+    };
+    let formats = vec![(format.to_owned(), data)];
+    w.each(|b| {
+        b.drag_from_outside(&OutsideDrag::Enter {
+            formats: formats.clone(),
+            at: (x, y),
+        })
+    })
+}
+
+// The table has a `format` and a `data` column.
+#[when(regex = r#"^another application drags this over ([-\d.]+), ([-\d.]+):$"#)]
+fn outside_drag_formats(w: &mut LjosWorld, x: f64, y: f64, step: &Step) -> StepResult {
+    let table = step
+        .table
+        .as_ref()
+        .ok_or_else(|| "the step needs a table of format and data".to_owned())?;
+    let formats: Vec<(String, String)> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|r| (r[0].clone(), r[1].clone()))
+        .collect();
+    w.each(|b| {
+        b.drag_from_outside(&OutsideDrag::Enter {
+            formats: formats.clone(),
+            at: (x, y),
+        })
+    })
+}
+
+#[when(regex = r#"^the drag from another application moves to ([-\d.]+), ([-\d.]+)$"#)]
+fn outside_drag_moves(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
+    w.each(|b| b.drag_from_outside(&OutsideDrag::Move((x, y))))
+}
+
+#[when("the drag from another application leaves the window")]
+fn outside_drag_leaves(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.drag_from_outside(&OutsideDrag::Leave))
+}
+
+#[when("the drag from another application is let go")]
+fn outside_drag_dropped(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.drag_from_outside(&OutsideDrag::Drop))
+}
+
+// What the application told the window system at the last step: whether
+// a drop target under the drag takes it, or took the drop.
+#[then(regex = r#"^the drag from another application is (taken|not taken)$"#)]
+fn outside_drag_taken(w: &mut LjosWorld, which: String) -> StepResult {
+    let want = which == "taken";
+    w.each(|b| {
+        if b.outside_drag_taken()? == want {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the drag from another application is {}taken",
+                if want { "not " } else { "" }
+            )))
+        }
+    })
 }
 
 #[when(regex = r#"^the user (grants|denies) the "([^"]+)" permission$"#)]
