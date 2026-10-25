@@ -10,7 +10,9 @@
 #   cua-sandbox.sh stop
 #
 # start and exec bring up what is not running. call fills in the app's pid, a shared session
-# label and foreground delivery where the tool takes them. Files go under LJOS_CUA_HOME,
+# label and foreground delivery where the tool takes them; it holds a button down
+# (mouse_button_down, mouse_drag, mouse_button_up) through XTEST, with xdotool, as the app
+# does not read the events the driver's own post. Files go under LJOS_CUA_HOME,
 # default <target>/cua.
 #
 # The compositor renders in software (pixman), so its clients do too: Mesa's llvmpipe. With
@@ -265,7 +267,7 @@ with() {
 # it is asked to focus the window the call names, by X11 id, else by pid.
 focus_target() {
   [[ $json == *'"delivery_mode"'*'"foreground"'* ]] || return 0
-  local criteria sock
+  local criteria
   if [[ $json =~ \"window_id\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
     criteria="id=${BASH_REMATCH[1]}"
   elif [[ $json =~ \"pid\"[[:space:]]*:[[:space:]]*([0-9]+) ]]; then
@@ -273,24 +275,98 @@ focus_target() {
   else
     return 0
   fi
+  focus "$criteria"
+}
+focus() {
+  local sock
   for sock in "$run"/sway-ipc.*.sock; do
     [[ -S $sock ]] && break
   done
   [[ -S $sock ]] || return 0
-  swaymsg -s "$sock" "[$criteria] focus" > /dev/null 2>&1 || true
+  swaymsg -s "$sock" "[$1] focus" > /dev/null 2>&1 || true
 }
+
+# A number or a string the json has under a key; fails when it has none.
+json_num() { [[ $json =~ \"$1\"[[:space:]]*:[[:space:]]*(-?[0-9]+(\.[0-9]+)?) ]] && printf '%.0f' "${BASH_REMATCH[1]}"; }
+json_str() { [[ $json =~ \"$1\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && echo "${BASH_REMATCH[1]}"; }
+
+# cua-driver's held-button tools post core X11 events with XSendEvent. The app reads the
+# pointer through XInput2 (winit), which never sees those: a press held with them, a long
+# press or a drag, did nothing. In the sandbox they go through XTEST, as cua-driver's own
+# foreground click and drag do, so the app sees what a user's pointer does. The button held
+# is kept in $home/held between calls. Coordinates are window-local, as the driver's are.
+held() {
+  command -v xdotool > /dev/null ||
+    die "$tool needs xdotool: cua-driver's own posts events the app does not read (use drag, from == to with duration_ms, for a long press)"
+  [[ $(json_str coordinate_frame) != desktop ]] || die "$tool: only window coordinates in the sandbox"
+  local state=$home/held win x y button=1 hx hy steps ms i
+  if [[ $tool == mouse_button_down ]]; then
+    win=$(json_num window_id) || die "$tool needs window_id"
+    case $(json_str button) in right) button=3 ;; middle) button=2 ;; esac
+  else
+    read -r win hx hy button 2> /dev/null < "$state" || die "$tool: no button is held (mouse_button_down)"
+  fi
+  x=$(json_num x) || x=${hx:-}
+  y=$(json_num y) || y=${hy:-}
+  [[ -n $x && -n $y ]] || die "$tool needs x and y"
+  focus "id=$win"
+  xdo() { "${sandbox_env[@]}" xdotool "$@"; }
+  case $tool in
+    mouse_button_down)
+      xdo mousemove --window "$win" "$x" "$y" mousedown "$button"
+      echo "$win $x $y $button" > "$state"
+      ;;
+    mouse_drag)
+      steps=$(json_num steps) || steps=20
+      ms=$(json_num duration_ms) || ms=500
+      ((steps > 0)) || steps=1
+      for ((i = 1; i <= steps; i++)); do
+        sleep "$(printf '%d.%03d' $((ms / steps / 1000)) $((ms / steps % 1000)))"
+        xdo mousemove --window "$win" $((hx + (x - hx) * i / steps)) $((hy + (y - hy) * i / steps))
+      done
+      echo "$win $x $y $button" > "$state"
+      ;;
+    mouse_button_up)
+      xdo mousemove --window "$win" "$x" "$y" mouseup "$button"
+      rm -f "$state"
+      ;;
+  esac
+  printf '{"route":"xtest","summary":"%s button %s at (%s, %s) of window %s through XTEST"}\n' \
+    "$tool" "$button" "$x" "$y" "$win"
+}
+# On a fresh display the first press a pointer tool made reached the app at the point the
+# pointer sat on, not the one asked for: the app had not yet seen the pointer come in, and a
+# press only says which button went down (winit), so it is taken where the pointer was last
+# seen. The pointer goes to the tool's point first, through XTEST, so the app sees it arrive.
+point_first() {
+  command -v xdotool > /dev/null || return 0
+  [[ $(json_str coordinate_frame) != desktop ]] || return 0
+  local win x y
+  win=$(json_num window_id) || return 0
+  x=$(json_num x) || x=$(json_num from_x) || return 0
+  y=$(json_num y) || y=$(json_num from_y) || return 0
+  "${sandbox_env[@]}" xdotool mousemove --window "$win" "$x" "$y" 2> /dev/null || true
+}
+
 call() {
   (($#)) || die "usage: mise run desktop:cua:call <tool> [<json>]   (cua-driver list-tools names them)"
   pid_of cua > /dev/null || die "cua-driver is not running in the sandbox: mise run desktop:cua (needs cua-driver on the PATH)"
   load_sandbox
   local tool=$1 app
   json=${2:-'{}'}
+  case $tool in
+    mouse_button_down | mouse_drag | mouse_button_up)
+      held
+      return
+      ;;
+  esac
   schema=$(cua-driver describe "$tool") || exit
   # Screenshot-relative coordinates need the session the screenshot was taken in.
   with session "\"$session\""
   app=$(pid_of app) && with pid "$app"
   with delivery_mode '"foreground"'
   focus_target
+  point_first
   # A pointer tool shows the agent cursor again. Its overlay lets clicks through, and hiding it
   # here would unmap a window: X11 hands the focus away and back, and an app closes its popups
   # on losing it, so a popup a click opened would be gone by the screenshot after it.
