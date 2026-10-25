@@ -545,7 +545,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             self.check_path_member(owner, path, span);
             return;
         };
-        let owner = if self.special(owner) == Some(Special::PropertyChanges) {
+        let changes = self.special(owner) == Some(Special::PropertyChanges);
+        let owner = if changes {
             // What a PropertyChanges changes is its target's; one whose
             // target is no id says nothing of what that target has.
             if matches!(self.tree.lookup(self.types, owner, name), Lookup::Found(_)) {
@@ -601,6 +602,14 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 format!("`{name}` is not a property of `{}`", object.name),
             ),
         };
+        if changes && severity == Severity::Error {
+            // Qt loads such a state and warns only as it is entered.
+            let (code, message) = message;
+            let span = self.span(span);
+            self.diagnostics
+                .push(Diagnostic::warning(code, message, span));
+            return;
+        }
         self.report_missing(severity, message, span);
     }
 
