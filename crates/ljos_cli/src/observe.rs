@@ -25,7 +25,12 @@ use ljos_mcp_core::CapSet;
 use ljos_shell::{InspectorAccess, InspectorOptions, ShellConfig};
 use serde_json::{Value as Json, json};
 
-use crate::inspector::{self, Answer, find_token_file, read_token_file};
+use crate::inspector::{self, Answer, Trust, find_token_file, read_token_file};
+
+/// How far the token file `ljos observe` was started on is believed, kept
+/// for every call `InspectorClient` reads its file again for. Before it is
+/// set, a file is believed only as far as one found.
+static TRUST: std::sync::OnceLock<Trust> = std::sync::OnceLock::new();
 
 /// The window, compiled when `ljos observe` starts: the binary carries
 /// it, so the observer runs wherever `ljos` does.
@@ -42,6 +47,11 @@ pub struct Observe {
     /// properties).
     #[arg(default_value = ".")]
     target: PathBuf,
+    /// Lets a token file named as the target give an address beyond this
+    /// machine (an inspector started with `--mcp-bind`) or a socket of
+    /// another user's. A file found in a directory never may.
+    #[arg(long)]
+    remote: bool,
     /// The window's size in logical pixels.
     #[arg(long, value_parser = crate::run::parse_size, default_value = "1200x760", value_name = "WxH")]
     size: (f32, f32),
@@ -61,8 +71,13 @@ pub struct Observe {
 
 impl Observe {
     pub fn run(self) -> anyhow::Result<()> {
-        let token_file = find_token_file(&self.target)?;
-        let target = read_token_file(&token_file)?;
+        let (token_file, trust) = find_token_file(&self.target)?;
+        let trust = Trust {
+            remote: self.remote,
+            ..trust
+        };
+        let target = read_token_file(&token_file, trust)?;
+        let _ = TRUST.set(trust);
         crate::stderr::line(&format!(
             "ljos: observing {} (pid {}) through {}",
             target.url,
@@ -176,7 +191,8 @@ impl InspectorClient {
         let file = cx.get(InspectorClient::TOKEN_FILE)?;
         let name = cx.get(InspectorClient::CLIENT_NAME)?;
         let (e, me) = (cx.engine, cx.this);
-        let request = read_token_file(Path::new(&file)).and_then(|target| {
+        let trust = TRUST.get().copied().unwrap_or(Trust::FOUND);
+        let request = read_token_file(Path::new(&file), trust).and_then(|target| {
             let args: Json = match arguments.trim() {
                 "" => json!({}),
                 text => serde_json::from_str(text).context("the arguments are not JSON")?,

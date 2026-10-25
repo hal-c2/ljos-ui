@@ -129,6 +129,26 @@ impl TokenFile {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Opens a token file for a client to read. It never waits for a
+    /// writer, so a pipe in its place is opened and can be turned away;
+    /// with `follow` false, a link in its place is not opened at all.
+    pub fn open_for_reading(path: &Path, follow: bool) -> std::io::Result<std::fs::File> {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            let mut flags = libc::O_NONBLOCK;
+            if !follow {
+                flags |= libc::O_NOFOLLOW;
+            }
+            options.custom_flags(flags);
+        }
+        #[cfg(not(unix))]
+        let _ = follow;
+        options.open(path)
+    }
 }
 
 impl Drop for TokenFile {

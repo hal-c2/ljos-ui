@@ -10,8 +10,19 @@ pub fn process_alive(pid: u32) -> Option<bool> {
     imp::alive(pid)
 }
 
+/// The user this process acts as, where the system has users: whom a file
+/// found rather than named has to belong to before it is believed.
+pub fn effective_uid() -> Option<u32> {
+    imp::uid()
+}
+
 #[cfg(unix)]
 mod imp {
+    pub(super) fn uid() -> Option<u32> {
+        // SAFETY: `geteuid` cannot fail and touches no memory.
+        Some(unsafe { libc::geteuid() })
+    }
+
     pub(super) fn alive(pid: u32) -> Option<bool> {
         // A pid the kernel's type cannot hold names no process; 0 and
         // negative numbers name groups to `kill`, not a process.
@@ -37,6 +48,10 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
+    pub(super) fn uid() -> Option<u32> {
+        None
+    }
+
     use windows_sys::Win32::Foundation::{
         CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, STILL_ACTIVE,
     };
@@ -69,6 +84,10 @@ mod imp {
 #[cfg(not(any(unix, windows)))]
 mod imp {
     pub(super) fn alive(_pid: u32) -> Option<bool> {
+        None
+    }
+
+    pub(super) fn uid() -> Option<u32> {
         None
     }
 }

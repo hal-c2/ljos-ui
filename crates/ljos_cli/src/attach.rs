@@ -15,7 +15,7 @@ use serde_json::{Value as Json, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
 use tokio::sync::Mutex;
 
-use crate::inspector::{self, Answer, find_token_file, read_token_file};
+use crate::inspector::{self, Answer, Trust, find_token_file, read_token_file};
 
 #[derive(Args)]
 pub struct Attach {
@@ -25,6 +25,11 @@ pub struct Attach {
     /// started again is found.
     #[arg(default_value = ".")]
     target: PathBuf,
+    /// Lets a token file named as the target give an address beyond this
+    /// machine (an inspector started with `--mcp-bind`) or a socket of
+    /// another user's. A file found in a directory never may.
+    #[arg(long)]
+    remote: bool,
 }
 
 /// How long a message may take beyond the wait it asks for.
@@ -32,8 +37,12 @@ const PATIENCE: Duration = Duration::from_secs(30);
 
 impl Attach {
     pub fn run(self) -> anyhow::Result<()> {
-        let token_file = find_token_file(&self.target)?;
-        let target = read_token_file(&token_file)?;
+        let (token_file, trust) = find_token_file(&self.target)?;
+        let trust = Trust {
+            remote: self.remote,
+            ..trust
+        };
+        let target = read_token_file(&token_file, trust)?;
         crate::stderr::line(&format!(
             "ljos: attached to {} through {}",
             target.url,
@@ -44,11 +53,11 @@ impl Attach {
             .enable_time()
             .build()
             .context("starting the async runtime")?
-            .block_on(bridge(token_file))
+            .block_on(bridge(token_file, trust))
     }
 }
 
-async fn bridge(token_file: PathBuf) -> anyhow::Result<()> {
+async fn bridge(token_file: PathBuf, trust: Trust) -> anyhow::Result<()> {
     let out = Arc::new(Mutex::new(tokio::io::stdout()));
     let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
     let mut running = tokio::task::JoinSet::new();
@@ -58,7 +67,7 @@ async fn bridge(token_file: PathBuf) -> anyhow::Result<()> {
         }
         let (out, token_file) = (Arc::clone(&out), token_file.clone());
         running.spawn(async move {
-            let said = relay(&token_file, line).await;
+            let said = relay(&token_file, trust, line).await;
             let mut out = out.lock().await;
             for message in said {
                 // A closed stdout is a client gone; stdin ends next.
@@ -78,13 +87,13 @@ async fn bridge(token_file: PathBuf) -> anyhow::Result<()> {
 /// The lines `message` is answered with: the inspector's messages, or a
 /// JSON-RPC error when it could not be asked. A notification is answered
 /// with nothing.
-async fn relay(token_file: &std::path::Path, message: String) -> Vec<String> {
+async fn relay(token_file: &std::path::Path, trust: Trust, message: String) -> Vec<String> {
     let parsed: Json = serde_json::from_str(&message).unwrap_or(Json::Null);
     let id = parsed.get("id").cloned();
     let wait = parsed["params"]["arguments"]["wait_ms"]
         .as_u64()
         .unwrap_or(0);
-    let got = match read_token_file(token_file) {
+    let got = match read_token_file(token_file, trust) {
         Ok(target) => {
             let limit = Duration::from_millis(wait) + PATIENCE;
             inspector::post(&target, message, limit).await

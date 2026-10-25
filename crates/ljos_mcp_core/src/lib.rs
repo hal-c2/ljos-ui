@@ -24,7 +24,7 @@ mod socket;
 mod surface;
 
 #[cfg(feature = "http")]
-pub use alive::process_alive;
+pub use alive::{effective_uid, process_alive};
 #[cfg(feature = "http")]
 pub use auth::{
     RateLimit, Token, TokenFile, TokenFileError, address_host, loopback_host, loopback_origin,
