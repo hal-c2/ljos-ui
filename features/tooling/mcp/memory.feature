@@ -130,6 +130,30 @@ Feature: An agent reads where the application's memory is
     And the answer's "/owners/13/gpu" is true
     And the answer's text contains "not attributed:"
 
+  # The kernel's map of the process names each mapping's file; it is read
+  # only when asked. Elsewhere than on Linux `known` is false.
+  Scenario: The program and what is not attributed are split by mapping when asked
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {"mappings": true}}
+      """
+    Then the answer's "/mappings/known" is true
+    And the answer's "/mappings/resident_bytes" is at least 1
+    And the answer's "/mappings/groups/0/resident_bytes" is at least 1
+    And the answer's "/mappings/program_split/0/bytes" is at least 1
+    And the answer's "/mappings/not_attributed_split/0/bytes" is at least 1
+    And the answer's text contains "program and libraries, by mapping:"
+    And the answer's text contains "the program"
+    And the answer's text contains "not attributed, by where it is:"
+
+  Scenario: Without `mappings` the process's map is not read
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
+    Then the answer's "/mappings" is null
+    And the answer does not contain "by mapping"
+
   Scenario: Each object says about how much it holds
     When the agent calls the tool "app_objects"
     Then the answer's "/objects/0/bytes" is at least 1

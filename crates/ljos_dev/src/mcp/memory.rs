@@ -13,6 +13,10 @@
 //! not attributed. What a renderer keeps in textures is listed but left
 //! out of the sum: where there is a GPU it lives there, not in the
 //! process.
+//!
+//! With `mappings` the program and its libraries, and what is not
+//! attributed, are split by the mapping the pages are in (see
+//! [`mappings`](super::mappings)).
 
 use std::fmt::Write as _;
 
@@ -24,8 +28,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::mappings::{Group, Mappings};
 use super::objects::handle;
 use super::observe::Resident;
+use super::rust_heap::rust_heap_bytes;
 
 /// The most types one answer lists unless told otherwise.
 const DEFAULT_MAX: usize = 20;
@@ -42,6 +48,12 @@ pub struct MemoryArgs {
     /// 1000). The rest are counted in `types_left_out`.
     #[serde(default)]
     pub max: Option<usize>,
+    /// Also split what is resident by the mapping it is in: the program,
+    /// LLVM, the GPU driver, fonts, other libraries, the allocator's heap,
+    /// other anonymous maps (Linux; elsewhere not known). Reads the
+    /// process's memory map, a few milliseconds.
+    #[serde(default)]
+    pub mappings: bool,
 }
 
 /// What one window holds, as its host tells it.
@@ -162,7 +174,12 @@ fn model_memory(engine: &Engine) -> (usize, usize) {
 }
 
 /// The answer, for the windows the host told of.
-pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArgs) -> ToolReply {
+pub(crate) fn memory(
+    engine: &Engine,
+    windows: &[WindowMemory],
+    args: &MemoryArgs,
+    driver: Option<&str>,
+) -> ToolReply {
     let max = args.max.unwrap_or(DEFAULT_MAX).clamp(1, MOST_TYPES);
     let all = engine.object_memory();
     let (count, bytes) = all
@@ -338,6 +355,7 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
             "not_attributed_bytes": gap,
             "not_attributed_share": if p.rss == 0 { 0.0 } else { gap.max(0) as f64 / p.rss as f64 },
             "heap_in_use_bytes": heap.map(|h| h.in_use),
+            "rust_heap_bytes": rust_heap_bytes(),
         });
     }
     owners.push({
@@ -345,6 +363,30 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
         t["gpu"] = json!(true);
         t
     });
+    let maps = args.mappings.then(Mappings::now);
+    let rust = rust_heap_bytes();
+    let script_bytes = owners[0]["bytes"].as_u64().unwrap_or(0);
+    let mapped = match &maps {
+        None => Value::Null,
+        Some(None) => json!({ "known": false }),
+        Some(Some(m)) => {
+            let mut v = m.json(driver);
+            v["program_split"] = json!(
+                m.file_backed()
+                    .into_iter()
+                    .map(|(g, b)| part(g.key(), &group_label(g, driver), b))
+                    .collect::<Vec<_>>()
+            );
+            v["not_attributed_split"] = json!(not_attributed_split(
+                m,
+                heap,
+                rust,
+                (attributed, script_bytes),
+                driver
+            ));
+            v
+        }
+    };
 
     let value = json!({
         "objects": {
@@ -380,6 +422,7 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
         "counted_bytes": counted,
         "owners": owners,
         "reconciled": reconciled,
+        "mappings": mapped,
     });
 
     let mut out = String::new();
@@ -422,6 +465,34 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
             gap as f64 / (1024.0 * 1024.0),
             share * 100.0
         );
+    }
+    match &maps {
+        None => {}
+        Some(None) => out.push_str("by mapping: not known on this platform\n"),
+        Some(Some(m)) => {
+            let _ = writeln!(out, "program and libraries, by mapping:");
+            for p in value["mappings"]["program_split"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                part_line(&mut out, p);
+            }
+            out.push_str("not attributed, by where it is:\n");
+            for p in value["mappings"]["not_attributed_split"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                part_line(&mut out, p);
+            }
+            let _ = writeln!(
+                out,
+                "mappings: {:.1} MiB resident in {} groups",
+                mib(m.resident()),
+                m.groups.len()
+            );
+        }
     }
     let _ = writeln!(
         out,
@@ -492,4 +563,99 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
         }
     }
     ToolReply::from(value).with_text(out)
+}
+
+/// A group's label, the driver named where the painter says which.
+fn group_label(g: Group, driver: Option<&str>) -> String {
+    match (g, driver) {
+        (Group::Driver, Some(d)) => format!("GPU driver: {d}"),
+        _ => g.label().to_owned(),
+    }
+}
+
+fn part(key: &str, label: &str, bytes: u64) -> Value {
+    json!({ "part": key, "label": label, "bytes": bytes })
+}
+
+fn part_line(out: &mut String, p: &Value) {
+    let _ = writeln!(
+        out,
+        "  {:<44} {:>10.2} MiB",
+        p["label"].as_str().unwrap_or(""),
+        mib(p["bytes"].as_u64().unwrap_or(0))
+    );
+}
+
+/// Where what no owner tells of is: what libraries wrote into their own
+/// mappings, code compiled at run time, the stack, and of the allocator's
+/// heap and the other anonymous maps, what no owner counts and the
+/// allocator does not hold free. Largest first; the parts add up to what
+/// is not attributed.
+fn not_attributed_split(
+    m: &Mappings,
+    heap: Option<Heap>,
+    rust: Option<u64>,
+    (attributed, script): (u64, u64),
+    driver: Option<&str>,
+) -> Vec<Value> {
+    let mut parts = Vec::new();
+    let mut anon_maps = 0;
+    for (g, b) in m.anonymous() {
+        match g {
+            Group::Heap | Group::Anonymous => anon_maps += b,
+            Group::Jit | Group::Stack | Group::Kernel => {
+                parts.push(part(g.key(), g.label(), b));
+            }
+            _ => parts.push(part(
+                &format!("{}_data", g.key()),
+                &format!("{}: data it wrote", group_label(g, driver)),
+                b,
+            )),
+        }
+    }
+    let rest = anon_maps
+        .saturating_sub(attributed)
+        .saturating_sub(heap.map_or(0, |h| h.free));
+    match (heap, rust) {
+        // The script engine is C: its heap is among the C libraries'.
+        (Some(h), Some(r)) => {
+            let rust = r.saturating_sub(attributed.saturating_sub(script));
+            let c = h.in_use.saturating_sub(r).saturating_sub(script);
+            // What is allocated counts pages never touched, which are not
+            // resident: what is resident is shared out by what each has
+            // allocated.
+            let rust_part = match rust + c {
+                0 => 0,
+                all => (u128::from(rest) * u128::from(rust) / u128::from(all)) as u64,
+            };
+            parts.push(part(
+                "rust_unowned",
+                "allocated by Rust code, no owner tells of it",
+                rust_part,
+            ));
+            parts.push(part(
+                "c_libraries",
+                "allocated by C libraries (GPU driver, LLVM, fonts)",
+                rest - rust_part,
+            ));
+        }
+        (Some(_), None) => parts.push(part(
+            "allocated_unowned",
+            "allocated, no owner tells of it",
+            rest,
+        )),
+        (None, _) => parts.push(part(
+            "anonymous_maps",
+            "heap and anonymous maps, less the owners",
+            rest,
+        )),
+    }
+    parts.retain(|p| p["bytes"].as_u64().unwrap_or(0) > 0);
+    parts.sort_by(|a, b| {
+        b["bytes"]
+            .as_u64()
+            .unwrap_or(0)
+            .cmp(&a["bytes"].as_u64().unwrap_or(0))
+    });
+    parts
 }

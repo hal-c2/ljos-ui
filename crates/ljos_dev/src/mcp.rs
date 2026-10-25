@@ -46,12 +46,14 @@ mod growth;
 mod holders;
 mod hot;
 mod logs;
+mod mappings;
 mod memory;
 mod models;
 mod objects;
 mod observe;
 mod paint;
 mod reload;
+mod rust_heap;
 mod surface;
 mod timeline;
 mod tools;
@@ -92,6 +94,7 @@ pub use ljos_mcp_core::{
 };
 pub use memory::WindowMemory;
 pub use paint::{Drawn, PaintReport, PainterInfo, StartupStep};
+pub use rust_heap::CountingAlloc;
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
 pub use wakes::HostWake;
 
@@ -449,10 +452,11 @@ impl Inspector {
     /// Answers the `app_metrics` `memory` requests that wait, with what the host's
     /// windows hold, the primary one first.
     pub fn finish_memory(&mut self, engine: &Engine, windows: &[WindowMemory]) {
+        let driver = self.painter.as_ref().and_then(|p| p.adapter.as_deref());
         for parked in std::mem::take(&mut self.parked_memory) {
             let _ = parked
                 .reply
-                .send(Ok(memory::memory(engine, windows, &parked.args)));
+                .send(Ok(memory::memory(engine, windows, &parked.args, driver)));
         }
     }
 
@@ -978,7 +982,8 @@ impl Inspector {
                 scene: scene.memory(),
                 render: None,
             }];
-            let _ = reply.send(Ok(memory::memory(engine, &windows, args)));
+            let driver = self.painter.as_ref().and_then(|p| p.adapter.as_deref());
+            let _ = reply.send(Ok(memory::memory(engine, &windows, args, driver)));
             return;
         }
         if let Kind::Frames(args) = &kind {

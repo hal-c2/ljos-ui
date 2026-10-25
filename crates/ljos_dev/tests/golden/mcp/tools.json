@@ -290,6 +290,11 @@
         "MemoryArgs": {
           "additionalProperties": false,
           "properties": {
+            "mappings": {
+              "default": false,
+              "description": "Also split what is resident by the mapping it is in: the program,\nLLVM, the GPU driver, fonts, other libraries, the allocator's heap,\nother anonymous maps (Linux; elsewhere not known). Reads the\nprocess's memory map, a few milliseconds.",
+              "type": "boolean"
+            },
             "max": {
               "default": null,
               "description": "The most types to list, the most bytes first (default 20, at most\n1000). The rest are counted in `types_left_out`.",

@@ -22,6 +22,10 @@ mod dev;
 pub use ljos_dev::{Overlay, ReloadStats, Report};
 #[cfg(feature = "dev")]
 mod tools;
+/// The global allocator that lets the inspector tell what Rust code
+/// holds from what C libraries do.
+#[cfg(feature = "mcp")]
+pub use ljos_dev::mcp::CountingAlloc;
 #[cfg(feature = "dev")]
 pub use ljos_dev::{TopRow, TopView};
 #[cfg(feature = "mcp")]

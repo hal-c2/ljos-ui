@@ -15,6 +15,12 @@ mod demand;
 mod fmt;
 #[cfg(feature = "dhat-heap")]
 mod heap;
+
+// What the inspector's memory answer counts as Rust's; the dhat build has
+// its own allocator.
+#[cfg(not(feature = "dhat-heap"))]
+#[global_allocator]
+static ALLOC: ljos_shell::CountingAlloc = ljos_shell::CountingAlloc;
 mod i18n;
 mod inspector;
 mod observe;
