@@ -79,3 +79,11 @@ Feature: A drag from another application
     Then the drag from another application is not taken
     When the drag from another application leaves the window
     Then the property "log" of "root" is "entered(text/plain) exited "
+
+  @api-QtQuick.DropArea.dropped
+  Scenario: A drag is dropped on the area under the place it was let go
+    When another application drags the URL "file:///home/a.txt" over 50, 50
+    And the drag from another application moves to 250, 350
+    And the drag from another application is let go
+    Then the drag from another application is taken
+    And the property "log" of "root" is "files(file:///home/a.txt true) entered(text/uri-list) dropped(file:///home/a.txt||) "
