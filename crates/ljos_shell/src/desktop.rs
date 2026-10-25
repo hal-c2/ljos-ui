@@ -231,6 +231,9 @@ struct Slot {
     applied: Option<WindowSpec>,
     /// The accessibility adapter was sent the scene's tree.
     told: bool,
+    /// The modifiers the window's keyboard holds, as the platform last
+    /// said; egui-winit keeps its own to itself.
+    modifiers: ljos_host::Modifiers,
     /// egui's tree as the adapter was last sent it. The same again
     /// changes nothing a reader hears, and still woke the adapter's
     /// thread on every pass.
@@ -319,6 +322,7 @@ impl Slot {
             painter: None,
             applied: None,
             told: false,
+            modifiers: ljos_host::Modifiers::default(),
             sent_root: None,
             pending: egui::TexturesDelta::default(),
             actions: Vec::new(),
@@ -552,6 +556,45 @@ fn starts_input(event: &WindowEvent) -> bool {
                 | PointerKind::Button(_, ButtonState::Pressed)
         ),
         _ => false,
+    }
+}
+
+/// Whether a press asks for a paste, by the chords of Qt's
+/// `QKeySequence::Paste` that egui-winit knows too: Command+V (Control+V
+/// off macOS), with Shift or without, Shift+Insert, and the Paste key. The
+/// V is the key that types it, or the V's place on a keyboard that types
+/// no Latin letter there.
+fn asks_paste(key: &ljos_host::KeyEvent, held: ljos_host::Modifiers, mac: bool) -> bool {
+    if key.state != ButtonState::Pressed {
+        return false;
+    }
+    let command = if mac { held.meta } else { held.control };
+    let other = if mac { held.control } else { held.meta };
+    match &key.key {
+        ljos_host::Key::Named(name) => {
+            name == "Paste"
+                || (!mac
+                    && name == "Insert"
+                    && held.shift
+                    && !held.control
+                    && !held.alt
+                    && !held.meta)
+        }
+        ljos_host::Key::Character(c) if command && !held.alt && !other => {
+            let latin = c.chars().all(|c| c.is_ascii_alphabetic());
+            c.eq_ignore_ascii_case("v") || (!latin && key.code.as_deref() == Some("KeyV"))
+        }
+        _ => false,
+    }
+}
+
+/// Keeps the modifiers a window's keyboard holds. One that lost the
+/// keyboard holds none: the release goes to the window that has it.
+fn follow_modifiers(held: &mut ljos_host::Modifiers, event: &WindowEvent) {
+    match event {
+        WindowEvent::Modifiers(m) => *held = *m,
+        WindowEvent::Focus(false) => *held = ljos_host::Modifiers::default(),
+        _ => {}
     }
 }
 
@@ -1187,6 +1230,12 @@ impl<M: Send + 'static> Desktop<M> {
             host.event_loop().system_theme(),
             side.map(|s| s.min(EGUI_TEXTURE_SIDE)),
         );
+        // egui-winit's own clipboard chords read its clipboard, which has
+        // no system behind it here, and drop the press when it is empty
+        // (#130); they swallow the Shift of Ctrl+Shift+V always. Off, every
+        // chord reaches the scene as the key it is, and the scene's editors
+        // copy, cut and paste through the platform's clipboard.
+        state.set_clipboard_shortcuts(false);
         // While the window is unseen: the adapter has to be there before
         // the platform asks about the window.
         state.init_accesskit(host.event_loop(), &window, host.proxy().clone());
@@ -1712,6 +1761,20 @@ impl<M: Send + 'static> Desktop<M> {
                 adapter.update_if_active(|| release);
                 slot.sent_root = None;
                 self.repaints.request(slot.key, Instant::now());
+            }
+        }
+        follow_modifiers(&mut slot.modifiers, event);
+        if let WindowEvent::Key(key) = event
+            && asks_paste(key, slot.modifiers, cfg!(target_os = "macos"))
+        {
+            // The press reaches the scene whatever the clipboard holds; the
+            // text, when it holds some, is the engine's before the press
+            // asks for it, as egui's paste event gives it under eframe.
+            let text = ljos_platform::Platform::of(&engine)
+                .clipboard()
+                .text(ljos_platform::ClipboardMode::Clipboard);
+            if let Some(text) = text.filter(|t| !t.is_empty()) {
+                ljos_quick::Clipboard::of(&engine).set_text(&engine, &text.replace("\r\n", "\n"));
             }
         }
         if let Some(raw) = raw
@@ -2467,6 +2530,85 @@ fn resize_edge(edges: ResizeEdges) -> ResizeEdge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn press(key: ljos_host::Key, code: &str) -> ljos_host::KeyEvent {
+        ljos_host::KeyEvent {
+            key,
+            code: Some(code.to_owned()),
+            state: ButtonState::Pressed,
+            repeat: false,
+            text: None,
+        }
+    }
+
+    fn v() -> ljos_host::KeyEvent {
+        press(ljos_host::Key::Character("v".into()), "KeyV")
+    }
+
+    const CTRL: ljos_host::Modifiers = ljos_host::Modifiers {
+        shift: false,
+        control: true,
+        alt: false,
+        meta: false,
+    };
+
+    /// Issue #130: the chords that paste are known before egui-winit
+    /// hears them, Shift or not, so the clipboard's text is there when
+    /// the scene's press asks for it.
+    #[test]
+    fn the_paste_chords_are_known_with_their_modifiers() {
+        let shift = ljos_host::Modifiers {
+            shift: true,
+            ..CTRL
+        };
+        let cmd = ljos_host::Modifiers {
+            meta: true,
+            ..Default::default()
+        };
+        let shift_only = ljos_host::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        assert!(asks_paste(&v(), CTRL, false));
+        assert!(asks_paste(&v(), shift, false));
+        assert!(asks_paste(&v(), cmd, true));
+        let big_v = press(ljos_host::Key::Character("V".into()), "KeyV");
+        assert!(asks_paste(&big_v, shift, false));
+        // A layout whose V key types no Latin letter still pastes there.
+        let cyrillic = press(ljos_host::Key::Character("м".into()), "KeyV");
+        assert!(asks_paste(&cyrillic, CTRL, false));
+        let insert = press(ljos_host::Key::Named("Insert".into()), "Insert");
+        assert!(asks_paste(&insert, shift_only, false));
+        let paste = press(ljos_host::Key::Named("Paste".into()), "Paste");
+        assert!(asks_paste(&paste, Default::default(), false));
+
+        assert!(!asks_paste(&v(), Default::default(), false));
+        assert!(!asks_paste(&v(), CTRL, true));
+        assert!(!asks_paste(&v(), cmd, false));
+        let alt = ljos_host::Modifiers { alt: true, ..CTRL };
+        assert!(!asks_paste(&v(), alt, false));
+        // A Latin layout's V elsewhere on the keyboard is the letter typed.
+        let dvorak = press(ljos_host::Key::Character("k".into()), "KeyV");
+        assert!(!asks_paste(&dvorak, CTRL, false));
+        let released = ljos_host::KeyEvent {
+            state: ButtonState::Released,
+            ..v()
+        };
+        assert!(!asks_paste(&released, CTRL, false));
+    }
+
+    /// A window that lost the keyboard holds no modifier: the release
+    /// went to another window.
+    #[test]
+    fn the_modifiers_held_follow_the_platform_and_drop_with_the_focus() {
+        let mut held = ljos_host::Modifiers::default();
+        follow_modifiers(&mut held, &WindowEvent::Modifiers(CTRL));
+        assert_eq!(held, CTRL);
+        follow_modifiers(&mut held, &WindowEvent::Key(v()));
+        assert_eq!(held, CTRL);
+        follow_modifiers(&mut held, &WindowEvent::Focus(false));
+        assert_eq!(held, ljos_host::Modifiers::default());
+    }
 
     #[test]
     fn every_window_has_an_accessibility_tree_of_its_own_and_none_has_eguis() {

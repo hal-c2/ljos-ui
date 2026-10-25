@@ -262,8 +262,10 @@ impl KeyTrack {
                         fallback: None,
                     });
                 }
-                // The platform layer turns the press of the clipboard
-                // chords into these and sends no key. The scene's
+                // egui-winit with its clipboard shortcuts on (eframe's)
+                // turns the press of the clipboard chords into these and
+                // sends no key, nor the Shift held; the desktop shell
+                // turns them off and sends the key. The scene's
                 // shortcuts and Keys handlers still get to see the chord;
                 // the release arrives as an ordinary key. A paste of a
                 // picture, with no text on the clipboard, is the same
@@ -543,6 +545,31 @@ mod tests {
             ]
         );
         assert!(out.iter().all(|e| e.kind == KeyKind::Press));
+    }
+
+    /// A host that sends the clipboard chords as keys (the desktop shell)
+    /// keeps every modifier held: Ctrl+Shift+V is not a plain paste.
+    #[test]
+    fn a_clipboard_chord_sent_as_a_key_keeps_its_modifiers() {
+        let mut track = KeyTrack::default();
+        let out = events(
+            &mut track,
+            &[down(Key::V, egui::Modifiers::SHIFT | egui::Modifiers::CTRL)],
+        );
+        assert_eq!(
+            (out[0].key, out[0].modifiers, out[0].kind),
+            (0x56, Modifiers::CONTROL | Modifiers::SHIFT, KeyKind::Press)
+        );
+        let cmd = egui::Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        };
+        let out = track.translate(&[down(Key::C, cmd)], MAC);
+        assert_eq!(
+            (out[0].event.key, out[0].event.modifiers),
+            (0x43, Modifiers::CONTROL)
+        );
     }
 
     #[test]
