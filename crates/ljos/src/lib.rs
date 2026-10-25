@@ -168,9 +168,9 @@ pub mod prelude {
         DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, DragData,
         ExternalDrag, FakeSensors, FetchError, Fetcher, Location, Measurement, Method, NameFilter,
         NoSensors, OpenUrlService, PathEnv, Permission, PermissionAnswer, PermissionService,
-        PermissionStatus, Platform, RecordedBadge, RecordedUrls, Request, Response, SensorKind,
-        SensorRequest, SensorService, SensorSink, StandardPaths, encoded_url, external_drag,
-        file_url, is_remote, url_path,
+        PermissionStatus, Platform, Post, RecordedBadge, RecordedUrls, Request, Response,
+        SensorKind, SensorRequest, SensorService, SensorSink, StandardPaths, encoded_url,
+        external_drag, file_url, is_remote, url_path,
     };
     pub use ljos_quick::{ColorScheme, Item, StyleHints};
     pub use ljos_runtime::{Time, TimerId};
