@@ -28,7 +28,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 12;
+pub const IR_VERSION: u32 = 13;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -128,6 +128,14 @@ pub struct Invocable {
 }
 
 impl CompiledFile {
+    /// Writes down each object's [`ObjectDef::facts`]: the compiler's
+    /// last step, and that of anything else that writes IR.
+    pub fn note_facts(&mut self) {
+        for od in self.components.iter_mut().flat_map(|c| &mut c.objects) {
+            od.flags = od.facts();
+        }
+    }
+
     pub fn component(&self, index: CompIdx) -> &ComponentDef {
         &self.components[index.index()]
     }
@@ -388,6 +396,75 @@ pub struct ObjectDef {
     /// The objects written in it that go to its default property, and the
     /// value sources and interceptors written on it.
     pub children: Vec<ObjectValue>,
+    /// What [`ObjectDef::facts`] finds, written down by the compiler so the
+    /// runtime does not look again for every instance it makes.
+    pub flags: ObjectFlags,
+}
+
+/// What an object is, from what is written alone: nothing here depends
+/// on what the native types are (docs/adr/0002).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ObjectFlags(u16);
+
+impl ObjectFlags {
+    /// It is given `Component.onCompleted` or `Component.onReloaded`.
+    pub const COMPLETION: Self = Self(1);
+    /// A `ListModel`, whose `ListElement`s are rows, not objects.
+    pub const LIST_MODEL: Self = Self(1 << 2);
+    /// A `ListElement`: a row of the model it is written in.
+    pub const LIST_ELEMENT: Self = Self(1 << 3);
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl ObjectDef {
+    /// The flags what is written gives the object.
+    pub fn facts(&self) -> ObjectFlags {
+        let mut f = ObjectFlags::empty();
+        match &self.ty {
+            TypeRef::Native { name, .. } if name == "ListModel" => {
+                f = f.union(ObjectFlags::LIST_MODEL);
+            }
+            TypeRef::Native { name, .. } if name == "ListElement" => {
+                f = f.union(ObjectFlags::LIST_ELEMENT);
+            }
+            _ => {}
+        }
+        let completion = self.attached.iter().any(|at| {
+            at.ty.is_component()
+                && at
+                    .members
+                    .handlers
+                    .iter()
+                    .any(|h| h.signal == "completed" || h.signal == "reloaded")
+        });
+        if completion {
+            f = f.union(ObjectFlags::COMPLETION);
+        }
+        f
+    }
+}
+
+impl TypeRef {
+    /// `Component`, of `QtQml`: what `Component.onCompleted` is attached by.
+    pub fn is_component(&self) -> bool {
+        matches!(self, TypeRef::Native { module, name }
+            if name == "Component" && (module == "QML" || module == "QtQml"))
+    }
 }
 
 impl Default for KeySeg {

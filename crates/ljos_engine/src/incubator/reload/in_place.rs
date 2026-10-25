@@ -49,7 +49,6 @@ use crate::engine::Engine;
 use crate::ids::ObjectId;
 use crate::incubator::{
     AllocFrame, Allocation, Creation, Instance, RootSpec, Target as IncTarget, Template,
-    is_component_attached,
 };
 use crate::loader::LoadedFile;
 use crate::meta::{MetaRef, PropertyAccess};
@@ -943,7 +942,7 @@ impl Engine {
             let def = inst.file.ir.component(inst.comp);
             for (i, od) in def.objects.iter().enumerate() {
                 let id = inst.objects[i];
-                for at in od.attached.iter().filter(|a| is_component_attached(&a.ty)) {
+                for at in od.attached.iter().filter(|a| a.ty.is_component()) {
                     for h in at
                         .members
                         .handlers
@@ -1729,7 +1728,7 @@ impl Engine {
             let rest = name.strip_prefix(a.written.as_str())?.strip_prefix('.')?;
             Some((a, rest))
         })?;
-        if is_component_attached(&a.ty) {
+        if a.ty.is_component() {
             return None;
         }
         let meta = self.type_meta(&inst.file, &a.ty).ok()?;
@@ -2058,7 +2057,7 @@ impl Engine {
             Some((a, rest))
         }) {
             Some((a, rest)) => {
-                if is_component_attached(&a.ty) || rest.contains('.') {
+                if a.ty.is_component() || rest.contains('.') {
                     return Err("a member no longer given is attached");
                 }
                 let meta = self

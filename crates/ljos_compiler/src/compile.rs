@@ -2718,6 +2718,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             *count += 1;
             file.components[index].id = id;
         }
+        file.note_facts();
         crate::tier1::compile(&mut file);
         Compiled {
             file,

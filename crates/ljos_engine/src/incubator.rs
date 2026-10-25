@@ -26,8 +26,8 @@ use std::rc::{Rc, Weak};
 
 use ljos_ir::{
     Arg, Attached, Binding, CompIdx, ComponentKind, ExprId, FunctionDecl, ImportSource, Literal,
-    Members, ObjRef, ObjectValue, PropertyBinding, PropertyDecl, SourceSpan, TranslationKind,
-    TypeRef,
+    Members, ObjRef, ObjectFlags, ObjectValue, PropertyBinding, PropertyDecl, SourceSpan,
+    TranslationKind, TypeRef,
 };
 use ljos_js::{JsValue, Scope};
 use ljos_runtime::{Job, JobCx, JobPoll, Lane, ProcId};
@@ -1024,8 +1024,9 @@ impl Engine {
                 // One that exists has been through all of this.
                 if !matches!(f.given.get(i), Some(Some(_))) {
                     let node = cr.nodes.entry(id).or_default();
-                    for at in &od.attached {
-                        if is_component_attached(&at.ty) {
+                    let completion = od.flags.contains(ObjectFlags::COMPLETION);
+                    for at in od.attached.iter().filter(|_| completion) {
+                        if at.ty.is_component() {
                             for h in &at.members.handlers {
                                 if h.signal == "completed" {
                                     node.handlers.push((inst.clone(), h.expr));
@@ -1398,19 +1399,18 @@ impl Engine {
         let inst = &u.inst;
         let od = &inst.file.ir.component(inst.comp).objects[u.obj];
         let id = inst.objects[u.obj];
-        let list_model = match &od.ty {
-            // Data for its ListModel, read from the IR below: what it is
-            // given are role values, not properties.
-            TypeRef::Native { name, .. } if name == "ListElement" => return,
-            TypeRef::Native { name, .. } if name == "ListModel" => {
-                // Before the members, so `onCountChanged` does not hear
-                // of the rows the model is declared with.
-                let rows = self.list_element_rows(inst, id, &od.children);
-                crate::listmodel::declare_rows(self, id, rows);
-                true
-            }
-            _ => false,
-        };
+        // Data for its ListModel, read from the IR below: what it is given
+        // are role values, not properties.
+        if od.flags.contains(ObjectFlags::LIST_ELEMENT) {
+            return;
+        }
+        let list_model = od.flags.contains(ObjectFlags::LIST_MODEL);
+        if list_model {
+            // Before the members, so `onCountChanged` does not hear of the
+            // rows the model is declared with.
+            let rows = self.list_element_rows(inst, id, &od.children);
+            crate::listmodel::declare_rows(self, id, rows);
+        }
         let plans = inst.file.plans();
         let plan = plans.object(&inst.file.ir, inst.comp.0, u.obj);
         self.apply_members(inst, id, &od.members, &[], id, plan.map(|p| &p.members));
@@ -1656,7 +1656,7 @@ impl Engine {
     }
 
     fn apply_attached(&self, inst: &Rc<Instance>, id: ObjectId, at: &Attached) {
-        if is_component_attached(&at.ty) {
+        if at.ty.is_component() {
             // `onCompleted` runs from the completion pass.
             for h in &at.members.handlers {
                 if h.signal != "destruction" {
@@ -3018,10 +3018,6 @@ impl Engine {
             WriteKind::Initial,
         );
     }
-}
-
-fn is_component_attached(ty: &TypeRef) -> bool {
-    matches!(ty, TypeRef::Native { module, name } if name == "Component" && (module == "QML" || module == "QtQml"))
 }
 
 /// A QML property type: enum types are ints. `T.Control`, where `T` is an
