@@ -499,6 +499,92 @@ module QtNetwork
 		signal transportMediumChanged
 		signal isMeteredChanged
 
+module QtPositioning
+	Position QtPositioning.Position
+	PositionSource QtPositioning.PositionSource
+	QtPositioning QtPositioning.QtPositioning
+	type QtPositioning.Position Position
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop coordinate QtQml.var named readonly
+		prop latitudeValid QtQml.bool named readonly
+		prop longitudeValid QtQml.bool named readonly
+		prop altitudeValid QtQml.bool named readonly
+		prop timestamp QtQml.var named readonly
+		prop speed QtQml.real named readonly
+		prop speedValid QtQml.bool named readonly
+		prop direction QtQml.real named readonly
+		prop directionValid QtQml.bool named readonly
+		prop verticalSpeed QtQml.real named readonly
+		prop verticalSpeedValid QtQml.bool named readonly
+		prop horizontalAccuracy QtQml.real named readonly
+		prop horizontalAccuracyValid QtQml.bool named readonly
+		prop verticalAccuracy QtQml.real named readonly
+		prop verticalAccuracyValid QtQml.bool named readonly
+		prop magneticVariation QtQml.real named readonly
+		prop magneticVariationValid QtQml.bool named readonly
+		prop directionAccuracy QtQml.real named readonly
+		prop directionAccuracyValid QtQml.bool named readonly
+		signal coordinateChanged
+		signal latitudeValidChanged
+		signal longitudeValidChanged
+		signal altitudeValidChanged
+		signal timestampChanged
+		signal speedChanged
+		signal speedValidChanged
+		signal directionChanged
+		signal directionValidChanged
+		signal verticalSpeedChanged
+		signal verticalSpeedValidChanged
+		signal horizontalAccuracyChanged
+		signal horizontalAccuracyValidChanged
+		signal verticalAccuracyChanged
+		signal verticalAccuracyValidChanged
+		signal magneticVariationChanged
+		signal magneticVariationValidChanged
+		signal directionAccuracyChanged
+		signal directionAccuracyValidChanged
+	type QtPositioning.PositionSource PositionSource
+		prototype QtQml.QtObject named
+		enum PositioningMethods NoPositioningMethods=0 SatellitePositioningMethods=255 NonSatellitePositioningMethods=-256 AllPositioningMethods=-1
+		enum SourceError AccessError=0 ClosedError=1 UnknownSourceError=2 NoError=3 UpdateTimeoutError=4
+		prop active QtQml.bool named
+		prop name QtQml.string named
+		prop position QtPositioning.Position named pointer readonly
+		prop preferredPositioningMethods PositioningMethods
+		prop supportedPositioningMethods PositioningMethods readonly
+		prop sourceError SourceError readonly
+		prop updateInterval QtQml.int named
+		prop valid QtQml.bool named readonly
+		signal activeChanged
+		signal nameChanged
+		signal preferredPositioningMethodsChanged
+		signal supportedPositioningMethodsChanged
+		signal sourceErrorChanged
+		signal updateIntervalChanged
+		signal validChanged
+		signal positionChanged
+		method start
+		method stop
+		method update
+		method backendProperty
+		method setBackendProperty
+	type QtPositioning.QtPositioning QtPositioning
+		prototype QtQml.QtObject named
+		is singleton
+		method coordinate
+		method rectangle
+		method circle
+		method path
+		method polygon
+		method shape
+		method shapeToRectangle
+		method shapeToCircle
+		method shapeToPath
+		method shapeToPolygon
+		method coordToMercator
+		method mercatorToCoord
+
 module QtQml
 	import QtQml.Models
 	Binding QtQml.Binding

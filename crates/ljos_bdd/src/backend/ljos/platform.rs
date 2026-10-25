@@ -12,6 +12,7 @@ use ljos_platform::{
     FakeDialogs, FakePermissions, FakeSensors, HttpFetcher, Measurement, PathEnv, Platform,
     RecordedUrls, SensorKind,
 };
+use ljos_positioning::{FixedPosition, GeoCoordinate, PositionFix};
 
 use super::{BackendError, Result, failed};
 use crate::backend::SystemDialogAnswer;
@@ -33,6 +34,8 @@ pub(super) struct Rig {
     /// The device's sensors, which read what the scenario says; none
     /// unless it says so, as on a desktop.
     sensors: FakeSensors,
+    /// Where the system is; no position service unless the scenario says.
+    position: Option<FixedPosition>,
 }
 
 impl Rig {
@@ -64,6 +67,9 @@ impl Rig {
         platform.set_dialogs(Rc::new(self.dialogs.clone()));
         platform.set_open_url(Rc::new(self.opened.clone()));
         platform.set_sensors(Rc::new(self.sensors.clone()));
+        if let Some(position) = &self.position {
+            ljos_positioning::set_service(engine, Rc::new(position.clone()));
+        }
         // A real network, as Qt has: a scenario reaches its own web server
         // on the loopback interface, and nothing else it names answers.
         platform.set_fetcher(Arc::new(HttpFetcher::new()));
@@ -84,6 +90,26 @@ impl Rig {
         // A sensor that is not running is given nothing, as a device's
         // driver gives nothing to who does not listen.
         self.sensors.feed(kind, Measurement::new(timestamp, values));
+        Ok(())
+    }
+
+    pub(super) fn system_position(&mut self, latitude: f64, longitude: f64, altitude: f64) {
+        let fix = PositionFix::at(GeoCoordinate::new(latitude, longitude, altitude));
+        self.position = Some(FixedPosition::new(fix));
+    }
+
+    pub(super) fn position_moves(
+        &self,
+        latitude: f64,
+        longitude: f64,
+        altitude: f64,
+    ) -> Result<()> {
+        let Some(position) = &self.position else {
+            return Err(failed("say where the system is before it moves"));
+        };
+        position.move_to(PositionFix::at(GeoCoordinate::new(
+            latitude, longitude, altitude,
+        )));
         Ok(())
     }
 

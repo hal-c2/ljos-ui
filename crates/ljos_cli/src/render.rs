@@ -277,6 +277,7 @@ pub(crate) fn register_modules(engine: &Engine) {
     ljos_localstorage::register(engine);
     ljos_xml::register(engine);
     ljos_folderlistmodel::register(engine);
+    ljos_positioning::register(engine);
 }
 
 /// Registers the backends of the gallery example `example` on `engine`;

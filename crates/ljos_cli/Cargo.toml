@@ -36,6 +36,7 @@ ljos_controls = { path = "../ljos_controls" }
 ljos_localstorage = { path = "../ljos_localstorage" }
 ljos_xml = { path = "../ljos_xml" }
 ljos_folderlistmodel = { path = "../ljos_folderlistmodel" }
+ljos_positioning = { path = "../ljos_positioning" }
 # The runner shows every format an Image reads, PDF documents too.
 ljos_quick = { path = "../ljos_quick", features = ["pdf"] }
 # `ljos shaders`: `.ljsh` artifacts made at build time.

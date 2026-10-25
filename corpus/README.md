@@ -72,6 +72,7 @@ module outside Qt's product modules provides, so the gap is not closed in Ljós.
 |---|---|---|
 | android-feature-delivery | `io.qt.fdmaploader`: `MapLoader` is a C++ type the app registers, and `loadedImages` a context property its C++ sets | the app |
 | car-configurator | `Qt.labs.assetdownloader` (`AssetDownloader`), a module of Qt's examples written in C++ that fetches the demo's assets; `QtQuick.Studio.Components` (`SvgPathItem`) and `QtQuick.Studio.DesignEffects` (`DesignEffect`), which come with Qt Design Studio and not with Qt; and what it shows is QtQuick3D, which Ljós stands in for | modules outside Qt; Quick3D is a stand-in |
+| lightningviewer | `LightningController`, a singleton its C++ registers that fetches the strikes; and the map itself, `Map` and the map items of QtLocation, which Ljós stands in for as empty Items. `QtPositioning`, which it also imports, is in Ljós (`features/positioning/`) | the app; QtLocation is a stand-in |
 
 `FrameAnimation`, which car-configurator's wall effects use, is QtQuick's and is in Ljós
 (`features/animation/frame-animation.feature`).

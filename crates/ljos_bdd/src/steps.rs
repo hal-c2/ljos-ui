@@ -370,7 +370,33 @@ fn system_has_sensor(w: &mut LjosWorld, kind: String) -> StepResult {
     w.each(|b| b.add_sensor(&kind))
 }
 
+#[given(
+    regex = r"^the system's position is latitude (-?[0-9.]+), longitude (-?[0-9.]+)(?:, altitude (-?[0-9.]+))?$"
+)]
+fn system_position(
+    w: &mut LjosWorld,
+    latitude: f64,
+    longitude: f64,
+    altitude: String,
+) -> StepResult {
+    let altitude = altitude.parse().unwrap_or(f64::NAN);
+    w.each(|b| b.system_position(latitude, longitude, altitude))
+}
+
 // ----------------------------------------------------------------- When
+
+#[when(
+    regex = r"^the system's position moves to latitude (-?[0-9.]+), longitude (-?[0-9.]+)(?:, altitude (-?[0-9.]+))?$"
+)]
+fn system_position_moves(
+    w: &mut LjosWorld,
+    latitude: f64,
+    longitude: f64,
+    altitude: String,
+) -> StepResult {
+    let altitude = altitude.parse().unwrap_or(f64::NAN);
+    w.each(|b| b.system_position_moves(latitude, longitude, altitude))
+}
 
 #[when(regex = r"^the ([a-z ]+) reads (-?[0-9.]+(?:, -?[0-9.]+)*)$")]
 fn sensor_reads(w: &mut LjosWorld, kind: String, values: String) -> StepResult {

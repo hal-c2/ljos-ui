@@ -512,6 +512,22 @@ pub trait Backend: fmt::Debug {
             "a sensor a scenario reads for",
         ))
     }
+    /// The system's position service is at `latitude`, `longitude` and
+    /// `altitude` (NaN when it is not known). Said before anything is
+    /// loaded; without it there is no service, as on a desktop.
+    fn system_position(&mut self, _latitude: f64, _longitude: f64, _altitude: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a position the system is at"))
+    }
+    /// The system's position moves: every started position source is
+    /// given the new fix.
+    fn system_position_moves(
+        &mut self,
+        _latitude: f64,
+        _longitude: f64,
+        _altitude: f64,
+    ) -> Result<()> {
+        Err(BackendError::NotImplemented("a position the system is at"))
+    }
     /// The URLs the application asked the system to open, in order.
     fn opened_urls(&mut self) -> Result<Vec<String>> {
         Err(BackendError::NotImplemented("the system's opener of URLs"))

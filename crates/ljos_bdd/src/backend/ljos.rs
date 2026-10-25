@@ -400,6 +400,7 @@ impl LjosBackend {
         // Sound goes nowhere: the clock is virtual.
         ljos_xml::register(&engine);
         ljos_folderlistmodel::register(&engine);
+        ljos_positioning::register(&engine);
         ljos_media::register(&engine);
         ljos_media::use_null_audio(&engine);
         ljos_localstorage::register(&engine);
@@ -488,6 +489,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_controls::register(&snapshot);
                 ljos_xml::register(&snapshot);
                 ljos_folderlistmodel::register(&snapshot);
+                ljos_positioning::register(&snapshot);
                 ljos_media::register(&snapshot);
                 ljos_localstorage::register(&snapshot);
                 fixtures::register(&snapshot);
@@ -1566,6 +1568,27 @@ impl Backend for LjosBackend {
     fn sensor_reads(&mut self, kind: &str, values: &[f64]) -> Result<()> {
         let timestamp = self.live()?.clock.now().as_micros();
         self.platform.sensor_reads(kind, timestamp, values)?;
+        let live = self.live()?;
+        ljos_platform::Platform::of(&live.engine).finish(&live.engine);
+        live.settle()
+    }
+
+    fn system_position(&mut self, latitude: f64, longitude: f64, altitude: f64) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("say where the system is before the QML"));
+        }
+        self.platform.system_position(latitude, longitude, altitude);
+        Ok(())
+    }
+
+    fn system_position_moves(
+        &mut self,
+        latitude: f64,
+        longitude: f64,
+        altitude: f64,
+    ) -> Result<()> {
+        self.platform
+            .position_moves(latitude, longitude, altitude)?;
         let live = self.live()?;
         ljos_platform::Platform::of(&live.engine).finish(&live.engine);
         live.settle()
