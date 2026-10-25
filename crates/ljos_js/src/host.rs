@@ -2424,9 +2424,7 @@ fn install_method<'js>(
             // host says it may give another later.
             let (f, keep) = match host.method_face(&scope, id, method) {
                 MethodFace::Direct(f) => (f, true),
-                MethodFace::Call { keep } => {
-                    (make_method(&ctx, state.clone(), id, method, &key)?, keep)
-                }
+                MethodFace::Call { keep } => (make_method(&ctx, id, method, &key)?, keep),
             };
             if keep && let Some(o) = this.as_object() {
                 o.prop(
@@ -2439,29 +2437,68 @@ fn install_method<'js>(
     proto.prop(name, Accessor::new_get(getter).configurable())
 }
 
+/// A method bound to the object `id`: plain C, as a global host function
+/// is ([`raw_global`]), with the object and the method in its data.
 fn make_method<'js>(
     ctx: &Ctx<'js>,
-    state: Weak<HostState>,
     id: u64,
     method: u32,
     name: &str,
 ) -> rquickjs::Result<Function<'js>> {
-    Function::new(
-        ctx.clone(),
-        move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<Value<'js>> {
-            let (scope, host) = callback_scope(&ctx, &state)?;
-            let argv = args
-                .0
-                .iter()
-                .map(|a| scope.script_value(a))
+    use rquickjs::qjs;
+    // Numbers hold no reference; the id goes in two halves, as a double
+    // keeps only 53 bits.
+    let mut data = [
+        Value::new_int(ctx.clone(), id as u32 as i32).as_raw(),
+        Value::new_int(ctx.clone(), (id >> 32) as u32 as i32).as_raw(),
+        Value::new_int(ctx.clone(), method as i32).as_raw(),
+    ];
+    // SAFETY: the context is alive and entered; `JS_NewCFunctionData`
+    // copies the data, and the new function is owned by the Value.
+    let func = unsafe {
+        let raw = ctx.as_raw().as_ptr();
+        let v = qjs::JS_NewCFunctionData(raw, Some(raw_method), 0, 0, 3, data.as_mut_ptr());
+        if qjs::JS_IsException(v) {
+            return Err(rquickjs::Error::Exception);
+        }
+        Value::from_raw(ctx.clone(), v)
+    };
+    func.into_function()
+        .ok_or_else(|| Exception::throw_type(ctx, "not a function"))?
+        .with_name(name)
+}
+
+/// A call of a method [`make_method`] made.
+unsafe extern "C" fn raw_method(
+    ctx: *mut rquickjs::qjs::JSContext,
+    _this: rquickjs::qjs::JSValue,
+    argc: std::ffi::c_int,
+    argv: *mut rquickjs::qjs::JSValue,
+    _magic: std::ffi::c_int,
+    data: *mut rquickjs::qjs::JSValue,
+) -> rquickjs::qjs::JSValue {
+    use rquickjs::qjs;
+    // SAFETY: QuickJS calls it on a live context with `argc` arguments,
+    // borrowed, so each is duplicated for the Value that frees it, and
+    // with the three numbers `make_method` gave it.
+    unsafe {
+        let low = u64::from(qjs::JS_VALUE_GET_INT(*data) as u32);
+        let high = u64::from(qjs::JS_VALUE_GET_INT(*data.add(1)) as u32);
+        let method = qjs::JS_VALUE_GET_INT(*data.add(2)) as u32;
+        raw_entry(ctx, |scope| {
+            let host = scope.state.host()?;
+            let args = (0..argc.max(0) as usize)
+                .map(|i| {
+                    let a = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, *argv.add(i)));
+                    scope.script_value(&a)
+                })
                 .collect::<rquickjs::Result<Vec<_>>>()?;
             let out = host
-                .call(&scope, id, method, &argv)
-                .map_err(|e| e.into_js(&ctx));
-            scope.back(out).and_then(|out| scope.to_value(&out))
-        },
-    )?
-    .with_name(name)
+                .call(scope, high << 32 | low, method, &args)
+                .map_err(|e| e.into_js(&scope.ctx));
+            raw_out(scope, &scope.back(out)?)
+        })
+    }
 }
 
 fn callback_scope<'js>(
