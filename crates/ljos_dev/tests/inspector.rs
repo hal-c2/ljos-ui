@@ -23,6 +23,7 @@ use ljos_dev::{
         PaintReport, PainterInfo, StartupStep, TOOLS,
     },
 };
+use ljos_drive::{DriveState, Driver, RealClock};
 use ljos_engine::{Engine, LogLevel, ObjectId, Value as QmlValue};
 use ljos_mcp_core::{
     CallCtx, Cap, CapSet, ErrorCode, McpSurface,
@@ -175,14 +176,12 @@ fn write(dir: &Path, name: &str, text: &str) {
 }
 
 impl App {
-    /// The frames a host runs until the scene is at rest.
+    /// The frames a host runs until the scene is at rest. A host does not
+    /// fail on a scene that keeps going; it draws the next frame.
     fn settle(&mut self) {
-        for _ in 0..16 {
-            self.scene.frame(&self.engine, self.clock.now());
-            if !self.scene.needs_frame() {
-                return;
-            }
-        }
+        let clock = RealClock(&self.clock);
+        let mut state = DriveState::default();
+        let _ = Driver::new(&self.engine, &mut self.scene, &clock, &mut state).settle();
     }
 
     fn try_call(&mut self, tool: &str, args: Value) -> Result<LocalReply, LocalError> {

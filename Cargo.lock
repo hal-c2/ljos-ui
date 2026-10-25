@@ -3752,6 +3752,7 @@ dependencies = [
  "libc",
  "ljos_a11y",
  "ljos_compiler",
+ "ljos_drive",
  "ljos_engine",
  "ljos_ir",
  "ljos_mcp_core",

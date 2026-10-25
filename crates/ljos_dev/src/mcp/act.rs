@@ -14,17 +14,17 @@
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use ljos_drive::{
+    Chord, DriveError, DriveState, Driver, MAX_TIMER_STEPS, RealClock, Refusal, SceneClock, Wheel,
+};
 use ljos_engine::{
     Engine, EngineError, ObjectId, OverrideContent, PropIndex, RestoreMode, TypeTag,
     Value as QmlValue,
 };
 use ljos_mcp_core::{ErrorCode, RefTable, SurfaceError, ToolReply, delta};
-use ljos_quick::keys::key;
-use ljos_quick::{
-    KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, WheelEvent,
-};
-use ljos_render::kurbo;
-use ljos_runtime::{Clock, Time, VirtualClock};
+use ljos_quick::{MouseButtons, QuickScene};
+use ljos_render::kurbo::{self, Point};
+use ljos_runtime::Clock;
 use serde_json::{Map, Value, json};
 
 use super::args::{
@@ -39,117 +39,25 @@ use super::tools::{Look, TYPED, Target, clip, flag, num, visible_to_the_top, win
 use super::values::number;
 use super::{Inspector, MAX_DELTA_LINES, View};
 
-/// Frames one settle runs before it gives up and says so.
-const MAX_SETTLE_FRAMES: usize = 64;
-/// How long one settle may take on the wall clock. A scene that animates
-/// for ever is not settled, and an agent is told so rather than kept waiting.
-const SETTLE_WALL: Duration = Duration::from_millis(250);
-/// Timer firings per `app_advance` before a zero-interval timer is reported
-/// instead of hanging the application.
-const MAX_TIMER_STEPS: usize = 100_000;
 /// Chords one `app_press` may name.
 const MAX_CHORDS: usize = 16;
-/// The distance between the points of a swipe, in logical pixels.
-const SWIPE_STEP: f64 = 8.0;
-/// The touch identity of the one finger.
-const FINGER: PointerId = PointerId(1);
 /// The time a script may run unless asked for less or more.
 const DEFAULT_EVAL: Duration = Duration::from_millis(1000);
 
-/// The modifier keys in the order a chord presses them.
-const MODIFIER_KEYS: [(Modifiers, i32); 4] = [
-    (Modifiers::CONTROL, key::CONTROL),
-    (Modifiers::SHIFT, key::SHIFT),
-    (Modifiers::ALT, key::ALT),
-    (Modifiers::META, key::META),
-];
-
 // ----- keys ------------------------------------------------------------------
 
-/// One key with the modifiers held around it, as `app_press` names it
-/// (`Ctrl+Shift+S`, `Tab`, `Ctrl++`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Chord {
-    modifiers: Modifiers,
-    key: i32,
-    /// What the key types with those modifiers.
-    text: String,
-}
-
-/// The chords of one `app_press`, in order.
+/// The chords of one `app_press`, in order (`Ctrl+Shift+S Tab`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Chords(Vec<Chord>);
 
-impl Chord {
-    fn parse(text: &str) -> Result<Chord, String> {
-        let (mods, name) = match text.strip_suffix("++") {
-            Some(mods) => (mods, "+"),
-            None => match text.rsplit_once('+') {
-                Some((mods, name)) if !name.is_empty() => (mods, name),
-                _ => ("", text),
-            },
-        };
-        let mut modifiers = Modifiers::empty();
-        for m in mods.split('+').filter(|m| !m.is_empty()) {
-            modifiers |= match m.to_ascii_lowercase().as_str() {
-                "shift" => Modifiers::SHIFT,
-                "ctrl" | "control" => Modifiers::CONTROL,
-                "alt" => Modifiers::ALT,
-                "meta" | "super" | "cmd" => Modifiers::META,
-                _ => {
-                    return Err(format!(
-                        "unknown modifier {m:?} in the chord {text:?}; the modifiers are Ctrl, \
-                         Shift, Alt and Meta"
-                    ));
-                }
-            };
-        }
-        // Spellings a person would use. A desktop's Enter key is the Return
-        // key; `Keys.onReturnPressed` is what a form listens to.
-        let name = match name {
-            n if n.eq_ignore_ascii_case("PageUp") => "PgUp",
-            n if n.eq_ignore_ascii_case("PageDown") => "PgDown",
-            n if n.eq_ignore_ascii_case("Enter") => "Return",
-            n => n,
-        };
-        let code = key::from_name(name).ok_or_else(|| {
-            format!(
-                "unknown key {name:?} in the chord {text:?}; keys are named as `Enter`, `Tab`, \
-                 `Escape`, `Backspace`, `Left`, `F5`, a letter or digit, with modifiers before \
-                 them such as `Ctrl+Shift+S`"
-            )
-        })?;
-        let shift = modifiers.contains(Modifiers::SHIFT);
-        // A desktop sends Shift+Tab as the Backtab key.
-        let code = if code == key::TAB && shift {
-            key::BACKTAB
-        } else {
-            code
-        };
-        let commands = Modifiers::CONTROL | Modifiers::ALT | Modifiers::META;
-        let mut chars = name.chars();
-        let typed = match (chars.next(), chars.next()) {
-            _ if modifiers.intersects(commands) => String::new(),
-            (Some(c), None) if shift => c.to_uppercase().collect(),
-            (Some(c), None) => c.to_lowercase().collect(),
-            _ if code == key::SPACE => " ".to_owned(),
-            _ if code == key::TAB && !shift => "\t".to_owned(),
-            _ => String::new(),
-        };
-        Ok(Chord {
-            modifiers,
-            key: code,
-            text: typed,
-        })
-    }
-}
-
 impl Chords {
-    /// Reads `keys`: chords separated by spaces.
+    /// Reads `keys`: chords separated by spaces. An agent's `Enter` is the
+    /// Return key a desktop sends for it, which `Keys.onReturnPressed`
+    /// hears; the driver reads `Enter` as the keypad's, as Qt names it.
     pub(super) fn parse(keys: &str) -> Result<Chords, String> {
         let chords: Vec<Chord> = keys
             .split_whitespace()
-            .map(Chord::parse)
+            .map(|text| Chord::parse(&return_for_enter(text)))
             .collect::<Result<_, _>>()?;
         if chords.is_empty() {
             return Err("`keys` names no key; give `Enter`, `Tab`, `Ctrl+A`, …".into());
@@ -161,6 +69,21 @@ impl Chords {
             ));
         }
         Ok(Chords(chords))
+    }
+}
+
+/// `text` with a key named `Enter` named `Return`.
+fn return_for_enter(text: &str) -> String {
+    let (mods, name) = match text.rsplit_once('+') {
+        Some((mods, name)) if !name.is_empty() => (Some(mods), name),
+        _ => (None, text),
+    };
+    if !name.eq_ignore_ascii_case("Enter") {
+        return text.to_owned();
+    }
+    match mods {
+        Some(mods) => format!("{mods}+Return"),
+        None => "Return".to_owned(),
     }
 }
 
@@ -363,49 +286,58 @@ impl Done {
     }
 }
 
-/// Where an input is aimed.
-struct Aim {
-    x: f64,
-    y: f64,
-}
-
 /// What the acts work with while one request is run.
 struct Hands<'a> {
     engine: &'a Engine,
     scene: &'a mut QuickScene,
-    clock: &'a dyn Clock,
-    vclock: Option<&'a VirtualClock>,
+    /// The test clock, when the application runs on one, and else the
+    /// system's, which `app_advance` cannot move.
+    clock: &'a dyn SceneClock,
     refs: &'a mut RefTable,
     edits: &'a mut Edits,
     redact_all: bool,
     /// The scene as it was after the last act; replaced by [`refresh`](Self::refresh).
     capture: Rc<Capture>,
     per_copy: usize,
-    frames: usize,
+    drive: DriveState,
     unsettled: bool,
-    /// When the scene said it next wants a frame.
-    wake: Option<Time>,
 }
 
 impl Hands<'_> {
-    /// Runs frames until the scene is idle, as a host does before the user
-    /// sees anything. A scene that will not settle is reported, not waited
-    /// for.
-    fn settle(&mut self) {
-        let started = Instant::now();
-        for _ in 0..MAX_SETTLE_FRAMES {
-            let now = self.clock.now();
-            let out = self.scene.frame(self.engine, now);
-            self.frames += 1;
-            self.wake = out.next_wake;
-            if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
-                return;
+    fn driver(&mut self) -> Driver<'_> {
+        Driver::new(self.engine, self.scene, self.clock, &mut self.drive)
+    }
+
+    /// What the driver did, for an agent: a scene that will not settle is
+    /// reported with the answer, not failed.
+    fn drove<R: Default>(&mut self, done: Result<R, DriveError>) -> Result<R, SurfaceError> {
+        match done {
+            Ok(r) => Ok(r),
+            Err(DriveError::Unsettled { .. }) => {
+                self.unsettled = true;
+                Ok(R::default())
             }
-            if started.elapsed() > SETTLE_WALL {
-                break;
-            }
+            Err(DriveError::RealClock) => Err(SurfaceError::unavailable(
+                "this application runs on the system clock, which only moves with time. \
+                 `app_advance` is for an application on a virtual clock (a test); \
+                 `app_status` says which clock there is",
+            )),
+            Err(DriveError::Timers { ms }) => Err(SurfaceError::new(
+                ErrorCode::AppFaulted,
+                format!(
+                    "timers fired more than {MAX_TIMER_STEPS} times in {ms} ms; a timer with no \
+                     interval never lets time pass"
+                ),
+            )),
+            Err(e) => Err(SurfaceError::new(ErrorCode::Internal, e.to_string())),
         }
-        self.unsettled = true;
+    }
+
+    /// Runs frames until the scene is idle, as a host does before the user
+    /// sees anything.
+    fn settle(&mut self) {
+        let done = self.driver().settle();
+        let _ = self.drove(done);
     }
 
     /// Copies the scene again, so that the next act and the answer see what
@@ -447,7 +379,7 @@ impl Hands<'_> {
 
     /// The point in the window an input for `what` is aimed at: its centre,
     /// provided that it can be reached.
-    fn aim(&mut self, what: &str, tool: &str) -> Result<Aim, SurfaceError> {
+    fn aim(&mut self, what: &str, tool: &str) -> Result<Point, SurfaceError> {
         let target = self.look().resolve(what, tool)?;
         let engine = self.engine;
         let (bounds, obj, listed_disabled) = match target {
@@ -474,49 +406,46 @@ impl Hands<'_> {
         };
         let own_disabled =
             obj.is_some_and(|o| engine.untrack(|| flag(engine, o, "enabled")) == Some(false));
-        if listed_disabled || own_disabled {
-            return Err(not_actionable(format!(
-                "`{what}` is disabled (`enabled: false`, or something above it is), so it takes \
-                 no input. `app_set_property` can enable it"
-            )));
-        }
         let [x, y, w, h] = bounds;
-        if w <= 0.0 || h <= 0.0 {
-            return Err(not_actionable(format!(
-                "`{what}` has no size ({w}x{h}), so there is nowhere on it to put the pointer"
-            )));
-        }
-        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
-        let view = self.scene.viewport();
-        if cx < 0.0 || cy < 0.0 || cx >= view.width() || cy >= view.height() {
-            return Err(not_actionable(format!(
-                "`{what}` is outside the window: its centre is at {},{} in a window of {}x{}. \
-                 Scroll it into view, or make the window larger with `app_resize`",
-                num(cx),
-                num(cy),
-                num(view.width()),
-                num(view.height())
-            )));
-        }
-        Ok(Aim { x: cx, y: cy })
-    }
-
-    fn pointer(&mut self, event: PointerEvent) {
-        self.scene.pointer_event(self.engine, &event);
-    }
-
-    fn key(&mut self, event: KeyEvent) {
-        self.scene.key_event(self.engine, &event);
+        let bounds = kurbo::Rect::new(x, y, x + w, y + h);
+        ljos_drive::aim(
+            bounds,
+            listed_disabled || own_disabled,
+            self.scene.viewport(),
+        )
+        .map_err(|why| match why {
+            Refusal::Disabled => not_actionable(format!(
+                "`{what}` is disabled (`enabled: false`, or something above it is), so it \
+                     takes no input. `app_set_property` can enable it"
+            )),
+            Refusal::Hidden => not_actionable(format!(
+                "`{what}` is not shown (it, or an item above it, has `visible: false`), so \
+                     nothing can be clicked there"
+            )),
+            Refusal::NoSize { width, height } => not_actionable(format!(
+                "`{what}` has no size ({width}x{height}), so there is nowhere on it to put \
+                     the pointer"
+            )),
+            Refusal::Outside { at, window } => not_actionable(format!(
+                "`{what}` is outside the window: its centre is at {},{} in a window of \
+                     {}x{}. Scroll it into view, or make the window larger with `app_resize`",
+                num(at.x),
+                num(at.y),
+                num(window.width),
+                num(window.height)
+            )),
+        })
     }
 
     /// A move, then `count` presses and releases of `button` at the point.
-    fn click_at(&mut self, at: &Aim, button: MouseButtons, count: u32) {
-        let t = self.clock.now();
-        self.pointer(PointerEvent::moved(at.x, at.y, MouseButtons::empty(), t));
-        for _ in 0..count {
-            self.pointer(PointerEvent::press(at.x, at.y, t).with_button(button));
-            self.pointer(PointerEvent::release(at.x, at.y, t).with_button(button));
-        }
+    fn click_at(
+        &mut self,
+        at: Point,
+        button: MouseButtons,
+        count: u32,
+    ) -> Result<(), SurfaceError> {
+        let done = self.driver().click(at, button, count);
+        self.drove(done)
     }
 
     // ----- the acts -----
@@ -529,7 +458,7 @@ impl Hands<'_> {
             Button::Middle => MouseButtons::MIDDLE,
         };
         let count = a.count.unwrap_or(1);
-        self.click_at(&at, button, count);
+        self.click_at(at, button, count)?;
         Ok(Done::new(format!(
             "clicked `{}` at {},{}",
             a.target,
@@ -563,36 +492,12 @@ impl Hands<'_> {
     fn type_text(&mut self, a: &TypeArgs) -> Result<Done, SurfaceError> {
         if let Some(target) = &a.target {
             let at = self.aim(target, "app_type")?;
-            self.click_at(&at, MouseButtons::LEFT, 1);
-            self.settle();
+            self.click_at(at, MouseButtons::LEFT, 1)?;
         }
         let focus = self.keyboard("app_type")?;
         let hidden = capture::is_secret(self.engine, focus, self.redact_all);
-        for c in a.text.chars() {
-            let (code, held, typed) = match c {
-                '\n' => (key::RETURN, Modifiers::empty(), "\n".to_string()),
-                '\t' => (key::TAB, Modifiers::empty(), "\t".to_string()),
-                c => (
-                    key::from_char(c).unwrap_or(0),
-                    if c.is_uppercase() {
-                        Modifiers::SHIFT
-                    } else {
-                        Modifiers::empty()
-                    },
-                    c.to_string(),
-                ),
-            };
-            self.key(
-                KeyEvent::press(code)
-                    .with_modifiers(held)
-                    .with_text(typed.clone()),
-            );
-            self.key(
-                KeyEvent::release(code)
-                    .with_modifiers(held)
-                    .with_text(typed),
-            );
-        }
+        let done = self.driver().type_text(&a.text);
+        self.drove(done)?;
         // What a field that hides its text was given is not said again.
         let typed = if hidden {
             REDACTED.to_string()
@@ -605,45 +510,17 @@ impl Hands<'_> {
             .with("characters", json!(a.text.chars().count())))
     }
 
-    /// A chord as a keyboard sends it: the modifier keys go down one by one,
-    /// then the key, and everything comes up in reverse.
-    fn chord(&mut self, c: &Chord) {
-        let mut held = Modifiers::empty();
-        for (modifier, code) in MODIFIER_KEYS {
-            if c.modifiers.contains(modifier) {
-                self.key(KeyEvent::press(code).with_modifiers(held));
-                held |= modifier;
-            }
-        }
-        self.key(
-            KeyEvent::press(c.key)
-                .with_modifiers(held)
-                .with_text(c.text.clone()),
-        );
-        self.key(
-            KeyEvent::release(c.key)
-                .with_modifiers(held)
-                .with_text(c.text.clone()),
-        );
-        for (modifier, code) in MODIFIER_KEYS.into_iter().rev() {
-            if c.modifiers.contains(modifier) {
-                held -= modifier;
-                self.key(KeyEvent::release(code).with_modifiers(held));
-            }
-        }
-    }
-
     fn press(&mut self, a: &PressArgs) -> Result<Done, SurfaceError> {
         let chords = Chords::parse(&a.keys).map_err(SurfaceError::invalid_argument)?;
         if let Some(target) = &a.target {
             let at = self.aim(target, "app_press")?;
-            self.click_at(&at, MouseButtons::LEFT, 1);
-            self.settle();
+            self.click_at(at, MouseButtons::LEFT, 1)?;
         }
         let repeat = a.repeat.unwrap_or(1);
         for _ in 0..repeat {
             for c in &chords.0 {
-                self.chord(c);
+                let done = self.driver().chord(c, 0);
+                self.drove(done)?;
             }
         }
         Ok(Done::new(format!("pressed {} × {repeat}", a.keys))
@@ -652,15 +529,12 @@ impl Hands<'_> {
     }
 
     /// The middle of the window, or of `target`.
-    fn spot(&mut self, target: &Option<String>, tool: &str) -> Result<Aim, SurfaceError> {
+    fn spot(&mut self, target: &Option<String>, tool: &str) -> Result<Point, SurfaceError> {
         match target {
             Some(what) => self.aim(what, tool),
             None => {
                 let view = self.scene.viewport();
-                Ok(Aim {
-                    x: view.width() / 2.0,
-                    y: view.height() / 2.0,
-                })
+                Ok(Point::new(view.width() / 2.0, view.height() / 2.0))
             }
         }
     }
@@ -668,10 +542,8 @@ impl Hands<'_> {
     fn scroll(&mut self, a: &ScrollArgs) -> Result<Done, SurfaceError> {
         let at = self.spot(&a.target, "app_scroll")?;
         let (dx, dy) = (a.dx.unwrap_or(0.0), a.dy.unwrap_or(0.0));
-        let t = self.clock.now();
-        self.pointer(PointerEvent::moved(at.x, at.y, MouseButtons::empty(), t));
-        self.scene
-            .wheel_event(self.engine, &WheelEvent::notches(at.x, at.y, dx, dy, t));
+        let done = self.driver().wheel(at, Wheel::Notches(dx, dy));
+        self.drove(done)?;
         Ok(Done::new(format!(
             "turned the wheel by {},{} notches at {},{}",
             num(dx),
@@ -689,21 +561,12 @@ impl Hands<'_> {
             ));
         }
         let at = self.spot(&a.target, "app_touch")?;
-        let t = self.clock.now();
-        self.pointer(PointerEvent::press(at.x, at.y, t).with_id(FINGER));
-        let mut end = (at.x, at.y);
-        if a.action == TouchAction::Swipe {
-            let (dx, dy) = (a.dx.unwrap_or(0.0), a.dy.unwrap_or(0.0));
-            let steps = (dx.hypot(dy) / SWIPE_STEP).ceil().max(1.0) as u32;
-            for i in 1..=steps {
-                let f = f64::from(i) / f64::from(steps);
-                end = (at.x + dx * f, at.y + dy * f);
-                self.pointer(
-                    PointerEvent::moved(end.0, end.1, MouseButtons::LEFT, t).with_id(FINGER),
-                );
-            }
-        }
-        self.pointer(PointerEvent::release(end.0, end.1, t).with_id(FINGER));
+        let by = match a.action {
+            TouchAction::Swipe => kurbo::Vec2::new(a.dx.unwrap_or(0.0), a.dy.unwrap_or(0.0)),
+            _ => kurbo::Vec2::ZERO,
+        };
+        let done = self.driver().touch(at, by);
+        self.drove(done)?;
         let what = if a.action == TouchAction::Swipe {
             "swiped"
         } else {
@@ -722,51 +585,9 @@ impl Hands<'_> {
     }
 
     fn advance(&mut self, a: &AdvanceArgs) -> Result<Done, SurfaceError> {
-        let Some(vclock) = self.vclock else {
-            return Err(SurfaceError::unavailable(
-                "this application runs on the system clock, which only moves with time. \
-                 `app_advance` is for an application on a virtual clock (a test); \
-                 `app_status` says which clock there is",
-            ));
-        };
-        let images = ljos_quick::ImageStore::of(self.engine);
-        images.finish(self.engine);
-        // The scene says when it next wants a frame only after a frame.
-        self.settle();
-        let end = vclock.now() + Duration::from_millis(a.ms);
-        // Each timer fires at its own deadline and the scene is settled in
-        // between, as a host woken at each deadline would.
-        for _ in 0..MAX_TIMER_STEPS {
-            let next = [self.engine.next_timer_deadline(), self.wake]
-                .into_iter()
-                .flatten()
-                .min();
-            match next {
-                Some(t) if t <= end => {
-                    if t > vclock.now() {
-                        vclock.set(t);
-                    }
-                    self.engine.advance_timers(vclock.now());
-                    self.settle();
-                }
-                _ => {
-                    vclock.set(end);
-                    self.engine.advance_timers(end);
-                    images.finish(self.engine);
-                    self.settle();
-                    return Ok(Done::new(format!("moved the clock by {} ms", a.ms))
-                        .with("advanced_ms", json!(a.ms)));
-                }
-            }
-        }
-        Err(SurfaceError::new(
-            ErrorCode::AppFaulted,
-            format!(
-                "timers fired more than {MAX_TIMER_STEPS} times in {} ms; a timer with no \
-                 interval never lets time pass",
-                a.ms
-            ),
-        ))
+        let done = self.driver().advance(a.ms);
+        self.drove(done)?;
+        Ok(Done::new(format!("moved the clock by {} ms", a.ms)).with("advanced_ms", json!(a.ms)))
     }
 
     fn resize(&mut self, a: &ResizeArgs) -> Result<Done, SurfaceError> {
@@ -1214,19 +1035,22 @@ impl Inspector {
     ) -> (Answer, Rc<Capture>) {
         let before = capture.clone();
         let started = Instant::now();
+        let real = RealClock(clock);
+        let clock: &dyn SceneClock = match &self.vclock {
+            Some(test) => test,
+            None => &real,
+        };
         let mut hands = Hands {
             engine,
             scene,
             clock,
-            vclock: self.vclock.as_ref(),
             refs: &mut self.refs,
             edits: &mut self.edits,
             redact_all: self.cfg.redact_all,
             capture,
             per_copy,
-            frames: 0,
+            drive: DriveState::default(),
             unsettled: false,
-            wake: None,
         };
         let body = match act {
             Act::Batch(steps) => Ok(hands.batch(steps)),
@@ -1306,11 +1130,11 @@ impl Hands<'_> {
         let mut results = Vec::new();
         let mut failed = Value::Null;
         for (i, (tool, act)) in steps.iter().enumerate() {
-            let frames = self.frames;
+            let frames = self.drive.frames;
             let started = Instant::now();
             let outcome = self.step(act);
             let cost = json!({
-                "frames": self.frames - frames,
+                "frames": self.drive.frames - frames,
                 "ms": started.elapsed().as_millis() as u64,
             });
             match outcome {

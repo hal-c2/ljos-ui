@@ -15,6 +15,7 @@ default = []
 mcp = [
     "dep:ljos_mcp_core",
     "dep:ljos_a11y",
+    "dep:ljos_drive",
     "dep:ljos_render",
     "dep:ljos_platform",
     "dep:tokio",
@@ -42,6 +43,8 @@ ljos_mcp_core = { path = "../ljos_mcp_core", features = ["inspect", "http"], opt
 # The outline is the accessibility tree; a picture is drawn by the R backend.
 ljos_a11y = { path = "../ljos_a11y", optional = true }
 ljos_render = { path = "../ljos_render", default-features = false, optional = true }
+# Acts settle, aim, type and let time pass the way every other driver does.
+ljos_drive = { path = "../ljos_drive", optional = true }
 # Requests out to platform threads, for `app_processes`.
 ljos_platform = { path = "../ljos_platform", optional = true }
 tokio = { workspace = true, optional = true }
