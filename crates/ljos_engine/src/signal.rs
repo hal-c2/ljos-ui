@@ -19,6 +19,25 @@ use crate::ids::{ConnectionId, ObjectId, SignalIndex};
 use crate::meta::MetaObject;
 use crate::value::Value;
 
+/// Where a handler of a change signal runs among the bindings that read the
+/// property, as in Qt.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Order {
+    /// One a document gives the object itself (`onWidthChanged:`): it
+    /// runs first and reads those bindings as they were
+    /// ([`Graph::watch_ahead`]).
+    ///
+    /// [`Graph::watch_ahead`]: ljos_reactive::Graph::watch_ahead
+    Own,
+    /// One native code makes: in the graph's order.
+    Made,
+    /// One QML connects later (`Connections`, `connect()`): it runs after
+    /// them and their own handlers ([`Graph::watch_behind`]).
+    ///
+    /// [`Graph::watch_behind`]: ljos_reactive::Graph::watch_behind
+    Later,
+}
+
 /// A signal handler: the engine and the signal's arguments.
 pub type Handler = Rc<dyn Fn(&Engine, &[Value])>;
 
@@ -155,7 +174,7 @@ impl Engine {
         signal: SignalIndex,
         handler: impl Fn(&Engine, &[Value]) + 'static,
     ) -> Result<ConnectionId, EngineError> {
-        self.connect_impl(obj, signal, None, Rc::new(handler))
+        self.connect_impl(obj, signal, None, Rc::new(handler), Order::Made)
     }
 
     pub fn connect_by_name(
@@ -180,7 +199,27 @@ impl Engine {
         if !self.is_alive(receiver) {
             return Err(EngineError::DeadObject(receiver));
         }
-        self.connect_impl(obj, signal, Some(receiver), Rc::new(handler))
+        self.connect_impl(obj, signal, Some(receiver), Rc::new(handler), Order::Made)
+    }
+
+    /// [`Engine::connect_to`] in the order Qt runs a QML handler of a
+    /// change signal in: before the bindings that read the property, for
+    /// one a document gives the object itself; after them, for one
+    /// connected later.
+    pub(crate) fn connect_ordered(
+        &self,
+        obj: ObjectId,
+        signal: SignalIndex,
+        receiver: Option<ObjectId>,
+        handler: Handler,
+        order: Order,
+    ) -> Result<ConnectionId, EngineError> {
+        if let Some(r) = receiver
+            && !self.is_alive(r)
+        {
+            return Err(EngineError::DeadObject(r));
+        }
+        self.connect_impl(obj, signal, receiver, handler, order)
     }
 
     fn connect_impl(
@@ -189,6 +228,7 @@ impl Engine {
         signal: SignalIndex,
         receiver: Option<ObjectId>,
         handler: Handler,
+        order: Order,
     ) -> Result<ConnectionId, EngineError> {
         let notify_of = {
             let store = self.inner.store.borrow();
@@ -213,7 +253,7 @@ impl Engine {
                 let scope = self.ensure_scope(obj)?;
                 let weak = Rc::downgrade(&self.inner);
                 let h = handler.clone();
-                Some(self.inner.graph.watch(scope, n, move |_g, v| {
+                let run = move |_: &_, v: &Value| {
                     if let Some(inner) = weak.upgrade() {
                         let engine = Engine::from_inner(inner);
                         let _t = Tracking::pause(&engine.inner.tracking);
@@ -225,7 +265,13 @@ impl Engine {
                         // A panic ends this handler only (fault.rs).
                         engine.guarded(receiver.unwrap_or(obj), || h(&engine, args));
                     }
-                })?)
+                };
+                let g = &self.inner.graph;
+                Some(match order {
+                    Order::Own => g.watch_ahead(scope, n, run)?,
+                    Order::Made => g.watch(scope, n, run)?,
+                    Order::Later => g.watch_behind(scope, n, run)?,
+                })
             }
             None => None,
         };

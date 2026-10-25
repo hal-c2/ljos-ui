@@ -2249,8 +2249,9 @@ impl Engine {
         }
         match self.signal_index(obj, signal) {
             Ok(s) => {
-                let h = handler.clone();
-                if let Err(e) = self.connect_to(obj, s, scope, move |e, a| h(e, a)) {
+                if let Err(e) =
+                    self.connect_ordered(obj, s, Some(scope), handler, crate::signal::Order::Own)
+                {
                     self.warn(e.to_string());
                 }
             }

@@ -1081,11 +1081,10 @@ impl HostObjects for EngineHost {
             let _origin = e.origin(receiver.or(Some(sender)));
             e.run_js("signal handler", |s| s.call_ref(&f, &this, &args));
         };
-        let id = match receiver {
-            Some(r) => engine.connect_to(sender, sig, r, handler),
-            None => engine.connect(sender, sig, handler),
-        }
-        .map_err(host_err)?;
+        let later = crate::signal::Order::Later;
+        let id = engine
+            .connect_ordered(sender, sig, receiver, Rc::new(handler), later)
+            .map_err(host_err)?;
         let js = engine.js().map_err(host_err)?;
         js.conns.borrow_mut().push(JsConn {
             sender,

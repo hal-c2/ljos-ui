@@ -1214,8 +1214,8 @@ impl Engine {
             for (name, h) in handlers {
                 match self.signal_index(target, &name) {
                     Ok(s) => {
-                        let h = h.clone();
-                        if let Ok(id) = self.connect_to(target, s, me, move |e, a| h(e, a)) {
+                        let later = crate::signal::Order::Later;
+                        if let Ok(id) = self.connect_ordered(target, s, Some(me), h.clone(), later) {
                             active.push(id);
                         }
                     }
