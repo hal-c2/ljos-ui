@@ -695,7 +695,7 @@ impl Engine {
                     if let Some(p) = od.properties.iter().find(|p| p.name == *name)
                         && self.is_alive(id)
                     {
-                        self.wire_alias(&now, id, p);
+                        self.wire_alias(&now, *j, id, p);
                         any = true;
                         if *j == 0
                             && let Some((user, i)) = users.get(&Rc::as_ptr(inst))

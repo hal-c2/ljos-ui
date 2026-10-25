@@ -1288,14 +1288,20 @@ impl Engine {
             let od = &u.inst.file.ir.component(u.inst.comp).objects[u.obj];
             let id = u.inst.objects[u.obj];
             for p in &od.properties {
-                self.wire_alias(&u.inst, id, p);
+                self.wire_alias(&u.inst, u.obj, id, p);
             }
         }
     }
 
-    /// Points the alias `p` of `id`, an object of `inst`, at what it
+    /// Points the alias `p` of `id`, object `obj` of `inst`, at what it
     /// stands for; nothing when `p` is no alias.
-    pub(super) fn wire_alias(&self, inst: &Rc<Instance>, id: ObjectId, p: &PropertyDecl) {
+    pub(super) fn wire_alias(
+        &self,
+        inst: &Rc<Instance>,
+        obj: usize,
+        id: ObjectId,
+        p: &PropertyDecl,
+    ) {
         let Some(alias) = &p.alias else { return };
         let Some(target) = alias.object.and_then(|r| inst.resolve(r)) else {
             self.warn(format!(
@@ -1307,7 +1313,15 @@ impl Engine {
             ));
             return;
         };
-        let Ok(me) = self.property_index(id, &p.name) else {
+        // The alias this definition declares, not one of the same name a
+        // type derived from it declares again: the index is the one seen
+        // from this definition's own type, and it holds on derived ones.
+        let me = self
+            .object_meta(&inst.file, inst.comp, obj)
+            .ok()
+            .and_then(|m| m.property_index(&p.name))
+            .or_else(|| self.property_index(id, &p.name).ok());
+        let Some(me) = me else {
             return;
         };
         let r = match alias.path.split_last() {
