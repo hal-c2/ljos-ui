@@ -5432,3 +5432,68 @@ DECISIONs:
   when the container is made.
 - The graph's u64 stamps were not narrowed: a 32-bit tick could wrap while frames are live.
 - The a11y object's role and label watches became write filters.
+
+### B24 (H2): the component plan (2026-10-25)
+
+[ADR 0002](adr/0002-component-plans.md)'s plan, in three commits. A loaded file links, on
+first use and beside itself, what its objects and expressions resolve to against the native
+types; every later instance allocates its objects, writes literals and installs bindings by
+index. Where each object and binding was written is derived from the instance when it is
+asked for, not stored per object. Expression arguments are resolved slots. Ids resolve by
+slot through the instance, so a new instance interns and writes down none. The IR is at
+version 14: the compiler writes down per object whether it runs completion handlers, is a
+`ListModel` or a `ListElement`, and per component its ids and the objects they name.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets). The
+budget QML now gives each component an id and uses it in a binding (`row.index`,
+`item.width`), so the zero name lookups also cover ids:
+
+| | ListView delegate, B23 | B24 | Item by `createObject`, B23 | B24 |
+|---|---:|---:|---:|---:|
+| Member lookups by name | 191 (19.1) | 40 (4) | 61 (6.1) | 10 (1) |
+| Type lookups by name | 20 (2) | 0 | 10 (1) | 0 |
+| Context name lookups | 0 | 0 | 0 | 0 |
+| Atoms interned | 0 | 0 | 0 | 0 |
+| Heap allocations | 1856 (185.6) | 1786 (178.6) | 1057 (105.7) | 1027 (102.7) |
+
+Objects, graph values, bindings, effects and scopes are unchanged (ADR 0001's work).
+
+| listview under callgrind (main thread, 20 s after 40 s) | Run 1 | Run 2 | B23 |
+|---|---:|---:|---:|
+| Per delegate (total ÷ text layouts) | 390.4 k (3.844 G / 9848) | 404.8 k (3.995 G / 9871) | 401.1 k, 409.6 k |
+| Delegates per frame | 12.2 | 10.1 | 11.3, 10.3 |
+| Adoption (`QuickScene::adopt`) | 73.1 k | 72.8 k | 74.9 k |
+| Text layout (`TextEngine::build_layout`) | 53.1 k | 52.9 k | 53.0 k |
+| Teardown: `Engine::destroy_now` | 29.2 k | 29.0 k | 30.2 k |
+| — `ViewShared::destroy` | 18.3 k | 18.3 k | 18.5 k |
+| — `QuickScene::unadopt` | 15.8 k | 15.6 k | 16.0 k |
+| `Engine::apply_members` | 10.9 k | 11.0 k | |
+| `Engine::apply_unit` | 17.5 k | 17.5 k | |
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós | qml6 (same run) | Ljós, B23 |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.46 | 15.34 | 19.40 |
+| listview | 210.25 | 102.81 | 211.93 |
+| listview with `reuseItems: true` | 88.35 | 60.54 | 88.64 |
+
+The plan takes the lookups away, but by instructions it is a small part of a delegate: a few
+thousand per delegate, within the run-to-run spread of the totals, and scrolling is where
+B23 left it. A delegate still costs about twice qml6's ~200 k; the rest is adoption, text
+layout and teardown, which ADR 0001 and B25–B30 take on.
+
+DECISIONs:
+
+- The 4 member lookups left per delegate are the view's row, found by name for each
+  delegate: B25's row plan. The 1 left per `createObject` item is the property it is given,
+  named by the caller at run time, which no plan can know.
+- The IR flags are what the runtime asks per object as it makes one: completion handlers,
+  `ListModel`, `ListElement`. Whether an object has bindings or handlers is already O(1)
+  from its members, and a "type is a file" flag would be wrong because a native type can be
+  registered from QML. Parameter shapes and id references already were in the IR
+  (`Arg::Object`, `Resolved::Id`), so only the per-component id list is new.
+- A context made for a new instance points at the instance and finds ids through
+  `ComponentDef::ids`. One that is given ids one by one (a reload in place, an id taken
+  away) writes the instance's ids into its map first, and the map wins over the slots.
+- Bindings installed through the plan are recorded as bits in the object's `Made`, with
+  their place derived on query; an explicit place (a reload, a binding set from script)
+  still wins. A reload in place writes the derived places down before it moves anything.
