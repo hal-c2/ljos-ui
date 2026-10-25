@@ -278,6 +278,14 @@ pub(crate) struct JsState {
     /// tool runs one (devtools.rs), so an application no tool looks at
     /// does not pay for them.
     pub(crate) devtools: Cell<bool>,
+    /// The kind each value type a module brings crosses as, in the order
+    /// they were defined (value_custom.rs).
+    pub(crate) customs: RefCell<
+        Vec<(
+            &'static dyn crate::value_custom::CustomType,
+            ljos_js::ValueKind,
+        )>,
+    >,
     /// How many script writes went straight to their node.
     plain_writes: Cell<u64>,
     /// How many script reads that are not a plain value's went the quick way.
@@ -1266,6 +1274,7 @@ impl Engine {
             calling: Cell::new(None),
             lists: crate::list_faces::ListFaces::default(),
             devtools: Cell::new(false),
+            customs: RefCell::new(Vec::new()),
             plain_writes: Cell::new(0),
             quick_reads: Cell::new(0),
         });
@@ -1428,6 +1437,7 @@ impl Engine {
             | Value::Vector3d(_)
             | Value::Vector4d(_)
             | Value::Quaternion(_) => value_faces::to_js(v).unwrap_or_default(),
+            Value::Custom(c) => self.custom_to_js(c),
             Value::Object(id) if self.is_alive(*id) => JsValue::Object(obj_to_u64(*id)),
             Value::Object(_) => JsValue::Null,
             Value::List(items) => JsValue::Array(items.iter().map(|i| self.to_js(i)).collect()),
@@ -1495,7 +1505,7 @@ impl Engine {
             v @ (JsValue::Color(_) | JsValue::InvalidColor(_)) => Value::Color(color_from_js(&v)),
             // Whatever it is going to: a `var` keeps the value, and a
             // property of another type refuses it by its name.
-            JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
+            JsValue::Typed(kind, fields) => self.typed_from_js(kind, fields),
             // Made only into JS; read back, it is what it copies.
             // What the property holds now: a list kept elsewhere is the
             // entries it had then, as on Qt.
@@ -1883,6 +1893,7 @@ impl Engine {
             .map_err(err)?;
         // The value types first: the prelude puts their makers on `Qt`.
         value_faces::define(&js.host).map_err(err)?;
+        self.install_custom_values(js)?;
         js.host.eval_script("prelude", PRELUDE).map_err(err)?;
         self.tell_scripts_wall_clock(js);
         js.host

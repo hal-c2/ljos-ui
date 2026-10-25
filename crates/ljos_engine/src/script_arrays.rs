@@ -27,7 +27,6 @@ use crate::js::u64_to_obj;
 use crate::meta::PropertyAccess;
 use crate::types::TypeTag;
 use crate::value::{JsHandle, Value};
-use crate::value_faces;
 
 /// What a property is to an array on its way in.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -134,7 +133,7 @@ impl Engine {
             v @ (JsValue::Color(_) | JsValue::InvalidColor(_)) => {
                 Value::Color(crate::js::color_from_js(&v))
             }
-            JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
+            JsValue::Typed(kind, fields) => self.typed_from_js(kind, fields),
             JsValue::Handle(r) => self.plain(&Value::Js(JsHandle(r))),
             JsValue::LiveList { obj, prop } => self
                 .untrack(|| self.live_list(obj, prop))

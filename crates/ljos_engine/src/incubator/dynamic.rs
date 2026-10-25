@@ -303,6 +303,7 @@ impl Engine {
             Value::Object(_) => "QObject*",
             Value::Js(_) if self.is_callable(v) => "JavaScript function",
             Value::List(_) | Value::Map(_) | Value::Js(_) => "QJSValue",
+            Value::Custom(c) => c.ty().name(),
         }
     }
 
@@ -325,6 +326,7 @@ impl Engine {
             TypeTag::Vector4d => "QVector4D",
             TypeTag::Quaternion => "QQuaternion",
             TypeTag::Url => "QUrl",
+            TypeTag::Custom(n) => return n.to_string(),
             TypeTag::Void => "void",
             TypeTag::Object(None) => "QObject*",
             TypeTag::Object(Some(n)) => return format!("{}*", self.class_named(n)),

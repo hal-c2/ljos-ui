@@ -541,8 +541,27 @@ pub(crate) const FACES: &str = r##"
     };
   };
 
+  // The face of a value type a module brings (value_custom.rs): every
+  // member as Rust gave it; its text, a write to a member and its methods
+  // are Rust's.
+  const custom = (members, shown, methods) => {
+    const face = kind(members, members.map(() => (v) => v), (o, vals) => {
+      for (let i = 0; i < members.length; ++i) {
+        if (shown[i]) o[members[i]] = vals[i];
+        else hide(o, members[i], vals[i]);
+      }
+    }, (o) => g.__ljos_custom_text(o));
+    hide(face.proto, "__ljos_with", function (member, value) {
+      return g.__ljos_custom_with(this, member, value);
+    });
+    for (const name of methods) {
+      hide(face.proto, name, function (...args) { return g.__ljos_custom_call(this, name, args); });
+    }
+    return face;
+  };
+
   g.__ljos_faces = {
-    point, size, rect, vector2d, vector3d, vector4d, quaternion, font, intPoint,
+    point, size, rect, vector2d, vector3d, vector4d, quaternion, font, intPoint, custom,
     qt: {
       point: exactly(point), size: exactly(size), rect: exactly(rect),
       vector2d: exactly(vector2d), vector3d: exactly(vector3d), vector4d: exactly(vector4d),

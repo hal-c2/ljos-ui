@@ -676,6 +676,8 @@ pub enum Value {
     Map(Arc<Vec<(Atom, Value)>>),
     Enum(EnumValue),
     Js(JsHandle),
+    /// A value of a type a module brings (value_custom.rs).
+    Custom(Arc<crate::value_custom::CustomValue>),
 }
 
 const _: () = assert!(std::mem::size_of::<Value>() <= 16);
@@ -844,6 +846,14 @@ impl Value {
                 }
                 Some(Value::Quaternion(Arc::new(q)))
             }
+            TypeTag::Custom(n) => {
+                let ty = crate::value_custom::find(n)?;
+                let now = match self {
+                    Value::Custom(c) if c.is(ty) => (**c).clone(),
+                    _ => crate::value_custom::CustomValue::default_of(ty),
+                };
+                Some(ty.with(&now, name, v)?.into())
+            }
             _ => None,
         }
     }
@@ -978,7 +988,8 @@ impl Value {
             | Value::Url(_)
             | Value::Object(_)
             | Value::List(_)
-            | Value::Map(_) => "object",
+            | Value::Map(_)
+            | Value::Custom(_) => "object",
             // Could be a function; only the JS host knows.
             Value::Js(_) => "object",
         }
@@ -1013,6 +1024,7 @@ impl Value {
             | Value::List(_)
             | Value::Map(_)
             | Value::IntPoint(_)
+            | Value::Custom(_)
             | Value::Js(_) => true,
         }
     }
@@ -1045,6 +1057,7 @@ impl Value {
             | Value::Object(_)
             | Value::Map(_)
             | Value::IntPoint(_)
+            | Value::Custom(_)
             | Value::Js(_) => f64::NAN,
         }
     }
@@ -1098,6 +1111,7 @@ impl Value {
                 Atom::from(out)
             }
             Value::Object(_) | Value::Map(_) | Value::Js(_) => Atom::intern("[object Object]"),
+            Value::Custom(c) => Atom::from(c.text()),
         }
     }
 
@@ -1142,6 +1156,7 @@ impl Value {
             (Value::List(a), Value::List(b)) => Arc::ptr_eq(a, b),
             (Value::Map(a), Value::Map(b)) => Arc::ptr_eq(a, b),
             (Value::Js(a), Value::Js(b)) => a == b,
+            (Value::Custom(a), Value::Custom(b)) => Arc::ptr_eq(a, b) || a.same(b),
             _ => false,
         }
     }
@@ -1182,6 +1197,7 @@ impl fmt::Debug for Value {
                 .finish(),
             Value::Enum(e) => write!(f, "enum({}:{})", e.ty, e.value),
             Value::Js(h) => write!(f, "{h:?}"),
+            Value::Custom(c) => write!(f, "{c:?}"),
         }
     }
 }

@@ -704,6 +704,12 @@ pub(crate) fn field(v: &Value, name: &str) -> Option<Value> {
             _ => None,
         },
         Value::Color(c) => color_field(*c, name),
+        // A number as a register holds it; anything else JS answers.
+        Value::Custom(c) => match c.member(name)? {
+            Value::Int(i) => Some(Value::Real(f64::from(i))),
+            v @ (Value::Real(_) | Value::Bool(_) | Value::String(_)) => Some(v),
+            _ => None,
+        },
         // `null.x` throws; a number's or a boolean's members are methods.
         _ => None,
     }

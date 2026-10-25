@@ -530,6 +530,7 @@ pub(super) fn normal(e: &Engine, v: Value) -> Value {
         | Value::String(_)
         | Value::Color(_)
         | Value::IntPoint(_)
+        | Value::Custom(_)
         | Value::Js(_) => v,
         // A number that is an integer goes to JavaScript as one, and an
         // integer zero has no sign.

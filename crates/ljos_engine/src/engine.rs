@@ -102,6 +102,8 @@ pub(crate) struct Inner {
     pub(crate) eager_hold: RefCell<Option<Vec<Held>>>,
     /// The application font this engine set for its thread.
     pub(crate) default_font: crate::value::EngineFont,
+    /// The value types modules registered (value_custom.rs).
+    pub(crate) value_types: RefCell<Vec<&'static dyn crate::value_custom::CustomType>>,
     /// Read by every translated string; bumped by
     /// [`Engine::retranslate`].
     pub(crate) translation: Cell<Option<NodeId>>,
@@ -289,6 +291,7 @@ impl Engine {
             eager_hold: RefCell::new(None),
             translation: Cell::new(None),
             default_font: Default::default(),
+            value_types: RefCell::new(Vec::new()),
             parent_listeners: RefCell::new(Vec::new()),
             attached_listeners: RefCell::new(Vec::new()),
             destruction_handlers: Cell::new(false),

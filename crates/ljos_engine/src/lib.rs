@@ -103,6 +103,8 @@ mod tree_model;
 mod types;
 mod url_global;
 mod value;
+mod value_custom;
+pub use value_custom::{CustomMember, CustomType, CustomValue};
 mod value_faces;
 mod value_types;
 mod whole_group;

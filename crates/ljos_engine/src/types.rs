@@ -76,6 +76,8 @@ pub enum TypeTag {
     Flags(Atom),
     /// A grouped property (`border` in `border.width`); the group's type.
     Group(Atom),
+    /// A value type a module brings, by its name (value_custom.rs).
+    Custom(Atom),
     /// No value (method returns).
     Void,
 }
@@ -100,9 +102,11 @@ impl TypeTag {
             TypeTag::Quaternion => "quaternion".into(),
             TypeTag::Url => "url".into(),
             TypeTag::Object(None) => "QtObject".into(),
-            TypeTag::Object(Some(n)) | TypeTag::Enum(n) | TypeTag::Flags(n) | TypeTag::Group(n) => {
-                n.to_string()
-            }
+            TypeTag::Object(Some(n))
+            | TypeTag::Enum(n)
+            | TypeTag::Flags(n)
+            | TypeTag::Group(n)
+            | TypeTag::Custom(n) => n.to_string(),
             TypeTag::List(None) => "list".into(),
             TypeTag::List(Some(n)) => format!("list<{n}>"),
             TypeTag::Void => "void".into(),
@@ -137,6 +141,9 @@ impl TypeTag {
                 .and_then(|r| r.strip_suffix('>'))
             {
                 Some(inner) => TypeTag::List(Some(Atom::intern(inner.trim()))),
+                None if crate::value_custom::find(other).is_some() => {
+                    TypeTag::Custom(Atom::intern(other))
+                }
                 None => TypeTag::Object(Some(Atom::intern(other))),
             },
         }
@@ -164,6 +171,7 @@ impl TypeTag {
             TypeTag::Object(_) => Value::Null,
             TypeTag::List(_) => Value::List(Arc::default()),
             TypeTag::Enum(_) | TypeTag::Flags(_) => Value::Enum(EnumValue::default()),
+            TypeTag::Custom(name) => crate::value_custom::default_of(name),
         }
     }
 
@@ -328,6 +336,10 @@ impl TypeTag {
                 }),
                 _ => return fail(),
             },
+            TypeTag::Custom(name) => match crate::value_custom::coerce(name, v) {
+                Some(v) => v,
+                None => return fail(),
+            },
             TypeTag::Group(_) | TypeTag::Void => return fail(),
         })
     }
@@ -358,6 +370,7 @@ pub(crate) fn describe(v: &Value) -> String {
         Value::List(_) | Value::Map(_) => "QJSValue".into(),
         Value::Enum(_) => "int".into(),
         Value::Js(_) => "QJSValue".into(),
+        Value::Custom(c) => c.ty().name().into(),
     }
 }
 
@@ -454,7 +467,8 @@ fn describe_data(v: &Value) -> String {
         | Value::Vector2d(_)
         | Value::Vector3d(_)
         | Value::Vector4d(_)
-        | Value::Quaternion(_) => format!("a {}", describe(v)),
+        | Value::Quaternion(_)
+        | Value::Custom(_) => format!("a {}", describe(v)),
     }
 }
 

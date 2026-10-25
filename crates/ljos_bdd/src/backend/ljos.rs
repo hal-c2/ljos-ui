@@ -828,6 +828,7 @@ impl Live {
             | QmlValue::Vector4d(_)
             | QmlValue::Quaternion(_)
             | QmlValue::Js(_)
+            | QmlValue::Custom(_)
             | QmlValue::Object(_) => self.js_json(v),
         }
     }
