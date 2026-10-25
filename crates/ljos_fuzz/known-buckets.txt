@@ -1,127 +1,154 @@
 # Buckets `ljos-fuzz` has found and that are known: a run reports them and does not fail.
-# One per line: the signature, then why it is known, with its issue if there is one.
+# One per line: the signature, then why it is known, with its scenario or issue.
 # A bucket that goes away when Ljós is fixed should go from here too.
-# A signature that ends in `*` knows every construct after it; use one only where every
-# difference of that kind and type is the one bug.
+# A signature that ends in `*` knows every bucket that starts with what is before it; use
+# one only where every such difference is the one cause.
+#
+# A value's signature is value:context:class. The context is where the difference shows: a
+# step (step, step-readonly or step-alias, by what it writes through), or the case being made
+# (load, load-handlers when the program has a handler, load-member-alias, alias, alias-to-member),
+# or the handlers that wrote the log (onChanged, …). The class is how the values differ:
+# nan-ljos (NaN on Ljós only), empty-qt (empty on Qt only), int-range, rounding, text-…, length,
+# a-vs-b for values of different kinds; a list or a record is the class of what differs first.
+# The class is coarse on purpose, so one cause shows as few buckets; a bucket can hold several
+# causes, and its line names them all. observations.json in a repro has the property's type
+# and the expression that made the difference as "detail".
 
-# Ljós bugs, each with its @backlog scenario.
-error-kind:TypeError/Error:step-push*         push on a readonly list: Qt TypeError, list unchanged (features/language/readonly-list-properties.feature)
-value:list<string>:step-push*                 push on a readonly list changes it (features/language/readonly-list-properties.feature)
-throws:Error/none:step-set*                   a script giving an int a non-numeric string is thrown an Error (features/bindings/string-to-int.feature)
-value:int:url-string                          an int bound to a string is 0 and warned about (features/bindings/string-to-int.feature)
-value:bool:isNaN                              NaN given to x/y/width/height is ignored (features/items/geometry-nan.feature)
-value:double:default                          NaN given to x is ignored, no change is told (features/items/geometry-nan.feature)
-value:double:ref                              NaN given to height is ignored (features/items/geometry-nan.feature)
-value:var(number):ref                         NaN given to y is ignored (features/items/geometry-nan.feature)
-value:point:step-set(Qt.point)                NaN given to y is ignored (features/items/geometry-nan.feature)
-value:bool:step-set(Array.isArray)            a list property is not an Array to Array.isArray (features/language/list-properties.feature)
-value:point:Qt.point                          a list property is not an Array to Array.isArray (features/language/list-properties.feature)
-value:color:default                           a colour with zero alpha is written #00000000 (features/language/color-values.feature)
-value:bool:default                            a colour given an array is invalid and told as a change (features/language/color-values.feature)
-value:color:step-set(literal)                 an alias of a colour channel writes the channel (features/language/color-member-aliases.feature)
-throws:none/Error:step-set(ref)               what an alias of a colour channel reads can be assigned (features/language/color-member-aliases.feature)
-value:font:step-member-write*                 a font pixel size of zero or less is ignored (features/language/font-pixel-size.feature)
-value:double:step-set(string-indexOf)         "".indexOf("") is -1 on Qt (features/bindings/expressions.feature)
-warning:TypeError(qt-only):Cannot_call_method_'_'_of_null unexplained: Qt runs onRotationChanged for rotation: -3 when the case is made by createObject, not when it is loaded as the root; no scenario yet
-warning:binding-loop(ljos-only):font*                     one font member reading another is not a loop (features/bindings/loops.feature)
-warning:binding-loop(ljos-only):isNaN                     one font member reading another is not a loop (features/bindings/loops.feature)
-warning:TypeError(qt-only):Property_'_'_of_object_is_not_a_function a url is an object to a script (features/language/url-values.feature)
-throws:Error/none:step-member-write*          a script giving an int member of a font NaN is thrown an Error (features/language/font-pixel-size.feature)
-value:int:reduce                              a number with a half given to an int as a string is rounded up (features/bindings/string-to-int.feature)
-value:string:string-times-one                 a string given NaN reads "nan" (features/language/property-conversions.feature)
-value:bool:string-lt                          a string given NaN reads "nan", compared (features/language/property-conversions.feature)
-value:list<real>:Qt.tint                      a list of reals given a colour holds one zero (features/language/property-conversions.feature)
-value:rect:Qt.point                           a rect given a point keeps x and y (features/language/property-conversions.feature)
-value:string:literal                          a string given a point is "" (features/language/property-conversions.feature)
-value:var(array):pair                         a real property keeps -0 (features/language/property-conversions.feature)
-value:var(number):step-emit(color.hslLightness)  a real signal parameter given undefined is NaN (features/language/property-conversions.feature)
-value:double:bool-to-number                   a list property is not an Array to Array.isArray (features/language/list-properties.feature)
-value:int:default                             "".indexOf("") is -1 on Qt, given to an enum (features/bindings/expressions.feature)
-value:point:step-qt-binding(Qt.point)         NaN given to height is ignored (features/items/geometry-nan.feature)
-value:var(number):default                     NaN given to y is ignored (features/items/geometry-nan.feature)
-value:var(string):literal                     NaN given to height is ignored, no change is told (features/items/geometry-nan.feature)
-value:rect:Qt.rect                            an alias of a colour channel reads it (features/language/color-member-aliases.feature)
-value:var(object):ref                         a url is an object to a script (features/language/url-values.feature)
-value:list<int>:step-set*                     a script can give a readonly list another list (features/language/readonly-list-properties.feature)
-value:list<string>:step-set*                  a script can give a readonly list another list (features/language/readonly-list-properties.feature)
-value:list<real>:step-push(color.r)           undefined pushed onto a list of reals is NaN (features/language/property-conversions.feature)
-value:url:default                             a font given an array is told as a change (features/language/property-conversions.feature)
-value:url:string-as-url                       a url given text that is no address is empty (features/language/url-values.feature)
-warning:assign(qt-only):Unable_to_assign_QString_to_int     an int bound to a string is warned about (features/bindings/string-to-int.feature)
-warning:assign(qt-only):Unable_to_assign_QPointF_to_QString a string given a point is warned about (features/language/property-conversions.feature)
-warning:assign(qt-only):Unable_to_assign_QUrl_to_double     a real bound to a url is warned about (features/language/property-conversions.feature)
-warning:assign(ljos-only):Unable_to_assign_QJSValue_to_*    a colour, rect or point given an array is not warned about (features/language/color-values.feature, property-conversions.feature)
-warning:assign(ljos-only):Unable_to_assign_double_to_color  a colour given a number is not warned about (features/language/property-conversions.feature)
+# NaN given to geometry is ignored, and no change is told (features/items/geometry-nan.feature).
+value:load-handlers:invalid-qt        NaN given to width is ignored, so no handler runs (features/items/geometry-nan.feature)
+value:load-handlers:empty-qt          NaN given to height is ignored, so no handler runs (features/items/geometry-nan.feature); or a handler run while made takes a later binding away, or a list is told as a change through an alias (features/bindings/creation-order.feature, features/language/list-properties.feature)
+value:load-handlers:bool              NaN given to y is ignored, read later (features/items/geometry-nan.feature); or the handlers of a tree run from its last child to its root (features/bindings/errors-during-creation.feature)
+value:load:empty-ljos                 NaN given to x is ignored (features/items/geometry-nan.feature); or a list of strings given a colour holds the colour's name (features/language/property-conversions.feature)
+value:load:nan-ljos                   NaN given to height or x is ignored (features/items/geometry-nan.feature)
+value:load:text-nan-ljos              NaN given to width is ignored (features/items/geometry-nan.feature)
+value:step:text-nan-ljos              NaN given to width or x is ignored (features/items/geometry-nan.feature)
+value:step:length                     NaN given to width is ignored (features/items/geometry-nan.feature)
+value:step:bool                       NaN given to y is ignored (features/items/geometry-nan.feature); or a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:onChanged:empty-qt              NaN given to width is ignored, so no handler runs (features/items/geometry-nan.feature)
+
+# A list given an equal list is told as a change, also when made and through an alias
+# (features/language/list-properties.feature).
+value:load-handlers:invalid-ljos      an empty list given an empty list is told as a change, through an alias when made (features/language/list-properties.feature)
+value:load-handlers:nan-qt            an empty list given an empty list is told as a change when made (features/language/list-properties.feature); or an invalid colour given to a colour is told as a change (features/language/color-values.feature)
+value:load-handlers:number            an empty list given an empty list is told as a change when made (features/language/list-properties.feature); or a handler runs while the object is made, before later bindings (features/bindings/creation-order.feature)
+value:load-handlers:int-range         an empty list given an empty list is told as a change when made (features/language/list-properties.feature)
+value:load-handlers:empty-ljos        an empty list given an empty list is told as a change when made (features/language/list-properties.feature)
+value:load-handlers:list-vs-string    an empty list given an empty list is told as a change when made (features/language/list-properties.feature)
+value:load-handlers:null-qt           an empty list given an empty list is told as a change when made (features/language/list-properties.feature)
+value:load-handlers:string-vs-list    an empty list given an empty list is told as a change when made (features/language/list-properties.feature)
+value:onChanged:empty-ljos            an empty list given an empty list is told as a change when made (features/language/list-properties.feature)
+value:step:color-vs-number            an empty list given an empty list is told as a change (features/language/list-properties.feature)
+warning:assign(qt-only):Cannot_assign_[undefined]_to_QQuickText::WrapMode  a list is told as a change through an alias when made, and the handler's write fails (features/language/list-properties.feature)
+
+# Handlers run while the tree is made: from its last child to its root, before later bindings,
+# and a handler's write takes a later binding away (features/bindings/creation-order.feature,
+# features/bindings/errors-during-creation.feature).
+value:load-handlers:bool-vs-number    the handlers of a tree run from its last child to its root (features/bindings/errors-during-creation.feature)
+value:load-handlers:text-number       a handler runs while the object is made, before later bindings (features/bindings/creation-order.feature)
+value:load-handlers:string-vs-color   a handler run while the object is made takes a later binding away (features/bindings/creation-order.feature)
+value:load-handlers:color             a handler run while the object is made reads a binding not made yet (features/bindings/creation-order.feature)
+value:step:text-number                a handler run while the object is made takes a later binding away, read by a step (features/bindings/creation-order.feature)
+warning:assign(ljos-only):Cannot_assign_double_to_Text::WrapMode  a handler run while the object is made reads a later binding as "", which Ljós has made (features/bindings/creation-order.feature)
+
+# A binding replaced while the tree is made is not logged when it fails
+# (features/bindings/errors-during-creation.feature).
+warning:Error(ljos-only):fN                   a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:RangeError(ljos-only):fN              a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:TypeError(ljos-only):fN               a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:TypeError(ljos-only):Cannot_read_property_'_'_of_undefined   a binding replaced during creation is not logged, or an alias of a colour channel read (features/bindings/errors-during-creation.feature)
+warning:TypeError(ljos-only):not_a_function   a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
 warning:assign(ljos-only):Unable_to_assign_double_to_url    a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
 warning:assign(ljos-only):Unable_to_assign_int_to_url       a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
-warning:other(ljos-only):Invalid_alias_target_location:*    an alias of a colour channel is a valid target (features/language/color-member-aliases.feature)
-warning:TypeError(ljos-only):Cannot_call_method_'_'_of_undefined     an alias of a colour channel reads it (features/language/color-member-aliases.feature)
-warning:TypeError(ljos-only):Cannot_read_property_'_'_of_undefined   a binding replaced during creation is not logged, or an alias of a colour channel read (features/bindings/errors-during-creation.feature)
-warning:TypeError(ljos-only):not_a_function                 a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
-warning:RangeError(ljos-only):fN                            a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
-throws:TypeError/none:step-set(literal)       writing a channel through an alias of a readonly colour is a TypeError (features/language/color-member-aliases.feature)
-value:bool:Array.isArray                      a list property is not an Array to Array.isArray (features/language/list-properties.feature)
-value:bool:strict-ne                          NaN given to width is ignored (features/items/geometry-nan.feature)
-value:color:Qt.rgba-computed                  NaN given to height is ignored (features/items/geometry-nan.feature)
-value:list<real>:step-push(ref)               NaN given to geometry is ignored (features/items/geometry-nan.feature)
-value:rect:step-set(Qt.rect)                  NaN given to geometry is ignored (features/items/geometry-nan.feature)
-value:var(number):step-set(ref)               NaN given to geometry is ignored (features/items/geometry-nan.feature)
-value:double:step-set(ref)                    rotation given NaN is NaN (features/items/geometry-nan.feature)
-value:color:Qt.darker                         Qt.darker rounds as Qt does (features/language/color-functions.feature)
-value:double:step-set(literal)                a font Qt.font makes has its pixel size; an empty list given an empty list is a change (features/language/font-pixel-size.feature, list-properties.feature)
-value:int:literal                             a handler runs while the object is made, before later bindings (features/bindings/creation-order.feature)
-value:int:slice-negative                      a number with a half given to an int as a string is rounded up (features/bindings/string-to-int.feature)
-value:list<real>:default                      an alias of a colour channel reads it (features/language/color-member-aliases.feature)
-value:rect:default                            an alias of a colour channel reads it (features/language/color-member-aliases.feature)
-value:var(array):step-push(ref)               an alias of a colour channel reads it (features/language/color-member-aliases.feature)
-value:list<real>:step-set(string-pair)        a script can give a readonly list another list (features/language/readonly-list-properties.feature)
-value:var(array):step-set(literal)            a script can give a readonly list another list (features/language/readonly-list-properties.feature)
-value:var(string):step-set(string-pair)       a script can give a readonly list another list (features/language/readonly-list-properties.feature)
-warning:assign(ljos-only):Unable_to_assign_QColor_to_rect   a rect given a colour is not warned about (features/language/property-conversions.feature)
 warning:assign(ljos-only):Unable_to_assign_[undefined]_to_*  a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
-warning:assign(qt-only):Unable_to_assign_[undefined]_to_int  an int bound to undefined is warned about (features/language/property-conversions.feature)
-warning:Error(ljos-only):fN                                 a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
-warning:binding-loop(qt-only):Qt.lighter+array-includes+color.r  a handler run while the object is made that writes what a binding reads is a loop (features/bindings/loops.feature)
-result:none/none:call(string-indexOf)         "".indexOf("") is -1 on Qt (features/bindings/expressions.feature)
-value:bool:step-qt-binding(Array.isArray)     a list property is not an Array to Array.isArray (features/language/list-properties.feature)
-value:var(bool):Array.isArray                 a list property is not an Array to Array.isArray (features/language/list-properties.feature)
-value:font:step-set(Qt.font-italic)           a list property is not an Array to Array.isArray, given to a font member (features/language/list-properties.feature)
-value:color:ref                               a Text keeps eight bits a channel of its colour (features/language/color-values.feature)
-value:list<real>:step-push(color.*            undefined pushed onto a list of reals is NaN (features/language/property-conversions.feature)
-value:point:step-set(literal)                 NaN given to x is ignored (features/items/geometry-nan.feature)
-value:var(object):step-set(ref)               a url is an object to a script (features/language/url-values.feature)
-value:var(string):default                     an empty list given an empty list is told as a change, through an alias when made (features/language/list-properties.feature)
-warning:assign(ljos-only):Unable_to_assign_QString_to_font  a font given text takes it as its family (features/language/property-conversions.feature)
+
+# A Text keeps eight bits a channel of its colour (features/language/color-values.feature).
+value:load-handlers:rounding          a Text keeps eight bits a channel of its colour (features/language/color-values.feature)
+value:load:rounding                   a Text keeps eight bits a channel of its colour (features/language/color-values.feature); or Qt.darker and Qt.lighter round as Qt does (features/language/color-functions.feature)
+value:step:alpha                      a Text keeps eight bits a channel of its colour, here of Qt.tint's (features/language/color-values.feature)
+
+# Other colours (features/language/color-values.feature).
+warning:assign(ljos-only):Unable_to_assign_QJSValue_to_*    a colour, rect or point given an array is not warned about (features/language/color-values.feature, property-conversions.feature)
+warning:assign(ljos-only):Unable_to_assign_double_to_color  a colour given a number is not warned about (features/language/property-conversions.feature)
+warning:assign(ljos-only):Unable_to_assign_bool_to_color   a colour given a bool is invalid and not warned about (features/language/property-conversions.feature)
+
+# An alias of a colour channel (features/language/color-member-aliases.feature).
+value:step-alias:*                    an alias of a colour channel writes the channel; a font pixel size of zero or less is ignored through an alias too (features/language/color-member-aliases.feature, features/language/font-pixel-size.feature)
+value:load-member-alias:empty-ljos    an alias of a colour channel reads it (features/language/color-member-aliases.feature)
+value:load-member-alias:nan-ljos      an alias of a colour channel reads it (features/language/color-member-aliases.feature)
+value:alias-to-member:undefined-ljos  an alias of a colour channel reads it (features/language/color-member-aliases.feature)
+value:load-handlers:text-nan-ljos     an alias of a colour channel reads it, here in a handler run while the object is made (features/language/color-member-aliases.feature)
+throws:none/Error:step-set-alias      what an alias of a colour channel reads can be assigned (features/language/color-member-aliases.feature)
+throws:none/Error:step-set            what an alias of a colour channel reads can be assigned to an int (features/language/color-member-aliases.feature)
+throws:TypeError/none:step-set-readonly writing a channel through an alias of a readonly colour is a TypeError (features/language/color-member-aliases.feature)
+warning:RangeError(qt-only):fN                a binding reading an alias of a colour channel runs again when the colour changes (features/language/color-member-aliases.feature)
+warning:TypeError(ljos-only):Cannot_call_method_'_'_of_undefined     an alias of a colour channel reads it (features/language/color-member-aliases.feature)
+warning:other(ljos-only):Invalid_alias_target_location:*    an alias of a colour channel is a valid target (features/language/color-member-aliases.feature)
+warning:other(qt-only):QColor::set*           Qt's own warning when a channel written through an alias is NaN; Ljós has no such alias yet (features/language/color-member-aliases.feature)
+
+# Read-only properties (features/language/readonly-list-properties.feature, features/language/readonly-value-members.feature).
+error-kind:TypeError/Error:step-push-readonly push on a readonly list: Qt TypeError, list unchanged (features/language/readonly-list-properties.feature)
+value:step-readonly:*                 push on a readonly list changes it, and a script can give a readonly list another list, also through an alias (features/language/readonly-list-properties.feature)
+throws:none/TypeError:step-set-readonly a script can give a readonly list another list (features/language/readonly-list-properties.feature)
+throws:none/TypeError:step-member-write-readonly writing a member of a readonly value-type property is ignored (features/language/readonly-value-members.feature)
+
+# A list property is not an Array to Array.isArray (features/language/list-properties.feature).
+value:load:bool                       a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:load:text                       a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:load:color                      a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:step:record-vs-list             a list property is not an Array to Array.isArray, so a handler runs (features/language/list-properties.feature)
+result:none/none:call:bool            a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+
+# Conversions between property types (features/language/property-conversions.feature,
+# features/bindings/string-to-int.feature, features/language/url-values.feature).
+warning:assign(qt-only):Unable_to_assign_QString_to_int     an int bound to a string is warned about (features/bindings/string-to-int.feature)
 warning:assign(qt-only):Cannot_assign_QString_to_int        a script giving an int a non-numeric string is thrown an Error, here in a handler (features/bindings/string-to-int.feature)
-warning:binding-loop(qt-only):implicitHeight                implicitHeight reading height is a loop (features/bindings/loops.feature)
-warning:binding-loop(qt-only):alias+mul+string-times-one    Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
+throws:Error/none:step-set            a script giving an int a non-numeric string is thrown an Error (features/bindings/string-to-int.feature)
+value:step:text-int-range             an int given numeric text rounds it (features/bindings/string-to-int.feature)
+result:none/none:call:text            an int parameter of a function drops what is after the point (features/language/property-conversions.feature)
+value:step:nan-qt                     undefined pushed onto a list of reals is NaN (features/language/property-conversions.feature); or a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:step:nan-ljos                   a string given a point is "" (features/language/property-conversions.feature)
+value:step:string-vs-number           a var given a typed list holds a typed copy, which converts what is pushed (features/language/property-conversions.feature)
+value:step:number                     a var given a typed list holds a typed copy, which converts what is pushed (features/language/property-conversions.feature); or a font pixel size of zero or less is ignored (features/language/font-pixel-size.feature)
+value:load:text-number                a string given NaN is "nan" (features/language/property-conversions.feature); or a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:load:text-int-range             a string given -Infinity is "-inf" (features/language/property-conversions.feature)
+value:load:text-rounding              a number halfway between two shortest texts is written with the even one (features/language/property-conversions.feature); or Math.hypot is an ulp from Qt's (no scenario)
+value:load:empty-qt                   a string given a point is empty (features/language/property-conversions.feature); or a url given text that is no address is empty (features/language/url-values.feature)
+value:load:record-vs-string           a url is an object to a script (features/language/url-values.feature)
+value:step:record-vs-string           a url is an object to a script (features/language/url-values.feature)
+value:load:nan-qt                     a url given text that is no address is empty (features/language/url-values.feature)
+value:load:encoding                   a url writes what an address cannot hold in percent codes (features/language/url-values.feature)
+value:step:encoding                   a url writes what an address cannot hold in percent codes (features/language/url-values.feature)
+warning:TypeError(qt-only):Property_'_'_of_object_is_not_a_function a url is an object to a script (features/language/url-values.feature)
+warning:assign(qt-only):Unable_to_assign_QPointF_to_QString a string given a point is warned about (features/language/property-conversions.feature)
+warning:assign(qt-only):Unable_to_assign_QSizeF_to_QString a string given a size is warned about (features/language/property-conversions.feature)
+warning:assign(qt-only):Unable_to_assign_QUrl_to_double     a real bound to a url is warned about (features/language/property-conversions.feature)
+warning:assign(qt-only):Unable_to_assign_[undefined]_to_int  an int bound to undefined is warned about (features/language/property-conversions.feature)
+warning:assign(qt-only):Unable_to_assign_[undefined]_to_double  a real bound to undefined is warned about (features/language/property-conversions.feature)
+warning:assign(ljos-only):Unable_to_assign_QColor_to_rect   a rect given a colour is not warned about (features/language/property-conversions.feature)
+warning:assign(ljos-only):Unable_to_assign_QColor_to_size   a size given a colour is invalid and not warned about (features/language/property-conversions.feature)
+warning:assign(ljos-only):Unable_to_assign_QString_to_font  a font given text takes it as its family (features/language/property-conversions.feature)
+
+# Value types: fonts, sizes, enumerations (features/language/font-pixel-size.feature, features/language/value-type-defaults.feature,
+# features/language/enum-properties.feature).
+throws:Error/none:step-member-write   a script giving an int member of a font NaN is thrown an Error (features/language/font-pixel-size.feature)
+value:step:rounding                   a font pixel size is rounded (features/language/font-pixel-size.feature); or a Text keeps eight bits a channel of its colour (features/language/color-values.feature)
+value:step:int-range                  an enumeration given a number out of its range reads it as unsigned (features/language/enum-properties.feature); or a size starts -1 by -1 (features/language/value-type-defaults.feature)
+value:load-member-alias:nan-qt        a size starts -1 by -1 (features/language/value-type-defaults.feature)
+warning:assign(qt-only):Unable_to_assign_double_to_QQuickText::WrapMode  an enumeration given NaN by a binding is warned about (features/language/enum-properties.feature)
+
+# A change handler runs before the bindings that read the property (features/bindings/change-handler-order.feature).
+value:step:color                      a change handler reads a binding of the changed property before it follows (features/bindings/change-handler-order.feature)
+
+# Expressions (features/bindings/expressions.feature).
+result:none/none:call:number          "".indexOf("") is -1 on Qt (features/bindings/expressions.feature)
+value:load:invalid-qt                 "".indexOf("") is -1 on Qt (features/bindings/expressions.feature)
+
+# Binding loops (features/bindings/loops.feature).
+warning:binding-loop(ljos-only):font*         one font member reading another is not a loop (features/bindings/loops.feature)
+warning:binding-loop(qt-only):implicitHeight  implicitHeight reading height is a loop (features/bindings/loops.feature)
 
 # Qt's own behaviour that Ljós does not copy.
-warning:binding-loop(qt-only):Qt.rect+alias+object-1      Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
-warning:binding-loop(qt-only):Qt.point+Qt.rect+alias  Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
-warning:binding-loop(qt-only):Qt.colorEqual+Qt.rgba-computed+alias  Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
-warning:coerce-void(qt-only):*                Qt 6.11 deprecation notice for a call to a function with typed parameters and no return type
-warning:binding-loop(qt-only):Qt.font-italic+alias+array-includes  Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
-warning:other(qt-only):QFont::fromString:*    QFont::fromString's own warning for a font given text it cannot read
-value:string:pair                             a string given a list of numbers is made of those character codes (features/language/property-conversions.feature)
-value:list<int>:step-push(literal)            Qt converts a number pushed onto a list of int through 64 bits, so 1e21 saturates to -1 where an int property gives ToInt32; no scenario
-warning:binding-loop(qt-only):Qt.font-italic+alias+charCodeAt  Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
-warning:other(qt-only):QColor::set*           Qt's own warning when a channel written through an alias is NaN; Ljós has no such alias yet (features/language/color-member-aliases.feature)
 warning:binding-loop(qt-only):alias-and-target  Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
-value:string:step-push(color.*                undefined pushed onto a list of reals is NaN, joined (features/language/property-conversions.feature)
-value:var(bool):step-set(Array.isArray)       a list property is not an Array to Array.isArray (features/language/list-properties.feature)
-value:var(color):step-qt-binding(literal)     an empty list given an empty list is told as a change (features/language/list-properties.feature)
-value:var(object):object-2                    NaN given to width is ignored (features/items/geometry-nan.feature)
-value:string:url-string                       an alias of a colour channel reads it (features/language/color-member-aliases.feature)
-warning:RangeError(qt-only):fN                a binding reading an alias of a colour channel runs again when the colour changes (features/language/color-member-aliases.feature)
-value:int:size.width                          a handler that fails to write a later binding still takes it away (features/bindings/errors-during-creation.feature)
-value:var(bool):default                       the handlers of a tree run from its last child to its root (features/bindings/errors-during-creation.feature)
-warning:assign(ljos-only):Unable_to_assign_QColor_to_size   a size given a colour is invalid and not warned about (features/language/property-conversions.feature)
-value:list<string>:Qt.darker                  a list of strings given a colour holds the colour's name (features/language/property-conversions.feature)
-value:var(array):ref                          a list of strings given a colour holds the colour's name (features/language/property-conversions.feature)
-value:var(array):step-push(literal)           a var given a list of strings holds a copy that makes text of what is pushed (features/language/property-conversions.feature)
-result:none/none:call(number-plus-string)     an int parameter of a function drops what is after the point (features/language/property-conversions.feature)
-value:string:ref                              a string given a list of numbers is made of those character codes (features/language/property-conversions.feature)
-value:list<real>:step-set(literal)            a script gives a read-only list a list through an alias of it (features/language/readonly-list-properties.feature)
-value:point:step-member-write(ref)            NaN given to width is ignored (features/items/geometry-nan.feature)
-warning:assign(ljos-only):Unable_to_assign_bool_to_color   a colour given a bool is invalid and not warned about (features/language/property-conversions.feature)
+value:load:int-range                  Qt bug: a binding reading an alias and its target together stops at a loop it does not report here (features/bindings/loops.feature); Qt's Math.abs of the least int overflows; Math.hypot is an ulp from Qt's, which Math.pow to a high power makes many (no scenarios)
+warning:coerce-void(qt-only):*                Qt 6.11 deprecation notice for a call to a function with typed parameters and no return type
+warning:other(qt-only):QFont::fromString:*    QFont::fromString's own warning for a font given text it cannot read

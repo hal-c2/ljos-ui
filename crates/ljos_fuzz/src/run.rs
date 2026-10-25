@@ -158,11 +158,11 @@ pub fn run<A: Area>(area: &A, config: &Config) -> Result<Report, Error> {
         differ: 0,
         buckets: Vec::new(),
     };
-    // Grouped before shrinking by the kind of difference and the value
-    // type: the construct an unshrunk case shows is mostly noise. A few
-    // representatives of each group are shrunk, the smallest first and
-    // each showing another construct, so that two bugs with one kind and
-    // type still come out as two buckets.
+    // Grouped before shrinking by what `coarse` keeps: where an unshrunk
+    // case shows a difference is mostly noise. A few representatives of
+    // each group are shrunk, the smallest first and each with another
+    // signature, so that two bugs of one class still come out as two
+    // buckets.
     let mut groups: BTreeMap<String, Vec<(String, usize, Diff)>> = BTreeMap::new();
     for (i, v) in verdicts.into_iter().enumerate() {
         match v {

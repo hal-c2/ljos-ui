@@ -12,7 +12,7 @@ use serde_json::Value;
 use self::ast::{Decl, Expr, Program, Stmt};
 use crate::{
     area::Area,
-    compare::{Diff, DiffKind, message_shape},
+    compare::{Diff, DiffKind, message_shape, value_class},
     outcome::Rendered,
     rng::Rng,
 };
@@ -45,6 +45,10 @@ impl Area for Bindings {
         describe(case, diff)
     }
 
+    fn detail(&self, case: &Program, diff: &Diff) -> String {
+        detail(case, diff)
+    }
+
     fn program(&self, case: &Program) -> String {
         print::clean(case)
     }
@@ -70,18 +74,19 @@ impl Area for Bindings {
     }
 }
 
-/// The value type and the construct of a difference, the two parts of a
-/// bucket's signature besides the kind of difference.
+/// The two parts of a difference's bucket after its kind. For a value:
+/// where in the program it shows (the load, a step, an alias) and how the
+/// values differ ([`value_class`]). Not the property's type nor the
+/// expression: one cause shows in properties of every type, reached
+/// through any expression. For an error: the two errors and the kind of
+/// step, which is what tells its causes apart.
 fn describe(p: &Program, d: &Diff) -> (String, String) {
     let step = d.phase.checked_sub(1).and_then(|i| p.steps.get(i));
-    let step_label = |s: &Stmt| {
-        let first = s.exprs().first().map_or("none", |e| e.label());
-        format!("step-{}({first})", s.label())
-    };
+    let class = || value_class(&d.qt, &d.ljos);
     match d.kind {
         DiffKind::Value | DiffKind::Missing => {
             if d.key == "root.log" {
-                return ("log".into(), handlers(p));
+                return (handlers(p), class());
             }
             let Some((obj, name)) = d.key.split_once('.') else {
                 return ("?".into(), "?".into());
@@ -89,22 +94,11 @@ fn describe(p: &Program, d: &Diff) -> (String, String) {
             let Some(prop) = p.prop(obj, name) else {
                 return ("?".into(), "?".into());
             };
-            let mut ty = prop.ty().qml().to_owned();
-            if ty == "var" {
-                let _ = write!(ty, "({})", json_kind(&d.qt));
-            }
-            let construct = match step {
-                Some(s) => step_label(s),
-                None => match (&prop.decl, &prop.init) {
-                    (Decl::Alias { target, .. }, _) if target.matches('.').count() > 1 => {
-                        "alias-to-member".into()
-                    }
-                    (Decl::Alias { .. }, _) => "alias".into(),
-                    (_, Some(e)) => e.label().to_owned(),
-                    (_, None) => "default".into(),
-                },
+            let context = match step {
+                Some(s) => step_family(p, s),
+                None => load_context(p, prop),
             };
-            (ty, construct)
+            (context, class())
         }
         DiffKind::Result | DiffKind::Throws | DiffKind::ErrorKind => {
             let err = |v: &Value| {
@@ -114,29 +108,21 @@ fn describe(p: &Program, d: &Diff) -> (String, String) {
                     .to_owned()
             };
             let ty = format!("{}/{}", err(&d.qt), err(&d.ljos));
-            let construct = match step {
-                Some(Stmt::Call { obj, fun, .. }) => p
-                    .obj(obj)
-                    .and_then(|o| o.funcs.iter().find(|f| f.name == *fun))
-                    .map_or_else(
-                        || "call".to_owned(),
-                        |f| match &f.throws {
-                            Some(_) => "call-throwing".into(),
-                            None => format!("call({})", f.ret.label()),
-                        },
-                    ),
-                Some(s @ Stmt::Assign { obj, prop, .. }) => {
-                    let ro = p.prop(obj, prop).is_some_and(|p| p.readonly());
-                    if ro {
-                        "step-set-readonly".into()
-                    } else {
-                        step_label(s)
-                    }
+            let context = match step {
+                Some(Stmt::Call { obj, fun, .. }) => {
+                    let throws = p
+                        .obj(obj)
+                        .and_then(|o| o.funcs.iter().find(|f| f.name == *fun))
+                        .is_some_and(|f| f.throws.is_some());
+                    if throws { "call-throwing" } else { "call" }.to_owned()
                 }
-                Some(s) => step_label(s),
+                Some(s) => step_kind(p, s),
                 None => "load".into(),
             };
-            (ty, construct)
+            match d.kind {
+                DiffKind::Result => (ty, format!("{context}:{}", class())),
+                _ => (ty, context),
+            }
         }
         DiffKind::Warning => {
             let (side, text) = if d.qt.is_null() {
@@ -146,20 +132,137 @@ fn describe(p: &Program, d: &Diff) -> (String, String) {
             };
             // A warning says what it is about better than the program does;
             // only a binding loop's says no more than the property's name,
-            // which is worth keeping where it is an item's own, and Qt's loop
-            // for a binding reading an alias and its target together is one
-            // bug whatever else the program does.
+            // which is worth keeping where it is an item's own. Qt's loop for
+            // a binding reading an alias and its target together is one bug
+            // whatever else the program does, even on an item's own property.
             let construct = match text.as_str() {
                 Some(t) if d.key != "binding-loop" => message_shape(t),
-                Some(t) => looped_builtin(t)
-                    .or_else(|| reads_alias_and_target(p).then(|| "alias-and-target".into()))
-                    .unwrap_or_else(|| step.map_or_else(|| features(p), step_label)),
-                None => step.map_or_else(|| features(p), step_label),
+                Some(_) if reads_alias_and_target(p) => "alias-and-target".into(),
+                Some(t) => looped_builtin(t).unwrap_or_else(|| loop_context(p, step)),
+                None => loop_context(p, step),
             };
             (format!("{}({side})", d.key), construct)
         }
         DiffKind::LjosRejects | DiffKind::LjosCrash | DiffKind::Phases => ("-".into(), features(p)),
     }
+}
+
+/// The observed property's type and the construct as the program writes
+/// it, which a person triaging a bucket wants to see but which are no part
+/// of its signature.
+fn detail(p: &Program, d: &Diff) -> String {
+    let prop = d
+        .key
+        .split_once('.')
+        .and_then(|(obj, name)| p.prop(obj, name));
+    let mut ty = prop.map_or("?", |prop| prop.ty().qml()).to_owned();
+    if ty == "var" {
+        let _ = write!(ty, "({})", json_kind(&d.qt));
+    }
+    format!("{ty} {}", construct(p, d, prop))
+}
+
+fn construct(p: &Program, d: &Diff, prop: Option<&ast::Prop>) -> String {
+    let step = d.phase.checked_sub(1).and_then(|i| p.steps.get(i));
+    if let Some(s) = step {
+        let first = s.exprs().first().map_or("none", |e| e.label());
+        return format!("step-{}({first})", s.label());
+    }
+    match prop.map(|prop| (&prop.decl, &prop.init)) {
+        Some((Decl::Alias { target, .. }, _)) if target.matches('.').count() > 1 => {
+            "alias-to-member".into()
+        }
+        Some((Decl::Alias { .. }, _)) => "alias".into(),
+        Some((_, Some(e))) => e.label().to_owned(),
+        Some((_, None)) => "default".into(),
+        None => features(p),
+    }
+}
+
+/// A step as a value's bucket names it: what it writes through, not how.
+/// Push, set and member writes that go wrong for one cause go wrong alike.
+fn step_family(p: &Program, s: &Stmt) -> String {
+    let kind = step_kind(p, s);
+    match kind.rsplit_once('-') {
+        Some((_, end @ ("readonly" | "alias"))) => format!("step-{end}"),
+        _ => "step".into(),
+    }
+}
+
+/// A step by what it does to what: `step-set`, `step-push-readonly`,
+/// `step-qt-binding-alias`.
+fn step_kind(p: &Program, s: &Stmt) -> String {
+    let mut kind = format!("step-{}", s.label());
+    if let Some(prop) = s.target().and_then(|(obj, name)| p.prop(obj, name)) {
+        if readonly_through(p, prop) {
+            kind.push_str("-readonly");
+        } else if matches!(prop.decl, Decl::Alias { .. }) {
+            kind.push_str("-alias");
+        }
+    }
+    kind
+}
+
+/// Whether `prop` is read-only, or an alias of a read-only property.
+fn readonly_through(p: &Program, prop: &ast::Prop) -> bool {
+    match &prop.decl {
+        Decl::Alias { target, .. } => {
+            let mut parts = target.split('.');
+            let (Some(obj), Some(name)) = (parts.next(), parts.next()) else {
+                return false;
+            };
+            p.prop(obj, name).is_some_and(ast::Prop::readonly)
+        }
+        _ => prop.readonly(),
+    }
+}
+
+/// Where a difference seen once the case is made comes from: the
+/// observed property's alias, change handlers run while the tree is made,
+/// a read through an alias of a value's member, or the bindings alone.
+fn load_context(p: &Program, prop: &ast::Prop) -> String {
+    let member_alias = |target: &str| target.matches('.').count() > 1;
+    if let Decl::Alias { target, .. } = &prop.decl {
+        let ro = if readonly_through(p, prop) {
+            "-readonly"
+        } else {
+            ""
+        };
+        return if member_alias(target) {
+            format!("alias-to-member{ro}")
+        } else {
+            format!("alias{ro}")
+        };
+    }
+    let objs = p.root.all();
+    if objs
+        .iter()
+        .any(|o| !o.changed.is_empty() || o.completed.is_some())
+    {
+        return "load-handlers".into();
+    }
+    if objs.iter().any(|o| {
+        o.props
+            .iter()
+            .any(|p| matches!(&p.decl, Decl::Alias { target, .. } if member_alias(target)))
+    }) {
+        return "load-member-alias".into();
+    }
+    "load".into()
+}
+
+/// A binding loop on a property the generator made, by what can make one
+/// that is not a real loop: handlers run while the tree is made, or a step.
+fn loop_context(p: &Program, step: Option<&Stmt>) -> String {
+    if let Some(s) = step {
+        return step_kind(p, s);
+    }
+    let handlers = p
+        .root
+        .all()
+        .iter()
+        .any(|o| !o.changed.is_empty() || o.completed.is_some());
+    if handlers { "load-handlers" } else { "load" }.into()
 }
 
 /// The property a binding loop names, when it is not one the generator made

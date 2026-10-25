@@ -56,6 +56,7 @@ pub fn write<A: Area>(
             "observations.json",
             serde_json::to_string_pretty(&json!({
                 "signature": signature,
+                "detail": area.detail(case, diff),
                 "kind": diff.kind.label(),
                 "phase": diff.phase,
                 "key": diff.key,

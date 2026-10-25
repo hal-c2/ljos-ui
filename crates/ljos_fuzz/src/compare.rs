@@ -215,6 +215,151 @@ fn close(x: f64, y: f64) -> bool {
     x.to_bits().abs_diff(y.to_bits()) <= ULPS
 }
 
+/// How two values that differ differ, in words a bucket can share: one
+/// cause tends to make one class of difference whatever the program around
+/// it does (`nan-ljos`: Ljós has NaN where Qt has a number, `length`: the
+/// lists are not as long). A list or a record is the class of its first item
+/// or field that differs. It is kept coarse on purpose: which number came
+/// out, and in which item or field it shows, follow from the program, not
+/// from the cause.
+#[must_use]
+pub fn value_class(qt: &Value, ljos: &Value) -> String {
+    let (qk, lk) = (shape(qt), shape(ljos));
+    let numeric = |k: &str| matches!(k, "number" | "nan" | "infinity");
+    if numeric(qk) && numeric(lk) {
+        return number_class(number(qt), number(ljos));
+    }
+    if qk != lk {
+        for special in ["undefined", "null", "error", "nan"] {
+            if qk == special {
+                return format!("{special}-qt");
+            }
+            if lk == special {
+                return format!("{special}-ljos");
+            }
+        }
+        return format!("{qk}-vs-{lk}");
+    }
+    match qk {
+        "string" => {
+            let (a, b) = (qt.as_str().unwrap_or(""), ljos.as_str().unwrap_or(""));
+            match (a.is_empty(), b.is_empty()) {
+                (true, false) => return "empty-qt".into(),
+                (false, true) => return "empty-ljos".into(),
+                _ => {}
+            }
+            if let (Ok(x), Ok(y)) = (a.parse::<f64>(), b.parse::<f64>()) {
+                return format!("text-{}", number_class(x, y));
+            }
+            if a.contains('%') != b.contains('%') {
+                return "encoding".into();
+            }
+            "text".into()
+        }
+        "list" => {
+            let (a, b) = (
+                qt.as_array().map_or(&[][..], Vec::as_slice),
+                ljos.as_array().map_or(&[][..], Vec::as_slice),
+            );
+            match (a.len(), b.len()) {
+                (0, _) => "empty-qt".into(),
+                (_, 0) => "empty-ljos".into(),
+                (x, y) if x != y => "length".into(),
+                _ => a
+                    .iter()
+                    .zip(b)
+                    .find(|(x, y)| !same(x, y))
+                    .map_or_else(|| "list".into(), |(x, y)| value_class(x, y)),
+            }
+        }
+        "color" => color_class(qt, ljos),
+        "record" => {
+            let (Some(a), Some(b)) = (qt.as_object(), ljos.as_object()) else {
+                return "record".into();
+            };
+            a.iter()
+                .find(|(k, v)| !b.get(*k).is_some_and(|w| same(v, w)))
+                .map_or_else(
+                    || "record".into(),
+                    |(k, v)| value_class(v, b.get(k).unwrap_or(&Value::Null)),
+                )
+        }
+        other => other.into(),
+    }
+}
+
+/// What kind of serialised value `v` is, for [`value_class`].
+fn shape(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "list",
+        Value::Object(o) if o.contains_key("$u") => "undefined",
+        Value::Object(o) if o.contains_key("$err") => "error",
+        Value::Object(o) if o.contains_key("$color") => "color",
+        Value::Object(o) if o.contains_key("$obj") => "object",
+        Value::Object(o) if o.contains_key("$fn") => "function",
+        Value::Object(o) => match o.get("$n").and_then(Value::as_str) {
+            Some("NaN") => "nan",
+            Some(_) => "infinity",
+            None => "record",
+        },
+    }
+}
+
+fn number(v: &Value) -> f64 {
+    match v {
+        Value::Number(n) => n.as_f64().unwrap_or(f64::NAN),
+        _ => match v.get("$n").and_then(Value::as_str) {
+            Some("Infinity") => f64::INFINITY,
+            Some("-Infinity") => f64::NEG_INFINITY,
+            _ => f64::NAN,
+        },
+    }
+}
+
+fn number_class(a: f64, b: f64) -> String {
+    let side = |qt: bool, what: &str| format!("{what}-{}", if qt { "qt" } else { "ljos" });
+    if a.is_nan() != b.is_nan() {
+        return side(a.is_nan(), "nan");
+    }
+    // Past an int's range is where a conversion through 32 or 64 bits
+    // shows; Infinity is the same story.
+    let big = |x: f64| x.abs() >= 2_147_483_648.0;
+    if big(a) || big(b) {
+        return "int-range".into();
+    }
+    if (a - b).abs() <= 0.01 * a.abs().max(b.abs()) {
+        return "rounding".into();
+    }
+    "number".into()
+}
+
+fn color_class(qt: &Value, ljos: &Value) -> String {
+    let argb = |v: &Value| -> Option<[i32; 4]> {
+        let hex = v.get("$color")?.as_str()?.strip_prefix('#')?;
+        let n = u32::from_str_radix(hex, 16).ok()?;
+        let a = if hex.len() == 8 { n >> 24 } else { 255 };
+        Some([a, n >> 16 & 255, n >> 8 & 255, n & 255].map(|c| c as i32))
+    };
+    let (Some(a), Some(b)) = (argb(qt), argb(ljos)) else {
+        return "color".into();
+    };
+    let invalid = |c: [i32; 4]| c == [255, 0, 0, 0] || c == [0, 0, 0, 0];
+    if invalid(a) != invalid(b) {
+        return format!("invalid-{}", if invalid(a) { "qt" } else { "ljos" });
+    }
+    if a[1..] == b[1..] {
+        return "alpha".into();
+    }
+    if a.iter().zip(&b).all(|(x, y)| (x - y).abs() <= 2) {
+        return "rounding".into();
+    }
+    "color".into()
+}
+
 /// A warning without what changes from case to case: where it is, the
 /// names and numbers in it. Two warnings of one shape are, nearly always,
 /// one behaviour.
@@ -405,5 +550,42 @@ mod tests {
             message_shape("file:///Case.qml:4: RangeError: Invalid array length 42"),
             "Invalid array length N"
         );
+    }
+
+    #[test]
+    fn a_difference_has_a_class_whatever_the_program() {
+        let class = |q: Value, l: Value| value_class(&q, &l);
+        assert_eq!(class(json!(0), json!({"$n": "NaN"})), "nan-ljos");
+        assert_eq!(class(json!({"$u": 1}), json!(3)), "undefined-qt");
+        assert_eq!(class(json!(1), json!(1.25)), "number");
+        assert_eq!(class(json!(0), json!(-3)), "number");
+        assert_eq!(class(json!({"$n": "Infinity"}), json!(0)), "int-range");
+        assert_eq!(class(json!(4294967295u32), json!(-1)), "int-range");
+        assert_eq!(class(json!(["#000000"]), json!([""])), "empty-ljos");
+        assert_eq!(class(json!([]), json!([0])), "empty-qt");
+        assert_eq!(class(json!("%7B%7D:0"), json!("{}:0")), "encoding");
+        assert_eq!(class(json!("NaN"), json!("0")), "text-nan-qt");
+        assert_eq!(class(json!("1.5"), json!("1.5000001")), "text-rounding");
+        assert_eq!(
+            class(
+                json!({"$color": "#0000bf00"}),
+                json!({"$color": "#0000c000"})
+            ),
+            "rounding"
+        );
+        assert_eq!(
+            class(json!({"$color": "#ff0000"}), json!({"$color": "#000000"})),
+            "invalid-ljos"
+        );
+        assert_eq!(
+            class(json!({"x": 0, "y": 0}), json!({"x": 0, "y": {"$n": "NaN"}})),
+            "nan-ljos"
+        );
+        assert_eq!(
+            class(json!({"pixelSize": 3}), json!({"pixelSize": -3})),
+            "number"
+        );
+        assert_eq!(class(json!(true), json!(false)), "bool");
+        assert_eq!(class(json!("a"), json!(1)), "string-vs-number");
     }
 }
