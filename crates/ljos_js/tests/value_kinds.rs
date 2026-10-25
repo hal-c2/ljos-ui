@@ -9,7 +9,9 @@ use ljos_js::{JsConfig, JsHost, JsValue, ModuleHandle, ValueKind};
 const PAIR: &str = r#"(() => {
   const proto = { toString() { return `Pair(${this.a}, ${this.b})`; } };
   const seen = new Map();
+  globalThis.made = 0;
   const make = (a, b) => {
+    globalThis.made += 1;
     const key = a + "," + b;
     let it = seen.get(key);
     if (!it) {
@@ -128,4 +130,33 @@ fn a_definition_that_is_not_a_kind_is_refused() {
     let host = JsHost::new(JsConfig::default()).unwrap();
     assert!(host.define_value_kind("({ make: 1 })").is_err());
     assert!(host.define_value_kind("nothing here").is_err());
+}
+
+#[test]
+fn a_frozen_value_that_crosses_again_is_not_made_again() {
+    let (host, pair, named) = host();
+    let m = module(
+        &host,
+        "export function id(x) { return x; }
+         export function made() { return globalThis.made; }
+         export function back() { return pair(5, 6); }",
+    );
+    let v = JsValue::Typed(pair, vec![JsValue::Number(1.0), JsValue::Number(2.0)]);
+    for _ in 0..3 {
+        assert_eq!(call(&host, &m, "id", std::slice::from_ref(&v)), v);
+    }
+    assert_eq!(call(&host, &m, "made", &[]), JsValue::Number(1.0));
+    // One that came from JS goes back as the object it was.
+    let w = call(&host, &m, "back", &[]);
+    assert_eq!(call(&host, &m, "id", std::slice::from_ref(&w)), w);
+    assert_eq!(call(&host, &m, "made", &[]), JsValue::Number(2.0));
+    // An object a script may still change is made each time.
+    let m2 = module(
+        &host,
+        "export function grow(x) { x.name += '!'; return x; }",
+    );
+    let n = JsValue::Typed(named, vec![JsValue::String("n".into())]);
+    let once = JsValue::Typed(named, vec![JsValue::String("n!".into())]);
+    assert_eq!(call(&host, &m2, "grow", std::slice::from_ref(&n)), once);
+    assert_eq!(call(&host, &m2, "grow", &[n]), once);
 }

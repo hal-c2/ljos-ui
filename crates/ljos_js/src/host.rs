@@ -229,7 +229,19 @@ struct KindFace {
     proto: Persistent<Object<'static>>,
     /// Shared, so that reading a value does not copy the names.
     fields: Rc<[String]>,
+    /// `Object.isFrozen`, as it was when the kind was defined.
+    is_frozen: Persistent<Function<'static>>,
+    /// The values of the kind that crossed last, newest first, with their
+    /// fields. Only frozen ones: their fields cannot change, so the same
+    /// fields are the same object, which a kind that keeps one object per
+    /// value would give anyway. A value read and written back, such as a
+    /// font whose member a script sets, then costs neither a `make` nor a
+    /// read of each field.
+    recent: RefCell<Vec<(Persistent<Object<'static>>, Vec<JsValue>)>>,
 }
+
+/// How many values of a kind [`KindFace::recent`] keeps.
+const RECENT_VALUES: usize = 4;
 
 /// The property of a kind's prototype that holds the kind's number. It only
 /// finds the candidate; the prototype itself is what is trusted.
@@ -1041,6 +1053,9 @@ impl<'js> Scope<'js> {
                 ))?
             }
             JsValue::Typed(kind, fields) => {
+                if let Some(o) = self.recent_object(kind.index(), fields)? {
+                    return Ok(o.into_value());
+                }
                 let make = self
                     .state
                     .kinds
@@ -1052,7 +1067,11 @@ impl<'js> Scope<'js> {
                     .iter()
                     .map(|f| self.to_value(f))
                     .collect::<rquickjs::Result<Vec<_>>>()?;
-                make.restore(ctx)?.call((Rest(args),))?
+                let made: Value<'js> = make.restore(ctx)?.call((Rest(args),))?;
+                if let Some(o) = made.as_object() {
+                    self.keep_typed(kind.index(), o, fields)?;
+                }
+                made
             }
         })
     }
@@ -1078,6 +1097,9 @@ impl<'js> Scope<'js> {
         if kind_proto.restore(&self.ctx)? != proto {
             return Ok(None);
         }
+        if let Some(fields) = self.recent_fields(index as usize, o)? {
+            return Ok(Some(JsValue::Typed(ValueKind(index as u32), fields)));
+        }
         let mut fields = Vec::with_capacity(names.len());
         for name in names.iter() {
             let v: Value<'js> = o.get(name.as_str())?;
@@ -1088,7 +1110,85 @@ impl<'js> Scope<'js> {
             }
             fields.push(self.read_value_at(&v, depth + 1)?);
         }
+        self.keep_typed(index as usize, o, &fields)?;
         Ok(Some(JsValue::Typed(ValueKind(index as u32), fields)))
+    }
+
+    /// The object of a value of kind `kind` with `fields` that crossed
+    /// lately ([`KindFace::recent`]).
+    fn recent_object(
+        &self,
+        kind: usize,
+        fields: &[JsValue],
+    ) -> rquickjs::Result<Option<Object<'js>>> {
+        let kinds = self.state.kinds.borrow();
+        let Some(face) = kinds.get(kind) else {
+            return Ok(None);
+        };
+        let mut recent = face.recent.borrow_mut();
+        // A number by its bits: `-0` is not `0` to a kind that keeps it.
+        let same = |a: &JsValue, b: &JsValue| match (a, b) {
+            (JsValue::Number(x), JsValue::Number(y)) => x.to_bits() == y.to_bits(),
+            _ => a == b,
+        };
+        let Some(at) = recent.iter().position(|(_, f)| {
+            f.len() == fields.len() && f.iter().zip(fields).all(|(a, b)| same(a, b))
+        }) else {
+            return Ok(None);
+        };
+        recent[..=at].rotate_right(1);
+        recent[0].0.clone().restore(&self.ctx).map(Some)
+    }
+
+    /// The fields of `o`, a value of kind `kind`, when it crossed lately.
+    fn recent_fields(
+        &self,
+        kind: usize,
+        o: &Object<'js>,
+    ) -> rquickjs::Result<Option<Vec<JsValue>>> {
+        let kinds = self.state.kinds.borrow();
+        let Some(face) = kinds.get(kind) else {
+            return Ok(None);
+        };
+        let mut recent = face.recent.borrow_mut();
+        let mut found = None;
+        for (i, (kept, _)) in recent.iter().enumerate() {
+            if kept.clone().restore(&self.ctx)? == *o {
+                found = Some(i);
+                break;
+            }
+        }
+        let Some(at) = found else {
+            return Ok(None);
+        };
+        recent[..=at].rotate_right(1);
+        Ok(Some(recent[0].1.clone()))
+    }
+
+    /// Keeps `o` as a value of kind `kind` that crossed lately, if it is
+    /// frozen.
+    fn keep_typed(&self, kind: usize, o: &Object<'js>, fields: &[JsValue]) -> rquickjs::Result<()> {
+        let is_frozen = {
+            let kinds = self.state.kinds.borrow();
+            let Some(face) = kinds.get(kind) else {
+                return Ok(());
+            };
+            face.is_frozen.clone()
+        };
+        let frozen: bool = is_frozen.restore(&self.ctx)?.call((o.clone(),))?;
+        if !frozen {
+            return Ok(());
+        }
+        let kinds = self.state.kinds.borrow();
+        let Some(face) = kinds.get(kind) else {
+            return Ok(());
+        };
+        let mut recent = face.recent.borrow_mut();
+        if recent.len() == RECENT_VALUES {
+            recent.pop();
+        }
+        recent.insert(0, (Persistent::save(&self.ctx, o.clone()), fields.to_vec()));
+        Ok(())
     }
 
     fn color_face(&self) -> rquickjs::Result<(Function<'js>, Object<'js>)> {
@@ -1692,12 +1792,16 @@ impl JsHost {
             let proto: Object = face.get("proto")?;
             let fields: Vec<String> = face.get("fields")?;
             let fields: Rc<[String]> = fields.into();
+            let object: Object = scope.ctx.globals().get("Object")?;
+            let is_frozen: Function = object.get("isFrozen")?;
             let index = scope.state.kinds.borrow().len() as u32;
             proto.prop(KIND_MARK, Property::from(index as i32))?;
             scope.state.kinds.borrow_mut().push(KindFace {
                 make: Persistent::save(&scope.ctx, make),
                 proto: Persistent::save(&scope.ctx, proto),
                 fields,
+                is_frozen: Persistent::save(&scope.ctx, is_frozen),
+                recent: RefCell::default(),
             });
             Ok(ValueKind(index))
         })
