@@ -140,6 +140,25 @@ Feature: Mnemonics in the text of a control
     When the user presses "Alt+G"
     Then the property "hits" of "b" is 0
 
+  Scenario: A mnemonic given to a button later clicks it
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      ApplicationWindow {
+        objectName: "w"; width: 300; height: 200; visible: true
+        property string name: "Go"
+        Button { objectName: "b"; text: "File"; property int hits: 0; onClicked: hits++ }
+        Button { objectName: "c"; text: name; property int hits: 0; onClicked: hits++ }
+      }
+      """
+    When the property "text" of "b" is set to "&File"
+    And the property "name" of "w" is set to "&Go"
+    And the user presses "Alt+F"
+    And the user presses "Alt+G"
+    Then the property "hits" of "b" is 1
+    And the property "hits" of "c" is 1
+
   Scenario Outline: Alt and the letter opens the menu of the bar
     Given the QML:
       """qml

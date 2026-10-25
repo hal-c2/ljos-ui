@@ -35,7 +35,7 @@ use crate::control::{Control, click_focus, focus_policy, hover, is_left, takes_i
 use crate::group;
 use crate::parts::{PartKind, manage_part};
 use crate::util::{
-    bind_default, check, flag, is_a, is_unset, mnemonic_of, num, object, set_computed,
+    bind_default, check, flag, is_a, is_unset, mnemonic_of, num, object, set_computed, warn,
 };
 
 /// `Qt.CheckState`.
@@ -102,6 +102,19 @@ pub(crate) struct ButtonState {
     action: Cell<Option<(ObjectId, ConnectionId)>>,
     /// Which of the button's properties follow its action ([`follows`]).
     follows_action: Cell<u8>,
+    /// Where the button stands with its mnemonic ([`make_mnemonic`]).
+    mnemonic: Cell<Mnemonic>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Mnemonic {
+    /// Not complete: it looks at its text when it completes.
+    #[default]
+    Later,
+    /// Complete with a text that has none: a text given later may.
+    None,
+    /// Its `Shortcut` is made.
+    Made,
 }
 
 mod follows {
@@ -145,7 +158,7 @@ fn button_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
 pub struct AbstractButton {
     #[qml(base)]
     pub control: Control,
-    #[qml(notify)]
+    #[qml(notify, write = text_written)]
     pub text: Atom,
     #[qml(notify, enumeration = "Display")]
     pub display: i32,
@@ -290,12 +303,27 @@ pub(crate) fn set_checked(engine: &Engine, obj: ObjectId, on: bool) -> Result<()
     }
 }
 
+/// A text with a mnemonic given to a complete button that had none: the
+/// button makes its `Shortcut` now.
+fn text_written(cx: &Cx, text: Atom) -> Option<Atom> {
+    if let Some(st) = state_of(cx.engine, cx.this)
+        && st.mnemonic.get() == Mnemonic::None
+        && mnemonic_of(&text).is_some()
+        && let Err(err) = make_mnemonic(cx.engine, cx.this, &st)
+    {
+        warn(cx.engine, format!("a mnemonic was not made: {err}"));
+    }
+    Some(text)
+}
+
 /// Alt and the letter after an `&` in the button's text press it, from
 /// anywhere in its window (`features/controls/mnemonics.feature`). The
-/// `Shortcut` is made with the button and follows its text, so that a
-/// button without a mnemonic has a shortcut with no sequence. The rows of
-/// a menu are left to the menu.
-fn make_mnemonic(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+/// `Shortcut` is made with the first text that has a mnemonic, and
+/// follows the text from then on, so that a text without one gives it no
+/// sequence. Most buttons never have one, and a `Shortcut` is an object
+/// and a few graph nodes. The rows of a menu are left to the menu.
+fn make_mnemonic(engine: &Engine, obj: ObjectId, st: &ButtonState) -> Result<(), EngineError> {
+    st.mnemonic.set(Mnemonic::Made);
     let s = engine.create_native_incomplete(Shortcut::default(), Some(obj))?;
     engine.bind(s, Shortcut::SEQUENCE.index, move |e| {
         let text = e.read(obj, AbstractButton::TEXT.index).to_js_string();
@@ -320,7 +348,14 @@ fn make_mnemonic(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
 }
 
 fn init_button(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
-    make_mnemonic(engine, obj)?;
+    if let Some(st) = state_of(engine, obj) {
+        let text = engine.untrack(|| engine.read(obj, AbstractButton::TEXT.index));
+        if mnemonic_of(&text.to_js_string()).is_some() {
+            make_mnemonic(engine, obj, &st)?;
+        } else {
+            st.mnemonic.set(Mnemonic::None);
+        }
+    }
     bind_default(engine, obj, AbstractButton::DOWN.index, move |e| {
         Value::Bool(flag(e, obj, AbstractButton::PRESSED.index))
     })?;

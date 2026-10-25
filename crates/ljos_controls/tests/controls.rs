@@ -621,6 +621,43 @@ fn material_rows_that_each_give_a_value_cost_what_each_costs() {
     );
 }
 
+/// Graph nodes per object made by a Repeater of `decl`, once settled.
+fn nodes_each(decl: &str) -> f64 {
+    let e = engine();
+    let n0 = e.node_count();
+    let root = load(
+        &e,
+        &format!(
+            "import QtQuick\nimport QtQuick.Controls.Basic\n\
+             Item {{ width: 400; height: 300; Repeater {{ model: 50; delegate: {decl} }} }}"
+        ),
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    (e.node_count() - n0) as f64 / 50.0
+}
+
+/// A container hears a colour set on it later through the colour's
+/// setter, not through a graph node per colour. A Pane holding an item
+/// cost 86 nodes more than a bare Control holding one while it watched
+/// each of its 21 colours, and 44 more without.
+#[test]
+fn a_container_has_no_node_per_colour() {
+    let pane = nodes_each("Pane { Item {} }");
+    let control = nodes_each("Control { contentItem: Item {} }");
+    assert!(pane - control < 50.0, "Pane {pane}, Control {control}");
+}
+
+/// A button makes its mnemonic's `Shortcut` with the first text that has
+/// one ([`features/controls/mnemonics.feature`]); one without costs
+/// nothing for it.
+#[test]
+fn a_button_without_a_mnemonic_has_no_shortcut() {
+    let plain = nodes_each(r#"Button { text: "File" }"#);
+    let marked = nodes_each(r#"Button { text: "&File" }"#);
+    assert!(marked - plain >= 3.0, "plain {plain}, marked {marked}");
+}
+
 /// Makes `rows` buttons one at a time, each with a colour of its own, as
 /// a view does as it scrolls, and returns the effects that ran.
 fn coloured_rows(rows: usize) -> u64 {
