@@ -15,6 +15,7 @@ pub mod compare;
 pub mod connections;
 pub mod creation;
 pub mod geometry;
+pub mod loaders;
 pub mod models;
 pub mod outcome;
 pub mod report;
@@ -22,6 +23,7 @@ pub mod rng;
 pub mod run;
 pub mod shrink;
 pub mod side;
+pub mod states;
 
 use std::path::PathBuf;
 

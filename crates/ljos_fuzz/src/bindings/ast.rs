@@ -437,6 +437,8 @@ pub enum ObjType {
     ListElement,
     /// Its one child is the delegate, made once per row.
     Repeater,
+    /// Makes one object of the component its settings name.
+    Loader,
 }
 
 impl ObjType {
@@ -455,6 +457,7 @@ impl ObjType {
             Self::ListModel => "ListModel",
             Self::ListElement => "ListElement",
             Self::Repeater => "Repeater",
+            Self::Loader => "Loader",
         }
     }
 
