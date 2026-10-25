@@ -30,6 +30,9 @@ fn a_frozen_timer_wakes_nobody_and_fires_once_on_thaw() {
     assert!(h.engine.is_frozen(h.find(root, "late")), "what it owns");
     assert!(!h.engine.is_frozen(root));
     assert_eq!(h.engine.next_timer_deadline(), None, "the host sleeps");
+    let listed = h.engine.running_timers();
+    assert_eq!(listed.len(), 1, "listed once, as frozen");
+    assert_eq!(listed[0].due, None);
     h.pass_ms(1000);
     assert_eq!(h.num(root, "ticks"), 1.0);
 

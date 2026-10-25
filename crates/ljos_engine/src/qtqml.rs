@@ -748,6 +748,7 @@ pub(crate) fn park_timers(engine: &Engine) {
             true => now,
             false => st.due_at.get(&o).copied().unwrap_or(now),
         };
+        st.due_at.remove(&o);
         let ids = [st.by_timer.remove(&o), st.by_start.remove(&o)];
         for t in ids.into_iter().flatten() {
             st.sched.cancel(t);
@@ -932,7 +933,13 @@ impl Engine {
                 }
                 Pending::Timer(o) => {
                     self.inner.timing.timer_fired();
-                    self.inner.timers.borrow_mut().by_timer.remove(&o);
+                    {
+                        let mut st = self.inner.timers.borrow_mut();
+                        st.by_timer.remove(&o);
+                        // Spent unless `timer_fire` arms it again: a single
+                        // shot or a stopped timer is no longer due.
+                        st.due_at.remove(&o);
+                    }
                     let n = fired.entry(o).or_default();
                     *n += 1;
                     let at = if *n >= MAX_CATCH_UP {
@@ -1070,6 +1077,7 @@ impl Engine {
                 st.sched.cancel(t);
                 st.pending.remove(&t);
             }
+            st.due_at.remove(&obj);
             if !running && let Some(t) = st.by_start.remove(&obj) {
                 st.sched.cancel(t);
                 st.pending.remove(&t);

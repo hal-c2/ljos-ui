@@ -120,6 +120,27 @@ Item {
 }
 
 #[test]
+fn a_stopped_or_spent_timer_is_not_listed_as_running() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  Timer { id: tick; interval: 250; repeat: true; running: true }
+  Timer { id: once; interval: 50; running: true }
+  function halt() { tick.stop() }
+}
+"#,
+    );
+    assert_eq!(h.engine.running_timers().len(), 2);
+    h.pass_ms(100);
+    let left = h.engine.running_timers();
+    assert_eq!(left.len(), 1, "the single shot fired");
+    assert!(left[0].due.is_some());
+    h.engine.invoke_by_name(root, "halt", &[]).unwrap();
+    assert!(h.engine.running_timers().is_empty(), "stopped");
+}
+
+#[test]
 fn timer_start_stop_restart_and_triggered_on_start() {
     let h = engine();
     let root = h.load(
