@@ -10,7 +10,7 @@
 
 use rquickjs::{Exception, Object, Value, qjs};
 
-use super::{SignalDef, raw_accessor, raw_entry, raw_out};
+use super::{SignalDef, raw_accessor, raw_entry, raw_in, raw_out};
 use crate::JsValue;
 
 /// The signal an object of the class emits: its opaque.
@@ -150,7 +150,13 @@ unsafe extern "C" fn call(
             let host = scope.state.host()?;
             let args = (0..argc.max(0) as usize)
                 .map(|i| {
-                    let a = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, *argv.add(i)));
+                    // A number or a bool, what most signals carry, is read
+                    // off its tag.
+                    let raw = *argv.add(i);
+                    if let Some(v) = raw_in(raw) {
+                        return Ok(v);
+                    }
+                    let a = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, raw));
                     scope.script_value(&a)
                 })
                 .collect::<rquickjs::Result<Vec<_>>>()?;

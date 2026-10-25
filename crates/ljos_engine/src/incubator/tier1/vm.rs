@@ -217,13 +217,13 @@ impl Run<'_> {
                         // member of a value is the script's to do.
                         return None;
                     };
-                    let name = match group {
+                    let p = match group {
                         Some((flag, _)) if matches!(r[usize::from(flag)], Value::Bool(true)) => {
-                            self.p.grouped(at)?
+                            let store = self.e.inner.store.borrow();
+                            writable_of(&store.objects.get(o)?.meta, self.p.grouped(at)?)
                         }
-                        _ => self.name(name),
-                    };
-                    let p = self.writable(o, name)?;
+                        _ => self.writable(o, name),
+                    }?;
                     let v = r[usize::from(val)].clone();
                     if has_js(&v) {
                         return None;
@@ -446,14 +446,15 @@ impl Run<'_> {
     }
 
     /// The property a write to `o.name` goes to.
-    fn writable(&self, o: ObjectId, name: &str) -> Option<PropIndex> {
+    fn writable(&self, o: ObjectId, name: u16) -> Option<PropIndex> {
         let store = self.e.inner.store.borrow();
         let meta = &store.objects.get(o)?.meta;
-        if meta.method_index(name).is_some() {
-            return None;
+        if let Some(Looked::Write(p)) = self.p.looked(name, meta, Key::Write) {
+            return p;
         }
-        let p = meta.property_index(name)?;
-        (!meta.property(p)?.flags.contains(PropertyFlags::GROUP)).then_some(p)
+        let p = writable_of(meta, self.name(name));
+        self.p.keep(name, meta, Key::Write, Looked::Write(p));
+        p
     }
 
     /// The function of a script `o` has by the name `name`, as it is
@@ -564,6 +565,16 @@ fn member_of(meta: &MetaObject, name: &str, pair: Option<&str>) -> Option<Member
         return None;
     }
     Some(Member::Leaf(leaf))
+}
+
+/// The property a write to the member `name` of objects of the type
+/// `meta` describes goes to.
+fn writable_of(meta: &MetaObject, name: &str) -> Option<PropIndex> {
+    if meta.method_index(name).is_some() {
+        return None;
+    }
+    let p = meta.property_index(name)?;
+    (!meta.property(p)?.flags.contains(PropertyFlags::GROUP)).then_some(p)
 }
 
 /// The method of a script that objects of the type `meta` describes have

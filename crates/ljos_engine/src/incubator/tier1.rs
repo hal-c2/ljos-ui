@@ -291,12 +291,15 @@ enum Key {
     /// A member, with or without a property it is grouped with.
     Member(bool),
     Method,
+    /// The property a write of the name goes to.
+    Write,
 }
 
 #[derive(Clone, Copy)]
 enum Looked {
     Member(Option<vm::Member>),
     Method(Option<MethodIndex>),
+    Write(Option<PropIndex>),
 }
 
 /// The types a name is remembered for: a program is shared by the
@@ -833,7 +836,12 @@ impl Engine {
         };
         if !check {
             if let Some((o, prop, v)) = done.write {
-                if self.write(o, prop, v, WriteKind::Imperative).is_err() {
+                // Most handlers write a number to a plain property, which
+                // needs none of the looks the long way makes.
+                let plain = self.plain_script_write(o, prop, &v);
+                if !matches!(plain, Ok(true))
+                    && (plain.is_err() || self.write(o, prop, v, WriteKind::Imperative).is_err())
+                {
                     // Refused (read-only, the wrong type): JavaScript
                     // throws for it, with the message tier 2 logs.
                     p.bailed();

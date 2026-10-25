@@ -2009,7 +2009,7 @@ impl Engine {
             };
             let kind = matches!(
                 (&p.ty, v),
-                (TypeTag::Real | TypeTag::Int, Value::Real(_))
+                (TypeTag::Real | TypeTag::Int, Value::Real(_) | Value::Int(_))
                     | (TypeTag::Bool, Value::Bool(_))
                     | (TypeTag::String, Value::String(_))
             );
