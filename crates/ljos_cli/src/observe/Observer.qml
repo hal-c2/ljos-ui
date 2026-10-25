@@ -152,10 +152,16 @@ ApplicationWindow {
             wakes.add(s)
         else if (route === "wake-due" && ok)
             wakes.showDue(s)
+        else if (route === "one-wake")
+            wakes.showOne(ok, s, r)
         else if (route === "components" && ok)
             components.show(s)
         else if (route === "component")
             components.showInstances(ok, s)
+        else if (route === "mark" && ok)
+            components.marked(s)
+        else if (route === "since-mark" && ok)
+            components.showSince(s)
         else if (route === "bindings" && ok)
             hot.show(s)
         else if (route === "growth" && ok)
@@ -3829,7 +3835,7 @@ ApplicationWindow {
                     ]
 
                     function load() {
-                        window.ask("app_metrics", { memory: { max: 200 } }, "memory")
+                        window.ask("app_metrics", { memory: { max: 200, mappings: true } }, "memory")
                     }
 
                     function sum(windows, of) {
@@ -4055,6 +4061,77 @@ ApplicationWindow {
                                               + (key.modelData.gpu ? " (GPU, not stacked)" : "")
                                         color: key.modelData.owner === "not_attributed" ? theme.warn : theme.subtle
                                         font.pixelSize: 11
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // What the owners above leave out, by mapping: the
+                    // program and each library it loaded, and of what is
+                    // not attributed, where it lies. Only where the
+                    // platform tells; elsewhere it says so.
+                    Rectangle {
+                        id: mapped
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: (split !== null && split.known ? mappedRow.implicitHeight : 18) + 16
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        visible: memory.last !== null && memory.last.mappings !== null
+                                 && memory.last.mappings !== undefined
+                        readonly property var split: visible ? memory.last.mappings : null
+                        Text {
+                            x: 8; y: 8
+                            visible: mapped.split !== null && !mapped.split.known
+                            text: "By mapping: not known on this platform"
+                            color: theme.subtle
+                        }
+                        Row {
+                            id: mappedRow
+                            x: 8; y: 8
+                            width: parent.width - 16
+                            spacing: 16
+                            visible: mapped.split !== null && mapped.split.known === true
+                            Repeater {
+                                model: [["The program and its libraries", "program_split"],
+                                        ["Not attributed, by where it is", "not_attributed_split"]]
+                                delegate: Column {
+                                    id: half
+                                    required property var modelData
+                                    width: (mappedRow.width - 16) / 2
+                                    spacing: 2
+                                    Text {
+                                        text: half.modelData[0]
+                                        color: theme.subtle
+                                        font.pixelSize: 12
+                                        font.bold: true
+                                    }
+                                    Repeater {
+                                        model: window.page === 8 && mapped.split !== null && mapped.split.known
+                                               ? mapped.split[half.modelData[1]] : null
+                                        delegate: Row {
+                                            id: mapRow
+                                            required property var modelData
+                                            spacing: 8
+                                            Accessible.role: Accessible.ListItem
+                                            Accessible.name: modelData.label + ", " + window.bytes(modelData.bytes)
+                                            Text {
+                                                width: half.width - 88
+                                                text: mapRow.modelData.label
+                                                elide: Text.ElideRight
+                                                color: theme.text
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                width: 80
+                                                horizontalAlignment: Text.AlignRight
+                                                text: window.bytes(mapRow.modelData.bytes)
+                                                color: theme.text
+                                                font.family: theme.mono
+                                                font.pixelSize: 12
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -4646,6 +4723,7 @@ ApplicationWindow {
                                 causes: w.causes.join(", "),
                                 tone: tone(w.causes),
                                 own: w.requests_only,
+                                detailed: w.detailed === true,
                                 ledTo: w.led_to,
                                 detail: "passes " + w.passes + " · frames " + w.frames + " · drawn " + w.drawn
                                         + " · unchanged " + w.unchanged
@@ -4709,6 +4787,45 @@ ApplicationWindow {
                         scheduled = s.scheduled
                         listening = s.listening
                         due = rows
+                    }
+
+                    // What the wake picked did, in order; a click on a
+                    // row the inspector kept the detail of asks for it.
+                    property var one: null
+
+                    function openOne(seq) {
+                        window.ask("app_frames", { wakes: true, wake: seq, max: 300 }, "one-wake")
+                    }
+
+                    function showOne(ok, s, r) {
+                        if (!ok) {
+                            one = { title: window.refusal(r), took: "", rows: [] }
+                            return
+                        }
+                        var rows = []
+                        for (var i = 0; i < s.entries.length; ++i) {
+                            var e = s.entries[i]
+                            var what = e.kind === "changed"
+                                ? e.type + "." + e.name + ": " + JSON.stringify(e.old) + " → " + JSON.stringify(e.new)
+                                : e.name !== "" ? e.type + "." + e.name : e.type + " " + e.object
+                            rows.push({
+                                depth: e.depth,
+                                kind: e.kind,
+                                what: what,
+                                at: e.at ? e.at.substring(e.at.lastIndexOf("/") + 1) : "",
+                                took: e.took_us === null ? "" : window.ms(e.took_us)
+                            })
+                        }
+                        var counted = []
+                        for (var k in s.counts)
+                            counted.push(s.counts[k] + " " + k)
+                        one = {
+                            title: "Wake " + s.wake + " · " + s.causes.join(", ") + " → " + s.led_to,
+                            took: s.steps.total_ms.toFixed(2) + " ms · layout " + s.steps.layout_ms.toFixed(2)
+                                  + " · scene " + s.steps.scene_ms.toFixed(2) + " · bindings "
+                                  + s.steps.bindings_ms.toFixed(2) + (counted.length > 0 ? " · " + counted.join(", ") : ""),
+                            rows: rows
+                        }
                     }
 
                     function refill() {
@@ -4840,6 +4957,7 @@ ApplicationWindow {
                                     required property color tone
                                     required property string ledTo
                                     required property string detail
+                                    required property bool detailed
                                     width: ListView.view.width
                                     height: 24
                                     Accessible.role: Accessible.ListItem
@@ -4895,6 +5013,12 @@ ApplicationWindow {
                                             font.pixelSize: 11
                                         }
                                     }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        enabled: wakeRow.detailed
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: wakes.openOne(wakeRow.seq)
+                                    }
                                 }
                             }
                             Text {
@@ -4903,6 +5027,85 @@ ApplicationWindow {
                                 text: wakes.recording ? "No wake since keeping began: the application is at rest"
                                                       : "Press Record to keep each wake and its causes"
                                 color: theme.subtle
+                            }
+                        }
+
+                        // What the wake picked did, in order.
+                        Rectangle {
+                            Layout.preferredWidth: 440
+                            Layout.fillHeight: true
+                            visible: wakes.one !== null
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.accent
+                            clip: true
+                            Text {
+                                id: oneTitle
+                                x: 10; y: 6
+                                width: parent.width - 80
+                                elide: Text.ElideRight
+                                text: wakes.one ? wakes.one.title : ""
+                                color: theme.text
+                                font.pixelSize: 12
+                                font.bold: true
+                            }
+                            Button {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 4
+                                y: 2
+                                text: "Close"
+                                flat: true
+                                onClicked: wakes.one = null
+                            }
+                            Text {
+                                x: 10; y: 26
+                                // Clear of the Close button.
+                                width: parent.width - 80
+                                wrapMode: Text.Wrap
+                                text: wakes.one ? wakes.one.took : ""
+                                color: theme.subtle
+                                font.pixelSize: 11
+                            }
+                            ListView {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                anchors.topMargin: 60
+                                clip: true
+                                model: window.page === 10 && wakes.one ? wakes.one.rows : []
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: Row {
+                                    id: oneRow
+                                    required property var modelData
+                                    width: ListView.view.width
+                                    height: 18
+                                    spacing: 6
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: modelData.kind + " " + modelData.what
+                                    Text {
+                                        width: 70 + oneRow.modelData.depth * 12
+                                        leftPadding: oneRow.modelData.depth * 12
+                                        text: oneRow.modelData.kind
+                                        color: oneRow.modelData.kind === "handler" ? theme.accent
+                                             : oneRow.modelData.kind === "binding" ? theme.violet
+                                             : oneRow.modelData.kind === "changed" ? theme.good : theme.subtle
+                                        font.pixelSize: 11
+                                    }
+                                    Text {
+                                        width: oneRow.width - 150 - oneRow.modelData.depth * 12
+                                        text: oneRow.modelData.what + (oneRow.modelData.at !== "" ? "  " + oneRow.modelData.at : "")
+                                        elide: Text.ElideRight
+                                        color: theme.text
+                                        font.pixelSize: 11
+                                    }
+                                    Text {
+                                        width: 60
+                                        horizontalAlignment: Text.AlignRight
+                                        text: oneRow.modelData.took
+                                        color: theme.subtle
+                                        font.family: theme.mono
+                                        font.pixelSize: 11
+                                    }
+                                }
                             }
                         }
 
@@ -5003,6 +5206,43 @@ ApplicationWindow {
                     property var shown: null
                     property int offset: 0
                     readonly property int limit: 50
+                    // This window's mark: the objects alive when "Mark" was
+                    // pressed. "Since mark" lists what was made since and
+                    // is still alive, the step's leftovers; the inspector
+                    // forgets the mark with the window.
+                    property int markedCount: -1
+                    property var since: null
+
+                    function mark() {
+                        since = null
+                        window.ask("app_objects", { mark: true, holder: window.holder }, "mark")
+                    }
+
+                    function marked(s) {
+                        markedCount = s.marked
+                    }
+
+                    function sinceMark() {
+                        window.ask("app_objects", { since_mark: true, holder: window.holder }, "since-mark")
+                    }
+
+                    // The components first, then the places objects were
+                    // made at; a row opens its first object.
+                    function showSince(s) {
+                        var rows = []
+                        for (var i = 0; i < s.components.length; ++i) {
+                            var c = s.components[i]
+                            rows.push({ what: c.kind + " " + c.name, count: c.instances, bytes: -1,
+                                        at: c.at || c.url, handle: c.handles[0] || "" })
+                        }
+                        for (var j = 0; j < s.places.length; ++j) {
+                            var p = s.places[j]
+                            rows.push({ what: p.type + (p.object_names.length > 0 ? " (" + p.object_names.join(", ") + ")" : ""),
+                                        count: p.count, bytes: p.bytes, at: p.at, handle: p.handles[0] || "" })
+                        }
+                        since = { made: s.made, gone: s.gone, bytes: s.bytes, seconds: s.since_ms / 1000,
+                                  rows: rows }
+                    }
 
                     function load() {
                         window.ask("app_objects", { components: true }, "components")
@@ -5053,8 +5293,99 @@ ApplicationWindow {
                             color: theme.subtle
                         }
                         Button {
+                            text: "Mark"
+                            onClicked: components.mark()
+                        }
+                        Button {
+                            text: "Since mark"
+                            enabled: components.markedCount >= 0
+                            onClicked: components.sinceMark()
+                        }
+                        Button {
                             text: "Refresh"
                             onClicked: components.load()
+                        }
+                    }
+
+                    // What was made since the mark and is still alive.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: sinceColumn.implicitHeight + 16
+                        radius: 9
+                        color: theme.card
+                        border.color: components.since && components.since.made > 0 ? theme.warn : theme.rule
+                        visible: components.markedCount >= 0
+                        Column {
+                            id: sinceColumn
+                            x: 8; y: 8
+                            width: parent.width - 16
+                            spacing: 2
+                            Text {
+                                width: parent.width
+                                elide: Text.ElideRight
+                                text: !components.since
+                                      ? "Marked: " + components.markedCount + " objects alive. Do a step and undo it, then press Since mark."
+                                      : components.since.made === 0
+                                        ? "Nothing made since the mark " + components.since.seconds.toFixed(1) + " s ago is alive"
+                                        : components.since.made + " objects made since the mark "
+                                          + components.since.seconds.toFixed(1) + " s ago are alive, "
+                                          + window.bytes(components.since.bytes) + "; "
+                                          + components.since.gone + " of those marked are gone"
+                                color: components.since && components.since.made > 0 ? theme.warn : theme.subtle
+                                font.pixelSize: 12
+                            }
+                            Repeater {
+                                model: window.page === 11 && components.since ? components.since.rows.slice(0, 12) : null
+                                delegate: Row {
+                                    id: sinceRow
+                                    required property var modelData
+                                    spacing: 10
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: modelData.what + " ×" + modelData.count + " at " + modelData.at
+                                    Text {
+                                        width: 220
+                                        text: sinceRow.modelData.what
+                                        elide: Text.ElideRight
+                                        color: sinceRow.modelData.handle !== "" ? theme.accent : theme.text
+                                        font.pixelSize: 12
+                                        font.underline: sinceHover.containsMouse
+                                        MouseArea {
+                                            id: sinceHover
+                                            anchors.fill: parent
+                                            enabled: sinceRow.modelData.handle !== ""
+                                            hoverEnabled: enabled
+                                            onClicked: {
+                                                window.page = 3
+                                                objects.load(true)
+                                                objects.pick(sinceRow.modelData.handle, sinceRow.modelData.what)
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        width: 50
+                                        horizontalAlignment: Text.AlignRight
+                                        text: "×" + sinceRow.modelData.count
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: 80
+                                        horizontalAlignment: Text.AlignRight
+                                        text: sinceRow.modelData.bytes < 0 ? "" : window.bytes(sinceRow.modelData.bytes)
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: sinceColumn.width - 380
+                                        text: sinceRow.modelData.at
+                                        elide: Text.ElideLeft
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                    }
+                                }
+                            }
                         }
                     }
 
