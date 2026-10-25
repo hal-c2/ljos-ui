@@ -3395,6 +3395,10 @@ ApplicationWindow {
                     onHideOwnChanged: refill()
                     // Where the last trace file was written.
                     property string savedTo: ""
+                    // The last frame listed. Two asks out at once, a
+                    // change's and Record's, answer from the same `since`,
+                    // and a frame both carry is listed once.
+                    property int lastSeq: 0
                     readonly property var parts: [
                         { key: "timers", name: "timers", tone: theme.warn },
                         { key: "animations", name: "animations", tone: theme.violet },
@@ -3446,8 +3450,12 @@ ApplicationWindow {
                         // Only a view at its end follows: one scrolled
                         // back is being read.
                         var following = frameRows.count === 0 || frameView.atYEnd
-                        for (var i = 0; i < s.frames.length; ++i)
+                        for (var i = 0; i < s.frames.length; ++i) {
+                            if (s.frames[i].frame <= lastSeq)
+                                continue
+                            lastSeq = s.frames[i].frame
                             put(s.frames[i])
+                        }
                         var all = kept
                         var over = all.length - 600
                         if (over > 0) {
@@ -4352,6 +4360,9 @@ ApplicationWindow {
                     // The strip shows this many seconds before the last wake.
                     readonly property real span: 10000
                     property real lastAt: 0
+                    // The last wake listed: two answers from the same
+                    // `since` list a wake once.
+                    property int lastSeq: 0
                     readonly property var tones: ({
                         input: theme.accent, timer: theme.warn, animation: theme.violet,
                         message: theme.subtle, redraw: theme.bad, window: "#3fa7a0",
@@ -4392,6 +4403,9 @@ ApplicationWindow {
                         var all = kept
                         for (var i = 0; i < s.wakes.length; ++i) {
                             var w = s.wakes[i]
+                            if (w.wake <= lastSeq)
+                                continue
+                            lastSeq = w.wake
                             var row = {
                                 seq: w.wake,
                                 atMs: w.at_ms,
