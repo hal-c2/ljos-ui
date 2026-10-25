@@ -35,6 +35,7 @@ ljos_controls = { path = "../ljos_controls" }
 # `ljos run`, `render` and `test` offer them all, as `qml6` does.
 ljos_localstorage = { path = "../ljos_localstorage" }
 ljos_xml = { path = "../ljos_xml" }
+ljos_lottie = { path = "../ljos_lottie" }
 ljos_folderlistmodel = { path = "../ljos_folderlistmodel" }
 ljos_positioning = { path = "../ljos_positioning" }
 # The runner shows every format an Image reads, PDF documents too.

@@ -110,6 +110,42 @@ module Qt.labs.folderlistmodel
 		method indexOf
 		method isFolder
 
+module Qt.labs.lottieqt
+	LottieAnimation Qt.labs.lottieqt.LottieAnimation
+	type Qt.labs.lottieqt.LottieAnimation LottieAnimation
+		prototype QtQuick.Item named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		enum Quality LowQuality=0 MediumQuality=1 HighQuality=2
+		enum Direction Forward=1 Reverse=-1
+		enum LoopCount Infinite=-1
+		prop source QtQml.url named
+		prop status Status readonly
+		prop frameRate QtQml.int named
+		prop autoPlay QtQml.bool named
+		prop loops QtQml.int named
+		prop quality Quality
+		prop direction Direction
+		prop startFrame QtQml.int named readonly
+		prop endFrame QtQml.int named readonly
+		signal sourceChanged
+		signal statusChanged
+		signal frameRateChanged
+		signal autoPlayChanged
+		signal loopsChanged
+		signal qualityChanged
+		signal directionChanged
+		signal startFrameChanged
+		signal endFrameChanged
+		signal finished
+		method start
+		method play
+		method pause
+		method togglePause
+		method stop
+		method gotoAndPlay
+		method gotoAndStop
+		method getDuration
+
 module Qt.labs.qmlmodels
 	DelegateChoice QtQml.Models.DelegateChoice
 	DelegateChooser QtQml.Models.DelegateChooser
