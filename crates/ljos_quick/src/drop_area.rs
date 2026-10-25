@@ -327,6 +327,7 @@ fn area_at(
     engine: &Engine,
     pos: kurbo::Point,
     window: Option<ObjectId>,
+    source: Option<ObjectId>,
     keys: &[String],
 ) -> Option<ObjectId> {
     let reg = engine.extension::<Areas>();
@@ -345,6 +346,9 @@ fn area_at(
                 && shown(engine, a)
                 && crate::handlers::reaches(engine, a, pos, 0.0)
                 && takes_keys(engine, a, keys)
+                // Qt does not offer a drag to the areas of its source, so an
+                // item that is dragged over its peers is not dropped on itself.
+                && source.is_none_or(|s| !crate::focus::tree::is_under(engine, a, s))
         })
         .map(|a| (stack_key(engine, a), a))
         .max_by(|(x, _), (y, _)| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
@@ -453,7 +457,7 @@ fn exit(engine: &Engine, area: ObjectId) {
 /// The drag is at `offer.pos`: the areas it left and entered are told,
 /// and the one it is over hears where it is.
 pub(crate) fn track(engine: &Engine, t: &Tracker, offer: &Offer) {
-    let now = area_at(engine, offer.pos, offer.window, &offer.keys);
+    let now = area_at(engine, offer.pos, offer.window, offer.source, &offer.keys);
     let over = t.over.get().filter(|a| engine.is_alive(*a));
     if let Some(area) = now.filter(|a| Some(*a) == over) {
         show_position(
