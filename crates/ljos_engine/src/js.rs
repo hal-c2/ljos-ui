@@ -2124,6 +2124,56 @@ const PRELUDE: &str = r##"
       default: return Reflect.construct(RealDate, arguments, Date);
     }
   };
+  // Qt's Date reads a number alone as no date, a four-digit year aside,
+  // and writes a date as "Mon Feb 5 03:04:05 2024 GMT+0100": the day
+  // unpadded, the year last.
+  const method = (o, name, f) =>
+    Object.defineProperty(o, name, { value: f, writable: true, configurable: true });
+  const realParse = RealDate.parse;
+  method(RealDate, "parse", function parse(s) {
+    const t = String(s);
+    return /^\s*[+-]?[\d.,]*\s*$/.test(t) && !/^\d{4}$/.test(t) ? NaN : realParse(t);
+  });
+  const dp = RealDate.prototype;
+  const getTime = dp.getTime;
+  const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const p2 = (n) => (n < 10 ? "0" : "") + n;
+  // Qt has no year 0: the year before 1 is -1.
+  const yearText = (y) => (y > 0 ? String(y).padStart(4, "0") : "-" + String(1 - y).padStart(3, "0"));
+  const fields = (d, utc) => {
+    const ms = getTime.call(d);
+    if (Number.isNaN(ms)) return null;
+    return utc
+      ? [d.getUTCDay(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(),
+        d.getUTCSeconds(), d.getUTCFullYear()]
+      : [d.getDay(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(),
+        d.getFullYear()];
+  };
+  const day = (f) => DAYS[f[0]] + " " + MONTHS[f[1]] + " " + f[2];
+  const time = (f) => p2(f[3]) + ":" + p2(f[4]) + ":" + p2(f[5]);
+  const toUTCString = function toUTCString() {
+    const f = fields(this, true);
+    return f ? day(f) + " " + time(f) + " " + yearText(f[6]) + " GMT" : "Invalid Date";
+  };
+  method(dp, "toUTCString", toUTCString);
+  method(dp, "toGMTString", toUTCString);
+  method(dp, "toString", function toString() {
+    const f = fields(this, false);
+    if (!f) return "Invalid Date";
+    const east = -this.getTimezoneOffset();
+    const a = Math.abs(east);
+    const zone = east === 0 ? "" : (east < 0 ? "-" : "+") + p2(Math.floor(a / 60)) + p2(a % 60);
+    return day(f) + " " + time(f) + " " + yearText(f[6]) + " GMT" + zone;
+  });
+  method(dp, "toDateString", function toDateString() {
+    const f = fields(this, false);
+    return f ? day(f) + " " + yearText(f[6]) : "";
+  });
+  method(dp, "toTimeString", function toTimeString() {
+    const f = fields(this, false);
+    return f ? time(f) : "";
+  });
   for (const key of Reflect.ownKeys(RealDate)) {
     if (key !== "prototype" && key !== "name" && key !== "length")
       Object.defineProperty(Date, key, Object.getOwnPropertyDescriptor(RealDate, key));

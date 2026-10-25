@@ -1863,6 +1863,9 @@ impl JsHost {
             if !def.plain && !def.name.is_empty() {
                 install_to_string(ctx, &proto, def.name.clone())?;
             }
+            if !def.plain {
+                install_to_json(ctx, &proto)?;
+            }
             Ok(Persistent::save(ctx, proto))
         })?;
         let listing = Some(Rc::new(listing));
@@ -3403,6 +3406,63 @@ fn install_to_string<'js>(
         Property::from(to_string).writable().configurable(),
     )?;
     Ok(())
+}
+
+/// Gives `proto` a `toJSON` for `JSON.stringify` of an object of its type.
+/// On Qt an object is written with its properties, and an object whose
+/// parent or children lead back to it throws for the circular structure.
+/// One that does not is written as it is.
+fn install_to_json<'js>(ctx: &Ctx<'js>, proto: &Object<'js>) -> rquickjs::Result<()> {
+    let to_json = Function::new(
+        ctx.clone(),
+        |ctx: Ctx<'js>, This(this): This<Object<'js>>| -> rquickjs::Result<Object<'js>> {
+            if in_a_cycle(&this) {
+                return Err(rquickjs::Exception::throw_type(
+                    &ctx,
+                    "Cannot convert circular structure to JSON",
+                ));
+            }
+            Ok(this)
+        },
+    )?
+    .with_name("toJSON")?;
+    proto.prop("toJSON", Property::from(to_json).writable().configurable())?;
+    Ok(())
+}
+
+/// Whether `o` has a parent, whose children hold it, or holds an object
+/// whose parent it is. A read that throws (a destroyed object) leads
+/// nowhere.
+fn in_a_cycle<'js>(o: &Object<'js>) -> bool {
+    fn read<'js>(from: &Object<'js>, key: &str) -> Option<Value<'js>> {
+        match from.get::<_, Value<'js>>(key) {
+            Ok(v) => Some(v),
+            Err(_) => {
+                let _ = from.ctx().catch();
+                None
+            }
+        }
+    }
+    if read(o, "parent").is_some_and(|p| p.is_object()) {
+        return true;
+    }
+    let Some(kids) = read(o, "data").and_then(Value::into_object) else {
+        return false;
+    };
+    let n = read(&kids, "length")
+        .and_then(|n| n.as_number())
+        .unwrap_or(0.0);
+    (0..n as u32).any(|i| {
+        let kid = match kids.get::<_, Value>(i) {
+            Ok(v) => v.into_object(),
+            Err(_) => {
+                let _ = kids.ctx().catch();
+                None
+            }
+        };
+        kid.and_then(|k| read(&k, "parent"))
+            .is_some_and(|p| p.as_object() == Some(o))
+    })
 }
 
 #[cfg(test)]
