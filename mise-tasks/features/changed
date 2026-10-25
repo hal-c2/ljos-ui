@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Run on Ljós only the feature files this branch adds or changes (committed, staged, unstaged or untracked), plus any paths given. Takes features:run's arguments."
+set -euo pipefail
+# A worker's gate is the behaviour it touched; CI runs the whole ledger.
+# The base is where the branch left the shared line, so files others changed are not run.
+base_ref="${LJOS_FEATURES_BASE:-}"
+if [ -z "$base_ref" ]; then
+  for r in origin/scaffold/m0 origin/main; do
+    if git rev-parse -q --verify "$r" >/dev/null; then base_ref=$r; break; fi
+  done
+fi
+files=()
+if [ -n "$base_ref" ]; then
+  base=$(git merge-base HEAD "$base_ref")
+  mapfile -t files < <(
+    {
+      git diff --name-only --diff-filter=AMR "$base" -- 'features/*.feature'
+      git ls-files --others --exclude-standard -- 'features/*.feature'
+    } | sort -u
+  )
+fi
+paths=0
+skip=0
+for a in "$@"; do
+  if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+  case "$a" in
+    -t|--tags|-n|--name|--input|-i|--backend) skip=1 ;;
+    -*) ;;
+    *) paths=1 ;;
+  esac
+done
+if [ ${#files[@]} -eq 0 ] && [ "$paths" -eq 0 ]; then
+  echo "features:changed: no feature file added or changed against ${base_ref:-a base}, and no path given" >&2
+  exit 0
+fi
+printf 'features:changed: %s\n' "${files[@]}" >&2
+exec "$(dirname "$0")/run" --backend ljos "${files[@]}" "$@"
