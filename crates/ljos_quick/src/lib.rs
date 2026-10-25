@@ -42,6 +42,7 @@ mod mouse_drag;
 mod paint_item;
 pub mod palette;
 mod particles;
+mod pinch_area;
 #[doc(hidden)]
 pub use particles::{emitters_looked_at, particle_reads, particles_painted};
 mod frame_times;
@@ -62,6 +63,7 @@ mod system_palette;
 mod system_prefs;
 mod text;
 pub mod text_input;
+pub mod touch;
 pub mod transform;
 mod tree;
 mod views;
@@ -131,6 +133,7 @@ pub use metrics::{FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
 pub use paint_item::{ItemPaint, ReadPaint, register_paint_item, request_repaint};
 pub use palette::{ColorGroup, Palette};
+pub use pinch_area::{Pinch, PinchArea, PinchEvent};
 pub use pointer_item::{
     HoverMove, PointerItem, contains_point, follows_implicit_size, give_size, is_mirrored,
     register_hover_move, register_pointer_item, takes_pointer,
@@ -206,6 +209,7 @@ pub fn register(engine: &Engine) {
         keys::Keys, keys::KeyNavigation, keys::KeyEventObject, keys::Shortcut,
         keys::StandardKey,
         WheelEventObject, WheelHandler,
+        PinchArea, Pinch,
     ]));
     // A file that imports `QtQuick` has `Timer` and `QtObject` too.
     engine.register_import("QtQuick", "QtQml");

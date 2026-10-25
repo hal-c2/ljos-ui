@@ -1175,6 +1175,8 @@ module QtQuick
 	PathSvg QtQuick.PathSvg
 	PathView QtQuick.PathView
 	PauseAnimation QtQuick.PauseAnimation
+	Pinch QtQuick.Pinch
+	PinchArea QtQuick.PinchArea
 	PinchHandler QtQuick.PinchHandler
 	PointHandler QtQuick.PointHandler
 	PointerDevice QtQuick.PointerDevice
@@ -2374,6 +2376,38 @@ module QtQuick
 		prototype QtQuick.Animation named
 		prop duration QtQml.int named
 		signal durationChanged
+	type QtQuick.Pinch Pinch
+		prototype QtQml.QtObject named
+		enum Axis NoDrag=0 XAxis=1 YAxis=2 XAndYAxis=3 XandYAxis=3
+		prop target QtQml.QtObject named pointer reset
+		prop active QtQml.bool named readonly
+		prop minimumScale QtQml.real named
+		prop maximumScale QtQml.real named
+		prop minimumRotation QtQml.real named
+		prop maximumRotation QtQml.real named
+		prop dragAxis Axis
+		prop minimumX QtQml.real named
+		prop maximumX QtQml.real named
+		prop minimumY QtQml.real named
+		prop maximumY QtQml.real named
+		signal targetChanged
+		signal activeChanged
+		signal minimumScaleChanged
+		signal maximumScaleChanged
+		signal minimumRotationChanged
+		signal maximumRotationChanged
+		signal dragAxisChanged
+		signal minimumXChanged
+		signal maximumXChanged
+		signal minimumYChanged
+		signal maximumYChanged
+	type QtQuick.PinchArea PinchArea
+		prototype QtQuick.Item named
+		prop pinch QtQuick.Pinch pointer readonly
+		signal pinchStarted pinch
+		signal pinchUpdated pinch
+		signal pinchFinished pinch
+		signal smartZoom pinch
 	type QtQuick.PinchHandler PinchHandler
 		prototype QtQuick.PointerHandler named
 		prop minimumPointCount QtQml.int named

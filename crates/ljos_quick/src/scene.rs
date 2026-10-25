@@ -537,6 +537,7 @@ pub struct QuickScene {
     timers: Option<TimerHook>,
     next_timer: Option<Time>,
     pointer: PointerState,
+    pub(crate) touch: crate::touch::Touches,
     /// Creation jobs of asynchronous Loaders, run a slice per frame.
     incubator: Scheduler<()>,
     /// What the creation jobs of the last frame that ran any cost, until a
@@ -632,6 +633,7 @@ impl QuickScene {
             timers: None,
             next_timer: None,
             pointer: PointerState::default(),
+            touch: crate::touch::Touches::default(),
             incubator: Scheduler::new(),
             incubation: None,
             incubation_budget: INCUBATION_BUDGET,
@@ -2319,7 +2321,7 @@ impl QuickScene {
     }
 
     /// Items under `pos`, topmost first.
-    fn hits(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
+    pub(crate) fn hits(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
         let Some(snap) = &self.snapshot else {
             return Vec::new();
         };
