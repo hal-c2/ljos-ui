@@ -62,3 +62,16 @@ build may differ by a pixel or two, which the hundredth of rounding absorbs.
 `dir` is relative to `corpus/<root>`. `qt.runnable=false` means qml6 cannot draw it headless here
 (a missing module, C++ types registered by the app, a `qrc:` entry); the reason says which. Such an
 example is still tried on Ljós so its first error is counted, but it has no score.
+
+## Examples that do not start on Ljós, and why
+
+What is left once everything Ljós should have is there. Each needs something an application or a
+module outside Qt's product modules provides, so the gap is not closed in Ljós.
+
+| example | what it needs | whose |
+|---|---|---|
+| android-feature-delivery | `io.qt.fdmaploader`: `MapLoader` is a C++ type the app registers, and `loadedImages` a context property its C++ sets | the app |
+| car-configurator | `Qt.labs.assetdownloader` (`AssetDownloader`), a module of Qt's examples written in C++ that fetches the demo's assets; `QtQuick.Studio.Components` (`SvgPathItem`) and `QtQuick.Studio.DesignEffects` (`DesignEffect`), which come with Qt Design Studio and not with Qt; and what it shows is QtQuick3D, which Ljós stands in for | modules outside Qt; Quick3D is a stand-in |
+
+`FrameAnimation`, which car-configurator's wall effects use, is QtQuick's and is in Ljós
+(`features/animation/frame-animation.feature`).
