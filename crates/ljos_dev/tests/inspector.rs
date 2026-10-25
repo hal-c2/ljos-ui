@@ -1070,6 +1070,44 @@ fn eval_masks_secret_keys_without_merging_them() {
     tells_neither(&kept);
 }
 
+/// A part of what a field hides, selected, and copied elsewhere.
+const SELECTED: &str = r#"
+import QtQuick
+Item {
+    objectName: "root"; width: 300; height: 200
+    property string chosen: pw.selectedText
+    property string said: "chose " + pw.selectedText
+    property string whole: pw.text + "!"
+    TextInput {
+        id: pw; objectName: "pw"; width: 120; height: 20
+        echoMode: TextInput.Password; text: "hunter2"
+        Component.onCompleted: select(0, 6)
+    }
+}
+"#;
+
+#[test]
+fn a_selection_of_a_secret_is_masked_where_it_is_copied() {
+    let mut app = app_granted(
+        SELECTED,
+        InspectorConfig::default(),
+        CapSet::of([Cap::Inspect, Cap::Eval]),
+    );
+    let reply = app.call("app_inspect", json!({ "target": "#root" }));
+    assert!(!reply.text.contains("hunter"), "{}", reply.text);
+    assert!(!reply.structured.to_string().contains("hunter"));
+    assert_eq!(property(&reply.structured, "chosen")["value"], "<redacted>");
+    assert_eq!(
+        property(&reply.structured, "said")["value"],
+        "chose <redacted>"
+    );
+    // The whole secret is masked before the part of it, not around it.
+    assert_eq!(property(&reply.structured, "whole")["value"], "<redacted>!");
+    let eval = app.call("app_eval", json!({ "target": "#root", "source": "said" }));
+    assert_eq!(eval.structured["value"], "chose <redacted>");
+    assert!(!eval.text.contains("hunter"), "{}", eval.text);
+}
+
 /// A title, an objectName and an id that repeat what a field hides.
 const NAMED_AFTER: &str = r#"
 import QtQuick

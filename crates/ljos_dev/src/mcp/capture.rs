@@ -21,6 +21,12 @@ use super::redact::mask_text;
 /// What a masked value is written as outside the outline.
 pub(crate) const REDACTED: &str = "<redacted>";
 
+/// The properties whose value is what was typed. One list both hides them
+/// in a field's properties and learns them as secrets, so that a part of
+/// the text (a selection, what an input method composes) that a binding
+/// copies elsewhere is masked there too.
+pub(crate) const TYPED: [&str; 4] = ["text", "displayText", "preeditText", "selectedText"];
+
 /// The accessibility tree, held for the length of one request.
 #[derive(Debug)]
 pub(crate) struct Lease {
@@ -222,7 +228,7 @@ fn capture_untracked(
             }
             if hides_its_text(engine, obj) || (redact_all && is_editor(engine, obj)) {
                 secret_items.insert(obj);
-                for prop in ["text", "displayText"] {
+                for prop in TYPED {
                     if let Value::String(s) = engine.read_by_name(obj, prop)
                         && !s.is_empty()
                     {
@@ -516,7 +522,7 @@ pub(crate) fn secrets_below(engine: &Engine, root: ObjectId, redact_all: bool) -
         let mut out = HashSet::new();
         for obj in objects {
             if hides_its_text(engine, obj) || (redact_all && is_editor(engine, obj)) {
-                for prop in ["text", "displayText"] {
+                for prop in TYPED {
                     if let Value::String(s) = engine.read_by_name(obj, prop)
                         && !s.is_empty()
                     {

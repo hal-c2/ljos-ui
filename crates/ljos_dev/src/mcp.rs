@@ -28,7 +28,8 @@
 //!
 //! **What is never shown.** The text of a field whose `echoMode` is not
 //! `Normal` (and of every editable field when
-//! [`InspectorConfig::redact_all`] is set) is `<redacted>` in outlines,
+//! [`InspectorConfig::redact_all`] is set), with what is selected in it
+//! and what an input method composes there, is `<redacted>` in outlines,
 //! searches, properties, pictures and in what the acts report back, and
 //! so is any name or string property that is exactly that text, and the
 //! text wherever it is part of a property's value, an expression or what

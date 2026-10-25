@@ -35,8 +35,7 @@ const MAX_VALUE_CHARS: usize = 200;
 const MAX_CANDIDATES: usize = 10;
 /// The most properties `dependencies` lists on each side.
 const MAX_DEPENDENCIES: usize = 50;
-/// The properties whose value is what was typed.
-pub(crate) const TYPED: [&str; 4] = ["text", "displayText", "preeditText", "selectedText"];
+pub(crate) use super::capture::TYPED;
 
 /// What a tool reads: the application as it is now.
 pub(crate) struct Look<'a> {
