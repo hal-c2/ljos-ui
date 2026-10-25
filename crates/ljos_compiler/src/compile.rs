@@ -781,9 +781,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     .collect(),
             });
         let span = self.span(declaration.span);
+        let ty = self.property_type_name(&type_name.name.parts);
         self.def_mut(at).properties.push(PropertyDecl {
             name: name.clone(),
-            ty: type_name.name.to_string(),
+            ty,
             is_list: type_name.is_list,
             is_default: declaration.is_default,
             is_readonly: declaration.is_readonly,
@@ -795,6 +796,30 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             // Qt places such a binding at the declaration.
             self.value(owner, Slot::Own, name, declaration.span, value, false);
         }
+    }
+
+    /// The type a property is declared with, as written, unless it is one
+    /// that stands in for a type of a module the runtime does not have:
+    /// then the `Item` it stands in as, so that the property holds such an
+    /// object (`property View3D view: parent`).
+    fn property_type_name(&self, parts: &[&str]) -> String {
+        // A value type (`int`, `vector3d`) is no object type, though a
+        // name nothing else has is taken for one of the missing module.
+        let object_type = parts
+            .last()
+            .is_some_and(|name| name.starts_with(|c: char| c.is_ascii_uppercase()));
+        if object_type
+            && matches!(
+                self.types.find(parts),
+                Some(Found {
+                    origin: Origin::StandIn(_),
+                    ..
+                })
+            )
+        {
+            return "Item".to_string();
+        }
+        parts.join(".")
     }
 
     /// The object `id` names from the object `owner`, nearest context first.

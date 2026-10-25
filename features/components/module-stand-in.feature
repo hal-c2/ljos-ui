@@ -142,3 +142,21 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
       """
     Then the property "made" of "root" is 0
     And the log has 1 warnings matching "QtQuick3D"
+
+  Scenario: A property declared with a missing type holds what stands in for it
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      Item {
+        objectName: "root"
+        View3D { id: view; width: 30; height: 20 }
+        property View3D shown: view
+        property list<Node> nodes: [ Node { }, Node { } ]
+        property real shownWidth: shown ? shown.width : -1
+        property int nodeCount: nodes.length
+      }
+      """
+    Then the property "shownWidth" of "root" is 30
+    And the property "nodeCount" of "root" is 2
+    And the log has no warning matching "Unable to assign"
