@@ -4099,6 +4099,7 @@ dependencies = [
  "ljos_test",
  "qml_front",
  "qt_types",
+ "quick-xml 0.42.0",
  "raw-window-handle",
  "rfd",
  "rustls",

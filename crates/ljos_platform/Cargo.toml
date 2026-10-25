@@ -23,6 +23,8 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_ir = { path = "../ljos_ir" }
 ljos_reactive = { path = "../ljos_reactive" }
 ljos_runtime = { path = "../ljos_runtime" }
+# responseXML's document is read with the reader XmlListModel uses.
+quick-xml.workspace = true
 raw-window-handle.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

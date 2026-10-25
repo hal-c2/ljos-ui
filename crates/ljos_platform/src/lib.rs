@@ -48,6 +48,7 @@ mod sensors;
 mod settings;
 mod window_handle;
 mod xhr;
+mod xml_dom;
 
 use std::cell::Cell;
 

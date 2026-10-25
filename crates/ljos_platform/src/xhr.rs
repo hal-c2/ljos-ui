@@ -10,8 +10,9 @@
 //!
 //! Qt's reply has the server's own reason phrase; this one has the
 //! standard phrase of its status. A local file is not read, as Qt reads
-//! none unless `QML_XHR_ALLOW_FILE_READ` is set, and `responseXML` is
-//! always null.
+//! none unless `QML_XHR_ALLOW_FILE_READ` is set. `responseXML` is the
+//! read-only DOM Qt has, read out of a reply of an XML type when a script
+//! first asks for it (`crate::xml_dom`).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -99,6 +100,19 @@ impl XhrHelper {
                 method.to_js_string()
             ),
         );
+    }
+
+    /// The document in a reply's text, as JSON, or null when the reply is
+    /// of no XML type or is not well-formed.
+    #[qml(invokable)]
+    fn document(_cx: &Cx, text: Value, content_type: Value) -> Value {
+        if !crate::xml_dom::is_xml(&content_type.to_js_string()) {
+            return Value::Null;
+        }
+        match crate::xml_dom::document(&text.to_js_string()) {
+            Some(json) => Value::from(json.as_str()),
+            None => Value::Null,
+        }
     }
 
     /// Lets go of the reply of a request the script stopped.
@@ -215,6 +229,86 @@ const INSTALL: &str = r#"(function (helper) {
   const state = new WeakMap();
   const remote = (url) => /^https?:/i.test(url);
 
+  // responseXML's nodes. What they hold is kept apart, so a script reads
+  // it through the getters only, and a write to one is let go, as Qt's.
+  const ELEMENT = 1, ATTRIBUTE = 2, TEXT = 3, CDATA = 4, DOCUMENT = 9;
+  const NO_NODES = Object.freeze([]);
+  const nodes = new WeakMap();
+  const inner = (node) => nodes.get(node);
+  const getters = (cls, all) => {
+    for (const [name, get] of Object.entries(all))
+      Object.defineProperty(cls.prototype, name, { get, set() {}, configurable: true });
+  };
+  const sibling = (node, step) => {
+    const n = inner(node);
+    const all = n.parent ? inner(n.parent).children : NO_NODES;
+    return all[n.index + step] || null;
+  };
+  class Node {}
+  class Document extends Node {}
+  class Element extends Node {}
+  class Attr extends Node {}
+  class CharacterData extends Node {}
+  class Text extends CharacterData {}
+  class CDATASection extends Text {}
+  getters(Node, {
+    nodeName() { return inner(this).name; },
+    nodeValue() { return inner(this).value; },
+    nodeType() { return inner(this).type; },
+    parentNode() { return inner(this).parent; },
+    childNodes() { return inner(this).children; },
+    firstChild() { return inner(this).children[0] || null; },
+    lastChild() { const c = inner(this).children; return c[c.length - 1] || null; },
+    previousSibling() { return sibling(this, -1); },
+    nextSibling() { return sibling(this, 1); },
+    attributes() { return inner(this).attributes; },
+  });
+  getters(Document, {
+    xmlVersion() { return inner(this).version; },
+    xmlEncoding() { return inner(this).encoding; },
+    xmlStandalone() { return inner(this).standalone; },
+    documentElement() { return inner(this).root; },
+  });
+  getters(Element, { tagName() { return inner(this).name; } });
+  getters(Attr, {
+    name() { return inner(this).name; },
+    value() { return inner(this).value; },
+    ownerElement() { return inner(this).owner; },
+  });
+  getters(CharacterData, {
+    data() { return inner(this).value; },
+    length() { return inner(this).value.length; },
+  });
+  getters(Text, {
+    isElementContentWhitespace() { return /^\s*$/.test(inner(this).value); },
+    wholeText() { return inner(this).value; },
+  });
+  const node = (cls, fields) => {
+    const n = Object.create(cls.prototype);
+    nodes.set(n, Object.assign({ value: null, parent: null, index: 0,
+      children: NO_NODES, attributes: null }, fields));
+    return n;
+  };
+  // A tree as helper.document gives it.
+  const build = (tree, parent, index) => {
+    if (tree[0] === TEXT || tree[0] === CDATA) {
+      const cdata = tree[0] === CDATA;
+      return node(cdata ? CDATASection : Text, { type: tree[0],
+        name: cdata ? '#cdata-section' : '#text', value: tree[1], parent, index });
+    }
+    const element = node(Element, { type: ELEMENT, name: tree[1], parent, index });
+    const n = inner(element);
+    n.attributes = Object.freeze(tree[2].map(([name, value]) =>
+      node(Attr, { type: ATTRIBUTE, name, value, owner: element })));
+    n.children = Object.freeze(tree[3].map((child, i) => build(child, element, i)));
+    return element;
+  };
+  const documentOf = (json) => {
+    const tree = JSON.parse(json);
+    return node(Document, { type: DOCUMENT, name: '#document', version: tree.version,
+      encoding: tree.encoding, standalone: tree.standalone, root: build(tree.root, null, 0) });
+  };
+
   class XMLHttpRequest {
     constructor() {
       state.set(this, { ready: UNSENT, type: "", reset: true });
@@ -244,10 +338,19 @@ const INSTALL: &str = r#"(function (helper) {
       const s = state.get(this);
       return s.ready === DONE && s.reply ? s.url : "";
     }
-    get responseXML() { return null; }
+    get responseXML() {
+      const s = state.get(this);
+      if (s.ready !== DONE || !s.reply) return null;
+      if (s.doc === undefined) {
+        const json = helper.document(s.reply.text, this.getResponseHeader("Content-Type"));
+        s.doc = json === null ? null : documentOf(json);
+      }
+      return s.doc;
+    }
     get response() {
       const s = state.get(this);
       if (s.type === "" || s.type === "text") return this.responseText;
+      if (s.type === "document") return this.responseXML;
       if (s.ready !== DONE || !s.reply) return null;
       if (s.type === "json") {
         try { return JSON.parse(s.reply.text); } catch (e) { return null; }
