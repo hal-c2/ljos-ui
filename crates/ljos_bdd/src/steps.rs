@@ -3153,3 +3153,24 @@ fn streamed_bytes(w: &mut LjosWorld, count: usize, name: String) -> StepResult {
     w.web()?.stream_bytes(&name, count);
     Ok(())
 }
+
+#[given(
+    regex = r#"^the web server streams (\d+) zero bytes after hex "([0-9a-f]+)" at "([^"]+)"$"#
+)]
+fn prefixed_streamed_bytes(
+    w: &mut LjosWorld,
+    count: usize,
+    hex: String,
+    name: String,
+) -> StepResult {
+    if !hex.len().is_multiple_of(2) {
+        return Err("hex requires pairs of digits".into());
+    }
+    let prefix = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    w.web()?.stream_prefixed_bytes(&name, count, prefix);
+    Ok(())
+}

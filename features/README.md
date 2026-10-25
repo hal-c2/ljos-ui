@@ -140,6 +140,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given "text" was copied in another application` | the clipboard holds the text when the scenario starts |
 | `Given the HTML "html" was copied in another application` | the clipboard holds formatted text, as a rich text editor elsewhere copies it: the HTML (single quotes for attributes), and its characters as plain text; give it after the QML |
 | `Given the font file "X.ttf"` | make a font file of `features/text/fonts` available beside the QML files under its own name |
+| `Given the web server streams N zero bytes after hex "ffd8" at "X"` | stream a hex prefix then N zero bytes without allocating the whole response |
 | `Given the web server streams N bytes at "X"` | stream N zero bytes in HTTP chunks without allocating the whole response |
 | `Given the media file "X"` | make a sound or a film of `features/multimedia/media` available beside the QML files under its own name |
 | `Given the sprite sheet "X"` | make an image of `features/animation/sprites` available beside the QML files under its own name: `strip.png` is four 16 by 16 frames in a row, red, green, blue and white; `sheet.png` the same four in two rows of two |

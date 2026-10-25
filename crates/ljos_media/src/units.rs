@@ -23,6 +23,14 @@ pub(crate) struct Splitter {
     au: Vec<Vec<u8>>,
     /// It has a picture's slice already.
     has_slice: bool,
+    scan: usize,
+    entropy: bool,
+    au_bytes: usize,
+    limit: usize,
+    nal_limit: usize,
+    failed: bool,
+    #[cfg(test)]
+    scanned: usize,
 }
 
 impl Splitter {
@@ -32,6 +40,14 @@ impl Splitter {
             buf: Vec::new(),
             au: Vec::new(),
             has_slice: false,
+            scan: 0,
+            entropy: false,
+            au_bytes: 0,
+            limit: crate::container_bytes::LIMIT,
+            nal_limit: 4096,
+            failed: false,
+            #[cfg(test)]
+            scanned: 0,
         }
     }
 
@@ -39,21 +55,80 @@ impl Splitter {
         self.cut
     }
 
-    /// Takes `bytes` and gives the units they complete.
-    pub(crate) fn push(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
-        self.buf.extend_from_slice(bytes);
+    // DECISION: reuse the 16 MiB container budget for all pending splitter
+    // bytes, including access-unit framing. Limit an access unit to 4096 NALs
+    // as well, since tiny parameter NALs otherwise amplify allocation overhead.
+    // Overflow permanently fails this stream; callers report a decode error.
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, &'static str> {
+        if self.failed {
+            return Err("media unit exceeds byte or NAL budget");
+        }
+        let mut out = Vec::new();
+        for piece in bytes.chunks(8192) {
+            if piece.len() > self.limit.saturating_sub(self.buffered_bytes()) {
+                // Feed smaller pieces near the limit so complete units can drain.
+                for byte in piece {
+                    if self.buffered_bytes() == self.limit {
+                        return self.fail();
+                    }
+                    self.buf.push(*byte);
+                    out.extend(self.extract(false)?);
+                }
+            } else {
+                self.buf.extend_from_slice(piece);
+                out.extend(self.extract(false)?);
+            }
+        }
+        Ok(out)
+    }
+
+    fn buffered_bytes(&self) -> usize {
+        self.buf.len() + self.au_bytes
+    }
+
+    fn fail<T>(&mut self) -> Result<T, &'static str> {
+        self.failed = true;
+        self.buf = Vec::new();
+        self.au = Vec::new();
+        self.au_bytes = 0;
+        Err("media unit exceeds byte or NAL budget")
+    }
+
+    fn oversized_length(&self, n: usize) -> bool {
+        if !(1..=4).contains(&n) {
+            return true;
+        }
+        let Some(prefix) = self.buf.get(..n) else {
+            return false;
+        };
+        let len = be(prefix);
+        if len > self.limit.saturating_sub(n) {
+            return true;
+        }
+        // The current NAL waits for the next header. Its length is already
+        // available before that header, so reject it without waiting for payload.
+        self.buf
+            .get(n + len..n + len + n)
+            .is_some_and(|b| be(b) > self.limit.saturating_sub(n))
+    }
+
+    fn extract(&mut self, last: bool) -> Result<Vec<Vec<u8>>, &'static str> {
+        if let Cut::Length(n) = self.cut
+            && self.oversized_length(n)
+        {
+            return self.fail();
+        }
         match self.cut {
-            Cut::Jpeg => self.jpegs(),
-            _ => self.access_units(false),
+            Cut::Jpeg => Ok(self.jpegs()),
+            _ => self.access_units(last),
         }
     }
 
-    /// The stream ended: gives what is left as a last unit.
-    pub(crate) fn finish(&mut self) -> Vec<Vec<u8>> {
-        match self.cut {
-            Cut::Jpeg => self.jpegs(),
-            _ => self.access_units(true),
+    pub(crate) fn finish(&mut self) -> Result<Vec<Vec<u8>>, &'static str> {
+        if self.failed {
+            return self.fail();
         }
+        self.extract(true)
     }
 
     fn jpegs(&mut self) -> Vec<Vec<u8>> {
@@ -65,22 +140,33 @@ impl Splitter {
                 self.buf.drain(..self.buf.len() - keep);
                 return out;
             };
-            match jpeg_end(&self.buf, start) {
+            match self.jpeg_end(start) {
                 Some(end) => {
                     out.push(self.buf[start..end].to_vec());
                     self.buf.drain(..end);
+                    self.scan = 0;
+                    self.entropy = false;
                 }
                 None => {
                     self.buf.drain(..start);
+                    self.scan = self.scan.saturating_sub(start);
                     return out;
                 }
             }
         }
     }
 
-    fn access_units(&mut self, last: bool) -> Vec<Vec<u8>> {
+    fn access_units(&mut self, last: bool) -> Result<Vec<Vec<u8>>, &'static str> {
         let mut out = Vec::new();
-        while let Some((start, end, next)) = self.next_nal(last) {
+        loop {
+            if let Cut::Length(n) = self.cut
+                && self.oversized_length(n)
+            {
+                return self.fail();
+            }
+            let Some((start, end, next)) = self.next_nal(last) else {
+                break;
+            };
             let nal = trim_zeros(&self.buf[start..end]).to_vec();
             // The next NAL's header, after its start code or length.
             let at = next
@@ -90,8 +176,20 @@ impl Splitter {
                 };
             let header = self.buf.get(at..at + 2).map(|h| [h[0], h[1]]);
             self.buf.drain(..next);
+            self.scan = 0;
             if !nal.is_empty() {
                 self.has_slice |= is_slice(nal[0]);
+                let framed = nal.len()
+                    + match self.cut {
+                        Cut::Length(n) => n,
+                        _ => 4,
+                    };
+                if self.au.len() == self.nal_limit
+                    || framed > self.limit.saturating_sub(self.buffered_bytes())
+                {
+                    return self.fail();
+                }
+                self.au_bytes += framed;
                 self.au.push(nal);
             }
             let starts_another = header.is_some_and(|h| begins_access_unit(h[0], h[1]));
@@ -105,7 +203,7 @@ impl Splitter {
         if last && !self.au.is_empty() {
             out.push(self.join());
         }
-        out
+        Ok(out)
     }
 
     /// The next complete NAL unit: where it starts and ends in `buf`,
@@ -113,12 +211,29 @@ impl Splitter {
     /// NAL is complete when the one after it shows two bytes of its
     /// header, so that whether it begins another access unit is known;
     /// at the `last`, the rest of the stream is one.
-    fn next_nal(&self, last: bool) -> Option<(usize, usize, usize)> {
+    fn next_nal(&mut self, last: bool) -> Option<(usize, usize, usize)> {
         match self.cut {
             Cut::AnnexB => {
-                let code = find(&self.buf, &[0, 0, 1], 0)?;
-                let start = code + 3;
-                match find(&self.buf, &[0, 0, 1], start) {
+                let Some(code) = find(&self.buf, &[0, 0, 1], 0) else {
+                    let keep = self.buf.len().min(2);
+                    self.buf.drain(..self.buf.len() - keep);
+                    return None;
+                };
+                if code > 0 {
+                    self.buf.drain(..code);
+                    self.scan = self.scan.saturating_sub(code);
+                }
+                let start = 3;
+                let from = self.scan.max(start);
+                #[cfg(test)]
+                {
+                    self.scanned += self.buf.len().saturating_sub(from);
+                }
+                let next = find(&self.buf, &[0, 0, 1], from);
+                self.scan = next
+                    .unwrap_or_else(|| self.buf.len().saturating_sub(2))
+                    .max(start);
+                match next {
                     Some(next) if next + 5 <= self.buf.len() => Some((start, next, next)),
                     Some(_) => None,
                     None if last && start < self.buf.len() => {
@@ -143,8 +258,55 @@ impl Splitter {
         }
     }
 
+    fn jpeg_end(&mut self, start: usize) -> Option<usize> {
+        self.scan = self.scan.max(start + 2);
+        loop {
+            let i = self.scan;
+            #[cfg(test)]
+            {
+                self.scanned += 1;
+            }
+            if i > self.buf.len() {
+                return None;
+            }
+            if self.entropy {
+                #[cfg(test)]
+                {
+                    self.scanned += self.buf.len().saturating_sub(i);
+                }
+                let Some(ff) = find(&self.buf, &[0xFF], i) else {
+                    self.scan = self.buf.len();
+                    return None;
+                };
+                self.scan = ff;
+                let next = *self.buf.get(ff + 1)?;
+                if next == 0 || (0xD0..=0xD7).contains(&next) || next == 0xFF {
+                    self.scan += if next == 0xFF { 1 } else { 2 };
+                    continue;
+                }
+                self.entropy = false;
+                continue;
+            }
+            if *self.buf.get(i)? != 0xFF {
+                return Some(i);
+            }
+            let marker = *self.buf.get(i + 1)?;
+            match marker {
+                0xFF => self.scan += 1,
+                0xD9 => return Some(i + 2),
+                0xD0..=0xD7 | 0x01 => self.scan += 2,
+                _ => {
+                    let len = be(self.buf.get(i + 2..i + 4)?);
+                    self.scan += 2 + len;
+                    self.entropy = marker == 0xDA;
+                }
+            }
+        }
+    }
+
     fn join(&mut self) -> Vec<u8> {
         self.has_slice = false;
+        self.au_bytes = 0;
         let mut out = Vec::new();
         for nal in self.au.drain(..) {
             match self.cut {
@@ -190,47 +352,75 @@ fn begins_access_unit(h0: u8, h1: u8) -> bool {
     }
 }
 
-/// Where the JPEG beginning at `start` ends, once all of it is there.
-fn jpeg_end(buf: &[u8], start: usize) -> Option<usize> {
-    let mut i = start + 2;
-    loop {
-        // A marker, after any fill bytes.
-        while *buf.get(i)? == 0xFF && *buf.get(i + 1)? == 0xFF {
-            i += 1;
-        }
-        if *buf.get(i)? != 0xFF {
-            // Not a JPEG after all: what follows its SOI is no marker.
-            return Some(i);
-        }
-        let marker = *buf.get(i + 1)?;
-        match marker {
-            0xD9 => return Some(i + 2),
-            0xD0..=0xD7 | 0x01 => i += 2,
-            _ => {
-                let len = be(buf.get(i + 2..i + 4)?);
-                i += 2 + len;
-                if marker == 0xDA {
-                    // Entropy-coded data, up to the next marker that is
-                    // neither stuffing nor a restart.
-                    loop {
-                        let ff = find(buf, &[0xFF], i)?;
-                        let next = *buf.get(ff + 1)?;
-                        if next == 0 || (0xD0..=0xD7).contains(&next) || next == 0xFF {
-                            i = ff + if next == 0xFF { 1 } else { 2 };
-                            continue;
-                        }
-                        i = ff;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn small(cut: Cut) -> Splitter {
+        let mut s = Splitter::new(cut);
+        s.limit = 128;
+        s.nal_limit = 4;
+        s
+    }
+
+    #[test]
+    fn incomplete_units_are_bounded_and_scanned_linearly() {
+        for (cut, prefix) in [
+            (Cut::Jpeg, &b"\xff\xd8\xff\xda\x00\x02"[..]),
+            (Cut::AnnexB, &b"\x00\x00\x01\x67\x01"[..]),
+        ] {
+            let mut s = small(cut);
+            s.push(prefix).unwrap();
+            for _ in prefix.len()..128 {
+                s.push(&[1]).unwrap();
+            }
+            assert!(s.scanned < 512, "{}", s.scanned);
+            assert!(s.push(&[1]).is_err());
+            assert!(s.buf.is_empty());
+            assert!(s.au.is_empty());
+            assert!(s.finish().is_err());
+            assert!(s.push(&jpeg(1)).is_err());
+        }
+    }
+
+    #[test]
+    fn declared_lengths_fail_before_payload_allocation() {
+        for n in [1, 2, 3, 4] {
+            let mut s = small(Cut::Length(n));
+            assert!(s.push(&vec![255; n]).is_err());
+            assert_eq!(s.buf.capacity(), 0);
+        }
+        let mut s = small(Cut::Length(4));
+        assert!(s.push(&[0, 0, 0, 2, 0x67, 1, 255, 255, 255, 255]).is_err());
+    }
+
+    #[test]
+    fn access_units_bound_both_nal_count_and_framed_bytes() {
+        for nal in [vec![0x67, 1], vec![0x67; 60]] {
+            let mut s = small(Cut::AnnexB);
+            let mut failed = false;
+            for _ in 0..10 {
+                let mut bytes = vec![0, 0, 1];
+                bytes.extend(&nal);
+                if s.push(&bytes).is_err() {
+                    failed = true;
+                    break;
+                }
+            }
+            assert!(failed);
+            assert_eq!(s.au_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn a_large_write_of_complete_pictures_can_exceed_the_pending_budget() {
+        let mut s = small(Cut::Jpeg);
+        let pictures: Vec<_> = (0..100).map(jpeg).collect();
+        let bytes = pictures.concat();
+        assert!(bytes.len() > s.limit);
+        assert_eq!(s.push(&bytes).unwrap(), pictures);
+        assert_eq!(s.buffered_bytes(), 0);
+    }
 
     fn jpeg(n: u8) -> Vec<u8> {
         // SOI, an APP0 of 4 bytes, SOS of length 2, data with stuffing
@@ -248,22 +438,22 @@ mod tests {
         stream.extend(b"\r\n--boundary\r\n");
         stream.extend(jpeg(2));
         for size in [1, 2, 5, 64] {
-            let mut s = Splitter::new(Cut::Jpeg);
+            let mut s = small(Cut::Jpeg);
             let mut got = Vec::new();
             for piece in stream.chunks(size) {
-                got.extend(s.push(piece));
+                got.extend(s.push(piece).unwrap());
             }
-            got.extend(s.finish());
+            got.extend(s.finish().unwrap());
             assert_eq!(got, [jpeg(1), jpeg(2)], "in pieces of {size}");
         }
     }
 
     #[test]
     fn a_jpeg_is_given_once_its_end_is_there() {
-        let mut s = Splitter::new(Cut::Jpeg);
+        let mut s = small(Cut::Jpeg);
         let j = jpeg(7);
-        assert!(s.push(&j[..j.len() - 1]).is_empty());
-        assert_eq!(s.push(&j[j.len() - 1..]), [j]);
+        assert!(s.push(&j[..j.len() - 1]).unwrap().is_empty());
+        assert_eq!(s.push(&j[j.len() - 1..]).unwrap(), [j]);
     }
 
     /// SPS, PPS, an IDR slice, then two pictures of one slice each, and
@@ -300,14 +490,14 @@ mod tests {
             au(&[&[0x41, 0x9A, 6], &[0x41, 0x40, 7]]),
         ];
         for size in [1, 3, 100] {
-            let mut s = Splitter::new(Cut::AnnexB);
+            let mut s = small(Cut::AnnexB);
             let mut got = Vec::new();
             for piece in annexb().chunks(size) {
-                got.extend(s.push(piece));
+                got.extend(s.push(piece).unwrap());
             }
             // All but the last is known before the end.
             assert_eq!(got.len(), 3, "in pieces of {size}");
-            got.extend(s.finish());
+            got.extend(s.finish().unwrap());
             assert_eq!(got, want, "in pieces of {size}");
         }
     }
@@ -319,9 +509,9 @@ mod tests {
             stream.extend([0, 0, 0, nal.len() as u8]);
             stream.extend(nal);
         }
-        let mut s = Splitter::new(Cut::Length(4));
-        let mut got = s.push(&stream);
-        got.extend(s.finish());
+        let mut s = small(Cut::Length(4));
+        let mut got = s.push(&stream).unwrap();
+        got.extend(s.finish().unwrap());
         assert_eq!(got, [stream[..7].to_vec(), stream[7..].to_vec()]);
     }
 }

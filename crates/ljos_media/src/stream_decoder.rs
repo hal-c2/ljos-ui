@@ -131,9 +131,16 @@ impl Decoder {
     /// picture once the next one begins (or, from a [`Decoder::live`]
     /// one, at the end of the push).
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<VideoFrame>, DecodeError> {
-        let mut units = self.splitter.push(bytes);
+        let mut units = self
+            .splitter
+            .push(bytes)
+            .map_err(|e| DecodeError::Codec(e.into()))?;
         if self.live {
-            units.extend(self.splitter.finish());
+            units.extend(
+                self.splitter
+                    .finish()
+                    .map_err(|e| DecodeError::Codec(e.into()))?,
+            );
         }
         let mut out = self.decode_units(units)?;
         if self.in_order && self.held {
@@ -150,7 +157,10 @@ impl Decoder {
 
     /// The stream ended: the last picture, and any the decoder held.
     pub fn finish(&mut self) -> Result<Vec<VideoFrame>, DecodeError> {
-        let units = self.splitter.finish();
+        let units = self
+            .splitter
+            .finish()
+            .map_err(|e| DecodeError::Codec(e.into()))?;
         let mut out = self.decode_units(units)?;
         out.extend(self.flush());
         Ok(out)

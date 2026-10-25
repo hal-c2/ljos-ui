@@ -27,7 +27,7 @@ type Files = Arc<Mutex<HashMap<String, Body>>>;
 #[derive(Clone, Debug)]
 enum Body {
     Bytes(Vec<u8>),
-    Repeated(usize),
+    Repeated(usize, Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -90,7 +90,18 @@ impl WebServer {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(
                 format!("/{}", name.trim_start_matches('/')),
-                Body::Repeated(count),
+                Body::Repeated(count, Vec::new()),
+            );
+    }
+
+    /// Streams a short prefix followed by zero bytes.
+    pub fn stream_prefixed_bytes(&self, name: &str, count: usize, prefix: Vec<u8>) {
+        self.files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                format!("/{}", name.trim_start_matches('/')),
+                Body::Repeated(count, prefix),
             );
     }
 
@@ -171,10 +182,23 @@ fn answer(stream: TcpStream, files: &Files) {
             .unwrap_or_else(PoisonError::into_inner)
             .get(&path)
             .cloned();
-        if let Some(Body::Repeated(count)) = served {
+        if let Some(Body::Repeated(count, prefix)) = served {
             let mut stream = &stream;
             let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
-            if stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: video/mp4\r\nConnection: close\r\n\r\n").is_err() {
+            let mime = if path.ends_with(".mjpeg") {
+                "video/x-motion-jpeg"
+            } else if path.ends_with(".h264") {
+                "video/h264"
+            } else {
+                "video/mp4"
+            };
+            if write!(stream, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: {mime}\r\nConnection: close\r\n\r\n").is_err() { return; }
+            if !prefix.is_empty()
+                && write!(stream, "{:x}\r\n", prefix.len())
+                    .and_then(|()| stream.write_all(&prefix))
+                    .and_then(|()| stream.write_all(b"\r\n"))
+                    .is_err()
+            {
                 return;
             }
             let piece = [0u8; 8192];
@@ -195,7 +219,7 @@ fn answer(stream: TcpStream, files: &Files) {
         }
         match served {
             Some(Body::Bytes(bytes)) => ("200 OK", content_type_of(&path), bytes),
-            Some(Body::Repeated(_)) => unreachable!(),
+            Some(Body::Repeated(..)) => unreachable!(),
             None => ("404 Not Found", "text/plain", b"Not Found".to_vec()),
         }
     };
