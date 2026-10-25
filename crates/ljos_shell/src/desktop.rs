@@ -214,6 +214,15 @@ fn earlier(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
     }
 }
 
+/// The host's icon of the same pixels, which it shares.
+fn host_icon(icon: &ljos_platform::Icon) -> ljos_host::Icon {
+    ljos_host::Icon {
+        width: icon.width(),
+        height: icon.height(),
+        rgba: Arc::clone(icon.rgba()),
+    }
+}
+
 /// One window of the application: what stays while it is hidden (the
 /// context, the view, the painter with its pictures) and what it has
 /// while it is open (the surface).
@@ -261,6 +270,9 @@ struct Slot {
     told_size: Option<[f64; 2]>,
     told_pos: Option<[f64; 2]>,
     told_state: Option<WindowState>,
+    /// The platform's count of icon changes when the window was given
+    /// its icon.
+    told_icons: u64,
     /// A modal window keeps the user out of this one.
     blocked: bool,
     /// The platform refused the window; it is not asked again.
@@ -336,6 +348,7 @@ impl Slot {
             told_size: None,
             told_pos: None,
             told_state: None,
+            told_icons: 0,
             blocked: false,
             broken: false,
             activate: false,
@@ -693,6 +706,9 @@ struct Desktop<M> {
     failure: Rc<RefCell<Option<ShellError>>>,
     screens: Vec<Screen>,
     screens_stale: bool,
+    /// The platform's count of icon changes when the icons were last
+    /// shown ([`ljos_platform::Platform::icons_changed`]).
+    icons_shown: u64,
     /// How many windows had closed when it was last asked whether the
     /// application ends.
     closed: u64,
@@ -816,6 +832,7 @@ impl<M: Send + 'static> Desktop<M> {
             failure,
             screens: Vec::new(),
             screens_stale: true,
+            icons_shown: 0,
             closed: 0,
             root_closed: false,
             next_key: 1,
@@ -1151,7 +1168,12 @@ impl<M: Send + 'static> Desktop<M> {
         attrs.max_size = attrs.max_size.map(|s| scaled(s, zoom));
         // Every window of the application goes by its desktop entry, which
         // is how the desktop finds its icon and its badge.
-        attrs.app_id = Some(ljos_platform::Platform::of(engine).desktop_file_name());
+        let platform = ljos_platform::Platform::of(engine);
+        attrs.app_id = Some(platform.desktop_file_name());
+        let icons = platform.icons_changed();
+        attrs.icon = platform
+            .window_icon(self.slots[i].window)
+            .map(|icon| host_icon(&icon));
         let id = match host.create_window(&attrs) {
             Ok(id) => id,
             Err(e) => return self.fail(host, i, ShellError::Window(e), engine),
@@ -1245,6 +1267,7 @@ impl<M: Send + 'static> Desktop<M> {
         slot.forget_platform();
         slot.surface = Some(Surface::new(id, window, state));
         slot.told_state = Some(attrs.state);
+        slot.told_icons = icons;
         note_size(slot, engine, sys, false);
         self.repaints.request(slot.key, Instant::now());
         self.screens_stale = true;
@@ -2219,6 +2242,27 @@ impl<M: Send + 'static> Desktop<M> {
         next
     }
 
+    /// Gives the platform the icons the application changed since they
+    /// were last given: its own, and each open window's.
+    fn show_icons(&mut self, host: &mut Control<'_>, engine: &Engine) {
+        let platform = ljos_platform::Platform::of(engine);
+        let changed = platform.icons_changed();
+        if changed != self.icons_shown {
+            self.icons_shown = changed;
+            let icon = platform.application_icon().map(|i| host_icon(&i));
+            host.set_application_icon(icon.as_ref());
+        }
+        for slot in &mut self.slots {
+            if let Some(surface) = &slot.surface
+                && slot.told_icons != changed
+            {
+                slot.told_icons = changed;
+                let icon = platform.window_icon(slot.window).map(|i| host_icon(&i));
+                host.change_window(surface.id, WindowChange::Icon(icon));
+            }
+        }
+    }
+
     fn unsettled(&self) -> bool {
         self.dirty.get() || self.app.view().scene().root() != self.last_root
     }
@@ -2242,6 +2286,7 @@ impl<M: Send + 'static> Desktop<M> {
             if std::mem::take(&mut self.screens_stale) {
                 self.read_screens(host, &engine, &sys);
             }
+            self.show_icons(host, &engine);
             self.serve_requests(host, &sys);
             #[cfg(feature = "mcp")]
             self.serve_resize(host, &engine, &sys);

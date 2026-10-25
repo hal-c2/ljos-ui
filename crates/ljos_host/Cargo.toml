@@ -12,7 +12,16 @@ publish.workspace = true
 default = ["winit"]
 # `WinitHost`: the desktop (and later iOS) host. Without it the crate is the
 # trait and the portable event types only, for a host of another kind.
-winit = ["dep:winit", "dep:x11rb", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
+winit = [
+    "dep:winit",
+    "dep:x11rb",
+    "dep:wayland-client",
+    "dep:wayland-protocols",
+    "dep:libc",
+    "dep:objc2",
+    "dep:objc2-app-kit",
+    "dep:objc2-foundation",
+]
 
 [dependencies]
 thiserror.workspace = true
@@ -21,14 +30,23 @@ winit = { version = "0.30.13", optional = true }
 
 [target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android"), not(target_os = "emscripten"), not(target_os = "redox")))'.dependencies]
 x11rb = { workspace = true, optional = true }
+# Window icons on Wayland (src/wayland_icon.rs), which winit does not set:
+# on the connection winit opened, libwayland's, as winit's is.
+wayland-client = { workspace = true, optional = true, features = ["system"] }
+wayland-protocols = { workspace = true, optional = true, features = ["client", "staging"] }
+libc = { workspace = true, optional = true }
 
-# The backdrop's views of the system's materials, which winit has not.
+# The backdrop's views of the system's materials, and the Dock's icon of
+# the application, which winit has not.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { workspace = true, optional = true }
 objc2-app-kit = { workspace = true, optional = true, features = [
     "NSAppearance",
+    "NSBitmapImageRep",
     "NSGlassEffectView",
     "NSGraphics",
+    "NSImage",
+    "NSImageRep",
     "NSUserInterfaceItemIdentification",
     "NSView",
     "NSVisualEffectView",

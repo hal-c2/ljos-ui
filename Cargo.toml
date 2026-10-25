@@ -201,6 +201,7 @@ globset = "0.4.20"
 # pointer to drive an application, screencopy to count the frames it shows).
 # The versions winit already brings.
 wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", default-features = false }
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 # The heap profile of `ljos` built with the `dhat-heap` feature.
 dhat = "0.3.3"

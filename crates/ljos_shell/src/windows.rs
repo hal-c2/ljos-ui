@@ -160,8 +160,9 @@ pub(crate) fn attributes(spec: &WindowSpec, caps: Capabilities) -> WindowAttribu
         backdrop: backdrop(spec),
         appearance: appearance(spec),
         active: spec.flags & NO_FOCUS == 0 && kind != WindowKind::ToolTip,
-        // The application's, not the window's: the shell says it.
+        // The application's, not the window's: the shell says them.
         app_id: None,
+        icon: None,
     }
 }
 

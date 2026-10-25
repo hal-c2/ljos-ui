@@ -17,6 +17,15 @@
 
 mod event;
 mod schedule;
+#[cfg(all(
+    feature = "winit",
+    unix,
+    not(target_vendor = "apple"),
+    not(target_os = "android"),
+    not(target_os = "emscripten"),
+    not(target_os = "redox")
+))]
+mod wayland_icon;
 mod window;
 #[cfg(feature = "winit")]
 mod winit_host;
@@ -30,7 +39,7 @@ pub use event::{
 };
 pub use schedule::{Schedule, Sleep};
 pub use window::{
-    Appearance, Backdrop, Capabilities, ResizeEdge, Screen, WindowAttributes, WindowChange,
+    Appearance, Backdrop, Capabilities, Icon, ResizeEdge, Screen, WindowAttributes, WindowChange,
     WindowId, WindowKind, WindowLevel, WindowState,
 };
 #[cfg(feature = "winit")]
@@ -147,4 +156,13 @@ pub trait HostControl {
 
     /// Ends the loop after this event.
     fn exit(&mut self);
+
+    /// What the desktop shows for the application as a whole where it
+    /// shows one apart from its windows' (the Dock on macOS); `None` gives
+    /// back the desktop's. A platform that shows only windows' icons
+    /// ignores it: there each window is given its icon
+    /// ([`WindowAttributes::icon`]).
+    fn set_application_icon(&mut self, icon: Option<&Icon>) {
+        let _ = icon;
+    }
 }

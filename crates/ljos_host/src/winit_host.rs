@@ -25,7 +25,7 @@ use crate::event::{
 };
 use crate::schedule::{Schedule, Sleep};
 use crate::window::{
-    Backdrop, Capabilities, Screen, WindowAttributes, WindowChange, WindowId, WindowLevel,
+    Backdrop, Capabilities, Icon, Screen, WindowAttributes, WindowChange, WindowId, WindowLevel,
     WindowState,
 };
 use crate::{HostApp, HostControl, HostError, PlatformHost, Wake, Waker};
@@ -164,6 +164,8 @@ struct State {
     /// Where the pointer was last seen in each window.
     pointer: HashMap<WindowId, [f64; 2]>,
     keyboardless: Keyboardless,
+    /// The icons of windows that winit does not set.
+    icons: platform::Icons,
 }
 
 /// Which window is active on a seat that has no keyboard.
@@ -325,6 +327,10 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
         if let Some(id) = &a.app_id {
             attrs = platform::with_app_id(attrs, id);
         }
+        if let Some(icon) = &a.icon {
+            attrs = attrs.with_window_icon(winit_icon(icon));
+            attrs = platform::with_taskbar_icon(attrs, icon);
+        }
         let window = self
             .event_loop
             .create_window(attrs)
@@ -337,6 +343,9 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
         }
         let id = WindowId(self.state.next_id);
         self.state.next_id += 1;
+        if a.icon.is_some() {
+            self.state.icons.set(id, &window, a.icon.as_ref(), false);
+        }
         self.state.ids.insert(window.id(), id);
         self.state.windows.insert(id, Arc::new(window));
         Ok(id)
@@ -347,6 +356,7 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
             self.state.ids.remove(&window.id());
             self.state.focused.remove(&id);
             self.state.pointer.remove(&id);
+            self.state.icons.forget(id);
         }
     }
 
@@ -393,7 +403,16 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
             WindowChange::StartResize(edge) => {
                 let _ = w.drag_resize_window(resize_direction(edge));
             }
+            WindowChange::Icon(icon) => {
+                w.set_window_icon(icon.as_ref().and_then(winit_icon));
+                platform::set_taskbar_icon(w, icon.as_ref());
+                self.state.icons.set(id, w, icon.as_ref(), true);
+            }
         }
+    }
+
+    fn set_application_icon(&mut self, icon: Option<&Icon>) {
+        platform::set_application_icon(icon);
     }
 
     fn request_redraw(&mut self, id: WindowId) {
@@ -699,6 +718,12 @@ fn translate(raw: &Raw, window: &Window, pointer: Option<[f64; 2]>) -> WindowEve
     }
 }
 
+/// winit's icon of the same pixels; `None` for pixels winit refuses, which
+/// [`Icon`]'s maker has refused already.
+fn winit_icon(icon: &Icon) -> Option<winit::window::Icon> {
+    winit::window::Icon::from_rgba(icon.rgba.to_vec(), icon.width, icon.height).ok()
+}
+
 /// What differs between window systems.
 mod platform {
     use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopBuilder};
@@ -706,9 +731,9 @@ mod platform {
     use winit::window::Window;
     use winit::window::WindowAttributes;
 
-    use crate::window::WindowKind;
     #[cfg(not(target_os = "macos"))]
     use crate::window::{Appearance, Backdrop};
+    use crate::window::{Icon, WindowKind};
 
     #[cfg(all(
         unix,
@@ -722,6 +747,8 @@ mod platform {
         use winit::platform::x11::{WindowAttributesExtX11, WindowType};
 
         use super::*;
+
+        pub(crate) use crate::wayland_icon::Icons;
 
         /// X11 knows kinds of window; Wayland has no word for them.
         pub(crate) const HAS_WINDOW_KINDS: bool = true;
@@ -757,6 +784,16 @@ mod platform {
             // both of its traits have this method, hence by name.
             winit::platform::wayland::WindowAttributesExtWayland::with_name(attrs, id, id)
         }
+
+        /// Neither has a task bar's icon apart from the window's.
+        pub(crate) fn with_taskbar_icon(attrs: WindowAttributes, _: &Icon) -> WindowAttributes {
+            attrs
+        }
+
+        pub(crate) fn set_taskbar_icon(_: &Window, _: Option<&Icon>) {}
+
+        /// The desktop shows windows' icons only.
+        pub(crate) fn set_application_icon(_: Option<&Icon>) {}
 
         /// KDE's blur: its Wayland protocol through winit, its window
         /// property on X11, which winit does not set. Elsewhere nothing
@@ -838,6 +875,54 @@ mod platform {
 
         pub(crate) const HAS_WINDOW_KINDS: bool = false;
 
+        /// winit sets the icons of windows where there are any.
+        #[derive(Default)]
+        pub(crate) struct Icons;
+
+        impl Icons {
+            pub(crate) fn set(
+                &mut self,
+                _: crate::window::WindowId,
+                _: &winit::window::Window,
+                _: Option<&Icon>,
+                _: bool,
+            ) {
+            }
+
+            pub(crate) fn forget(&mut self, _: crate::window::WindowId) {}
+        }
+
+        /// Windows shows a window's icon in its title bar and a larger
+        /// one in the task bar, scaled from the same pixels here.
+        pub(crate) fn with_taskbar_icon(attrs: WindowAttributes, icon: &Icon) -> WindowAttributes {
+            #[cfg(target_os = "windows")]
+            {
+                use winit::platform::windows::WindowAttributesExtWindows;
+                attrs.with_taskbar_icon(crate::winit_host::winit_icon(icon))
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = icon;
+                attrs
+            }
+        }
+
+        pub(crate) fn set_taskbar_icon(window: &winit::window::Window, icon: Option<&Icon>) {
+            #[cfg(target_os = "windows")]
+            {
+                use winit::platform::windows::WindowExtWindows;
+                window.set_taskbar_icon(icon.and_then(crate::winit_host::winit_icon));
+            }
+            #[cfg(not(target_os = "windows"))]
+            let _ = (window, icon);
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        pub(crate) fn set_application_icon(_: Option<&Icon>) {}
+
+        #[cfg(target_os = "macos")]
+        pub(crate) use crate::winit_host::appkit_icon::set as set_application_icon;
+
         pub(crate) fn is_wayland(_: &ActiveEventLoop) -> bool {
             false
         }
@@ -889,8 +974,8 @@ mod platform {
     }
 
     pub(crate) use imp::{
-        HAS_WINDOW_KINDS, is_wayland, loop_is_wayland, set_backdrop, use_x11, with_app_id,
-        with_kind,
+        HAS_WINDOW_KINDS, Icons, is_wayland, loop_is_wayland, set_application_icon, set_backdrop,
+        set_taskbar_icon, use_x11, with_app_id, with_kind, with_taskbar_icon,
     };
 }
 
@@ -982,6 +1067,76 @@ mod appkit_reopen {
     /// What was heard since the last call, oldest first.
     pub(crate) fn take() -> Option<bool> {
         REOPENED.with_borrow_mut(|r| (!r.is_empty()).then(|| r.remove(0)))
+    }
+}
+
+/// The Dock's icon of the application: AppKit's `applicationIconImage`,
+/// which winit does not set. A bundled application has its bundle's icon
+/// there until one is given; one without a bundle has the system's
+/// placeholder.
+#[cfg(target_os = "macos")]
+mod appkit_icon {
+    use objc2::{AllocAnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSBitmapImageRep, NSDeviceRGBColorSpace, NSImage};
+    use objc2_foundation::NSSize;
+
+    use crate::window::Icon;
+
+    pub(crate) fn set(icon: Option<&Icon>) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let image = icon.and_then(image);
+        let app = NSApplication::sharedApplication(mtm);
+        // SAFETY: an image or none, on the main thread; none gives the
+        // bundle's back.
+        unsafe { app.setApplicationIconImage(image.as_deref()) };
+    }
+
+    /// An image of the pixels, premultiplied as AppKit keeps them.
+    fn image(icon: &Icon) -> Option<objc2::rc::Retained<NSImage>> {
+        let (w, h) = (icon.width as isize, icon.height as isize);
+        // SAFETY: with no planes AppKit makes the memory itself, of the
+        // size the arguments say; NSDeviceRGBColorSpace is AppKit's
+        // constant.
+        let rep = unsafe {
+            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+                NSBitmapImageRep::alloc(),
+                std::ptr::null_mut(),
+                w,
+                h,
+                8,
+                4,
+                true,
+                false,
+                NSDeviceRGBColorSpace,
+                w * 4,
+                32,
+            )
+        }?;
+        let data = rep.bitmapData();
+        if data.is_null() {
+            return None;
+        }
+        // SAFETY: AppKit's memory of `w * h * 4` bytes, written while the
+        // representation is held and before anything reads it.
+        let out = unsafe { std::slice::from_raw_parts_mut(data, icon.rgba.len()) };
+        for (to, px) in out
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(icon.rgba.as_chunks::<4>().0)
+        {
+            let a = u32::from(px[3]);
+            let pre = |c: u8| ((u32::from(c) * a + 127) / 255) as u8;
+            *to = [pre(px[0]), pre(px[1]), pre(px[2]), px[3]];
+        }
+        let image = NSImage::initWithSize(
+            NSImage::alloc(),
+            NSSize::new(f64::from(icon.width), f64::from(icon.height)),
+        );
+        image.addRepresentation(&rep);
+        Some(image)
     }
 }
 

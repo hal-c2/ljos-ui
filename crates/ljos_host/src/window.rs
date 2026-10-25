@@ -1,6 +1,8 @@
 //! Windows as an application describes them, and what a platform says
 //! about itself.
 
+use std::sync::Arc;
+
 /// A window of a host. Ids are never reused within a run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowId(pub u64);
@@ -62,6 +64,25 @@ pub enum Appearance {
     Dark,
 }
 
+/// A picture the desktop shows for a window or the application: straight
+/// (not premultiplied) RGBA, `width` × `height` pixels row by row from the
+/// top. Cloning it shares the pixels.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Icon {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<[u8]>,
+}
+
+impl std::fmt::Debug for Icon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Icon")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Everything about a window that is decided when it is opened. Sizes and
 /// positions are in logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -93,6 +114,10 @@ pub struct WindowAttributes {
     /// task bar and its icon lookup go by. Platforms that group windows
     /// by process ignore it.
     pub app_id: Option<String>,
+    /// What the desktop shows for the window (its title bar, the task
+    /// bar, a window switcher); `None` leaves it to the desktop, which
+    /// goes by [`WindowAttributes::app_id`].
+    pub icon: Option<Icon>,
 }
 
 impl Default for WindowAttributes {
@@ -114,6 +139,7 @@ impl Default for WindowAttributes {
             appearance: Appearance::System,
             active: true,
             app_id: None,
+            icon: None,
         }
     }
 }
@@ -143,6 +169,9 @@ pub enum WindowChange {
     StartMove,
     /// The same for resizing the window by an edge or a corner.
     StartResize(ResizeEdge),
+    /// What the desktop shows for the window; `None` gives it back the
+    /// desktop's.
+    Icon(Option<Icon>),
 }
 
 /// An edge or a corner of a window, by the compass.
