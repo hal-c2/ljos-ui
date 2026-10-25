@@ -297,7 +297,10 @@ fn compute_item_rect(e: &Engine, obj: ObjectId) -> Rect {
 /// and quantized effect parameters so static or repeated effects do not
 /// recompute pixels.
 #[derive(Default)]
-struct Effects(RefCell<HashMap<EffectKey, WeakImage>>);
+struct Effects(RefCell<HashMap<EffectKey, Composed>>);
+
+/// A picture in use and the shadow it was made with.
+type Composed = (WeakImage, Option<std::sync::Weak<[f32]>>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct EffectKey {
@@ -330,6 +333,19 @@ pub struct EffectPaint {
     image: Option<ImageHandle>,
     pad: [f64; 4],
     inputs: Option<Arc<EffectInputs>>,
+    /// The blurred shadow the picture was made with, kept so that the
+    /// next picture of the same shape finds it.
+    _shadow: Option<Held>,
+}
+
+/// A shadow kept in [`Shadows`] by the picture made with it.
+#[derive(Clone)]
+struct Held(Arc<[f32]>);
+
+impl std::fmt::Debug for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Held({} values)", self.0.len())
+    }
 }
 
 /// What an effect was given besides its source's pixels.
@@ -468,6 +484,7 @@ impl EffectPaint {
             image: None,
             pad: [0.0; 4],
             inputs,
+            _shadow: None,
         }
     }
 
@@ -510,6 +527,7 @@ impl EffectPaint {
                 image: Some(source_img),
                 pad: [0.0; 4],
                 inputs,
+                _shadow: None,
             };
         }
 
@@ -562,11 +580,17 @@ impl EffectPaint {
         };
 
         let cache = e.extension::<Effects>();
-        if let Some(hit) = cache.0.borrow().get(&key).and_then(WeakImage::upgrade) {
+        if let Some((hit, shadow)) = cache.0.borrow().get(&key).and_then(|(img, sh)| {
+            Some((
+                img.upgrade()?,
+                sh.as_ref().and_then(std::sync::Weak::upgrade),
+            ))
+        }) {
             return Self {
                 image: Some(hit),
                 pad: if has_spatial { pad } else { [0.0; 4] },
                 inputs,
+                _shadow: shadow.map(Held),
             };
         }
 
@@ -579,18 +603,22 @@ impl EffectPaint {
             if has_spatial { pad_px } else { [0; 4] },
             fg_blur_radius,
             shadow,
+            &e.extension::<Shadows>(),
         );
 
-        if let Some(img) = &composed {
+        let (image, shadow) = composed.unzip();
+        let shadow = shadow.flatten();
+        if let Some(img) = &image {
             let mut map = cache.0.borrow_mut();
-            map.retain(|_, v| v.is_alive());
-            map.insert(key, img.downgrade());
+            map.retain(|_, (v, _)| v.is_alive());
+            map.insert(key, (img.downgrade(), shadow.as_ref().map(Arc::downgrade)));
         }
 
         Self {
-            image: composed,
+            image,
             pad: if has_spatial { pad } else { [0.0; 4] },
             inputs,
+            _shadow: shadow.map(Held),
         }
     }
 
@@ -903,11 +931,12 @@ fn compose_effect(
     pad: [u32; 4],
     fg_blur_radius: f64,
     shadow: Option<ShadowParams>,
-) -> Option<ImageHandle> {
+    shadows: &Shadows,
+) -> Option<(ImageHandle, Option<Arc<[f32]>>)> {
     let adjusted = mask_and_adjust(source, mask, mask_params, adjust)?;
     let has_spatial = fg_blur_radius > 0.0 || shadow.is_some() || pad.iter().any(|&p| p > 0);
     if !has_spatial {
-        return Some(adjusted);
+        return Some((adjusted, None));
     }
 
     let (w, h) = (target_size.0 as usize, target_size.1 as usize);
@@ -939,50 +968,48 @@ fn compose_effect(
         fg = gaussian_blur_rgba(&fg, cw, ch, fg_blur_radius);
     }
 
+    let mut kept = None;
     if let Some(sh) = shadow
         && sh.opacity > 0.0
         && sh.color.a > 0
         && sh.scale > 0.0
     {
-        let mut sh_alpha = vec![0.0f32; cw * ch];
-        let center_x = pl as f64 + w as f64 * 0.5;
-        let center_y = pt as f64 + h as f64 * 0.5;
-        let inv_scale = 1.0 / sh.scale;
-
-        for cy in 0..ch {
-            let py = cy as f64 + 0.5;
-            let sy = (py - sh.offset_y - center_y) * inv_scale + h as f64 * 0.5;
-            if sy < 0.0 || sy >= h as f64 {
-                continue;
-            }
-            let sy_i = sy.floor() as usize;
-            for cx in 0..cw {
-                let px = cx as f64 + 0.5;
-                let sx = (px - sh.offset_x - center_x) * inv_scale + w as f64 * 0.5;
-                if sx < 0.0 || sx >= w as f64 {
-                    continue;
-                }
-                let sx_i = sx.floor() as usize;
-                let a = base_data[(sy_i * w + sx_i) * 4 + 3];
-                sh_alpha[cy * cw + cx] = f32::from(a) / 255.0;
-            }
-        }
-
-        if sh.blur_radius > 0.0 {
-            sh_alpha = gaussian_blur_alpha(&sh_alpha, cw, ch, sh.blur_radius);
-        }
+        let canvas = Padded {
+            w,
+            h,
+            pl,
+            pt,
+            cw,
+            ch,
+        };
+        let sh_alpha = shadows.alpha(&base_data, canvas, sh);
 
         let col_r = f64::from(sh.color.r) / 65535.0;
         let col_g = f64::from(sh.color.g) / 65535.0;
         let col_b = f64::from(sh.color.b) / 65535.0;
         let col_a = (f64::from(sh.color.a) / 65535.0) * sh.opacity;
 
+        // A pixel the same as the one before, over the same shadow, comes
+        // out the same; most of a shadow's pixels are one of a few.
+        let mut last: Option<(u32, [u8; 4], [u8; 4])> = None;
         for (i, a) in sh_alpha.iter().enumerate() {
+            let p = i * 4;
+            // Opaque foreground hides the shadow: source-over leaves it as it is.
+            if fg[p + 3] == 255 {
+                continue;
+            }
             let sa = (f64::from(*a) * col_a).clamp(0.0, 1.0);
             if sa <= 0.0 {
                 continue;
             }
-            let p = i * 4;
+            let px = [fg[p], fg[p + 1], fg[p + 2], fg[p + 3]];
+            if let Some((la, lpx, out)) = last
+                && la == a.to_bits()
+                && lpx == px
+            {
+                fg[p..p + 4].copy_from_slice(&out);
+                continue;
+            }
             let fa = f64::from(fg[p + 3]) / 255.0;
             let inv_fa = 1.0 - fa;
             let sa_255 = sa * 255.0;
@@ -1000,10 +1027,121 @@ fn compose_effect(
             fg[p + 3] = (f64::from(fg[p + 3]) + sa_255 * inv_fa)
                 .round()
                 .clamp(0.0, 255.0) as u8;
+            last = Some((a.to_bits(), px, [fg[p], fg[p + 1], fg[p + 2], fg[p + 3]]));
+        }
+        kept = Some(sh_alpha);
+    }
+
+    let image = ImageHandle::from_premultiplied(cw as u32, ch as u32, fg).ok()?;
+    Some((image, kept))
+}
+
+/// Where a `w x h` source sits in its `cw x ch` padded canvas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Padded {
+    w: usize,
+    h: usize,
+    pl: usize,
+    pt: usize,
+    cw: usize,
+    ch: usize,
+}
+
+/// The blurred shadows in use, by what a shadow is made of: its source's
+/// alpha, where that sits, and the shadow's offset, scale and blur. Its
+/// colour and opacity are not part of it, nor the colours of the source,
+/// so an effect whose source changes only its colours or text, or whose
+/// shadow changes only its colour, blurs nothing again, and equal shapes
+/// share one shadow.
+#[derive(Default)]
+struct Shadows(RefCell<HashMap<ShadowAlphaKey, std::sync::Weak<[f32]>>>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ShadowAlphaKey {
+    alpha: Vec<u8>,
+    canvas: Padded,
+    blur_bits: u64,
+    offset_x_bits: u64,
+    offset_y_bits: u64,
+    scale_bits: u64,
+}
+
+impl Shadows {
+    /// The shadow's alpha over the padded canvas, blurred: the one in use
+    /// when there is one, else made (and kept while it is in use).
+    fn alpha(&self, base: &[u8], c: Padded, sh: ShadowParams) -> Arc<[f32]> {
+        let key = ShadowAlphaKey {
+            alpha: base.iter().skip(3).step_by(4).copied().collect(),
+            canvas: c,
+            blur_bits: sh.blur_radius.to_bits(),
+            offset_x_bits: sh.offset_x.to_bits(),
+            offset_y_bits: sh.offset_y.to_bits(),
+            scale_bits: sh.scale.to_bits(),
+        };
+        if let Some(hit) = self.0.borrow().get(&key).and_then(std::sync::Weak::upgrade) {
+            return hit;
+        }
+        let made: Arc<[f32]> = shadow_alpha(base, c, sh).into();
+        let mut map = self.0.borrow_mut();
+        map.retain(|_, v| v.strong_count() > 0);
+        map.insert(key, Arc::downgrade(&made));
+        made
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0
+            .borrow()
+            .values()
+            .filter(|v| v.strong_count() > 0)
+            .count()
+    }
+}
+
+/// The source's alpha scaled about its centre and offset, over the padded
+/// canvas, then blurred.
+fn shadow_alpha(base: &[u8], c: Padded, sh: ShadowParams) -> Vec<f32> {
+    let Padded {
+        w,
+        h,
+        pl,
+        pt,
+        cw,
+        ch,
+    } = c;
+    let mut sh_alpha = vec![0.0f32; cw * ch];
+    let center_x = pl as f64 + w as f64 * 0.5;
+    let center_y = pt as f64 + h as f64 * 0.5;
+    let inv_scale = 1.0 / sh.scale;
+
+    // Which source column each canvas column samples is the same on
+    // every row.
+    let columns: Vec<Option<usize>> = (0..cw)
+        .map(|cx| {
+            let px = cx as f64 + 0.5;
+            let sx = (px - sh.offset_x - center_x) * inv_scale + w as f64 * 0.5;
+            (sx >= 0.0 && sx < w as f64).then(|| sx.floor() as usize)
+        })
+        .collect();
+    for cy in 0..ch {
+        let py = cy as f64 + 0.5;
+        let sy = (py - sh.offset_y - center_y) * inv_scale + h as f64 * 0.5;
+        if sy < 0.0 || sy >= h as f64 {
+            continue;
+        }
+        let sy_i = sy.floor() as usize;
+        let out = &mut sh_alpha[cy * cw..(cy + 1) * cw];
+        for (o, sx_i) in out.iter_mut().zip(&columns) {
+            if let Some(sx_i) = sx_i {
+                *o = f32::from(base[(sy_i * w + sx_i) * 4 + 3]) / 255.0;
+            }
         }
     }
 
-    ImageHandle::from_premultiplied(cw as u32, ch as u32, fg).ok()
+    if sh.blur_radius > 0.0 {
+        sh_alpha = gaussian_blur_alpha(&sh_alpha, cw, ch, sh.blur_radius);
+    }
+    sh_alpha
 }
 
 /// Builds a normalized 1D Gaussian kernel of half-width $r = \lceil R \rceil$
@@ -1061,6 +1199,11 @@ fn gaussian_blur_alpha(src: &[f32], w: usize, h: usize, radius: f64) -> Vec<f32>
 /// one after another instead of a value from each, and the loops are the
 /// compiler's to vectorise. A pixel still sums its taps from the first to
 /// the last, from 0.0, so the numbers are the ones a pixel at a time gives.
+///
+/// A shape's rows are mostly the same as the row before (the straight
+/// sides of a rectangle, the empty padding), and the same row blurs to
+/// the same numbers: the row pass blurs it once, and the column pass
+/// works out once each row whose taps all fall on the same row.
 fn blur_passes(
     src: &[f32],
     w: usize,
@@ -1071,13 +1214,45 @@ fn blur_passes(
 ) -> Vec<f32> {
     let row = w * channels;
     let mut mid = vec![0.0f32; src.len()];
-    if row > 0 {
-        for (out, src) in mid.chunks_exact_mut(row).zip(src.chunks_exact(row)) {
-            taps(out, src, r, kernel, channels);
+    if row == 0 {
+        return mid;
+    }
+    let line = |y: usize| y * row..(y + 1) * row;
+    let same = |v: &[f32], a: usize, b: usize| {
+        v[line(a)]
+            .iter()
+            .zip(&v[line(b)])
+            .all(|(x, y)| x.to_bits() == y.to_bits())
+    };
+    for y in 0..h {
+        if y > 0 && same(src, y - 1, y) {
+            mid.copy_within(line(y - 1), y * row);
+        } else {
+            taps(&mut mid[line(y)], &src[line(y)], r, kernel, channels);
         }
     }
+
+    // `run[y]`: the first of the rows up to `y` that are all the same as `y`.
+    let mut run = vec![0usize; h];
+    for y in 1..h {
+        run[y] = if same(&mid, y - 1, y) { run[y - 1] } else { y };
+    }
     let mut out = vec![0.0f32; src.len()];
-    taps(&mut out, &mid, r, kernel, row);
+    for y in 0..h {
+        // Rows `y - 1 - r ..= y + r`, all inside and all the same: row
+        // `y` sums what row `y - 1` summed.
+        if y > r && y + r < h && run[y + r] + r < y {
+            out.copy_within(line(y - 1), y * row);
+            continue;
+        }
+        let o = &mut out[line(y)];
+        for sy in y.saturating_sub(r)..=(y + r).min(h - 1) {
+            let weight = kernel[sy + r - y];
+            for (o, m) in o.iter_mut().zip(&mid[line(sy)]) {
+                *o += m * weight;
+            }
+        }
+    }
     debug_assert_eq!(out.len(), w * h * channels);
     out
 }
@@ -1246,8 +1421,10 @@ mod tests {
             [4, 4, 4, 4],
             2.0,
             None,
+            &Shadows::default(),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert_eq!((blurred.width(), blurred.height()), (13, 13));
         // Centre (6, 6) stays full red; 4 cardinal inner edges and 4 outer neighbours match.
         assert_eq!(blurred.pixel(6, 6), [255, 0, 0, 255]);
@@ -1397,5 +1574,98 @@ mod tests {
                 "{w}x{h} r{radius}"
             );
         }
+    }
+
+    /// A shape of rows that repeat, as a rounded rectangle's are: empty
+    /// rows, a few rows of corner, and the same row many times.
+    fn shape(w: usize, h: usize) -> Vec<f32> {
+        (0..h)
+            .flat_map(|y| {
+                (0..w).map(move |x| {
+                    let edge = y.min(h - 1 - y);
+                    if edge < 3 || x < 2 || x + 2 >= w {
+                        0.0
+                    } else if edge < 6 {
+                        ((x + edge) % 5) as f32 / 4.0
+                    } else {
+                        0.75
+                    }
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rows_that_repeat_blur_to_the_numbers_one_pixel_at_a_time_gives() {
+        for (w, h, radius) in [(20, 40, 3.0), (9, 30, 6.5), (12, 12, 8.0), (30, 200, 32.0)] {
+            let alpha = shape(w, h);
+            let fast = gaussian_blur_alpha(&alpha, w, h, radius);
+            let slow = tap_by_tap_alpha(&alpha, w, h, radius);
+            assert!(
+                fast.iter()
+                    .zip(&slow)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{w}x{h} r{radius}"
+            );
+            let rgba: Vec<u8> = alpha
+                .iter()
+                .flat_map(|&a| {
+                    let v = (a * 255.0) as u8;
+                    [v, v / 2, 0, v]
+                })
+                .collect();
+            assert_eq!(
+                gaussian_blur_rgba(&rgba, w, h, radius),
+                tap_by_tap_rgba(&rgba, w, h, radius),
+                "{w}x{h} r{radius}"
+            );
+        }
+    }
+
+    #[test]
+    fn sources_of_one_shape_share_a_shadow_whatever_their_colours() {
+        let shadows = Shadows::default();
+        let shadow = ShadowParams {
+            blur_radius: 8.0,
+            opacity: 0.5,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            scale: 1.0,
+            color: Color::rgba16(0, 0, 0, 65535),
+        };
+        let compose = |colour: [u8; 4], shadow: ShadowParams| {
+            let src = ImageHandle::filled(20, 10, colour).unwrap();
+            compose_effect(
+                &src,
+                None,
+                None,
+                ColourAdjust::default(),
+                (20, 10),
+                [8, 8, 8, 8],
+                0.0,
+                Some(shadow),
+                &shadows,
+            )
+            .unwrap()
+        };
+        let (_, red) = compose([255, 0, 0, 255], shadow);
+        let green_shadow = ShadowParams {
+            color: Color::rgba16(0, 65535, 0, 65535),
+            ..shadow
+        };
+        let (_, green) = compose([0, 0, 255, 255], green_shadow);
+        assert!(Arc::ptr_eq(red.as_ref().unwrap(), green.as_ref().unwrap()));
+        assert_eq!(shadows.len(), 1);
+        let (_, moved) = compose(
+            [0, 0, 255, 255],
+            ShadowParams {
+                offset_x: 2.0,
+                ..shadow
+            },
+        );
+        assert!(!Arc::ptr_eq(red.as_ref().unwrap(), moved.as_ref().unwrap()));
+        assert_eq!(shadows.len(), 2);
+        drop((red, green, moved));
+        assert_eq!(shadows.len(), 0, "a shadow no picture uses is not kept");
     }
 }

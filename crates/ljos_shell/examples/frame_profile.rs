@@ -8,12 +8,15 @@
 //!
 //! `cargo run --release -p ljos_shell --example frame_profile -- DIR ENTRY
 //! [--frames N] [--size WxH] [--click] [--warm N] [--slow MS] [--start EXPR]…
-//! [--eval EXPR]… [--wall]`
+//! [--eval EXPR]… [--wall] [--grow PX]`
 //!
 //! `--start` runs `EXPR` in the root after the warm frames and prints how
 //! long it took and how much of the graph it ran, to time one handler (a
 //! game's start, a page's build) on its own. `--slow` prints each frame
 //! that took longer than `MS`.
+//!
+//! `--grow` makes the window `PX` wider and narrower again on alternate
+//! frames after the warm ones, to time what a resize costs.
 //!
 //! `--eval` prints what a script in the root makes of `EXPR` at the end,
 //! to see that the run reached the state meant (a game started, a page
@@ -42,6 +45,7 @@ struct Args {
     start: Vec<String>,
     slow: Option<Duration>,
     wall: bool,
+    grow: f32,
 }
 
 fn args() -> anyhow::Result<Args> {
@@ -59,6 +63,7 @@ fn args() -> anyhow::Result<Args> {
         start: Vec::new(),
         slow: None,
         wall: false,
+        grow: 0.0,
     };
     while let Some(flag) = it.next() {
         match flag.as_str() {
@@ -66,6 +71,7 @@ fn args() -> anyhow::Result<Args> {
             "--warm" => a.warm = it.next().context("N")?.parse()?,
             "--click" => a.click = true,
             "--wall" => a.wall = true,
+            "--grow" => a.grow = it.next().context("PX")?.parse()?,
             "--slow" => {
                 let ms: f64 = it.next().context("MS")?.parse()?;
                 a.slow = Some(Duration::from_secs_f64(ms / 1000.0));
@@ -126,7 +132,11 @@ fn main() -> anyhow::Result<()> {
         let _ = engine.set_js_dispatch_budget(Duration::from_secs(10), Duration::from_secs(600));
         Ok(made)
     })?;
-    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(a.size.0, a.size.1));
+    let screen = |i: u32| {
+        let wider = i >= a.warm && (i - a.warm) % 2 == 1;
+        let w = a.size.0 + if wider { a.grow } else { 0.0 };
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, a.size.1))
+    };
     let period = Duration::from_micros(16_667);
     let total = a.warm + a.frames;
     // One click every 24 frames (0.4 s), over the same 5 × 5 grid as the bench.
@@ -198,7 +208,7 @@ fn main() -> anyhow::Result<()> {
             press = Some(p);
         }
         let input = egui::RawInput {
-            screen_rect: Some(screen),
+            screen_rect: Some(screen(i)),
             focused: true,
             time: Some(f64::from(i) * period.as_secs_f64()),
             events,

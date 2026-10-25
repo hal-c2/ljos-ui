@@ -77,3 +77,69 @@ fn a_changed_input_recomposes_the_picture_once() {
     frame(&mut s, &e);
     assert_eq!(painted(&s, fx).unwrap().id(), after.id());
 }
+
+/// Two cards of a rounded rectangle with a text on it, each with a
+/// shadow, as a page of cards draws them.
+const CARDS: &str = r#"
+import QtQuick
+import QtQuick.Effects
+Item {
+    width: 200; height: 120
+    Rectangle {
+        id: a; objectName: "a"
+        x: 10; y: 10; width: 60; height: 80; radius: 8; color: "white"
+        Text { text: "A" }
+    }
+    MultiEffect {
+        objectName: "fxA"
+        source: a; anchors.fill: a
+        shadowEnabled: true; shadowOpacity: 0.5
+    }
+    Rectangle {
+        id: b; objectName: "b"
+        x: 110; y: 10; width: 60; height: 80; radius: 8; color: "white"
+        Text { text: "B" }
+    }
+    MultiEffect {
+        objectName: "fxB"
+        source: b; anchors.fill: b
+        shadowEnabled: true; shadowOpacity: 0.5
+    }
+}
+"#;
+
+#[test]
+fn a_moved_shadow_is_not_drawn_again() {
+    let e = engine();
+    let root = load(&e, CARDS);
+    let (a, fx) = (find(&e, root, "a"), find(&e, root, "fxA"));
+    let mut s = scene(&e, root, 200.0, 120.0);
+    frame(&mut s, &e);
+    let before = painted(&s, fx).expect("the shadow paints a picture");
+
+    set(&e, a, "y", Value::Real(25.0));
+    frame(&mut s, &e);
+    assert_eq!(painted(&s, fx).unwrap().id(), before.id());
+}
+
+#[test]
+fn a_resize_draws_again_only_the_shadow_whose_size_changed() {
+    let e = engine();
+    let root = load(&e, CARDS);
+    let a = find(&e, root, "a");
+    let (fx_a, fx_b) = (find(&e, root, "fxA"), find(&e, root, "fxB"));
+    let mut s = scene(&e, root, 200.0, 120.0);
+    frame(&mut s, &e);
+    let (a0, b0) = (painted(&s, fx_a).unwrap(), painted(&s, fx_b).unwrap());
+
+    set(&e, a, "width", Value::Real(70.0));
+    frame(&mut s, &e);
+    let a1 = painted(&s, fx_a).unwrap();
+    assert_ne!(a1.id(), a0.id(), "the resized card's shadow is drawn again");
+    assert_eq!(a1.width(), a0.width() + 10);
+    assert_eq!(
+        painted(&s, fx_b).unwrap().id(),
+        b0.id(),
+        "the other is kept"
+    );
+}

@@ -85,3 +85,17 @@ waited for was not looked into (it has a running `Timer`).
 - **Same cost without a reload.** A script making the window 3 px wider took the same time.
 - **The fix.** The blur adds one tap at a time to a run of pixels, not one pixel's taps at a time. The numbers are the same to the bit (`the_blur_gives_the_same_numbers_as_one_pixel_at_a_time`).
 - **After.** The same width change costs 11–21 ms instead of 60–110 ms. The reload applies in 12–22 ms and shows 47–61 ms after the save.
+- **Then the shadows themselves.** A resize still blurred again every shadow whose size changed, 1.8–2.1 ms for each card and 0.65 ms for each circle. Now:
+  - a shadow is kept by what it is made of: its source's alpha, its size and padding, and its offset, scale and blur. A source that changes only its colours or text, a shadow that changes only its colour, and two sources of one shape all share one blurred shadow;
+  - a row the same as the row before is blurred once, and so is a row whose taps all fall on the same row: the straight sides and the empty padding of a card cost one row each;
+  - an opaque pixel of the source leaves the shadow under it unworked, and a pixel the same as the one before comes out the same.
+
+  The numbers are still the same to the bit (`rows_that_repeat_blur_to_the_numbers_one_pixel_at_a_time_gives`). A moved shadow is not drawn again, and a resize draws again only the shadows whose size changed (`crates/ljos_quick/tests/effects.rs`).
+- **Measured** with `frame_profile` on coffee's choosing page at 1000x600, the window 3 px wider every other frame (`--grow 3`):
+
+  | | a card's shadow | a circle's shadow | shadow work per resize frame | a frame |
+  |---|---|---|---|---|
+  | before | 1.8–2.1 ms | 0.65–0.85 ms | 5–6 ms | 19.6 ms |
+  | after | 0.38–0.87 ms | 0.25–0.70 ms | 2–2.5 ms | 7.8 ms |
+
+- **The GPU.** The blur stays on the CPU for now. The GL backend draws the window, and there is no wgpu backend yet to run a blur pass in. With the work above a resize is under the 3 ms aimed for.
