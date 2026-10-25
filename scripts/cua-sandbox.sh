@@ -20,6 +20,10 @@
 # clients buffers there, which measures an app on the hardware it ships on; give that sandbox
 # its own LJOS_CUA_HOME.
 #
+# The screen is LJOS_CUA_RESOLUTION, default 1600x1000; 720x1280 is one an app laid out for a
+# phone held upright sees. It is the compositor's, so a sandbox of another size needs its own
+# LJOS_CUA_HOME too.
+#
 # cua-driver tells the bus a screen reader runs, which no bus signal tells apart from one. Apps
 # get LJOS_SCREEN_READER=off unless it is set, so they do what they do for a user without one
 # (ARCHITECTURE.md section 14); their accessibility tree is exposed all the same.
@@ -146,7 +150,7 @@ start_sway() {
 </busconfig>
 EOF
   cat > "$home/sway.config" << EOF
-output HEADLESS-1 resolution 1600x1000
+output HEADLESS-1 resolution ${LJOS_CUA_RESOLUTION:-1600x1000}
 default_border none
 # Windows keep the size they ask for, as on a desktop that does not tile.
 for_window [all] floating enable
