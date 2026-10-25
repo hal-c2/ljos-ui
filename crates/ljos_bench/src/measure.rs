@@ -73,6 +73,9 @@ pub struct Phases {
     pub settle: Duration,
     pub idle: Duration,
     pub load: Duration,
+    /// How many times the load span is run back to back, memory read
+    /// after each: whether what driving takes keeps growing.
+    pub rounds: u32,
     /// What the application is driven with under load.
     pub gesture: Gesture,
     /// Read `/proc` for resident memory and mapped files.
@@ -256,6 +259,15 @@ pub struct Run {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idled: Option<Settled>,
     pub load: Option<Span>,
+    /// Memory again once the load span is over: what using the
+    /// application leaves behind, which a run repeated shows to settle (a
+    /// cache) or to keep growing (a leak).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loaded: Option<Settled>,
+    /// With more than one round, memory after each, the last being
+    /// `loaded`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rounds: Vec<Settled>,
     /// How long the window took to stop changing once the pointer was on
     /// it, before it was driven; `None` when it was not driven, or never
     /// stopped (an animation that runs for ever) within [`QUIET_LIMIT`].
@@ -1019,6 +1031,8 @@ fn run_once(
         settled: None,
         idle: None,
         idled: None,
+        loaded: None,
+        rounds: Vec::new(),
         load: None,
         quiet_ms: None,
         gesture: phases.gesture,
@@ -1066,17 +1080,32 @@ fn run_once(
                     .map(|took| took.as_secs_f64() * 1000.0);
                 w.sample();
             }
-            out.load = span(
-                setup,
-                &mut w,
-                pid,
-                phases.load,
-                phases.gesture,
-                rect.filter(|_| drive),
-                points,
-                rect,
-                phases.instructions,
-            );
+            for round in 0..phases.rounds.max(1) {
+                let load = span(
+                    setup,
+                    &mut w,
+                    pid,
+                    phases.load,
+                    phases.gesture,
+                    rect.filter(|_| drive),
+                    points,
+                    rect,
+                    phases.instructions,
+                );
+                // The first span is the one every run has, comparable
+                // with runs of one round.
+                if round == 0 {
+                    out.load = load;
+                }
+                if w.exited.is_some() {
+                    break;
+                }
+                let m = memory(&w);
+                if phases.rounds > 1 {
+                    out.rounds.push(m.clone());
+                }
+                out.loaded = Some(m);
+            }
         }
         if phases.detail && w.exited.is_none() {
             out.install = Some(install(pid));
@@ -1144,6 +1173,7 @@ pub fn min_memory(
         settle: Duration::from_secs(1),
         idle: Duration::ZERO,
         load: Duration::ZERO,
+        rounds: 1,
         gesture: Gesture::Click,
         detail: false,
         instructions: false,

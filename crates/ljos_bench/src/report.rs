@@ -157,6 +157,16 @@ const METRICS: &[Metric] = &[
         },
     },
     Metric {
+        title: "Settled RSS (MiB)",
+        value: |r| {
+            r.settled
+                .as_ref()?
+                .resident
+                .as_ref()
+                .map(|p| p.rss as f64 / MIB)
+        },
+    },
+    Metric {
         title: "Settled PSS (MiB, all pages)",
         value: |r| {
             r.settled
@@ -178,6 +188,56 @@ const METRICS: &[Metric] = &[
                 .resident
                 .as_ref()
                 .map(|p| p.pss as f64 / MIB)
+        },
+    },
+    Metric {
+        title: "RSS after driving (MiB)",
+        value: |r| {
+            r.loaded
+                .as_ref()?
+                .resident
+                .as_ref()
+                .map(|p| p.rss as f64 / MIB)
+        },
+    },
+    Metric {
+        title: "PSS after driving (MiB, all pages)",
+        value: |r| {
+            r.loaded
+                .as_ref()?
+                .resident
+                .as_ref()
+                .map(|p| p.pss as f64 / MIB)
+        },
+    },
+    Metric {
+        title: "Private memory after driving (MiB, PSS of anonymous pages)",
+        value: |r| {
+            r.loaded
+                .as_ref()?
+                .resident
+                .as_ref()
+                .map(|p| p.pss_anon as f64 / MIB)
+        },
+    },
+    Metric {
+        title: "Settled private memory with what was swapped out (MiB, PSS)",
+        value: |r| {
+            r.settled
+                .as_ref()?
+                .resident
+                .as_ref()
+                .map(|p| (p.pss_anon + p.swap_pss) as f64 / MIB)
+        },
+    },
+    Metric {
+        title: "Private memory after driving with what was swapped out (MiB, PSS)",
+        value: |r| {
+            r.loaded
+                .as_ref()?
+                .resident
+                .as_ref()
+                .map(|p| (p.pss_anon + p.swap_pss) as f64 / MIB)
         },
     },
     Metric {

@@ -83,6 +83,11 @@ pub struct Bench {
     /// Seconds of driving the window with `--gesture`.
     #[arg(long, default_value_t = 10.0)]
     load: f64,
+    /// Run the load span this many times back to back, reading memory
+    /// after each: memory that keeps climbing is a leak, memory that
+    /// settles a cache.
+    #[arg(long, default_value_t = 1)]
+    rounds: u32,
     /// What drives the window under load: `click` (a grid of clicks over
     /// it), `drag` (up and down from its middle) or `scroll` (the wheel).
     #[arg(long, default_value = "click", value_parser = gesture)]
@@ -256,6 +261,7 @@ impl Bench {
                 settle: secs(self.settle),
                 idle: secs(self.idle),
                 load: secs(self.load),
+                rounds: self.rounds,
                 gesture: self.gesture,
                 detail: true,
                 instructions: !self.no_instructions,

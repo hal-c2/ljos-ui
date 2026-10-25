@@ -192,6 +192,7 @@ pub fn run(
                     settle: Duration::from_millis(500),
                     idle: Duration::ZERO,
                     load: Duration::ZERO,
+                    rounds: 1,
                     gesture: measure::Gesture::Click,
                     detail: false,
                     instructions: false,

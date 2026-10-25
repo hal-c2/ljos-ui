@@ -13,6 +13,12 @@ pub struct Resident {
     pub pss_anon: u64,
     pub pss_file: u64,
     pub pss_shmem: u64,
+    /// The process's share of its pages swapped out (`SwapPss`). The
+    /// machine may swap an idle application out under pressure from
+    /// other work, which takes pages out of `rss` and `pss_anon` without
+    /// the application having given them back.
+    #[serde(default)]
+    pub swap_pss: u64,
 }
 
 /// # Errors
@@ -31,6 +37,7 @@ pub fn resident(pid: u32) -> std::io::Result<Resident> {
         pss_anon: kb("Pss_Anon"),
         pss_file: kb("Pss_File"),
         pss_shmem: kb("Pss_Shmem"),
+        swap_pss: kb("SwapPss"),
     })
 }
 
