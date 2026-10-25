@@ -92,3 +92,6 @@ item a reader would fix.
 | `text-raw-markup` | `ux-backticks-in-plain-text` | backticks and `**` in plain text |
 | `text-raw-markup` | `ux-envelope-tag-bubble` | an internal result tag shown as characters |
 | `text-raw-markup` | `ux-http-error-line` | a raw HTTP status and URL as the message |
+
+`ljos_design::fixture` reads the headers for every runner, and
+`tests/fixtures.rs` checks the structure.
