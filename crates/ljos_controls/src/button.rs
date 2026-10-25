@@ -560,8 +560,8 @@ fn follow_action(
     // qml6): an action says which picture, not how large.
     for (bit, leaf) in ICON_LEAVES {
         let (Ok(own), Ok(theirs)) = (
-            engine.property_index(obj, &format!("icon.{leaf}")),
-            engine.property_index(action, &format!("icon.{leaf}")),
+            engine.property_index(obj, leaf),
+            engine.property_index(action, leaf),
         ) else {
             continue;
         };
@@ -573,14 +573,14 @@ fn follow_action(
 
 /// The leaves of `icon` a button takes from its action.
 const ICON_LEAVES: [(u8, &str); 3] = [
-    (follows::ICON_NAME, "name"),
-    (follows::ICON_SOURCE, "source"),
-    (follows::ICON_COLOR, "color"),
+    (follows::ICON_NAME, "icon.name"),
+    (follows::ICON_SOURCE, "icon.source"),
+    (follows::ICON_COLOR, "icon.color"),
 ];
 
-/// Who gave the button's `icon.<leaf>`: the object and the property that
-/// hold what was written, and whether anything was written at all
-/// (tracked). For a leaf the button takes from its action that is the
+/// Who gave the button's `leaf`, named whole (`icon.name`): the object
+/// and the property that hold what was written, and whether anything was
+/// written at all (tracked). For a leaf the button takes from its action that is the
 /// action: a relative `icon.source` is meant from the file that wrote
 /// it, and a colour nobody gave is not the same as transparent.
 pub(crate) fn icon_giver(
@@ -594,9 +594,7 @@ pub(crate) fn icon_giver(
             Some(Provenance::Default | Provenance::Animated | Provenance::Host) | None
         )
     };
-    let own = engine
-        .property_index(button, &format!("icon.{leaf}"))
-        .ok()?;
+    let own = engine.property_index(button, leaf).ok()?;
     let follows = ICON_LEAVES
         .iter()
         .find(|(_, l)| *l == leaf)
@@ -606,7 +604,7 @@ pub(crate) fn icon_giver(
         // Tracked: a button given another action shows that one's icon.
         let action = object(engine, button, AbstractButton::ACTION.index);
         if let Some(action) = action.filter(|a| is_a::<Action>(engine, *a))
-            && let Ok(theirs) = engine.property_index(action, &format!("icon.{leaf}"))
+            && let Ok(theirs) = engine.property_index(action, leaf)
         {
             return Some((action, theirs, given(action, theirs)));
         }

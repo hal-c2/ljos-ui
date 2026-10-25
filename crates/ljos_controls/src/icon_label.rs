@@ -181,7 +181,13 @@ pub(crate) fn register(engine: &Engine) {
 
 /// The leaves of an `icon` group, in the order of [`Icon`]'s fields that
 /// matter here.
-const LEAVES: [&str; 5] = ["name", "source", "width", "height", "color"];
+const LEAVES: [&str; 5] = [
+    "icon.name",
+    "icon.source",
+    "icon.width",
+    "icon.height",
+    "icon.color",
+];
 
 /// The button a label belongs to: the nearest object above it that is
 /// one.
@@ -216,7 +222,7 @@ struct Shown {
 fn shown(engine: &Engine, label: ObjectId) -> Shown {
     let button = engine.untrack(|| button_of(engine, label));
     let giver = |leaf: &str| -> Option<(ObjectId, PropIndex, bool)> {
-        let own = engine.property_index(label, &format!("icon.{leaf}")).ok()?;
+        let own = engine.property_index(label, leaf).ok()?;
         if engine
             .provenance_tracked(label, own)
             .is_some_and(|p| !unset(p))
