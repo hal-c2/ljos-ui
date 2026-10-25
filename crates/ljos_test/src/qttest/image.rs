@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use ljos_engine::{Color, Cx, Engine, EngineError, ObjectId, QmlObject, QtObject, Value, qml_impl};
 use ljos_quick::{Item, scene_transform};
 use ljos_render::kurbo::Rect;
-use ljos_render::{FrameView, RasterConfig, Rgba, RgbaImage, VelloCpuReference};
+use ljos_render::{RasterConfig, Rgba, RgbaImage};
 use ljos_runtime::Clock as _;
 
 use super::host::Host;
@@ -47,12 +47,11 @@ impl GrabbedImage {
         let host = Host::of(engine);
         host.settle(engine)?;
         let window = host.with_rig(|rig| {
-            let out = rig.scene.frame(engine, rig.clock.now());
-            let mut r = VelloCpuReference::new(RasterConfig {
+            let config = RasterConfig {
                 background: Rgba::from_straight(1.0, 1.0, 1.0, 1.0),
                 ..RasterConfig::default()
-            });
-            r.render(&FrameView::new(&out.snapshot, 1.0))
+            };
+            ljos_drive::draw(engine, &mut rig.scene, rig.clock.now(), config)
         })?;
         let window = window.map_err(|e| error(format!("grabImage: {e}")))?;
         let width = engine.get(item, Item::WIDTH)?;

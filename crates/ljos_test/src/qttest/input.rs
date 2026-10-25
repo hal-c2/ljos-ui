@@ -105,11 +105,11 @@ pub(crate) fn press_at(
         if fresh {
             rig.fresh_press();
         }
-        rig.held |= button;
+        rig.drive.buttons |= button;
         let mut ev = PointerEvent::press(at.x, at.y, rig.mouse_time())
             .with_button(button)
             .with_modifiers(modifiers);
-        ev.buttons = rig.held;
+        ev.buttons = rig.drive.buttons;
         ev
     })?;
     deliver(engine, host, &ev)
@@ -123,11 +123,11 @@ pub(crate) fn release_at(
     modifiers: Modifiers,
 ) -> Result<(), EngineError> {
     let ev = host.with_rig(|rig| {
-        rig.held -= button;
+        rig.drive.buttons -= button;
         let mut ev = PointerEvent::release(at.x, at.y, rig.mouse_time())
             .with_button(button)
             .with_modifiers(modifiers);
-        ev.buttons = rig.held;
+        ev.buttons = rig.drive.buttons;
         ev
     })?;
     deliver(engine, host, &ev)
@@ -141,7 +141,7 @@ pub(crate) fn move_to(
     modifiers: Modifiers,
 ) -> Result<(), EngineError> {
     let ev = host.with_rig(|rig| {
-        PointerEvent::moved(at.x, at.y, buttons | rig.held, rig.mouse_time())
+        PointerEvent::moved(at.x, at.y, buttons | rig.drive.buttons, rig.mouse_time())
             .with_modifiers(modifiers)
     })?;
     deliver(engine, host, &ev)
@@ -191,7 +191,7 @@ pub(crate) fn wheel_at(
     })?;
     // The buttons a test names are held for this event without a press.
     host.with_rig(|rig| {
-        let held = buttons | rig.held;
+        let held = buttons | rig.drive.buttons;
         rig.scene.wheel_event_held(engine, &ev, held)
     })?;
     host.settle(engine)

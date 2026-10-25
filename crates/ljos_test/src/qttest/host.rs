@@ -8,9 +8,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ljos_drive::{Advance, DriveError, DriveState, Settling};
 use ljos_engine::{Engine, EngineError, LogEntry, LogLevel, ObjectId, Value};
-use ljos_platform::Platform;
-use ljos_quick::{DOUBLE_CLICK_INTERVAL, ImageStore, MouseButtons, QuickScene};
+use ljos_quick::{DOUBLE_CLICK_INTERVAL, QuickScene};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
 
 use super::report::{LineSink, Message, MessageKind, Reporter};
@@ -25,25 +25,17 @@ pub(crate) const SKIP_MARKER: &str = "QtQuickTest::skip";
 /// have begins.
 const REFUSED: &str = "Cannot assign to non-existent property";
 
-/// Frames a scene may need to come to rest, and timer firings one wait may
-/// see, before something is wrong with the test.
-const MAX_SETTLE_FRAMES: usize = 64;
-const MAX_TIMER_STEPS: usize = 1_000_000;
-
 /// The scene of the test file and the clock it runs on.
 pub(crate) struct Rig {
     pub(crate) clock: Arc<VirtualClock>,
     pub(crate) scene: QuickScene,
-    /// When the scene last said it next needs a frame.
-    wake: Option<Time>,
-    /// How many frames showed something new.
-    pub(crate) frames: u64,
+    /// When the scene next asks to be woken, how many frames showed
+    /// something new, and the mouse buttons a test holds down.
+    pub(crate) drive: DriveState,
     /// How far the time on pointer events is ahead of the clock. Presses
     /// are told apart by their time, and two clicks a test makes one after
     /// the other are not a double click in Qt; see `input.rs`.
     pub(crate) lead: Duration,
-    /// The mouse buttons a test holds down.
-    pub(crate) held: MouseButtons,
 }
 
 impl Rig {
@@ -124,6 +116,10 @@ fn invoke_error(text: impl Into<String>) -> EngineError {
     EngineError::Invoke(text.into())
 }
 
+fn drive_error(e: DriveError) -> EngineError {
+    invoke_error(e.to_string())
+}
+
 impl Host {
     pub(crate) fn of(engine: &Engine) -> Rc<Host> {
         engine.extension::<Host>()
@@ -142,10 +138,8 @@ impl Host {
         *self.rig.borrow_mut() = Some(Rig {
             clock,
             scene,
-            wake: None,
-            frames: 0,
+            drive: DriveState::default(),
             lead: Duration::ZERO,
-            held: MouseButtons::empty(),
         });
         let mut state = self.state.borrow_mut();
         *state = State {
@@ -184,37 +178,28 @@ impl Host {
         self.with_rig(|rig| rig.clock.clone())
     }
 
-    /// Frames until the scene is at rest: bindings, layout, deferred
-    /// deletes, what `Qt.callLater` put off.
+    /// Frames until the scene is at rest, as the scene driver settles it
+    /// ([`ljos_drive::Driver::settle`]). The scene is let go of between
+    /// frames, for what `Qt.callLater` put off to run outside them: a test
+    /// function it calls may send input.
     pub(crate) fn settle(&self, engine: &Engine) -> Result<(), EngineError> {
-        for _ in 0..MAX_SETTLE_FRAMES {
+        let mut settling = self.with_rig(|rig| Settling::new(&*rig.clock))?;
+        loop {
             if engine.has_due_calls() {
                 engine.run_pending_calls();
             }
-            let idle = self.with_rig(|rig| {
-                let now = rig.clock.now();
-                let out = rig.scene.frame(engine, now);
-                if out.changed {
-                    rig.frames += 1;
-                }
-                let idle = !rig.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now);
-                if idle {
-                    rig.wake = out.next_wake;
-                }
-                idle
+            let rest = self.with_rig(|rig| {
+                settling.frame(engine, &mut rig.scene, &*rig.clock, &mut rig.drive)
             })?;
-            if idle && !engine.has_due_calls() {
+            if rest.map_err(drive_error)? {
                 return Ok(());
             }
         }
-        Err(invoke_error(format!(
-            "the scene did not come to rest in {MAX_SETTLE_FRAMES} frames"
-        )))
     }
 
     /// How many frames have shown something new so far.
     pub(crate) fn frames(&self) -> Result<u64, EngineError> {
-        self.with_rig(|rig| rig.frames)
+        self.with_rig(|rig| rig.drive.shown)
     }
 
     /// Lets `ms` of the application's time pass: every timer fires at its
@@ -240,6 +225,8 @@ impl Host {
         self.advance_while(engine, ms, &mut done)
     }
 
+    /// The scene driver's advance ([`ljos_drive::Driver::advance`]), one
+    /// stop at a time with the scene let go of in between.
     fn advance_while(
         &self,
         engine: &Engine,
@@ -247,48 +234,30 @@ impl Host {
         done: &mut dyn FnMut() -> Result<bool, EngineError>,
     ) -> Result<bool, EngineError> {
         let clock = self.clock()?;
-        let images = ImageStore::of(engine);
-        let end = clock.now() + Duration::from_millis(ms);
-        let platform = Platform::of(engine);
-        for _ in 0..MAX_TIMER_STEPS {
-            // Pictures that were being read, and what was fetched, have
-            // arrived, whatever the disk or the network took: the
-            // application's time is not the machine's.
-            images.finish(engine);
-            if platform.pending() > 0 {
-                platform.finish(engine);
-                self.settle(engine)?;
+        let mut advance = Advance::new(&*clock, ms).map_err(drive_error)?;
+        self.settle(engine)?;
+        self.finish_promised(engine)?;
+        loop {
+            let wake = self.with_rig(|rig| rig.drive.wake)?;
+            let stop = advance
+                .stop(engine, &*clock, wake, None)
+                .map_err(drive_error)?;
+            if stop.is_none() {
+                return Ok(false);
             }
-            let wake = self.with_rig(|rig| rig.wake)?;
-            let next = [engine.next_timer_deadline(), wake]
-                .into_iter()
-                .flatten()
-                .min();
-            let last = match next {
-                Some(t) if t <= end => {
-                    if t > clock.now() {
-                        clock.set(t);
-                    }
-                    false
-                }
-                _ => {
-                    clock.set(end);
-                    true
-                }
-            };
-            engine.advance_timers(clock.now());
-            images.finish(engine);
             self.settle(engine)?;
+            self.finish_promised(engine)?;
             if done()? {
                 return Ok(true);
             }
-            if last {
-                return Ok(false);
-            }
         }
-        Err(invoke_error(format!(
-            "timers fired more than {MAX_TIMER_STEPS} times in {ms} ms"
-        )))
+    }
+
+    /// Pictures that were being read, and what was fetched, have arrived,
+    /// whatever the disk or the network took: the application's time is
+    /// not the machine's.
+    fn finish_promised(&self, engine: &Engine) -> Result<(), EngineError> {
+        ljos_drive::finish_promised(engine, None, || self.settle(engine))
     }
 
     // ----------------------------------------------------------- report
@@ -488,9 +457,8 @@ impl Host {
     /// a timer, a frame of an animation. `false` when nothing is.
     pub(crate) fn advance_to_next(&self, engine: &Engine) -> Result<bool, EngineError> {
         let clock = self.clock()?;
-        let images = ImageStore::of(engine);
-        images.finish(engine);
-        let wake = self.with_rig(|rig| rig.wake)?;
+        self.finish_promised(engine)?;
+        let wake = self.with_rig(|rig| rig.drive.wake)?;
         let next = [engine.next_timer_deadline(), wake]
             .into_iter()
             .flatten()
@@ -500,8 +468,8 @@ impl Host {
         };
         clock.set(next);
         engine.advance_timers(clock.now());
-        images.finish(engine);
         self.settle(engine)?;
+        self.finish_promised(engine)?;
         Ok(true)
     }
 
