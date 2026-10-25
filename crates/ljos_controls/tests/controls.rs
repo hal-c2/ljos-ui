@@ -771,3 +771,69 @@ fn a_bound_colour_that_changes_costs_what_is_below_it() {
         "beside 80 buttons the switch ran {many} effects, beside 10 {few}"
     );
 }
+
+/// Switches the colours bound on `menus` menus of four items each, once,
+/// and returns the effects and the reads of the switch, and what an item
+/// of a menu and the menu itself read after.
+fn menus_switched(menus: usize) -> (u64, u64, Value, Value) {
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {{
+    property bool dark: false
+    Repeater {{
+        model: {menus}
+        Item {{
+            Menu {{
+                objectName: "menu"
+                palette.base: dark ? "black" : "white"
+                palette.text: dark ? "white" : "black"
+                palette.highlight: dark ? "red" : "blue"
+                Repeater {{ model: 4; MenuItem {{ objectName: "entry" }} }}
+            }}
+        }}
+    }}
+}}
+"#
+        ),
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let before = e.graph().stats();
+    e.write_by_name(root, "dark", Value::Bool(true)).unwrap();
+    settle(&mut s, &e, Time::ZERO);
+    let after = e.graph().stats();
+    let entry = find(&e, root, "entry");
+    let menu = find(&e, root, "menu");
+    (
+        after.effect_runs - before.effect_runs,
+        after.reads - before.reads,
+        e.read_by_name(entry, "palette.text"),
+        e.read_by_name(menu, "palette.inactive.base"),
+    )
+}
+
+/// A menu handed each colour bound on it to its popup's item on its own,
+/// and read all of the item's colours back for each: the controls in it
+/// resolved their palettes once for each colour, and the first switch
+/// had every menu tell the whole scene to look again. Now the colours go
+/// down together and a menu costs what it holds.
+#[test]
+fn colours_bound_on_menus_cost_what_each_menu_holds() {
+    let (few, few_reads, text, base) = menus_switched(4);
+    let (many, many_reads, ..) = menus_switched(8);
+    assert_eq!(text, Value::Color(ljos_engine::Color::WHITE));
+    assert_eq!(base, Value::Color(ljos_engine::Color::BLACK));
+    assert!(
+        many * 10 < few * 22,
+        "8 menus ran {many} effects, 4 ran {few}"
+    );
+    assert!(
+        few_reads < 4 * 300 && many_reads < 8 * 300,
+        "4 menus read {few_reads} times, 8 read {many_reads}"
+    );
+}

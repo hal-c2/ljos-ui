@@ -6,6 +6,8 @@
 //! its properties with bindings and reads back what the page works out.
 //! QML cannot name the type.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use ljos_a11y::Role;
@@ -173,12 +175,22 @@ pub(super) fn mirror_look(
 ) -> Result<(), EngineError> {
     let (mine, theirs) = (Popup::FONT.index, Control::FONT.index);
     let hand_down = move |e: &Engine, from: PropIndex, to: PropIndex, v: &Value| {
-        if author_set(e, popup, from) && !e.untrack(|| e.read(item, to)).change_equals(v) {
-            check(
-                e,
-                "popup",
-                e.write(item, to, v.clone(), WriteKind::Imperative),
-            );
+        if !author_set(e, popup, from) {
+            return;
+        }
+        let same = e.untrack(|| e.read(item, to)).change_equals(v);
+        if same && author_set(e, item, to) {
+            return;
+        }
+        check(
+            e,
+            "popup",
+            e.write(item, to, v.clone(), WriteKind::Imperative),
+        );
+        // A colour the item has already is still made its own, and its
+        // watches do not hear that.
+        if same && item_colours().contains(&to) {
+            crate::inherit::made_own(e, item, to);
         }
     };
     hand_down(
@@ -211,26 +223,52 @@ pub(super) fn mirror_look(
 
     // The colour groups too: the item resolves them from the window, and
     // what it reads now from them (checked on qml6).
+    //
+    // The colours the author gave the popup are handed down together, by
+    // one effect that reads them: a watch for each wrote each to the item
+    // as its own change, and the controls in the popup resolved their
+    // palettes again for each colour of a theme switch. A colour the
+    // effect did not read when it ran is handed down by its watch.
     let (mine, theirs) = (popup_colours(), item_colours());
+    let carried = Rc::new(Cell::new(0u128));
     for i in 0..COLOURS {
         let (from, to) = (mine[i], theirs[i]);
-        hand_down(
-            engine,
-            from,
-            to,
-            &engine.untrack(|| engine.read(popup, from)),
-        );
-        engine.watch(popup, from, move |e, v| hand_down(e, from, to, v))?;
+        let v = engine.untrack(|| engine.read(popup, from));
+        hand_down(engine, from, to, &v);
+        let carried = Rc::clone(&carried);
+        engine.watch(popup, from, move |e, v| {
+            if carried.get() & 1 << i == 0 {
+                hand_down(e, from, to, v);
+            }
+        })?;
+        // Each of the item's colours the popup has not set goes to the
+        // popup as it changes: one effect that read all of them read them
+        // all again for each.
+        let take = move |e: &Engine, v: &Value| {
+            if !author_set(e, popup, from) {
+                check(e, "palette", put(e, popup, from, v.clone()));
+            }
+        };
+        take(engine, &engine.untrack(|| engine.read(item, to)));
+        engine.watch(item, to, take)?;
     }
     engine.effect_in(popup, move |e| {
-        for i in 0..COLOURS {
-            let colour = e.read(item, theirs[i]);
-            e.untrack(|| {
-                if !author_set(e, popup, mine[i]) {
-                    check(e, "palette", put(e, popup, mine[i], colour));
+        let mut read = 0u128;
+        let mut given = Vec::new();
+        for (i, p) in mine.iter().copied().enumerate() {
+            if e.untrack(|| author_set(e, popup, p)) {
+                read |= 1 << i;
+                given.push((i, e.read(popup, p)));
+            }
+        }
+        carried.set(read);
+        e.untrack(|| {
+            e.batch(|| {
+                for (i, v) in &given {
+                    hand_down(e, mine[*i], theirs[*i], v);
                 }
             });
-        }
+        });
     })?;
     Ok(())
 }

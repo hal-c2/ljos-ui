@@ -296,6 +296,9 @@ struct PlainItems {
     /// This module is writing a colour of a group: the write is not an
     /// author's.
     grouping: Cell<bool>,
+    /// Colours made the author's by a write of the value they had, which
+    /// their watches did not hear ([`made_own`]).
+    made_own: RefCell<HashSet<(ObjectId, PropIndex)>>,
 }
 
 /// The engine's application font: a graph node, so that what reads it runs
@@ -1082,9 +1085,11 @@ fn group_written(engine: &Engine, obj: ObjectId) {
             };
             if given {
                 over_groups(e, obj, kind, p, v);
-                colour_written(e, obj, role_index(kind, p), was.replace(true));
+                colour_written(e, obj, role_index(kind, p), was_own(e, obj, p, &was));
+            } else if author_set(e, obj, p) {
+                was.set(true);
             } else {
-                was.set(author_set(e, obj, p));
+                not_own(e, obj, p, &was);
             }
         });
         check(engine, "palette", watched.map(|_| ()));
@@ -1139,9 +1144,9 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
             let watched = engine.watch(item, p, move |e, v| {
                 if author_set(e, item, p) {
                     over_groups(e, item, Kind::Item, p, v);
-                    colour_written(e, item, Some(i), was.replace(true));
+                    colour_written(e, item, Some(i), was_own(e, item, p, &was));
                 } else {
-                    was.set(false);
+                    not_own(e, item, p, &was);
                 }
             });
             check(engine, "palette", watched.map(|_| ()));
@@ -1154,6 +1159,43 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
         // Made inside items that hand colours down: they did so before it was.
         engine.untrack(|| take_from_above(engine, item, None));
     }
+}
+
+/// `obj`'s colour `p` was the author's before the write being heard, by
+/// what this watch last heard of it or by [`made_own`]. It is from now.
+fn was_own(engine: &Engine, obj: ObjectId, p: PropIndex, was: &Cell<bool>) -> bool {
+    let told = || {
+        engine
+            .extension::<PlainItems>()
+            .made_own
+            .borrow()
+            .contains(&(obj, p))
+    };
+    was.replace(true) || told()
+}
+
+/// `obj`'s colour `p` is not the author's after the write being heard.
+fn not_own(engine: &Engine, obj: ObjectId, p: PropIndex, was: &Cell<bool>) {
+    was.set(false);
+    engine
+        .extension::<PlainItems>()
+        .made_own
+        .borrow_mut()
+        .remove(&(obj, p));
+}
+
+/// `obj`'s colour `p` was made the author's by a write of the value it
+/// had already. Its watch did not hear it, so the next change would be
+/// news to every object in the scene, as a colour that was not the
+/// author's: a theme bound on many menus moved the epoch once for each
+/// on its first switch. The controls below look again now instead.
+pub(crate) fn made_own(engine: &Engine, obj: ObjectId, p: PropIndex) {
+    engine
+        .extension::<PlainItems>()
+        .made_own
+        .borrow_mut()
+        .insert((obj, p));
+    colours_changed(engine, obj);
 }
 
 /// An author changed `obj`'s colours: the controls below look again, and
