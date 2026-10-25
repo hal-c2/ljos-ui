@@ -1,5 +1,10 @@
 //! The log an agent can ask for: the newest lines the application wrote,
 //! each with a number so that a later request can ask for what is newer.
+//!
+//! A line may repeat what a hidden field holds (`console.log(password.text)`).
+//! It is masked with every secret known when it is written, again when a
+//! secret becomes known later, and once more when it is told: a line kept
+//! is never the plaintext of a secret the inspector has seen.
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -9,6 +14,7 @@ use ljos_mcp_core::ToolReply;
 use serde_json::{Value, json};
 
 use super::args::{Level, LogsArgs, MAX_LOG_LINES};
+use super::redact::{SecretBook, mask_text};
 
 /// Lines kept. Older ones are forgotten: the inspector is not a log store.
 const KEPT: usize = 1000;
@@ -31,6 +37,8 @@ pub(crate) struct LogRing {
     lines: VecDeque<Line>,
     /// The number of the newest line ever kept; numbers start at 1.
     last: u64,
+    /// The secrets the lines are masked with.
+    book: SecretBook,
 }
 
 fn level_of(l: LogLevel) -> Level {
@@ -59,7 +67,35 @@ fn clip(text: &str, max: usize) -> String {
     }
 }
 
+impl Line {
+    fn mask(&mut self, secrets: &[String]) {
+        if secrets.is_empty() {
+            return;
+        }
+        mask_text(&mut self.message, secrets);
+        mask_text(&mut self.category, secrets);
+        if let Some(file) = self.file.as_mut() {
+            mask_text(file, secrets);
+        }
+    }
+}
+
 impl LogRing {
+    /// The secrets known so far: the faults are masked with them too.
+    pub(crate) fn book(&self) -> &SecretBook {
+        &self.book
+    }
+
+    /// Makes `secrets` known, and masks the lines kept with what is new
+    /// among them: a line written before its secret was seen must not
+    /// show it once the secret is forgotten.
+    pub(crate) fn learn<'a>(&mut self, secrets: impl IntoIterator<Item = &'a String>) {
+        let new = self.book.learn(secrets);
+        if !new.is_empty() {
+            self.lines.iter_mut().for_each(|l| l.mask(&new));
+        }
+    }
+
     pub(crate) fn push(&mut self, entry: &LogEntry, at: Option<&SourcePlace>) {
         let (file, line) = match at {
             Some(at) => (Some(at.file.clone()), Some(at.line)),
@@ -69,14 +105,18 @@ impl LogRing {
         if self.lines.len() == KEPT {
             self.lines.pop_front();
         }
-        self.lines.push_back(Line {
+        // Masked before it is cut: a cut could split a secret.
+        let mut kept = Line {
             seq: self.last,
             level: entry.level,
             category: entry.category.clone(),
-            message: clip(&entry.message, MAX_MESSAGE_CHARS),
+            message: entry.message.clone(),
             file,
             line,
-        });
+        };
+        kept.mask(self.book.secrets());
+        kept.message = clip(&kept.message, MAX_MESSAGE_CHARS);
+        self.lines.push_back(kept);
     }
 
     #[cfg(test)]
@@ -96,7 +136,16 @@ impl LogRing {
             .filter(|l| l.seq > since && level_of(l.level) >= least)
             .collect();
         let total = fitting.len();
-        let mut shown: &[&Line] = &fitting[total.saturating_sub(limit)..];
+        let masked: Vec<Line> = fitting[total.saturating_sub(limit)..]
+            .iter()
+            .map(|l| {
+                let mut l = (*l).clone();
+                l.mask(self.book.secrets());
+                l
+            })
+            .collect();
+        let masked: Vec<&Line> = masked.iter().collect();
+        let mut shown: &[&Line] = &masked;
         loop {
             let (text, value) = self.write(shown, total);
             // The oldest lines go first: the newest are what is asked for.
@@ -255,5 +304,70 @@ mod tests {
         assert!(reply.structured.to_string().len() <= 20_000);
         assert_eq!(reply.structured["truncated"], true);
         assert!(reply.structured["count"].as_u64().unwrap() >= 1);
+    }
+
+    fn told(ring: &LogRing) -> (String, String) {
+        let reply = ring.answer(&LogsArgs::default(), 20_000);
+        (reply.structured.to_string(), reply.text.unwrap_or_default())
+    }
+
+    #[test]
+    fn a_secret_known_when_a_line_is_written_is_never_kept() {
+        let mut ring = LogRing::default();
+        ring.learn(&["hunter2".to_string()]);
+        ring.push(&entry(LogLevel::Debug, "typed hunter2"), None);
+        ring.push(&entry(LogLevel::Debug, "an ordinary line"), None);
+        assert_eq!(ring.lines[0].message, "typed <redacted>");
+        let (json, text) = told(&ring);
+        for answer in [&json, &text] {
+            assert!(!answer.contains("hunter2"), "{answer}");
+            assert!(answer.contains("typed <redacted>"), "{answer}");
+            assert!(answer.contains("an ordinary line"), "{answer}");
+        }
+    }
+
+    #[test]
+    fn a_line_written_before_its_secret_was_seen_is_masked_once_it_is() {
+        let mut ring = LogRing::default();
+        ring.push(&entry(LogLevel::Warning, "hunter2 and swordfish"), None);
+        // The field held one, then the other; both stay secrets.
+        ring.learn(&["hunter2".to_string()]);
+        ring.learn(&["swordfish".to_string()]);
+        assert_eq!(ring.lines[0].message, "<redacted> and <redacted>");
+        let (json, text) = told(&ring);
+        for answer in [&json, &text] {
+            assert!(!answer.contains("hunter2"), "{answer}");
+            assert!(!answer.contains("swordfish"), "{answer}");
+        }
+    }
+
+    #[test]
+    fn the_seq_and_the_level_are_not_masked() {
+        let mut ring = LogRing::default();
+        ring.learn(&["1".to_string()]);
+        ring.push(&entry(LogLevel::Debug, "pin 1"), None);
+        let reply = ring.answer(&LogsArgs::default(), 20_000);
+        assert!(
+            reply
+                .text
+                .as_deref()
+                .unwrap()
+                .starts_with("1 debug pin <redacted>")
+        );
+        assert_eq!(reply.structured["entries"][0]["seq"], 1);
+    }
+
+    #[test]
+    fn a_masked_line_stays_masked_once_its_secret_is_forgotten() {
+        let mut ring = LogRing::default();
+        ring.push(&entry(LogLevel::Debug, "pin hunter2"), None);
+        ring.learn(&["hunter2".to_string()]);
+        let others: Vec<String> = (0..5000).map(|i| format!("other{i}")).collect();
+        ring.learn(&others);
+        let (json, text) = told(&ring);
+        assert!(
+            !json.contains("hunter2") && !text.contains("hunter2"),
+            "{json}"
+        );
     }
 }

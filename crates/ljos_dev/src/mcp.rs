@@ -37,6 +37,9 @@
 //! handler is script too, so `app_invoke` is refused under `redact_all`.
 //! A refusal is masked as an answer is, with the secrets from before the
 //! act and after it.
+//! What the application logged (`app_logs`, `ljos://app/logs`) and the
+//! faults it threw (`app_processes`) are masked with every secret the
+//! inspector has seen a field hold, the ones changed or cleared since too.
 
 mod act;
 mod args;
@@ -57,6 +60,7 @@ mod objects;
 mod observe;
 mod one_wake;
 mod paint;
+mod redact;
 mod reload;
 mod rust_heap;
 mod surface;
@@ -866,7 +870,14 @@ impl Inspector {
                     self.pointer_lines,
                 )));
             }
+            if let Some(c) = &capture {
+                self.logs.borrow_mut().learn(&c.secrets);
+            }
             self.answer(engine, scene, clock, &mut capture, request);
+            // An act may have left a field holding another secret.
+            if let Some(c) = &capture {
+                self.logs.borrow_mut().learn(&c.secrets);
+            }
         }
         if let Some(lease) = lease {
             lease.release(engine, scene);
@@ -1027,6 +1038,16 @@ impl Inspector {
         }
         let scene: &QuickScene = scene;
         let capture = capture.as_ref();
+        let repeats_the_app = matches!(
+            kind,
+            Kind::Logs(_) | Kind::Resource(Resource::Logs) | Kind::Processes(_)
+        );
+        if repeats_the_app && capture.is_none() {
+            // What the application logged or threw may hold what a field
+            // holds now, which no look at the scene has seen yet.
+            let now = capture::secrets(engine, scene, self.cfg.redact_all);
+            self.logs.borrow_mut().learn(&now);
+        }
         let queued = self.inbox.len();
         let capacity = self.inbox.capacity();
         let background = self.cfg.background;
@@ -1055,6 +1076,7 @@ impl Inspector {
             )),
             (Kind::Processes(args), _) => Ok(observe::processes(
                 engine,
+                self.logs.borrow().book(),
                 &self.stats,
                 ljos_platform::Platform::of(engine).pending(),
                 // Frames asked for by more requests or by motion.
@@ -1230,6 +1252,13 @@ impl Inspector {
                 ErrorCode::Internal,
                 "the scene was not looked at for a request that needs it",
             )),
+        };
+        let now = match now {
+            Err(mut e) if repeats_the_app => {
+                self.logs.borrow().book().mask_error(&mut e);
+                Err(e)
+            }
+            now => now,
         };
         let _ = reply.send(now);
     }

@@ -460,3 +460,26 @@ pub(crate) fn all_objects(engine: &Engine, scene: &QuickScene) -> Vec<ObjectId> 
         out
     })
 }
+
+/// What the fields below the scene's root that must not be shown hold now,
+/// as [`capture`] finds them, without the accessibility tree: for an answer
+/// that does not look at the scene but may repeat a secret (a log line, a
+/// fault).
+pub(crate) fn secrets(engine: &Engine, scene: &QuickScene, redact_all: bool) -> HashSet<String> {
+    let objects = all_objects(engine, scene);
+    engine.untrack(|| {
+        let mut out = HashSet::new();
+        for obj in objects {
+            if hides_its_text(engine, obj) || (redact_all && is_editor(engine, obj)) {
+                for prop in ["text", "displayText"] {
+                    if let Value::String(s) = engine.read_by_name(obj, prop)
+                        && !s.is_empty()
+                    {
+                        out.insert(s.to_string());
+                    }
+                }
+            }
+        }
+        out
+    })
+}

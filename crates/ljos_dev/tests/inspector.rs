@@ -748,6 +748,83 @@ fn a_method_that_throws_a_hidden_text_is_refused_without_it() {
     assert_eq!(shown.structured["result"], "milk");
 }
 
+const LOGGED: &str = r##"import QtQuick
+Item {
+    objectName: "page"
+    width: 200; height: 100
+    function logPin() { console.log("the pin is " + pin.text); console.log("an ordinary line") }
+    function throwPin() { throw new Error("thrown pin " + pin.text) }
+    TextInput {
+        id: pin
+        objectName: "pin"
+        width: 100; height: 20
+        echoMode: TextInput.Password
+        text: "s3cret-pin"
+    }
+}
+"##;
+
+/// Every way the log and the faults are told, in one string.
+fn told_logs_and_faults(app: &mut App) -> String {
+    let logs = app.call("app_logs", json!({}));
+    let resource = app.read("ljos://app/logs").unwrap();
+    let faults = app.call("app_processes", json!({ "kind": "fault" }));
+    format!(
+        "{}\n{}\n{resource}\n{}\n{}",
+        logs.structured, logs.text, faults.structured, faults.text
+    )
+}
+
+#[test]
+fn what_the_app_logged_or_threw_is_told_without_a_secret_it_held_then() {
+    let mut app = app_with(LOGGED, InspectorConfig::default());
+    let page = app.named("page");
+    // Before anything looked at the scene.
+    app.engine.invoke_by_name(page, "logPin", &[]).unwrap();
+    let _ = app.engine.invoke_by_name(page, "throwPin", &[]);
+    app.settle();
+    let told = told_logs_and_faults(&mut app);
+    assert!(!told.contains("s3cret-pin"), "{told}");
+    assert!(told.contains("the pin is <redacted>"), "{told}");
+    assert!(told.contains("thrown pin <redacted>"), "{told}");
+    assert!(told.contains("an ordinary line"), "{told}");
+
+    // The field lets the secret go: what was told before stays masked.
+    app.set("pin", "text", QmlValue::from("new-pin"));
+    app.set("pin", "text", QmlValue::from(""));
+    let told = told_logs_and_faults(&mut app);
+    assert!(!told.contains("s3cret-pin"), "{told}");
+
+    // A secret the inspector saw, logged and thrown, then changed.
+    app.set("pin", "text", QmlValue::from("after-pin"));
+    app.call("app_status", json!({}));
+    app.engine.invoke_by_name(page, "logPin", &[]).unwrap();
+    let _ = app.engine.invoke_by_name(page, "throwPin", &[]);
+    app.set("pin", "text", QmlValue::from("changed"));
+    app.set("pin", "text", QmlValue::from(""));
+    let told = told_logs_and_faults(&mut app);
+    assert!(!told.contains("after-pin"), "{told}");
+    assert!(!told.contains("s3cret-pin"), "{told}");
+    assert!(told.contains("an ordinary line"), "{told}");
+}
+
+#[test]
+fn an_inspector_told_to_mask_every_editable_value_masks_them_in_the_log() {
+    let mut app = app_with(
+        CALLS,
+        InspectorConfig {
+            redact_all: true,
+            ..InspectorConfig::default()
+        },
+    );
+    app.engine
+        .log(LogLevel::Info, "app", "shopping list: milk and eggs");
+    let logs = app.call("app_logs", json!({}));
+    let told = format!("{}\n{}", logs.structured, logs.text);
+    assert!(!told.contains("milk"), "{told}");
+    assert!(told.contains("and eggs"), "{told}");
+}
+
 // ----------------------------------------------------------------- app_find
 
 #[test]

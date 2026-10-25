@@ -33,6 +33,7 @@ use super::args::{
 };
 use super::capture::{self, Capture, REDACTED};
 use super::edits::{Edit, Edits};
+use super::redact::{mask_error, mask_json, mask_text};
 use super::surface::Answer;
 use super::tools::{Look, TYPED, Target, clip, flag, num, visible_to_the_top, window_box};
 use super::values::number;
@@ -306,30 +307,6 @@ pub(crate) fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
     }
 }
 
-/// Replaces every secret that is in `v`, inside strings too, by the mask.
-/// `secrets` is longest first so that a secret that contains another is
-/// masked whole.
-fn mask_json(v: &mut Value, secrets: &[String]) {
-    match v {
-        Value::String(s) => mask_text(s, secrets),
-        Value::Array(items) => items.iter_mut().for_each(|i| mask_json(i, secrets)),
-        Value::Object(map) => map.values_mut().for_each(|i| mask_json(i, secrets)),
-        _ => {}
-    }
-}
-
-fn mask_text(s: &mut String, secrets: &[String]) {
-    if secrets.iter().any(|x| x == s) {
-        *s = REDACTED.to_string();
-        return;
-    }
-    for secret in secrets {
-        if s.contains(secret.as_str()) {
-            *s = s.replace(secret.as_str(), REDACTED);
-        }
-    }
-}
-
 /// The secrets of every capture given, longest first. An act may have
 /// changed or cleared a field, so what it held before is a secret too.
 fn secrets_of_all(captures: &[&Capture]) -> Vec<String> {
@@ -345,15 +322,6 @@ fn secrets_of_all(captures: &[&Capture]) -> Vec<String> {
 
 fn secrets_of(capture: &Capture) -> Vec<String> {
     secrets_of_all(&[capture])
-}
-
-/// A refusal is an answer too: what a method threw or a script said may
-/// hold what a field hides.
-fn mask_error(e: &mut SurfaceError, secrets: &[String]) {
-    mask_text(&mut e.message, secrets);
-    if let Some(details) = e.details.as_mut() {
-        mask_json(details, secrets);
-    }
 }
 
 // ----- the hands -------------------------------------------------------------

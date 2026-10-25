@@ -19,6 +19,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::args::{Act, Kind, Resource};
+use super::redact::SecretBook;
 use super::surface::DevReq;
 use crate::top::{FrameStats, owner_name};
 
@@ -573,6 +574,7 @@ fn waker_rows(engine: &Engine, watching: bool, text: &mut String) -> Vec<Value> 
 /// host watches the QML files.
 pub(crate) fn processes(
     engine: &Engine,
+    secrets: &SecretBook,
     stats: &FrameStats,
     pending_requests: usize,
     queued_work: bool,
@@ -721,7 +723,7 @@ pub(crate) fn processes(
             rows.push(row);
         }
     }
-    let faults = wants(ProcessKind::Fault).then(|| fault_rows(engine, &mut text));
+    let faults = wants(ProcessKind::Fault).then(|| fault_rows(engine, secrets, &mut text));
     if rows.is_empty() && !args.wants_mailboxes() && faults.is_none() {
         text.push_str("nothing of that kind is running\n");
     }
@@ -781,8 +783,11 @@ fn supervisor_row(engine: &Engine, s: &ljos_engine::SupervisorInfo) -> Value {
     row
 }
 
-/// The faults on record, the oldest first, and a line for each.
-fn fault_rows(engine: &Engine, text: &mut String) -> Vec<Value> {
+/// The faults on record, the oldest first, and a line for each. What a
+/// fault says (its message, where it was, its stack) may repeat what a
+/// hidden field held when it was thrown, so it is masked with every secret
+/// the inspector has known.
+fn fault_rows(engine: &Engine, secrets: &SecretBook, text: &mut String) -> Vec<Value> {
     use ljos_engine::TakenBy;
     let faults = engine.faults();
     let mut rows = Vec::with_capacity(faults.len());
@@ -796,30 +801,44 @@ fn fault_rows(engine: &Engine, text: &mut String) -> Vec<Value> {
             TakenBy::Boundary { object, name } => (name.clone(), alive(*object)),
         };
         let origin_handle = f.origin.and_then(alive);
+        let masked = |s: &str| {
+            let mut s = s.to_owned();
+            secrets.mask_text(&mut s);
+            s
+        };
         let stack: Vec<Value> = f
             .stack
             .iter()
-            .map(|s| json!({ "function": s.function, "file": s.file, "line": s.line }))
+            .map(|s| {
+                let mut frame = json!({ "function": s.function, "file": s.file, "line": s.line });
+                secrets.mask_json(&mut frame);
+                frame
+            })
             .collect();
+        let message = masked(&f.message());
+        let fault_file = f.file.as_deref().map(masked);
+        let origin = f.origin_name.as_deref().map(masked);
         let now = engine.now();
         rows.push(json!({
             "seq": f.seq,
             "fault": f.kind(),
-            "message": f.message(),
-            "file": f.file,
+            "message": message,
+            "file": fault_file,
             "line": f.line,
             "at_ms": f.at.as_micros() / 1000,
             "ago_ms": u64::try_from(now.saturating_since(f.at).as_millis()).unwrap_or(u64::MAX),
             // What it was called then: it may have gone with the content
             // the fault stopped, and then it has no handle.
-            "origin": f.origin_name,
+            "origin": origin,
             "origin_handle": origin_handle,
             "origin_gone": f.origin.is_some() && origin_handle.is_none(),
             "taken_by": taken_by,
             "taken_by_handle": taken_handle,
             "stack": stack,
         }));
-        let file = f.file.as_deref().map(|p| p.rsplit('/').next().unwrap_or(p));
+        let file = fault_file
+            .as_deref()
+            .map(|p| p.rsplit('/').next().unwrap_or(p));
         let _ = writeln!(
             text,
             "fault {} {} at {}:{}: {}, taken by {taken_by}",
@@ -827,7 +846,7 @@ fn fault_rows(engine: &Engine, text: &mut String) -> Vec<Value> {
             f.kind(),
             file.unwrap_or("?"),
             f.line,
-            f.message()
+            message
         );
     }
     if faults.is_empty() {
