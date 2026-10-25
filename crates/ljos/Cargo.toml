@@ -41,6 +41,9 @@ ljos_text = { path = "../ljos_text" }
 ljos_i18n = { path = "../ljos_i18n", default-features = false }
 # Only with `testing`: the system's preferences a test plays.
 ljos_a11y = { path = "../ljos_a11y", optional = true }
+# Only with `render` or `testing`: what settles a scene, lets time pass
+# on a test clock, hands it input and draws it.
+ljos_drive = { path = "../ljos_drive", optional = true }
 # Only with `dev-qml` or `build`: compiles QML directories at start-up or
 # in a build script, which links the parser. A shipped application's own
 # `ljos` leaves both off and embeds compiled IR
@@ -105,7 +108,7 @@ build = ["dep:ljos_compiler", "dep:qml_front"]
 pdf = ["ljos_quick/pdf"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG
 # on a virtual clock, for screenshot tests and documentation.
-render = []
+render = ["dep:ljos_drive"]
 # Development only: hot reload. `Setup::watch` and its kin compile the
 # application's QML, watch it and apply every save to the running
 # application (`ljos::reload`). Links the QML compiler; no inspector, MCP
@@ -120,7 +123,7 @@ mcp = ["dev", "ljos_shell/mcp", "ljos_dev/mcp", "dep:thiserror"]
 # For an application's tests (`[dev-dependencies]`): `ljos::testing`, a
 # window without a platform on a virtual clock that a test hands input
 # to, and the host's and the system's part a test plays.
-testing = ["dep:ljos_a11y"]
+testing = ["dep:ljos_a11y", "dep:ljos_drive"]
 
 [lints]
 workspace = true

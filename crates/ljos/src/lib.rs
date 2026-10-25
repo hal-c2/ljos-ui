@@ -183,8 +183,6 @@ pub mod build;
 mod compile;
 #[cfg(feature = "dev-qml")]
 pub mod dev;
-#[cfg(any(feature = "render", feature = "testing"))]
-mod drive;
 pub mod item;
 pub mod locale;
 #[cfg(feature = "mcp")]

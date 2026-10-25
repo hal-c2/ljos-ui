@@ -21,15 +21,15 @@
 
 use std::sync::Arc;
 
+use ljos_drive::{Driver, Stage};
 use ljos_engine::{Engine, ObjectId};
-use ljos_quick::{Item, QuickScene};
+use ljos_quick::Item;
 use ljos_render::{DisplayList, kurbo};
-use ljos_runtime::{Clock as _, TIMER_GRANULARITY, Time, VirtualClock};
+use ljos_runtime::{Clock as _, Time};
 
 pub use ljos_a11y::{AccessibleNode, Contrast, NodeKey, SystemPrefs};
 pub use ljos_controls::ScreenSpec;
 
-use crate::drive::Run;
 use crate::item::{KeyEvent, PointerEvent, TextEngine, WheelEvent};
 use crate::prelude::ApplicationState;
 
@@ -39,17 +39,14 @@ use crate::prelude::ApplicationState;
 /// window's virtual clock from [`new`](Self::new) on, which stands still
 /// until [`advance`](Self::advance) lets time pass.
 pub struct TestWindow {
-    engine: Engine,
-    scene: QuickScene,
-    clock: Arc<VirtualClock>,
-    wake: Option<Time>,
+    stage: Stage,
     serve: Option<Box<dyn FnMut()>>,
 }
 
 impl std::fmt::Debug for TestWindow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TestWindow")
-            .field("now", &self.clock.now())
+            .field("now", &self.now())
             .finish_non_exhaustive()
     }
 }
@@ -59,17 +56,8 @@ impl TestWindow {
     /// Make it before the root is made, for the root's timers and
     /// animations to start on its clock.
     pub fn new(engine: &Engine, width: f64, height: f64) -> Self {
-        // On the timer grid: a timer started off it is due at the next
-        // whole step, after `advance` by its interval would end. Rounding
-        // up keeps what is already scheduled from going back in time.
-        let start = engine.now().round_up_to(TIMER_GRANULARITY);
-        let clock = Arc::new(VirtualClock::starting_at(start));
-        engine.set_clock(std::rc::Rc::new(Arc::clone(&clock)));
         Self {
-            engine: engine.clone(),
-            scene: QuickScene::new(kurbo::Size::new(width, height)),
-            clock,
-            wake: None,
+            stage: Stage::new(engine, width, height),
             serve: None,
         }
     }
@@ -77,10 +65,7 @@ impl TestWindow {
     /// Shows `root`, an item or a `Window`, and lets the scene come to
     /// rest. `Err` says why it cannot be shown or does not come to rest.
     pub fn show(&mut self, root: ObjectId) -> Result<(), String> {
-        self.scene
-            .set_root(&self.engine, root)
-            .map_err(|e| e.to_string())?;
-        self.settle()
+        self.stage.show(root)
     }
 
     /// Makes the window `width` by `height` logical pixels, as a user
@@ -89,15 +74,15 @@ impl TestWindow {
     /// it, and a root item takes it as `width` and `height`, as a host
     /// that sizes its root to the view writes it.
     pub fn resize(&mut self, width: f64, height: f64) -> Result<(), String> {
-        self.scene
-            .set_viewport(kurbo::Rect::new(0.0, 0.0, width, height));
-        if let Some(root) = self.scene.root() {
-            let windows = ljos_controls::WindowSystem::of(&self.engine);
-            if windows.spec(&self.engine, root).is_some() {
-                windows.resized(&self.engine, root, [width, height]);
+        let Stage { engine, scene, .. } = &mut self.stage;
+        scene.set_viewport(kurbo::Rect::new(0.0, 0.0, width, height));
+        if let Some(root) = scene.root() {
+            let windows = ljos_controls::WindowSystem::of(engine);
+            if windows.spec(engine, root).is_some() {
+                windows.resized(engine, root, [width, height]);
             } else {
                 for (prop, v) in [(Item::WIDTH, width), (Item::HEIGHT, height)] {
-                    self.engine.set(root, prop, v).map_err(|e| e.to_string())?;
+                    engine.set(root, prop, v).map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -106,13 +91,13 @@ impl TestWindow {
 
     /// The time on the window's clock.
     pub fn now(&self) -> Time {
-        self.clock.now()
+        self.stage.clock.now()
     }
 
     /// Frames until the scene is idle, with no time passing: layout,
-    /// anchors, paint, deferred deletes.
+    /// anchors, paint, deferred deletes, what `Qt.callLater` put off.
     pub fn settle(&mut self) -> Result<(), String> {
-        self.run().settle()
+        self.drive().settle().map_err(|e| e.to_string())
     }
 
     /// Lets `ms` milliseconds pass, firing each timer at its own deadline
@@ -125,7 +110,7 @@ impl TestWindow {
     /// server) gives that to [`serve_while_waiting`](Self::serve_while_waiting),
     /// or the wait blocks it for up to 10 s without an answer.
     pub fn advance(&mut self, ms: u64) -> Result<(), String> {
-        self.run().advance(ms)
+        self.drive().advance(ms).map_err(|e| e.to_string())
     }
 
     /// Calls `serve` on this thread every few milliseconds while
@@ -135,77 +120,76 @@ impl TestWindow {
         self.serve = Some(Box::new(serve));
     }
 
-    fn run(&mut self) -> Run<'_> {
-        Run {
-            engine: &self.engine,
-            scene: &mut self.scene,
-            clock: &self.clock,
-            wake: &mut self.wake,
-            serve: self.serve.as_deref_mut().map(|s| s as &mut dyn FnMut()),
-        }
+    fn drive(&mut self) -> Driver<'_> {
+        let serve = self.serve.as_deref_mut().map(|s| s as &mut dyn FnMut());
+        self.stage.drive().serving(serve)
     }
 
-    /// One frame at the present time, as a host makes after input.
-    fn frame(&mut self) {
-        let out = self.scene.frame(&self.engine, self.clock.now());
-        self.wake = out.next_wake;
+    /// Settles after input, as a host makes the frames input asks for. A
+    /// scene that does not come to rest says so at the next
+    /// [`settle`](Self::settle) or [`advance`](Self::advance).
+    fn after_input(&mut self, taken: bool) -> bool {
+        let _ = self.settle();
+        taken
     }
 
-    /// Hands the window a key, then makes a frame. Whether an item took it.
+    /// Hands the window a key, then lets the scene come to rest. Whether
+    /// an item took it.
     pub fn key(&mut self, ev: &KeyEvent) -> bool {
-        let taken = self.scene.key_event(&self.engine, ev);
-        self.frame();
-        taken
+        let taken = self.drive().send_key(ev);
+        self.after_input(taken)
     }
 
-    /// Hands the window a pointer event (in its coordinates), then makes
-    /// a frame. A move with no button held is hover. Whether an item or
-    /// handler took it.
+    /// Hands the window a pointer event (in its coordinates), then lets
+    /// the scene come to rest. A move with no button held is hover.
+    /// Whether an item or handler took it.
     pub fn pointer(&mut self, ev: &PointerEvent) -> bool {
-        let taken = self.scene.pointer_event(&self.engine, ev);
-        self.frame();
-        taken
+        let taken = self.drive().send_pointer(ev);
+        self.after_input(taken)
     }
 
-    /// Hands the window a wheel event, then makes a frame. Whether an
-    /// item used it.
+    /// Hands the window a wheel event, then lets the scene come to rest.
+    /// Whether an item used it.
     pub fn wheel(&mut self, ev: &WheelEvent) -> bool {
-        let taken = self.scene.wheel_event(&self.engine, ev);
-        self.frame();
-        taken
+        let taken = self.drive().send_wheel(ev);
+        self.after_input(taken)
     }
 
     /// Is the input method composing `text` (`cursor` in UTF-16 units of
     /// it) in the item with the active focus; an empty `text` ends the
     /// composition. Whether the item took it.
     pub fn preedit(&mut self, text: &str, cursor: Option<usize>) -> bool {
-        let taken = self.scene.ime_preedit(&self.engine, text, cursor);
-        self.frame();
-        taken
+        let Stage { engine, scene, .. } = &mut self.stage;
+        let taken = scene.ime_preedit(engine, text, cursor);
+        self.after_input(taken)
     }
 
     /// Is the input method committing `text` to the item with the active
     /// focus. Whether the item took it.
     pub fn commit(&mut self, text: &str) -> bool {
-        let taken = self.scene.ime_commit(&self.engine, text);
-        self.frame();
-        taken
+        let Stage { engine, scene, .. } = &mut self.stage;
+        let taken = scene.ime_commit(engine, text);
+        self.after_input(taken)
     }
 
     /// The item an input method talks to: the one with the active focus,
     /// if it is a text input client.
     pub fn input_method_item(&self) -> Option<ObjectId> {
-        self.scene.text_input_target(&self.engine).map(|(o, _)| o)
+        self.stage
+            .scene
+            .text_input_target(&self.stage.engine)
+            .map(|(o, _)| o)
     }
 
     /// Where the input method is told the cursor is, in the window's
     /// coordinates: the place its candidate window goes.
     pub fn input_method_cursor(&self) -> Option<kurbo::Rect> {
-        let (item, client) = self.scene.text_input_target(&self.engine)?;
-        let local = client.cursor_rect(&self.engine, item);
+        let (item, client) = self.stage.scene.text_input_target(&self.stage.engine)?;
+        let local = client.cursor_rect(&self.stage.engine, item);
         let to_window = self
+            .stage
             .engine
-            .untrack(|| ljos_quick::scene_transform(&self.engine, item));
+            .untrack(|| ljos_quick::scene_transform(&self.stage.engine, item));
         Some(to_window.transform_rect_bbox(local))
     }
 
@@ -213,7 +197,8 @@ impl TestWindow {
     /// up does, or off, and lets the scene come to rest. The scene builds
     /// the tree only while it is on.
     pub fn set_accessibility_active(&mut self, active: bool) -> Result<(), String> {
-        self.scene.set_accessibility_active(&self.engine, active);
+        let Stage { engine, scene, .. } = &mut self.stage;
+        scene.set_accessibility_active(engine, active);
         self.settle()
     }
 
@@ -222,33 +207,38 @@ impl TestWindow {
     /// computed roles, names, states and children. Only the window while
     /// the tree is off.
     pub fn accessibility_tree(&self) -> AccessibleNode {
-        let sys = ljos_controls::WindowSystem::of(&self.engine);
+        let sys = ljos_controls::WindowSystem::of(&self.stage.engine);
         let title = self
+            .stage
             .scene
             .root()
-            .and_then(|r| sys.spec(&self.engine, r))
+            .and_then(|r| sys.spec(&self.stage.engine, r))
             .map(|s| s.title)
             .unwrap_or_default();
-        let tree = self.scene.accessibility_tree();
-        AccessibleNode::window(tree, title, self.scene.accessible_focus_node())
+        ljos_drive::a11y::tree(&self.stage.scene, title)
     }
 
     /// The node `item` is exposed as, while the tree is on.
     pub fn accessible_node(&self, item: ObjectId) -> Option<NodeKey> {
-        self.scene.accessible_node(item)
+        self.stage.scene.accessible_node(item)
     }
 
     /// The item behind a node of the tree; for a part of an item (a link
     /// in a text), that item. `None` for an announcement.
     pub fn accessible_item(&self, node: NodeKey) -> Option<ObjectId> {
-        self.scene.accessible_item(node)
+        self.stage.scene.accessible_item(node)
     }
 
     /// What `item` painted in the last frame, in its own coordinates;
     /// `None` for an item that paints nothing or is not shown.
     pub fn painted(&self, item: ObjectId) -> Option<Arc<DisplayList>> {
-        let node = self.scene.node_of(item)?;
-        self.scene.render_tree().node(node)?.content().cloned()
+        let node = self.stage.scene.node_of(item)?;
+        self.stage
+            .scene
+            .render_tree()
+            .node(node)?
+            .content()
+            .cloned()
     }
 }
 

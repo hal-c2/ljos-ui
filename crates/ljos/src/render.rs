@@ -39,9 +39,9 @@ use std::sync::Arc;
 use ljos_engine::{Engine, ObjectId, QmlType as _, Value};
 use ljos_quick::{QuickScene, TextEngine};
 
-use crate::drive::Run;
-use ljos_render::{FrameView, RasterConfig, Rgba, VelloCpuReference, kurbo};
-use ljos_runtime::{Clock as _, VirtualClock};
+use ljos_drive::{DriveState, Driver};
+use ljos_render::{RasterConfig, Rgba, kurbo};
+use ljos_runtime::VirtualClock;
 
 /// The fonts text is set in on this thread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -203,16 +203,10 @@ impl Picture {
             let size = [f64::from(width), f64::from(height)];
             ljos_controls::WindowSystem::of(engine).resized(engine, root, size);
         }
-        let mut wake = None;
-        let mut run = Run {
-            engine,
-            scene: &mut scene,
-            clock: &self.clock,
-            wake: &mut wake,
-            serve: None,
-        };
-        run.settle()?;
-        run.advance(self.settle_ms)?;
+        let mut state = DriveState::default();
+        let mut run = Driver::new(engine, &mut scene, &*self.clock, &mut state);
+        run.settle().map_err(|e| e.to_string())?;
+        run.advance(self.settle_ms).map_err(|e| e.to_string())?;
         let window = engine
             .meta_of(root)
             .is_some_and(|m| m.inherits(ljos_controls::Window::static_meta()));
@@ -228,16 +222,11 @@ impl Picture {
 
 /// A PNG of the scene: on white, or on nothing for a window, which
 /// paints its own colour.
-fn picture(run: &mut Run<'_>, window: bool) -> Result<Vec<u8>, String> {
-    run.settle()?;
-    let out = run.scene.frame(run.engine, run.clock.now());
+fn picture(run: &mut Driver<'_>, window: bool) -> Result<Vec<u8>, String> {
     let backdrop = if window { 0.0 } else { 1.0 };
-    let mut r = VelloCpuReference::new(RasterConfig {
+    run.grab(RasterConfig {
         background: Rgba::from_straight(backdrop, backdrop, backdrop, backdrop),
         ..RasterConfig::default()
-    });
-    let image = r
-        .render(&FrameView::new(&out.snapshot, 1.0))
-        .map_err(|e| e.to_string())?;
-    image.to_png().map_err(|e| e.to_string())
+    })
+    .map_err(|e| e.to_string())
 }
