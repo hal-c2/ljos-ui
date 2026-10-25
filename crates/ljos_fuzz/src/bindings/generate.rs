@@ -17,7 +17,7 @@ use crate::rng::Rng;
 
 /// What an argument of an operation is.
 #[derive(Clone, Copy)]
-enum Arg {
+pub(crate) enum Arg {
     Of(Kind),
     /// A literal between 0 and 1, as a colour channel is.
     Unit,
@@ -29,7 +29,7 @@ use Arg::{Of, Pixels, Unit};
 use Kind::{Any, Arr, Bool, Color, Font, Num, Obj as KObj, Point, Rect, Size, Str, Url};
 
 /// The operations that make a value of each kind.
-const OPS: &[(Kind, &str, &str, &[Arg])] = &[
+const OPS: &[Op] = &[
     (Num, "add", "($0 + $1)", &[Of(Num), Of(Num)]),
     (Num, "sub", "($0 - $1)", &[Of(Num), Of(Num)]),
     (Num, "mul", "($0 * $1)", &[Of(Num), Of(Num)]),
@@ -420,15 +420,15 @@ pub fn item_builtins() -> &'static [(&'static str, PType)] {
 
 /// A property that bindings made later may read.
 #[derive(Clone, Debug)]
-struct Avail {
-    obj: String,
-    prop: String,
-    ty: PType,
+pub(crate) struct Avail {
+    pub(crate) obj: String,
+    pub(crate) prop: String,
+    pub(crate) ty: PType,
     /// Its place in the order things were made.
-    order: usize,
+    pub(crate) order: usize,
     /// An alias, a member of a group or a readonly property is never the
     /// target of a write made to keep the graph acyclic.
-    writable: bool,
+    pub(crate) writable: bool,
 }
 
 /// A function a binding may call: it reads only its parameters.
@@ -440,26 +440,43 @@ struct Callable {
     ret: Kind,
 }
 
-struct Gen<'r> {
-    rng: &'r mut Rng,
-    scope: Vec<Avail>,
+/// The generator's state, which the other areas that make programs
+/// build on: what bindings may read, the functions they may call and the
+/// names given so far.
+pub(crate) struct Gen<'r> {
+    pub(crate) rng: &'r mut Rng,
+    pub(crate) scope: Vec<Avail>,
     callables: Vec<Callable>,
     names: usize,
     enums: Vec<String>,
     /// Ids of the objects made so far, which a `var` may hold.
-    ids: Vec<String>,
+    pub(crate) ids: Vec<String>,
+    /// Operations used besides [`OPS`], for an area that wants more of
+    /// some kind.
+    pub(crate) extra: &'static [Op],
+}
+
+/// An operation: the kind it makes, its label, its template and its
+/// arguments.
+pub(crate) type Op = (Kind, &'static str, &'static str, &'static [Arg]);
+
+impl<'r> Gen<'r> {
+    pub(crate) fn new(rng: &'r mut Rng) -> Self {
+        Self {
+            rng,
+            scope: Vec::new(),
+            callables: Vec::new(),
+            names: 0,
+            enums: Vec::new(),
+            ids: Vec::new(),
+            extra: &[],
+        }
+    }
 }
 
 /// A random program.
 pub fn program(rng: &mut Rng) -> Program {
-    let mut g = Gen {
-        rng,
-        scope: Vec::new(),
-        callables: Vec::new(),
-        names: 0,
-        enums: Vec::new(),
-        ids: Vec::new(),
-    };
+    let mut g = Gen::new(rng);
     let mut enums = Vec::new();
     if g.rng.chance(15) {
         let keys = vec![
@@ -482,13 +499,13 @@ pub fn program(rng: &mut Rng) -> Program {
 }
 
 impl Gen<'_> {
-    fn name(&mut self, prefix: &str) -> String {
+    pub(crate) fn name(&mut self, prefix: &str) -> String {
         self.names += 1;
         format!("{prefix}{}", self.names - 1)
     }
 
     /// Gives `o` its properties and children, depth first.
-    fn fill(&mut self, o: &mut Obj, depth: usize, count: &mut usize, target: usize) {
+    pub(crate) fn fill(&mut self, o: &mut Obj, depth: usize, count: &mut usize, target: usize) {
         if self.rng.chance(40) {
             self.funcs(o);
         }
@@ -524,7 +541,7 @@ impl Gen<'_> {
         }
     }
 
-    fn prop(&mut self, o: &mut Obj) {
+    pub(crate) fn prop(&mut self, o: &mut Obj) {
         let ty = self.rng.pick(&PType::ALL).clone();
         let readonly = self.rng.chance(10);
         let init = if readonly || self.rng.chance(90) {
@@ -546,7 +563,7 @@ impl Gen<'_> {
         );
     }
 
-    fn add(
+    pub(crate) fn add(
         &mut self,
         o: &mut Obj,
         name: String,
@@ -572,7 +589,7 @@ impl Gen<'_> {
     }
 
     /// What a property of type `ty` is first bound to.
-    fn init(&mut self, ty: &PType) -> Expr {
+    pub(crate) fn init(&mut self, ty: &PType) -> Expr {
         // The string forms of value types Qt reads when it loads the file.
         let literal = match ty {
             PType::Point => Some("\"1,2\""),
@@ -612,7 +629,7 @@ impl Gen<'_> {
     }
 
     /// Qt rejects a literal for an `int` that is not a 32-bit whole number.
-    fn fit(&mut self, ty: &PType, e: Expr) -> Expr {
+    pub(crate) fn fit(&mut self, ty: &PType, e: Expr) -> Expr {
         let whole = |t: &str| {
             t.parse::<f64>()
                 .is_ok_and(|n| n.fract() == 0.0 && n.abs() < 2_147_483_648.0)
@@ -625,7 +642,7 @@ impl Gen<'_> {
         }
     }
 
-    fn alias(&mut self, o: &mut Obj) {
+    pub(crate) fn alias(&mut self, o: &mut Obj) {
         let Some(t) = self.pick_scope(|_| true) else {
             return;
         };
@@ -651,7 +668,7 @@ impl Gen<'_> {
         );
     }
 
-    fn builtin(&mut self, o: &mut Obj) {
+    pub(crate) fn builtin(&mut self, o: &mut Obj) {
         let text = o.ty == ObjType::Text;
         let choice = if text { self.rng.below(5) } else { 0 };
         let (name, ty, init, writable) = match choice {
@@ -751,7 +768,7 @@ impl Gen<'_> {
 
     /// Functions of the object; those that read only their parameters can be
     /// called from bindings made after them.
-    fn funcs(&mut self, o: &mut Obj) {
+    pub(crate) fn funcs(&mut self, o: &mut Obj) {
         for _ in 0..1 + self.rng.below(2) {
             let n = self.rng.below(3);
             let params: Vec<(String, Kind, Option<&'static str>)> = (0..n)
@@ -801,9 +818,17 @@ impl Gen<'_> {
 
     /// Signals, handlers and `Component.onCompleted`, once every property
     /// exists.
-    fn after(&mut self, root: &mut Obj) {
+    pub(crate) fn after(&mut self, root: &mut Obj) {
         let mut objs = Vec::new();
-        root.each_mut(&mut |o| objs.push(o.id.clone()));
+        // The others hold no signals or handlers of their own.
+        root.each_mut(&mut |o| {
+            if matches!(
+                o.ty,
+                ObjType::Item | ObjType::QtObject | ObjType::Text | ObjType::Rectangle
+            ) {
+                objs.push(o.id.clone());
+            }
+        });
         for id in objs {
             let mut changed = Vec::new();
             let mut signals = Vec::new();
@@ -892,7 +917,7 @@ impl Gen<'_> {
         }
     }
 
-    fn step(&mut self, root: &Obj) -> Option<Stmt> {
+    pub(crate) fn step(&mut self, root: &Obj) -> Option<Stmt> {
         let objs = root.all();
         match self.rng.below(100) {
             0..35 => {
@@ -1012,16 +1037,16 @@ impl Gen<'_> {
         (!ro.is_empty()).then(|| self.rng.pick(&ro).clone())
     }
 
-    fn pick_scope(&mut self, keep: impl Fn(&Avail) -> bool) -> Option<Avail> {
+    pub(crate) fn pick_scope(&mut self, keep: impl Fn(&Avail) -> bool) -> Option<Avail> {
         let c: Vec<&Avail> = self.scope.iter().filter(|a| keep(a)).collect();
         (!c.is_empty()).then(|| c[self.rng.below(c.len())].clone())
     }
 
-    fn lit_from(&mut self, from: &[&str], k: Kind) -> Expr {
+    pub(crate) fn lit_from(&mut self, from: &[&str], k: Kind) -> Expr {
         Expr::Lit((*self.rng.pick(from)).to_owned(), k)
     }
 
-    fn literal(&mut self, k: Kind) -> Expr {
+    pub(crate) fn literal(&mut self, k: Kind) -> Expr {
         match k {
             Num => {
                 if !self.enums.is_empty() && self.rng.chance(10) {
@@ -1095,7 +1120,7 @@ impl Gen<'_> {
 
     /// An expression of kind `k`, at most `depth` operations deep, that may
     /// read `params` and the properties in scope.
-    fn expr(&mut self, k: Kind, depth: u32, params: &[(String, Kind)]) -> Expr {
+    pub(crate) fn expr(&mut self, k: Kind, depth: u32, params: &[(String, Kind)]) -> Expr {
         if depth == 0 || self.rng.chance(30) {
             return self.leaf(k, params);
         }
@@ -1132,8 +1157,11 @@ impl Gen<'_> {
                 );
             }
         }
-        let ops: Vec<&(Kind, &str, &str, &[Arg])> =
-            OPS.iter().filter(|(ok, ..)| *ok == k).collect();
+        let ops: Vec<&Op> = OPS
+            .iter()
+            .chain(self.extra)
+            .filter(|(ok, ..)| *ok == k)
+            .collect();
         let (_, label, tpl, args) = *ops[self.rng.below(ops.len())];
         let mut args: Vec<Expr> = args
             .iter()
@@ -1164,7 +1192,7 @@ impl Gen<'_> {
         Expr::op(label, tpl, k, args)
     }
 
-    fn leaf(&mut self, k: Kind, params: &[(String, Kind)]) -> Expr {
+    pub(crate) fn leaf(&mut self, k: Kind, params: &[(String, Kind)]) -> Expr {
         let ps: Vec<&(String, Kind)> = params
             .iter()
             .filter(|(_, pk)| *pk == k || k == Any)
@@ -1186,7 +1214,7 @@ impl Gen<'_> {
     }
 }
 
-fn assign(t: &Avail, value: Expr) -> Stmt {
+pub(crate) fn assign(t: &Avail, value: Expr) -> Stmt {
     Stmt::Assign {
         obj: t.obj.clone(),
         prop: t.prop.clone(),

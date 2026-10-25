@@ -10,68 +10,94 @@ use std::{collections::BTreeSet, fmt::Write};
 use serde_json::Value;
 
 use self::ast::{Decl, Expr, Program, Stmt};
-use crate::{
-    area::Area,
-    compare::{Diff, DiffKind, message_shape, value_class},
-    outcome::Rendered,
-    rng::Rng,
-};
+use crate::compare::{Diff, DiffKind, message_shape, value_class};
 
 /// Object trees with typed properties bound to JavaScript, aliases,
 /// functions, signals, handlers and a list of steps run after the load.
 #[derive(Debug, Default)]
 pub struct Bindings;
 
-impl Area for Bindings {
-    type Case = Program;
+/// An [`Area`](crate::area::Area) whose cases are [`Program`]s, made by
+/// `$make`: it shares with bindings the printer, the shrinker and, unless
+/// it names one itself with `$describe`, how a difference is named.
+#[macro_export]
+macro_rules! program_area {
+    ($area:ty, $name:literal, $make:path) => {
+        $crate::program_area!($area, $name, $make, $crate::bindings::describe);
+    };
+    ($area:ty, $name:literal, $make:path, $describe:path) => {
+        impl $crate::area::Area for $area {
+            type Case = $crate::bindings::ast::Program;
 
-    fn name(&self) -> &'static str {
-        "bindings"
-    }
+            fn name(&self) -> &'static str {
+                $name
+            }
 
-    fn generate(&self, rng: &mut Rng) -> Program {
-        generate::program(rng)
-    }
+            fn generate(&self, rng: &mut $crate::rng::Rng) -> Self::Case {
+                $make(rng)
+            }
 
-    fn render(&self, case: &Program) -> Rendered {
-        print::render(case)
-    }
+            fn render(&self, case: &Self::Case) -> $crate::outcome::Rendered {
+                $crate::bindings::print::render(case)
+            }
 
-    fn reductions(&self, case: &Program) -> Vec<Program> {
-        shrink::reductions(case)
-    }
+            fn reductions(&self, case: &Self::Case) -> Vec<Self::Case> {
+                $crate::bindings::shrink::reductions(case)
+            }
 
-    fn describe(&self, case: &Program, diff: &Diff) -> (String, String) {
-        describe(case, diff)
-    }
+            fn describe(
+                &self,
+                case: &Self::Case,
+                diff: &$crate::compare::Diff,
+            ) -> (String, String) {
+                $describe(case, diff)
+            }
 
-    fn detail(&self, case: &Program, diff: &Diff) -> String {
-        detail(case, diff)
-    }
+            fn detail(&self, case: &Self::Case, diff: &$crate::compare::Diff) -> String {
+                $crate::bindings::detail(case, diff)
+            }
 
-    fn program(&self, case: &Program) -> String {
-        print::clean(case)
-    }
+            fn program(&self, case: &Self::Case) -> String {
+                $crate::bindings::print::clean(case)
+            }
 
-    fn steps(&self, case: &Program) -> Vec<String> {
-        case.steps.iter().map(print::step).collect()
-    }
+            fn steps(&self, case: &Self::Case) -> Vec<String> {
+                case.steps
+                    .iter()
+                    .map($crate::bindings::print::step)
+                    .collect()
+            }
 
-    fn summary(&self, case: &Program) -> String {
-        let objs = case.root.all();
-        let props: usize = objs.iter().map(|o| o.props.len()).sum();
-        let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
-        format!(
-            "{}, {}, {}",
-            plural(objs.len(), "object"),
-            plural(props, "property").replace("propertys", "properties"),
-            plural(case.steps.len(), "step")
-        )
-    }
+            fn summary(&self, case: &Self::Case) -> String {
+                $crate::bindings::summary(case)
+            }
 
-    fn scenario(&self, case: &Program, diff: &Diff, signature: &str) -> String {
-        scenario(case, diff, signature)
-    }
+            fn scenario(
+                &self,
+                case: &Self::Case,
+                diff: &$crate::compare::Diff,
+                signature: &str,
+            ) -> String {
+                $crate::bindings::scenario($name, case, diff, signature)
+            }
+        }
+    };
+}
+
+program_area!(Bindings, "bindings", generate::program);
+
+/// How big a program is: its objects, properties and steps.
+#[must_use]
+pub fn summary(case: &Program) -> String {
+    let objs = case.root.all();
+    let props: usize = objs.iter().map(|o| o.props.len()).sum();
+    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+    format!(
+        "{}, {}, {}",
+        plural(objs.len(), "object"),
+        plural(props, "property").replace("propertys", "properties"),
+        plural(case.steps.len(), "step")
+    )
 }
 
 /// The two parts of a difference's bucket after its kind. For a value:
@@ -80,7 +106,8 @@ impl Area for Bindings {
 /// expression: one cause shows in properties of every type, reached
 /// through any expression. For an error: the two errors and the kind of
 /// step, which is what tells its causes apart.
-fn describe(p: &Program, d: &Diff) -> (String, String) {
+#[must_use]
+pub fn describe(p: &Program, d: &Diff) -> (String, String) {
     let step = d.phase.checked_sub(1).and_then(|i| p.steps.get(i));
     let class = || value_class(&d.qt, &d.ljos);
     match d.kind {
@@ -150,7 +177,8 @@ fn describe(p: &Program, d: &Diff) -> (String, String) {
 /// The observed property's type and the construct as the program writes
 /// it, which a person triaging a bucket wants to see but which are no part
 /// of its signature.
-fn detail(p: &Program, d: &Diff) -> String {
+#[must_use]
+pub fn detail(p: &Program, d: &Diff) -> String {
     let prop = d
         .key
         .split_once('.')
@@ -377,13 +405,14 @@ fn features(p: &Program) -> String {
 
 /// A draft of the `@qt-parity` scenario for a bucket, in catalogue steps
 /// where there is one; what has none is left as a comment for the author.
-fn scenario(p: &Program, d: &Diff, signature: &str) -> String {
+#[must_use]
+pub fn scenario(area: &str, p: &Program, d: &Diff, signature: &str) -> String {
     let mut s = String::new();
     let _ = writeln!(s, "  @qt-parity @backlog");
     let _ = writeln!(s, "  Scenario: TODO describe {signature}");
     let _ = writeln!(
         s,
-        "    # Sources: found by ljos-fuzz (bindings); bucket {signature}"
+        "    # Sources: found by ljos-fuzz ({area}); bucket {signature}"
     );
     let _ = writeln!(s, "    # Verified on Qt 6.11.2 (qml6, offscreen).");
     let _ = writeln!(s, "    Given the QML:");

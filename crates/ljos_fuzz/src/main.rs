@@ -38,8 +38,8 @@ struct Args {
     /// same program on every machine.
     #[arg(long)]
     seed: Option<u64>,
-    /// The known buckets.
-    #[arg(long, default_value = "crates/ljos_fuzz/known-buckets.txt")]
+    /// The directory of known buckets, one `<area>.txt` per area.
+    #[arg(long, default_value = "crates/ljos_fuzz/known")]
     known: PathBuf,
     /// Where repros are written, one directory per bucket.
     #[arg(long, default_value = "target/fuzz/out")]
@@ -75,18 +75,18 @@ fn main() -> Result<ExitCode> {
     let jobs = args
         .jobs
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from));
-    let area = args
-        .area
-        .to_possible_value()
-        .map_or_else(String::new, |v| v.get_name().to_owned());
+    match args.area {
+        AreaName::Bindings => fuzz(&Bindings, args, seed, jobs),
+    }
+}
+
+fn fuzz<A: Area>(area: &A, args: Args, seed: u64, jobs: usize) -> Result<ExitCode> {
     if let Some(n) = args.show {
-        let case = match args.area {
-            AreaName::Bindings => Bindings.render(&Bindings.generate(&mut Rng::for_case(seed, n))),
-        };
+        let case = area.render(&area.generate(&mut Rng::for_case(seed, n)));
         print!("{}", case.qml);
         return Ok(ExitCode::SUCCESS);
     }
-    let known = Known::read(&args.known)?;
+    let known = Known::read(&args.known.join(format!("{}.txt", area.name())))?;
     let work = std::path::absolute(&args.work).context("the work directory")?;
     // Old repros would read as this run's.
     if args.out.exists() {
@@ -114,10 +114,12 @@ fn main() -> Result<ExitCode> {
         max_buckets: 60,
         per_group: 3,
     };
-    println!("ljos-fuzz {area}: seed {seed}, {} cases", config.cases);
-    let report = match args.area {
-        AreaName::Bindings => run(&Bindings, &config)?,
-    };
+    println!(
+        "ljos-fuzz {}: seed {seed}, {} cases",
+        area.name(),
+        config.cases
+    );
+    let report = run(area, &config)?;
     print(&report);
     Ok(if report.new_buckets() > 0 {
         ExitCode::FAILURE

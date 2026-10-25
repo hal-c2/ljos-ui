@@ -250,11 +250,11 @@ pub fn repair(p: &mut Program) {
         for body in o.bodies_mut() {
             body.retain(alive);
         }
-        let own: BTreeSet<&str> = o.props.iter().map(|p| p.name.as_str()).collect();
+        let watched = o.watched().to_owned();
         let keep: Vec<bool> = o
             .changed
             .iter()
-            .map(|c| own.contains(c.prop.as_str()))
+            .map(|c| props.contains(&(watched.clone(), c.prop.clone())))
             .collect();
         let mut k = keep.into_iter();
         o.changed.retain(|_| k.next().unwrap_or(true));

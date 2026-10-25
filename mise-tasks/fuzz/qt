@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Differential fuzzing of Ljós against Qt (qml6, offscreen): random programs, shrunk repros, bucketed differences. fuzz:qt [area] [--cases N] [--seed S] [ljos-fuzz options]; exits 1 on a bucket not in crates/ljos_fuzz/known-buckets.txt"
+#MISE description="Differential fuzzing of Ljós against Qt (qml6, offscreen): random programs, shrunk repros, bucketed differences. fuzz:qt [area] [--cases N] [--seed S] [ljos-fuzz options]; exits 1 on a bucket not in crates/ljos_fuzz/known/<area>.txt"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 target="${CARGO_TARGET_DIR:-$root/target}"
@@ -14,5 +14,5 @@ dir="$profile"
 
 cd "$root"
 exec "$target/$dir/ljos-fuzz" --qml "$qml" \
-  --known "$root/crates/ljos_fuzz/known-buckets.txt" \
+  --known "$root/crates/ljos_fuzz/known" \
   --out "${FUZZ_OUT:-$target/fuzz/out}" --work "$target/fuzz/work" "$@"

@@ -13,7 +13,7 @@ use std::{
     fmt::Write,
 };
 
-use super::ast::{Decl, Expr, Func, Obj, Program, Stmt};
+use super::ast::{Decl, Expr, Func, Obj, ObjType, Program, Stmt};
 use crate::outcome::Rendered;
 
 /// The case as both sides run it.
@@ -23,22 +23,23 @@ pub fn render(p: &Program) -> Rendered {
     obj(p, &p.root, 0, true, &mut out);
     let unobserved: BTreeSet<String> = p
         .root
-        .all()
+        .live()
         .iter()
         .flat_map(|o| {
             o.props
                 .iter()
-                .filter(|p| p.in_loop)
+                .filter(|p| p.in_loop && p.observed())
                 .map(|p| format!("{}.{}", o.id, p.name))
         })
         .collect();
     let mut types: BTreeMap<String, String> = p
         .root
-        .all()
+        .live()
         .iter()
         .flat_map(|o| {
             o.props
                 .iter()
+                .filter(|p| p.observed())
                 .map(|p| (format!("{}.{}", o.id, p.name), p.ty().qml().to_owned()))
         })
         .collect();
@@ -72,8 +73,14 @@ fn pad(depth: usize) -> String {
 fn obj(p: &Program, o: &Obj, depth: usize, harness: bool, out: &mut String) {
     let (i, j) = (pad(depth), pad(depth + 1));
     let _ = writeln!(out, "{i}{} {{", o.ty.qml());
-    let _ = writeln!(out, "{j}id: {}", o.id);
-    let _ = writeln!(out, "{j}objectName: \"{}\"", o.id);
+    // A row of a model is literals only, and a component has an id and
+    // its one object.
+    if o.ty != ObjType::ListElement {
+        let _ = writeln!(out, "{j}id: {}", o.id);
+    }
+    if !matches!(o.ty, ObjType::ListElement | ObjType::Component) {
+        let _ = writeln!(out, "{j}objectName: \"{}\"", o.id);
+    }
     if depth == 0 {
         let _ = writeln!(out, "{j}property string log: \"\"");
         for (name, keys) in &p.enums {
@@ -93,7 +100,7 @@ fn obj(p: &Program, o: &Obj, depth: usize, harness: bool, out: &mut String) {
                 init.map_or(head.clone(), |e| format!("{head}: {e}"))
             }
             Decl::Alias { target, .. } => format!("property alias {}: {target}", prop.name),
-            Decl::Builtin { .. } | Decl::Enum => match init {
+            Decl::Builtin { .. } | Decl::Enum | Decl::Setting => match init {
                 Some(e) => format!("{}: {e}", prop.name),
                 None => continue,
             },
@@ -122,12 +129,13 @@ fn obj(p: &Program, o: &Obj, depth: usize, harness: bool, out: &mut String) {
         }
     }
     for c in &o.changed {
-        let _ = writeln!(
-            out,
-            "{j}{}: {{ {} }}",
-            handler_name(&c.prop, "Changed"),
-            block(&c.body)
-        );
+        let name = handler_name(&c.prop, "Changed");
+        let body = block(&c.body);
+        if o.ty == ObjType::Connections {
+            let _ = writeln!(out, "{j}function {name}() {{ {body} }}");
+        } else {
+            let _ = writeln!(out, "{j}{name}: {{ {body} }}");
+        }
     }
     if let Some(body) = &o.completed {
         let _ = writeln!(out, "{j}Component.onCompleted: {{ {} }}", block(body));
@@ -246,8 +254,8 @@ fn helpers(p: &Program, j: &str, out: &mut String) {
     );
     let mut obs = String::new();
     let mut keys: Vec<(String, String)> = vec![("root.log".into(), "__ser(root.log)".into())];
-    for o in p.root.all() {
-        for prop in &o.props {
+    for o in p.root.live() {
+        for prop in o.props.iter().filter(|p| p.observed()) {
             let path = format!("{}.{}", o.id, prop.name);
             keys.push((path.clone(), format!("{}({path})", prop.ty().serialiser())));
         }

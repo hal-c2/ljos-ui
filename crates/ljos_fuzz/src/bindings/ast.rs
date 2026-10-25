@@ -264,6 +264,10 @@ pub enum Decl {
     Builtin { ty: PType },
     /// An enum value, written `Text.AlignRight` or `Case.Two`.
     Enum,
+    /// A built-in that is written and never observed: an anchor, the
+    /// target of a `Connections`, a `Binding`'s value, a list of states.
+    /// What it does shows in the properties it moves.
+    Setting,
 }
 
 /// A property of an object and what it is bound to.
@@ -283,7 +287,14 @@ impl Prop {
         match &self.decl {
             Decl::New { ty, .. } | Decl::Alias { ty, .. } | Decl::Builtin { ty } => ty.clone(),
             Decl::Enum => PType::Int,
+            Decl::Setting => PType::Var,
         }
+    }
+
+    /// Whether `__obs` reads it.
+    #[must_use]
+    pub fn observed(&self) -> bool {
+        !matches!(self.decl, Decl::Setting)
     }
 
     #[must_use]
@@ -412,6 +423,20 @@ pub enum ObjType {
     Item,
     QtObject,
     Text,
+    Rectangle,
+    Row,
+    Column,
+    /// Its `changed` handlers are of its target's properties.
+    Connections,
+    Binding,
+    /// Holds one object, made by `createObject`: what is inside is not
+    /// there until then, and is not observed by id.
+    Component,
+    ListModel,
+    /// A row of its model: no id, no objectName, literals only.
+    ListElement,
+    /// Its one child is the delegate, made once per row.
+    Repeater,
 }
 
 impl ObjType {
@@ -421,7 +446,22 @@ impl ObjType {
             Self::Item => "Item",
             Self::QtObject => "QtObject",
             Self::Text => "Text",
+            Self::Rectangle => "Rectangle",
+            Self::Row => "Row",
+            Self::Column => "Column",
+            Self::Connections => "Connections",
+            Self::Binding => "Binding",
+            Self::Component => "Component",
+            Self::ListModel => "ListModel",
+            Self::ListElement => "ListElement",
+            Self::Repeater => "Repeater",
         }
+    }
+
+    /// Whether what it holds is a template rather than objects of the tree.
+    #[must_use]
+    pub fn templates(self) -> bool {
+        matches!(self, Self::Component | Self::Repeater)
     }
 }
 
@@ -450,6 +490,36 @@ impl Obj {
             completed: None,
             children: Vec::new(),
         }
+    }
+
+    /// The objects that exist once the tree is made and can be read by
+    /// id from anywhere: not those inside a component or a delegate, nor a
+    /// model's rows.
+    pub fn live(&self) -> Vec<&Obj> {
+        let mut out = vec![self];
+        if !self.ty.templates() {
+            for c in &self.children {
+                if c.ty != ObjType::ListElement {
+                    out.extend(c.live());
+                }
+            }
+        }
+        out
+    }
+
+    /// The id of the object whose properties its `changed` handlers watch.
+    #[must_use]
+    pub fn watched(&self) -> &str {
+        if self.ty == ObjType::Connections
+            && let Some(Expr::Ref { obj, .. }) = self
+                .props
+                .iter()
+                .find(|p| p.name == "target")
+                .and_then(|p| p.init.as_ref())
+        {
+            return obj;
+        }
+        &self.id
     }
 
     /// This object and all below it, parents first.
