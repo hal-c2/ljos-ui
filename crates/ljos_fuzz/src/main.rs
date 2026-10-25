@@ -9,6 +9,7 @@ use ljos_fuzz::{
     area::Area,
     bindings::Bindings,
     bucket::Known,
+    connections::Connections,
     geometry::Geometry,
     rng::Rng,
     run::{Config, Oracle, Report, run},
@@ -19,6 +20,7 @@ use ljos_fuzz::{
 enum AreaName {
     Bindings,
     Geometry,
+    Connections,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -40,7 +42,8 @@ struct Args {
     /// same program on every machine.
     #[arg(long)]
     seed: Option<u64>,
-    /// The directory of known buckets, one `<area>.txt` per area.
+    /// The directory of known buckets, one `<area>.txt` per area; every
+    /// area knows `bindings.txt` too.
     #[arg(long, default_value = "crates/ljos_fuzz/known")]
     known: PathBuf,
     /// Where repros are written, one directory per bucket.
@@ -80,6 +83,7 @@ fn main() -> Result<ExitCode> {
     match args.area {
         AreaName::Bindings => fuzz(&Bindings, args, seed, jobs),
         AreaName::Geometry => fuzz(&Geometry, args, seed, jobs),
+        AreaName::Connections => fuzz(&Connections, args, seed, jobs),
     }
 }
 
@@ -89,7 +93,17 @@ fn fuzz<A: Area>(area: &A, args: Args, seed: u64, jobs: usize) -> Result<ExitCod
         print!("{}", case.qml);
         return Ok(ExitCode::SUCCESS);
     }
-    let known = Known::read(&args.known.join(format!("{}.txt", area.name())))?;
+    let mut known = Known::read(&args.known.join(format!("{}.txt", area.name())))?;
+    // Every area's expressions are bindings', so what is known there is
+    // known here too, unless the area's own list says otherwise.
+    if area.name() != "bindings" {
+        for (sig, why) in Known::read(&args.known.join("bindings.txt"))?.0 {
+            known
+                .0
+                .entry(sig)
+                .or_insert_with(|| format!("as in bindings: {why}"));
+        }
+    }
     let work = std::path::absolute(&args.work).context("the work directory")?;
     // Old repros would read as this run's.
     if args.out.exists() {

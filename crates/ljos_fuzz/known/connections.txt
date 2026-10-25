@@ -1,0 +1,64 @@
+# Buckets of ljos-fuzz connections (Connections, Binding and states) that are known: as
+# known/bindings.txt, whose lines this area knows too, one per line, the signature then why.
+# Triaged from seeds 101 and 202 (2000 cases each).
+
+# A Connections' handler runs after the bindings that read the property on Qt, before them on
+# Ljós (features/bindings/writers-from-outside.feature). Who writes last differs where a handler, a Binding and a state write the same
+# property.
+value:step:number-vs-list           two Connections' handlers write one property: the one of what a binding reads runs last on Qt (features/bindings/writers-from-outside.feature)
+value:step:record-vs-object         handlers of a property and of what a binding reads write one property (features/bindings/writers-from-outside.feature)
+value:step:bool-vs-string           a Connections' handler and a state write one property (features/bindings/writers-from-outside.feature)
+value:step:object-vs-bool           a handler of a property a state changes writes what the state also gives; the state's is last on Qt (features/bindings/writers-from-outside.feature)
+value:step:object-vs-record         a handler of a property a state changes writes what the state also gives (features/bindings/writers-from-outside.feature)
+value:step:object-vs-color          a Connections' handler and a Binding of what it reads write one property (features/bindings/writers-from-outside.feature); or an invalid colour given a colour is told as a change (features/language/color-values.feature)
+value:step:color-vs-record          a state's binding and a handler of what it reads write one property (features/bindings/writers-from-outside.feature)
+value:step:color-vs-list            a state's binding given back and a Connections' handler write one property (features/bindings/writers-from-outside.feature)
+value:step:number-vs-record         a Binding whose value changes writes over what a state gave (features/bindings/writers-from-outside.feature)
+value:step:record-vs-color          a Binding whose value changes writes over what a state gave (features/bindings/writers-from-outside.feature)
+value:load-handlers:string-vs-record  a Connections' handler and a Binding write one property while made (features/bindings/writers-from-outside.feature)
+value:load-handlers:number-vs-list  a Connections' handler and a Binding write one property while made (features/bindings/writers-from-outside.feature)
+value:load-handlers:bool-vs-record  two Connections' handlers of what a state changes write one property while made (features/bindings/writers-from-outside.feature)
+value:load-handlers:record-vs-bool  a Connections' handler and a state write one property while made (features/bindings/writers-from-outside.feature)
+
+# A Binding turned off gives back the old value on Ljós; on Qt not for a list, an object, or
+# a Binding without a value (features/bindings/writers-from-outside.feature).
+value:step:list-vs-number           a Binding of a list turned off (features/bindings/writers-from-outside.feature)
+value:step:list-vs-string           a Binding of a list turned off (features/bindings/writers-from-outside.feature)
+value:step:undefined-ljos           a Binding without a value turned off, after a script wrote an object (features/bindings/writers-from-outside.feature)
+value:step:string-vs-bool           a Binding without a value turned off, after a script wrote a string (features/bindings/writers-from-outside.feature)
+value:load:list-vs-string           a Binding of a list on while made and off once another Binding holds what its when reads (features/bindings/writers-from-outside.feature)
+
+# A colour given null is invalid, silently (features/bindings/writers-from-outside.feature).
+warning:assign(ljos-only):Unable_to_assign_null_to_color   a colour given null warns on Ljós (features/bindings/writers-from-outside.feature)
+
+# Qt's own: Ljós is not to copy these.
+value:load:null-qt                  an explicit PropertyChanges of a list gives a list of nulls on Qt
+value:step:null-qt                  an explicit PropertyChanges of a list gives a list of nulls on Qt
+value:step:record-vs-number         a point a state gives stays on Qt when a state that extends it gives a number
+value:load:color-vs-string          a colour a state gives stays on Qt when a state that extends it gives a string
+
+# Which state holds when whens and a state set by name change together (no scenario yet).
+value:step:string-vs-record         a when made true by the changes of the state set by name: Qt keeps the named state
+value:step:invalid-qt               a when made true by the changes of the state set by name: Qt keeps the named state
+value:step:bool-vs-color            a state left by name while a when that reads a missing property holds
+value:step:number-vs-string         a when that holds replaces the state set by name on Qt once something else changes
+value:step:color-vs-string          a Binding whose when a state's change makes true: Qt applies it
+value:load:bool-vs-list             a when made true by another state's changes while made: Qt does not enter it
+value:load:invalid-ljos             a state entered by its when while made, and what it extends
+value:load:undefined-ljos           a state whose when a Binding makes true while made
+value:step:empty-ljos               a state whose change writes its own when
+value:step:empty-qt                 a state whose change writes its own when
+value:step:null-ljos                a state whose change writes its own when: Qt leaves it and gives the value back
+warning:other(qt-only):<Unknown_File>:_QML_StateGroup:_Can'   a state whose change writes its own when; Qt warns that it cannot apply the change
+warning:other(ljos-only):QML_State:_property_"_"_handlers_re-ran_N_times_in_one_update   a state whose change writes its own when loops on Ljós
+
+# A Binding whose when or value reads what it holds loops: Qt warns "Binding loop detected"
+# and Ljós that the handlers re-ran (no scenario yet).
+warning:binding-loop(qt-only):*     a Binding whose when reads what it holds, or what a state gives, loops; Ljós warns in its own words
+warning:other(ljos-only):QML_Binding:_property_"_"_handlers_re-ran_N_times_in_one_update   a Binding whose when reads what it holds loops
+warning:other(ljos-only):QML_Case:_property_"_"_handlers_re-ran_N_times_in_one_update      a Binding whose when reads what it holds loops
+warning:other(ljos-only):QML_Item:_property_"_"_handlers_re-ran_N_times_in_one_update      a Binding whose when reads what it holds loops
+
+# As in bindings.
+warning:TypeError(qt-only):Cannot_call_method_'_'_of_undefined   an invalid colour given a colour is told as a change, so a handler runs (features/language/color-values.feature)
+value:step:invalid-ljos             a string given to an int that is not a number is not told as a change (features/bindings/string-to-int.feature)
