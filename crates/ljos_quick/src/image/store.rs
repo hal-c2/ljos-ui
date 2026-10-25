@@ -164,7 +164,8 @@ const FETCH_GUESS_SHARE: usize = MAX_IN_FLIGHT;
 /// network pictures does not pile up undecoded; a decode waits for room
 /// while another runs, so pictures are not all at full size together. A
 /// decode waits only on other decodes, never on bodies, which only a
-/// decode frees; and one alone always runs, however large.
+/// decode frees; and one alone always runs, unless it alone would hold
+/// more than [`decode::MOST_DECODE_COST`], which none ever may.
 #[derive(Default)]
 struct Gate {
     held: Mutex<Held>,
@@ -219,8 +220,12 @@ impl Gate {
         self.permit(Part::Body, bytes)
     }
 
-    /// Waits until a decode holding `bytes` fits beside the others.
-    fn decode(self: &Arc<Self>, bytes: usize, cap: usize) -> Permit {
+    /// Waits until a decode holding `bytes` fits beside the others; none
+    /// for one too large to run at all, which does not wait.
+    fn decode(self: &Arc<Self>, bytes: usize, cap: usize) -> Option<Permit> {
+        if bytes > decode::MOST_DECODE_COST {
+            return None;
+        }
         let held = self.lock();
         let mut held = self
             .freed
@@ -229,7 +234,7 @@ impl Gate {
             })
             .unwrap_or_else(PoisonError::into_inner);
         held.decoding += bytes;
-        self.permit(Part::Decoding, bytes)
+        Some(self.permit(Part::Decoding, bytes))
     }
 
     fn permit(self: &Arc<Self>, part: Part, bytes: usize) -> Permit {
@@ -1304,7 +1309,9 @@ impl ImageStore {
                     }
                 };
                 let _body = gate.body(bytes.len());
-                let _decoding = gate.decode(decode::cost(&bytes, key.request), cap);
+                let _decoding = gate
+                    .decode(decode::cost(&bytes, key.request), cap)
+                    .ok_or_else(|| decode::too_large(&key.url))?;
                 // A decoder that panics on a hostile file must still answer,
                 // or its Image would say "Loading" for ever.
                 let loaded = catch_unwind(AssertUnwindSafe(|| {
@@ -1624,13 +1631,13 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let _bodies = [gate.body(500), gate.body(500)];
         let g = Arc::clone(&gate);
-        assert!(finishes(move || drop(g.decode(400, 800))));
+        assert!(finishes(move || drop(g.decode(400, 800).unwrap())));
     }
 
     #[test]
     fn a_decode_waits_for_another_when_both_do_not_fit() {
         let gate = Arc::new(Gate::default());
-        let first = gate.decode(600, 800);
+        let first = gate.decode(600, 800).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let g = Arc::clone(&gate);
         std::thread::spawn(move || {
@@ -1640,8 +1647,19 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
         drop(first);
         assert!(rx.recv_timeout(Duration::from_secs(30)).is_ok());
-        // One alone runs however large.
+        // One alone runs however far over the cap.
         let g = Arc::clone(&gate);
-        assert!(finishes(move || drop(g.decode(10_000, 800))));
+        assert!(finishes(move || drop(g.decode(10_000, 800).unwrap())));
+    }
+
+    #[test]
+    fn a_decode_too_large_to_run_is_refused_even_alone() {
+        let gate = Arc::new(Gate::default());
+        let most = decode::MOST_DECODE_COST;
+        assert!(gate.decode(most + 1, 800).is_none());
+        // A cost that could not be counted is as large as can be.
+        assert!(gate.decode(usize::MAX, usize::MAX).is_none());
+        assert_eq!(gate.held(), 0, "a refused decode holds nothing");
+        assert!(gate.decode(most, 800).is_some());
     }
 }

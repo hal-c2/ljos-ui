@@ -241,6 +241,7 @@ pub(crate) fn read<'a>(
 /// JPEG decoded smaller the smaller pixels, plus for a progressive one
 /// the coefficients of the whole picture, which its decoder keeps until
 /// the last scan; for a PNG made smaller as it is decoded, a row. 0 for what has no header read here (a drawing).
+/// `usize::MAX` for more than a `usize` counts, which is never let decode.
 pub(crate) fn cost(bytes: &[u8], request: Request) -> usize {
     let Some((w, h)) = dimensions(bytes) else {
         return 0;
@@ -324,10 +325,17 @@ fn jpeg_frame(bytes: &[u8]) -> Option<JpegFrame> {
                 let (hmax, vmax) = (most(|f| f.0), most(|f| f.1));
                 let blocks =
                     |n: u32, f: u32, max: u32| ((n * f).div_ceil(max)).div_ceil(8) as usize * 8;
+                // A count that wrapped would let a huge picture through
+                // as a small one.
                 let coefficients = factors
                     .iter()
-                    .map(|&(hf, vf)| blocks(width, hf, hmax) * blocks(height, vf, vmax) * 2)
-                    .sum();
+                    .map(|&(hf, vf)| {
+                        blocks(width, hf, hmax)
+                            .checked_mul(blocks(height, vf, vmax))
+                            .and_then(|n| n.checked_mul(2))
+                            .unwrap_or(usize::MAX)
+                    })
+                    .fold(0usize, usize::saturating_add);
                 return Some(JpegFrame {
                     width,
                     height,
@@ -377,6 +385,7 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
             pages: 1,
         });
     }
+    within_budget(url, bytes, request)?;
     if request.animated && bytes.starts_with(GIF) {
         let (width, height, frames) =
             decode_gif(bytes, true).map_err(|reason| LoadError::decode(url, reason))?;
@@ -742,9 +751,12 @@ impl<'u> Shrink<'u> {
     }
 
     fn with(from: Layout, to: (usize, usize), url: &'u str, how: How) -> Result<Self, LoadError> {
+        let bytes =
+            to.0.checked_mul(to.1)
+                .and_then(|n| n.checked_mul(4))
+                .ok_or_else(|| too_large(url))?;
         let mut out = Vec::new();
-        out.try_reserve_exact(to.0 * to.1 * 4)
-            .map_err(|_| too_large(url))?;
+        out.try_reserve_exact(bytes).map_err(|_| too_large(url))?;
         Ok(Shrink {
             from,
             to,
@@ -925,8 +937,55 @@ pub(crate) fn header_size(origin: &Origin) -> Option<(u32, u32)> {
 /// How much of a file [`header_size`] reads at most.
 const HEADER_READ: u64 = 128 * 1024;
 
-fn too_large(url: &str) -> LoadError {
-    LoadError::decode(url, "the picture is too large")
+pub(crate) fn too_large(url: &str) -> LoadError {
+    LoadError::decode(url, TOO_LARGE)
+}
+
+const TOO_LARGE: &str = "the picture is too large";
+
+/// The most bytes the pixels of one picture may take at four bytes a
+/// pixel, whole as decoded or as made for a `sourceSize`: 256 MiB, as Qt
+/// 6's image reader allows by default, and the image cache's whole budget
+/// on a desktop. A header that says more is refused before any decoder
+/// runs, since a decoder that cannot have its memory aborts the process
+/// rather than fails.
+pub(crate) const MOST_PIXEL_BYTES: usize = 256 << 20;
+
+/// The most a decode may hold at its height ([`cost`]): the largest
+/// picture whole, and as much again that it is made from.
+pub(crate) const MOST_DECODE_COST: usize = 2 * MOST_PIXEL_BYTES;
+
+/// Whether pixels `size` large, at four bytes a pixel, are within
+/// [`MOST_PIXEL_BYTES`]; a count that overflows is not.
+fn fits(size: (u32, u32)) -> bool {
+    (size.0 as usize)
+        .checked_mul(size.1 as usize)
+        .and_then(|n| n.checked_mul(4))
+        .is_some_and(|n| n <= MOST_PIXEL_BYTES)
+}
+
+/// Refuses, from its header alone, a picture whose decode for `request`
+/// would hold more than [`MOST_DECODE_COST`], or that a `sourceSize` would
+/// make larger than [`MOST_PIXEL_BYTES`]. What has no header read here is
+/// checked by each decoder once it has read its own.
+fn within_budget(url: &str, bytes: &[u8], request: Request) -> Result<(), LoadError> {
+    let Some(natural) = dimensions(bytes) else {
+        return Ok(());
+    };
+    let asks_size = request.width > 0 || request.height > 0;
+    if cost(bytes, request) > MOST_DECODE_COST
+        || (asks_size && !fits(requested_size(natural, request)))
+    {
+        return Err(too_large(url));
+    }
+    Ok(())
+}
+
+/// `n` bytes to fill, or none when they cannot be had.
+fn buffer(n: usize) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    out.try_reserve_exact(n).map_err(|_| TOO_LARGE.to_owned())?;
+    Ok(out)
 }
 
 /// Whether `bytes` are an SVG drawing, plain or gzipped (SVGZ): told by
@@ -1211,24 +1270,34 @@ fn decode_png(bytes: &[u8]) -> Result<Decoded, String> {
     // becomes an alpha channel: four layouts are left to convert.
     dec.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = dec.read_info().map_err(|e| e.to_string())?;
+    if !fits((reader.info().width, reader.info().height)) {
+        return Err(TOO_LARGE.to_owned());
+    }
     let size = reader
         .output_buffer_size()
-        .ok_or_else(|| "the picture is too large".to_owned())?;
-    let mut buf = vec![0; size];
+        .ok_or_else(|| TOO_LARGE.to_owned())?;
+    let mut buf = buffer(size)?;
+    buf.resize(size, 0);
     let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
     buf.truncate(info.buffer_size());
     let (channels, pixels): (usize, Vec<u8>) = match info.color_type {
         png::ColorType::Rgba => (4, buf),
         png::ColorType::Rgb => (3, buf),
-        png::ColorType::Grayscale => (3, buf.iter().flat_map(|g| [*g, *g, *g]).collect()),
-        png::ColorType::GrayscaleAlpha => (
-            4,
-            buf.as_chunks::<2>()
-                .0
-                .iter()
-                .flat_map(|c| [c[0], c[0], c[0], c[1]])
-                .collect(),
-        ),
+        png::ColorType::Grayscale => {
+            let mut rgb = buffer(buf.len().saturating_mul(3))?;
+            rgb.extend(buf.iter().flat_map(|g| [*g, *g, *g]));
+            (3, rgb)
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut rgba = buffer(buf.len().saturating_mul(2))?;
+            rgba.extend(
+                buf.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .flat_map(|c| [c[0], c[0], c[0], c[1]]),
+            );
+            (4, rgba)
+        }
         other => return Err(format!("unexpected PNG colour type {other:?}")),
     };
     Ok((info.width, info.height, channels, pixels))
@@ -1255,7 +1324,11 @@ fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<Frame>), String>
     if w == 0 || h == 0 {
         return Err("Unable to read image data".to_owned());
     }
-    let mut canvas = vec![0u8; w * h * 4];
+    if !fits((w as u32, h as u32)) {
+        return Err(TOO_LARGE.to_owned());
+    }
+    let mut canvas = buffer(w * h * 4)?;
+    canvas.resize(w * h * 4, 0);
     let mut out = Vec::new();
     while let Some(frame) = dec.read_next_frame().map_err(|e| e.to_string())? {
         let before = (frame.dispose == gif::DisposalMethod::Previous).then(|| canvas.clone());
@@ -1307,10 +1380,14 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Decoded, String> {
     // Three bytes a pixel: a JPEG has no alpha to keep.
     let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
     let mut dec = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
-    let rgb = dec.decode().map_err(|e| e.to_string())?;
+    dec.decode_headers().map_err(|e| e.to_string())?;
     let info = dec
         .info()
         .ok_or_else(|| "the JPEG has no header".to_owned())?;
+    if !fits((u32::from(info.width), u32::from(info.height))) {
+        return Err(TOO_LARGE.to_owned());
+    }
+    let rgb = dec.decode().map_err(|e| e.to_string())?;
     Ok((u32::from(info.width), u32::from(info.height), 3, rgb))
 }
 
@@ -1323,6 +1400,7 @@ fn decode_jpeg_smaller<'a>(bytes: &[u8], natural: (u32, u32), k: u32) -> Option<
         return None;
     }
     let mut dec = jpeg_decoder::Decoder::new(bytes);
+    dec.set_max_decoding_buffer_size(MOST_DECODE_COST);
     let side = |n: u32, s: u32| u16::try_from(n.div_ceil(1 << s)).ok();
     let want = k.min(3);
     let (w, h) = dec
@@ -1348,7 +1426,9 @@ fn decode_jpeg_smaller<'a>(bytes: &[u8], natural: (u32, u32), k: u32) -> Option<
         return None;
     }
     let data = if channels == 1 {
-        pixels.iter().flat_map(|&g| [g, g, g]).collect()
+        let mut rgb = buffer(pixels.len() * 3).ok()?;
+        rgb.extend(pixels.iter().flat_map(|&g| [g, g, g]));
+        rgb
     } else {
         pixels
     };
@@ -2121,5 +2201,120 @@ mod tests {
                 assert!(got.abs_diff(want) <= 4, "{px:?}");
             }
         }
+    }
+
+    /// `bytes` with the size their header says made `width` by `height`,
+    /// the rest as it was: a picture far larger than its data, which no
+    /// decoder may be let near.
+    fn claiming(bytes: &[u8], width: u32, height: u32) -> Vec<u8> {
+        let mut out = bytes.to_vec();
+        if out.starts_with(PNG) {
+            out[16..20].copy_from_slice(&width.to_be_bytes());
+            out[20..24].copy_from_slice(&height.to_be_bytes());
+            let crc = crc32(&out[12..29]);
+            out[29..33].copy_from_slice(&crc.to_be_bytes());
+        } else if out.starts_with(GIF) {
+            out[6..8].copy_from_slice(&(width as u16).to_le_bytes());
+            out[8..10].copy_from_slice(&(height as u16).to_le_bytes());
+        } else {
+            let sof = out.windows(2).position(|m| m == [0xff, 0xc0]).unwrap();
+            out[sof + 5..sof + 7].copy_from_slice(&(height as u16).to_be_bytes());
+            out[sof + 7..sof + 9].copy_from_slice(&(width as u16).to_be_bytes());
+        }
+        out
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &b in bytes {
+            crc ^= u32::from(b);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb8_8320 & (crc & 1).wrapping_neg());
+            }
+        }
+        !crc
+    }
+
+    fn too_large_for(url: &str) -> Result<Loaded, LoadError> {
+        Err(LoadError::decode(url, TOO_LARGE))
+    }
+
+    fn sized(width: u32, height: u32) -> Request {
+        Request {
+            width,
+            height,
+            ..Request::default()
+        }
+    }
+
+    #[test]
+    fn a_png_saying_it_is_huge_is_refused_before_it_is_decoded() {
+        let png = claiming(
+            &png_of(1, 1, png::ColorType::Rgba, &[0; 4]),
+            100_000,
+            100_000,
+        );
+        assert_eq!(dimensions(&png), Some((100_000, 100_000)));
+        let url = "file:///huge.png";
+        let load = |request| load_bytes(url, &png, request).map(|_| ());
+        assert_eq!(load(Request::default()), too_large_for(url).map(|_| ()));
+        // A sourceSize decodes it whole, so it is refused as well.
+        assert_eq!(load(sized(100, 100)), too_large_for(url).map(|_| ()));
+        // The decoder itself refuses it before it makes room for it.
+        assert_eq!(decode_png(&png).err().as_deref(), Some(TOO_LARGE));
+    }
+
+    #[test]
+    fn a_jpeg_saying_it_is_huge_is_refused_before_it_is_decoded() {
+        let mut jpeg = Vec::new();
+        jpeg_encoder::Encoder::new(&mut jpeg, 90)
+            .encode(&[0; 16 * 16 * 3], 16, 16, jpeg_encoder::ColorType::Rgb)
+            .unwrap();
+        let jpeg = claiming(&jpeg, 16_000, 16_000);
+        assert_eq!(dimensions(&jpeg), Some((16_000, 16_000)));
+        let url = "file:///huge.jpg";
+        let load = |request| load_bytes(url, &jpeg, request).map(|_| ());
+        assert_eq!(load(Request::default()), too_large_for(url).map(|_| ()));
+        assert_eq!(load(sized(100, 0)), too_large_for(url).map(|_| ()));
+        assert_eq!(decode_jpeg(&jpeg).err().as_deref(), Some(TOO_LARGE));
+    }
+
+    #[test]
+    fn a_gif_saying_it_is_huge_is_refused_before_it_is_decoded() {
+        let gif = claiming(&gif(&RGB, 10), 65_535, 65_535);
+        let url = "file:///huge.gif";
+        assert_eq!(
+            load_bytes(url, &gif, Request::default()).map(|_| ()),
+            too_large_for(url).map(|_| ())
+        );
+        assert_eq!(decode_gif(&gif, false).err().as_deref(), Some(TOO_LARGE));
+    }
+
+    #[test]
+    fn a_size_asked_for_cannot_make_a_picture_huge() {
+        let png = png_of(2, 1, png::ColorType::Rgba, &[0; 8]);
+        let url = "file:///wide.png";
+        let cover = Request {
+            width: 60_000,
+            height: 60_000,
+            cover: true,
+            ..Request::default()
+        };
+        assert_eq!(
+            load_bytes(url, &png, cover).map(|_| ()),
+            too_large_for(url).map(|_| ())
+        );
+        // What is within the budget is made as before.
+        let loaded = load_bytes(url, &png, ask(40, 20, true)).unwrap();
+        assert_eq!((loaded.image.width(), loaded.image.height()), (40, 20));
+    }
+
+    #[test]
+    fn the_largest_picture_let_decode_is_within_the_decode_budget() {
+        assert!(fits((8192, 8192)));
+        assert!(!fits((8192, 8193)));
+        assert!(!fits((u32::MAX, u32::MAX)), "a count that overflows");
+        let png = claiming(&png_of(1, 1, png::ColorType::Rgba, &[0; 4]), 8192, 8192);
+        assert_eq!(cost(&png, Request::default()), MOST_DECODE_COST);
     }
 }
