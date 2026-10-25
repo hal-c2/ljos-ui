@@ -247,6 +247,25 @@ pub(crate) fn cost(bytes: &[u8], request: Request) -> usize {
         return 0;
     };
     let area = |(w, h): (u32, u32)| (w as usize).saturating_mul(h as usize);
+    if request.animated && bytes.starts_with(GIF) {
+        // Every frame whole at once, the canvas they are drawn on and the
+        // copy of it a frame to be undone keeps, then each frame again at
+        // the size asked for when that differs.
+        let frames = gif_frames(bytes);
+        if frames > MOST_FRAMES {
+            return usize::MAX;
+        }
+        let whole = area((w, h)).saturating_mul(4);
+        let sized = requested_size((w, h), request);
+        let refitted = if sized == (w, h) {
+            0
+        } else {
+            area(sized).saturating_mul(4).saturating_mul(frames)
+        };
+        return whole
+            .saturating_mul(frames.saturating_add(2))
+            .saturating_add(refitted);
+    }
     let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
     let kept = if asks_nothing {
         kept_size((w, h), request.limit)
@@ -389,6 +408,15 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
     if request.animated && bytes.starts_with(GIF) {
         let (width, height, frames) =
             decode_gif(bytes, true).map_err(|reason| LoadError::decode(url, reason))?;
+        // What the item keeps, every frame at the size asked for, is held
+        // to one picture's budget before any frame is made that size.
+        let (fw, fh) = requested_size((width, height), request);
+        (fw as usize)
+            .checked_mul(fh as usize)
+            .and_then(|n| n.checked_mul(4))
+            .and_then(|n| n.checked_mul(frames.len()))
+            .filter(|&n| n <= MOST_PIXEL_BYTES)
+            .ok_or_else(|| too_large(url))?;
         let mut images = Vec::with_capacity(frames.len());
         let mut delays = Vec::with_capacity(frames.len());
         for (rgba, delay) in frames {
@@ -981,6 +1009,73 @@ fn within_budget(url: &str, bytes: &[u8], request: Request) -> Result<(), LoadEr
     Ok(())
 }
 
+/// The most frames an animation may have: tiny frames cost little each,
+/// but without an end a small file could still ask for millions of them.
+/// Ten thousand is over sixteen minutes at the fastest pace browsers keep.
+pub(crate) const MOST_FRAMES: usize = 10_000;
+
+/// What decoding every frame of an animation may take.
+#[derive(Clone, Copy, Debug)]
+struct AnimationBudget {
+    frames: usize,
+    /// Bytes of every frame kept: those of one picture, so an animation
+    /// costs the item no more than the largest still would the cache.
+    kept: usize,
+    /// Bytes held at once: the frames kept, the canvas they are drawn on
+    /// and the copy of it a frame to be undone keeps.
+    held: usize,
+}
+
+const ANIMATION_BUDGET: AnimationBudget = AnimationBudget {
+    frames: MOST_FRAMES,
+    kept: MOST_PIXEL_BYTES,
+    held: MOST_DECODE_COST,
+};
+
+/// How many frames the blocks of a GIF say it has, counted without
+/// decoding any; more than [`MOST_FRAMES`] is not counted further. What
+/// cannot be read ends the count there.
+fn gif_frames(bytes: &[u8]) -> usize {
+    let table = |packed: u8| {
+        if packed & 0x80 == 0 {
+            0
+        } else {
+            3 << ((packed & 7) + 1)
+        }
+    };
+    // Past sub-blocks of data, each led by its length, up to an empty one.
+    let blocks = |mut at: usize| loop {
+        match bytes.get(at) {
+            Some(0) => return Some(at + 1),
+            Some(&n) => at += 1 + usize::from(n),
+            None => return None,
+        }
+    };
+    let Some(&packed) = bytes.get(10) else {
+        return 0;
+    };
+    let mut at = 13 + table(packed);
+    let mut frames = 0;
+    while frames <= MOST_FRAMES {
+        let next = match bytes.get(at) {
+            Some(0x21) => blocks(at + 2),
+            Some(0x2c) => {
+                let Some(&packed) = bytes.get(at + 9) else {
+                    break;
+                };
+                frames += 1;
+                blocks(at + 10 + table(packed) + 1)
+            }
+            _ => None,
+        };
+        match next {
+            Some(next) => at = next,
+            None => break,
+        }
+    }
+    frames
+}
+
 /// `n` bytes to fill, or none when they cannot be had.
 fn buffer(n: usize) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
@@ -1313,8 +1408,17 @@ type Frame = (Vec<u8>, u32);
 /// The frames of a GIF as whole pictures (straight RGBA, the size of the
 /// logical screen), each with its delay in milliseconds: every frame is
 /// drawn on what the ones before left, as its disposal says. Only the
-/// first unless `all`.
+/// first unless `all`. Every frame kept, and every copy of the canvas, is
+/// counted against [`ANIMATION_BUDGET`] before it is made.
 fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<Frame>), String> {
+    decode_gif_within(bytes, all, ANIMATION_BUDGET)
+}
+
+fn decode_gif_within(
+    bytes: &[u8],
+    all: bool,
+    budget: AnimationBudget,
+) -> Result<(u32, u32, Vec<Frame>), String> {
     let mut options = gif::DecodeOptions::new();
     options.set_color_output(gif::ColorOutput::RGBA);
     let mut dec = options
@@ -1327,11 +1431,38 @@ fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<Frame>), String>
     if !fits((w as u32, h as u32)) {
         return Err(TOO_LARGE.to_owned());
     }
-    let mut canvas = buffer(w * h * 4)?;
-    canvas.resize(w * h * 4, 0);
+    let size = w * h * 4;
+    let mut canvas = buffer(size)?;
+    canvas.resize(size, 0);
+    // Bytes of the frames kept, and of everything held with them.
+    let (mut kept, mut held) = (0usize, size);
+    let mut take = |kept_too: bool, held_now: usize| -> Result<(), String> {
+        let more_kept = if kept_too { size } else { 0 };
+        match (kept.checked_add(more_kept), held_now.checked_add(size)) {
+            (Some(k), Some(h)) if k <= budget.kept && h <= budget.held => {
+                kept = k;
+                Ok(())
+            }
+            _ => Err(TOO_LARGE.to_owned()),
+        }
+    };
+    let copy = |canvas: &[u8]| -> Result<Vec<u8>, String> {
+        let mut out = buffer(size)?;
+        out.extend_from_slice(canvas);
+        Ok(out)
+    };
     let mut out = Vec::new();
     while let Some(frame) = dec.read_next_frame().map_err(|e| e.to_string())? {
-        let before = (frame.dispose == gif::DisposalMethod::Previous).then(|| canvas.clone());
+        if out.len() >= budget.frames {
+            return Err(TOO_LARGE.to_owned());
+        }
+        let before = if all && frame.dispose == gif::DisposalMethod::Previous {
+            take(false, held)?;
+            Some(copy(&canvas)?)
+        } else {
+            None
+        };
+        let held_now = held + before.as_ref().map_or(0, Vec::len);
         let (left, top) = (usize::from(frame.left), usize::from(frame.top));
         let fw = usize::from(frame.width);
         let rows = frame.buffer.chunks_exact(fw.max(1) * 4);
@@ -1354,10 +1485,13 @@ fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<Frame>), String>
             0 => GIF_DEFAULT_DELAY_MS,
             ms => ms,
         };
-        out.push((canvas.clone(), delay));
         if !all {
+            out.push((canvas, delay));
             break;
         }
+        take(true, held_now)?;
+        out.push((copy(&canvas)?, delay));
+        held += size;
         match (frame.dispose, before) {
             (gif::DisposalMethod::Previous, Some(before)) => canvas = before,
             (gif::DisposalMethod::Background, _) => {
@@ -1675,6 +1809,11 @@ mod tests {
 
     /// A 3 by 2 GIF of one colour a frame, each frame `delay` hundredths.
     fn gif(colours: &[[u8; 3]], delay: u16) -> Vec<u8> {
+        disposed_gif(colours, delay, gif::DisposalMethod::Keep)
+    }
+
+    /// [`gif`] with every frame disposed of as `dispose` says.
+    fn disposed_gif(colours: &[[u8; 3]], delay: u16, dispose: gif::DisposalMethod) -> Vec<u8> {
         let palette: Vec<u8> = colours.iter().flatten().copied().collect();
         let mut out = Vec::new();
         {
@@ -1684,6 +1823,7 @@ mod tests {
                     width: 3,
                     height: 2,
                     delay,
+                    dispose,
                     buffer: std::borrow::Cow::Owned(vec![u8::try_from(i).unwrap(); 6]),
                     ..gif::Frame::default()
                 };
@@ -2288,6 +2428,117 @@ mod tests {
             too_large_for(url).map(|_| ())
         );
         assert_eq!(decode_gif(&gif, false).err().as_deref(), Some(TOO_LARGE));
+        // Nor is it decoded when every frame is asked for.
+        assert_eq!(
+            load_bytes(url, &gif, every_frame()).map(|_| ()),
+            too_large_for(url).map(|_| ())
+        );
+        assert_eq!(decode_gif(&gif, true).err().as_deref(), Some(TOO_LARGE));
+    }
+
+    fn every_frame() -> Request {
+        Request {
+            animated: true,
+            ..Request::default()
+        }
+    }
+
+    /// One 3 by 2 frame at four bytes a pixel.
+    const FRAME: usize = 3 * 2 * 4;
+
+    fn budget(frames: usize, kept: usize, held: usize) -> AnimationBudget {
+        AnimationBudget { frames, kept, held }
+    }
+
+    #[test]
+    fn an_animation_costs_every_frame_and_its_canvas() {
+        let three = gif(&RGB, 10);
+        assert_eq!(gif_frames(&three), 3);
+        // Three frames, the canvas and the copy a frame to be undone keeps.
+        assert_eq!(cost(&three, every_frame()), FRAME * 5);
+        // Still, it costs one picture and what it is made from, as before.
+        assert_eq!(cost(&three, Request::default()), FRAME * 2);
+        // Each frame made larger to cover is counted again.
+        let larger = Request {
+            animated: true,
+            ..ask(6, 4, true)
+        };
+        assert_eq!(cost(&three, larger), FRAME * 5 + FRAME * 4 * 3);
+    }
+
+    #[test]
+    fn an_animation_of_more_frames_than_allowed_is_refused_before_it_is_decoded() {
+        let mut bytes = Vec::new();
+        {
+            let mut enc = gif::Encoder::new(&mut bytes, 1, 1, &[0, 0, 0]).unwrap();
+            let frame = gif::Frame {
+                width: 1,
+                height: 1,
+                buffer: std::borrow::Cow::Owned(vec![0]),
+                ..gif::Frame::default()
+            };
+            for _ in 0..=MOST_FRAMES {
+                enc.write_frame(&frame).unwrap();
+            }
+        }
+        // A few hundred kilobytes for frames of one pixel each.
+        assert!(bytes.len() < 1 << 20);
+        assert_eq!(gif_frames(&bytes), MOST_FRAMES + 1);
+        assert_eq!(cost(&bytes, every_frame()), usize::MAX);
+        let url = "file:///many.gif";
+        assert_eq!(
+            load_bytes(url, &bytes, every_frame()).map(|_| ()),
+            too_large_for(url).map(|_| ())
+        );
+        // The decoder stops at the frame past its budget, too.
+        let three = gif(&RGB, 10);
+        assert_eq!(
+            decode_gif_within(&three, true, budget(2, usize::MAX, usize::MAX))
+                .err()
+                .as_deref(),
+            Some(TOO_LARGE)
+        );
+        // Its still picture is its first frame, as ever.
+        assert!(load_bytes(url, &bytes, Request::default()).is_ok());
+    }
+
+    #[test]
+    fn the_frames_kept_are_held_to_one_pictures_budget() {
+        let three = gif(&RGB, 10);
+        let decode = |kept| decode_gif_within(&three, true, budget(10, kept, usize::MAX));
+        assert_eq!(decode(FRAME * 3).unwrap().2.len(), 3);
+        assert_eq!(decode(FRAME * 3 - 1).err().as_deref(), Some(TOO_LARGE));
+        // Every frame made larger than the budget allows together is
+        // refused before any is made larger: each alone would fit.
+        let url = "file:///three.gif";
+        let larger = Request {
+            animated: true,
+            ..ask(5_000, 5_000, true)
+        };
+        let each = requested_size((3, 2), larger);
+        assert_eq!(each, (7_500, 5_000));
+        assert!(fits(each));
+        assert!(each.0 as usize * each.1 as usize * 4 * 3 > MOST_PIXEL_BYTES);
+        assert_eq!(
+            load_bytes(url, &three, larger).map(|_| ()),
+            too_large_for(url).map(|_| ())
+        );
+    }
+
+    #[test]
+    fn a_frame_to_be_undone_counts_the_copy_of_the_canvas_it_keeps() {
+        let kept = gif(&RGB[..2], 10);
+        let undone = disposed_gif(&RGB[..2], 10, gif::DisposalMethod::Previous);
+        // The canvas and two frames kept, at most.
+        let held = FRAME * 3;
+        let decode = |bytes| decode_gif_within(bytes, true, budget(10, usize::MAX, held));
+        assert_eq!(decode(&kept).unwrap().2.len(), 2);
+        // The second frame's copy of the canvas is one more than that.
+        assert_eq!(decode(&undone).err().as_deref(), Some(TOO_LARGE));
+        // Within budget, a frame to be undone is undone.
+        let (_, _, frames) = decode_gif(&undone, true).unwrap();
+        let firsts: Vec<&[u8]> = frames.iter().map(|(px, _)| &px[..4]).collect();
+        assert_eq!(firsts, [[255, 0, 0, 255], [0, 255, 0, 255]]);
     }
 
     #[test]
