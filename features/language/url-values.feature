@@ -77,3 +77,22 @@ Feature: A url as a script sees it
       | text           |
       | ("0" + ":0")   |
       | ("a b" + ":c") |
+
+  # Found by ljos-fuzz (bindings), buckets value:load:encoding and value:step:encoding.
+  @backlog
+  Scenario Outline: A url given <text> writes what an address cannot hold in percent codes
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property url address: <text>
+        property string seen: address
+      }
+      """
+    Then the property "seen" of "root" is "<seen>"
+
+    Examples:
+      | text                          | seen       |
+      | JSON.stringify([""])          | [%22%22]   |
+      | (JSON.stringify({}) + ".png") | %7B%7D.png |

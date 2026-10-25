@@ -26,6 +26,7 @@ Feature: A value a binding gives a property of another type
       | number       | text |
       | ("a" * 1)    | nan  |
       | (1 / 0)      | inf  |
+      | Math.log(0)  | -inf |
 
   # Bucket value:list<real>:Qt.tint.
   @backlog
@@ -59,18 +60,24 @@ Feature: A value a binding gives a property of another type
     And the property "rw" of "root" is 0
 
   # Buckets value:string:literal and warning:assign(qt-only):literal.
+  # Bucket warning:assign(qt-only):Unable_to_assign_QSizeF_to_QString for a size.
   @backlog
-  Scenario: A string given a point is empty and warned about
+  Scenario Outline: A string given a <type> is empty and warned about
     Given the QML:
       """qml
       import QtQuick
       Item {
         objectName: "root"
-        property string s: Qt.point(0, 0)
+        property string s: <value>
       }
       """
     Then the property "s" of "root" is ""
-    And the log has a warning matching "Unable to assign QPointF to QString"
+    And the log has a warning matching "Unable to assign <qt> to QString"
+
+    Examples:
+      | type  | value          | qt      |
+      | point | Qt.point(0, 0) | QPointF |
+      | size  | Qt.size(0, 0)  | QSizeF  |
 
   # Bucket value:var(array):pair.
   @backlog
@@ -191,6 +198,20 @@ Feature: A value a binding gives a property of another type
     Then the property "n" of "root" is 0
     And the log has a warning matching "Unable to assign .undefined. to int"
 
+  # Bucket warning:assign(qt-only):Unable_to_assign_[undefined]_to_double.
+  @backlog
+  Scenario: A real bound to undefined is zero and warned about
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property real n: "#000000".r
+      }
+      """
+    Then the property "n" of "root" is 0
+    And the log has a warning matching "Unable to assign .undefined. to double"
+
   # Bucket warning:assign(ljos-only):Unable_to_assign_QString_to_font.
   @backlog
   Scenario: A font given text takes it as its family and is not warned about
@@ -282,3 +303,17 @@ Feature: A value a binding gives a property of another type
       }
       """
     Then the property "text" of "root" is "AB"
+
+  # Bucket value:load:text-rounding.
+  @backlog
+  Scenario: A number halfway between two shortest texts is written with the even one
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<string> names: [0.50000762939453125]
+        property string seen: names[0]
+      }
+      """
+    Then the property "seen" of "root" is "0.5000076293945312"

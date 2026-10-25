@@ -227,3 +227,46 @@ Feature: Properties that hold an enumeration
         | "3"         |
         | null        |
         | [1, 2]      |
+
+  Rule: A number out of an enumeration's range is read as unsigned
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string given: "0"
+          Text { objectName: "text"; wrapMode: Number(root.given) }
+          Text {
+            objectName: "plain"
+            function bind() { wrapMode = Qt.binding(function () { return Number("x") }) }
+          }
+        }
+        """
+
+    # Found by ljos-fuzz (bindings), bucket value:step:int-range.
+    @backlog
+    Scenario Outline: A binding that gives <given> reads <read>
+      When the property "given" of "root" is set to <given>
+      Then the property "wrapMode" of "text" is <read>
+
+      Examples:
+        | given      | read       |
+        | "-1"       | 4294967295 |
+        | "-2"       | 4294967294 |
+        | "1e21"     | 4294967295 |
+        | "Infinity" | 4294967295 |
+
+    Scenario: A binding that gives NaN leaves the value as it was
+      When the property "given" of "root" is set to "NaN"
+      Then the property "wrapMode" of "text" is 0
+      And the log has a warning matching "Scenario.qml:5:\d+: Unable to assign double to \S*WrapMode$"
+
+    # Found by ljos-fuzz (bindings), bucket
+    # warning:assign(qt-only):Unable_to_assign_double_to_QQuickText::WrapMode.
+    @backlog
+    Scenario: A binding Qt.binding made that gives NaN at once leaves the value as it was
+      When the method "bind" of "plain" is called
+      Then the property "wrapMode" of "plain" is 0
+      And the log has a warning matching "Unable to assign double to \S*WrapMode$"

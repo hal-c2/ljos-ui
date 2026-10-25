@@ -81,3 +81,23 @@ Feature: A string given to an int property
       | "3"   | 4 |
       | "03"  | 4 |
       | "2"   | 3 |
+
+  # Found by ljos-fuzz (bindings), bucket value:step-readonly:text-int-range.
+  @backlog
+  Scenario Outline: A script that gives an int the string <value>, which is out of its range, gives the least int
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property int n: 3
+        function give() { n = <value> }
+      }
+      """
+    When the method "give" of "root" is called
+    Then the property "n" of "root" is -2147483648
+
+    Examples:
+      | value         |
+      | "3000000000"  |
+      | "-3000000000" |
