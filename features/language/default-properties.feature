@@ -157,3 +157,58 @@ Feature: Default properties of components
       And the property "inside" of "root" is "a,b"
       And the property "given" of "root" is "a,b"
       And the property "parentName" of "root" is "inner"
+
+  Rule: A default property of type Component makes a template of the child written in it
+
+    Scenario: A slot type's child is a component its user makes objects from
+      Given the file "Slot.qml":
+        """qml
+        import QtQuick
+        Item { default property Component delegate }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string made
+          Slot { id: slot; Text { text: "made from the slot" } }
+          Component.onCompleted: made = String(slot.delegate).startsWith("QQmlComponent")
+            + " " + slot.delegate.createObject(slot).text
+        }
+        """
+      Then the property "made" of "root" is "true made from the slot"
+      And the log has no warnings
+
+    Scenario: A slot type's child written in QML compiled at run time is a component too
+      Given the file "Slot.qml":
+        """qml
+        import QtQuick
+        Item { default property Component delegate }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string made
+          Component.onCompleted: {
+            let slot = Qt.createQmlObject('import QtQuick; Slot { Text { text: "made at run time" } }', root)
+            made = slot.delegate.createObject(slot).text
+          }
+        }
+        """
+      Then the property "made" of "root" is "made at run time"
+
+    Scenario: A default property an object declares for itself takes no child as a template
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string got
+          Item { id: own; default property Component content; Text { text: "lost" } }
+          Component.onCompleted: got = String(own.content)
+        }
+        """
+      Then the property "got" of "root" is "null"

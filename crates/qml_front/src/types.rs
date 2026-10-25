@@ -728,7 +728,7 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                 Kind::Component(key) => {
                     let shape = self.project.shape(&key)?;
                     if shape.has_default {
-                        return None;
+                        return shape.default_component.clone();
                     }
                     kind = self.root(&key, shape)?;
                 }

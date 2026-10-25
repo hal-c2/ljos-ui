@@ -115,6 +115,9 @@ pub struct Shape {
     /// Objects written inside an instance go somewhere the component says,
     /// not where its root type would put them.
     pub has_default: bool,
+    /// The default property, when the component declares it a `Component`:
+    /// a single object written inside an instance is a template for it.
+    pub default_component: Option<String>,
     /// `enum Theme { Light, Dark }`: the keys of each, in the order written,
     /// with their numbers.
     pub enums: HashMap<String, Vec<EnumKey>>,
@@ -412,6 +415,7 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
         functions: HashSet::new(),
         required: Vec::new(),
         has_default: false,
+        default_component: None,
         enums: HashMap::new(),
         ids: HashSet::new(),
         mentions: HashSet::new(),
@@ -431,6 +435,13 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
                     shape.required.push(name.clone());
                 }
                 shape.has_default |= property.is_default;
+                if property.is_default
+                    && property.type_name.as_ref().is_some_and(|type_name| {
+                        type_name.name.as_simple() == Some("Component") && !type_name.is_list
+                    })
+                {
+                    shape.default_component = Some(name.clone());
+                }
                 if let Some(type_name) = &property.type_name {
                     let alias = match &property.value {
                         Some(QmlBindingValue::Expression(expression))
