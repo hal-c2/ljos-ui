@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 
+use egui::emath::TSTransform;
 use egui::epaint::{ClippedPrimitive, ClippedShape, CornerRadius, Mesh, Primitive, Shape};
 use egui::{Rect, TextureId};
 use ljos_render::b0::ShaderPaint;
@@ -541,9 +542,8 @@ pub(crate) enum Frame {
 
 /// Where `shape` can draw: its edges are smoothed a pixel out.
 fn extent(shape: &ClippedShape, pixels_per_point: f32) -> Rect {
-    shape
-        .shape
-        .visual_bounding_rect()
+    // The clip rectangle is in the space the transform maps to.
+    (shape.transform_after_tessellation * shape.shape.visual_bounding_rect())
         .expand(1.0 / pixels_per_point)
         .intersect(shape.clip_rect)
 }
@@ -664,15 +664,12 @@ pub(crate) fn clip_to(shapes: &mut Vec<ClippedShape>, areas: &[Rect], pixels_per
         while let Some(clip_rect) = inside.next() {
             if inside.peek().is_none() {
                 // The last one takes the shape itself.
-                shapes.push(ClippedShape {
-                    clip_rect,
-                    shape: s.shape,
-                });
+                shapes.push(ClippedShape { clip_rect, ..s });
                 break;
             }
             shapes.push(ClippedShape {
                 clip_rect,
-                shape: s.shape.clone(),
+                ..s.clone()
             });
         }
     }
@@ -694,11 +691,16 @@ pub(crate) fn tessellate(
     let mut rest = Vec::new();
     let mut run: Vec<Arc<Mesh>> = Vec::new();
     let mut run_clip = Rect::NOTHING;
-    for ClippedShape { clip_rect, shape } in shapes {
-        let Shape::Mesh(mesh) = shape else {
-            end_run(&mut out, &mut run, run_clip);
-            rest.push(ClippedShape { clip_rect, shape });
-            continue;
+    for s in shapes {
+        // A mesh moved after tessellation is egui's to move.
+        let clip_rect = s.clip_rect;
+        let mesh = match s.shape {
+            Shape::Mesh(mesh) if s.transform_after_tessellation == TSTransform::IDENTITY => mesh,
+            shape => {
+                end_run(&mut out, &mut run, run_clip);
+                rest.push(ClippedShape { shape, ..s });
+                continue;
+            }
         };
         if !clip_rect.is_positive() || mesh.is_empty() {
             continue;
@@ -790,21 +792,18 @@ mod tests {
     use super::*;
 
     fn rect(x: f32) -> ClippedShape {
-        ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Rect(RectShape::filled(
+        ClippedShape::new(
+            Rect::EVERYTHING,
+            Shape::Rect(RectShape::filled(
                 Rect::from_min_size(Pos2::new(x, 0.0), vec2(10.0, 10.0)),
                 CornerRadius::ZERO,
                 Color32::RED,
             )),
-        }
+        )
     }
 
     fn mesh(mesh: &Arc<Mesh>) -> ClippedShape {
-        ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Mesh(Arc::clone(mesh)),
-        }
+        ClippedShape::new(Rect::EVERYTHING, Shape::Mesh(Arc::clone(mesh)))
     }
 
     /// Counts the frames drawn for a run of passes, as the shell decides.
@@ -872,13 +871,13 @@ mod tests {
     }
 
     fn shader(paint: &Arc<ShaderPaint>) -> ClippedShape {
-        ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Callback(egui::PaintCallback {
+        ClippedShape::new(
+            Rect::EVERYTHING,
+            Shape::Callback(egui::PaintCallback {
                 rect: Rect::from_min_size(Pos2::ZERO, vec2(10.0, 10.0)),
                 callback: Arc::clone(paint) as _,
             }),
-        }
+        )
     }
 
     #[test]
@@ -1004,14 +1003,14 @@ mod tests {
 
     #[test]
     fn a_shape_is_drawn_in_each_area_it_reaches_in_paint_order() {
-        let wide = ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Rect(RectShape::filled(
+        let wide = ClippedShape::new(
+            Rect::EVERYTHING,
+            Shape::Rect(RectShape::filled(
                 Rect::from_min_size(Pos2::ZERO, vec2(100.0, 10.0)),
                 CornerRadius::ZERO,
                 Color32::BLUE,
             )),
-        };
+        );
         let mut shapes = vec![wide, rect(0.0), rect(80.0)];
         let left = Rect::from_min_max(Pos2::ZERO, Pos2::new(10.0, 10.0));
         let right = Rect::from_min_max(Pos2::new(80.0, 0.0), Pos2::new(90.0, 10.0));
@@ -1036,13 +1035,15 @@ mod tests {
     #[test]
     fn each_shape_is_compared_only_with_the_areas_near_it() {
         // Two hundred bars, one a row, each with the area it moved in.
-        let bar = |row: f32| ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Rect(RectShape::filled(
-                Rect::from_min_size(Pos2::new(row * 3.0 % 700.0, row * 6.0), vec2(12.0, 3.0)),
-                CornerRadius::ZERO,
-                Color32::RED,
-            )),
+        let bar = |row: f32| {
+            ClippedShape::new(
+                Rect::EVERYTHING,
+                Shape::Rect(RectShape::filled(
+                    Rect::from_min_size(Pos2::new(row * 3.0 % 700.0, row * 6.0), vec2(12.0, 3.0)),
+                    CornerRadius::ZERO,
+                    Color32::RED,
+                )),
+            )
         };
         let mut shapes: Vec<_> = (0..200).map(|r| bar(r as f32)).collect();
         let areas: Vec<_> = shapes
@@ -1067,14 +1068,14 @@ mod tests {
 
     /// Row `i` of a list in `LIST`, at `y`.
     fn row(i: u8, y: f32) -> ClippedShape {
-        ClippedShape {
-            clip_rect: LIST,
-            shape: Shape::Rect(RectShape::filled(
+        ClippedShape::new(
+            LIST,
+            Shape::Rect(RectShape::filled(
                 Rect::from_min_size(Pos2::new(0.0, y), vec2(100.0, 10.0)),
                 CornerRadius::ZERO,
                 Color32::from_rgb(i * 20, 0, 0),
             )),
-        }
+        )
     }
 
     fn rows(from: f32) -> Vec<ClippedShape> {
@@ -1189,14 +1190,14 @@ mod tests {
 
     #[test]
     fn what_stays_over_a_moving_list_is_drawn_where_it_is_and_where_it_was_moved() {
-        let bar = ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Rect(RectShape::filled(
+        let bar = ClippedShape::new(
+            Rect::EVERYTHING,
+            Shape::Rect(RectShape::filled(
                 Rect::from_min_max(Pos2::new(95.0, 10.0), Pos2::new(100.0, 30.0)),
                 CornerRadius::ZERO,
                 Color32::BLUE,
             )),
-        };
+        );
         let (mut before, mut now) = (rows(0.0), rows(-3.0));
         before.push(bar.clone());
         now.push(bar.clone());
@@ -1209,14 +1210,14 @@ mod tests {
 
     #[test]
     fn a_background_under_a_moving_list_is_not_drawn_again() {
-        let back = ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Rect(RectShape::filled(
+        let back = ClippedShape::new(
+            Rect::EVERYTHING,
+            Shape::Rect(RectShape::filled(
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(200.0, 200.0)),
                 CornerRadius::ZERO,
                 Color32::WHITE,
             )),
-        };
+        );
         let (mut before, mut now) = (vec![back.clone()], vec![back]);
         before.extend(rows(0.0));
         now.extend(rows(-3.0));
@@ -1230,13 +1231,15 @@ mod tests {
 
     #[test]
     fn one_small_thing_moving_in_a_large_clip_is_drawn_where_it_moves() {
-        let dot = |x: f32| ClippedShape {
-            clip_rect: LIST,
-            shape: Shape::Rect(RectShape::filled(
-                Rect::from_min_size(Pos2::new(x, 50.0), vec2(4.0, 4.0)),
-                CornerRadius::ZERO,
-                Color32::RED,
-            )),
+        let dot = |x: f32| {
+            ClippedShape::new(
+                LIST,
+                Shape::Rect(RectShape::filled(
+                    Rect::from_min_size(Pos2::new(x, 50.0), vec2(4.0, 4.0)),
+                    CornerRadius::ZERO,
+                    Color32::RED,
+                )),
+            )
         };
         assert!(matches!(
             change(&[dot(10.0)], &[dot(12.0)]),

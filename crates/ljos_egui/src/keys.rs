@@ -41,6 +41,35 @@ pub fn map_key(k: Key, os: OperatingSystem) -> i32 {
         Key::Cut => key::CUT,
         Key::Paste => key::PASTE,
         Key::BrowserBack => key::BACK,
+        Key::BrowserForward => key::FORWARD,
+        Key::BrowserRefresh => key::REFRESH,
+        Key::BrowserSearch => key::SEARCH,
+        Key::BrowserHome => key::HOME_PAGE,
+        Key::BrowserFavorites => key::FAVORITES,
+        Key::BrowserStop => key::STOP,
+        Key::MediaPlayPause => key::MEDIA_TOGGLE_PLAY_PAUSE,
+        Key::MediaTrackNext => key::MEDIA_NEXT,
+        Key::MediaTrackPrevious => key::MEDIA_PREVIOUS,
+        Key::MediaStop => key::MEDIA_STOP,
+        Key::AudioVolumeMute => key::VOLUME_MUTE,
+        Key::AudioVolumeDown => key::VOLUME_DOWN,
+        Key::AudioVolumeUp => key::VOLUME_UP,
+        Key::LaunchMail => key::LAUNCH_MAIL,
+        Key::LaunchApp1 => key::LAUNCH_0,
+        Key::LaunchApp2 => key::LAUNCH_1,
+        Key::CapsLock => key::CAPS_LOCK,
+        Key::NumLock => key::NUM_LOCK,
+        Key::ScrollLock => key::SCROLL_LOCK,
+        Key::PrintScreen => key::PRINT,
+        Key::Pause => key::PAUSE,
+        Key::Menu => key::MENU,
+        Key::Eject => key::EJECT,
+        Key::Help => key::HELP,
+        Key::Power => key::POWER_OFF,
+        Key::Sleep => key::SLEEP,
+        Key::Clear => key::CLEAR,
+        // Qt has no code for it: the keyboard keeps it to itself.
+        Key::Fn => key::UNKNOWN,
         Key::ShiftLeft | Key::ShiftRight => key::SHIFT,
         Key::AltLeft | Key::AltRight => key::ALT,
         Key::ControlLeft | Key::ControlRight if mac => key::META,
@@ -323,6 +352,12 @@ mod tests {
             (Key::ControlRight, key::CONTROL),
             (Key::SuperLeft, key::META),
             (Key::BrowserBack, key::BACK),
+            (Key::BrowserForward, key::FORWARD),
+            (Key::MediaPlayPause, key::MEDIA_TOGGLE_PLAY_PAUSE),
+            (Key::AudioVolumeUp, key::VOLUME_UP),
+            (Key::CapsLock, key::CAPS_LOCK),
+            (Key::PrintScreen, key::PRINT),
+            (Key::Menu, key::MENU),
         ] {
             assert_eq!(map_key(k, NIX), qt, "{k:?}");
         }
@@ -332,7 +367,7 @@ mod tests {
     fn every_egui_key_has_a_code() {
         for k in Key::ALL {
             let qt = map_key(*k, NIX);
-            if *k != Key::IntlBackslash {
+            if !matches!(k, Key::IntlBackslash | Key::Fn) {
                 assert_ne!(qt, key::UNKNOWN, "{k:?}");
             }
         }

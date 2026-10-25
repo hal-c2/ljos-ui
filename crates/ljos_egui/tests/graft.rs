@@ -261,15 +261,15 @@ fn the_focus_is_not_on_the_graft_before_its_tree_is_there() {
 struct Quiet;
 
 impl accesskit_consumer::TreeChangeHandler for Quiet {
-    fn node_added(&mut self, _: &accesskit_consumer::Node) {}
-    fn node_updated(&mut self, _: &accesskit_consumer::Node, _: &accesskit_consumer::Node) {}
+    fn node_added(&mut self, _: &accesskit_consumer::NodeRef) {}
+    fn node_updated(&mut self, _: &accesskit_consumer::NodeRef, _: &accesskit_consumer::NodeRef) {}
     fn focus_moved(
         &mut self,
-        _: Option<&accesskit_consumer::Node>,
-        _: Option<&accesskit_consumer::Node>,
+        _: Option<&accesskit_consumer::NodeRef>,
+        _: Option<&accesskit_consumer::NodeRef>,
     ) {
     }
-    fn node_removed(&mut self, _: &accesskit_consumer::Node) {}
+    fn node_removed(&mut self, _: &accesskit_consumer::NodeRef) {}
 }
 
 /// The trees as an adapter of a focused window has them after `sent`.
@@ -329,17 +329,20 @@ fn the_focus_leaves_the_graft_while_the_window_s_focus_changes() {
     assert_eq!(adapter.state().focus_id(), Some(in_scene));
 }
 
-/// Why [`QmlView::release_graft_focus`] is there. When this stops
-/// panicking the adapters were mended (accesskit_consumer 0.39 is), and
-/// a host need not release the focus any more.
+/// Up to accesskit_consumer 0.38 this panicked ("is not in the node
+/// list"), which is why [`QmlView::release_graft_focus`] is there. The
+/// adapters of egui 0.37 take it; a host that still releases the focus
+/// first only sends one update more.
 #[test]
-#[should_panic(expected = "is not in the node list")]
-fn an_adapter_cannot_take_the_window_s_focus_changing_with_the_focus_in_a_graft() {
+fn an_adapter_takes_the_window_s_focus_changing_with_the_focus_in_a_graft() {
     let s = scene();
     let mut h = Host::new(&s);
     focus_in_the_scene(&mut h);
     let mut adapter = adapter_after(&h.sent);
+    let in_scene = adapter.state().focus_id();
     adapter.update_host_focus_state_and_process_changes(false, &mut Quiet);
+    adapter.update_host_focus_state_and_process_changes(true, &mut Quiet);
+    assert_eq!(adapter.state().focus_id(), in_scene);
 }
 
 #[test]

@@ -113,7 +113,7 @@ pub(crate) fn text_action(
 
 /// The egui id of run `index` of the text of a node.
 fn run_id(view: Id, key: NodeKey, index: usize) -> Id {
-    Id::new((view, key.0, "run", index))
+    view.with((key.0, "run", index))
 }
 
 /// Whether egui is building an AccessKit tree this pass.
@@ -128,7 +128,7 @@ pub(crate) fn listening(ui: &Ui) -> bool {
 /// The egui id of a node: the same item in the same view keeps it for as
 /// long as it lives, wherever it moves in the tree.
 pub(crate) fn node_id(view: Id, key: NodeKey) -> Id {
-    Id::new((view, key.0))
+    view.with(key.0)
 }
 
 /// Writes every node of `tree` under a node for the view. `rect` is where
@@ -151,7 +151,7 @@ pub(crate) fn emit(
     // every node gets one. They paint nothing and take no space.
     let mut host = ui.new_child(
         UiBuilder::new()
-            .id(view)
+            .scope_id(view)
             .max_rect(rect)
             .accessibility_parent(holder),
     );
@@ -169,7 +169,7 @@ pub(crate) fn emit(
         let max = Pos2::new(rect.min.x + b.x1 as f32, rect.min.y + b.y1 as f32);
         let _node_ui = host.new_child(
             UiBuilder::new()
-                .id(id)
+                .scope_id(id)
                 .max_rect(Rect::from_min_max(min, max))
                 .accessibility_parent(parent_id),
         );
@@ -203,7 +203,7 @@ pub(crate) fn emit(
             let rid = run_id(view, key, index);
             let _run_ui = host.new_child(
                 UiBuilder::new()
-                    .id(rid)
+                    .scope_id(rid)
                     .max_rect(Rect::from_min_max(min, max))
                     .accessibility_parent(id),
             );

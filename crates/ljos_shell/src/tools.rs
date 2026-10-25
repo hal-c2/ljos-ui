@@ -376,7 +376,7 @@ impl<M> ShellApp<M> {
 /// equal widths so the columns stand.
 fn paint_top(ui: &mut egui::Ui, top: &TopView) {
     let window = ui.max_rect();
-    egui::Area::new(egui::Id::new("ljos-top"))
+    egui::Area::new(egui::Id::unique("ljos-top"))
         .order(egui::Order::Foreground)
         .fixed_pos(window.right_top())
         .pivot(egui::Align2::RIGHT_TOP)

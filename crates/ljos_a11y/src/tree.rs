@@ -1264,7 +1264,7 @@ impl Tree {
         self.sent_focus = self.focus();
         TreeUpdate {
             nodes,
-            tree: Some(accesskit::Tree::new(NodeKey::ROOT.node_id())),
+            tree: Some(accesskit::TreeInfo::new(NodeKey::ROOT.node_id())),
             tree_id: accesskit::TreeId::ROOT,
             focus: self.sent_focus.unwrap_or(NodeKey::ROOT).node_id(),
         }

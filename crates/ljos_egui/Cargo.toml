@@ -23,7 +23,7 @@ egui_kittest = { workspace = true, features = ["wgpu"] }
 # tests/graft.rs reads the trees the way the platform adapters of this egui
 # do: the version accesskit_unix builds on, which is not the one kittest
 # wraps.
-accesskit_consumer = "0.36.0"
+accesskit_consumer = "0.39.1"
 png.workspace = true
 # tests/scripts.rs compiles a QML string; the crate never links the parser.
 ljos_compiler = { path = "../ljos_compiler" }

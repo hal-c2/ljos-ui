@@ -300,7 +300,7 @@ impl QmlView {
             scene,
             backend: EpaintBackend::new(),
             clock: Arc::new(SystemClock::new()),
-            id: Id::new(("ljos_qml_view", root)),
+            id: Id::unique(("ljos_qml_view", root)),
             resize: ResizeMode::default(),
             gate,
             pointer: PointerTrack::default(),
@@ -474,11 +474,12 @@ impl QmlView {
     /// is nothing to send. The host then asks for a pass, which says
     /// again where the focus is.
     ///
-    /// The adapters of this AccessKit (accesskit_consumer 0.36) take the
-    /// change of the window's focus for an update of egui's tree, and
-    /// name the focused node by the id it has in its own tree. With the
-    /// focus inside the grafted tree that id is none of egui's, and the
-    /// adapter panics. So the focus leaves the graft first.
+    /// The adapters up to accesskit_consumer 0.38 took the change of the
+    /// window's focus for an update of egui's tree, and named the focused
+    /// node by the id it has in its own tree. With the focus inside the
+    /// grafted tree that id is none of egui's, and the adapter panicked.
+    /// Those of egui 0.37 (consumer 0.39) do not; the release is kept for
+    /// a host on an older adapter, and costs one update.
     pub fn release_graft_focus(&mut self) -> Option<egui::accesskit::TreeUpdate> {
         let root = self.graft_focus.take()?;
         Some(egui::accesskit::TreeUpdate {
@@ -593,10 +594,9 @@ impl QmlView {
     }
 
     /// How long until the scene wants its next pass, as the last pass
-    /// left it; `None` when it waits for nothing. egui shortens a delayed
-    /// repaint by a frame, for a host whose drawing waits for the
-    /// display; a host that did not draw a pass waits for this instead.
-    /// It is early by as much as a pass may be (see
+    /// left it; `None` when it waits for nothing. A host that did not draw
+    /// a pass waits for this, not for what it was asked: it is early by
+    /// as much as a pass may be (see
     /// [`QmlView::set_refresh_rate`]), so that such a host asks for the
     /// display's frame in time.
     pub fn wakes_in(&self) -> Option<Duration> {
@@ -1181,9 +1181,11 @@ impl QmlView {
                     unit,
                     delta,
                     phase,
+                    source,
                     modifiers,
                 } => {
-                    let scroll = map_wheel(&mut self.wheel, *unit, *delta, *phase, rect.size());
+                    let scroll =
+                        map_wheel(&mut self.wheel, *unit, *delta, *phase, *source, rect.size());
                     // The event has no position of its own: it is for
                     // what the pointer is over.
                     let Some(p) = ui.input(|i| i.pointer.latest_pos()).filter(|p| over(*p)) else {

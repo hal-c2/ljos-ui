@@ -2051,20 +2051,19 @@ impl RenderBackend for EpaintBackend {
             let (node, clip) = match drawn {
                 Drawn::Node(node, clip) => (node, clip),
                 Drawn::Solid(clip_rect, rect, color) => {
-                    sink.shapes.push(ClippedShape {
+                    sink.shapes.push(ClippedShape::new(
                         clip_rect,
-                        shape: Shape::Rect(RectShape::filled(rect, CornerRadius::ZERO, color)),
-                    });
+                        Shape::Rect(RectShape::filled(rect, CornerRadius::ZERO, color)),
+                    ));
                     continue;
                 }
             };
             let ne = self.nodes.get_mut(node).expect("present");
             for seg in &mut ne.segs {
                 match seg {
-                    WorldSeg::Mesh(m) => sink.shapes.push(ClippedShape {
-                        clip_rect: clip,
-                        shape: Shape::Mesh(Arc::clone(m)),
-                    }),
+                    WorldSeg::Mesh(m) => sink
+                        .shapes
+                        .push(ClippedShape::new(clip, Shape::Mesh(Arc::clone(m)))),
                     WorldSeg::Image(seg) => {
                         let Some(ctx) = sink.ctx else {
                             stats.warnings += 1;
@@ -2088,10 +2087,8 @@ impl RenderBackend for EpaintBackend {
                             place_uvs(mesh, seg.placed, uv);
                             seg.placed = uv;
                         }
-                        sink.shapes.push(ClippedShape {
-                            clip_rect: clip,
-                            shape: Shape::Mesh(Arc::clone(&seg.mesh)),
-                        });
+                        sink.shapes
+                            .push(ClippedShape::new(clip, Shape::Mesh(Arc::clone(&seg.mesh))));
                     }
                     WorldSeg::Shape(s) => {
                         let mesh = self.shapes.draw(
@@ -2106,10 +2103,7 @@ impl RenderBackend for EpaintBackend {
                             self.textured.insert(node);
                         }
                         if let Some(mesh) = mesh {
-                            sink.shapes.push(ClippedShape {
-                                clip_rect: clip,
-                                shape: Shape::Mesh(mesh),
-                            });
+                            sink.shapes.push(ClippedShape::new(clip, Shape::Mesh(mesh)));
                         }
                     }
                     WorldSeg::Shader(seg) => {
@@ -2153,13 +2147,13 @@ impl RenderBackend for EpaintBackend {
                             }));
                         }
                         let Some(paint) = &seg.paint else { continue };
-                        sink.shapes.push(ClippedShape {
-                            clip_rect: clip,
-                            shape: Shape::Callback(PaintCallback {
+                        sink.shapes.push(ClippedShape::new(
+                            clip,
+                            Shape::Callback(PaintCallback {
                                 rect: erect(seg.to_screen.transform_rect_bbox(seg.rect)),
                                 callback: Arc::clone(paint) as _,
                             }),
-                        });
+                        ));
                     }
                     WorldSeg::Glyphs(g) => {
                         if sink.ctx.is_none() {
@@ -2178,10 +2172,8 @@ impl RenderBackend for EpaintBackend {
                         if let Some(m) = g.mesh_for(generation, clip)
                             && !m.is_empty()
                         {
-                            sink.shapes.push(ClippedShape {
-                                clip_rect: clip,
-                                shape: Shape::Mesh(Arc::clone(m)),
-                            });
+                            sink.shapes
+                                .push(ClippedShape::new(clip, Shape::Mesh(Arc::clone(m))));
                         }
                     }
                     WorldSeg::Text {
@@ -2213,10 +2205,8 @@ impl RenderBackend for EpaintBackend {
                         let shape =
                             TextShape::new(Pos2::new(x as f32, rect.y0 as f32), galley, *color)
                                 .with_opacity_factor(*opacity);
-                        sink.shapes.push(ClippedShape {
-                            clip_rect: clip,
-                            shape: Shape::Text(shape),
-                        });
+                        sink.shapes
+                            .push(ClippedShape::new(clip, Shape::Text(shape)));
                     }
                 }
             }

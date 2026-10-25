@@ -1257,13 +1257,13 @@ pub(crate) fn fill_rects(
             }
             Fill::Clear(clip_rect, rect, color) => {
                 quads_into_mesh(&mut shapes, &mut run);
-                shapes.push(ClippedShape {
+                shapes.push(ClippedShape::new(
                     clip_rect,
-                    shape: Shape::Callback(PaintCallback {
+                    Shape::Callback(PaintCallback {
                         rect,
                         callback: Arc::new(Clear(color)),
                     }),
-                });
+                ));
             }
         }
     }
@@ -1352,10 +1352,7 @@ fn quads_into_mesh(shapes: &mut Vec<ClippedShape>, run: &mut Vec<(egui::Rect, eg
     for &(r, color) in run.iter() {
         mesh.add_colored_rect(r, color);
     }
-    shapes.push(ClippedShape {
-        clip_rect: egui::Rect::EVERYTHING,
-        shape: Shape::mesh(mesh),
-    });
+    shapes.push(ClippedShape::new(egui::Rect::EVERYTHING, Shape::mesh(mesh)));
     run.clear();
 }
 
@@ -1381,14 +1378,14 @@ mod tests {
     use super::*;
 
     fn rect(min: [f32; 2], max: [f32; 2], fill: Color32) -> ClippedShape {
-        ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Rect(RectShape::filled(
+        ClippedShape::new(
+            Rect::EVERYTHING,
+            Shape::Rect(RectShape::filled(
                 Rect::from_min_max(pos2(min[0], min[1]), pos2(max[0], max[1])),
                 CornerRadius::ZERO,
                 fill,
             )),
-        }
+        )
     }
 
     fn cleared(shapes: &[ClippedShape]) -> Vec<bool> {
@@ -1621,13 +1618,13 @@ mod tests {
 
     #[test]
     fn a_clear_stays_after_what_it_covers_and_after_other_callbacks() {
-        let other = ClippedShape {
-            clip_rect: Rect::EVERYTHING,
-            shape: Shape::Callback(PaintCallback {
+        let other = ClippedShape::new(
+            Rect::EVERYTHING,
+            Shape::Callback(PaintCallback {
                 rect: Rect::from_min_max(pos2(0.0, 500.0), pos2(10.0, 510.0)),
                 callback: Arc::new(egui_glow::CallbackFn::new(|_, _| {})),
             }),
-        };
+        );
         let before = vec![
             label([0.0, 0.0], [50.0, 50.0]),
             // Covers the first label: drawn after it.

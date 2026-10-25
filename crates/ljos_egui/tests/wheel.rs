@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use egui::{Event, Modifiers, MouseWheelUnit, Pos2, Rect, TouchPhase, Vec2};
+use egui::{Event, Modifiers, MouseWheelSource, MouseWheelUnit, Pos2, Rect, TouchPhase, Vec2};
 use egui_kittest::Harness;
 use ljos_egui::{QmlView, ResizeMode};
 use ljos_engine::{Engine, ObjectId, QmlType, Value};
@@ -102,7 +102,7 @@ fn in_scroll_area(e: &Rc<Engine>, root: ObjectId) -> Harness<'static, State> {
                     st.rect = st.view.show(ui).rect;
                     ui.allocate_space(Vec2::new(100.0, 850.0));
                 });
-                st.outer = out.state.offset.y;
+                st.outer = out.state.clamped_offset().y;
             },
             state(e, root),
         );
@@ -119,6 +119,7 @@ fn wheel(unit: MouseWheelUnit, x: f32, y: f32, phase: TouchPhase) -> Event {
         unit,
         delta: Vec2::new(x, y),
         phase,
+        source: MouseWheelSource::Unknown,
         modifiers: Modifiers::NONE,
     }
 }

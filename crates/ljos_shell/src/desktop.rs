@@ -277,7 +277,7 @@ struct Slot {
     undrawn: u32,
     /// Passes that were not drawn asked for the next at once: it waits
     /// until here, a frame later, as a drawn one waits for the display;
-    /// or until the scene's next timer, which egui asked for a frame early.
+    /// or until the scene's next timer.
     held: Option<Instant>,
     /// The frame part of `held`: what a pass asked for at once waits for.
     paced: Option<Instant>,
@@ -401,8 +401,8 @@ impl Slot {
 
     /// A pass changed nothing to draw; the scene wants the next in
     /// `wake`. Drawn passes are paced by the display, which this one did
-    /// not wait for: the next waits for the scene, whose request egui
-    /// made a frame early. One that comes at once is let through (what
+    /// not wait for: the next waits for the scene
+    /// (`QmlView::wakes_in`). One that comes at once is let through (what
     /// the pass changed is laid out and shown by the next), and from the
     /// second in a row they wait a frame, so that a scene
     /// whose animations show nothing does not spin. A scene that asks for
@@ -1518,6 +1518,9 @@ impl<M: Send + 'static> Desktop<M> {
                 }
                 // Pictures of a window are the development tools' to take.
                 egui_winit::ActionRequested::Screenshot(_) => continue,
+                // A hidden window shows nothing; the Engine's own dirty
+                // state, not a widget, says when a frame is painted.
+                egui_winit::ActionRequested::PaintWhileHidden => continue,
             };
             surface.state.egui_input_mut().events.push(event);
         }
@@ -1691,10 +1694,12 @@ impl<M: Send + 'static> Desktop<M> {
             return;
         };
         if slot.told && matches!(event, WindowEvent::Focus(_)) {
-            // An adapter cannot take the window's focus changing while
-            // the focus is in the scene's tree
-            // (`QmlView::release_graft_focus`); the pass the change asks
-            // for says where it is. An adapter that was not told the
+            // The adapters before egui 0.37 could not take the window's
+            // focus changing while the focus is in the scene's tree
+            // (`QmlView::release_graft_focus`); those of 0.37 can, and the
+            // release stays until a screen reader on a desktop has been
+            // heard to do without it. The pass the change asks for says
+            // where it is. An adapter that was not told the
             // trees has no focus to release, and must not hear of one
             // before it hears of them.
             let view = match slot.view.as_mut() {

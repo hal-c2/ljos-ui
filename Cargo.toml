@@ -45,15 +45,18 @@ postcard = { version = "1.1", features = ["alloc"] }
 # Without egui's own fonts (1.4 MB of Ubuntu Light, Hack and two emoji
 # fonts): text is drawn by ljos_text, and the shell gives egui the family
 # it bundles for what little egui draws itself.
-egui = { version = "0.36.2", default-features = false }
-eframe = "0.36.2"
-egui_kittest = "0.36.2"
+egui = { version = "0.37.0", default-features = false }
+# Without eframe's defaults: since 0.37 they bring egui's system font
+# provider, whose fontique asks for fontconfig by dlopen and so takes away
+# the linked symbols ljos_text and parley's fontique use.
+eframe = { version = "0.37.0", default-features = false, features = ["accesskit", "wayland", "x11"] }
+egui_kittest = "0.37.0"
 # ljos_shell's GL painter: the versions eframe's glow painter brings.
-egui_glow = "0.36.2"
+egui_glow = "0.37.0"
 glow = "0.17.0"
 glutin = { version = "0.32.3", default-features = false, features = ["egl", "wayland", "x11"] }
 # Must match egui's accesskit: its types do not interoperate across minor versions.
-accesskit = "0.24.1"
+accesskit = "0.25.0"
 vello_cpu = "0.3"
 hayro = "0.8.0"
 parley = "0.12"

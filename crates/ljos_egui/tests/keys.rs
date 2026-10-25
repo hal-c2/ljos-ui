@@ -157,7 +157,7 @@ struct State {
 }
 
 fn field_id() -> Id {
-    Id::new("the field before")
+    Id::unique("the field before")
 }
 
 fn harness(s: &Scene, policy: KeyboardPolicy, around: Around) -> Harness<'static, State> {
@@ -167,10 +167,14 @@ fn harness(s: &Scene, policy: KeyboardPolicy, around: Around) -> Harness<'static
         .with_keyboard_policy(policy);
     let mut h = Harness::builder()
         .with_size(Vec2::new(260.0, 200.0))
+        // egui brings no fonts of its own here; its widgets around the view
+        // draw with Ljós's, as the shell's do.
+        .with_context_setup(|ctx| ctx.set_fonts(ljos_egui::font_definitions()))
         .build_ui_state(
             |ui, st: &mut State| {
                 if st.around.field_before {
-                    ui.add(egui::TextEdit::singleline(&mut st.text).id(field_id()));
+                    ui.add(egui::TextEdit::singleline(&mut st.text).id(field_id()))
+                        .accessible_name("The field before");
                 }
                 st.view.show(ui);
                 ui.input(|i| {
@@ -194,7 +198,7 @@ fn harness(s: &Scene, policy: KeyboardPolicy, around: Around) -> Harness<'static
                     let _ = ui.button("After");
                 }
                 if st.around.modal {
-                    egui::Modal::new(Id::new("a dialog")).show(ui.ctx(), |ui| {
+                    egui::Modal::new(Id::unique("a dialog")).show(ui.ctx(), |ui| {
                         ui.label("Sure?");
                     });
                 }

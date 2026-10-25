@@ -30,8 +30,8 @@ egui.workspace = true
 # workspace pins; the versions are egui's. wgpu draws where there is no
 # EGL, or where GL cannot be had (LJOS_PAINTER=wgpu asks for it).
 # Not its clipboard: the platform's is the system's (see desktop.rs).
-egui-winit = { version = "0.36.2", default-features = false, features = ["accesskit", "links", "wayland", "x11"] }
-egui-wgpu = { version = "0.36.2", features = ["winit", "wayland", "x11"] }
+egui-winit = { version = "0.37.0", default-features = false, features = ["accesskit", "links", "wayland", "x11"] }
+egui-wgpu = { version = "0.37.0", features = ["winit", "wayland", "x11"] }
 # Surface creation is asynchronous in wgpu and immediate on the desktop.
 pollster = "1.0.1"
 thiserror.workspace = true

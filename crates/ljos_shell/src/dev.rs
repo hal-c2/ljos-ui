@@ -359,7 +359,7 @@ impl<M> ShellApp<M> {
             return;
         };
         let window = ui.max_rect();
-        egui::Area::new(egui::Id::new("ljos-reload-error"))
+        egui::Area::new(egui::Id::unique("ljos-reload-error"))
             .order(egui::Order::Foreground)
             .fixed_pos(window.left_bottom())
             .pivot(egui::Align2::LEFT_BOTTOM)

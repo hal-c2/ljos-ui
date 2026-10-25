@@ -266,7 +266,7 @@ fn ids_come_from_the_view_and_the_item() {
     assert_eq!(h.state().view.accessible_id(s.root), None);
     let other = QmlView::new(Rc::clone(&s.engine), s.root)
         .unwrap()
-        .with_id(egui::Id::new("another view"));
+        .with_id(egui::Id::unique("another view"));
     assert_eq!(other.accessible_id(s.save), None);
 }
 

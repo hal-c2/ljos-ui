@@ -1,7 +1,7 @@
 //! egui pointer vocabulary to `ljos_quick`'s egui-free one.
 
 use egui::os::OperatingSystem;
-use egui::{MouseWheelUnit, PointerButton, TouchPhase, Vec2};
+use egui::{MouseWheelSource, MouseWheelUnit, PointerButton, TouchPhase, Vec2};
 use ljos_quick::{Modifiers, MouseButtons, ScrollPhase, WheelEvent};
 use ljos_render::kurbo;
 
@@ -64,6 +64,7 @@ pub fn map_wheel(
     unit: MouseWheelUnit,
     delta: Vec2,
     phase: TouchPhase,
+    source: MouseWheelSource,
     page: Vec2,
 ) -> Scroll {
     let v = |x: f32, y: f32| kurbo::Vec2::new(f64::from(x), f64::from(y));
@@ -73,14 +74,18 @@ pub fn map_wheel(
         MouseWheelUnit::Page => (kurbo::Vec2::ZERO, v(delta.x * page.x, delta.y * page.y)),
     };
     let phase = match phase {
+        // The platform keeps the content going after the fingers left;
+        // Qt calls that its own phase. egui knows it only on macOS, and
+        // elsewhere it looks like a wheel.
+        TouchPhase::End | TouchPhase::Cancel if source == MouseWheelSource::Momentum => {
+            ScrollPhase::End
+        }
+        _ if source == MouseWheelSource::Momentum => ScrollPhase::Momentum,
         TouchPhase::Start => {
             track.in_gesture = true;
             ScrollPhase::Begin
         }
         TouchPhase::Move if track.in_gesture => ScrollPhase::Update,
-        // What the platform sends after the fingers left (it keeps the
-        // content going) looks like a wheel from here: egui does not tell
-        // the two apart.
         TouchPhase::Move => ScrollPhase::None,
         TouchPhase::End | TouchPhase::Cancel => {
             track.in_gesture = false;
@@ -101,7 +106,14 @@ mod tests {
     const PAGE: Vec2 = Vec2::new(300.0, 200.0);
 
     fn wheel(track: &mut WheelTrack, unit: MouseWheelUnit, x: f32, y: f32) -> Scroll {
-        map_wheel(track, unit, Vec2::new(x, y), TouchPhase::Move, PAGE)
+        map_wheel(
+            track,
+            unit,
+            Vec2::new(x, y),
+            TouchPhase::Move,
+            MouseWheelSource::Unknown,
+            PAGE,
+        )
     }
 
     #[test]
@@ -129,8 +141,17 @@ mod tests {
     fn only_an_announced_gesture_has_phases() {
         let mut t = WheelTrack::default();
         let unit = MouseWheelUnit::Point;
-        let mut phase =
-            |p: TouchPhase| map_wheel(&mut t, unit, Vec2::new(0.0, -4.0), p, PAGE).phase;
+        let mut phase = |p: TouchPhase| {
+            map_wheel(
+                &mut t,
+                unit,
+                Vec2::new(0.0, -4.0),
+                p,
+                MouseWheelSource::Unknown,
+                PAGE,
+            )
+            .phase
+        };
         assert_eq!(phase(TouchPhase::Move), ScrollPhase::None);
         assert_eq!(phase(TouchPhase::Start), ScrollPhase::Begin);
         assert_eq!(phase(TouchPhase::Move), ScrollPhase::Update);
@@ -140,6 +161,29 @@ mod tests {
         assert_eq!(phase(TouchPhase::Start), ScrollPhase::Begin);
         assert_eq!(phase(TouchPhase::Cancel), ScrollPhase::End);
         assert_eq!(phase(TouchPhase::Move), ScrollPhase::None);
+    }
+
+    /// macOS goes on scrolling after the fingers left, in a gesture of
+    /// its own; Qt shows it as `Qt.ScrollMomentum` until it ends.
+    #[test]
+    fn momentum_after_the_fingers_left_is_its_own_phase() {
+        let mut t = WheelTrack::default();
+        let unit = MouseWheelUnit::Point;
+        let mut phase = |p: TouchPhase, source| {
+            map_wheel(&mut t, unit, Vec2::new(0.0, -4.0), p, source, PAGE).phase
+        };
+        let fingers = MouseWheelSource::Trackpad;
+        let momentum = MouseWheelSource::Momentum;
+        assert_eq!(phase(TouchPhase::Start, fingers), ScrollPhase::Begin);
+        assert_eq!(phase(TouchPhase::Move, fingers), ScrollPhase::Update);
+        assert_eq!(phase(TouchPhase::End, fingers), ScrollPhase::End);
+        assert_eq!(phase(TouchPhase::Start, momentum), ScrollPhase::Momentum);
+        assert_eq!(phase(TouchPhase::Move, momentum), ScrollPhase::Momentum);
+        assert_eq!(phase(TouchPhase::End, momentum), ScrollPhase::End);
+        assert_eq!(
+            phase(TouchPhase::Move, MouseWheelSource::Wheel),
+            ScrollPhase::None
+        );
     }
 
     #[test]

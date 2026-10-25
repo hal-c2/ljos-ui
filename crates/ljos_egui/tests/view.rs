@@ -108,10 +108,6 @@ fn harness(s: &Scene, clock: Option<Arc<VirtualClock>>) -> Harness<'static, Stat
         )
 }
 
-/// egui_kittest's default `step_dt`, which egui uses as the predicted frame
-/// time.
-const STEP_DT: Duration = Duration::from_millis(250);
-
 fn repaint_delay(h: &Harness<'_, State>) -> Duration {
     h.output().viewport_output[&ViewportId::ROOT].repaint_delay
 }
@@ -513,23 +509,23 @@ fn a_timer_wakes_exactly_when_due() {
     }));
     h.run();
     assert_eq!(fired.get(), 0);
-    // egui reports the delay minus the predicted frame time, so the frame
-    // is ready on time.
-    assert_eq!(repaint_delay(&h), Duration::from_millis(1000) - STEP_DT);
+    // Since 0.37 egui reports the delay as it was asked for, and no longer
+    // a predicted frame early.
+    assert_eq!(repaint_delay(&h), Duration::from_millis(1000));
 
     let frames_before = h.state().view.stats().frames;
     // Passes before the deadline do not run the pipeline but keep the
     // delayed repaint alive.
     clock.advance_ms(400);
     h.step();
-    assert_eq!(repaint_delay(&h), Duration::from_millis(600) - STEP_DT);
+    assert_eq!(repaint_delay(&h), Duration::from_millis(600));
     assert_eq!(h.state().view.stats().frames, frames_before);
 
     // Behave like an event loop: sleep until egui's deadline, then run a
     // pass. Every wake must be a due tick, and then the loop must stop.
     let mut wakes = 0u32;
     while repaint_delay(&h) != Duration::MAX && wakes < 10 {
-        clock.advance(repaint_delay(&h) + STEP_DT);
+        clock.advance(repaint_delay(&h));
         h.step();
         wakes += 1;
         assert_eq!(fired.get(), wakes, "a wake that fired no tick");

@@ -66,7 +66,14 @@ fn harness(
     setup: impl FnOnce(&mut Setup<'_, String>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Harness<'static, ShellApp<String>> {
     let config = ShellConfig::default();
-    let mut h = sampling(Harness::builder().with_size(SIZE)).build_eframe(move |cc| {
+    // kittest wants every input of the tree named, and takes AccessKit's
+    // Splitter for one; a QML separator is a Splitter there (AccessKit has
+    // no separator) and has no name, in Qt neither. What the scene says is
+    // checked in features/accessibility.
+    let builder = Harness::builder()
+        .with_size(SIZE)
+        .with_accessibility_check(false);
+    let mut h = sampling(builder).build_eframe(move |cc| {
         ShellApp::new(&cc.egui_ctx, &config, Arc::new(SystemClock::new()), setup).unwrap()
     });
     h.run();
