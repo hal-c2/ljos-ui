@@ -24,8 +24,8 @@ use crate::top::{FrameStats, owner_name};
 
 pub const PROCESSES: &str = "\
 What does work, like Erlang's observer: threads (state, CPU time, wakeups), Timers, animations, \
-scheduler owners, the supervision tree, the last faults and what took each, and the mailboxes \
-to the UI thread (depth, age, refused), shown even when it is stuck. `kind` keeps one.";
+scheduler owners, the supervision tree, the last faults and what took each, and the UI thread's \
+mailboxes (depth, age, refused), even when stuck. `kind` keeps one; `waker`: what will wake it.";
 
 /// The most front messages `app_processes` names per inbox.
 pub const MAX_PEEK: usize = 20;
@@ -51,13 +51,19 @@ pub enum ProcessKind {
     /// The last faults (at most 32), in `faults`: where each happened and
     /// what took it.
     Fault,
+    /// What will wake the UI thread, each with its owner and where it is
+    /// declared: running Timers and animations, answers awaited (fetches,
+    /// files, media, dialogs), pictures loading, posted messages, and what
+    /// listens (file watchers). Only when asked for by name.
+    Waker,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessesArgs {
     /// List only this kind: `thread`, `timer`, `animation`, `owner`,
-    /// `mailbox`, `supervisor` or `fault`.
+    /// `mailbox`, `supervisor`, `fault`, or `waker` (what will wake the UI
+    /// thread, listed only when asked for).
     #[serde(default)]
     pub kind: Option<ProcessKind>,
     /// List only the mailboxes of this name (`application`, `platform`,
@@ -439,14 +445,160 @@ fn process_block(threads: usize) -> Value {
     json!({ "pid": std::process::id(), "threads": threads })
 }
 
-/// Answers `app_processes`, on the UI thread.
+/// Where `obj` is declared, `file:line:column`.
+pub(crate) fn declared_at(engine: &Engine, obj: ObjectId) -> Option<String> {
+    engine
+        .declared_at(obj)
+        .map(|at| at.trim_end_matches(": ").to_owned())
+}
+
+/// One row of what will wake the UI thread: `source` is what it is,
+/// `owner` the object it is for.
+fn waker(engine: &Engine, source: &str, owner: Option<ObjectId>, scheduled: bool) -> Value {
+    let mut row = json!({ "kind": "waker", "source": source, "scheduled": scheduled });
+    if let Some(o) = owner.filter(|o| engine.is_alive(*o)) {
+        let (name, locator) = label(engine, o);
+        row["name"] = json!(name);
+        row["handle"] = json!(super::objects::handle(o));
+        row["locator"] = json!(locator);
+        row["at"] = json!(declared_at(engine, o));
+    }
+    row
+}
+
+fn owner_text(row: &Value) -> String {
+    let name = row["name"].as_str().unwrap_or("");
+    match row["at"].as_str() {
+        Some(at) => format!("{name} at {at}"),
+        None if name.is_empty() => "the application".to_owned(),
+        None => name.to_owned(),
+    }
+}
+
+/// What will wake the UI thread, and its lines: rows that are scheduled
+/// (a Timer due, an animation running, an answer under way, a message
+/// posted) and rows that listen for news that may never come (a file
+/// watcher, a screen reader that may ask). A resting application has
+/// none of the first.
+fn waker_rows(engine: &Engine, watching: bool, text: &mut String) -> Vec<Value> {
+    let mut rows = Vec::new();
+    let now = engine.now();
+    for t in engine.running_timers() {
+        let due_in = t.due.map(|d| d.saturating_since(now));
+        let mut row = waker(engine, "timer", Some(t.object), t.due.is_some());
+        row["interval_ms"] = json!(t.interval);
+        row["repeat"] = json!(t.repeat);
+        row["due_in_us"] = json!(due_in.map(micros));
+        let _ = writeln!(
+            text,
+            "timer {}: every {} ms{}, {}",
+            owner_text(&row),
+            t.interval,
+            if t.repeat { "" } else { " once" },
+            match due_in {
+                Some(d) => format!("next in {:.1} ms", d.as_secs_f64() * 1000.0),
+                None => "frozen".to_owned(),
+            }
+        );
+        rows.push(row);
+    }
+    for (anim, paused) in ljos_quick::running_animations(engine) {
+        if paused {
+            continue;
+        }
+        let row = waker(engine, "animation", Some(anim), true);
+        let _ = writeln!(text, "animation {}: running, every frame", owner_text(&row));
+        rows.push(row);
+    }
+    for p in ljos_platform::Platform::of(engine).promises() {
+        let mut row = waker(engine, "answer", p.owner, !p.standing);
+        row["what"] = json!(p.what);
+        row["waited_us"] = json!(micros(p.since.elapsed()));
+        let _ = writeln!(
+            text,
+            "{} {}: {}, for {}, waited {:.1} ms",
+            if p.standing { "listens" } else { "answer" },
+            p.what,
+            if p.standing {
+                "may never come"
+            } else {
+                "under way"
+            },
+            owner_text(&row),
+            p.since.elapsed().as_secs_f64() * 1000.0
+        );
+        rows.push(row);
+    }
+    for load in ljos_quick::ImageStore::of(engine).loading() {
+        let mut row = waker(engine, "image", load.items.first().copied(), true);
+        row["url"] = json!(load.url);
+        row["waiting"] = json!(load.items.len());
+        row["queued"] = json!(load.queued);
+        let _ = writeln!(
+            text,
+            "image {}: {}, for {}{}",
+            load.url,
+            if load.queued { "queued" } else { "decoding" },
+            owner_text(&row),
+            if load.items.len() > 1 {
+                format!(" and {} more", load.items.len() - 1)
+            } else {
+                String::new()
+            }
+        );
+        rows.push(row);
+    }
+    // The inspector's own inbox holds the asking client, not the
+    // application's work.
+    for m in observe::mailboxes(0) {
+        if m.depth == 0 || m.name == "inspector" {
+            continue;
+        }
+        let mut row = waker(engine, "message", None, true);
+        row["mailbox"] = json!(m.name);
+        row["depth"] = json!(m.depth);
+        let _ = writeln!(text, "message: {} queued in {}", m.depth, m.name);
+        rows.push(row);
+    }
+    if watching {
+        let mut row = waker(engine, "watcher", None, false);
+        row["what"] = json!("QML files");
+        text.push_str("listens watcher: the QML files, for a change to reload\n");
+        rows.push(row);
+    }
+    rows
+}
+
+/// Answers `app_processes`, on the UI thread. `watching` is whether the
+/// host watches the QML files.
 pub(crate) fn processes(
     engine: &Engine,
     stats: &FrameStats,
     pending_requests: usize,
     queued_work: bool,
+    watching: bool,
     args: &ProcessesArgs,
 ) -> ToolReply {
+    if args.kind == Some(ProcessKind::Waker) {
+        let mut text = String::new();
+        let rows = waker_rows(engine, watching, &mut text);
+        let scheduled = rows.iter().filter(|r| r["scheduled"] == true).count();
+        let _ = writeln!(
+            text,
+            "{}",
+            match (scheduled, rows.len() - scheduled) {
+                (0, 0) => "nothing will wake the UI thread".to_owned(),
+                (0, n) => format!("nothing is scheduled to wake the UI thread; {n} listening"),
+                (s, n) => format!("{s} scheduled to wake the UI thread, {n} listening"),
+            }
+        );
+        let value = json!({
+            "processes": rows,
+            "scheduled": scheduled,
+            "listening": rows.len() - scheduled,
+        });
+        return ToolReply::from(value).with_text(text.trim_end().to_owned());
+    }
     let wants = |k: ProcessKind| args.kind.is_none_or(|w| w == k);
     let mut rows: Vec<Value> = Vec::new();
     let mut text = String::new();

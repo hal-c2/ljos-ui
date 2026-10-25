@@ -22,6 +22,7 @@ mcp = [
     "dep:serde_json",
     "dep:schemars",
     "dep:slotmap",
+    "dep:libc",
 ]
 
 [dependencies]
@@ -49,6 +50,11 @@ serde_json = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
 # A handle names an object by its generational key.
 slotmap = { workspace = true, optional = true }
+
+# glibc's allocator says what it holds in use and free, which splits what
+# `memory` cannot put to an owner.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The end-to-end test makes a scene of the right size.

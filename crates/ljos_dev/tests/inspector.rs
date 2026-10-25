@@ -1970,7 +1970,7 @@ fn app_frames_export_writes_a_trace_file_a_trace_viewer_reads() {
     let mut app = app_with(
         HOT,
         InspectorConfig {
-            exports: Some(traces.path().to_owned()),
+            exports: ljos_dev::mcp::TraceDir::At(traces.path().to_owned()),
             ..InspectorConfig::default()
         },
     );

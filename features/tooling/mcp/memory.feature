@@ -10,6 +10,9 @@ Feature: An agent reads where the application's memory is
   allocator view does: its objects by type, the script heap, the reactive
   graph, the text caches, and per window the scene's tree and display
   lists and what its renderer keeps, beside the process's resident bytes.
+  It is also broken down by owner, each with bytes and a count, and
+  reconciled with what is resident: the program, the owners, what the
+  allocator keeps free, and the rest, told as not attributed.
   Counts are exact. Bytes no allocator counts for us are estimates, and
   say so. Asking reads running counts and walks the objects once; nothing
   is kept up to date for it, so an application at rest stays at rest.
@@ -29,6 +32,7 @@ Feature: An agent reads where the application's memory is
           }
         }
         Timer { interval: 1000 }
+        ListModel { ListElement { name: "a" } ListElement { name: "b" } }
         Component.onCompleted: names = ["a", "b", "c"].map(function (n) { return n + n })
       }
       """
@@ -93,6 +97,38 @@ Feature: An agent reads where the application's memory is
     And the answer's "/windows/0/scene/lists" is at least 1
     And the answer's "/windows/0/scene/bytes" is at least 1
     And the answer's "/windows/0/render" is null
+
+  Scenario: Each owner says what it holds and how many of what
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
+    Then the answer's "/owners/0/owner" is "script"
+    And the answer's "/owners/0/bytes" is at least 1
+    And the answer's "/owners/0/count" is at least 1
+    And the answer's "/owners/0/of" is "objects"
+    And the answer's "/owners/8/owner" is "models"
+    And the answer's "/owners/8/count" is at least 2
+    And the answer's "/owners/8/bytes" is at least 1
+    And the answer's "/owners/9/owner" is "compiled"
+    And the answer's "/owners/9/count" is at least 1
+    And the answer's "/owners/9/bytes" is at least 1
+    And the answer's text contains "by owner:"
+
+  # Textures are told but not added: where there is a GPU they are there.
+  Scenario: The owners reconcile with what is resident
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
+    Then the answer's "/reconciled/resident_bytes" is at least 1
+    And the answer's "/reconciled/attributed_bytes" is at least 1
+    And the answer's "/reconciled/not_attributed_share" is at least 0
+    And the answer's "/owners/10/owner" is "program"
+    And the answer's "/owners/12/owner" is "not_attributed"
+    And the answer's "/owners/13/owner" is "textures"
+    And the answer's "/owners/13/gpu" is true
+    And the answer's text contains "not attributed:"
 
   Scenario: Each object says about how much it holds
     When the agent calls the tool "app_objects"

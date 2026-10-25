@@ -9,10 +9,11 @@ Feature: An agent keeps a recording as a trace file
   What `app_frames` recorded (the frames with their passes, the wakes,
   and the runs of bindings and handlers) can be kept as a trace file a
   standard trace viewer opens. `export` names the file; the application
-  writes it, whole or not at all, in the folder its host gave for trace
-  files (beside its token file, `target/ljos/traces/`), and the answer
-  says where and how much it holds. A client names a file, never a
-  place: a name with a folder in it is refused.
+  writes it, whole or not at all, in `traces` of its own per-user state
+  folder (on Linux `~/.local/state/<name>/traces/`, wherever it was
+  started from), and the answer says where and how much it holds. A
+  client names a file, never a place: a name with a folder in it is
+  refused.
 
   Background:
     Given the QML:
@@ -23,11 +24,12 @@ Feature: An agent keeps a recording as a trace file
         property int base: 1
         property int sum: base + 1
         Text { text: "sum " + parent.sum }
+        Component.onCompleted: Qt.application.name = "Counter"
       }
       """
     And the inspector is connected with the capabilities "inspect, mutate"
 
-  Scenario: The bindings recorded are written to a trace file
+  Scenario: The bindings recorded are written to a trace file in the application's state folder
     When the agent calls the tool "app_frames" with:
       """json
       {"bindings": true, "record": true}
@@ -40,7 +42,7 @@ Feature: An agent keeps a recording as a trace file
       """json
       {"export": "run-1"}
       """
-    Then the answer's "/path" matches "/run-1\.json$"
+    Then the answer's "/path" matches "/home/user/\.local/state/Counter/traces/run-1\.json$"
     And the answer's "/runs" is at least 2
     And the answer's text contains "open it in a trace viewer"
 

@@ -326,7 +326,7 @@
     "read_only": true
   },
   {
-    "description": "What does work, like Erlang's observer: threads (state, CPU time, wakeups), Timers, animations, scheduler owners, the supervision tree, the last faults and what took each, and the mailboxes to the UI thread (depth, age, refused), shown even when it is stuck. `kind` keeps one.",
+    "description": "What does work, like Erlang's observer: threads (state, CPU time, wakeups), Timers, animations, scheduler owners, the supervision tree, the last faults and what took each, and the UI thread's mailboxes (depth, age, refused), even when stuck. `kind` keeps one; `waker`: what will wake it.",
     "input_schema": {
       "$defs": {
         "ProcessKind": {
@@ -365,6 +365,11 @@
               "const": "fault",
               "description": "The last faults (at most 32), in `faults`: where each happened and\nwhat took it.",
               "type": "string"
+            },
+            {
+              "const": "waker",
+              "description": "What will wake the UI thread, each with its owner and where it is\ndeclared: running Timers and animations, answers awaited (fetches,\nfiles, media, dialogs), pictures loading, posted messages, and what\nlistens (file watchers). Only when asked for by name.",
+              "type": "string"
             }
           ]
         }
@@ -380,7 +385,7 @@
               "type": "null"
             }
           ],
-          "description": "List only this kind: `thread`, `timer`, `animation`, `owner`,\n`mailbox`, `supervisor` or `fault`."
+          "description": "List only this kind: `thread`, `timer`, `animation`, `owner`,\n`mailbox`, `supervisor`, `fault`, or `waker` (what will wake the UI\nthread, listed only when asked for)."
         },
         "mailbox": {
           "default": null,

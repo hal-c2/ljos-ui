@@ -5,17 +5,18 @@
 //! The application writes the file: a recording is up to 600 frames, 600
 //! wakes and 20 000 runs of bindings, more than an answer carries, and a
 //! client that is an agent has no file of its own to put pages into. It
-//! is written below the directory the host names for it (beside the
-//! token file, `target/ljos/traces/`), under a plain name the client
-//! gives: a client names a file but not a place, so a client that may
-//! only look cannot write anywhere else. Written whole or not at all.
+//! is written below the directory the host names for it ([`TraceDir`]:
+//! for an application, `traces` in its own per-user state directory),
+//! under a plain name the client gives: a client names a file but not a
+//! place, so a client that may only look cannot write anywhere else.
+//! Written whole or not at all.
 //!
 //! One process, three tracks: the frames with their passes and painting,
 //! the wakes, and the runs of bindings and handlers, nested as they ran.
 
 use std::fmt::Write as _;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ljos_engine::{Engine, HotKind};
@@ -29,6 +30,38 @@ pub(crate) const TID_WAKES: u32 = 2;
 pub(crate) const TID_BINDINGS: u32 = 3;
 /// The longest name a client may give.
 const MAX_NAME: usize = 64;
+
+/// Where trace files go.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum TraceDir {
+    /// Nowhere: `export` says the application was given no place.
+    #[default]
+    Nowhere,
+    /// This directory, as a host or a test names it.
+    At(PathBuf),
+    /// `traces` in the application's per-user state directory, as
+    /// `StandardPaths.StateLocation` names it: on Linux
+    /// `$XDG_STATE_HOME/<organization>/<name>/traces`, by default below
+    /// `~/.local/state`. Found when a file is written, so that the name the
+    /// application gives itself (`Qt.application.name`) is the one used.
+    PerUser,
+}
+
+impl TraceDir {
+    fn resolve(&self, engine: &Engine) -> Option<PathBuf> {
+        match self {
+            TraceDir::Nowhere => None,
+            TraceDir::At(dir) => Some(dir.clone()),
+            TraceDir::PerUser => {
+                let platform = ljos_platform::Platform::of(engine);
+                let (org, app) = platform.application(engine);
+                let env = platform.env();
+                let dir = ljos_platform::Location::State.writable(&env, &org, &app);
+                Some(env.real(&dir.join("traces")))
+            }
+        }
+    }
+}
 
 /// One trace event, with when it starts and, a slice, how long it lasts;
 /// its times are filled in once the earliest is known.
@@ -146,13 +179,13 @@ fn file_name(name: &str) -> Result<String, SurfaceError> {
 /// Writes what is recorded to `name` below `dir`.
 pub(crate) fn export(
     engine: &Engine,
-    dir: Option<&Path>,
+    dir: &TraceDir,
     name: &str,
     timeline: &super::timeline::Timeline,
     wakes: &super::wakes::Wakes,
 ) -> Result<ToolReply, SurfaceError> {
     let file = file_name(name)?;
-    let Some(dir) = dir else {
+    let Some(dir) = dir.resolve(engine) else {
         return Err(SurfaceError::unavailable(
             "`export`: this application was given no place for trace files",
         ));
@@ -199,7 +232,7 @@ pub(crate) fn export(
     }
     body.push_str("\n],\"displayTimeUnit\":\"ms\"}\n");
     let path = dir.join(&file);
-    write_whole(dir, &path, body.as_bytes()).map_err(|e| {
+    write_whole(&dir, &path, body.as_bytes()).map_err(|e| {
         SurfaceError::unavailable(format!(
             "`export`: {} could not be written: {e}",
             path.display()

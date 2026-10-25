@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 
 use super::act::to_json;
 use super::objects::handle;
+use super::observe::declared_at;
 use super::tools::text_property;
 use super::watch::ChangeFeed;
 
@@ -141,6 +142,33 @@ fn label(engine: &Engine, owner: ObjectId) -> String {
     }
 }
 
+/// The views that show a model, each with where it is declared, for a
+/// client to open.
+fn shown_by(engine: &Engine, views: &[ObjectId]) -> Vec<Value> {
+    views
+        .iter()
+        .map(|v| {
+            json!({
+                "view": handle(*v),
+                "name": label(engine, *v),
+                "at": declared_at(engine, *v),
+            })
+        })
+        .collect()
+}
+
+/// The views alive that show `model`, in the order of their places.
+fn views_of(engine: &Engine, model: &Rc<dyn ItemModel>) -> Vec<ObjectId> {
+    let mut views: Vec<ObjectId> = engine
+        .shown_models()
+        .into_iter()
+        .filter(|(_, m)| data_ptr(m) == data_ptr(model))
+        .map(|(v, _)| v)
+        .collect();
+    views.sort_by_key(|v| handle_order(*v));
+    views
+}
+
 /// One model as a line of text.
 fn line(engine: &Engine, f: &Found, ty: &str, count: usize, writable: bool) -> String {
     let mut line = if f.is_object {
@@ -160,6 +188,9 @@ fn line(engine: &Engine, f: &Found, ty: &str, count: usize, writable: bool) -> S
         let _ = write!(line, ", shown by {}", names.join(", "));
     }
     let _ = write!(line, " {}", handle(f.owner));
+    if let Some(at) = declared_at(engine, f.owner) {
+        let _ = write!(line, " at {at}");
+    }
     line
 }
 
@@ -187,6 +218,8 @@ pub(crate) fn list(engine: &Engine, max: Option<usize>, per_copy: usize) -> Tool
                     "roles": roles(&f.model),
                     "writable": writable,
                     "views": views,
+                    "shown_by": shown_by(engine, &f.views),
+                    "at": declared_at(engine, f.owner),
                 });
                 let line = line(engine, f, &ty, count, writable);
                 (row, line)
@@ -267,6 +300,8 @@ pub(crate) fn rows(
         let offset = offset.unwrap_or(0).min(count);
         let limit = limit.unwrap_or(DEFAULT_LIMIT);
         let names = roles(&model);
+        let views = shown_by(engine, &views_of(engine, &model));
+        let at = declared_at(engine, obj);
         let end = offset.saturating_add(limit).min(count);
         let all_rows: Vec<Value> = (offset..end)
             .map(|r| row_values(engine, &model, &names, r))
@@ -283,6 +318,8 @@ pub(crate) fn rows(
                 "offset": offset,
                 "rows": all_rows[..keep],
                 "next_offset": next,
+                "at": at,
+                "shown_by": views,
             });
             let mut text = format!(
                 "{} {}: rows {offset} to {} of {count}",

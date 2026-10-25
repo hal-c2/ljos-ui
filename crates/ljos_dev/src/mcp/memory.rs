@@ -6,6 +6,13 @@
 //! text caches, each scene and each renderer add up their own tables.
 //! Nothing is kept up to date for it, so an application at rest stays at
 //! rest. Bytes no allocator counts for us are estimates and say so.
+//!
+//! `owners` puts it together by owner, each with bytes and a count, so
+//! that it adds up to what is resident: the program and its libraries,
+//! each owner, what the allocator holds free, and what is left, which is
+//! not attributed. What a renderer keeps in textures is listed but left
+//! out of the sum: where there is a GPU it lives there, not in the
+//! process.
 
 use std::fmt::Write as _;
 
@@ -84,6 +91,76 @@ fn mib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }
 
+/// What glibc's allocator holds: in use by anyone, and freed but kept.
+#[derive(Clone, Copy, Debug)]
+struct Heap {
+    in_use: u64,
+    free: u64,
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn heap() -> Option<Heap> {
+    // SAFETY: mallinfo2 reads the allocator's own counts under its locks
+    // and takes nothing.
+    let m = unsafe { libc::mallinfo2() };
+    Some(Heap {
+        in_use: (m.uordblks + m.hblkhd) as u64,
+        free: m.fordblks as u64,
+    })
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn heap() -> Option<Heap> {
+    None
+}
+
+/// One owner: what it is, its bytes, how many of what it counts.
+fn owner(key: &str, label: &str, bytes: usize, count: usize, of: &str, approximate: bool) -> Value {
+    json!({
+        "owner": key,
+        "label": label,
+        "bytes": bytes,
+        "count": count,
+        "of": of,
+        "approximate": approximate,
+    })
+}
+
+/// The rows of the models and about what they hold: a ListModel counts
+/// its own rows, a model written in Rust a value a cell. A model another
+/// stands for (a DelegateModel over a ListModel) is counted once.
+fn model_memory(engine: &Engine) -> (usize, usize) {
+    let ptr = |m: &std::rc::Rc<dyn ljos_engine::ItemModel>| std::rc::Rc::as_ptr(m).cast::<()>();
+    let mut seen = std::collections::HashSet::new();
+    let (mut rows, mut bytes) = (0, 0);
+    engine.untrack(|| {
+        let objects = engine.object_ids();
+        for &obj in &objects {
+            if let Some((r, b)) = engine.list_model_memory(obj) {
+                if let Some(m) = engine.object_model(obj) {
+                    seen.insert(ptr(&m));
+                }
+                rows += r;
+                bytes += b;
+            }
+        }
+        for &obj in &objects {
+            if engine.is_list_model(obj) {
+                continue;
+            }
+            if let Some(m) = engine.object_model(obj)
+                && seen.insert(ptr(&m))
+            {
+                let r = m.row_count();
+                rows += r;
+                bytes +=
+                    r * m.role_names().len().max(1) * std::mem::size_of::<ljos_engine::Value>();
+            }
+        }
+    });
+    (rows, bytes)
+}
+
 /// The answer, for the windows the host told of.
 pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArgs) -> ToolReply {
     let max = args.max.unwrap_or(DEFAULT_MAX).clamp(1, MOST_TYPES);
@@ -109,6 +186,10 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
     let images = ljos_quick::ImageStore::of(engine);
     let image_bytes = images.bytes();
     let process = Resident::now();
+    let script_stats = engine.script_memory();
+    let compiled = engine.compiled_memory();
+    let (model_rows, model_bytes) = model_memory(engine);
+    let heap = heap();
 
     let scenes: usize = windows.iter().map(|w| w.scene.bytes).sum();
     let renders: usize = windows
@@ -123,6 +204,147 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
         + image_bytes
         + scenes
         + renders;
+
+    // By owner. The script's is QuickJS's own count, with its objects,
+    // when it can be asked (not inside a run); else what its allocator
+    // holds.
+    let render_sum = |f: fn(&BackendMemory) -> usize| -> usize {
+        windows
+            .iter()
+            .filter_map(|w| w.render.as_ref())
+            .map(f)
+            .sum()
+    };
+    let scene_nodes: usize = windows.iter().map(|w| w.scene.tree.nodes).sum();
+    let mut owners = vec![
+        match script_stats {
+            Some(s) => owner("script", "JS heap", s.bytes, s.objects, "objects", false),
+            None => owner(
+                "script",
+                "JS heap",
+                script.unwrap_or(0),
+                0,
+                "objects",
+                false,
+            ),
+        },
+        owner(
+            "objects",
+            "objects and items",
+            bytes,
+            count,
+            "objects",
+            true,
+        ),
+        owner("reactive", "reactive graph", graph, nodes, "nodes", true),
+        owner("scene", "scene nodes", scenes, scene_nodes, "nodes", true),
+        owner(
+            "text",
+            "text layouts",
+            text.map_or(0, |t| t.bytes),
+            text.map_or(0, |t| t.layouts),
+            "layouts",
+            true,
+        ),
+        owner(
+            "glyph_atlas",
+            "glyph atlas",
+            render_sum(|r| r.glyph_atlas_bytes),
+            render_sum(|r| r.glyphs),
+            "glyphs",
+            true,
+        ),
+        owner(
+            "meshes",
+            "meshes",
+            render_sum(|r| r.mesh_bytes),
+            render_sum(|r| r.meshes),
+            "meshes",
+            true,
+        ),
+        owner(
+            "images",
+            "image cache",
+            image_bytes,
+            images.len(),
+            "images",
+            false,
+        ),
+        owner(
+            "models",
+            "model storage",
+            model_bytes,
+            model_rows,
+            "rows",
+            true,
+        ),
+        owner(
+            "compiled",
+            "compiled units",
+            compiled.bytes,
+            compiled.files,
+            "files",
+            true,
+        ),
+    ];
+    let attributed: u64 = owners
+        .iter()
+        .map(|o| o["bytes"].as_u64().unwrap_or(0))
+        .sum();
+    let textures = owner(
+        "textures",
+        "textures",
+        render_sum(|r| r.texture_bytes + r.page_bytes + r.shape_texture_bytes),
+        render_sum(|r| r.textures + r.pages + r.shape_textures),
+        "textures",
+        true,
+    );
+    // What is resident, less the program and its libraries, the owners
+    // and what the allocator holds free, is what nobody told of: other
+    // libraries' heaps, stacks, the driver's maps.
+    let mut reconciled = Value::Null;
+    if let Some(p) = process {
+        let free = heap.map_or(0, |h| h.free);
+        let gap = p.own() as i64 - attributed as i64 - free as i64;
+        owners.push(owner(
+            "program",
+            "program and libraries",
+            p.shared as usize,
+            0,
+            "",
+            false,
+        ));
+        if heap.is_some() {
+            owners.push(owner(
+                "allocator_free",
+                "freed, kept by the allocator",
+                free as usize,
+                0,
+                "",
+                false,
+            ));
+        }
+        owners.push(owner(
+            "not_attributed",
+            "not attributed",
+            gap.max(0) as usize,
+            0,
+            "",
+            true,
+        ));
+        reconciled = json!({
+            "resident_bytes": p.rss,
+            "attributed_bytes": attributed,
+            "not_attributed_bytes": gap,
+            "not_attributed_share": if p.rss == 0 { 0.0 } else { gap.max(0) as f64 / p.rss as f64 },
+            "heap_in_use_bytes": heap.map(|h| h.in_use),
+        });
+    }
+    owners.push({
+        let mut t = textures;
+        t["gpu"] = json!(true);
+        t
+    });
 
     let value = json!({
         "objects": {
@@ -156,6 +378,8 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
             "virtual_bytes": p.virt,
         })),
         "counted_bytes": counted,
+        "owners": owners,
+        "reconciled": reconciled,
     });
 
     let mut out = String::new();
@@ -166,6 +390,37 @@ pub(crate) fn memory(engine: &Engine, windows: &[WindowMemory], args: &MemoryArg
             mib(p.rss),
             mib(p.own()),
             mib(counted as u64)
+        );
+    }
+    out.push_str("by owner:\n");
+    for o in value["owners"].as_array().into_iter().flatten() {
+        let n = o["count"].as_u64().unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "  {:<30} {:>10.2} MiB{}{}",
+            o["label"].as_str().unwrap_or(""),
+            mib(o["bytes"].as_u64().unwrap_or(0)),
+            if n > 0 || !o["of"].as_str().unwrap_or("").is_empty() {
+                format!("  {n} {}", o["of"].as_str().unwrap_or(""))
+            } else {
+                String::new()
+            },
+            if o["gpu"] == true {
+                "  (on the GPU where there is one; not in the sum)"
+            } else {
+                ""
+            }
+        );
+    }
+    if let Some(gap) = value["reconciled"]["not_attributed_bytes"].as_i64() {
+        let share = value["reconciled"]["not_attributed_share"]
+            .as_f64()
+            .unwrap_or(0.0);
+        let _ = writeln!(
+            out,
+            "not attributed: {:.2} MiB, {:.0} % of resident",
+            gap as f64 / (1024.0 * 1024.0),
+            share * 100.0
         );
     }
     let _ = writeln!(

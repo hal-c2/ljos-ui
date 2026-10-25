@@ -83,6 +83,7 @@ use tokio::sync::oneshot;
 pub use args::{
     FIRST_ACT, INSTRUCTIONS, MAX_LOG_LINES, MAX_NODES, MAX_SCREENSHOT_SIDE, SERVER_NAME, TOOLS,
 };
+pub use export::TraceDir;
 pub use ljos_mcp_core::glue::http::{
     HttpConfig, HttpError, HttpServer, LAN_WARNING, Listen, bind_policy,
 };
@@ -133,9 +134,8 @@ pub struct InspectorConfig {
     pub virtual_clock: bool,
     /// What a picture is drawn on where the application draws nothing.
     pub background: [u8; 3],
-    /// Where `app_frames`' `export` writes trace files; without it there
-    /// is nowhere to write them.
-    pub exports: Option<std::path::PathBuf>,
+    /// Where `app_frames`' `export` writes trace files.
+    pub exports: TraceDir,
 }
 
 impl Default for InspectorConfig {
@@ -145,7 +145,7 @@ impl Default for InspectorConfig {
             timeout: Duration::from_secs(5),
             virtual_clock: false,
             background: [0xff, 0xff, 0xff],
-            exports: None,
+            exports: TraceDir::Nowhere,
         }
     }
 }
@@ -989,13 +989,9 @@ impl Inspector {
                     }
                     Ok(self.growth.answer(engine, args.max))
                 }
-                timeline::Mode::Export(name) => export::export(
-                    engine,
-                    self.cfg.exports.as_deref(),
-                    name,
-                    &self.timeline,
-                    &self.wakes,
-                ),
+                timeline::Mode::Export(name) => {
+                    export::export(engine, &self.cfg.exports, name, &self.timeline, &self.wakes)
+                }
             });
             let _ = reply.send(answer);
             return;
@@ -1034,6 +1030,7 @@ impl Inspector {
                 ljos_platform::Platform::of(engine).pending(),
                 // Frames asked for by more requests or by motion.
                 queued > 0 || ljos_quick::running_animation_count(engine) > 0,
+                self.feed.state().watched,
                 args,
             )),
             (Kind::Objects(args), _) if args.release => {

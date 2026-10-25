@@ -612,9 +612,10 @@ mod inspector {
             let cfg = InspectorConfig {
                 redact_all: options.redact_all,
                 background: self.tools.background,
-                // Beside the token file: where a developer looks for what
-                // the application wrote for its tools.
-                exports: options.token_file.parent().map(|d| d.join("traces")),
+                // The application's own per-user state, not the working
+                // directory: a trace is kept like a log, wherever the
+                // application was started from.
+                exports: mcp::TraceDir::PerUser,
                 ..InspectorConfig::default()
             };
             let (inspector, surface) = Inspector::new(cfg, Arc::clone(&self.tools.wake));

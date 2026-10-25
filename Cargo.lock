@@ -3750,6 +3750,7 @@ name = "ljos_dev"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "libc",
  "ljos_a11y",
  "ljos_compiler",
  "ljos_engine",
