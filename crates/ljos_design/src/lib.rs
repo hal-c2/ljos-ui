@@ -15,6 +15,7 @@ use serde::Serialize;
 pub mod color;
 pub mod limits;
 pub mod motion;
+pub mod scale;
 
 /// How sure a check is that a finding hurts a user.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
