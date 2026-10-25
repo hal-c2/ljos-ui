@@ -398,6 +398,9 @@ struct Entry {
     /// The item this one was adopted under; `None` for the root.
     parent: Option<ObjectId>,
     effects: Vec<GraphNode>,
+    /// It is on screen and its paint is followed: by `content_effect`, or
+    /// for a Text by its polish effect, which reads all its paint does.
+    painting: bool,
     content_effect: Option<GraphNode>,
     anchors: Rc<RefCell<AnchorState>>,
     inherit: Rc<RefCell<Inherit>>,
@@ -792,7 +795,7 @@ impl QuickScene {
         let nodes: Vec<NodeId> = self
             .entries
             .values()
-            .filter(|e| e.kind.paints() && e.content_effect.is_some())
+            .filter(|e| e.kind.paints() && e.painting)
             .map(|e| e.node)
             .collect();
         for n in nodes {
@@ -823,9 +826,7 @@ impl QuickScene {
         let content: Vec<(ObjectId, NodeId)> = self
             .entries
             .iter()
-            .filter(|(_, e)| {
-                matches!(e.kind, Kind::Text | Kind::Editor) && e.content_effect.is_some()
-            })
+            .filter(|(_, e)| matches!(e.kind, Kind::Text | Kind::Editor) && e.painting)
             .map(|(o, e)| (*o, e.node))
             .collect();
         for (_, n) in &content {
@@ -1286,6 +1287,7 @@ impl QuickScene {
                 kind,
                 parent,
                 effects: Vec::new(),
+                painting: false,
                 content_effect: None,
                 anchors: Rc::clone(&anchors),
                 inherit: Rc::clone(&inherit),
@@ -1326,7 +1328,13 @@ impl QuickScene {
         )?);
         let shared = Rc::clone(&self.shared);
         effects.push(engine.effect_in(obj, move |e| geometry_effect(e, obj, &shown, &shared))?);
-        if kind.polishes() {
+        if kind == Kind::Text {
+            // What the text read as it was completed is handed over, not
+            // read again; from now on each change is.
+            let shared = Rc::clone(&self.shared);
+            let sink: text::Sink = Rc::new(move |e, obj, t| text_polish(e, obj, t, &shared));
+            effects.push(text::follow_into(engine, obj, sink)?);
+        } else if kind.polishes() {
             let shared = Rc::clone(&self.shared);
             effects.push(engine.effect_in(obj, move |e| polish_effect(e, obj, kind, &shared))?);
         }
@@ -1353,6 +1361,10 @@ impl QuickScene {
             return;
         };
         self.items_gen += 1;
+        if entry.kind == Kind::Text {
+            // Its effect is among `effects`; this also forgets the sink.
+            text::unfollow(engine, obj);
+        }
         let g = engine.graph();
         for n in entry
             .effects
@@ -1591,7 +1603,7 @@ impl QuickScene {
             );
             if size != e.size {
                 e.size = size;
-                if e.kind.paints() && e.content_effect.is_some() {
+                if e.kind.paints() && e.painting {
                     self.tree.mark_content_dirty(node);
                 }
             }
@@ -2105,21 +2117,32 @@ impl QuickScene {
             // A ShaderEffectSource is often not shown itself, only
             // sampled: it reads its source all the same.
             let shown = shown || matches!(e.kind, Kind::Shape | Kind::Source);
-            match (shown, e.content_effect) {
-                (true, None) => {
+            match (shown, e.painting) {
+                (true, false) if e.kind == Kind::Text => {
+                    // An effect here would read nothing: what the text
+                    // paints is what its polish effect read, and that
+                    // effect tells of each change from now on.
+                    e.painting = true;
+                    engine.untrack(|| content_effect(engine, obj, Kind::Text, &self.shared));
+                    installed = true;
+                }
+                (true, false) => {
                     let shared = Rc::clone(&self.shared);
                     let (o, kind) = (obj, e.kind);
                     match engine.effect_in(o, move |en| content_effect(en, o, kind, &shared)) {
                         Ok(n) => {
+                            e.painting = true;
                             e.content_effect = Some(n);
                             installed = true;
                         }
                         Err(err) => failed.push(err),
                     }
                 }
-                (false, Some(n)) => {
-                    let _ = engine.graph().dispose(n);
-                    e.content_effect = None;
+                (false, true) => {
+                    if let Some(n) = e.content_effect.take() {
+                        let _ = engine.graph().dispose(n);
+                    }
+                    e.painting = false;
                     if e.kind == Kind::Text {
                         self.shared.borrow_mut().texts_shown.remove(&obj);
                     }
@@ -2823,32 +2846,7 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Managed => crate::layouts::read_inputs(e, obj),
         Kind::Text => {
             // Reads the item's size too, where the layout depends on it.
-            let t = TextInputs::read(e, obj);
-            // A new text was measured as it was completed; laid out as it
-            // still is, it is not polished to be measured again.
-            let polish = !text::completion_measured(e, obj, &t);
-            // Something it reads changed and it came out the same (the width
-            // its own measuring gave it, where it does not elide to it):
-            // neither what it measures nor how it looks moves. A document
-            // changes inside (a picture arrives) without changing the inputs.
-            if t.rich.is_none() && shared.borrow().text_inputs.get(&obj) == Some(&t) {
-                return;
-            }
-            let shown = shared.borrow().texts_shown.contains(&obj);
-            if !polish && !shown {
-                // Nothing for a frame to do.
-                shared.borrow_mut().text_inputs.insert(obj, t);
-                return;
-            }
-            mark(shared, |s| {
-                if shown {
-                    s.content.insert(obj, Paint::Text(t.clone()));
-                }
-                s.text_inputs.insert(obj, t);
-                if polish {
-                    s.polish.insert(obj);
-                }
-            });
+            text_polish(e, obj, TextInputs::read(e, obj), shared);
             return;
         }
         Kind::Canvas => crate::canvas::read_inputs(e, obj),
@@ -2866,6 +2864,42 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
     }
     mark(shared, |s| {
         s.polish.insert(obj);
+    });
+}
+
+/// What the inputs `t` a Text read make the scene do: lay it out again,
+/// paint it again, or nothing.
+fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
+    // A new text was measured as it was completed; laid out as it still
+    // is, it is not polished to be measured again.
+    let measured = text::completion_measured(e, obj, &t);
+    let (same, same_layout) = match shared.borrow().text_inputs.get(&obj) {
+        Some(was) => (*was == t, was.lays_out_as(&t)),
+        None => (false, false),
+    };
+    // Something it reads changed and it came out the same (the width its
+    // own measuring gave it, where it does not elide to it): neither what
+    // it measures nor how it looks moves. A document changes inside (a
+    // picture arrives) without changing the inputs.
+    if t.rich.is_none() && same {
+        return;
+    }
+    // Only how it is painted changed (a colour): it measures the same.
+    let polish = !measured && !(t.rich.is_none() && same_layout);
+    let shown = shared.borrow().texts_shown.contains(&obj);
+    if !polish && !shown {
+        // Nothing for a frame to do.
+        shared.borrow_mut().text_inputs.insert(obj, t);
+        return;
+    }
+    mark(shared, |s| {
+        if shown {
+            s.content.insert(obj, Paint::Text(t.clone()));
+        }
+        s.text_inputs.insert(obj, t);
+        if polish {
+            s.polish.insert(obj);
+        }
     });
 }
 
@@ -2897,8 +2931,9 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Rectangle => Paint::Rect(RectanglePaint::read(e, obj)),
         Kind::Text => {
             // Painted from what the polish effect read, which tells it of
-            // every change from now on. Read here only for a text that has
-            // no polish effect: tracked, so this runs again on a change.
+            // every change from now on; called untracked, not as an effect.
+            // Read here only where that effect has not run yet: when it
+            // does, it sees the text shown and paints it again.
             let read = {
                 let mut s = shared.borrow_mut();
                 s.texts_shown.insert(obj);

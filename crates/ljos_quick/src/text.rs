@@ -220,6 +220,9 @@ pub struct Text {
     /// look at it: a polish of the same inputs would only measure it again.
     #[qml(skip)]
     measured: Option<Box<TextInputs>>,
+    /// The effect that reads the inputs, from the completion on.
+    #[qml(skip)]
+    follow: Option<Rc<Follow>>,
     /// The document, once the text was more than plain.
     #[qml(skip)]
     pub(crate) rich: Option<rich::Shared>,
@@ -303,6 +306,7 @@ impl Default for Text {
             bottom_padding: 0.0,
             initialised: false,
             measured: None,
+            follow: None,
             rich: None,
         }
     }
@@ -321,7 +325,12 @@ impl Text {
         // change before the first frame, and that would be a second layout.
         // So does an empty one, which is most often one built in Rust and
         // given its text after it was completed.
-        let t = cx.engine.untrack(|| TextInputs::read(cx.engine, cx.this));
+        // Read by the effect that goes on following them, so the scene
+        // that shows the text does not read them all again.
+        let follow = follow(cx.engine, cx.this)?;
+        let Some(t) = follow.last.borrow().clone() else {
+            return Ok(());
+        };
         if t.params.width.is_some() || t.text.is_empty() {
             return Ok(());
         }
@@ -797,6 +806,23 @@ impl TextInputs {
         }
     }
 
+    /// Whether `other` measures as this does: only what is painted
+    /// (colours, the style's copies, the overline, the alignment of the
+    /// lines, a document's selection or focus) differs. Plain text only;
+    /// a document lays out what it holds.
+    pub(crate) fn lays_out_as(&self, other: &TextInputs) -> bool {
+        self.rich.is_none()
+            && other.rich.is_none()
+            && self.text == other.text
+            && self.style == other.style
+            && self.params == other.params
+            && self.small_caps == other.small_caps
+            && self.format == other.format
+            && self.pad == other.pad
+            && self.v_align == other.v_align
+            && self.align_height == other.align_height
+    }
+
     fn layout(&self, te: &mut TextEngine) -> Arc<TextLayout> {
         if self.small_caps {
             let (drawn, spans) = Ranged::small_caps(self.text.as_str(), &self.style);
@@ -898,6 +924,96 @@ pub(crate) fn polish(
     // Measured again, so what the completion measured no longer stands.
     engine.with_mut(obj, |x: &mut Text| x.measured = None)?;
     write_measured(engine, obj, &t, te)
+}
+
+/// What tells the scene of a Text's new inputs.
+pub(crate) type Sink = Rc<dyn Fn(&Engine, ObjectId, TextInputs)>;
+
+/// Follows a Text's inputs: one effect, made as the text is completed or
+/// first shown, reads them then and on each change after. They go to the
+/// sink of the scene that shows the text; until there is one, the last
+/// read waits for it.
+#[derive(Default)]
+pub(crate) struct Follow {
+    node: Cell<Option<ljos_engine::NodeId>>,
+    last: RefCell<Option<TextInputs>>,
+    sink: RefCell<Option<Sink>>,
+}
+
+impl std::fmt::Debug for Follow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Follow")
+            .field("node", &self.node.get())
+            .field("sink", &self.sink.borrow().is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+fn followed(engine: &Engine, obj: ObjectId, f: &Follow) {
+    if !engine.is_alive(obj) {
+        return;
+    }
+    let t = TextInputs::read(engine, obj);
+    let sink = f.sink.borrow().clone();
+    match sink {
+        Some(sink) => sink(engine, obj, t),
+        None => *f.last.borrow_mut() = Some(t),
+    }
+}
+
+/// The text's [`Follow`], made (and run once) if it has none.
+fn follow(engine: &Engine, obj: ObjectId) -> Result<Rc<Follow>, EngineError> {
+    if let Some(f) = engine.untrack(|| engine.with(obj, |t: &Text| t.follow.clone()))? {
+        return Ok(f);
+    }
+    let f = Rc::new(Follow::default());
+    engine.with_mut(obj, |t: &mut Text| t.follow = Some(Rc::clone(&f)))?;
+    let run = Rc::clone(&f);
+    let node = engine.effect_now_in(obj, move |e| followed(e, obj, &run))?;
+    f.node.set(Some(node));
+    Ok(f)
+}
+
+/// Hands the inputs of the Text `obj` to `sink` from now on, starting
+/// with what it read last (its first read, if it is new). Returns the
+/// effect that reads them, which [`unfollow`] stops.
+pub(crate) fn follow_into(
+    engine: &Engine,
+    obj: ObjectId,
+    sink: Sink,
+) -> Result<ljos_engine::NodeId, EngineError> {
+    let existing = engine.untrack(|| engine.with(obj, |t: &Text| t.follow.clone()))?;
+    let f = match existing {
+        Some(f) => f,
+        None => {
+            // Made with the sink in place, so its first run goes there.
+            let f = Rc::new(Follow::default());
+            *f.sink.borrow_mut() = Some(Rc::clone(&sink));
+            engine.with_mut(obj, |t: &mut Text| t.follow = Some(Rc::clone(&f)))?;
+            let run = Rc::clone(&f);
+            let node = engine.effect_now_in(obj, move |e| followed(e, obj, &run))?;
+            f.node.set(Some(node));
+            return Ok(node);
+        }
+    };
+    *f.sink.borrow_mut() = Some(Rc::clone(&sink));
+    let last = f.last.borrow_mut().take();
+    if let Some(t) = last {
+        engine.untrack(|| sink(engine, obj, t));
+    }
+    f.node.get().ok_or_else(|| EngineError::dead(obj))
+}
+
+/// Stops following the inputs of `obj`: a text the scene no longer shows
+/// costs nothing when they change. Showing it again reads them again.
+pub(crate) fn unfollow(engine: &Engine, obj: ObjectId) {
+    let f = engine
+        .untrack(|| engine.with_mut(obj, |t: &mut Text| t.follow.take()))
+        .ok()
+        .flatten();
+    if let Some(n) = f.and_then(|f| f.node.get()) {
+        let _ = engine.graph().dispose(n);
+    }
 }
 
 /// Whether `t` is what the completion measured the text with and nothing

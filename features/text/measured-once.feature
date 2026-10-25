@@ -8,8 +8,8 @@ Feature: A text is measured again only when what it measures changes
   A Text is laid out to say how large it is: its implicit size, its
   content size and its line count. That is done again when its text, its
   font or the width it wraps to changes, and not when something it does
-  not measure with changes: where it is, a width it does not wrap to, or a
-  height it is not aligned in.
+  not measure with changes: where it is, a width it does not wrap to, a
+  height it is not aligned in, or how it is painted.
 
   Background:
     Given the QML:
@@ -51,6 +51,18 @@ Feature: A text is measured again only when what it measures changes
 
   Scenario: A text at the top of its item is not measured again when its height changes
     When the property "height" of "label" is set to 80
+    And 50 milliseconds pass
+    Then text was measured at most 0 times since that was counted
+
+  Scenario: A text is not measured again when its colour changes
+    When the property "color" of "label" is set to "red"
+    And the property "styleColor" of "label" is set to "blue"
+    And 50 milliseconds pass
+    Then text was measured at most 0 times since that was counted
+    And the property "color" of "label" is "#ff0000"
+
+  Scenario: A text is not measured again when its alignment in its width changes
+    When the property "horizontalAlignment" of "label" is set to 4
     And 50 milliseconds pass
     Then text was measured at most 0 times since that was counted
 
