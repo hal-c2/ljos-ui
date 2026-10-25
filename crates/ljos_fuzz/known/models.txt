@@ -1,0 +1,11 @@
+# Buckets of ljos-fuzz models that are known: as known/bindings.txt, one per line, the
+# signature then why.
+# Triaged from seeds 101 and 202 (2000 cases each): 16 and 12 cases differ.
+
+# A Repeater given an array equal to the one it shows keeps its delegates on Qt
+# (features/models/repeater-equal-array.feature).
+value:log:text                  a Repeater given an equal array replaces its delegates (features/models/repeater-equal-array.feature)
+
+# Qt's own quirk, which Ljós is not to copy: an object of an array model, as modelData made a
+# string, names Qt's inner class.
+result:none/none:call:text      String(modelData) of an object row is "[object Object]", not Qt's "[object V4ReferenceObject]"

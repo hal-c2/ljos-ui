@@ -14,6 +14,7 @@ pub mod compare;
 pub mod connections;
 pub mod creation;
 pub mod geometry;
+pub mod models;
 pub mod outcome;
 pub mod report;
 pub mod rng;
