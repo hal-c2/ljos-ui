@@ -446,7 +446,12 @@ impl EffectPaint {
         } else {
             None
         };
-        let source_img = source_obj.and_then(|src| read_item_image(e, src));
+        // A source with items in it is drawn by the scene from its subtree,
+        // in the frame this paint is shown in: a picture of the source alone
+        // would be made only to be thrown away, at each write of a colour.
+        let source_img = source_obj
+            .filter(|&src| e.visual_children(src).is_empty())
+            .and_then(|src| read_item_image(e, src));
         let mask_img = if mask_enabled {
             let Some(m) = mask_obj.and_then(|m| read_item_image(e, m)) else {
                 return Self::none(None);
@@ -473,8 +478,8 @@ impl EffectPaint {
         });
         match source_img {
             Some(img) => Self::finish(e, &inputs, img),
-            // An item with nothing of its own to sample is drawn by the
-            // scene, from its subtree ([`EffectPaint::with_source`]).
+            // An item with items in it, or nothing of its own to sample, is
+            // drawn by the scene, from its subtree ([`EffectPaint::with_source`]).
             None => Self::none(Some(inputs)),
         }
     }
@@ -1667,5 +1672,47 @@ mod tests {
         assert_eq!(shadows.len(), 2);
         drop((red, green, moved));
         assert_eq!(shadows.len(), 0, "a shadow no picture uses is not kept");
+    }
+
+    fn item<T: ljos_engine::QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
+        let o = e.create_native(T::default(), parent).unwrap();
+        if let Some(p) = parent {
+            crate::add_data(e, p, o).unwrap();
+        }
+        e.complete(o).unwrap();
+        o
+    }
+
+    /// A card of a rounded rectangle with an item on it, and a shadow.
+    fn card(e: &Engine, with_item: bool) -> (ObjectId, ObjectId) {
+        let root = item::<Item>(e, None);
+        let src = item::<Rectangle>(e, Some(root));
+        for (name, v) in [("width", 60.0), ("height", 80.0), ("radius", 8.0)] {
+            e.write_by_name(src, name, Value::Real(v)).unwrap();
+        }
+        if with_item {
+            item::<Rectangle>(e, Some(src));
+        }
+        let fx = item::<MultiEffect>(e, Some(root));
+        e.write_by_name(fx, "source", Value::Object(src)).unwrap();
+        for (name, v) in [("width", 60.0), ("height", 80.0)] {
+            e.write_by_name(fx, name, Value::Real(v)).unwrap();
+        }
+        e.write_by_name(fx, "shadowEnabled", Value::Bool(true))
+            .unwrap();
+        (src, fx)
+    }
+
+    #[test]
+    fn a_source_with_items_in_it_is_left_to_the_scene_to_draw() {
+        let e = Engine::new();
+        crate::register(&e);
+        let (src, fx) = card(&e, true);
+        let paint = EffectPaint::read(&e, fx);
+        assert!(paint.image.is_none(), "no picture of the source alone");
+        assert_eq!(paint.source(), Some(src), "the scene is told what to draw");
+
+        let (_, fx) = card(&e, false);
+        assert!(EffectPaint::read(&e, fx).image.is_some());
     }
 }

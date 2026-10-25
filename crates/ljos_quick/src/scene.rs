@@ -1816,6 +1816,13 @@ impl QuickScene {
             self.parents = (self.items_gen, parents);
         }
         let parents = &self.parents.1;
+        // What a ShaderEffectSource or a layer samples is drawn even while
+        // hidden, and so is each effect in it.
+        let sampled: FxHashSet<NodeId> = (self.source_base.values())
+            .filter_map(|(s, _)| s.source)
+            .chain(self.layer_base.keys().copied())
+            .filter_map(|o| self.entries.get(&o).map(|e| e.node))
+            .collect();
         let mut redrawn = redrawn;
         for (obj, (base, seen)) in &mut self.effect_base {
             let Some(src) = base.source().filter(|s| parents.contains(s)) else {
@@ -1825,6 +1832,11 @@ impl QuickScene {
             else {
                 continue;
             };
+            // A hidden effect is drawn when it is shown: closing a panel
+            // with a shadow is not to cost a picture of it.
+            if !in_view(&self.tree, fx.node, &sampled) {
+                continue;
+            }
             let Some(snap) = self.tree.compose_subtree(src_entry.node) else {
                 continue;
             };
@@ -3349,6 +3361,25 @@ pub(crate) fn emit_mouse_event(
 }
 
 /// What a composed subtree shows, to tell whether it must be drawn again.
+/// Whether `node` and the nodes it is in are shown, or one of them is
+/// `sampled`.
+fn in_view(tree: &RenderTree, node: NodeId, sampled: &FxHashSet<NodeId>) -> bool {
+    let mut at = Some(node);
+    while let Some(id) = at {
+        let Some(n) = tree.node(id) else {
+            return false;
+        };
+        if sampled.contains(&id) {
+            return true;
+        }
+        if n.is_pruned() {
+            return false;
+        }
+        at = n.parent();
+    }
+    true
+}
+
 fn fingerprint(snap: &FrameSnapshot) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();

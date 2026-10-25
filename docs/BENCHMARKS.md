@@ -4697,3 +4697,60 @@ DECISIONs:
   out-of-memory test runs right at its limit.
 - QuickJS's arena allocator is left unpatched.
 - props is left as it is: what is left of it is the engine's read and write, H2's.
+
+
+### Slow handlers of a debug build: shadows of sources with items in them (2026-10-25)
+
+In debug-build drives of the corpus, coffee's theme toggle took 512–862 ms
+(`CustomToolBar.qml:11`). Two of mediaplayer's handlers took 426–533 ms: the playlist button
+(`Main.qml:292`) and the theme radios (`ThemeInfo.qml:27`, `:34`). These figures are the "JS
+dispatch exceeded its soft budget" lines of the gallery:drive logs of 10-18 and 10-24. Other
+work has made them smaller since. They were measured again off-screen in the desktop:cua
+sandbox, in release and debug builds, with the hot-bindings mode of `app_frames`:
+`{"bindings": true}` times each binding and handler that ran. The handler was run by
+`app_eval` (`clicked()` on its button) and timed there with `performance.now()`. Coffee was
+measured on the page `getStartedButton` pushes, which has the cards. Mediaplayer's radios were
+clicked by reference from a snapshot, because its control bar moves with the pointer.
+
+**The cause.** Both apps put a `MultiEffect` shadow on a `Rectangle` that has items in it:
+coffee's cards and circles, and mediaplayer's settings panel. Two things were wasted:
+- **A picture thrown away.** Each colour written to such a source made the effect draw the
+  source alone, as a picture, and compose its shadow, inside the handler. In the same frame,
+  the scene drew the source again from its whole subtree and threw that picture away.
+- **A hidden effect.** An effect that was hidden was still drawn. Mediaplayer hides its
+  settings panel when the playlist opens or closes.
+
+**The fixes** (`crates/ljos_quick`):
+- **The scene draws the source.** An effect whose source has items in it leaves the drawing
+  to the scene (`a_source_with_items_in_it_is_left_to_the_scene_to_draw`).
+- **Hidden effects wait.** The scene draws an effect only while it and the items it is in are
+  shown, or while a `ShaderEffectSource` or a layer samples it. Such an effect is drawn again
+  once it is shown (`a_closed_panel_s_shadow_is_drawn_again_only_when_it_is_shown`,
+  `an_effect_in_a_hidden_item_a_shader_effect_source_samples_is_drawn`).
+
+Each handler, run four times (the last three for the radios):
+
+| handler | build | before | after |
+|---|---|---|---|
+| coffee, theme toggle | release | 15.3 ms first, then 3.5–5.2 | 1.1 ms first, then 0.52–0.59 |
+| coffee, theme toggle | debug | 48–53 ms | 5.9 ms first, then 2.1–3.1 |
+| mediaplayer, playlist open and close | release | 0.42–1.13 ms | 0.23–0.49 ms |
+| mediaplayer, playlist close | debug | 26–32 ms | 1.0–1.3 ms |
+| mediaplayer, theme radio | release | 5.1–5.9 ms | 3.9–4.5 ms |
+| mediaplayer, theme radio | debug | 64–128 ms | 31–40 ms |
+
+Coffee's page push went from 7.2 to 3.8 ms in release. In debug it stayed at 44 ms.
+
+**Left as the app's.** A radio still costs about 4 ms in release, about the 4 ms soft budget.
+That is the app's own theme change: the handler runs about 100 bindings that set colours
+across the window, and the panel's shadow is shown, so it is drawn. This was not broken down
+further. A debug build is 8–10 times slower than release at this. `vello_cpu` is built at
+opt-level 3 in debug, but `vello_common` and `fearless_simd` are not. Building them at
+opt-level 3 too is an idea not tried.
+
+DECISIONs:
+- The 512–862 ms figures were taken from the older drives' logs. They were not measured
+  again on those trees.
+- There is no features scenario. What changed is when a picture is made, and QML cannot see
+  that: the shadow shown is the same before and after. The behaviour is pinned by the tests
+  named above.

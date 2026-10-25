@@ -143,3 +143,81 @@ fn a_resize_draws_again_only_the_shadow_whose_size_changed() {
         "the other is kept"
     );
 }
+
+/// A panel with a shadow that is shown only while it is open, as an
+/// overlay is.
+const PANEL: &str = r#"
+import QtQuick
+import QtQuick.Effects
+Item {
+    width: 200; height: 120
+    Rectangle {
+        id: panel; objectName: "panel"
+        x: 10; y: 10; width: 60; height: 80; radius: 8; color: "white"
+        Text { text: "A" }
+    }
+    MultiEffect {
+        objectName: "fx"
+        source: panel; anchors.fill: panel
+        shadowEnabled: panel.visible; shadowOpacity: 0.5
+        visible: panel.visible
+    }
+}
+"#;
+
+#[test]
+fn a_closed_panel_s_shadow_is_drawn_again_only_when_it_is_shown() {
+    let e = engine();
+    let root = load(&e, PANEL);
+    let (panel, fx) = (find(&e, root, "panel"), find(&e, root, "fx"));
+    let mut s = scene(&e, root, 200.0, 120.0);
+    frame(&mut s, &e);
+    let open = painted(&s, fx).expect("the open panel has its shadow");
+    assert_eq!(open.width(), 60 + 2 * 32, "the panel, padded by blurMax");
+
+    set(&e, panel, "visible", Value::Bool(false));
+    let blue = ljos_engine::Color::from_rgba8(0, 0, 255, 255);
+    set(&e, panel, "color", Value::Color(blue));
+    frame(&mut s, &e);
+    assert!(
+        painted(&s, fx).is_none_or(|p| p.id() == open.id()),
+        "no picture is made of a closed panel"
+    );
+
+    set(&e, panel, "visible", Value::Bool(true));
+    frame(&mut s, &e);
+    let again = painted(&s, fx).expect("open again, it has its shadow");
+    assert_ne!(
+        again.id(),
+        open.id(),
+        "with what changed while it was closed"
+    );
+}
+
+#[test]
+fn an_effect_in_a_hidden_item_a_shader_effect_source_samples_is_drawn() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Effects
+Item {
+    width: 200; height: 120
+    Item {
+        id: holder
+        width: 100; height: 100
+        visible: false
+        Rectangle { id: card; width: 60; height: 80; radius: 8; Text { text: "A" } }
+        MultiEffect { objectName: "fx"; source: card; anchors.fill: card; shadowEnabled: true }
+    }
+    ShaderEffectSource { sourceItem: holder; x: 100; width: 100; height: 100 }
+}
+"#,
+    );
+    let fx = find(&e, root, "fx");
+    let mut s = scene(&e, root, 200.0, 120.0);
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    assert!(painted(&s, fx).is_some(), "what is sampled is drawn");
+}
