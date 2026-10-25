@@ -600,11 +600,116 @@ fn a_call_whose_client_went_away_is_dropped() {
     // Not answered: the call is waiting.
     let wait = std::time::Duration::from_secs(5);
     assert!(
-        told.recv_timeout(std::time::Duration::from_millis(200))
+        told.recv_timeout(std::time::Duration::from_secs(6))
             .is_err()
     );
     drop(stream);
     // A watch dropped is what lets go of what its client held.
     told.recv_timeout(wait)
         .expect("the call outlived its client");
+}
+
+// These socket tests specify setup limits without adding raw TCP steps to the ledger.
+#[test]
+fn partial_headers_release_all_connection_permits() {
+    let rig = Rig::start(config());
+    let mut clients = Vec::new();
+    for _ in 0..32 {
+        let mut stream = std::net::TcpStream::connect(rig.server.addr().unwrap()).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(8)))
+            .unwrap();
+        stream.write_all(b"POST /mcp HTTP/1.1\r\nHost:").unwrap();
+        clients.push(stream);
+    }
+    for mut stream in clients {
+        let mut byte = [0];
+        match stream.read(&mut byte) {
+            Ok(0) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+            other => panic!("partial header connection did not expire: {other:?}"),
+        }
+    }
+    assert_eq!(rig.call(&rig.bearer).status, 200);
+}
+
+fn unfinished_body(rig: &Rig, framing: &str, body: &str) -> std::net::TcpStream {
+    let mut stream = std::net::TcpStream::connect(rig.server.addr().unwrap()).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(8)))
+        .unwrap();
+    let mut request = String::from("POST /mcp HTTP/1.1\r\n");
+    for (k, v) in mcp_headers(&rig.host, &rig.bearer) {
+        request.push_str(&format!("{k}: {v}\r\n"));
+    }
+    request.push_str(&format!("{framing}\r\n\r\n{body}"));
+    stream.write_all(request.as_bytes()).unwrap();
+    stream
+}
+
+#[test]
+fn incomplete_body_expires_and_releases_its_permit() {
+    let mut cfg = config();
+    cfg.max_connections = 1;
+    let rig = Rig::start(cfg);
+    let started = std::time::Instant::now();
+    let mut stream = unfinished_body(&rig, "Content-Length: 100", "{");
+    // Progress does not restart the total body deadline.
+    for _ in 0..2 {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        stream.write_all(b" ").unwrap();
+    }
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 408"), "{response}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(7));
+    assert_eq!(rig.call(&rig.bearer).status, 200);
+}
+
+#[test]
+fn oversized_fixed_and_chunked_bodies_are_closed() {
+    let rig = Rig::start(config());
+    for (framing, body) in [
+        ("Content-Length: 1048577", String::new()),
+        (
+            "Transfer-Encoding: chunked",
+            format!("100001\r\n{}\r\n0\r\n\r\n", "x".repeat(1_048_577)),
+        ),
+    ] {
+        let mut stream = unfinished_body(&rig, framing, &body);
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 413"), "{response}");
+        assert!(response.to_ascii_lowercase().contains("connection: close"));
+    }
+}
+
+#[test]
+fn an_unauthenticated_unfinished_body_is_closed_without_waiting() {
+    let mut cfg = config();
+    cfg.max_connections = 1;
+    let mut rig = Rig::start(cfg);
+    rig.bearer.clear();
+    let mut stream = unfinished_body(&rig, "Content-Length: 100", "{");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 401"), "{response}");
+    let bearer = format!("Bearer {}", rig.server.token().as_str());
+    assert_eq!(rig.call(&bearer).status, 200);
+}
+
+#[test]
+fn an_idle_connection_expires_before_sending_any_headers() {
+    let mut cfg = config();
+    cfg.max_connections = 1;
+    let rig = Rig::start(cfg);
+    let mut stream = std::net::TcpStream::connect(rig.server.addr().unwrap()).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(8)))
+        .unwrap();
+    assert_eq!(stream.read(&mut [0]).unwrap(), 0);
+    assert_eq!(rig.call(&rig.bearer).status, 200);
 }

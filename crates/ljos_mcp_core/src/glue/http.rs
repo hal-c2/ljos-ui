@@ -18,13 +18,13 @@ use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use http::{Request, Response, StatusCode, header};
-use http_body_util::{BodyExt as _, Full, combinators::BoxBody};
+use http_body_util::{BodyExt as _, Full, Limited, combinators::BoxBody};
 use hyper::body::Incoming;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::never::NeverSessionManager,
 };
@@ -35,6 +35,13 @@ use crate::{CapSet, McpSurface, RateLimit, Token, TokenFile, TokenFileError};
 
 /// The path the server answers on.
 pub const MCP_PATH: &str = "/mcp";
+
+// Absolute read deadlines stop trickling clients from retaining connection permits.
+// Only request input is timed: app_watch may legitimately wait for an hour.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(5);
+// Inspector requests carry commands, not assets. Bound allocation even for chunked input.
+const MAX_REQUEST_BODY: usize = 1024 * 1024;
 
 /// What is printed, loudly, when the server listens beyond this machine.
 pub const LAN_WARNING: &str = "the inspector listens on an address that is not this machine's: \
@@ -393,6 +400,8 @@ async fn accept<S: McpSurface>(
                         async move { Ok::<_, Infallible>(answer(&state, req).await) }
                     });
                     let _ = hyper::server::conn::http1::Builder::new()
+                        .timer(TokioTimer::new())
+                        .header_read_timeout(HEADER_READ_TIMEOUT)
                         .serve_connection(TokioIo::new(stream), service)
                         .await;
                     drop(permit);
@@ -415,7 +424,17 @@ fn refuse(status: StatusCode, code: &str, message: &str) -> Response<Body> {
         header::CONTENT_TYPE,
         header::HeaderValue::from_static("application/json"),
     );
+    // Refusals can leave unread input, including an unauthenticated body.
+    // Close rather than let draining that input retain a connection permit.
+    response.headers_mut().insert(
+        header::CONNECTION,
+        header::HeaderValue::from_static("close"),
+    );
     response
+}
+
+fn refuse_body(status: StatusCode, message: &str) -> Response<Body> {
+    refuse(status, "invalid_request_body", message)
 }
 
 /// One request: is it from this machine, does it have the token, is it
@@ -490,7 +509,42 @@ async fn answer<S: McpSurface>(state: &State<S>, request: Request<Incoming>) -> 
             "the MCP endpoint of this server is /mcp",
         );
     }
-    state.service.handle(request).await
+    let (parts, body) = request.into_parts();
+    if parts
+        .headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .is_some_and(|n| n > MAX_REQUEST_BODY as u64)
+    {
+        return refuse_body(StatusCode::PAYLOAD_TOO_LARGE, "request body exceeds 1 MiB");
+    }
+    let body = match tokio::time::timeout(
+        BODY_READ_TIMEOUT,
+        Limited::new(body, MAX_REQUEST_BODY).collect(),
+    )
+    .await
+    {
+        Ok(Ok(body)) => body.to_bytes(),
+        Ok(Err(error)) => {
+            let status = if error.is::<http_body_util::LengthLimitError>() {
+                StatusCode::PAYLOAD_TOO_LARGE
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            return refuse_body(status, "request body is invalid or exceeds 1 MiB");
+        }
+        Err(_) => {
+            return refuse_body(
+                StatusCode::REQUEST_TIMEOUT,
+                "request body read exceeded 5 seconds",
+            );
+        }
+    };
+    state
+        .service
+        .handle(Request::from_parts(parts, Full::new(body)))
+        .await
 }
 
 /// SIGINT and SIGTERM, awaited by the server's thread.
