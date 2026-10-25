@@ -913,3 +913,40 @@ fn ran_this_flush_tells_a_run_the_change_reached_from_one_it_did_not() {
     assert_eq!(g.peek(by_b), Some(6), "the due run was made");
     assert!(!g.ran_this_flush(by_b), "no flush is under way");
 }
+
+#[test]
+fn a_journaled_graph_keeps_each_change_old_and_new_in_order() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(a) * 10).unwrap();
+    assert_eq!(g.get(b), 10);
+    g.set(a, 2);
+    assert_eq!(g.get(b), 20);
+    assert_eq!(g.take_journal(), (Vec::new(), 0), "off, nothing is kept");
+    g.set_journaled(true);
+    g.set(a, 3);
+    g.set(a, 3);
+    assert_eq!(
+        g.journal_len(),
+        1,
+        "a write of the same value changes nothing"
+    );
+    assert_eq!(g.get(b), 30);
+    let (changes, dropped) = g.take_journal();
+    assert_eq!(dropped, 0);
+    let seen: Vec<(NodeId, Option<i64>, i64)> = changes
+        .into_iter()
+        .map(|c| (c.node, c.old, c.new))
+        .collect();
+    assert_eq!(seen, [(a, Some(2), 3), (b, Some(20), 30)]);
+    assert_eq!(g.journal_len(), 0, "taken, they are gone");
+    for v in 0..ljos_reactive::MAX_JOURNAL as i64 + 5 {
+        g.set(a, 100 + v);
+    }
+    assert_eq!(g.take_journal().1, 5);
+    g.set_journaled(false);
+    g.set(a, 0);
+    assert!(!g.is_journaled());
+    assert_eq!(g.journal_len(), 0);
+}

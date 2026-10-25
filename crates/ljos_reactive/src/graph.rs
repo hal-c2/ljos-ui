@@ -313,6 +313,40 @@ struct Inner<V> {
     diagnostics: Vec<Diagnostic>,
     dropped_diagnostics: usize,
     handler: Option<DiagnosticHandler>,
+    /// `Some` while the graph keeps its changes ([`Graph::set_journaled`]).
+    journal: Option<Journal<V>>,
+}
+
+/// The changes kept while journaled.
+struct Journal<V> {
+    changes: Vec<Changed<V>>,
+    dropped: u64,
+}
+
+/// A node's value changed: what it was, and what it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Changed<V> {
+    pub node: NodeId,
+    /// `None` for a node that had no value yet.
+    pub old: Option<V>,
+    pub new: V,
+}
+
+/// The most changes kept between two takes; the later are counted.
+pub const MAX_JOURNAL: usize = 4_096;
+
+impl<V: Clone> Journal<V> {
+    fn keep(&mut self, node: NodeId, old: Option<V>, new: &V) {
+        if self.changes.len() >= MAX_JOURNAL {
+            self.dropped += 1;
+            return;
+        }
+        self.changes.push(Changed {
+            node,
+            old,
+            new: new.clone(),
+        });
+    }
 }
 
 /// A single-threaded push-pull reactive graph over values of type `V`.
@@ -531,6 +565,7 @@ impl<V: Clone + 'static> Graph<V> {
                 diagnostics: Vec::new(),
                 dropped_diagnostics: 0,
                 handler: None,
+                journal: None,
             }),
         }
     }
@@ -1561,6 +1596,9 @@ impl<V: Clone + 'static> Graph<V> {
             p.host = false;
             let changed = !node.value.as_ref().is_some_and(|old| eq(old, &v));
             if changed {
+                if let Some(j) = i.journal.as_mut() {
+                    j.keep(n, node.value.clone(), &v);
+                }
                 node.value = Some(v);
             }
             // Animated, it is set now: what asked whether it was is told
@@ -2258,6 +2296,45 @@ impl<V: Clone + 'static> Graph<V> {
     /// Evaluation counters.
     pub fn stats(&self) -> Stats {
         self.inner.borrow().stats
+    }
+
+    // --------------------------------------------------------------- journal
+
+    /// Keeps each change of a node's value, old and new, until taken
+    /// ([`Graph::take_journal`]), or stops and forgets them. Off, a change
+    /// pays one look at an option.
+    pub fn set_journaled(&self, on: bool) {
+        let mut i = self.inner.borrow_mut();
+        i.journal = on.then(|| Journal {
+            changes: Vec::new(),
+            dropped: 0,
+        });
+    }
+
+    pub fn is_journaled(&self) -> bool {
+        self.inner.borrow().journal.is_some()
+    }
+
+    /// How many changes are kept: where the next one goes.
+    pub fn journal_len(&self) -> usize {
+        self.inner
+            .borrow()
+            .journal
+            .as_ref()
+            .map_or(0, |j| j.changes.len())
+    }
+
+    /// The changes kept since the last take, in the order they were made,
+    /// and how many past [`MAX_JOURNAL`] were not kept.
+    pub fn take_journal(&self) -> (Vec<Changed<V>>, u64) {
+        let mut i = self.inner.borrow_mut();
+        match i.journal.as_mut() {
+            Some(j) => (
+                std::mem::take(&mut j.changes),
+                std::mem::take(&mut j.dropped),
+            ),
+            None => (Vec::new(), 0),
+        }
     }
 
     // ----------------------------------------------------------- diagnostics
@@ -3029,6 +3106,9 @@ impl<V: Clone + 'static> Inner<V> {
         let node = &mut self.nodes[n];
         if node.value.as_ref().is_some_and(|old| eq(old, &v)) {
             return false;
+        }
+        if let Some(j) = self.journal.as_mut() {
+            j.keep(n, node.value.clone(), &v);
         }
         node.value = Some(v);
         self.stats.propagations += 1;
