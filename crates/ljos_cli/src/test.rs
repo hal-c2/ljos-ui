@@ -232,6 +232,9 @@ impl Suite {
             ljos_platform::Platform::of(&engine)
                 .set_fetcher(std::sync::Arc::new(ljos_platform::HttpFetcher::new()));
             ljos_test::qttest::register(&engine);
+            // What the runner was started with, as qmltestrunner's tests
+            // read its own.
+            ljos_controls::set_application_arguments(&engine, std::env::args());
             // The engine would refuse the file too, but cannot say where
             // in it the import is.
             let missing = modules
