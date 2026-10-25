@@ -96,6 +96,9 @@ pub(crate) struct Changes {
     /// The named scripts of the state entered, each with the property its
     /// statement is kept under: a `ScriptAction` runs one by `scriptName`.
     pub scripts: Vec<(Atom, ObjectId, PropIndex)>,
+    /// The value each `PropertyAction` was given, read before the state's
+    /// changes were made ([`action_values`]); one not here reads its own.
+    pub values: Vec<(ObjectId, Value)>,
 }
 
 /// What an animation is built in: the property of a `Behavior`, or the
@@ -283,6 +286,9 @@ struct ActionNode {
     slots: Vec<Slot>,
     /// Per slot; `None` where there is nothing to set.
     values: Vec<Option<Value>>,
+    /// In a transition, the action was given a value of its own: the
+    /// state's change of what it sets ends there ([`Timed::given`]).
+    own: bool,
 }
 
 /// The way from one value to another.
@@ -769,6 +775,26 @@ pub(crate) fn script_names(engine: &Engine, anims: &[ObjectId]) -> Vec<Atom> {
     out
 }
 
+/// The value of each `PropertyAction` in `anims`, as it is now: a
+/// transition's actions read theirs before the state's changes are made
+/// (qml6), so one that reads what the state changes sets the old value.
+pub(crate) fn action_values(engine: &Engine, anims: &[ObjectId]) -> Vec<(ObjectId, Value)> {
+    let mut out = Vec::new();
+    for anim in anims {
+        if is_a::<PropertyAction>(engine, *anim) {
+            out.push((
+                *anim,
+                engine.untrack(|| engine.read_by_name(*anim, "value")),
+            ));
+        } else if is_a::<SequentialAnimation>(engine, *anim)
+            || is_a::<ParallelAnimation>(engine, *anim)
+        {
+            out.extend(action_values(engine, &objects(engine, *anim, "animations")));
+        }
+    }
+    out
+}
+
 /// Whether `anim`, run with these defaults, takes the defaults' property
 /// somewhere: one of its parts animates or sets it. A `Behavior` whose
 /// animation does not lets the value through.
@@ -1038,7 +1064,16 @@ impl Timed {
             let (slots, tos) = aimed(Kind::Any);
             // Without a value of its own it sets what the Behavior it is
             // in was given, or what the state gives the property.
-            let own = set("value").or_else(|| defaults.and_then(|d| d.to.clone()));
+            let read = env
+                .changes
+                .and_then(|c| c.values.iter().find(|(a, _)| *a == anim));
+            let own = match read {
+                Some((_, Value::Undefined)) => None,
+                Some((_, v)) => Some(v.clone()),
+                None => set("value"),
+            };
+            let given = env.changes.is_some() && own.is_some();
+            let own = own.or_else(|| defaults.and_then(|d| d.to.clone()));
             let values = match env.changes {
                 Some(_) => tos.into_iter().map(|to| own.clone().or(to)).collect(),
                 None => slots
@@ -1046,7 +1081,11 @@ impl Timed {
                     .map(|_| Some(own.clone().unwrap_or_default()))
                     .collect(),
             };
-            let node = ActionNode { slots, values };
+            let node = ActionNode {
+                slots,
+                values,
+                own: given,
+            };
             (Node::Action { node, fired: false }, 0)
         } else {
             // An animation type this module does not know stands still.
@@ -1196,6 +1235,19 @@ impl Timed {
             Node::Pause | Node::Script { .. } => return,
         };
         out.extend(slots.iter().map(|s| (s.obj, s.prop)));
+    }
+
+    /// The properties a transition's `PropertyAction` sets to a value of
+    /// its own: the change the state makes of each ends at that value,
+    /// not at the state's (qml6).
+    pub(crate) fn given(&self, out: &mut Vec<(ObjectId, PropIndex)>) {
+        match &self.node {
+            Node::Action { node, .. } if node.own => {
+                out.extend(node.slots.iter().map(|s| (s.obj, s.prop)));
+            }
+            Node::Seq(c) | Node::Par(c) => c.iter().for_each(|c| c.given(out)),
+            _ => {}
+        }
     }
 
     /// Writes what Animators show and have not written yet, and shows the

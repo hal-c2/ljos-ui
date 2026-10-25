@@ -69,6 +69,9 @@ pub(crate) fn register(engine: &Engine) {
         AnchorAnimation, ParentAnimation, SpringAnimation, Animator, OpacityAnimator, XAnimator,
         YAnimator, ScaleAnimator, RotationAnimator, UniformAnimator,
     ]));
+    // A transition's animations are made when it first runs, in Qt: what
+    // they are given is not worked out before then.
+    engine.register_deferred_contents(Transition::static_meta());
     // `script: ...` is a statement to run when its turn comes.
     engine.register_script_property(ScriptAction::static_meta(), ScriptAction::SCRIPT.index);
     // `NumberAnimation on x { }` and `Behavior on x { }`.

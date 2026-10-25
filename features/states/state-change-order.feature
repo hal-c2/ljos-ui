@@ -17,7 +17,6 @@ Feature: The order of a state change
   PropertyChanges that reads what it changes reads it once, and a PropertyAction reads its value
   before the changes are made.
 
-  @backlog
   Scenario: A state given where the item is made is told before its script runs
     Given the QML:
       """qml
@@ -32,7 +31,6 @@ Feature: The order of a state change
       """
     Then the property "log" of "root" is "st=s0;scs;"
 
-  @backlog
   Scenario: A state given where the item is made is told when no state has its name
     Given the QML:
       """qml
@@ -59,7 +57,6 @@ Feature: The order of a state change
       """
     Then the property "log" of "root" is "st=s0;scs;"
 
-  @backlog
   Scenario: A state a when picks where the item is made runs the transition to it
     Given the QML:
       """qml
@@ -78,6 +75,26 @@ Feature: The order of a state change
       }
       """
     Then the property "seen" of "root" is "x|sa;"
+
+  Scenario: A state's own scripts run once the transition to it has started
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log
+        property bool go
+        states: [State { name: "s0"; when: root.go
+          StateChangeScript { script: root.log += "scs;" } }]
+        transitions: [Transition { SequentialAnimation {
+          ScriptAction { script: root.log += "a;" }
+          PauseAnimation { duration: 50 }
+          ScriptAction { script: root.log += "b;" } } }]
+        function run() { go = true; log += "|" }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "log" of "root" is "a;scs;|"
 
   Scenario: A state given by name where the item is made runs no transition
     Given the QML:
@@ -98,7 +115,6 @@ Feature: The order of a state change
       """
     Then the property "seen" of "root" is "|"
 
-  @backlog
   Scenario: A transition runs to a state no state has
     Given the QML:
       """qml
@@ -150,6 +166,26 @@ Feature: The order of a state change
     When the method "run" of "root" is called
     Then the property "seen" of "root" is "s0|27"
 
+  Scenario: A state given where the item is made whose when is false is left before it is entered
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property int v
+        states: [State {
+          name: "s0"; when: false
+          PropertyChanges { root.v: 5 }
+          StateChangeScript { script: root.log += "scs;" }
+        }]
+        state: "s0"
+        onStateChanged: log += "st=" + state + ";"
+        property string seen: log + "|" + state + "|" + v
+      }
+      """
+    Then the property "seen" of "root" is "st=;||0"
+
   Scenario: A change that reads the property it changes reads it once, and is warned of a loop
     Given the QML:
       """qml
@@ -166,7 +202,24 @@ Feature: The order of a state change
     Then the property "seen" of "root" is "3"
     And the log has a warning matching "Binding loop detected for property .p."
 
-  @backlog
+  Scenario: A change in an extending state reads what the state it extends gave the property
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property int p
+        property int q
+        states: [State { name: "s0"; PropertyChanges { root.p: 5; root.q: 2 * 3 } },
+          State { name: "s1"; extend: "s0"; PropertyChanges { root.p: root.p + 1; root.q: root.q + 1 } }]
+        property var seen: [p, q]
+        function run() { state = "s1" }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "seen" of "root" is [6, 7]
+    And the log has a warning matching "Binding loop detected for property .q."
+
   Scenario: A change of a colour to a bool makes it invalid, and one to no number is warned of
     Given the QML:
       """qml
@@ -185,7 +238,6 @@ Feature: The order of a state change
     Then the property "seen" of "root" is "#000000 false 4 4"
     And the log has 2 warnings matching "Unable to assign"
 
-  @backlog
   Scenario: A change an extended state keeps is restored when the default state is set
     Given the QML:
       """qml
@@ -206,7 +258,6 @@ Feature: The order of a state change
     When the method "run" of "root" is called
     Then the property "seen" of "root" is "|-0"
 
-  @backlog
   Scenario: A PropertyAction value that would throw is not read while its transition never runs
     Given the QML:
       """qml
@@ -220,7 +271,6 @@ Feature: The order of a state change
       """
     Then the log has no warnings
 
-  @backlog
   Scenario: A PropertyAction value is read before the state's changes are made
     Given the QML:
       """qml
@@ -238,7 +288,24 @@ Feature: The order of a state change
     When the method "run" of "root" is called
     Then the property "seen" of "root" is "old"
 
-  @backlog
+  Scenario: A state's binding has the last word over a PropertyAction, and its value does not
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property int a
+        property int b
+        states: [State { name: "s0"; PropertyChanges { root.a: Math.min(4, 9); root.b: 4 } }]
+        transitions: [Transition { to: "s0"
+          PropertyAction { targets: [root]; properties: "a,b"; value: 97 } }]
+        property var seen: [a, b]
+        function run() { state = "s0" }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "seen" of "root" is [4, 97]
+
   Scenario: Two changes that read each other through a binding are no loop
     Given the QML:
       """qml

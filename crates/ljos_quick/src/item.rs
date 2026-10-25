@@ -710,6 +710,7 @@ impl Item {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init_item(cx.engine, cx.this)?;
         crate::palette::item_palette_set(cx.engine, cx.this, false);
+        crate::states::group::attach_stateless(cx.engine, cx.this);
         Ok(())
     }
 

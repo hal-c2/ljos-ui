@@ -2,20 +2,18 @@
 # signature then why.
 # Triaged from seeds 101 and 202 (2000 cases each).
 
-# The order of a state change (features/states/state-change-order.feature).
-value:onChanged:text      a state given where the item is made is told before its script runs (state-change-order.feature)
-value:load:number      a state a when picks where the item is made runs the transition to it (state-change-order.feature)
-value:load:text-nan-qt      a state a when picks where the item is made runs the transition to it (state-change-order.feature)
-value:load:invalid-ljos      a state a when picks where the item is made runs the transition to it (state-change-order.feature)
-value:log:text      a state a when picks where the item is made runs the transition to it (state-change-order.feature)
-value:step:invalid-ljos      a PropertyAction value is read before the state's changes are made (state-change-order.feature)
-value:step:invalid-qt      a change of a colour to a bool makes it invalid (state-change-order.feature)
-value:step:text      a change an extended state keeps is restored when the default state is set (state-change-order.feature)
-warning:assign(ljos-only):QML_Case:_Unable_to_assign_*      a change of a colour to a bool or a number is not warned of, and one to no number is warned of in Qt's words (state-change-order.feature)
-warning:assign(qt-only):Unable_to_assign_QJSValue_to_int      a change of an int to an array is warned of (state-change-order.feature)
-warning:binding-loop(ljos-only):*      two changes that read each other through a binding are no loop (state-change-order.feature)
+# The order of a state change (features/states/state-change-order.feature) is fixed; these
+# buckets still come up in seeds 101 and 202 for other differences, not yet triaged.
+value:onChanged:text      Qt tells more changes: NaN bound again through Qt.binding (features/language/nan-is-a-change.feature), and a PropertyAction with no value, told three times
+value:load:number      an int a state's change gives text that is no number, or a state that changes a property the item lacks
+value:step:invalid-ljos      a state's own change makes its when false, without a transition: Qt stays in it, Ljós goes to the default state
+value:step:invalid-qt      a when a set of another property makes true again: Qt enters its state anew
+value:step:text      a when that turns true again while a state given by name is in force: Qt goes to its state, Ljós stays
+warning:assign(ljos-only):QML_Case:_Unable_to_assign_*      a change of a real to undefined, or of a colour to an object, is warned of by Ljós only
+warning:assign(qt-only):Unable_to_assign_QJSValue_to_int      an int declared with an array, among states and transitions, is warned of by Qt only
+warning:binding-loop(ljos-only):*      a change that reads a property whose own binding reads the changed one is a loop to Ljós only
 warning:binding-loop(qt-only):load      NaN given to a NaN is a change, so a change giving it NaN through a binding of it is a loop (features/language/nan-is-a-change.feature)
-warning:binding-loop(qt-only):step-set      a change of a colour that reads it is a loop to Qt, and is warned of as a bool given a colour by Ljós (state-change-order.feature)
+warning:binding-loop(qt-only):step-set      a change of a property that reads it is a loop to Qt when it gives NaN or a colour
 
 # Qt's own quirk, which Ljós is not to copy: a `when` that a change of its state makes false
 # again, while a transition runs, sends Qt back to the default state with a warning that it
