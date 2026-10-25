@@ -1,0 +1,29 @@
+# Buckets of ljos-fuzz builtins that are known: as known/bindings.txt, one per line, the
+# signature then why.
+# Triaged from seeds 101 and 202 (2000 cases each): 116 and 110 cases differ. The generator
+# calls only what Qt 6.11's engine has (features/language/newer-builtins.feature).
+
+# Date.parse of what is no date is NaN on Qt; Ljós's engine reads a number alone as a date
+# (features/language/date-strings.feature).
+value:load:text-nan-qt                  Date.parse of a number alone is a date, not NaN (features/language/date-strings.feature)
+value:load:nan-qt                       Date.parse of a number alone is a date, not NaN (features/language/date-strings.feature)
+value:step:nan-qt                       Date.parse of a number alone is a date, not NaN (features/language/date-strings.feature)
+
+# toUTCString writes Qt's own order (features/language/date-strings.feature).
+value:step:text                         toUTCString puts the year before the time, not last (features/language/date-strings.feature)
+value:load:text                         toUTCString puts the year before the time, not last (features/language/date-strings.feature)
+result:none/none:call:text              toUTCString puts the year before the time, not last (features/language/date-strings.feature)
+
+# JSON.stringify of an item throws on Qt, which walks its parent and children; Ljós gives "{}"
+# (features/language/json-of-items.feature). Qt also warns of the loop and of the properties
+# that cannot be bound on its way through them.
+value:load:number                       JSON.stringify of an item is "{}", or Date.parse of a number alone is a date (features/language/json-of-items.feature, features/language/date-strings.feature)
+throws:TypeError/none:call              JSON.stringify of an item is "{}", not a TypeError (features/language/json-of-items.feature)
+value:load:undefined-qt                 a binding with JSON.stringify of an item does not throw (features/language/json-of-items.feature)
+warning:TypeError(qt-only):Cannot_convert_circular_structure_to_JSON  JSON.stringify of an item is "{}", not a TypeError (features/language/json-of-items.feature)
+warning:binding-loop(qt-only):*         a binding with JSON.stringify of an item reads its own property on Qt (features/language/json-of-items.feature)
+warning:other(qt-only):QQmlExpression:_Expression___depends_on_non-bindable_properties  a binding with JSON.stringify of an item reads the item's every property on Qt (features/language/json-of-items.feature)
+
+# Qt's own words, which Ljós is not to copy: Qt's engine notes a date past its range on
+# stderr as it gives NaN, which Ljós gives too.
+warning:other(qt-only):Apparently_out-of-range_date_N-N-N  Date.UTC past the range is NaN without Qt's debug note

@@ -10,6 +10,7 @@
 pub mod area;
 pub mod bindings;
 pub mod bucket;
+pub mod builtins;
 pub mod compare;
 pub mod connections;
 pub mod creation;

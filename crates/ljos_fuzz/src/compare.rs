@@ -391,6 +391,12 @@ pub fn message_shape(text: &str) -> String {
     {
         out = msg.to_owned();
     }
+    // What the object prints as is the program's value, not the warning's.
+    if let Some((head, _)) = out.split_once(" of object ")
+        && out.ends_with(" is not a function")
+    {
+        out = format!("{head} of object is not a function");
+    }
     let mut shape = String::with_capacity(out.len());
     let mut quote = None;
     let mut digits = false;
@@ -549,6 +555,12 @@ mod tests {
         assert_eq!(
             message_shape("file:///Case.qml:4: RangeError: Invalid array length 42"),
             "Invalid array length N"
+        );
+        assert_eq!(
+            message_shape(
+                "file:///Case.qml:9: TypeError: Property 'at' of object {\"k\":[1,2]} is not a function"
+            ),
+            "Property '_' of object is not a function"
         );
     }
 
