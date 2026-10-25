@@ -80,6 +80,7 @@ mod model;
 mod number;
 mod number_slot;
 mod object;
+mod profile;
 mod property_map;
 mod qml_types;
 mod qt_enums;
@@ -154,6 +155,7 @@ pub use object::{
     ObjectFlags, QmlObject, QmlType, ScriptMethod, downcast_chain, downcast_chain_mut, find_native,
     find_native_mut,
 };
+pub use profile::{BindingLoopSeen, HotCause, HotEntry, HotKind, HotRun, MAX_RUNS, Profile};
 pub use property_map::PropertyMap;
 pub use qtqml::{Component, ComponentAttached, Connections, RunningTimer, Timer};
 pub use registry::{

@@ -137,6 +137,8 @@ pub(crate) struct Inner {
     pub(crate) shown: crate::model::Shown,
     /// What a frame timeline counts (timing.rs); one flag while off.
     pub(crate) timing: crate::timing::Timing,
+    /// Hot bindings and the binding loops seen (`profile.rs`).
+    pub(crate) profile: crate::profile::Profiler,
     /// The properties whose setters (those that get a `Cx`) are running,
     /// innermost last: a write to one of them from inside is refused.
     setters: RefCell<SmallVec<[(ObjectId, PropIndex); 2]>>,
@@ -301,6 +303,7 @@ impl Engine {
             traces: Default::default(),
             shown: Default::default(),
             timing: Default::default(),
+            profile: Default::default(),
             setters: RefCell::new(SmallVec::new()),
             frozen: Cell::new(0),
         });
@@ -390,6 +393,9 @@ impl Engine {
     // ------------------------------------------------------------ warnings
 
     fn report(&self, d: &Diagnostic) {
+        if let Diagnostic::BindingLoop { node, cycle } = d {
+            self.loop_seen(*node, cycle);
+        }
         let node = match d {
             Diagnostic::BindingLoop { node, .. } | Diagnostic::RerunLimit { node, .. } => *node,
         };
@@ -469,7 +475,7 @@ impl Engine {
 
     /// Where the binding of `prop` was written (`file.qml:4:9`), when it was
     /// written in a file.
-    fn binding_place(&self, obj: ObjectId, prop: PropIndex) -> Option<String> {
+    pub(crate) fn binding_place(&self, obj: ObjectId, prop: PropIndex) -> Option<String> {
         let store = self.inner.store.borrow();
         let ext = store.objects.get(obj)?.ext.as_ref()?;
         let l = &ext.binding_locs.iter().find(|l| l.prop == prop)?.at;
@@ -2502,6 +2508,7 @@ impl Engine {
             // read that changed, how long it took and what it gave.
             // Otherwise this is one look at a flag.
             let _timed = engine.inner.timing.binding();
+            let _profiled = engine.profile_binding(obj, prop);
             let followed = if engine.inner.traces.follows_bindings() {
                 engine
                     .binding_runs(obj, prop)

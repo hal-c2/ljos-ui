@@ -270,7 +270,7 @@ impl Engine {
     }
 
     /// What `n` read when it last ran, with the values they have now.
-    fn reads_now(&self, n: NodeId) -> Vec<(NodeId, Value)> {
+    pub(crate) fn reads_now(&self, n: NodeId) -> Vec<(NodeId, Value)> {
         let g = &self.inner.graph;
         g.sources(n)
             .into_iter()

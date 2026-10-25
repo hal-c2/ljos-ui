@@ -2224,6 +2224,7 @@ impl Engine {
             .find(|r| matches!(r.resolved, ljos_ir::Resolved::Local))
             .map(|r| Atom::new(&r.name));
         let code = self.reload_code(inst, expr);
+        let signal_name = Atom::new(signal);
         let handler: crate::Handler = Rc::new(move |e: &Engine, args: &[Value]| {
             // Dev reload: the tree being replaced, or the one being
             // made, is not to act on what the other does.
@@ -2234,6 +2235,10 @@ impl Engine {
             if let Some(name) = &injected {
                 e.warn_injected(&i, expr, name);
             }
+            let _profiled = e.profile_handler(scope, obj, expr.0, &signal_name, || {
+                let at = handler_place(&i.file.ir, expr);
+                Some(format!("{}:{}:{}", i.url(), at.line, at.column))
+            });
             e.call_expr(&i, expr, args);
         });
         // Every handler of a `Connections` is for its target, also one
