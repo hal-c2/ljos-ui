@@ -304,6 +304,114 @@ impl InspectorSurface {
             )),
         }
     }
+
+    /// Runs a tool on its way to the UI thread, or here when it needs not
+    /// go there. What it answers is capped by [`McpSurface::call_tool`].
+    async fn run(&self, name: &str, ctx: &CallCtx, args: Value, per_copy: usize) -> Answer {
+        if !args::TOOLS.contains(&name) {
+            // Says which tools there are.
+            return args::parse(name, Value::Null).map(|_| ToolReply::from(Value::Null));
+        }
+        // The capability is checked before the arguments are read, so
+        // that a connection that may not use a tool learns nothing about
+        // it but that.
+        let def = self.registry.all().find(|d| d.name == name);
+        if let Some(needs) = def.and_then(|d| d.required_cap)
+            && !ctx.caps.contains(needs)
+        {
+            return Err(refusal(&format!("tool `{name}`"), needs, ctx.caps));
+        }
+        let kind = args::parse(name, args)?;
+        if let Kind::Processes(a) = &kind
+            && !a.wants_the_ui_thread()
+        {
+            // Read here, so a UI thread that is stuck still shows its
+            // inbox filling up.
+            return Ok(super::observe::with_mailboxes(
+                ToolReply::from(json!({})),
+                a,
+                per_copy,
+            ));
+        }
+        if let Kind::Watch(a) = &kind {
+            let wait = a.wait_ms.unwrap_or(super::watch::DEFAULT_WAIT_MS);
+            let holding = a
+                .holder
+                .as_deref()
+                .map(|h| self.holders.watching(h, Duration::from_millis(wait)));
+            // Sleeps here until the UI thread has something to tell:
+            // a watch never wakes it.
+            let reply = super::watch::watch(&self.changes, a).await;
+            if let Some(holding) = holding {
+                holding.answered();
+            }
+            return Ok(reply);
+        }
+        match &kind {
+            Kind::Act(Act::Batch(steps)) => {
+                // Everything a batch will do is allowed before any of it is.
+                for (i, (tool, act)) in steps.iter().enumerate() {
+                    if let Some(&needs) = act.needs().iter().find(|&&c| !ctx.caps.contains(c)) {
+                        return Err(refusal(
+                            &format!("step {i} of the batch (`{tool}`)"),
+                            needs,
+                            ctx.caps,
+                        ));
+                    }
+                }
+            }
+            // What the arguments ask for may need more than the tool
+            // does: a binding is script.
+            Kind::Act(act) => {
+                if let Some(&needs) = act.needs().iter().find(|&&c| !ctx.caps.contains(c)) {
+                    return Err(refusal(
+                        &format!("tool `{name}` with these arguments"),
+                        needs,
+                        ctx.caps,
+                    ));
+                }
+            }
+            _ => {}
+        }
+        let mut waited = None;
+        if let Kind::Status(a) = &kind
+            && let Some(after) = a.after_reload
+        {
+            waited = Some(self.wait_for_reload(after, a.wait_ms.unwrap_or(0)).await);
+        }
+        let processes = match &kind {
+            Kind::Processes(a) if a.wants_mailboxes() => Some(a.clone()),
+            _ => None,
+        };
+        let holds = match &kind {
+            Kind::Trace(a) if a.target.is_some() && !a.stop => a.holder.clone(),
+            Kind::Frames(a) if a.record == Some(true) => a.holder.clone(),
+            Kind::Objects(a) if a.model.is_some() || a.mark => a.holder.clone(),
+            _ => None,
+        };
+        let answer = self.ask(kind, per_copy, ctx).await;
+        if let Some(a) = processes {
+            return match answer {
+                Ok(reply) => Ok(super::observe::with_mailboxes(reply, &a, per_copy)),
+                // A UI thread that does not answer is what the
+                // mailboxes are looked at for: they are still told.
+                Err(e) if matches!(e.code, ErrorCode::Timeout | ErrorCode::Busy) => {
+                    let reply = ToolReply::from(json!({ "ui_thread": e.message.clone() }))
+                        .with_text(e.message);
+                    Ok(super::observe::with_mailboxes(reply, &a, per_copy))
+                }
+                Err(e) => Err(e),
+            };
+        }
+        let mut reply = answer?;
+        if let Some(holder) = holds {
+            self.holders.holds(&holder);
+        }
+        if let Some(waited) = waited {
+            reply.structured["reload"]["waited"] = json!(waited);
+        }
+        Ok(reply)
+    }
 }
 
 impl McpSurface for InspectorSurface {
@@ -321,111 +429,18 @@ impl McpSurface for InspectorSurface {
 
     fn call_tool<'a>(&'a self, name: &'a str, ctx: &'a CallCtx, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
-            if !args::TOOLS.contains(&name) {
-                // Says which tools there are.
-                return args::parse(name, Value::Null).map(|_| ToolReply::from(Value::Null));
-            }
-            // The capability is checked before the arguments are read, so
-            // that a connection that may not use a tool learns nothing about
-            // it but that.
-            let def = self.registry.all().find(|d| d.name == name);
-            if let Some(needs) = def.and_then(|d| d.required_cap)
-                && !ctx.caps.contains(needs)
-            {
-                return Err(refusal(&format!("tool `{name}`"), needs, ctx.caps));
-            }
-            let per_copy = def.map_or(ljos_mcp_core::DEFAULT_RESULT_BYTES / 2, |d| {
-                d.per_copy_bytes()
-            });
-            let kind = args::parse(name, args)?;
-            if let Kind::Processes(a) = &kind
-                && !a.wants_the_ui_thread()
-            {
-                // Read here, so a UI thread that is stuck still shows its
-                // inbox filling up.
-                return Ok(super::observe::with_mailboxes(
-                    ToolReply::from(json!({})),
-                    a,
-                ));
-            }
-            if let Kind::Watch(a) = &kind {
-                let wait = a.wait_ms.unwrap_or(super::watch::DEFAULT_WAIT_MS);
-                let holding = a
-                    .holder
-                    .as_deref()
-                    .map(|h| self.holders.watching(h, Duration::from_millis(wait)));
-                // Sleeps here until the UI thread has something to tell:
-                // a watch never wakes it.
-                let reply = super::watch::watch(&self.changes, a).await;
-                if let Some(holding) = holding {
-                    holding.answered();
-                }
-                return Ok(reply);
-            }
-            match &kind {
-                Kind::Act(Act::Batch(steps)) => {
-                    // Everything a batch will do is allowed before any of it is.
-                    for (i, (tool, act)) in steps.iter().enumerate() {
-                        if let Some(&needs) = act.needs().iter().find(|&&c| !ctx.caps.contains(c)) {
-                            return Err(refusal(
-                                &format!("step {i} of the batch (`{tool}`)"),
-                                needs,
-                                ctx.caps,
-                            ));
-                        }
-                    }
-                }
-                // What the arguments ask for may need more than the tool
-                // does: a binding is script.
-                Kind::Act(act) => {
-                    if let Some(&needs) = act.needs().iter().find(|&&c| !ctx.caps.contains(c)) {
-                        return Err(refusal(
-                            &format!("tool `{name}` with these arguments"),
-                            needs,
-                            ctx.caps,
-                        ));
-                    }
-                }
-                _ => {}
-            }
-            let mut waited = None;
-            if let Kind::Status(a) = &kind
-                && let Some(after) = a.after_reload
-            {
-                waited = Some(self.wait_for_reload(after, a.wait_ms.unwrap_or(0)).await);
-            }
-            let processes = match &kind {
-                Kind::Processes(a) if a.wants_mailboxes() => Some(a.clone()),
-                _ => None,
-            };
-            let holds = match &kind {
-                Kind::Trace(a) if a.target.is_some() && !a.stop => a.holder.clone(),
-                Kind::Frames(a) if a.record == Some(true) => a.holder.clone(),
-                Kind::Objects(a) if a.model.is_some() || a.mark => a.holder.clone(),
-                _ => None,
-            };
-            let answer = self.ask(kind, per_copy, ctx).await;
-            if let Some(a) = processes {
-                return match answer {
-                    Ok(reply) => Ok(super::observe::with_mailboxes(reply, &a)),
-                    // A UI thread that does not answer is what the
-                    // mailboxes are looked at for: they are still told.
-                    Err(e) if matches!(e.code, ErrorCode::Timeout | ErrorCode::Busy) => {
-                        let reply = ToolReply::from(json!({ "ui_thread": e.message.clone() }))
-                            .with_text(e.message);
-                        Ok(super::observe::with_mailboxes(reply, &a))
-                    }
-                    Err(e) => Err(e),
-                };
-            }
-            let mut reply = answer?;
-            if let Some(holder) = holds {
-                self.holders.holds(&holder);
-            }
-            if let Some(waited) = waited {
-                reply.structured["reload"]["waited"] = json!(waited);
-            }
-            Ok(reply)
+            let per_copy = self
+                .registry
+                .all()
+                .find(|d| d.name == name)
+                .map_or(ljos_mcp_core::DEFAULT_RESULT_BYTES / 2, |d| {
+                    d.per_copy_bytes()
+                });
+            // The registry caps what its handlers answer; these tools are
+            // run here, so every answer is capped here, however it came.
+            self.run(name, ctx, args, per_copy)
+                .await
+                .map(|reply| reply.capped(per_copy))
         })
     }
 

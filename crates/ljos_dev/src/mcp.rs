@@ -62,6 +62,7 @@ mod one_wake;
 mod paint;
 mod redact;
 mod reload;
+mod room;
 mod rust_heap;
 mod surface;
 mod timeline;
@@ -272,6 +273,7 @@ struct ParkedResize {
 struct ParkedMemory {
     reply: oneshot::Sender<Answer>,
     args: memory::MemoryArgs,
+    per_copy: usize,
 }
 
 /// The inspector's side on the UI thread. The host makes one, hands the
@@ -465,9 +467,13 @@ impl Inspector {
     pub fn finish_memory(&mut self, engine: &Engine, windows: &[WindowMemory]) {
         let driver = self.painter.as_ref().and_then(|p| p.adapter.as_deref());
         for parked in std::mem::take(&mut self.parked_memory) {
-            let _ = parked
-                .reply
-                .send(Ok(memory::memory(engine, windows, &parked.args, driver)));
+            let _ = parked.reply.send(Ok(memory::memory(
+                engine,
+                windows,
+                &parked.args,
+                driver,
+                parked.per_copy,
+            )));
         }
     }
 
@@ -916,6 +922,7 @@ impl Inspector {
         engine: &Engine,
         scene: &mut QuickScene,
         args: &timeline::FramesArgs,
+        per_copy: usize,
     ) -> Result<ToolReply, SurfaceError> {
         if let Some(record) = args.record {
             self.wakes.ask(record, args.holder.as_deref())?;
@@ -928,7 +935,7 @@ impl Inspector {
         if args.wake.is_some() || args.last_input {
             return self.wakes.answer_one(engine, args.wake, args.max);
         }
-        Ok(self.wakes.answer(args.since, args.max))
+        Ok(self.wakes.answer(args.since, args.max, per_copy))
     }
 
     fn next_epoch(&mut self) -> u64 {
@@ -995,6 +1002,7 @@ impl Inspector {
                 self.parked_memory.push(ParkedMemory {
                     reply,
                     args: args.clone(),
+                    per_copy,
                 });
                 (self.wake)();
                 return;
@@ -1005,16 +1013,16 @@ impl Inspector {
                 render: None,
             }];
             let driver = self.painter.as_ref().and_then(|p| p.adapter.as_deref());
-            let _ = reply.send(Ok(memory::memory(engine, &windows, args, driver)));
+            let _ = reply.send(Ok(memory::memory(engine, &windows, args, driver, per_copy)));
             return;
         }
         if let Kind::Frames(args) = &kind {
             let answer = args.mode().and_then(|mode| match mode {
                 timeline::Mode::Frames => {
                     let keeps = self.wakes.recording();
-                    timeline::frames(engine, scene, &mut self.timeline, args, keeps)
+                    timeline::frames(engine, scene, &mut self.timeline, args, keeps, per_copy)
                 }
-                timeline::Mode::Wakes => self.answer_wakes(engine, scene, args),
+                timeline::Mode::Wakes => self.answer_wakes(engine, scene, args, per_copy),
                 timeline::Mode::Bindings => {
                     if let Some(record) = args.record {
                         self.hot.ask(engine, record, args.holder.as_deref())?;
@@ -1078,11 +1086,14 @@ impl Inspector {
                 engine,
                 self.logs.borrow().book(),
                 &self.stats,
-                ljos_platform::Platform::of(engine).pending(),
-                // Frames asked for by more requests or by motion.
-                queued > 0 || ljos_quick::running_animation_count(engine) > 0,
-                self.feed.state().watched,
+                observe::ProcessActivity {
+                    pending_requests: ljos_platform::Platform::of(engine).pending(),
+                    // Frames asked for by more requests or by motion.
+                    queued_work: queued > 0 || ljos_quick::running_animation_count(engine) > 0,
+                    watching: self.feed.state().watched,
+                },
                 args,
+                per_copy,
             )),
             (Kind::Objects(args), _) if args.release => {
                 if let Some(holder) = &args.holder {
@@ -1172,7 +1183,7 @@ impl Inspector {
                     },
                     (None, _) => Ok(None),
                 };
-                found.and_then(|found| trace::trace(engine, &self.traces, args, found))
+                found.and_then(|found| trace::trace(engine, &self.traces, args, found, per_copy))
             }
             // The server answers it without the UI thread.
             (Kind::Watch(_), _) => Err(SurfaceError::new(

@@ -12,77 +12,98 @@ fn size_of(value: &Value) -> usize {
 
 /// Brings `value` under `max_bytes` of compact JSON.
 ///
-/// Shrinks the largest top-level array first, then the largest string, and sets
-/// `truncated: true` plus `next_cursor` (the index of the first dropped array
-/// element, as a string) so the caller can resume. A tool that paginates
-/// itself and already set `next_cursor` keeps its own cursor. Non-object values
-/// are wrapped as `{"value": …}` because structured results are always objects.
+/// Shrinks what holds most of the bytes, however deep: a list whose bytes
+/// are spread over its elements is halved, one whose single element holds
+/// most of them keeps that element and shrinks inside it, and a long string
+/// is cut. Sets `truncated: true`. A top-level list that is cut also gets
+/// `next_cursor` (the index of its first dropped element, as a string) and
+/// `truncated_field`, so the caller can resume; a tool that paginates itself
+/// and already set `next_cursor` keeps its own cursor. A cut deeper down has
+/// no cursor to resume from. Non-object values are wrapped as `{"value": …}`
+/// because structured results are always objects.
 pub fn cap_result(value: Value, max_bytes: usize) -> Value {
     let max_bytes = max_bytes.min(HARD_RESULT_BYTES);
-    let mut obj = match value {
+    let obj = match value {
         Value::Object(o) => o,
         other => Map::from_iter([("value".to_owned(), other)]),
     };
-    if size_of(&Value::Object(obj.clone())) <= max_bytes {
-        return Value::Object(obj);
+    let mut value = Value::Object(obj);
+    if size_of(&value) <= max_bytes {
+        return value;
     }
+    let Value::Object(obj) = &mut value else {
+        unreachable!("wrapped above")
+    };
     obj.insert("truncated".into(), Value::Bool(true));
     let own_cursor = obj.contains_key("next_cursor");
 
-    while size_of(&Value::Object(obj.clone())) > max_bytes {
-        if shrink_array(&mut obj, own_cursor) || shrink_string(&mut obj) {
-            continue;
+    while size_of(&value) > max_bytes {
+        let Some(cut) = shrink(&mut value, true) else {
+            break;
+        };
+        if let (Some((key, keep)), false) = (cut, own_cursor)
+            && let Value::Object(obj) = &mut value
+        {
+            obj.insert("next_cursor".into(), json!(keep.to_string()));
+            obj.insert("truncated_field".into(), json!(key));
         }
-        break;
     }
-    Value::Object(obj)
+    value
 }
 
-/// Halves the largest array. Halving keeps this O(n log n) for huge lists.
-fn shrink_array(obj: &mut Map<String, Value>, own_cursor: bool) -> bool {
-    let Some(key) = obj
-        .iter()
-        .filter_map(|(k, v)| match v {
-            Value::Array(a) if !a.is_empty() => Some((k.clone(), size_of(v))),
-            _ => None,
-        })
-        .max_by_key(|(_, s)| *s)
-        .map(|(k, _)| k)
-    else {
-        return false;
-    };
-    let Some(Value::Array(items)) = obj.get_mut(&key) else {
-        return false;
-    };
-    let keep = items.len() / 2;
-    items.truncate(keep);
-    if !own_cursor {
-        obj.insert("next_cursor".into(), json!(keep.to_string()));
-        obj.insert("truncated_field".into(), json!(key));
-    }
-    true
-}
-
-fn shrink_string(obj: &mut Map<String, Value>) -> bool {
-    let Some(key) = obj
-        .iter()
-        .filter_map(|(k, v)| match v {
-            Value::String(s) if s.len() > 64 => Some((k.clone(), s.len())),
-            _ => None,
-        })
-        .max_by_key(|(_, l)| *l)
-        .map(|(k, _)| k)
-    else {
-        return false;
-    };
-    if let Some(Value::String(s)) = obj.get_mut(&key) {
-        let mut cut = s.len() / 2;
-        while !s.is_char_boundary(cut) {
-            cut -= 1;
+/// Shrinks the part of `value` that holds most of its bytes, once.
+/// `None`: nothing is left to shrink. `Some(Some((key, kept)))`: a list of
+/// the top-level object (`top`) was halved to `kept` elements.
+fn shrink(value: &mut Value, top: bool) -> Option<Option<(String, usize)>> {
+    match value {
+        Value::String(s) if s.len() > 64 => {
+            let mut cut = s.len() / 2;
+            while !s.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            s.truncate(cut);
+            Some(None)
         }
-        s.truncate(cut);
+        Value::Object(map) => {
+            // Biggest first; a child with nothing to shrink gives way to
+            // the next one.
+            let mut keys: Vec<(String, usize)> =
+                map.iter().map(|(k, v)| (k.clone(), size_of(v))).collect();
+            keys.sort_by_key(|(_, s)| std::cmp::Reverse(*s));
+            for (key, _) in keys {
+                let child = map.get_mut(&key)?;
+                let was_list = matches!(child, Value::Array(a) if !a.is_empty());
+                let before = child.as_array().map(Vec::len);
+                if let Some(cut) = shrink(child, false) {
+                    let after = child.as_array().map(Vec::len);
+                    let halved = was_list && before != after;
+                    return Some(match (top && halved, after) {
+                        (true, Some(kept)) => Some((key, kept)),
+                        _ => cut,
+                    });
+                }
+            }
+            None
+        }
+        Value::Array(items) if !items.is_empty() => {
+            let sizes: Vec<usize> = items.iter().map(size_of).collect();
+            let total: usize = sizes.iter().sum();
+            let (big, &most) = sizes
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, s)| **s)
+                .unwrap_or((0, &0));
+            // One element that holds most of the list is shrunk rather
+            // than dropped with the rest.
+            if most * 2 > total && shrink(&mut items[big], false).is_some() {
+                return Some(None);
+            }
+            let keep = items.len() / 2;
+            items.truncate(keep);
+            Some(None)
+        }
+        _ => None,
     }
-    true
 }
 
 /// Slices `items` for a cursor-paginated tool. `cursor` is the start index as
@@ -137,6 +158,51 @@ mod tests {
     fn tool_budget_cannot_exceed_the_hard_cap() {
         let out = cap_result(json!({ "text": "x".repeat(200_000) }), usize::MAX);
         assert!(size_of(&out) <= HARD_RESULT_BYTES);
+    }
+
+    #[test]
+    fn nested_lists_are_shrunk_too() {
+        let types: Vec<Value> = (0..5000)
+            .map(|i| json!({ "type": format!("Type{i:05}"), "count": i, "bytes": i * 64 }))
+            .collect();
+        let out = cap_result(
+            json!({ "objects": { "count": 5000, "types": types }, "next_since": 7 }),
+            4096,
+        );
+        assert!(size_of(&out) <= 4096);
+        assert_eq!(out["truncated"], true);
+        assert!(!out["objects"]["types"].as_array().unwrap().is_empty());
+        // What the tool says to resume from is kept as it was, and a cut
+        // deep down has no cursor of its own.
+        assert_eq!(out["next_since"], 7);
+        assert_eq!(out["objects"]["count"], 5000);
+        assert!(out.get("next_cursor").is_none());
+    }
+
+    #[test]
+    fn one_element_that_holds_most_is_shrunk_and_kept() {
+        let out = cap_result(
+            json!({ "events": [ { "seq": 1, "value": "x".repeat(100_000) } ], "next_since": 1 }),
+            2048,
+        );
+        assert!(size_of(&out) <= 2048);
+        assert_eq!(out["events"][0]["seq"], 1);
+        assert!(out.get("next_cursor").is_none());
+    }
+
+    #[test]
+    fn deep_values_are_shrunk() {
+        let deep = json!({ "a": [[[["y".repeat(50_000), "z".repeat(50_000)]]]] });
+        let out = cap_result(deep, 1024);
+        assert!(size_of(&out) <= 1024);
+    }
+
+    #[test]
+    fn a_tool_cursor_is_kept_when_a_top_list_is_cut() {
+        let items: Vec<String> = (0..5000).map(|i| format!("item-{i:05}")).collect();
+        let out = cap_result(json!({ "items": items, "next_cursor": "own" }), 4096);
+        assert!(size_of(&out) <= 4096);
+        assert_eq!(out["next_cursor"], "own");
     }
 
     #[test]

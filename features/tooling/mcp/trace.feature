@@ -31,12 +31,12 @@ Feature: Tracing what happens to an object over time
           property alias caption: label.text; property alias size: label.font.pixelSize
           Text { id: label; objectName: "label" } }
         width: 200; height: 100
-        property int count: 0
-        property real level: 0
-        property bool open: true
+        property int count: 0; property real level: 0
+        property bool open: true; property string big: ""
         signal poked(int times)
         function poke() { count += 1; poked(count) }
         function many() { for (var i = 0; i < 1100; ++i) count += 1 }
+        function grow() { big = "x".repeat(100000) }
         Item { objectName: "other"; property int n: 0 }
         Item { objectName: "gauge"; property int doubled: top.count * 2 }
         Item { objectName: "sign"; property bool positive: top.count > 0 }
@@ -289,6 +289,36 @@ Feature: Tracing what happens to an object over time
       Then the answer's "/waited" is false
       And the answer's "/changed/0" is "traces"
       And the answer's "/counts/traces" is 2
+
+  Rule: A trace too long for one answer goes on where the answer stopped
+
+    # 20480 bytes is half the default budget: the answer is sent twice,
+    # as data and as text, and each copy keeps to it.
+    Scenario: The events that do not fit wait for the next call
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root"}
+        """
+      And the method "many" of "root" is called
+      And the agent calls the tool "app_trace"
+      Then the answer is at most 20480 bytes
+      And the answer's "/events/0/seq" is 101
+      And the answer's "/more" is true
+      When the agent calls the tool "app_trace" with the answer's "/next_since" as "since"
+      Then the answer is at most 20480 bytes
+      And the answer's "/events/0/seq" is at least 102
+
+    Scenario: A value too large for one answer is cut inside its event
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root"}
+        """
+      And the method "grow" of "root" is called
+      And the agent calls the tool "app_trace"
+      Then the answer is at most 20480 bytes
+      And the answer's "/events/0/name" is "big"
+      And the answer's "/events/0/truncated" is true
+      And the answer's "/more" is false
 
   Rule: A trace is stopped by the agent
 

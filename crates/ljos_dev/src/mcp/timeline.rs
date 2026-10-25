@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 use super::frames::{ms, paint_json, spread, us};
 use super::objects::handle;
 use super::paint::PaintReport;
+use super::room::{self, Room};
 
 pub const FRAMES: &str = "\
 A timeline of every window's frames: `record` starts or stops it; each says what woke it and \
@@ -460,6 +461,7 @@ pub(crate) fn frames(
     timeline: &mut Timeline,
     args: &FramesArgs,
     keeps_wakes: bool,
+    per_copy: usize,
 ) -> Result<ToolReply, SurfaceError> {
     if let Some(record) = args.record {
         timeline.ask(record, args.holder.as_deref())?;
@@ -482,10 +484,6 @@ pub(crate) fn frames(
             timeline.frames.iter().skip(skip).collect()
         }
     };
-    let more = shown
-        .last()
-        .is_some_and(|last| last.seq + 1 < timeline.next);
-    let next_since = shown.last().map_or(timeline.next - 1, |e| e.seq);
     let mut text = String::new();
     if timeline.recording() {
         let _ = writeln!(
@@ -496,8 +494,24 @@ pub(crate) fn frames(
     } else {
         text.push_str("not recording; `record: true` starts it\n");
     }
-    for e in &shown {
-        let _ = writeln!(text, "{}", e.line());
+    // What does not fit is the next answer's: `next_since` stops at the
+    // last frame told.
+    let mut room = Room::new(
+        per_copy,
+        &json!({ "frames": [], "next_since": timeline.next, "kept": MAX_KEPT }),
+        &text,
+    );
+    let rows = room::rows(&mut room, &shown, args.since.is_none(), |e| {
+        (e.json(), e.line())
+    });
+    let left_out = shown.len() - rows.len();
+    let shown: Vec<&Entry> = rows.iter().map(|(e, _, _)| *e).collect();
+    let more = shown
+        .last()
+        .is_some_and(|last| last.seq + 1 < timeline.next);
+    let next_since = shown.last().map_or(timeline.next - 1, |e| e.seq);
+    for (_, _, line) in &rows {
+        let _ = writeln!(text, "{line}");
     }
     if timeline.dropped > 0 {
         let _ = writeln!(text, "{} older frames gave way", timeline.dropped);
@@ -515,15 +529,26 @@ pub(crate) fn frames(
             total["max"]
         );
     }
-    let value = json!({
+    // Without `since` the newest are kept, so `more` cannot tell of the
+    // older ones that did not fit.
+    if left_out > 0 {
+        let _ = writeln!(
+            text,
+            "{left_out} older frames did not fit; `since` pages from the oldest"
+        );
+    }
+    let mut value = json!({
         "recording": timeline.recording(),
-        "frames": shown.iter().map(|e| e.json()).collect::<Vec<_>>(),
+        "frames": rows.into_iter().map(|(_, v, _)| v).collect::<Vec<_>>(),
         "next_since": next_since,
         "more": more,
         "dropped": timeline.dropped,
         "kept": timeline.frames.len(),
         "summary": summary,
     });
+    if left_out > 0 {
+        value["frames_left_out"] = json!(left_out);
+    }
     Ok(ToolReply::from(value).with_text(text))
 }
 

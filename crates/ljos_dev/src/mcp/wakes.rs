@@ -28,6 +28,8 @@ use ljos_mcp_core::{SurfaceError, ToolReply};
 use ljos_quick::FrameTimes;
 use serde_json::{Value, json};
 
+use super::room::{self, Room};
+
 /// The most wakes kept.
 pub const MAX_KEPT: usize = 600;
 /// The most wakes one answer lists unless told otherwise.
@@ -443,7 +445,12 @@ impl Wakes {
     }
 
     /// Answers `app_frames` with `wakes`.
-    pub(crate) fn answer(&self, since: Option<u64>, max: Option<usize>) -> ToolReply {
+    pub(crate) fn answer(
+        &self,
+        since: Option<u64>,
+        max: Option<usize>,
+        per_copy: usize,
+    ) -> ToolReply {
         let max = max.unwrap_or(DEFAULT_MAX);
         let shown: Vec<&Entry> = match since {
             Some(since) => self
@@ -457,6 +464,15 @@ impl Wakes {
                 self.wakes.iter().skip(skip).collect()
             }
         };
+        // What does not fit is the next answer's: `next_since` stops at
+        // the last wake told.
+        let mut room = Room::new(
+            per_copy,
+            &json!({ "wakes": [], "next_since": self.next, "kept": MAX_KEPT, "by_cause": {} }),
+            "not keeping wakes; `wakes: true, record: true` starts it",
+        );
+        let rows = room::rows(&mut room, &shown, since.is_none(), |e| (e.json(), e.line()));
+        let shown: Vec<&Entry> = rows.iter().map(|(e, _, _)| *e).collect();
         let more = shown.last().is_some_and(|last| last.seq + 1 < self.next);
         let next_since = shown.last().map_or(self.next - 1, |e| e.seq);
         let idle = shown.iter().filter(|e| e.led_to() == "nothing").count();
@@ -476,8 +492,8 @@ impl Wakes {
         } else {
             text.push_str("not keeping wakes; `wakes: true, record: true` starts it\n");
         }
-        for e in &shown {
-            let _ = writeln!(text, "{}", e.line());
+        for (_, _, line) in &rows {
+            let _ = writeln!(text, "{line}");
         }
         if self.dropped > 0 {
             let _ = writeln!(text, "{} older wakes gave way", self.dropped);
@@ -487,7 +503,7 @@ impl Wakes {
         }
         let value = json!({
             "recording": self.recording(),
-            "wakes": shown.iter().map(|e| e.json()).collect::<Vec<_>>(),
+            "wakes": rows.into_iter().map(|(_, v, _)| v).collect::<Vec<_>>(),
             "next_since": next_since,
             "more": more,
             "dropped": self.dropped,
@@ -562,7 +578,11 @@ mod tests {
             }
         ));
         assert_eq!(w.wakes[1].led_to(), "nothing");
-        assert_eq!(w.answer(None, None).structured["idle"], 1);
+        assert_eq!(
+            w.answer(None, None, ljos_mcp_core::DEFAULT_RESULT_BYTES / 2)
+                .structured["idle"],
+            1
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 
 use super::args::{Act, Kind, Resource};
 use super::redact::SecretBook;
+use super::room::Room;
 use super::surface::DevReq;
 use crate::top::{FrameStats, owner_name};
 
@@ -192,7 +193,11 @@ fn mailbox_rows(args: &ProcessesArgs) -> (Vec<Value>, String) {
 
 /// Adds the mailboxes `args` asks for to `reply`, the answer of the UI
 /// thread (or, when it gave none, an empty one).
-pub(crate) fn with_mailboxes(mut reply: ToolReply, args: &ProcessesArgs) -> ToolReply {
+pub(crate) fn with_mailboxes(
+    mut reply: ToolReply,
+    args: &ProcessesArgs,
+    per_copy: usize,
+) -> ToolReply {
     if !args.wants_mailboxes() {
         return reply;
     }
@@ -202,11 +207,54 @@ pub(crate) fn with_mailboxes(mut reply: ToolReply, args: &ProcessesArgs) -> Tool
     }
     reply.structured["mailboxes"] = Value::Array(rows);
     reply.structured["counted_since"] = json!("inspector attached");
-    let text = match reply.text.take() {
+    let mut text = match reply.text.take() {
         Some(t) if !t.is_empty() => format!("{t}\n{lines}"),
         _ => lines,
     };
+    // The UI thread fitted its rows before the mailboxes came.
+    fit_rows(&mut reply.structured, &mut text, per_copy);
     reply.with_text(text)
+}
+
+/// Brings the rows of an `app_processes` answer within `per_copy`, with
+/// the rest of it as it is. What does not fit is counted, not sent. The
+/// other threads of the process give way first: the application's own
+/// timers, animations and supervisors are what an agent looks here for.
+fn fit_rows(value: &mut Value, text: &mut String, per_copy: usize) {
+    let Some(Value::Array(rows)) = value
+        .get_mut("processes")
+        .map(|r| std::mem::replace(r, json!([])))
+    else {
+        return;
+    };
+    let mut room = Room::new(per_copy, value, "");
+    let total = rows.len();
+    let other_thread = |row: &Value| row["kind"] == "thread" && row.get("thread_name").is_none();
+    let mut order: Vec<usize> = (0..total).collect();
+    order.sort_by_key(|&i| other_thread(&rows[i]));
+    let mut keep = vec![false; total];
+    for i in order {
+        if !room.take(&rows[i], "") {
+            break;
+        }
+        keep[i] = true;
+    }
+    let rows: Vec<Value> = rows
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(row, kept)| kept.then_some(row))
+        .collect();
+    let left_out = total - rows.len();
+    value["processes"] = Value::Array(rows);
+    if left_out > 0 {
+        let before = value["processes_left_out"].as_u64().unwrap_or(0);
+        value["processes_left_out"] = json!(before + left_out as u64);
+        // First, where a text cut to the budget still has it.
+        text.insert_str(
+            0,
+            &format!("{left_out} more not listed; `kind` lists one kind\n"),
+        );
+    }
 }
 
 /// One OS thread as `/proc` shows it.
@@ -570,20 +618,25 @@ fn waker_rows(engine: &Engine, watching: bool, text: &mut String) -> Vec<Value> 
     rows
 }
 
-/// Answers `app_processes`, on the UI thread. `watching` is whether the
-/// host watches the QML files.
+/// Engine activity that determines what one `app_processes` reply reports.
+pub(crate) struct ProcessActivity {
+    pub(crate) pending_requests: usize,
+    pub(crate) queued_work: bool,
+    pub(crate) watching: bool,
+}
+
+/// Answers `app_processes`, on the UI thread.
 pub(crate) fn processes(
     engine: &Engine,
     secrets: &SecretBook,
     stats: &FrameStats,
-    pending_requests: usize,
-    queued_work: bool,
-    watching: bool,
+    activity: ProcessActivity,
     args: &ProcessesArgs,
+    per_copy: usize,
 ) -> ToolReply {
     if args.kind == Some(ProcessKind::Waker) {
         let mut text = String::new();
-        let rows = waker_rows(engine, watching, &mut text);
+        let rows = waker_rows(engine, activity.watching, &mut text);
         let scheduled = rows.iter().filter(|r| r["scheduled"] == true).count();
         let _ = writeln!(
             text,
@@ -617,7 +670,7 @@ pub(crate) fn processes(
             // It is answering this request, which says nothing about how
             // busy it is otherwise.
             let state = if is_ui {
-                if queued_work { "busy" } else { "idle" }
+                if activity.queued_work { "busy" } else { "idle" }
             } else {
                 thread_state(t.state)
             };
@@ -634,7 +687,7 @@ pub(crate) fn processes(
             });
             if is_ui {
                 row["thread_name"] = json!(t.name);
-                row["platform_requests"] = json!(pending_requests);
+                row["platform_requests"] = json!(activity.pending_requests);
             }
             if cut && !is_ui {
                 // The kernel kept 15 bytes of a longer name.
@@ -744,6 +797,7 @@ pub(crate) fn processes(
         }
         value["process"] = process;
     }
+    fit_rows(&mut value, &mut text, per_copy);
     ToolReply::from(value).with_text(text.trim_end().to_owned())
 }
 

@@ -177,3 +177,14 @@ Feature: An agent reads where the application's memory is
       """
     Then the agent is refused with "invalid_argument"
     And the refusal mentions "memory.max"
+
+  # 20480 bytes is half the default budget: the answer is sent twice, as
+  # data and as text, and each copy keeps to it. The types that do not
+  # fit are counted with the ones past `max`.
+  Scenario: A long list of types keeps to the answer's budget
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {"max": 1000}}
+      """
+    Then the answer is at most 20480 bytes
+    And the answer's "/objects/types/0/bytes" is at least 1

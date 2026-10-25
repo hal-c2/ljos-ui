@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use super::mappings::{Group, Mappings};
 use super::objects::handle;
 use super::observe::Resident;
+use super::room::{self, Room};
 use super::rust_heap::rust_heap_bytes;
 
 /// The most types one answer lists unless told otherwise.
@@ -179,6 +180,7 @@ pub(crate) fn memory(
     windows: &[WindowMemory],
     args: &MemoryArgs,
     driver: Option<&str>,
+    per_copy: usize,
 ) -> ToolReply {
     let max = args.max.unwrap_or(DEFAULT_MAX).clamp(1, MOST_TYPES);
     let all = engine.object_memory();
@@ -188,12 +190,6 @@ pub(crate) fn memory(
     let kept: Vec<_> = all
         .iter()
         .filter(|t| args.r#type.as_deref().is_none_or(|name| t.name == name))
-        .collect();
-    let left_out = kept.len().saturating_sub(max);
-    let types: Vec<Value> = kept
-        .iter()
-        .take(max)
-        .map(|t| json!({ "type": t.name, "count": t.count, "bytes": t.bytes }))
         .collect();
 
     let script = engine.script_heap_bytes();
@@ -388,13 +384,13 @@ pub(crate) fn memory(
         }
     };
 
-    let value = json!({
+    let mut value = json!({
         "objects": {
             "count": count,
             "bytes": bytes,
             "approximate": true,
-            "types": types,
-            "types_left_out": left_out,
+            "types": [],
+            "types_left_out": kept.len(),
         },
         "script": script.map(|b| json!({ "bytes": b, "approximate": false })),
         "reactive": { "nodes": nodes, "bytes": graph, "approximate": true },
@@ -499,18 +495,7 @@ pub(crate) fn memory(
         "objects: {count} holding about {:.2} MiB",
         mib(bytes as u64)
     );
-    for t in &kept[..kept.len().min(max)] {
-        let _ = writeln!(
-            out,
-            "  {:<24} {:>7} {:>10.1} KiB",
-            t.name,
-            t.count,
-            t.bytes as f64 / 1024.0
-        );
-    }
-    if left_out > 0 {
-        let _ = writeln!(out, "  … {left_out} more types");
-    }
+    let head = std::mem::take(&mut out);
     match script {
         Some(b) => {
             let _ = writeln!(out, "script heap: {:.2} MiB", mib(b as u64));
@@ -562,7 +547,29 @@ pub(crate) fn memory(
             None => out.push_str("; nothing draws it\n"),
         }
     }
-    ToolReply::from(value).with_text(out)
+    // The types that do not fit are counted with those `max` left out.
+    let mut room = Room::new(per_copy, &value, &format!("{head}{out}"));
+    let rows = room::rows(&mut room, &kept[..kept.len().min(max)], false, |t| {
+        let row = json!({ "type": t.name, "count": t.count, "bytes": t.bytes });
+        let line = format!(
+            "  {:<24} {:>7} {:>10.1} KiB",
+            t.name,
+            t.count,
+            t.bytes as f64 / 1024.0
+        );
+        (row, line)
+    });
+    let left_out = kept.len() - rows.len();
+    let mut lines = String::new();
+    for (_, _, line) in &rows {
+        let _ = writeln!(lines, "{line}");
+    }
+    if left_out > 0 {
+        let _ = writeln!(lines, "  … {left_out} more types");
+    }
+    value["objects"]["types"] = rows.into_iter().map(|(_, v, _)| v).collect();
+    value["objects"]["types_left_out"] = json!(left_out);
+    ToolReply::from(value).with_text(format!("{head}{lines}{out}"))
 }
 
 /// A group's label, the driver named where the painter says which.

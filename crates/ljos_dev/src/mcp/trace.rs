@@ -29,6 +29,7 @@ use serde_json::{Value, json};
 
 use super::capture::{self, REDACTED};
 use super::objects::handle;
+use super::room::Room;
 use super::watch::ChangeFeed;
 
 pub const TRACE: &str = "\
@@ -282,6 +283,7 @@ pub(crate) fn trace(
     log: &Rc<RefCell<TraceLog>>,
     args: &TraceArgs,
     target: Option<ObjectId>,
+    per_copy: usize,
 ) -> Result<ToolReply, SurfaceError> {
     if args.bindings && (target.is_none() || args.stop) {
         return Err(SurfaceError::invalid_argument(
@@ -423,9 +425,6 @@ pub(crate) fn trace(
         .flat_map(|r| r.events.iter())
         .filter(|e| e.seq > since)
         .collect();
-    let shown = &after[..after.len().min(max)];
-    let more = after.len() > shown.len();
-    let next_since = shown.last().map_or(log.next - 1, |e| e.seq);
     let mut text = String::new();
     for (o, label, names) in &tracing {
         let too = if follows(*o) { ", bindings too" } else { "" };
@@ -436,100 +435,8 @@ pub(crate) fn trace(
         };
         let _ = writeln!(text, "tracing {label}{only}{too}");
     }
-    let events: Vec<Value> = shown
-        .iter()
-        .map(|e| {
-            let mut v = json!({
-                "seq": e.seq,
-                "at_us": e.at_us,
-                "handle": handle(e.object),
-                "object": e.label,
-                "kind": e.kind,
-            });
-            let ms = e.at_us as f64 / 1000.0;
-            match e.kind {
-                "change" => {
-                    v["name"] = json!(e.name);
-                    v["value"] = e.values.first().cloned().unwrap_or(Value::Null);
-                    let shown = match &e.key {
-                        Some(key) => {
-                            v["key"] = json!(key);
-                            format!("{key} ({})", v["value"])
-                        }
-                        None => v["value"].to_string(),
-                    };
-                    let _ = writeln!(
-                        text,
-                        "{:>4} {ms:>10.1} ms  {} .{} = {shown}",
-                        e.seq, e.label, e.name
-                    );
-                }
-                "binding" => {
-                    let Some(run) = &e.run else {
-                        return v;
-                    };
-                    v["name"] = json!(e.name);
-                    v["cause"] = run
-                        .cause
-                        .iter()
-                        .map(|(o, label, p)| {
-                            json!({ "handle": handle(*o), "object": label, "property": p })
-                        })
-                        .collect();
-                    v["us"] = json!(run.us);
-                    v["same"] = json!(run.same);
-                    let cause: Vec<String> = run
-                        .cause
-                        .iter()
-                        .map(|(_, l, p)| format!("{l}.{p}"))
-                        .collect();
-                    let _ = writeln!(
-                        text,
-                        "{:>4} {ms:>10.1} ms  {} binding {} ← {} ({} µs){}",
-                        e.seq,
-                        e.label,
-                        e.name,
-                        if cause.is_empty() {
-                            "?".to_string()
-                        } else {
-                            cause.join(", ")
-                        },
-                        run.us,
-                        if run.same {
-                            ", gave the value it had"
-                        } else {
-                            ""
-                        }
-                    );
-                }
-                "signal" => {
-                    v["name"] = json!(e.name);
-                    v["args"] = Value::Array(e.values.clone());
-                    let args: Vec<String> = e.values.iter().map(Value::to_string).collect();
-                    let _ = writeln!(
-                        text,
-                        "{:>4} {ms:>10.1} ms  {} {}({})",
-                        e.seq,
-                        e.label,
-                        e.name,
-                        args.join(", ")
-                    );
-                }
-                _ => {
-                    let _ = writeln!(text, "{:>4} {ms:>10.1} ms  {} destroyed", e.seq, e.label);
-                }
-            }
-            v
-        })
-        .collect();
-    if events.is_empty() {
-        text.push_str("nothing written down since then\n");
-    }
-    if dropped > 0 {
-        let _ = writeln!(text, "{dropped} older events gave way");
-    }
-    let value = json!({
-        "tracing": tracing
+    let tracing_json = || -> Vec<Value> {
+        tracing
             .iter()
             .map(|(o, label, names)| {
                 json!({
@@ -539,7 +446,127 @@ pub(crate) fn trace(
                     "names": names,
                 })
             })
-            .collect::<Vec<_>>(),
+            .collect()
+    };
+    let row = |e: &Event| -> (Value, String) {
+        let mut line = String::new();
+        let mut v = json!({
+            "seq": e.seq,
+            "at_us": e.at_us,
+            "handle": handle(e.object),
+            "object": e.label,
+            "kind": e.kind,
+        });
+        let ms = e.at_us as f64 / 1000.0;
+        match e.kind {
+            "change" => {
+                v["name"] = json!(e.name);
+                v["value"] = e.values.first().cloned().unwrap_or(Value::Null);
+                let shown = match &e.key {
+                    Some(key) => {
+                        v["key"] = json!(key);
+                        format!("{key} ({})", v["value"])
+                    }
+                    None => v["value"].to_string(),
+                };
+                let _ = writeln!(
+                    line,
+                    "{:>4} {ms:>10.1} ms  {} .{} = {shown}",
+                    e.seq, e.label, e.name
+                );
+            }
+            "binding" => {
+                let Some(run) = &e.run else {
+                    return (v, line);
+                };
+                v["name"] = json!(e.name);
+                v["cause"] = run
+                        .cause
+                        .iter()
+                        .map(|(o, label, p)| {
+                            json!({ "handle": handle(*o), "object": label, "property": p })
+                        })
+                        .collect();
+                v["us"] = json!(run.us);
+                v["same"] = json!(run.same);
+                let cause: Vec<String> = run
+                    .cause
+                    .iter()
+                    .map(|(_, l, p)| format!("{l}.{p}"))
+                    .collect();
+                let _ = writeln!(
+                    line,
+                    "{:>4} {ms:>10.1} ms  {} binding {} ← {} ({} µs){}",
+                    e.seq,
+                    e.label,
+                    e.name,
+                    if cause.is_empty() {
+                        "?".to_string()
+                    } else {
+                        cause.join(", ")
+                    },
+                    run.us,
+                    if run.same {
+                        ", gave the value it had"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            "signal" => {
+                v["name"] = json!(e.name);
+                v["args"] = Value::Array(e.values.clone());
+                let args: Vec<String> = e.values.iter().map(Value::to_string).collect();
+                let _ = writeln!(
+                    line,
+                    "{:>4} {ms:>10.1} ms  {} {}({})",
+                    e.seq,
+                    e.label,
+                    e.name,
+                    args.join(", ")
+                );
+            }
+            _ => {
+                let _ = writeln!(line, "{:>4} {ms:>10.1} ms  {} destroyed", e.seq, e.label);
+            }
+        }
+        (v, line)
+    };
+    // What does not fit in this answer is the next one's: `next_since`
+    // stops at the last event told.
+    let mut room = Room::new(
+        per_copy,
+        &json!({ "tracing": tracing_json(), "events": [], "next_since": log.next, "more": true }),
+        &text,
+    );
+    let mut events: Vec<Value> = Vec::new();
+    let mut told = None;
+    for e in after.iter().take(max) {
+        let (v, line) = row(e);
+        let (v, line) = if room.take(&v, &line) {
+            (v, line)
+        } else if events.is_empty() {
+            room.squeeze(v, &line)
+        } else {
+            break;
+        };
+        text.push_str(&line);
+        if !line.ends_with('\n') {
+            text.push('\n');
+        }
+        events.push(v);
+        told = Some(e.seq);
+    }
+    let more = after.len() > events.len();
+    let next_since = told.unwrap_or(log.next - 1);
+    if events.is_empty() {
+        text.push_str("nothing written down since then\n");
+    }
+    if dropped > 0 {
+        let _ = writeln!(text, "{dropped} older events gave way");
+    }
+    let value = json!({
+        "tracing": tracing_json(),
         "events": events,
         "next_since": next_since,
         "more": more,

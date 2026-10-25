@@ -2273,3 +2273,226 @@ fn app_frames_export_without_a_place_for_traces_is_unavailable() {
     let (code, message, _) = app.refused("app_frames", json!({ "export": "run" }));
     assert_eq!(code, "unavailable", "{message}");
 }
+
+// ----- answers keep to their budget ------------------------------------------
+
+/// Half of the default budget: what each copy of an answer may hold.
+const PER_COPY: usize = ljos_mcp_core::DEFAULT_RESULT_BYTES / 2;
+
+fn fits(reply: &LocalReply) {
+    let data = reply.structured.to_string().len();
+    let text = reply.text.len();
+    assert!(
+        data <= PER_COPY && text <= PER_COPY,
+        "{data} bytes of data and {text} of text; at most {PER_COPY} each"
+    );
+}
+
+const TRACED: &str = r#"import QtQuick
+Item {
+    id: page
+    objectName: "page"
+    width: 100; height: 100
+    property int count: 0
+    property string big: ""
+    function many() { for (var i = 0; i < 900; ++i) count += 1 }
+    function grow() { big = "x".repeat(100000) }
+}
+"#;
+
+#[test]
+fn a_trace_longer_than_one_answer_goes_on_where_it_was_cut() {
+    let mut app = app_with(TRACED, InspectorConfig::default());
+    app.call("app_trace", json!({ "target": "#page" }));
+    let page = app.named("page");
+    app.engine.invoke_by_name(page, "many", &[]).unwrap();
+    app.settle();
+    let mut since = 0;
+    let mut seen = Vec::new();
+    let mut pages = 0;
+    loop {
+        let reply = app.call("app_trace", json!({ "since": since, "max": 500 }));
+        fits(&reply);
+        pages += 1;
+        let events = reply.structured["events"].as_array().unwrap();
+        seen.extend(events.iter().map(|e| e["seq"].as_u64().unwrap()));
+        since = reply.structured["next_since"].as_u64().unwrap();
+        assert_eq!(
+            Some(&since),
+            seen.last(),
+            "next_since is the last event told"
+        );
+        if reply.structured["more"] != true {
+            break;
+        }
+        assert!(pages < 100, "the pages never end");
+    }
+    assert!(pages > 1, "900 events fit in one answer");
+    assert_eq!(seen.len(), 900, "an event was lost or told twice");
+    assert!(seen.windows(2).all(|w| w[1] == w[0] + 1));
+}
+
+#[test]
+fn a_traced_value_larger_than_one_answer_is_cut_inside_its_event() {
+    let mut app = app_with(TRACED, InspectorConfig::default());
+    app.call("app_trace", json!({ "target": "#page" }));
+    let page = app.named("page");
+    app.engine.invoke_by_name(page, "grow", &[]).unwrap();
+    app.settle();
+    let reply = app.call("app_trace", json!({}));
+    fits(&reply);
+    let answer = &reply.structured;
+    let events = answer["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "{answer}");
+    assert_eq!(events[0]["name"], "big");
+    assert_eq!(events[0]["truncated"], true);
+    assert_eq!(answer["next_since"], events[0]["seq"]);
+    assert_eq!(answer["more"], false);
+}
+
+fn timers(n: usize) -> String {
+    format!(
+        r#"import QtQuick
+Item {{
+    width: 100; height: 100
+    Repeater {{
+        model: {n}
+        Item {{ Timer {{ objectName: "a timer with a name long enough to count"; interval: 1000 + index; repeat: true; running: true }} }}
+    }}
+}}
+"#
+    )
+}
+
+#[test]
+fn processes_that_do_not_fit_are_counted_and_the_mailboxes_still_fit() {
+    let mut app = app_with(&timers(1500), InspectorConfig::default());
+    let reply = app.call("app_processes", json!({ "kind": "timer" }));
+    fits(&reply);
+    let answer = &reply.structured;
+    let listed = answer["processes"].as_array().unwrap().len();
+    assert!(listed > 0);
+    assert_eq!(
+        listed + answer["processes_left_out"].as_u64().unwrap() as usize,
+        1500
+    );
+    assert!(answer.get("next_cursor").is_none(), "{answer}");
+
+    // The mailboxes are added on the server's thread, after the UI
+    // thread answered.
+    let reply = app.call("app_processes", json!({ "peek": 20 }));
+    fits(&reply);
+    assert!(!reply.structured["mailboxes"].as_array().unwrap().is_empty());
+}
+
+fn many_types(n: usize) -> String {
+    let long = "x".repeat(150);
+    let mut qml = String::from("import QtQuick\nItem {\n    width: 100; height: 100\n");
+    for i in 0..n {
+        qml.push_str(&format!("    component T{i:03}{long}: Item {{}}\n"));
+    }
+    for i in 0..n {
+        qml.push_str(&format!("    T{i:03}{long} {{}}\n"));
+    }
+    qml.push_str("}\n");
+    qml
+}
+
+fn memory_fits(reply: &LocalReply) {
+    fits(reply);
+    let objects = &reply.structured["objects"];
+    let listed = objects["types"].as_array().unwrap().len();
+    assert!(listed > 0);
+    assert!(
+        objects["types_left_out"].as_u64().unwrap() > 0,
+        "every type fit: {objects}"
+    );
+}
+
+#[test]
+fn a_memory_answer_lists_the_types_that_fit_and_counts_the_rest() {
+    let mut app = app_with(&many_types(200), InspectorConfig::default());
+    let reply = app.call("app_metrics", json!({ "memory": { "max": 1000 } }));
+    memory_fits(&reply);
+}
+
+#[test]
+fn a_memory_answer_the_host_finishes_later_keeps_to_the_budget_too() {
+    let mut app = app_with(&many_types(200), InspectorConfig::default());
+    app.inspector.as_mut().unwrap().set_measures_render();
+    let App {
+        client,
+        inspector,
+        scene,
+        engine,
+        clock,
+        ..
+    } = &mut app;
+    let reply = client
+        .call(
+            "app_metrics",
+            json!({ "memory": { "max": 1000 } }),
+            &mut || {
+                let Some(inspector) = inspector.as_mut() else {
+                    return;
+                };
+                inspector.pump(engine, scene, &*clock);
+                if inspector.waits_for_memory() {
+                    let windows = [ljos_dev::mcp::WindowMemory {
+                        window: None,
+                        scene: scene.memory(),
+                        render: None,
+                    }];
+                    inspector.finish_memory(engine, &windows);
+                }
+            },
+        )
+        .unwrap();
+    assert!(!reply.is_error, "{}", reply.text);
+    memory_fits(&reply);
+}
+
+#[test]
+fn frames_that_do_not_fit_one_answer_are_counted_or_paged() {
+    let mut app = app_with(TRACED, InspectorConfig::default());
+    app.call("app_frames", json!({ "record": true }));
+    let page = app.named("page");
+    for _ in 0..400 {
+        app.engine.invoke_by_name(page, "many", &[]).unwrap();
+        let App {
+            inspector,
+            scene,
+            engine,
+            clock,
+            ..
+        } = &mut app;
+        scene.frame(engine, clock.now());
+        inspector.as_mut().unwrap().record_scene_frames(scene, 0);
+    }
+    // Without `since` the newest are kept and the older ones counted.
+    let newest = app.call("app_frames", json!({ "max": 600 }));
+    fits(&newest);
+    let left_out = newest.structured["frames_left_out"].as_u64().unwrap();
+    assert!(left_out > 0, "{}", newest.structured);
+    // From `since` they are paged, oldest first, with no frame lost.
+    let mut since = 0;
+    let mut seen = Vec::new();
+    loop {
+        let part = app.call("app_frames", json!({ "since": since, "max": 600 }));
+        fits(&part);
+        let s = &part.structured;
+        seen.extend(
+            s["frames"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["frame"].as_u64().unwrap()),
+        );
+        since = s["next_since"].as_u64().unwrap();
+        if s["more"] != true {
+            break;
+        }
+    }
+    assert!(seen.len() >= 400, "{} frames", seen.len());
+    assert!(seen.windows(2).all(|w| w[1] == w[0] + 1));
+}

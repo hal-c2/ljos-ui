@@ -6,7 +6,7 @@ use std::{future::Future, pin::Pin};
 
 use serde_json::Value;
 
-use crate::{ResourceContent, SurfaceError};
+use crate::{HARD_RESULT_BYTES, ResourceContent, SurfaceError, cap_result};
 
 /// A picture in a tool's answer.
 #[derive(Clone, PartialEq, Eq)]
@@ -47,6 +47,21 @@ impl ToolReply {
         self.images.push(ToolImage { mime, data });
         self
     }
+
+    /// The answer with each copy, the structured value and the text, at
+    /// most `per_copy` bytes (never more than half of
+    /// [`HARD_RESULT_BYTES`]): what a surface that runs its tools itself
+    /// does to every answer, as the registry does to its handlers'.
+    /// Pictures are counted apart.
+    #[must_use]
+    pub fn capped(mut self, per_copy: usize) -> Self {
+        let per_copy = per_copy.min(HARD_RESULT_BYTES / 2);
+        self.structured = cap_result(self.structured, per_copy);
+        if let Some(text) = &mut self.text {
+            cut_text(text, per_copy);
+        }
+        self
+    }
 }
 
 impl From<Value> for ToolReply {
@@ -56,6 +71,23 @@ impl From<Value> for ToolReply {
             text: None,
             images: Vec::new(),
         }
+    }
+}
+
+/// Cuts `text` to at most `max` bytes on a character boundary, saying so
+/// at its end.
+fn cut_text(text: &mut String, max: usize) {
+    if text.len() <= max {
+        return;
+    }
+    let note = format!("\n… cut at {max} bytes; ask for less");
+    let mut cut = max.saturating_sub(note.len());
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text.truncate(cut);
+    if note.len() <= max {
+        text.push_str(&note);
     }
 }
 
@@ -139,6 +171,33 @@ pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_capped_reply_fits_both_copies() {
+        let reply = ToolReply::from(serde_json::json!({
+            "outer": { "inner": { "list": (0..5000).map(|i| format!("row-{i}")).collect::<Vec<_>>() } },
+        }))
+        .with_text("é".repeat(50_000))
+        .capped(4096);
+        assert!(reply.structured.to_string().len() <= 4096);
+        let text = reply.text.unwrap();
+        assert!(text.len() <= 4096);
+        assert!(text.ends_with("ask for less"));
+        assert_eq!(reply.structured["truncated"], true);
+    }
+
+    #[test]
+    fn a_reply_that_fits_is_left_alone() {
+        let reply = ToolReply::from(serde_json::json!({ "a": [1, 2] })).with_text("short");
+        assert_eq!(reply.clone().capped(4096), reply);
+    }
+
+    #[test]
+    fn a_capped_reply_never_passes_half_the_hard_cap() {
+        let reply = ToolReply::from(serde_json::json!({})).with_text("x".repeat(200_000));
+        let text = reply.capped(usize::MAX).text.unwrap();
+        assert!(text.len() <= HARD_RESULT_BYTES / 2);
+    }
 
     #[test]
     fn base64_round_trips_every_padding() {
