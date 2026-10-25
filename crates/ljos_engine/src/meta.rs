@@ -348,6 +348,8 @@ struct Lookup {
     /// The `required` properties, inherited ones included. Empty for
     /// nearly every type.
     required: Vec<PropIndex>,
+    /// The default property, inherited if the type sets none.
+    default: Option<PropIndex>,
 }
 
 /// What in QML declares a type: an object prints by it (`String(item)`).
@@ -439,6 +441,9 @@ impl MetaObject {
             for (i, m) in self.methods.iter().enumerate() {
                 l.methods.insert(m.name.clone(), MethodIndex(i as u32));
             }
+            l.default = self
+                .default_property()
+                .and_then(|name| l.props.get(name).copied());
             l
         })
     }
@@ -530,6 +535,11 @@ impl MetaObject {
 
     pub fn own_methods(&self) -> &[MethodInfo] {
         &self.methods[self.method_offset as usize..]
+    }
+
+    /// [`MetaObject::default_property`] as an index, found once per type.
+    pub fn default_property_index(&self) -> Option<PropIndex> {
+        self.lookup().default
     }
 
     /// The default property, inherited if the type sets none.

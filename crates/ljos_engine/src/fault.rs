@@ -391,7 +391,7 @@ impl Engine {
     /// The URL and line `obj` is declared at.
     pub(crate) fn declared_place(&self, obj: Option<ObjectId>) -> (Option<String>, u32) {
         let store = self.inner.store.borrow();
-        obj.and_then(|o| store.objects.get(o)?.ext.as_ref()?.location.as_ref())
+        obj.and_then(|o| store.objects.get(o)?.location())
             .map_or((None, 0), |l| (Some(l.url.to_string()), l.line))
     }
 

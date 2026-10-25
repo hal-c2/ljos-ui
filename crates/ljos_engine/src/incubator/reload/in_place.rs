@@ -2146,7 +2146,7 @@ impl Engine {
                 self.apply_literal(inst, t, &a.value, (a.span.line, a.span.column));
             }
         } else if let Some(pb) = m.bindings.iter().find(|b| b.name == name) {
-            self.install_binding(inst, t, pb);
+            self.install_binding(inst, t, pb, None);
         }
     }
 
@@ -2182,6 +2182,7 @@ impl Engine {
             if added.contains(&id) {
                 continue;
             }
+            h.note_places();
             let Some(ext) = h.ext.as_deref_mut() else {
                 continue;
             };

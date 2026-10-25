@@ -445,11 +445,10 @@ impl Engine {
             return "QML ?: Binding loop detected".to_owned();
         };
         let info = h.meta.property(prop);
-        let ext = h.ext.as_ref();
-        let binding = ext.and_then(|e| e.binding_locs.iter().find(|l| l.prop == prop));
+        let binding = h.binding_loc(prop);
         let place = |l: &Location| format!("{}:{}:{}", l.url, l.line, l.column);
-        let object_at = ext.and_then(|e| e.location.as_ref()).map(place);
-        let binding_at = binding.map(|b| place(&b.at));
+        let object_at = h.location().as_ref().map(place);
+        let binding_at = binding.as_ref().map(|b| place(&b.at));
 
         let mut ty = h.meta.name.to_string();
         let mut name = info.map_or_else(|| "?".to_owned(), |p| p.name.to_string());
@@ -464,7 +463,7 @@ impl Engine {
             }
             _ => {}
         }
-        if let Some(member) = binding.and_then(|b| b.member.as_ref()) {
+        if let Some(member) = binding.as_ref().and_then(|b| b.member.as_ref()) {
             two_lines = true;
             name = member.to_string();
         }
@@ -483,8 +482,7 @@ impl Engine {
     /// written in a file.
     pub(crate) fn binding_place(&self, obj: ObjectId, prop: PropIndex) -> Option<String> {
         let store = self.inner.store.borrow();
-        let ext = store.objects.get(obj)?.ext.as_ref()?;
-        let l = &ext.binding_locs.iter().find(|l| l.prop == prop)?.at;
+        let l = store.objects.get(obj)?.binding_loc(prop)?.at;
         Some(format!("{}:{}:{}", l.url, l.line, l.column))
     }
 

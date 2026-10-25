@@ -270,7 +270,12 @@ impl Default for ItemLayer {
             mipmap: false,
             wrap_mode: 0,
             texture_mirroring: 2,
-            sampler_name: Atom::from("source"),
+            // Every item has a layer; one shared name, not one per item.
+            sampler_name: {
+                static SOURCE: std::sync::LazyLock<Atom> =
+                    std::sync::LazyLock::new(|| Atom::from("source"));
+                SOURCE.clone()
+            },
             format: 1,
             samples: 0,
             live: true,

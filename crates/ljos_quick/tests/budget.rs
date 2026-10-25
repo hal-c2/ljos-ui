@@ -14,7 +14,7 @@ use std::cell::Cell;
 
 use common::*;
 use ljos_engine::{Engine, Lookups, ObjectId, Value, lookups};
-use ljos_quick::{QuickScene, child_items};
+use ljos_quick::{Item, QuickScene, child_items};
 use ljos_reactive::Census;
 use ljos_runtime::Time;
 
@@ -150,8 +150,10 @@ Rectangle {
     set(&e, root, "height", Value::from(600.0));
     settle(&mut s, &e, 1000);
     let before = shown(&e, view);
+    // By index: the step looks nothing up itself, so what is counted is
+    // what the new delegates cost.
     let b = spent(&e, &mut s, 2000, || {
-        set(&e, root, "height", Value::from(1000.0))
+        e.set(root, Item::HEIGHT, 1000.0).unwrap();
     });
     (b, shown(&e, view) - before)
 }
@@ -183,8 +185,9 @@ Item {
     e.invoke_by_name(root, "make", &[]).unwrap();
     settle(&mut s, &e, 1000);
     let before = e.children(root).len();
+    let make = e.method_index(root, "make").unwrap();
     let b = spent(&e, &mut s, 2000, || {
-        e.invoke_by_name(root, "make", &[]).unwrap();
+        e.invoke(root, make, &[]).unwrap();
     });
     (b, e.children(root).len() - before)
 }
@@ -195,7 +198,9 @@ fn ten_listview_delegates() {
     assert_eq!(made, 10);
     // Per delegate: 4 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 8 values, 7 bindings, 16 effects, 2 scopes,
-    // 19.1 member and 2 type lookups, 186.6 allocations.
+    // 4 member lookups (the view's row, found by name for each delegate)
+    // and no type lookups, 181.6 allocations. What the component writes
+    // and binds goes by index once its plan is linked.
     assert_eq!(
         b,
         Budget {
@@ -207,12 +212,12 @@ fn ten_listview_delegates() {
                 scopes: 20,
             },
             lookups: Lookups {
-                members: 191,
-                types: 20,
+                members: 40,
+                types: 0,
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1866,
+            allocations: 1816,
         }
     );
 }
@@ -222,7 +227,8 @@ fn ten_plain_items() {
     let (b, made) = plain_items();
     assert_eq!(made, 10);
     // Per instance: 2 objects, 6 values, 2 bindings, 15 effects, 2 scopes,
-    // 6.1 member and 1 type lookups, 105.7 allocations.
+    // 1 member lookup (the property `createObject` is given, by its name)
+    // and no type lookups, 103.7 allocations.
     assert_eq!(
         b,
         Budget {
@@ -234,12 +240,12 @@ fn ten_plain_items() {
                 scopes: 20,
             },
             lookups: Lookups {
-                members: 61,
-                types: 10,
+                members: 10,
+                types: 0,
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1057,
+            allocations: 1037,
         }
     );
 }

@@ -483,6 +483,10 @@ pub(crate) struct LoaderState {
 pub(crate) struct Tier0 {
     pub(crate) param: usize,
     pub(crate) path: Vec<Atom>,
+    /// Each step of `path`, linked on the type it is read from.
+    pub(crate) steps: Box<[crate::plan::Slot]>,
+    /// The step and the next as one group leaf (`anchors.top`).
+    pub(crate) leaves: Box<[crate::plan::Slot]>,
 }
 
 pub(crate) struct LoadedFile {
@@ -494,6 +498,9 @@ pub(crate) struct LoadedFile {
     fns: RefCell<Option<Rc<Vec<Option<FnId>>>>>,
     /// Types of declaring objects, by (component, object).
     pub(crate) metas: RefCell<rustc_hash::FxHashMap<(u32, u32), MetaRef>>,
+    /// What its components and expressions are linked to: made again
+    /// with [`LoadedFile::metas`] when those go.
+    plans: RefCell<Rc<crate::plan::Plans>>,
     /// Tier-0 form of each function, by `FnIndex`.
     pub(crate) tier0: Vec<Option<Tier0>>,
     /// The tier-1 programs of the file's expressions.
@@ -522,6 +529,7 @@ impl LoadedFile {
     ) -> Self {
         let tier0 = tier0_table(&ir);
         let tier1 = crate::incubator::tier1::Programs::new(&ir);
+        let plans = RefCell::new(Rc::new(crate::plan::Plans::new(&ir)));
         Self {
             key: key.to_owned(),
             url: Atom::new(&url),
@@ -529,6 +537,7 @@ impl LoadedFile {
             bytecode,
             fns: RefCell::new(None),
             metas: RefCell::default(),
+            plans,
             tier0,
             tier1,
             epoch: Cell::new(0),
@@ -546,6 +555,7 @@ impl LoadedFile {
         *self.size.get_or_init(|| {
             self.ir.to_bytes().map_or(0, |b| b.len())
                 + self.bytecode.as_ref().map_or(0, |b| b.as_bytes().len())
+                + self.plans.borrow().bytes()
                 + self.tier0.capacity() * std::mem::size_of::<Option<Tier0>>()
                 + self
                     .tier0
@@ -554,6 +564,16 @@ impl LoadedFile {
                     .map(|t| t.path.capacity() * std::mem::size_of::<Atom>())
                     .sum::<usize>()
         })
+    }
+
+    /// The file's plans (plan.rs).
+    pub(crate) fn plans(&self) -> Rc<crate::plan::Plans> {
+        self.plans.borrow().clone()
+    }
+
+    /// Drops the plans: the types they were linked against are made anew.
+    pub(crate) fn unlink(&self) {
+        *self.plans.borrow_mut() = Rc::new(crate::plan::Plans::new(&self.ir));
     }
 
     /// The file's inline component `name`, or its file component.
@@ -682,6 +702,8 @@ fn tier0_table(ir: &CompiledFile) -> Vec<Option<Tier0>> {
                 name,
                 Tier0 {
                     param,
+                    steps: path.iter().map(|_| Default::default()).collect(),
+                    leaves: path.iter().map(|_| Default::default()).collect(),
                     path: path.into_iter().map(Atom::new).collect(),
                 },
             );
@@ -768,8 +790,8 @@ impl Engine {
             store
                 .objects
                 .get(from)
-                .and_then(|h| h.ext.as_ref()?.location.as_ref())
-                .map(|l| l.url.clone())
+                .and_then(|h| h.location())
+                .map(|l| l.url)
         };
         match base {
             Some(base) if !url.is_empty() => join_url(&base, url),
@@ -782,8 +804,7 @@ impl Engine {
     /// from QML.
     pub fn document_url(&self, obj: ObjectId) -> Option<Atom> {
         let store = self.inner.store.borrow();
-        let location = store.objects.get(obj)?.ext.as_ref()?.location.as_ref()?;
-        Some(location.url.clone())
+        Some(store.objects.get(obj)?.location()?.url)
     }
 
     /// The key of the file that declares `obj`, as the component source
@@ -933,7 +954,7 @@ impl Engine {
             store
                 .objects
                 .values()
-                .filter_map(|h| Some(h.ext.as_ref()?.location.as_ref()?.url.clone()))
+                .filter_map(|h| Some(h.location()?.url))
                 .collect()
         };
         let keys: HashSet<String> = {

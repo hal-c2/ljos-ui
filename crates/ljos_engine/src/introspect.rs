@@ -165,7 +165,7 @@ impl Engine {
         let store = self.inner.store.borrow();
         objs.iter()
             .map(|obj| {
-                let l = store.objects.get(*obj)?.ext.as_ref()?.location.as_ref()?;
+                let l = store.objects.get(*obj)?.location()?;
                 ids.get(&(&*l.url, l.line, l.column))
                     .map(|id| id.to_string())
             })
@@ -271,16 +271,14 @@ impl Engine {
 
     fn place_of(&self, obj: ObjectId) -> Option<SourcePlace> {
         let store = self.inner.store.borrow();
-        let l = store.objects.get(obj)?.ext.as_ref()?.location.as_ref()?;
-        Some(SourcePlace::of(l))
+        let l = store.objects.get(obj)?.location()?;
+        Some(SourcePlace::of(&l))
     }
 
     fn binding_location(&self, obj: ObjectId, prop: PropIndex) -> Option<Location> {
         let (obj, prop) = self.redirect(obj, prop);
         let store = self.inner.store.borrow();
-        let ext = store.objects.get(obj)?.ext.as_ref()?;
-        let l = ext.binding_locs.iter().find(|l| l.prop == prop)?;
-        Some(l.at.clone())
+        Some(store.objects.get(obj)?.binding_loc(prop)?.at)
     }
 
     /// Calls `f` with the declaration written at `at`.

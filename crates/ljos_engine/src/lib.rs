@@ -84,6 +84,7 @@ mod model;
 mod number;
 mod number_slot;
 mod object;
+mod plan;
 mod profile;
 mod property_map;
 mod qml_types;

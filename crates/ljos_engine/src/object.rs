@@ -141,6 +141,9 @@ pub struct ObjectHeader {
     pub(crate) attached: SmallVec<[(AttachedTypeId, ObjectId); 1]>,
     /// What only some objects need (QML-declared types, aliases, scripts).
     pub(crate) ext: Option<Box<ObjectExt>>,
+    /// The declaration the object was made from, which its place and the
+    /// places of its bindings are read from when asked.
+    pub(crate) made: Option<Made>,
     pub(crate) flags: ObjectFlags,
     /// Graph scope owning this object's nodes, created with the first node.
     pub(crate) scope: Option<ScopeId>,
@@ -457,6 +460,53 @@ fn with_implied_base(native: Box<dyn QmlObject>) -> Box<dyn QmlObject> {
 }
 
 impl ObjectHeader {
+    /// Where the object is declared, for one made from QML.
+    pub(crate) fn location(&self) -> Option<Location> {
+        match self.ext.as_ref().and_then(|e| e.location.as_ref()) {
+            Some(l) => Some(l.clone()),
+            None => self.made.as_ref().map(Made::location),
+        }
+    }
+
+    /// Where the binding on `prop` is written: the one noted last, else
+    /// the one of the declaration the object was made from.
+    pub(crate) fn binding_loc(&self, prop: PropIndex) -> Option<BindingLoc> {
+        let noted = self
+            .ext
+            .as_ref()
+            .and_then(|e| e.binding_locs.iter().find(|l| l.prop == prop));
+        match noted {
+            Some(l) => Some(l.clone()),
+            None => self.made.as_ref()?.binding_loc(&self.meta, prop),
+        }
+    }
+
+    /// Writes down the places [`ObjectHeader::made`] stands for, and
+    /// forgets it: a reload in place moves places in what is written
+    /// down, and the file the object was made from is no longer the one
+    /// loaded.
+    pub(crate) fn note_places(&mut self) {
+        let Some(made) = self.made.take() else {
+            return;
+        };
+        let location = made.location();
+        let bindings: Vec<(PropIndex, Location)> = made.bindings(&self.meta).collect();
+        let ext = self.ext_mut();
+        if ext.location.is_none() {
+            ext.location = Some(location);
+        }
+        for (prop, at) in bindings {
+            // One noted since was put there after the declaration's.
+            if !ext.binding_locs.iter().any(|l| l.prop == prop) {
+                ext.binding_locs.push(BindingLoc {
+                    prop,
+                    at,
+                    member: None,
+                });
+            }
+        }
+    }
+
     pub(crate) fn new(meta: MetaRef, native: Box<dyn QmlObject>, context: ContextId) -> Self {
         let native = with_implied_base(native);
         // Declared properties come after the native ones they build on:
@@ -488,6 +538,7 @@ impl ObjectHeader {
             context,
             attached: SmallVec::new(),
             ext: None,
+            made: None,
             flags: ObjectFlags::empty(),
             scope: None,
             nodes: None,
@@ -574,6 +625,82 @@ pub(crate) struct AliasTarget {
     pub(crate) object: ObjectId,
     pub(crate) prop: Option<PropIndex>,
     pub(crate) member: Option<Atom>,
+}
+
+/// The declaration an object was made from: object `obj` of component
+/// `comp` of `file`. Its place is not written down when the object is
+/// made; only a message or a tool asks for it.
+pub(crate) struct Made {
+    pub(crate) file: Rc<crate::loader::LoadedFile>,
+    pub(crate) comp: u32,
+    pub(crate) obj: u32,
+    /// Bit `k`: the `k`-th binding of the declaration (its own members',
+    /// then each group's, in order) is on the object itself, and its place
+    /// is the one written there.
+    pub(crate) bound: u64,
+}
+
+impl Made {
+    /// What bit `k` of [`Made::bound`] stands for: up to 64 bindings, so
+    /// one past them is noted as any other.
+    pub(crate) const BITS: u32 = u64::BITS;
+
+    fn def(&self) -> &ljos_ir::ObjectDef {
+        &self.file.ir.component(ljos_ir::CompIdx(self.comp)).objects[self.obj as usize]
+    }
+
+    fn location(&self) -> Location {
+        let span = self.def().span;
+        Location {
+            url: self.file.url.clone(),
+            line: span.line,
+            column: span.column,
+        }
+    }
+
+    /// The place of the binding on `prop` of an object of type `meta`, when
+    /// the declaration put one there.
+    fn binding_loc(&self, meta: &MetaObject, prop: PropIndex) -> Option<BindingLoc> {
+        self.bindings(meta)
+            .find(|(p, _)| *p == prop)
+            .map(|(_, at)| BindingLoc {
+                prop,
+                at,
+                member: None,
+            })
+    }
+
+    /// Each binding [`Made::bound`] notes: its property and its place.
+    fn bindings<'a>(
+        &'a self,
+        meta: &'a MetaObject,
+    ) -> impl Iterator<Item = (PropIndex, Location)> + 'a {
+        let od = self.def();
+        let groups = std::iter::once((&[][..], &od.members))
+            .chain(od.grouped.iter().map(|g| (&g.path[..], &g.members)));
+        groups
+            .flat_map(|(path, m)| m.bindings.iter().map(move |pb| (path, pb)))
+            .zip(0..Self::BITS)
+            .filter(|(_, k)| self.bound & (1 << k) != 0)
+            .filter_map(move |((path, pb), _)| {
+                let prop = if path.is_empty() {
+                    meta.property_index(&pb.name)
+                } else {
+                    meta.property_index(&format!("{}.{}", path.join("."), pb.name))
+                }?;
+                let span = if pb.name_span.line == 0 {
+                    self.file.ir.expr(pb.expr).span
+                } else {
+                    pb.name_span
+                };
+                let at = Location {
+                    url: self.file.url.clone(),
+                    line: span.line,
+                    column: span.column,
+                };
+                Some((prop, at))
+            })
+    }
 }
 
 /// A source position, for Qt-style messages.

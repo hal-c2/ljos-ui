@@ -204,14 +204,26 @@ pub struct RectanglePaint {
     pub gradient: Option<GradientPaint>,
 }
 
+/// `border.width` and `border.color` of a Rectangle: leaves of a group,
+/// at an index that holds on every type made from it.
+fn border_props() -> [ljos_engine::PropIndex; 2] {
+    use ljos_engine::QmlType;
+    use std::sync::OnceLock;
+    static PROPS: OnceLock<[ljos_engine::PropIndex; 2]> = OnceLock::new();
+    *PROPS.get_or_init(|| {
+        let m = <Rectangle as QmlType>::static_meta();
+        let leaf = |name| {
+            m.property_index(name)
+                .expect("Rectangle has a border group")
+        };
+        [leaf("border.width"), leaf("border.color")]
+    })
+}
+
 impl RectanglePaint {
     /// Reads the paint properties (tracked).
     pub fn read(engine: &Engine, obj: ObjectId) -> Self {
-        let num = |name| engine.read_by_name(obj, name).to_number();
-        let color = |name| match engine.read_by_name(obj, name) {
-            ljos_engine::Value::Color(c) => c,
-            _ => Color::TRANSPARENT,
-        };
+        let [border_width, border_color] = border_props();
         let radius = engine.read(obj, Rectangle::RADIUS.index).to_number();
         let assigned = |p: ljos_engine::PropIndex| {
             !matches!(
@@ -229,10 +241,9 @@ impl RectanglePaint {
             corner(Rectangle::BOTTOM_RIGHT_RADIUS.index),
             corner(Rectangle::BOTTOM_LEFT_RADIUS.index),
         ];
-        let assigned_name = |name| engine.property_index(obj, name).is_ok_and(&assigned);
         // Qt reads `border.width` as 1 by default but draws no border until
         // the author assigns its width or colour (checked on qml6).
-        let has_border = assigned_name("border.width") || assigned_name("border.color");
+        let has_border = assigned(border_width) || assigned(border_color);
         // A rectangle painted before it completes has no binding yet.
         let antialiasing = if assigned(Item::ANTIALIASING.index) {
             engine.read(obj, Item::ANTIALIASING.index).to_boolean()
@@ -246,8 +257,15 @@ impl RectanglePaint {
             },
             radius,
             radii,
-            border_width: if has_border { num("border.width") } else { 0.0 },
-            border_color: color("border.color"),
+            border_width: if has_border {
+                engine.read(obj, border_width).to_number()
+            } else {
+                0.0
+            },
+            border_color: match engine.read(obj, border_color) {
+                ljos_engine::Value::Color(c) => c,
+                _ => Color::TRANSPARENT,
+            },
             antialiasing,
             gradient: as_gradient(engine, &engine.read(obj, Rectangle::GRADIENT.index))
                 .and_then(|g| GradientPaint::of(engine, g)),

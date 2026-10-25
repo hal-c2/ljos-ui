@@ -387,21 +387,22 @@ impl Engine {
 
     /// The default property's index.
     pub fn default_property(&self, obj: ObjectId) -> Result<PropIndex, EngineError> {
-        let name = {
-            let store = self.inner.store.borrow();
-            let h = store
-                .objects
-                .get(obj)
-                .ok_or_else(|| EngineError::dead(obj))?;
-            h.meta
+        let store = self.inner.store.borrow();
+        let h = store
+            .objects
+            .get(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
+        if let Some(p) = h.meta.default_property_index() {
+            return Ok(p);
+        }
+        Err(EngineError::UnknownProperty {
+            ty: h.meta.name.to_string(),
+            // The name a type gives that it does not have, else none.
+            name: h
+                .meta
                 .default_property()
-                .cloned()
-                .ok_or_else(|| EngineError::UnknownProperty {
-                    ty: h.meta.name.to_string(),
-                    name: "default property".into(),
-                })?
-        };
-        self.property_index(obj, &name)
+                .map_or_else(|| "default property".into(), |n| n.to_string()),
+        })
     }
 
     /// Number of items (`list.length`). Tracked.

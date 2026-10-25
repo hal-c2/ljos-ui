@@ -40,6 +40,7 @@ use crate::ids::{ContextId, ObjectId, PropIndex};
 use crate::loader::LoadedFile;
 use crate::meta::{Declared, MetaBuilder, MetaRef, PropertyFlags};
 use crate::object::{BindingLoc, Location, QmlType};
+use crate::plan::{ArgPlan, MembersPlan, Slot};
 use crate::qtqml::{Component, Connections};
 use crate::types::{TypeTag, Url};
 use crate::value::{Color, Value};
@@ -770,12 +771,14 @@ impl Engine {
         }
     }
 
-    fn set_location(&self, obj: ObjectId, url: &Atom, line: u32, column: u32) {
+    /// Notes the declaration `obj` is made from: object `i` of `comp`.
+    fn set_made(&self, obj: ObjectId, file: &Rc<LoadedFile>, comp: CompIdx, i: usize) {
         if let Some(h) = self.inner.store.borrow_mut().objects.get_mut(obj) {
-            h.ext_mut().location = Some(Location {
-                url: url.clone(),
-                line,
-                column,
+            h.made = Some(crate::object::Made {
+                file: file.clone(),
+                comp: comp.0,
+                obj: i as u32,
+                bound: 0,
             });
         }
     }
@@ -803,6 +806,46 @@ impl Engine {
                 member,
             });
         }
+        self.hold_installed(obj, prop, inst, at);
+    }
+
+    /// Notes that binding `k` of declaration object `def` of `inst` is on
+    /// `prop` of `obj`, which made from that object reads its place back
+    /// from there. `false` when `obj` was made from another declaration
+    /// (the root of a component file's instance) or `k` is past what the
+    /// bits count.
+    fn note_bound(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        inst: &Instance,
+        def: u32,
+        k: u32,
+    ) -> bool {
+        let mut store = self.inner.store.borrow_mut();
+        let Some(h) = store.objects.get_mut(obj) else {
+            return false;
+        };
+        let Some(made) = h.made.as_mut() else {
+            return false;
+        };
+        if k >= crate::object::Made::BITS
+            || !Rc::ptr_eq(&made.file, &inst.file)
+            || made.comp != inst.comp.0
+            || made.obj != def
+        {
+            return false;
+        }
+        made.bound |= 1 << k;
+        // What was noted before is no longer the binding there.
+        if let Some(ext) = h.ext.as_deref_mut() {
+            ext.binding_locs.retain(|l| l.prop != prop);
+        }
+        true
+    }
+
+    /// A binding installed just now that Qt runs after the others.
+    fn hold_installed(&self, obj: ObjectId, prop: PropIndex, inst: &Instance, at: SourceSpan) {
         // The binding was installed just now, so it is at the end.
         let node = match self.inner.eager_hold.borrow_mut().as_mut() {
             Some(held) => held
@@ -926,7 +969,7 @@ impl Engine {
     /// `url:line:col: ` of an object made from QML.
     pub(crate) fn location_of(&self, obj: ObjectId) -> Option<String> {
         let store = self.inner.store.borrow();
-        let loc = store.objects.get(obj)?.ext.as_ref()?.location.as_ref()?;
+        let loc = store.objects.get(obj)?.location()?;
         Some(format!("{}:{}:{}: ", loc.url, loc.line, loc.column))
     }
 
@@ -1058,7 +1101,7 @@ impl Engine {
             }
         };
         if !matches!((i, &f.root), (0, RootSpec::Existing(_))) {
-            self.set_location(id, &f.file.url, od.span.line, od.span.column);
+            self.set_made(id, &f.file, f.comp, i);
             // A `baseUrl` is the file's address from the start.
             self.give_absent(id);
             cr.all.push(id);
@@ -1246,8 +1289,7 @@ impl Engine {
         ty: &TypeRef,
     ) -> Result<PropIndex, EngineError> {
         let meta = self.type_meta(file, ty)?;
-        meta.default_property()
-            .and_then(|name| meta.property_index(name))
+        meta.default_property_index()
             .ok_or_else(|| EngineError::UnknownProperty {
                 ty: meta.name.to_string(),
                 name: "default property".into(),
@@ -1369,10 +1411,16 @@ impl Engine {
             }
             _ => false,
         };
-        self.apply_members(inst, id, &od.members, &[], id);
-        for g in &od.grouped {
-            if !self.apply_value_members(inst, id, &g.members, &g.path) {
-                self.apply_members(inst, id, &g.members, &g.path, id);
+        let plans = inst.file.plans();
+        let plan = plans.object(&inst.file.ir, inst.comp.0, u.obj);
+        self.apply_members(inst, id, &od.members, &[], id, plan.map(|p| &p.members));
+        for (k, g) in od.grouped.iter().enumerate() {
+            let gp = plan.and_then(|p| p.grouped.get(k));
+            // A group of the object's own (`anchors`) is no value: what
+            // finds out whether it is need not be asked each time.
+            let own = gp.is_some_and(|gp| self.own_group(id, &g.path, &gp.head));
+            if own || !self.apply_value_members(inst, id, &g.members, &g.path) {
+                self.apply_members(inst, id, &g.members, &g.path, id, gp.map(|g| &g.members));
             }
         }
         // Children written here go to the default property of the type
@@ -1381,8 +1429,18 @@ impl Engine {
         // body.data` must not take `body` from the file that declares it.
         let mut memo = None;
         let mut children_default = || {
-            memo.get_or_insert_with(|| self.children_default(&inst.file, &od.ty))
-                .clone()
+            memo.get_or_insert_with(|| {
+                let linked = plan.and_then(|p| {
+                    self.linked(id, &p.children_default, |_| {
+                        self.children_default(&inst.file, &od.ty).ok()
+                    })
+                });
+                match linked {
+                    Some(p) => Ok(p),
+                    None => self.children_default(&inst.file, &od.ty),
+                }
+            })
+            .clone()
         };
         for v in &od.children {
             match v {
@@ -1633,7 +1691,7 @@ impl Engine {
         match att {
             Ok(att) => {
                 let (rest, fields) = self.value_fields_of(att, &at.members);
-                self.apply_members(inst, att, &rest, &[], id);
+                self.apply_members(inst, att, &rest, &[], id, None);
                 for (path, m) in fields {
                     self.apply_value_members(inst, att, &m, &path);
                 }
@@ -1647,7 +1705,7 @@ impl Engine {
     }
 
     /// Applies `m` to `obj` (under the group `path`); handlers die with
-    /// `scope`.
+    /// `scope`. `plan` links the names of `m` where it is given.
     fn apply_members(
         &self,
         inst: &Rc<Instance>,
@@ -1655,15 +1713,19 @@ impl Engine {
         m: &Members,
         path: &[String],
         scope: ObjectId,
+        plan: Option<&MembersPlan>,
     ) {
+        let slot =
+            |slots: fn(&MembersPlan) -> &[Slot], k: usize| plan.and_then(|p| slots(p).get(k));
         // Properties declared in QML that were given an array or an object
         // where they are declared: Qt runs those as bindings, so each tells
         // of its value once when the object is made, which a number or a
         // string written there does not.
         let mut told: Vec<Target> = Vec::new();
-        for a in &m.assignments {
-            let t = match self.member_target(obj, path, &a.name) {
-                Ok(t) => t,
+        for (k, a) in m.assignments.iter().enumerate() {
+            let at = slot(|p| &p.assignments, k);
+            let t = match self.planned_target(obj, path, &a.name, at) {
+                Ok((t, _)) => t,
                 Err(_) => {
                     if !self.keep_foreign_literal(inst, obj, path, a) {
                         self.no_property(inst, a.span.line, a.span.column, path, &a.name);
@@ -1688,9 +1750,10 @@ impl Engine {
                 told.push(t);
             }
         }
-        for oa in &m.objects {
-            let t = match self.member_target(obj, path, &oa.name) {
-                Ok(t) => t,
+        for (k, oa) in m.objects.iter().enumerate() {
+            let at = slot(|p| &p.objects, k);
+            let t = match self.planned_target(obj, path, &oa.name, at) {
+                Ok((t, _)) => t,
                 Err(_) => {
                     let at = self.location_of(obj);
                     self.not_assignable(format!(
@@ -1758,8 +1821,9 @@ impl Engine {
             // Nothing happens when no handler was connected above.
             let _ = self.notify(t.obj, t.prop);
         }
-        for pb in &m.bindings {
-            let t = match self.member_target(obj, path, &pb.name) {
+        for (k, pb) in m.bindings.iter().enumerate() {
+            let at = slot(|p| &p.bindings, k);
+            let (t, planned) = match self.planned_target(obj, path, &pb.name, at) {
                 Ok(t) => t,
                 Err(_) => {
                     let b = inst.file.ir.expr(pb.expr);
@@ -1769,7 +1833,13 @@ impl Engine {
                     continue;
                 }
             };
-            self.install_binding(inst, &t, pb);
+            // A binding found through the plan is on the object it is
+            // written on, by the name written: its place can be read back
+            // from the declaration.
+            let derived = plan
+                .filter(|_| planned)
+                .map(|p| (p.obj, p.first + k as u32));
+            self.install_binding(inst, &t, pb, derived);
         }
     }
 
@@ -2056,6 +2126,30 @@ impl Engine {
         ));
     }
 
+    /// [`Engine::member_target`] through `slot`: a member of `obj` itself
+    /// is found by index once the slot is linked. Says whether it was.
+    fn planned_target(
+        &self,
+        obj: ObjectId,
+        path: &[String],
+        name: &str,
+        slot: Option<&Slot>,
+    ) -> Result<(Target, bool), EngineError> {
+        let linked = slot.and_then(|slot| {
+            self.linked(obj, slot, |m| {
+                if path.is_empty() {
+                    m.property_index(name)
+                } else {
+                    m.property_index(&dotted(path, name))
+                }
+            })
+        });
+        match linked {
+            Some(prop) => Ok((Target { obj, prop }, true)),
+            None => self.member_target(obj, path, name).map(|t| (t, false)),
+        }
+    }
+
     /// The property `path.name` of `obj`: a dotted group leaf
     /// (`border.width`), or a property of the object a path leads to.
     fn member_target(
@@ -2078,15 +2172,8 @@ impl Engine {
                 },
             };
         }
-        // One string, made as it is looked up: a group leaf is a property
-        // of that dotted name (`anchors.fill`).
-        let mut dotted =
-            String::with_capacity(path.iter().map(|s| s.len() + 1).sum::<usize>() + name.len());
-        for seg in path {
-            dotted.push_str(seg);
-            dotted.push('.');
-        }
-        dotted.push_str(name);
+        // A group leaf is a property of that dotted name (`anchors.fill`).
+        let dotted = dotted(path, name);
         if let Some(prop) = self.find_property(obj, &dotted) {
             return Ok(Target { obj, prop });
         }
@@ -2447,7 +2534,15 @@ impl Engine {
             .is_ok_and(|p| self.group_at(obj, p).is_some())
     }
 
-    fn install_binding(&self, inst: &Rc<Instance>, t: &Target, pb: &PropertyBinding) {
+    /// `derived`: the declaration object and binding ordinal `pb` is, when
+    /// its place can be read back from there (see [`crate::object::Made`]).
+    fn install_binding(
+        &self,
+        inst: &Rc<Instance>,
+        t: &Target,
+        pb: &PropertyBinding,
+        derived: Option<(u32, u32)>,
+    ) {
         let expr = pb.expr;
         let b = inst.file.ir.expr(expr);
         let hint = self
@@ -2482,7 +2577,12 @@ impl Engine {
         match r {
             Ok(()) => {
                 let (obj, prop) = self.redirect(t.obj, t.prop);
-                self.set_binding_loc(obj, prop, inst, name_place(pb, b.span), None);
+                let derived = derived.filter(|_| (obj, prop) == (t.obj, t.prop));
+                if !derived.is_some_and(|(o, k)| self.note_bound(obj, prop, inst, o, k)) {
+                    self.set_binding_loc(obj, prop, inst, name_place(pb, b.span), None);
+                } else {
+                    self.hold_installed(obj, prop, inst, name_place(pb, b.span));
+                }
             }
             Err(e) => self.warn(format!(
                 "{}:{}:{}: {e}",
@@ -2538,9 +2638,11 @@ impl Engine {
         let b = file.ir.expr(expr);
         // A fault in it is one of the object it belongs to (fault.rs).
         let _origin = self.origin(inst.resolve(b.scope));
+        let plans = file.plans();
+        let planned = plans.args(&file.ir, expr.index());
         if args.is_empty()
             && let Some(Some(t0)) = file.tier0.get(b.js_fn.index())
-            && let Some(v) = self.tier0_eval(inst, b, t0)
+            && let Some(v) = self.tier0_eval(inst, b, t0, planned)
         {
             return v;
         }
@@ -2577,8 +2679,8 @@ impl Engine {
         };
         self.run_js_naming(label, what, |s| {
             let mut a: Vec<JsValue> = Vec::with_capacity(b.params.len() + args.len());
-            for p in &b.params {
-                a.push(self.arg_js(s, inst, &p.arg));
+            for (k, p) in b.params.iter().enumerate() {
+                a.push(self.arg_js_at(s, inst, &p.arg, planned.get(k)));
             }
             a.extend(args.iter().map(|v| self.to_js(v)));
             let out = match s.call_with_this(f, &this, &a) {
@@ -2624,8 +2726,10 @@ impl Engine {
         inst: &Instance,
         b: &Binding,
         t0: &crate::loader::Tier0,
+        planned: &[ArgPlan],
     ) -> Option<Option<Value>> {
-        let mut cur = self.arg_value(inst, &b.params.get(t0.param)?.arg)?;
+        let param = &b.params.get(t0.param)?.arg;
+        let mut cur = self.arg_value_at(inst, param, planned.get(t0.param))?;
         let mut i = 0;
         let path = &t0.path;
         while i < path.len() {
@@ -2652,28 +2756,23 @@ impl Engine {
                 }
                 _ => return None,
             };
-            match self.property_index(o, name) {
-                Ok(p) => {
-                    let group = self
-                        .meta_of(o)
-                        .and_then(|m| {
-                            m.property(p)
-                                .map(|i| i.flags.contains(PropertyFlags::GROUP))
-                        })
-                        .unwrap_or(false);
-                    if group {
+            match self.linked_property(o, &t0.steps[i], name) {
+                Some(p) => {
+                    if self.property_flags(o, p).contains(PropertyFlags::GROUP) {
                         let leaf = path.get(i + 1)?;
-                        let p = self.find_property(o, &format!("{name}.{leaf}"))?;
+                        let p = self.linked(o, &t0.leaves[i], |m| {
+                            m.property_index(&format!("{name}.{leaf}"))
+                        })?;
                         cur = self.read(o, p);
                         i += 2;
                         continue;
                     }
                     cur = self.read(o, p);
                 }
-                Err(_) if name.as_str() == "parent" => {
+                None if name.as_str() == "parent" => {
                     cur = self.visual_parent(o).map_or(Value::Null, Value::Object);
                 }
-                Err(_) => return None,
+                None => return None,
             }
             i += 1;
         }
@@ -2702,11 +2801,19 @@ impl Engine {
     /// A parameter as an engine value, for tier 0. `None` for what only JS
     /// can supply.
     fn arg_value(&self, inst: &Instance, arg: &Arg) -> Option<Value> {
+        self.arg_value_at(inst, arg, None)
+    }
+
+    /// [`Engine::arg_value`], with what `plan` linked of it.
+    fn arg_value_at(&self, inst: &Instance, arg: &Arg, plan: Option<&ArgPlan>) -> Option<Value> {
         match arg {
             Arg::Object(r) => Some(inst.resolve(*r).map_or(Value::Null, Value::Object)),
             Arg::Property { object, name } => {
                 let o = inst.resolve(*object)?;
-                Some(self.read_by_name(o, name))
+                match plan.and_then(|p| self.linked_property(o, &p.prop, name)) {
+                    Some(p) => Some(self.read(o, p)),
+                    None => Some(self.read_by_name(o, name)),
+                }
             }
             Arg::Context {
                 component,
@@ -2714,11 +2821,17 @@ impl Engine {
                 fallback,
             } => match self.context_arg(inst, *component, name) {
                 Some(v) => Some(v),
-                None => self.arg_value(inst, fallback.as_deref()?),
+                None => self.arg_value_at(inst, fallback.as_deref()?, plan),
             },
             Arg::Attached { ty, object } => {
                 let o = inst.resolve(*object)?;
-                let meta = self.type_meta(&inst.file, ty).ok()?;
+                let meta = match plan {
+                    Some(p) => p
+                        .meta
+                        .get_or_init(|| self.type_meta(&inst.file, ty).ok())
+                        .clone()?,
+                    None => self.type_meta(&inst.file, ty).ok()?,
+                };
                 let attached = self.attached_object(o, &meta).ok()?;
                 Some(Value::Object(attached))
             }
@@ -2756,21 +2869,39 @@ impl Engine {
 
     /// A parameter as JS sees it.
     fn arg_js(&self, s: &Scope<'_>, inst: &Instance, arg: &Arg) -> JsValue {
+        self.arg_js_at(s, inst, arg, None)
+    }
+
+    /// [`Engine::arg_js`], with what `plan` linked of it.
+    fn arg_js_at(
+        &self,
+        s: &Scope<'_>,
+        inst: &Instance,
+        arg: &Arg,
+        plan: Option<&ArgPlan>,
+    ) -> JsValue {
         match arg {
             // A `list<T>` declared in QML is the property's own list to a
             // script (list_faces.rs); the read is what a binding follows.
             Arg::Property { object, name } => {
-                if let Some(f) = self.method_js(s, inst, *object, name) {
+                // A property linked once is no method.
+                let linked = plan.and_then(|p| {
+                    let o = inst.resolve(*object)?;
+                    self.linked_property(o, &p.prop, name)
+                });
+                if linked.is_none()
+                    && let Some(f) = self.method_js(s, inst, *object, name)
+                {
                     return f;
                 }
-                let Some(v) = self.arg_value(inst, arg) else {
+                let Some(v) = self.arg_value_at(inst, arg, plan) else {
                     return JsValue::Undefined;
                 };
                 // A native list is read through to the property.
                 let face = matches!(v, Value::List(_))
                     .then(|| {
                         let o = inst.resolve(*object)?;
-                        let p = self.find_property(o, name)?;
+                        let p = linked.or_else(|| self.find_property(o, name))?;
                         let js = self.inner.js.borrow().clone()?;
                         match self.script_list(o, p) {
                             Some((owner, list)) => self.list_face(s, &js, owner, list).ok(),
@@ -2781,7 +2912,7 @@ impl Engine {
                 face.unwrap_or_else(|| self.to_js(&v))
             }
             Arg::Object(_) | Arg::Attached { .. } => self
-                .arg_value(inst, arg)
+                .arg_value_at(inst, arg, plan)
                 .map_or(JsValue::Undefined, |v| self.to_js(&v)),
             Arg::Type(t) => match self.type_meta(&inst.file, t) {
                 Ok(m) => self.type_face(s, &m),
@@ -2812,7 +2943,7 @@ impl Engine {
                 None => match fallback.as_deref() {
                     // The script has the name as it is: nothing asks.
                     Some(Arg::Singleton(t)) => self.singleton_value_js(t, inst.context),
-                    Some(f) => self.arg_js(s, inst, f),
+                    Some(f) => self.arg_js_at(s, inst, f, plan),
                     None => global(s, name),
                 },
             },
@@ -3451,4 +3582,16 @@ impl Engine {
     pub fn has_incubations(&self) -> bool {
         !self.inner.loader.borrow().incubating.is_empty()
     }
+}
+
+/// `path.name` as one string, made as it is looked up.
+fn dotted(path: &[String], name: &str) -> String {
+    let mut dotted =
+        String::with_capacity(path.iter().map(|s| s.len() + 1).sum::<usize>() + name.len());
+    for seg in path {
+        dotted.push_str(seg);
+        dotted.push('.');
+    }
+    dotted.push_str(name);
+    dotted
 }

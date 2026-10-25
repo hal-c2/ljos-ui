@@ -1251,6 +1251,7 @@ impl Engine {
         if clear_metas {
             for f in l.files.values() {
                 f.metas.borrow_mut().clear();
+                f.unlink();
             }
         }
         let installed: Rc<dyn ComponentSource> = Rc::new(PatchedSource {
@@ -1275,6 +1276,7 @@ impl Engine {
         l.files = saved.files;
         for (file, metas) in saved.metas {
             *file.metas.borrow_mut() = metas;
+            file.unlink();
         }
         *self.inner.reload.overlay.borrow_mut() = saved.overlay;
         drop(l);
