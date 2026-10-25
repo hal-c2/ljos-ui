@@ -5267,7 +5267,11 @@ instantiated once; per instance in brackets):
 | Type lookups by name | 20 (2) | 10 (1) |
 | Context name lookups | 0 | 0 |
 | Atoms interned | 0 | 0 |
-| Heap allocations | 1856 (185.6) | 1057 (105.7) |
+| Heap allocations | 1866 (186.6) | 1057 (105.7) |
+
+The delegate's 186.6 allocations were 185.6 when the pin was set; a graph node that went
+from 216 to 200 bytes keeps an override's id beside its layers (d574f1d5), one more allocation
+per delegate for 16 bytes less on every node.
 
 Most effects are the scene's, not the delegate's: the plain Item and Text have two
 bindings and fifteen effects. ADR 0001 takes those down; ADR 0002 takes the lookups to zero.

@@ -195,7 +195,7 @@ fn ten_listview_delegates() {
     assert_eq!(made, 10);
     // Per delegate: 4 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 8 values, 7 bindings, 16 effects, 2 scopes,
-    // 19.1 member and 2 type lookups, 185.6 allocations.
+    // 19.1 member and 2 type lookups, 186.6 allocations.
     assert_eq!(
         b,
         Budget {
@@ -212,7 +212,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1856,
+            allocations: 1866,
         }
     );
 }
