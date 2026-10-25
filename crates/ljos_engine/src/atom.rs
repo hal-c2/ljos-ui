@@ -56,6 +56,7 @@ impl Atom {
         if s.is_empty() {
             return Atom::EMPTY;
         }
+        crate::lookups::atom();
         INTERNER.with(|set| {
             let mut set = set.borrow_mut();
             if let Some(a) = set.get(s) {

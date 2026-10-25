@@ -72,6 +72,7 @@ mod list_faces;
 mod listmodel;
 mod loader;
 mod log;
+mod lookups;
 mod made_on_read;
 pub use made_on_read::BindOnRead;
 mod journal;
@@ -146,6 +147,9 @@ pub use listmodel::{CarriedCell, CarriedRows, ListElement, ListModel};
 pub use ljos_js::{JsClock, Timing as JsTiming};
 pub use loader::{ComponentSource, MapSource, encoded_url, file_url, url_path};
 pub use log::{LogEntry, LogLevel};
+pub use lookups::Lookups;
+#[cfg(feature = "lookup-counts")]
+pub use lookups::lookups;
 pub use memory::{CompiledMemory, TypeMemory};
 pub use meta::{
     AttachedTypeId, CompleteThunk, Declared, EnumInfo, Getter, GroupGet, GroupGetMut, ImplInfo,

@@ -201,16 +201,19 @@ impl Registry {
     }
 
     pub(crate) fn slot(&self, uri: &str, name: &str) -> Option<Slot> {
+        crate::lookups::type_();
         Some(self.modules.get(uri)?.types.get(name)?.meta.clone())
     }
 
     pub(crate) fn slot_any(&self, name: &str) -> Option<Slot> {
+        crate::lookups::type_();
         self.order
             .iter()
             .find_map(|uri| Some(self.modules.get(uri)?.types.get(name)?.meta.clone()))
     }
 
     pub(crate) fn slot_versioned(&self, uri: &str, version: Version, name: &str) -> Option<Slot> {
+        crate::lookups::type_();
         let e = self.modules.get(uri)?.types.get(name)?;
         (e.since <= version).then(|| e.meta.clone())
     }

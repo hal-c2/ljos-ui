@@ -3252,6 +3252,7 @@ impl Engine {
 
     /// Declares `id: name` in `ctx`.
     pub fn set_context_id(&self, ctx: ContextId, name: &str, obj: ObjectId) {
+        crate::lookups::name();
         if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
             c.ids.insert(Atom::intern(name), obj);
         }
@@ -3260,6 +3261,7 @@ impl Engine {
     /// Takes `name` out of `ctx` while it names `obj`, so that the name is
     /// found further out, as a context that never had it finds it.
     pub(crate) fn unset_context_id(&self, ctx: ContextId, name: &str, obj: ObjectId) {
+        crate::lookups::name();
         if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx)
             && c.ids.get(name) == Some(&obj)
         {
@@ -3270,6 +3272,7 @@ impl Engine {
     /// Resolves an id from `ctx` outwards. An id whose object is gone
     /// resolves to `None` (`null` in QML).
     pub fn resolve_id(&self, ctx: ContextId, name: &str) -> Option<ObjectId> {
+        crate::lookups::name();
         let found = {
             let contexts = self.inner.contexts.borrow();
             let mut cur = Some(ctx);
@@ -3295,6 +3298,7 @@ impl Engine {
     /// Puts `name` in scope for everything created in `ctx` and its
     /// children (`setContextProperty`).
     pub fn set_context_property(&self, ctx: ContextId, name: &str, v: Value) {
+        crate::lookups::name();
         if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
             c.props.insert(Atom::intern(name), v);
         }
@@ -3304,6 +3308,7 @@ impl Engine {
     /// name, then the properties of the context's object (a delegate's
     /// row: `index`, `model`, the roles).
     pub fn context_property(&self, ctx: ContextId, name: &str) -> Option<Value> {
+        crate::lookups::name();
         let mut cur = Some(ctx);
         while let Some(id) = cur {
             // Not borrowed across the read below, which may run a binding.
@@ -3334,6 +3339,7 @@ impl Engine {
     /// properties. An inline component reads the ids of the file that
     /// uses it this way.
     pub(crate) fn context_name(&self, ctx: ContextId, name: &str) -> Option<Value> {
+        crate::lookups::name();
         let mut cur = Some(ctx);
         let found = loop {
             let object = {
@@ -3369,6 +3375,7 @@ impl Engine {
         name: &str,
         ids: bool,
     ) -> Option<Result<ObjectId, Value>> {
+        crate::lookups::name();
         let mut cur = Some(ctx);
         while let Some(id) = cur {
             let object = {

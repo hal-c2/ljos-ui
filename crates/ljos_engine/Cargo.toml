@@ -32,6 +32,11 @@ arcstr.workspace = true
 # The steps of a slow reload, at debug level.
 tracing.workspace = true
 
+[features]
+# Counts lookups by name (`ljos_engine::lookups`) for budget tests. Off in
+# shipped builds: the counting calls then compile to nothing.
+lookup-counts = []
+
 [dev-dependencies]
 proptest.workspace = true
 # Tests compile QML strings; the engine itself never links the parser.

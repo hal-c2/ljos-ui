@@ -456,6 +456,7 @@ impl MetaObject {
 
     /// A property by name, inherited ones included.
     pub fn property_index(&self, name: &str) -> Option<PropIndex> {
+        crate::lookups::member();
         self.lookup().props.get(name).copied()
     }
 
@@ -480,6 +481,7 @@ impl MetaObject {
     }
 
     pub fn signal_index(&self, name: &str) -> Option<SignalIndex> {
+        crate::lookups::member();
         self.lookup().signals.get(name).copied()
     }
 
@@ -509,6 +511,7 @@ impl MetaObject {
     }
 
     pub fn method_index(&self, name: &str) -> Option<MethodIndex> {
+        crate::lookups::member();
         self.lookup().methods.get(name).copied()
     }
 
