@@ -2497,6 +2497,15 @@ const PRELUDE: &str = r##"
     };
     Object.defineProperty(JSON, "stringify", { value: stringify, writable: true, configurable: true });
   }
+
+  // Qt's engine finds no empty text in an empty one, from wherever it looks.
+  {
+    const realIndexOf = String.prototype.indexOf;
+    method(String.prototype, "indexOf", function indexOf(search, position) {
+      const i = realIndexOf.call(this, search, position);
+      return i === 0 && search === "" && String(this) === "" ? -1 : i;
+    });
+  }
 })();
 "##;
 

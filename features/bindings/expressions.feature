@@ -147,10 +147,12 @@ Feature: What a binding computes
 
       # Found by ljos-fuzz (bindings), bucket value:double:step-set(string-indexOf).
       # ECMAScript gives 0; Qt's engine gives -1 for an empty string searched for itself.
-      @backlog
       Examples: an empty string is not found in itself
-        | expression        | text |
-        | "".indexOf("")    | -1   |
+        | expression           | text |
+        | "".indexOf("")       | -1   |
+        | "".indexOf("", 1)    | -1   |
+        | "abc".indexOf("", 3) | 3    |
+        | "".lastIndexOf("")   | 0    |
 
   Rule: A binding follows what it read, and nothing else
 
