@@ -10,6 +10,7 @@ use ljos_fuzz::{
     bindings::Bindings,
     bucket::Known,
     connections::Connections,
+    creation::Creation,
     geometry::Geometry,
     rng::Rng,
     run::{Config, Oracle, Report, run},
@@ -21,6 +22,7 @@ enum AreaName {
     Bindings,
     Geometry,
     Connections,
+    Creation,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -84,6 +86,7 @@ fn main() -> Result<ExitCode> {
         AreaName::Bindings => fuzz(&Bindings, args, seed, jobs),
         AreaName::Geometry => fuzz(&Geometry, args, seed, jobs),
         AreaName::Connections => fuzz(&Connections, args, seed, jobs),
+        AreaName::Creation => fuzz(&Creation, args, seed, jobs),
     }
 }
 

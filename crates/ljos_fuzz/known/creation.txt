@@ -1,0 +1,44 @@
+# Buckets of ljos-fuzz creation that are known: as known/bindings.txt, one per line, the
+# signature then why.
+# Triaged from seeds 101 and 202 (2000 cases each).
+
+# A binding that makes an object is run again on Ljós by what the object's onCompleted wrote,
+# so a second object is made (features/components/create-object-in-binding.feature).
+warning:binding-loop(ljos-only):*       a binding that makes an object depends on what the object's onCompleted read and wrote (features/components/create-object-in-binding.feature)
+value:onCompleted:text                  a binding that makes an object is run again, and the second object logs its onCompleted (features/components/create-object-in-binding.feature)
+value:load-handlers:number              the root's children counted after a binding made a second object (features/components/create-object-in-binding.feature)
+value:step:number                       the root's children counted after a binding made a second object, or an initial int from a fraction is truncated (features/components/create-object-in-binding.feature, features/components/create-object-converted.feature)
+value:step:invalid-ljos                 a binding that makes an object is run again and the new object has its default colour, not the one a step wrote (features/components/create-object-in-binding.feature)
+value:step:rounding                     an int initial property past the int range from the root's children counted after a second object (features/components/create-object-in-binding.feature)
+value:step:text-rounding                a string of the root's children counted after a binding made a second object (features/components/create-object-in-binding.feature)
+result:none/none:call:text-number       a function given the root's children counted after a binding made a second object (features/components/create-object-in-binding.feature)
+result:none/none:call:text-rounding     a function given the root's children counted after a binding made a second object (features/components/create-object-in-binding.feature)
+
+# An initial property is converted as a value from outside QML on Qt
+# (features/components/create-object-converted.feature).
+value:load-handlers:bool                an initial bool from "0" or a fraction below a half is true (features/components/create-object-converted.feature)
+value:step:bool                         an initial bool from "0" or a fraction below a half is true (features/components/create-object-converted.feature)
+value:step:text-number                  an initial int from a fraction is truncated, not rounded, and read as a string (features/components/create-object-converted.feature)
+value:load-handlers:invalid-qt          an initial colour from false or a number keeps its binding's colour, not an invalid one (features/components/create-object-converted.feature)
+value:step:invalid-qt                   an initial colour from false or a number keeps its binding's colour, not an invalid one (features/components/create-object-converted.feature)
+value:step:alpha                        an initial colour from false keeps the transparent colour its binding gives, not an invalid one (features/components/create-object-converted.feature)
+warning:other(ljos-only):Could_not_set_initial_property_pN  an initial colour from false or a number is refused, not made an invalid colour (features/components/create-object-converted.feature)
+warning:other(qt-only):Could_not_set_initial_property_pN    an initial int or real from NaN, undefined or "" is taken without a word (features/components/create-object-converted.feature)
+value:load-handlers:nan-ljos            an initial real that cannot be converted keeps its binding's NaN, not the type's 0 (features/components/create-object-converted.feature)
+value:onChanged+onCompleted:empty-qt    an initial real that cannot be converted keeps its binding, and its change is told (features/components/create-object-converted.feature)
+value:onChanged:text                    an initial property that cannot be converted keeps its binding and is told again, an initial colour from false keeps its binding's, or a binding that makes an object is run again (features/components/create-object-converted.feature, features/components/create-object-in-binding.feature)
+value:onChanged:empty-ljos              an initial colour from another type is refused, so the change to an invalid colour is not told (features/components/create-object-converted.feature)
+value:onChanged:empty-qt                an initial point from false or a number is refused on Qt and the binding dropped; Ljós takes the origin and tells it (features/components/create-object-converted.feature)
+
+# Qt says more about a point it cannot make; Ljós says only that the initial property was
+# not set.
+warning:assign(qt-only):Could_not_find_any_constructor_for_value_type_QQmlPointFValueType_to_call_with_v  a point initial property from a number or a bool is refused with Qt's own words for it too
+
+# A binding to a value of another type (features/bindings/bound-to-another-type.feature).
+warning:assign(ljos-only):Unable_to_assign_QColor_to_point   a point bound to a colour is warned about, not made the origin without a word (features/bindings/bound-to-another-type.feature)
+warning:assign(ljos-only):Unable_to_assign_QJSValue_to_color a colour bound to an array is warned about, not made invalid without a word (features/bindings/bound-to-another-type.feature)
+warning:assign(ljos-only):Unable_to_assign_double_to_color   a colour bound to a number is warned about, not made invalid without a word (features/bindings/bound-to-another-type.feature)
+warning:assign(ljos-only):Unable_to_assign_bool_to_color     a colour bound to a bool is warned about, not made invalid without a word (features/bindings/bound-to-another-type.feature)
+warning:assign(ljos-only):Unable_to_assign_QJSValue_to_point a point bound to what is no point is warned about (features/bindings/bound-to-another-type.feature)
+warning:assign(qt-only):Unable_to_assign_QPointF_to_QString  a string bound to a point is not told, and is the point's text (features/bindings/bound-to-another-type.feature)
+value:load-handlers:empty-qt            a string bound to a point is the point's text, not empty (features/bindings/bound-to-another-type.feature)

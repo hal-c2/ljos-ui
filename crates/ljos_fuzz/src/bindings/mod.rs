@@ -294,14 +294,15 @@ fn loop_context(p: &Program, step: Option<&Stmt>) -> String {
 }
 
 /// The property a binding loop names, when it is not one the generator made
-/// (`p3`, `a7`): `implicitHeight` reading `height` is one bucket however the
+/// (`p3`, `a7`, `made4`): `implicitHeight` reading `height` is one bucket however the
 /// program around it reads.
 fn looped_builtin(text: &str) -> Option<String> {
     let rest = text.split_once("property \"")?.1;
     let name = rest.split_once('"')?.0;
-    let generated = name.len() > 1
-        && name.starts_with(['p', 'a'])
-        && name[1..].bytes().all(|b| b.is_ascii_digit());
+    let digits = name.trim_start_matches(|c: char| c.is_ascii_lowercase());
+    let generated = digits.len() < name.len()
+        && !digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit());
     (!generated && !name.is_empty()).then(|| name.to_owned())
 }
 
@@ -631,6 +632,7 @@ mod tests {
         assert_eq!(loop_on("font.italic").as_deref(), Some("font.italic"));
         assert_eq!(loop_on("p12"), None);
         assert_eq!(loop_on("a3"), None);
+        assert_eq!(loop_on("made4"), None);
         assert_eq!(loop_on("p"), Some("p".to_owned()));
     }
 }
