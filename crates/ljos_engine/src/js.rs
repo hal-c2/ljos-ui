@@ -2137,16 +2137,107 @@ const PRELUDE: &str = r##"
       default: return Reflect.construct(RealDate, arguments, Date);
     }
   };
-  // Qt's Date reads a number alone as no date, a four-digit year aside,
-  // and writes a date as "Mon Feb 5 03:04:05 2024 GMT+0100": the day
-  // unpadded, the year last.
+  // Qt's Date reads only the forms below, and writes a date as
+  // "Mon Feb 5 03:04:05 2024 GMT+0100": the day unpadded, the year last.
   const method = (o, name, f) =>
     Object.defineProperty(o, name, { value: f, writable: true, configurable: true });
-  const realParse = RealDate.parse;
-  method(RealDate, "parse", function parse(s) {
-    const t = String(s);
-    return /^\s*[+-]?[\d.,]*\s*$/.test(t) && !/^\d{4}$/.test(t) ? NaN : realParse(t);
-  });
+  const qtParse = (() => {
+    const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+    const MONTH = "(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
+    const SHORT = "(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)";
+    const re = (src, flags) => new RegExp("^" + src + "$", flags);
+    // ISO 8601 as ECMAScript reads it, with what Qt adds: `t`, a space
+    // before a time after a whole date, a comma before the fraction, an
+    // hour alone, and a zone of `+H`, `+HH`, `+HHmm` or `+HH:m(m)`. A
+    // date alone is UTC and a time without a zone local; a day or month
+    // too large for the month rolls over.
+    const ISO = /^(\d{4}|[+-]\d{6})(?:-(\d\d)(?:-(\d\d))?)?(?:(?:[Tt]|(?<=-\d\d-\d\d) )(\d\d)(?::(\d\d)(?::(\d\d)(?:[.,](\d+))?)?)?([Zz]|[+-]\d\d?(?::?\d\d?)?)?)?$/;
+    // 2024/01/02 and 2024.01.02, with an optional time: a real date only.
+    const YMD = /^(\d{4})([/.])(\d\d)\2(\d\d)(?:[T ](\d\d)(?::(\d\d)(?::(\d\d)(?:\.(\d+))?)?)?(Z|[+-]\d\d:?\d\d)?)?$/;
+    const MDY = /^(\d\d?)\/(\d\d?)\/(-?\d{4})$/;
+    const TIME = "(?: (\\d\\d):(\\d\\d)(?::(\\d\\d))?)?";
+    const MDAY = re(MONTH + " (\\d\\d?),? (-?\\d{4})" + TIME, "i");
+    const DMON = re("(\\d\\d?) " + MONTH + ",? (-?\\d{4})" + TIME, "i");
+    // What Date's own toString wrote before Qt 6: weekday, month, day, year, time.
+    const JS = re("[A-Za-z]+ " + SHORT + " (\\d\\d?) (-?\\d{4}) (\\d\\d):(\\d\\d)(?::(\\d\\d)(?:\\.(\\d+))?)?(?: (?:GMT|UTC)?([+-]\\d\\d:?\\d\\d)?)?");
+    // Qt's text date: weekday, month, day, time, year.
+    const TEXT = re("\\s*[A-Za-z]+\\s+" + SHORT + "\\s+(\\d\\d?)\\s+(\\d\\d):(\\d\\d)(?::(\\d\\d)(?:\\.(\\d+))?)?\\s+(-?\\d+)(?:\\s+(?:GMT|UTC)?([+-]\\d\\d?(?::?\\d\\d)?)?)?\\s*");
+    // RFC 2822; without the weekday, with a zone of digits or none.
+    const RFC = re("(?:[A-Za-z]{3}, )?(\\d\\d?) " + SHORT + " (\\d{4}) (\\d\\d?):(\\d\\d):(\\d\\d)(?: (GMT|UTC|Z|EST|MST|HST|[+-]\\d\\d:?\\d\\d))?", "i");
+    const ms = (f) => (f ? Number((f + "00").slice(0, 3)) : 0);
+    const num = (v) => (v === undefined ? 0 : Number(v));
+    // Minutes east of UTC; undefined for local time.
+    const zone = (z) => {
+      if (z === undefined) return undefined;
+      if (/^(?:GMT|UTC|Z)$/i.test(z)) return 0;
+      // Zones Qt knows by these names that keep one offset all year.
+      const fixed = { EST: -300, MST: -420, HST: -600 }[z];
+      if (fixed !== undefined) return fixed;
+      if (!/^[+-]/.test(z)) return NaN;
+      const m = /^([+-])(\d\d?)(?::?(\d\d?))?$/.exec(z);
+      const h = Number(m[2]);
+      return h > 23 ? NaN : (m[1] === "-" ? -1 : 1) * (h * 60 + num(m[3]));
+    };
+    // The time of `y-m-d h:mi:s.f` in `east` (local when undefined).
+    // `exact` is NaN for a field out of its range, a day the month does
+    // not have among them, and with `day24` 24:00 is the next midnight.
+    const at = (y, m, d, h, mi, s, f, east, exact, day24) => {
+      if (Number.isNaN(east)) return NaN;
+      if (exact) {
+        if (m < 0 || m > 11 || h > 24 || (h === 24 && (!day24 || mi || s || f)) || mi > 59 || s > 59) return NaN;
+        const day = new RealDate(0);
+        day.setUTCFullYear(y, m, d);
+        if (day.getUTCDate() !== d) return NaN;
+      }
+      let t;
+      if (east === undefined) {
+        const date = new RealDate(2000, 0, 1);
+        date.setFullYear(y, m, d);
+        date.setHours(h, mi, s, f);
+        t = getTime.call(date);
+      } else {
+        const date = new RealDate(0);
+        date.setUTCFullYear(y, m, d);
+        date.setUTCHours(h, mi, s, f);
+        t = getTime.call(date) - east * 60000;
+      }
+      return Math.abs(t) > 8.64e15 ? NaN : t;
+    };
+    const month = (name) => MON[name.slice(0, 3).toLowerCase()];
+    // Written out, a year before 1 is -1, as Qt writes it.
+    const written = (y) => (y < 0 ? y + 1 : y);
+    return function parse(text) {
+      const t = String(text);
+      let m = ISO.exec(t);
+      if (m) {
+        if (m[1] === "-000000") return NaN;
+        const [mo, d, h, mi, s] = [m[2] ?? "01", m[3] ?? "01", m[4], m[5], m[6]].map(num);
+        if (mo > 12 || d > 31 || h > 24 || mi > 59 || s > 60) return NaN;
+        if (s === 60 && m[7] && Number(m[7]) > 0) return NaN;
+        // An hour alone after a space is read by Qt as the day.
+        if (m[4] !== undefined && m[5] === undefined && m[8] === undefined && !/[Tt]/.test(t))
+          return at(Number(m[1]), mo - 1, h, 0, 0, 0, 0, 0, false);
+        const local = m[4] !== undefined && m[8] === undefined;
+        return at(Number(m[1]), mo - 1, d, h, mi, s, ms(m[7]), local ? undefined : zone(m[8] ?? "Z"), false);
+      }
+      if ((m = YMD.exec(t)))
+        return at(Number(m[1]), m[3] - 1, num(m[4]), num(m[5]), num(m[6]), num(m[7]), ms(m[8]), zone(m[9]), true, true);
+      if ((m = MDY.exec(t))) return at(written(Number(m[3])), m[1] - 1, Number(m[2]), 0, 0, 0, 0, 0, true);
+      if ((m = RFC.exec(t)) && (/^[A-Za-z]/.test(t) || !m[7] || /^[+-]/.test(m[7])) && !/[a-z]/.test(m[7] ?? ""))
+        return at(Number(m[3]), month(m[2]), Number(m[1]), num(m[4]), num(m[5]), num(m[6]), 0, zone(m[7] ?? "Z"), true);
+      if ((m = MDAY.exec(t)) || (m = DMON.exec(t))) {
+        const [mo, d] = /^\d/.test(m[1]) ? [m[2], m[1]] : [m[1], m[2]];
+        const local = m[4] !== undefined;
+        return at(written(Number(m[3])), month(mo), Number(d), num(m[4]), num(m[5]), num(m[6]), 0, local ? undefined : 0, true);
+      }
+      if ((m = JS.exec(t)))
+        return at(written(Number(m[3])), month(m[1]), Number(m[2]), num(m[4]), num(m[5]), num(m[6]), ms(m[7]), / (?:GMT|UTC)/.test(t) && !m[8] ? 0 : zone(m[8]), true);
+      if ((m = TEXT.exec(t)))
+        return at(written(Number(m[7])), month(m[1]), Number(m[2]), num(m[3]), num(m[4]), num(m[5]), ms(m[6]), /\s(?:GMT|UTC)\s*$/.test(t) ? 0 : zone(m[8]), true);
+      return NaN;
+    };
+  })();
+  method(RealDate, "parse", qtParse);
   const dp = RealDate.prototype;
   const getTime = dp.getTime;
   const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
