@@ -51,7 +51,7 @@ pub struct Accessible {}
 #[qml(name = "AccessibleAttached", enums = accessible_enums)]
 pub struct AccessibleAttached {
     /// A `QAccessible::Role` number ([`ljos_a11y::Role`]).
-    #[qml(notify, enumeration = "Role")]
+    #[qml(notify, enumeration = "Role", write = role_written)]
     pub role: i32,
     #[qml(notify)]
     pub name: Atom,
@@ -122,11 +122,11 @@ pub struct AccessibleAttached {
     pub expanded: bool,
     /// The item whose text names this one. Naming it here names this
     /// item as that item's `labelFor`, unless it says otherwise itself.
-    #[qml(notify)]
+    #[qml(notify, write = labelled_by_written)]
     pub labelled_by: Option<ObjectId>,
     /// The item this one is the label of; the other way of saying
     /// `labelledBy`.
-    #[qml(notify)]
+    #[qml(notify, write = label_for_written)]
     pub label_for: Option<ObjectId>,
 }
 
@@ -514,9 +514,6 @@ pub(crate) fn register(engine: &Engine) {
                 format!("Accessible.focusable has no default: {err}"),
             );
         }
-        if let Err(err) = follow_role(e, att).and_then(|()| mirror_labels(e, att)) {
-            warn(e, format!("Accessible has no defaults: {err}"));
-        }
         true
     });
 }
@@ -542,49 +539,61 @@ const ROLE_DEFAULTS: [RoleDefault; 3] = [
     ),
 ];
 
-/// Turns the role's defaults on when the role changes. Like `focusable`
-/// they stay on under another role. The values are derived, so the
-/// author's assignment, and a control's own binding, still replace them.
-fn follow_role(e: &Engine, att: ObjectId) -> Result<(), ljos_engine::EngineError> {
-    e.watch(att, AccessibleAttached::ROLE.index, move |e, v| {
-        let Some(role) = Role::from_qt(v.to_number() as i32) else {
-            return;
-        };
+/// A role turns its defaults on as it is written. Like `focusable` they
+/// stay on under another role. The values are derived, so the author's
+/// assignment, and a control's own binding, still replace them. Heard in
+/// the role's setter, not through a watch: every item an assistive
+/// technology may read has this object, and a watch is two graph nodes.
+fn role_written(cx: &Cx, role: i32) -> Option<i32> {
+    if let Some(r) = Role::from_qt(role) {
         for (prop, on) in ROLE_DEFAULTS {
             let prop = prop();
-            if on(role) && crate::item::is_unset(e, att, prop) {
-                let _ = e.write_derived(att, prop, Value::Bool(true));
+            if on(r) && crate::item::is_unset(cx.engine, cx.this, prop) {
+                let _ = cx.engine.write_derived(cx.this, prop, Value::Bool(true));
             }
         }
-    })?;
-    Ok(())
+    }
+    Some(role)
 }
 
 /// Naming a label names what it labels, from either side: `labelFor` on
 /// the label reads as `labelledBy` on the other item and the reverse. An
 /// item that says something of its own keeps it.
-fn mirror_labels(e: &Engine, att: ObjectId) -> Result<(), ljos_engine::EngineError> {
-    let (by, of) = (
-        AccessibleAttached::LABELLED_BY.index,
-        AccessibleAttached::LABEL_FOR.index,
-    );
-    for (prop, back) in [(by, of), (of, by)] {
-        e.watch(att, prop, move |e, v| {
-            let Some(me) = e.owner(att) else {
-                return;
-            };
-            let Some(other) = v.as_object().filter(|o| e.is_alive(*o) && *o != me) else {
-                return;
-            };
-            let Ok(theirs) = e.attached_object(other, &attacher()) else {
-                return;
-            };
-            if e.read(theirs, back).as_object().is_none() {
-                let _ = e.write_derived(theirs, back, Value::Object(me));
-            }
-        })?;
+fn labelled_by_written(cx: &Cx, v: Option<ObjectId>) -> Option<Option<ObjectId>> {
+    mirror_label(cx, v, AccessibleAttached::LABEL_FOR.index);
+    Some(v)
+}
+
+fn label_for_written(cx: &Cx, v: Option<ObjectId>) -> Option<Option<ObjectId>> {
+    mirror_label(cx, v, AccessibleAttached::LABELLED_BY.index);
+    Some(v)
+}
+
+/// The other item's side of a label being written: set where it says
+/// nothing. Its own setter, run by that write, does not answer back: what
+/// is being written here is not stored yet, and would read as nothing.
+fn mirror_label(cx: &Cx, v: Option<ObjectId>, back: PropIndex) {
+    #[derive(Default)]
+    struct Mirroring(Cell<bool>);
+    let e = cx.engine;
+    let mirroring = &e.extension::<Mirroring>().0;
+    if mirroring.get() {
+        return;
     }
-    Ok(())
+    let Some(me) = e.owner(cx.this) else {
+        return;
+    };
+    let Some(other) = v.filter(|o| e.is_alive(*o) && *o != me) else {
+        return;
+    };
+    let Ok(theirs) = e.attached_object(other, &attacher()) else {
+        return;
+    };
+    if e.untrack(|| e.read(theirs, back)).as_object().is_none() {
+        mirroring.set(true);
+        let _ = e.write_derived(theirs, back, Value::Object(me));
+        mirroring.set(false);
+    }
 }
 
 /// The tree node of an item. Object ids are never 0, which is the root.

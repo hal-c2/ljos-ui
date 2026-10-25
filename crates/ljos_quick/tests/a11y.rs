@@ -967,3 +967,26 @@ Item {
         assert_eq!(get(&e, item, "activeFocus"), Value::Bool(false));
     }
 }
+
+/// Every control has an `Accessible` object. What it does when its role
+/// or a label is written runs in their setters: the object costs the
+/// graph its `focusable`, which follows the role, and no watch (a node
+/// for the property and one for what hears it) on the role or a label.
+#[test]
+fn an_accessible_object_costs_one_graph_node() {
+    let e = engine();
+    let item = make::<Item>(&e, None);
+    let before = e.node_count();
+    let att = accessible(&e, item);
+    assert_eq!(e.node_count() - before, 1);
+
+    // What the setters do still happens.
+    let other = make::<Item>(&e, None);
+    set(&e, att, "role", role(Role::CheckBox));
+    assert_eq!(get(&e, att, "checkable"), Value::Bool(true));
+    set(&e, att, "labelledBy", Value::Object(other));
+    assert_eq!(
+        get(&e, accessible(&e, other), "labelFor"),
+        Value::Object(item)
+    );
+}
