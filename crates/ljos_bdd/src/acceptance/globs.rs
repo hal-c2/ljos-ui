@@ -1,11 +1,14 @@
 //! `features.globs`: the allowlist of a suite's feature files.
 //!
 //! One glob per line, relative to the checkout, `#` starts a comment. A
-//! line starting with `!` takes files out again. Every glob has to match
+//! line starting with `!` takes files out again. A glob may end in
+//! `.feature:<name glob>` to list (or with `!`, take out) only the
+//! scenarios of those files whose name matches. Every glob has to match
 //! something: an allowlist that silently stopped matching (the suite moved a
 //! directory) would otherwise turn a suite into zero scenarios and a green
-//! result.
+//! result. A name glob is held to that too, once the files are read.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use globset::{Glob, GlobMatcher};
@@ -35,6 +38,30 @@ struct Line {
     text: String,
     exclude: bool,
     matcher: GlobMatcher,
+    /// The scenario-name glob after `.feature:`, if the line has one.
+    names: Option<String>,
+}
+
+/// A listed feature file and which of its scenarios are listed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Listed {
+    /// Relative to the checkout.
+    pub file: String,
+    /// Name globs of the scenarios listed; empty when the whole file is.
+    pub only: Vec<String>,
+    /// Name globs of scenarios taken out again.
+    pub except: Vec<String>,
+}
+
+impl Listed {
+    /// The whole of `file`.
+    #[must_use]
+    pub fn file(file: impl Into<String>) -> Self {
+        Self {
+            file: file.into(),
+            ..Self::default()
+        }
+    }
 }
 
 /// # Errors
@@ -49,6 +76,16 @@ fn parse(text: &str) -> Result<Vec<Line>, GlobError> {
         let (exclude, glob) = line
             .strip_prefix('!')
             .map_or((false, line), |rest| (true, rest.trim()));
+        let (glob, names) = match glob.split_once(".feature:") {
+            Some((files, names)) => (&glob[..files.len() + ".feature".len()], Some(names)),
+            None => (glob, None),
+        };
+        if let Some(names) = names {
+            Glob::new(names).map_err(|source| GlobError::Bad {
+                line: n + 1,
+                source,
+            })?;
+        }
         let matcher = Glob::new(glob)
             .map_err(|source| GlobError::Bad {
                 line: n + 1,
@@ -60,6 +97,7 @@ fn parse(text: &str) -> Result<Vec<Line>, GlobError> {
             text: glob.to_owned(),
             exclude,
             matcher,
+            names: names.map(str::to_owned),
         });
     }
     if lines.iter().all(|l| l.exclude) {
@@ -68,14 +106,18 @@ fn parse(text: &str) -> Result<Vec<Line>, GlobError> {
     Ok(lines)
 }
 
-/// The suite's feature files, relative to `root` and sorted.
+/// The suite's feature files, relative to `root` and sorted, each with
+/// the scenario-name globs that narrow it.
 ///
 /// # Errors
 /// See [`GlobError`].
-pub fn expand(text: &str, root: &Path) -> Result<Vec<String>, GlobError> {
+pub fn expand(text: &str, root: &Path) -> Result<Vec<Listed>, GlobError> {
     let lines = parse(text)?;
     let files = files_below(root)?;
-    let mut out = Vec::new();
+    let mut out: BTreeMap<String, Listed> = BTreeMap::new();
+    // A file listed whole stays whole whatever names other lines list.
+    let mut whole: BTreeSet<String> = BTreeSet::new();
+    let mut dropped: BTreeSet<String> = BTreeSet::new();
     for line in &lines {
         let hits: Vec<&String> = files.iter().filter(|f| line.matcher.is_match(f)).collect();
         if hits.is_empty() {
@@ -85,22 +127,39 @@ pub fn expand(text: &str, root: &Path) -> Result<Vec<String>, GlobError> {
                 root: root.display().to_string(),
             });
         }
-        if !line.exclude {
-            out.extend(hits.into_iter().cloned());
+        for f in hits {
+            match (line.exclude, &line.names) {
+                // Excludes apply to everything listed before and after them.
+                (true, None) => {
+                    dropped.insert(f.clone());
+                }
+                (true, Some(n)) => out.entry(f.clone()).or_default().except.push(n.clone()),
+                (false, None) => {
+                    whole.insert(f.clone());
+                    out.entry(f.clone()).or_default();
+                }
+                (false, Some(n)) => out.entry(f.clone()).or_default().only.push(n.clone()),
+            }
         }
     }
-    // Excludes apply to everything listed before and after them.
-    out.retain(|f| {
-        !lines
-            .iter()
-            .any(|l| l.exclude && l.matcher.is_match(f.as_str()))
-    });
-    out.sort();
-    out.dedup();
-    if out.is_empty() {
+    let listed: Vec<Listed> = out
+        .into_iter()
+        .filter(|(f, _)| !dropped.contains(f))
+        .filter_map(|(file, mut l)| {
+            if whole.contains(&file) {
+                l.only.clear();
+            } else if l.only.is_empty() {
+                // Only taken out of, never listed.
+                return None;
+            }
+            l.file = file;
+            Some(l)
+        })
+        .collect();
+    if listed.is_empty() {
         return Err(GlobError::Empty);
     }
-    Ok(out)
+    Ok(listed)
 }
 
 #[cfg(test)]
@@ -130,16 +189,40 @@ mod tests {
             "features/**/*.feature # all\n!features/deep/*\n",
             dir.path(),
         );
-        assert_eq!(got.unwrap(), ["features/a.feature"]);
+        assert_eq!(got.unwrap(), [Listed::file("features/a.feature")]);
         let got = expand("features/**/*.feature\nother/*.feature\n", dir.path()).unwrap();
+        let files: Vec<&str> = got.iter().map(|l| l.file.as_str()).collect();
         assert_eq!(
-            got,
+            files,
             [
                 "features/a.feature",
                 "features/deep/b.feature",
                 "other/d.feature"
             ]
         );
+    }
+
+    #[test]
+    fn a_line_can_name_the_scenarios_of_a_file() {
+        let dir = tree();
+        let got = expand(
+            "features/a.feature:Adding*\nfeatures/a.feature:Taking one\n\
+             features/deep/*.feature\n!features/deep/b.feature:Slow *\n\
+             !other/d.feature:Anything\n",
+            dir.path(),
+        )
+        .unwrap();
+        let a = Listed {
+            only: vec!["Adding*".into(), "Taking one".into()],
+            ..Listed::file("features/a.feature")
+        };
+        let b = Listed {
+            except: vec!["Slow *".into()],
+            ..Listed::file("features/deep/b.feature")
+        };
+        assert_eq!(got, [a, b], "a file only taken out of is not listed");
+        let got = expand("features/a.feature:One\nfeatures/a.feature\n", dir.path()).unwrap();
+        assert_eq!(got, [Listed::file("features/a.feature")], "whole wins");
     }
 
     #[test]

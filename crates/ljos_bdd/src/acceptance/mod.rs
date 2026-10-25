@@ -10,7 +10,10 @@
 //!
 //! and one adapter crate, `steps/`, that maps the suite's UI-facing steps
 //! onto the [`crate::backend::Backend`] trait through [`AcceptanceWorld`].
-//! The adapter's `main` calls [`main`]. Ljós never writes into the suite's
+//! The adapter's `main` calls [`main`]. An application that runs its own
+//! ledger against itself brings its own World instead (its engine, types,
+//! controllers and fakes) and calls [`main_with`], choosing which tags
+//! leave a scenario out ([`Selection`]). Ljós never writes into the suite's
 //! checkout; the only file this module writes is `RATCHET`, and only on
 //! `--raise`.
 
@@ -27,11 +30,11 @@ use std::{
     rc::Rc,
 };
 
-use cucumber::{World as _, cli, event, parser};
+use cucumber::{cli, event, parser};
 use futures::stream;
 use gherkin::{Feature, GherkinEnv, Rule, Scenario};
 
-pub use globs::GlobError;
+pub use globs::{GlobError, Listed};
 pub use pin::{Pin, PinError, tree_digest};
 pub use ratchet::{Ratchet, RatchetError};
 pub use world::AcceptanceWorld;
@@ -39,6 +42,57 @@ pub use world::AcceptanceWorld;
 /// A scenario with this tag is known not to work on Ljós yet. It is not run,
 /// and the summary counts it.
 pub const BACKLOG_TAG: &str = "backlog-ljos";
+
+/// A World a suite runs on: one `#[derive(cucumber::World)]` gives, with
+/// the steps written for it.
+pub trait SuiteWorld:
+    cucumber::World + std::fmt::Debug + cucumber::codegen::WorldInventory
+{
+}
+
+impl<W> SuiteWorld for W where
+    W: cucumber::World + std::fmt::Debug + cucumber::codegen::WorldInventory
+{
+}
+
+/// Which of the listed scenarios a run is about, by their tags (with or
+/// without the `@`; a feature's and a rule's tags count for their
+/// scenarios).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selection {
+    /// A scenario with any of these is not run; the summary counts it.
+    pub skip: Vec<String>,
+    /// When set, a scenario without this tag is not part of the run at all
+    /// (a suite that tags which surface each scenario is for).
+    pub require: Option<String>,
+}
+
+impl Default for Selection {
+    /// Leaves out `@backlog-ljos`, requires nothing.
+    fn default() -> Self {
+        Self {
+            skip: vec![BACKLOG_TAG.to_owned()],
+            require: None,
+        }
+    }
+}
+
+impl Selection {
+    fn has(tags: &[&String], tag: &str) -> bool {
+        let tag = tag.trim_start_matches('@');
+        tags.iter().any(|t| t.trim_start_matches('@') == tag)
+    }
+
+    /// The skip tags as the summary shows them: `@a or @b`.
+    fn skip_words(&self) -> String {
+        let tags: Vec<String> = self
+            .skip
+            .iter()
+            .map(|t| format!("@{}", t.trim_start_matches('@')))
+            .collect();
+        tags.join(" or ")
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum SuiteError {
@@ -66,7 +120,7 @@ pub struct Outcome {
 pub struct Run {
     pub files: usize,
     pub outcomes: Vec<Outcome>,
-    /// Ids of the `@backlog-ljos` scenarios that were left out.
+    /// Ids of the scenarios a skip tag left out.
     pub skipped: Vec<String>,
 }
 
@@ -77,7 +131,7 @@ pub enum Why {
     /// The suite no longer has a scenario by this name (it was renamed or
     /// its file left the allowlist).
     Missing,
-    /// It is tagged `@backlog-ljos` and so was not run.
+    /// It has a skip tag and so was not run.
     Skipped,
 }
 
@@ -162,14 +216,33 @@ fn key(path: &Path, scenario: &Scenario) -> Key {
 }
 
 /// The features that will run, the ids of their scenarios, and the
-/// scenarios left out for being on Ljós's backlog.
+/// scenarios a skip tag left out.
 struct Plan {
     features: Vec<Feature>,
     ids: BTreeMap<Key, String>,
     skipped: Vec<String>,
 }
 
-fn plan(root: &Path, files: &[String]) -> Result<Plan, SuiteError> {
+/// Whether `name` matches any of the scenario-name globs `globs`.
+fn named(globs: &[globset::GlobMatcher], name: &str) -> bool {
+    globs.iter().any(|g| g.is_match(name))
+}
+
+fn matchers(rel: &str, globs: &[String]) -> Result<Vec<globset::GlobMatcher>, SuiteError> {
+    globs
+        .iter()
+        .map(|g| {
+            globset::Glob::new(g)
+                .map(|g| g.compile_matcher())
+                .map_err(|e| SuiteError::Feature {
+                    path: rel.to_owned(),
+                    why: e.to_string(),
+                })
+        })
+        .collect()
+}
+
+fn plan(root: &Path, listed: &[Listed], selection: &Selection) -> Result<Plan, SuiteError> {
     use cucumber::feature::Ext as _;
     let mut out = Plan {
         features: Vec::new(),
@@ -177,7 +250,8 @@ fn plan(root: &Path, files: &[String]) -> Result<Plan, SuiteError> {
         skipped: Vec::new(),
     };
     let mut taken: BTreeMap<String, usize> = BTreeMap::new();
-    for rel in files {
+    for entry in listed {
+        let rel = &entry.file;
         let path = root.join(rel);
         let fail = |why: String| SuiteError::Feature {
             path: rel.clone(),
@@ -188,9 +262,23 @@ fn plan(root: &Path, files: &[String]) -> Result<Plan, SuiteError> {
             .expand_examples()
             .map_err(|e| fail(e.to_string()))?;
         let feature_tags = feature.tags.clone();
+        let (only, except) = (matchers(rel, &entry.only)?, matchers(rel, &entry.except)?);
+        let mut used = vec![false; only.len()];
         let mut sort = |rule: Option<&Rule>, scenarios: Vec<Scenario>, inherited: &[String]| {
             let mut kept = Vec::new();
             for scenario in scenarios {
+                for (u, g) in used.iter_mut().zip(&only) {
+                    *u |= g.is_match(&scenario.name);
+                }
+                let tags: Vec<&String> = inherited.iter().chain(&scenario.tags).collect();
+                let listed = only.is_empty() || named(&only, &scenario.name);
+                let required = selection
+                    .require
+                    .as_ref()
+                    .is_none_or(|t| Selection::has(&tags, t));
+                if !listed || named(&except, &scenario.name) || !required {
+                    continue;
+                }
                 let mut id = base_id(rel, rule, &scenario);
                 // Two scenarios of one name stay two ids: #2, #3, ...
                 let count = taken.entry(id.clone()).or_insert(0);
@@ -198,11 +286,7 @@ fn plan(root: &Path, files: &[String]) -> Result<Plan, SuiteError> {
                 if *count > 1 {
                     id.push_str(&format!(" #{count}"));
                 }
-                let backlog = inherited
-                    .iter()
-                    .chain(&scenario.tags)
-                    .any(|t| t.trim_start_matches('@') == BACKLOG_TAG);
-                if backlog {
+                if selection.skip.iter().any(|t| Selection::has(&tags, t)) {
                     out.skipped.push(id);
                 } else {
                     out.ids.insert(key(&path, &scenario), id);
@@ -222,6 +306,13 @@ fn plan(root: &Path, files: &[String]) -> Result<Plan, SuiteError> {
             };
             rule.scenarios = sort(Some(&shown), scenarios, &inherited);
         }
+        // A name glob that stopped matching would quietly shrink the suite.
+        if let Some(i) = used.iter().position(|u| !u) {
+            return Err(SuiteError::Feature {
+                path: rel.clone(),
+                why: format!("no scenario is named like `{}`", entry.only[i]),
+            });
+        }
         out.features.push(feature);
     }
     Ok(out)
@@ -239,22 +330,31 @@ impl<I> cucumber::Parser<I> for Prepared {
     }
 }
 
-/// Runs the scenarios of `files` (relative to `root`) on the Ljós backend
-/// with whatever steps are linked into this program.
+/// Runs the selected scenarios of `listed` (relative to `root`), each on a
+/// fresh `W` (made by its `#[world(init)]`), with whatever steps for `W`
+/// are linked into this program: [`AcceptanceWorld`] for the Ljós
+/// backend, or an application's own World.
 ///
 /// # Errors
-/// A feature file does not parse.
-pub fn run_features(root: &Path, files: &[String]) -> Result<Run, SuiteError> {
+/// A feature file does not parse, or a name glob matches no scenario.
+pub fn run_features<W>(
+    root: &Path,
+    listed: &[Listed],
+    selection: &Selection,
+) -> Result<Run, SuiteError>
+where
+    W: SuiteWorld,
+{
     let Plan {
         features,
         ids,
         skipped,
-    } = plan(root, files)?;
+    } = plan(root, listed, selection)?;
     let ids = Rc::new(ids);
     let outcomes: Rc<RefCell<Vec<Outcome>>> = Rc::default();
     let (seen, record) = (Rc::clone(&ids), Rc::clone(&outcomes));
     futures::executor::block_on(
-        AcceptanceWorld::cucumber::<PathBuf>()
+        W::cucumber::<PathBuf>()
             .with_parser(Prepared(features))
             .with_default_cli()
             .max_concurrent_scenarios(1)
@@ -273,7 +373,7 @@ pub fn run_features(root: &Path, files: &[String]) -> Result<Run, SuiteError> {
     let mut outcomes = outcomes.take();
     outcomes.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(Run {
-        files: files.len(),
+        files: listed.len(),
         outcomes,
         skipped,
     })
@@ -301,13 +401,24 @@ struct Cli {
 }
 
 /// The program an adapter crate is: `suite_dir` is the suite's directory in
-/// this repository, from the adapter's point of view.
+/// this repository, from the adapter's point of view. Scenarios run on
+/// [`AcceptanceWorld`] and `@backlog-ljos` ones are left out.
 #[must_use]
 pub fn main(suite_dir: &Path) -> ExitCode {
+    main_with::<AcceptanceWorld>(suite_dir, &Selection::default())
+}
+
+/// [`main`] with the program's own World and tag selection: an
+/// application's runner for its own ledger.
+#[must_use]
+pub fn main_with<W>(suite_dir: &Path, selection: &Selection) -> ExitCode
+where
+    W: SuiteWorld,
+{
     use clap::Parser as _;
     let cli = Cli::parse();
     let suite_dir = cli.suite.clone().unwrap_or_else(|| suite_dir.to_path_buf());
-    match execute(&cli, &suite_dir) {
+    match execute::<W>(&cli, &suite_dir, selection) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(e) => {
@@ -317,7 +428,10 @@ pub fn main(suite_dir: &Path) -> ExitCode {
     }
 }
 
-fn execute(cli: &Cli, suite_dir: &Path) -> Result<bool, SuiteError> {
+fn execute<W>(cli: &Cli, suite_dir: &Path, selection: &Selection) -> Result<bool, SuiteError>
+where
+    W: SuiteWorld,
+{
     let name = suite_dir
         .canonicalize()
         .unwrap_or_else(|_| suite_dir.to_path_buf())
@@ -337,13 +451,14 @@ fn execute(cli: &Cli, suite_dir: &Path) -> Result<bool, SuiteError> {
     let ratchet_file = suite_dir.join("RATCHET");
     let mut ratchet = Ratchet::read(&ratchet_file)?;
 
-    let run = run_features(&root, &files)?;
+    let run = run_features::<W>(&root, &files, selection)?;
+    let skip = selection.skip_words();
     let verdict = judge(&ratchet, &run);
     let passing = run.outcomes.iter().filter(|o| o.passed).count();
     println!();
     println!(
         "acceptance {name}: {} feature files, {} scenarios run on Ljos: {passing} pass, {} fail; \
-         {} skipped (@{BACKLOG_TAG}); ratchet holds {}",
+         {} skipped ({skip}); ratchet holds {}",
         run.files,
         run.outcomes.len(),
         run.outcomes.len() - passing,
@@ -354,9 +469,14 @@ fn execute(cli: &Cli, suite_dir: &Path) -> Result<bool, SuiteError> {
         let what = match why {
             Why::Failed => "fails",
             Why::Missing => "is not in the suite any more",
-            Why::Skipped => "is tagged @backlog-ljos",
+            Why::Skipped => "is tagged ",
         };
-        println!("  REGRESSION  {id}: {what}");
+        let tags = if *why == Why::Skipped {
+            skip.as_str()
+        } else {
+            ""
+        };
+        println!("  REGRESSION  {id}: {what}{tags}");
     }
     for id in &verdict.not_yet {
         println!("  not yet     {id}");
@@ -433,6 +553,82 @@ mod tests {
         assert!(verdict.holds());
     }
 
+    /// An application's own World: state of its own, set up before any
+    /// step, and steps that reach it directly.
+    #[derive(Debug, cucumber::World)]
+    #[world(init = Self::new)]
+    struct Tally {
+        count: i64,
+    }
+
+    impl Tally {
+        fn new() -> Self {
+            Self { count: 10 }
+        }
+    }
+
+    #[cucumber::given(expr = "the tally adds {int}")]
+    fn tally_adds(w: &mut Tally, n: i64) {
+        w.count += n;
+    }
+
+    #[cucumber::then(expr = "the tally is {int}")]
+    fn tally_is(w: &mut Tally, n: i64) -> Result<(), String> {
+        (w.count == n).then_some(()).ok_or(format!("{}", w.count))
+    }
+
+    const TALLY: &str = "@kiosk\nFeature: T\n\
+        \x20 Scenario: adds one\n    Given the tally adds 1\n    Then the tally is 11\n\
+        \x20 Scenario: adds two\n    Given the tally adds 2\n    Then the tally is 99\n\
+        \x20 @backlog @slow\n  Scenario: adds three\n    Given the tally adds 3\n\
+        \x20 @backlog-kiosk\n  Scenario: adds four\n    Given the tally adds 4\n\
+        \x20 Scenario: other\n    Given the tally adds 5\n";
+
+    #[test]
+    fn an_app_runs_its_own_world_with_its_own_tags_and_names() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.feature"), TALLY).unwrap();
+        let selection = Selection {
+            skip: vec!["backlog".into(), "@backlog-kiosk".into()],
+            require: Some("kiosk".into()),
+        };
+        let listed = Listed {
+            only: vec!["adds *".into()],
+            ..Listed::file("t.feature")
+        };
+        let run = run_features::<Tally>(dir.path(), &[listed], &selection).unwrap();
+        let outcome = |id: &str, passed| Outcome {
+            id: format!("t.feature :: {id}"),
+            passed,
+        };
+        assert_eq!(
+            run.outcomes,
+            [outcome("adds one", true), outcome("adds two", false)]
+        );
+        assert_eq!(
+            run.skipped,
+            ["t.feature :: adds three", "t.feature :: adds four"]
+        );
+        let elsewhere = Selection {
+            require: Some("@desk".into()),
+            ..selection
+        };
+        let run = run_features::<Tally>(dir.path(), &[Listed::file("t.feature")], &elsewhere);
+        assert!(run.unwrap().outcomes.is_empty(), "not for this surface");
+    }
+
+    #[test]
+    fn a_name_glob_that_matches_no_scenario_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.feature"), TALLY).unwrap();
+        let listed = Listed {
+            only: vec!["adds one".into(), "renamed".into()],
+            ..Listed::file("t.feature")
+        };
+        let e = plan(dir.path(), &[listed], &Selection::default()).err();
+        assert!(e.unwrap().to_string().contains("`renamed`"));
+    }
+
     #[test]
     fn ids_name_the_file_rule_scenario_and_outline_row() {
         let dir = tempfile::tempdir().unwrap();
@@ -443,7 +639,12 @@ mod tests {
              \x20 Rule: R\n    Scenario Outline: row <n>\n      Given x\n      Examples:\n        | n |\n        | 1 |\n        | 2 |\n",
         )
         .unwrap();
-        let planned = plan(dir.path(), &["a.feature".to_owned()]).unwrap();
+        let planned = plan(
+            dir.path(),
+            &[Listed::file("a.feature")],
+            &Selection::default(),
+        )
+        .unwrap();
         let mut ids: Vec<&String> = planned.ids.values().collect();
         ids.sort();
         assert_eq!(

@@ -44,8 +44,12 @@ writing a `digest` PIN.
 ## `features.globs`
 
 One glob per line, relative to the checkout (`features/**/*.feature`). `!glob` takes files out again.
-Every line has to match at least one file: an allowlist that silently matches nothing (the suite moved a
-directory) would turn the suite into zero scenarios and a green result, so it is an error (exit 2).
+A glob that ends in `.feature:<name glob>` lists only the scenarios of those files whose name matches
+(`features/settings.feature:Theme *`), and with `!` takes just those out; a file listed whole stays whole.
+Every line has to match at least one file, and every name glob at least one scenario: an allowlist that
+silently matches nothing (the suite moved a directory, renamed a scenario) would turn the suite into
+fewer scenarios and a green result, so it is an error (exit 2). `#` starts a comment, so a name glob
+cannot hold one.
 
 ## `RATCHET`
 
@@ -59,7 +63,8 @@ run (exit 1). `--raise` adds the scenarios that pass now. It refuses to write an
 scenario fails, and it never removes a line: taking one out is a decision a person makes and shows in
 a diff. The comment block at the top of the file is kept.
 
-`@backlog-ljos` scenarios are not run; the summary counts them.
+`@backlog-ljos` scenarios are not run; the summary counts them. A runner of its own (below) chooses
+the tags that leave a scenario out, and may name one a scenario must have to be part of the run at all.
 
 ## The adapter crate
 
@@ -75,6 +80,15 @@ fn main() -> std::process::ExitCode {
 A step reaches the application only through `world.backend()`, the `Backend` trait the Ljós ledger
 drives: `click`, `key`, `get`, `a11y_tree`, `advance` and the rest. It loads QML with `world.stage`
 and `world.load`. An adapter never sees egui, the engine or the compiler.
+
+An application that runs its own ledger against itself (its compiled QML, its native types, its
+controllers, a fake of its server) brings its own World instead: a `#[derive(cucumber::World)]` whose
+`init` sets the engine up before anything loads, with steps that reach the application directly. Its
+`main` calls `ljos_bdd::acceptance::main_with::<MyWorld>(dir, &selection)`, where `Selection { skip,
+require }` lists the tags that leave a scenario out (`["backlog", "backlog-desktop"]`) and an optional
+tag a scenario must have (`Some("desktop")`). The PIN, globs, ratchet, `--raise` and exit statuses are
+the same. Such a runner still links all of `ljos_bdd`; a judging half without the Ljós backend is not
+split out yet.
 
 The repository's workspace is `crates/*`, so an adapter is a workspace of its own (its `Cargo.toml`
 says `[workspace]`; like any crate outside the repository it needs nothing else to build against
