@@ -59,7 +59,7 @@ impl Engine {
                 return Err(EngineError::ReadOnly(p.name.to_string()));
             }
             p.reset
-                .ok_or_else(|| ConvertError::new("[undefined]", p.ty.name()))?
+                .ok_or_else(|| ConvertError::new("[undefined]", p.ty.qt_name()))?
         };
         match reset {
             Reset::Default => self.reset_to_default(obj, prop),

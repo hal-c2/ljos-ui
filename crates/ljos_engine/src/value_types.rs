@@ -178,9 +178,15 @@ pub(crate) fn named(name: &str, numbers: &[f64]) -> String {
 /// which a QML font cannot change and are written as Qt has them by
 /// default.
 pub(crate) fn font_text(f: &Font) -> String {
+    format!("QFont({})", font_string(f))
+}
+
+/// A font as Qt writes it in a string property: its family and sizes, then
+/// its style and spacing as numbers.
+pub(crate) fn font_string(f: &Font) -> String {
     let flag = |b: bool| u8::from(b);
     format!(
-        "QFont({},{},{},5,{},{},{},{},0,0,{},{},{},{},0,1,,0,0)",
+        "{},{},{},5,{},{},{},{},0,0,{},{},{},{},0,1,,0,0",
         f.family,
         crate::number::number_to_string(f.point_size),
         f.pixel_size,

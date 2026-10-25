@@ -165,6 +165,10 @@ fn entry(e: &Engine, kind: Entry, ty: &TypeTag, from: Origin, v: &Value) -> Valu
             Value::Int(_) | Value::Real(_) | Value::Enum(_) | Value::Bool(_) => {
                 Value::String(v.to_js_string())
             }
+            // A colour's name, a font's text.
+            Value::Color(_) | Value::Font(_) => TypeTag::String
+                .coerce(v)
+                .unwrap_or(Value::String(Atom::EMPTY)),
             _ => Value::String(Atom::EMPTY),
         },
         (Entry::Bool, _) => Value::Bool(v.to_boolean()),
@@ -198,7 +202,20 @@ fn entries_of_one(e: &Engine, kind: Entry, ty: &TypeTag, v: &Value) -> Option<Ve
                 })
                 .collect(),
         ),
-        one => Some(vec![entry(e, kind, ty, Origin::Put, one)]),
+        one => Some(vec![match (kind, one) {
+            // A value a list of reals cannot take as a number is a zero,
+            // as qml6 converts the one value assigned; what is pushed is
+            // made a number as JavaScript makes it.
+            (Entry::Real, v)
+                if !matches!(
+                    v,
+                    Value::Int(_) | Value::Real(_) | Value::Enum(_) | Value::Bool(_)
+                ) =>
+            {
+                Value::Real(0.0)
+            }
+            _ => entry(e, kind, ty, Origin::Put, one),
+        }]),
     }
 }
 

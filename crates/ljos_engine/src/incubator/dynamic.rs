@@ -340,18 +340,18 @@ impl Engine {
             TypeTag::Var | TypeTag::Data => "QVariant",
             TypeTag::Bool => "bool",
             TypeTag::Int | TypeTag::Enum(_) | TypeTag::Flags(_) => "int",
-            TypeTag::Real => "double",
-            TypeTag::String => "QString",
-            TypeTag::Color => "QColor",
-            TypeTag::Point => "QPointF",
-            TypeTag::Size => "QSizeF",
-            TypeTag::Rect => "QRectF",
-            TypeTag::Font => "QFont",
-            TypeTag::Vector2d => "QVector2D",
-            TypeTag::Vector3d => "QVector3D",
-            TypeTag::Vector4d => "QVector4D",
-            TypeTag::Quaternion => "QQuaternion",
-            TypeTag::Url => "QUrl",
+            TypeTag::Real
+            | TypeTag::String
+            | TypeTag::Color
+            | TypeTag::Point
+            | TypeTag::Size
+            | TypeTag::Rect
+            | TypeTag::Font
+            | TypeTag::Vector2d
+            | TypeTag::Vector3d
+            | TypeTag::Vector4d
+            | TypeTag::Quaternion
+            | TypeTag::Url => return ty.qt_name(),
             TypeTag::Custom(n) => return n.to_string(),
             TypeTag::Void => "void",
             TypeTag::Object(None) => "QObject*",

@@ -10,7 +10,6 @@ Feature: A value a binding gives a property of another type
   keep what they can of the value, and some give the property its empty value and warn.
 
   # Bucket value:string:string-times-one (and value:bool:string-lt, which compares it).
-  @backlog
   Scenario Outline: A string property given <number> reads "<text>"
     Given the QML:
       """qml
@@ -29,7 +28,6 @@ Feature: A value a binding gives a property of another type
       | Math.log(0)  | -inf |
 
   # Bucket value:list<real>:Qt.tint.
-  @backlog
   Scenario: A list of reals given a colour holds one zero
     Given the QML:
       """qml
@@ -42,7 +40,6 @@ Feature: A value a binding gives a property of another type
     Then the property "l" of "root" is [0]
 
   # Bucket value:rect:Qt.point.
-  @backlog
   Scenario: A rect given a point keeps the point's x and y
     Given the QML:
       """qml
@@ -61,7 +58,6 @@ Feature: A value a binding gives a property of another type
 
   # Buckets value:string:literal and warning:assign(qt-only):literal.
   # Bucket warning:assign(qt-only):Unable_to_assign_QSizeF_to_QString for a size.
-  @backlog
   Scenario Outline: A string given a <type> is empty and warned about
     Given the QML:
       """qml
@@ -114,7 +110,6 @@ Feature: A value a binding gives a property of another type
   # Buckets warning:assign(ljos-only):Unable_to_assign_QJSValue_to_rect, …_to_point and
   # …_to_color (the colour is in features/language/color-values.feature), and
   # warning:assign(ljos-only):Unable_to_assign_double_to_color and …_bool_to_color.
-  @backlog
   Scenario Outline: A <type> given <value> is empty and not warned about
     Given the QML:
       """qml
@@ -199,7 +194,6 @@ Feature: A value a binding gives a property of another type
     And the log has a warning matching "Unable to assign .undefined. to int"
 
   # Bucket warning:assign(qt-only):Unable_to_assign_[undefined]_to_double.
-  @backlog
   Scenario: A real bound to undefined is zero and warned about
     Given the QML:
       """qml
@@ -213,7 +207,6 @@ Feature: A value a binding gives a property of another type
     And the log has a warning matching "Unable to assign .undefined. to double"
 
   # Bucket warning:assign(ljos-only):Unable_to_assign_QString_to_font.
-  @backlog
   Scenario: A font given text takes it as its family and is not warned about
     Given the QML:
       """qml
@@ -228,7 +221,6 @@ Feature: A value a binding gives a property of another type
     And the log has no warning matching "assign"
 
   # Bucket warning:assign(ljos-only):Unable_to_assign_QColor_to_size.
-  @backlog
   Scenario: A size given a colour is invalid and not warned about
     Given the QML:
       """qml
@@ -245,7 +237,6 @@ Feature: A value a binding gives a property of another type
     And the log has no warning matching "assign"
 
   # Buckets value:list<string>:Qt.darker and value:var(array):ref.
-  @backlog
   Scenario: A list of strings given a colour holds the colour's name
     Given the QML:
       """qml
@@ -291,7 +282,6 @@ Feature: A value a binding gives a property of another type
     Then the property "seen" of "root" is "1 -1"
 
   # Buckets value:string:pair and value:string:ref.
-  @backlog
   Scenario: A string given a list of numbers is made of those character codes
     Given the QML:
       """qml

@@ -1522,13 +1522,19 @@ impl Engine {
                 if let Some(list) = self.face_list(&r) {
                     return list;
                 }
-                let num = |k: &str| match scope.get_field(&r, k) {
-                    Ok(JsValue::Number(n)) => n,
-                    _ => 0.0,
+                let field = |k: &str| match scope.get_field(&r, k) {
+                    Ok(JsValue::Number(n)) => Some(n),
+                    _ => None,
                 };
+                // A part the object has not keeps what the type has before
+                // it is given anything, as in qml6.
+                let num = |k: &str| field(k).unwrap_or(0.0);
                 match ty {
                     TypeTag::Point => Value::point(num("x"), num("y")),
-                    TypeTag::Size => Value::size(num("width"), num("height")),
+                    TypeTag::Size => Value::size(
+                        field("width").unwrap_or(-1.0),
+                        field("height").unwrap_or(-1.0),
+                    ),
                     TypeTag::Rect => Value::rect(num("x"), num("y"), num("width"), num("height")),
                     TypeTag::Vector2d => Value::vector2d(num("x") as f32, num("y") as f32),
                     TypeTag::Vector3d => {
@@ -1540,14 +1546,17 @@ impl Engine {
                         num("z") as f32,
                         num("w") as f32,
                     ),
-                    TypeTag::Color => {
-                        // A colour object (`{r, g, b, a}`) from a JS helper.
-                        let a = match scope.get_field(&r, "a") {
-                            Ok(JsValue::Number(n)) => n,
-                            _ => 1.0,
-                        };
-                        Value::Color(Color::from_rgba_f(num("r"), num("g"), num("b"), a))
+                    // A colour object (`{r, g, b, a}`) from a JS helper; one
+                    // with none of those is no colour.
+                    TypeTag::Color if ["r", "g", "b", "a"].iter().all(|k| field(k).is_none()) => {
+                        Value::Color(Color::INVALID)
                     }
+                    TypeTag::Color => Value::Color(Color::from_rgba_f(
+                        num("r"),
+                        num("g"),
+                        num("b"),
+                        field("a").unwrap_or(1.0),
+                    )),
                     // A Date is its text; any other object a string refuses.
                     TypeTag::String => match scope.date_text(&r) {
                         Some(t) => Value::String(t.into()),

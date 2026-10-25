@@ -110,7 +110,7 @@ fn typed_and_dynamic_access() {
         Ok(Color::from_rgba8(0, 0, 255, 255))
     );
     let err = e.write_by_name(r, "radius", Value::Undefined).unwrap_err();
-    assert_eq!(err.to_string(), "Unable to assign [undefined] to real");
+    assert_eq!(err.to_string(), "Unable to assign [undefined] to double");
 
     // Group leaves are properties of the object.
     e.write_by_name(r, "border.width", Value::Int(3)).unwrap();
@@ -245,7 +245,7 @@ fn failed_binding_keeps_value_and_warns() {
     let w = e.take_warnings();
     assert_eq!(w.len(), 1, "{w:?}");
     assert!(
-        w[0].contains("Unable to assign [undefined] to real"),
+        w[0].contains("Unable to assign [undefined] to double"),
         "{w:?}"
     );
 }

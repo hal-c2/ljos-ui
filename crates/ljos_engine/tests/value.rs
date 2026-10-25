@@ -133,7 +133,7 @@ fn property_coercion() {
     assert_eq!(real.coerce(&Value::Int(2)), Ok(Value::Real(2.0)));
     assert_eq!(real.coerce(&Value::string("2.5")), Ok(Value::Real(2.5)));
     let err = real.coerce(&Value::Undefined).unwrap_err();
-    assert_eq!(err.to_string(), "Unable to assign [undefined] to real");
+    assert_eq!(err.to_string(), "Unable to assign [undefined] to double");
     assert_eq!(
         TypeTag::Color.coerce(&Value::string("red")),
         Ok(Value::Color(Color::from_rgba8(255, 0, 0, 255)))

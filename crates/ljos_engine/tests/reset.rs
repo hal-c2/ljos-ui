@@ -289,12 +289,12 @@ fn a_property_without_a_reset_refuses_undefined() {
     let e = engine();
     let s = shelf(&e);
     let err = undefine(&e, s, "plain").unwrap_err();
-    assert_eq!(err.to_string(), "Unable to assign [undefined] to real");
+    assert_eq!(err.to_string(), "Unable to assign [undefined] to double");
     assert_eq!(num(&e, s, "plain"), 1.0);
     let err = e.reset(s, Shelf::PLAIN.index).unwrap_err();
-    assert_eq!(err.to_string(), "Unable to assign [undefined] to real");
+    assert_eq!(err.to_string(), "Unable to assign [undefined] to double");
     let err = undefine(&e, s, "edge.plain").unwrap_err();
-    assert_eq!(err.to_string(), "Unable to assign [undefined] to real");
+    assert_eq!(err.to_string(), "Unable to assign [undefined] to double");
     assert!(e.reset_of(s, Shelf::PLAIN.index).is_none());
     assert!(e.reset_of(s, Shelf::DEPTH.index).is_some());
 
@@ -306,7 +306,7 @@ fn a_property_without_a_reset_refuses_undefined() {
     assert!(
         log[0]
             .message
-            .contains("Unable to assign [undefined] to real"),
+            .contains("Unable to assign [undefined] to double"),
         "{log:?}"
     );
 }

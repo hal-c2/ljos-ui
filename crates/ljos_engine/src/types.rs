@@ -12,15 +12,19 @@
 //! | `bool` | anything but `undefined` | `ToBoolean` |
 //! | `int` | numbers, bools, decimal strings, `null` | `ToNumber` then `ToInt32` (truncates, wraps; NaN is 0); a string is rounded, half away from 0, and is the least int past the range |
 //! | `real` | numbers, bools, strings, `null` | `ToNumber` (`"abc"` is NaN) |
-//! | `string` | anything but `undefined` | `ToString`; `null` is `""` |
-//! | `color` | colours, colour strings | `#rgb`, `#argb`, `#rrggbb`, `#aarrggbb`, CSS keywords |
+//! | `string` | anything but `undefined`, a point, size, rect or vector | `ToString`; `null` is `""`, NaN `"nan"`, a list a character per item, a font Qt's text of it |
+//! | `color` | anything but `undefined` | `#rgb`, `#argb`, `#rrggbb`, `#aarrggbb`, CSS keywords; anything else is an invalid colour |
 //! | `url` | urls, strings | |
-//! | `point` | points, `"x,y"`, a `vector2d`, `null` (the origin) | |
-//! | `size` | sizes, `"WxH"` | |
-//! | `rect` | rects, `"x,y,WxH"` | |
-//! | `vector2d` | the same, `"x,y"`, a `point`, a longer vector (cut short) | |
-//! | `vector3d`/`vector4d`/`quaternion` | the same, numbers in a string | |
-//! | `font` | fonts | |
+//! | `point` | points, `"x,y"`, a vector's or a rect's x and y | |
+//! | `size` | sizes, `"WxH"`, a rect's | |
+//! | `rect` | rects, `"x,y,WxH"`, a size at the origin, a point with no size | |
+//! | `vector2d`/`vector3d` | the same, numbers in a string, another vector's or a point's parts | |
+//! | `vector4d`/`quaternion` | the same, numbers in a string | |
+//! | `font` | fonts, a family's name | |
+//!
+//! A point, size, rect, `vector2d`, `vector3d` or font refuses a number, a
+//! bool and a url; anything else it cannot be made from (a list, an
+//! object, a colour) is its empty value, without a word, as in qml6.
 //! | object types | objects, `null` | the engine checks the class |
 //! | `list<T>` | lists, a single object (a list of one), `null` (empty) | |
 //! | enums | numbers (a real is rounded), bools, the name of a key | the engine looks the key up in the property's type ([`crate::MetaObject::coerce_enum`]); the value is the number |
@@ -113,6 +117,28 @@ impl TypeTag {
         }
     }
 
+    /// The C++ type qml6 names a property of this type by in a binding's
+    /// warning (`Unable to assign QUrl to double`); the QML name where it
+    /// is not one of these.
+    pub fn qt_name(&self) -> String {
+        match self {
+            TypeTag::Real => "double",
+            TypeTag::String => "QString",
+            TypeTag::Color => "QColor",
+            TypeTag::Point => "QPointF",
+            TypeTag::Size => "QSizeF",
+            TypeTag::Rect => "QRectF",
+            TypeTag::Font => "QFont",
+            TypeTag::Vector2d => "QVector2D",
+            TypeTag::Vector3d => "QVector3D",
+            TypeTag::Vector4d => "QVector4D",
+            TypeTag::Quaternion => "QQuaternion",
+            TypeTag::Url => "QUrl",
+            _ => return self.name(),
+        }
+        .into()
+    }
+
     /// Parses a QML property type as written in `property <type> name`.
     /// Unknown names are taken as object types; the compiler, which knows
     /// the imports, decides whether they are enums instead.
@@ -178,7 +204,7 @@ impl TypeTag {
     /// Converts `v` for assignment to a property of this type. See the
     /// module docs for the rules. Object class checks are the engine's.
     pub fn coerce(&self, v: &Value) -> Result<Value, ConvertError> {
-        let fail = || Err(ConvertError::new(describe(v), self.name()));
+        let fail = || Err(ConvertError::new(describe(v), self.qt_name()));
         if matches!(v, Value::Undefined) && !matches!(self, TypeTag::Var | TypeTag::Data) {
             return fail();
         }
@@ -230,6 +256,25 @@ impl TypeTag {
             TypeTag::String => match v {
                 Value::String(_) => v.clone(),
                 Value::Null => Value::String(Atom::EMPTY),
+                // As C++ writes a double that is no number.
+                Value::Real(n) if n.is_nan() => Value::String(Atom::intern("nan")),
+                Value::Real(n) if n.is_infinite() => {
+                    Value::String(Atom::intern(if *n > 0.0 { "inf" } else { "-inf" }))
+                }
+                // A list is a character for each item: a number's code, a
+                // text's first character, and 0 for anything else.
+                Value::List(items) => Value::String(Atom::from(String::from_utf16_lossy(
+                    &items.iter().map(char_code).collect::<Vec<_>>(),
+                ))),
+                Value::Font(f) => Value::String(Atom::from(crate::value_types::font_string(f))),
+                Value::Point(_)
+                | Value::IntPoint(_)
+                | Value::Size(_)
+                | Value::Rect(_)
+                | Value::Vector2d(_)
+                | Value::Vector3d(_)
+                | Value::Vector4d(_)
+                | Value::Quaternion(_) => return fail(),
                 // An object, though it has a toString, as qml6 refuses it
                 // and names it in a binding's warning.
                 Value::Map(_) | Value::Js(_) => {
@@ -242,11 +287,11 @@ impl TypeTag {
             },
             TypeTag::Color => match v {
                 Value::Color(_) => v.clone(),
-                // Text that names no colour, `""` too, makes an invalid
-                // colour without a word, as in qml6. A literal one is refused
-                // when the file is compiled, before this.
+                // Text that names no colour, `""` too, and anything else makes
+                // an invalid colour without a word, as in qml6. A literal one
+                // is refused when the file is compiled, before this.
                 Value::String(s) => Value::Color(Color::parse(s).unwrap_or(Color::INVALID)),
-                _ => return fail(),
+                _ => Value::Color(Color::INVALID),
             },
             TypeTag::Url => match v {
                 Value::Url(_) => v.clone(),
@@ -255,50 +300,63 @@ impl TypeTag {
             },
             TypeTag::Point => match v {
                 Value::Point(_) => v.clone(),
-                Value::IntPoint(p) => Value::point(f64::from(p.x), f64::from(p.y)),
-                Value::Vector2d(p) => Value::point(p.x.into(), p.y.into()),
-                Value::Null => self.default_value(),
                 Value::String(s) => match list(s) {
                     Some([x, y]) => Value::point(x, y),
                     None => return fail(),
                 },
-                _ => return fail(),
+                _ if refused_as_value(v) => return fail(),
+                _ => match spread(v) {
+                    Some([x, y, _]) => Value::point(x, y),
+                    None => self.default_value(),
+                },
             },
             TypeTag::Size => match v {
                 Value::Size(_) => v.clone(),
+                Value::Rect(r) => Value::size(r.width, r.height),
                 Value::String(s) => match extent(s) {
                     Some([w, h]) => Value::size(w, h),
                     None => return fail(),
                 },
-                _ => return fail(),
+                _ if refused_as_value(v) => return fail(),
+                _ => self.default_value(),
             },
             TypeTag::Rect => match v {
                 Value::Rect(_) => v.clone(),
+                Value::Size(s) => Value::rect(0.0, 0.0, s.width, s.height),
                 Value::String(s) => match area(s) {
                     Some([x, y, w, h]) => Value::rect(x, y, w, h),
                     None => return fail(),
                 },
-                _ => return fail(),
+                _ if refused_as_value(v) => return fail(),
+                _ => match spread(v) {
+                    Some([x, y, _]) => Value::rect(x, y, 0.0, 0.0),
+                    None => self.default_value(),
+                },
             },
             TypeTag::Vector2d => match v {
                 Value::Vector2d(_) => v.clone(),
-                Value::Point(p) => Value::vector2d(p.x as f32, p.y as f32),
-                Value::IntPoint(p) => Value::vector2d(p.x as f32, p.y as f32),
-                Value::Vector3d(p) => Value::vector2d(p.x, p.y),
-                Value::Vector4d(p) => Value::vector2d(p.x, p.y),
+                // Text that is no vector is the empty one, without a word.
                 Value::String(s) => match list(s) {
                     Some([x, y]) => Value::vector2d(x as f32, y as f32),
-                    None => return fail(),
+                    None => self.default_value(),
                 },
-                _ => return fail(),
+                _ if refused_as_value(v) => return fail(),
+                _ => match spread(v) {
+                    Some([x, y, _]) => Value::vector2d(x as f32, y as f32),
+                    None => self.default_value(),
+                },
             },
             TypeTag::Vector3d => match v {
                 Value::Vector3d(_) => v.clone(),
                 Value::String(s) => match list(s) {
                     Some([x, y, z]) => Value::vector3d(x as f32, y as f32, z as f32),
-                    None => return fail(),
+                    None => self.default_value(),
                 },
-                _ => return fail(),
+                _ if refused_as_value(v) => return fail(),
+                _ => match spread(v) {
+                    Some([x, y, z]) => Value::vector3d(x as f32, y as f32, z as f32),
+                    None => self.default_value(),
+                },
             },
             TypeTag::Vector4d => match v {
                 Value::Vector4d(_) => v.clone(),
@@ -320,7 +378,14 @@ impl TypeTag {
             },
             TypeTag::Font => match v {
                 Value::Font(_) => v.clone(),
-                _ => return fail(),
+                // A text is the family of a font that is otherwise the
+                // default one.
+                Value::String(s) => Value::Font(Arc::new(Font {
+                    family: s.clone(),
+                    ..Font::default()
+                })),
+                _ if refused_as_value(v) => return fail(),
+                _ => self.default_value(),
             },
             TypeTag::Object(_) => match v {
                 Value::Object(_) | Value::Null => v.clone(),
@@ -349,6 +414,50 @@ impl TypeTag {
     }
 }
 
+/// What qml6 refuses to make a point, size, rect, vector or font of, with a
+/// warning: what is a number or a bool, and a url. Anything else it cannot
+/// make one of (a list, an object, a colour) is the type's empty value,
+/// without a word.
+fn refused_as_value(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Bool(_)
+            | Value::Int(_)
+            | Value::Real(_)
+            | Value::Enum(_)
+            | Value::Url(_)
+            | Value::Object(_)
+            | Value::Custom(_)
+    )
+}
+
+/// The first three numbers of a value with an x and a y (a point, a
+/// vector, a quaternion's vector part, a rect's corner), the third 0
+/// where there is none.
+fn spread(v: &Value) -> Option<[f64; 3]> {
+    Some(match v {
+        Value::Point(p) => [p.x, p.y, 0.0],
+        Value::IntPoint(p) => [p.x.into(), p.y.into(), 0.0],
+        Value::Rect(r) => [r.x, r.y, 0.0],
+        Value::Vector2d(p) => [p.x.into(), p.y.into(), 0.0],
+        Value::Vector3d(p) => [p.x.into(), p.y.into(), p.z.into()],
+        Value::Vector4d(p) => [p.x.into(), p.y.into(), p.z.into()],
+        Value::Quaternion(q) => [q.x.into(), q.y.into(), q.z.into()],
+        _ => return None,
+    })
+}
+
+/// The UTF-16 code an item of a list is as a character of a string.
+fn char_code(v: &Value) -> u16 {
+    match v {
+        Value::String(s) => s.encode_utf16().next().unwrap_or(0),
+        Value::Int(_) | Value::Real(_) | Value::Enum(_) | Value::Bool(_) => {
+            to_int32(v.to_number()) as u16
+        }
+        _ => 0,
+    }
+}
+
 /// Qt-style description of a value in assignment errors: `[undefined]`,
 /// `QString`, `double`.
 pub(crate) fn describe(v: &Value) -> String {
@@ -357,6 +466,8 @@ pub(crate) fn describe(v: &Value) -> String {
         Value::Null => "null".into(),
         Value::Bool(_) => "bool".into(),
         Value::Int(_) => "int".into(),
+        // A script's number is an int while it is a whole one.
+        Value::Real(n) if n.fract() == 0.0 && n.abs() <= f64::from(i32::MAX) => "int".into(),
         Value::Real(_) => "double".into(),
         Value::String(_) => "QString".into(),
         Value::Color(_) => "QColor".into(),
@@ -380,7 +491,7 @@ pub(crate) fn describe(v: &Value) -> String {
 
 /// A value could not be assigned to a typed property or argument.
 ///
-/// A scalar says it as Qt does (`Unable to assign [undefined] to real`).
+/// A scalar says it as Qt does (`Unable to assign [undefined] to double`).
 /// Data (`serde_json::Value`, `Vec<T>`, maps) says where in what it was
 /// given, in the Rust author's terms: `Sink.json: payload.item is a QML
 /// object, not JSON`.
@@ -854,10 +965,10 @@ mod tests {
         );
         // Text that names no colour is an invalid colour, as in qml6.
         assert_eq!(Color::from_value(&Value::string("#12")), Ok(Color::INVALID));
-        assert!(Color::from_value(&Value::Bool(true)).is_err());
+        assert_eq!(Color::from_value(&Value::Bool(true)), Ok(Color::INVALID));
         assert_eq!(<Option<ObjectId>>::from_value(&Value::Undefined), Ok(None));
         let err = f64::from_value(&Value::Undefined).unwrap_err();
-        assert_eq!(err.to_string(), "Unable to assign [undefined] to real");
+        assert_eq!(err.to_string(), "Unable to assign [undefined] to double");
     }
 
     #[test]
@@ -899,13 +1010,22 @@ mod tests {
         assert_eq!(to("quaternion", Value::Null).ok(), None);
         assert_eq!(
             to("point", text("nope")).unwrap_err().to_string(),
-            "Unable to assign QString to point"
+            "Unable to assign QString to QPointF"
         );
         assert!(to("point", Value::Int(5)).is_err());
         assert!(to("rect", text("1,2")).is_err());
         assert!(to("size", Value::Bool(true)).is_err());
         assert!(to("vector3d", Value::Int(5)).is_err());
-        assert!(to("point", Value::size(1.0, 2.0)).is_err());
+        // What has no corner is the empty point, without a word.
+        assert_eq!(to("point", Value::size(1.0, 2.0)).unwrap(), "QPointF(0, 0)");
+        assert_eq!(
+            to("rect", Value::size(1.0, 2.0)).unwrap(),
+            "QRectF(0, 0, 1, 2)"
+        );
+        assert_eq!(
+            to("point", Value::rect(1.0, 2.0, 3.0, 4.0)).unwrap(),
+            "QPointF(1, 2)"
+        );
     }
 
     #[test]
