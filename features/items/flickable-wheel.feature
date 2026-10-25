@@ -191,6 +191,56 @@ Feature: Scrolling a Flickable with the wheel
       And 400 milliseconds pass
       Then the property "contentY" of "f" is 0
 
+  Rule: A list that runs across
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 400; height: 400
+          ListView {
+            objectName: "alone"
+            width: 200; height: 50
+            orientation: ListView.Horizontal
+            model: 50
+            delegate: Rectangle { width: 40; height: 50 }
+          }
+          Flickable {
+            objectName: "outer"
+            x: 200; width: 200; height: 200
+            contentWidth: 200; contentHeight: 1000
+            ListView {
+              objectName: "inner"
+              width: 200; height: 50
+              orientation: ListView.Horizontal
+              model: 50
+              delegate: Rectangle { width: 40; height: 50 }
+            }
+          }
+        }
+        """
+
+    # Also crates/ljos_test/tests/qml/suite/tst_wheel_across.qml, which runs
+    # on Qt's runner too, with a wheel turned both ways at once.
+    Scenario: A lengthways wheel leaves a list that runs across where it is
+      When the user turns the wheel 1 notch down at 100, 25
+      And 400 milliseconds pass
+      Then the property "contentX" of "alone" is 0
+      And the property "contentY" of "alone" is 0
+
+    Scenario: A sideways wheel moves it
+      When the user turns the wheel 1 notch right at 100, 25
+      And 400 milliseconds pass
+      Then the property "contentX" of "alone" is 72
+
+    Scenario: A lengthways wheel goes on to the Flickable the list is in
+      When the user turns the wheel 1 notch down at 300, 25
+      And 400 milliseconds pass
+      Then the property "contentX" of "inner" is 0
+      And the property "contentY" of "outer" is 72
+
   Rule: What is on top of the content
 
     Background:

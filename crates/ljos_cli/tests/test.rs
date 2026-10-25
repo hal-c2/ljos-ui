@@ -219,7 +219,7 @@ fn nothing_to_run_is_an_error() {
 }
 
 /// The suite that uses every function of the module passes; the same
-/// files pass on Qt's runner with the same totals (110 passed, 1 skipped
+/// files pass on Qt's runner with the same totals (116 passed, 1 skipped
 /// on Qt 6.11.2).
 #[test]
 fn the_evidence_suite_passes() {
@@ -236,7 +236,7 @@ fn the_evidence_suite_passes() {
     );
     let text = stdout(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert_eq!(totals(&text), "Totals: 110 passed, 0 failed, 1 skipped");
+    assert_eq!(totals(&text), "Totals: 116 passed, 0 failed, 1 skipped");
     assert!(!text.contains("FAIL!"), "{text}");
     // `grabImage(...).save(name)` writes into the current directory.
     assert!(dir.path().join("grabbed-by-the-suite.png").is_file());
