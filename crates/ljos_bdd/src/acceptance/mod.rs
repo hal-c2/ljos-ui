@@ -13,18 +13,16 @@
 //! The adapter's `main` calls [`main`]. An application that runs its own
 //! ledger against itself brings its own World instead (its engine, types,
 //! controllers and fakes) and calls [`main_with`], choosing which tags
-//! leave a scenario out ([`Selection`]). Ljós never writes into the suite's
-//! checkout; the only file this module writes is `RATCHET`, and only on
-//! `--raise`.
+//! leave a scenario out ([`Selection`]). Reading those files and judging
+//! a run is `ljos_ratchet`, re-exported here, which a runner of its own
+//! can use without this crate. Ljós never writes into the suite's
+//! checkout; the only file written is `RATCHET`, and only on `--raise`.
 
-mod globs;
-mod pin;
-mod ratchet;
 mod world;
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
     process::ExitCode,
     rc::Rc,
@@ -34,14 +32,11 @@ use cucumber::{cli, event, parser};
 use futures::stream;
 use gherkin::{Feature, GherkinEnv, Rule, Scenario};
 
-pub use globs::{GlobError, Listed};
-pub use pin::{Pin, PinError, tree_digest};
-pub use ratchet::{Ratchet, RatchetError};
+pub use ljos_ratchet::{
+    BACKLOG_TAG, Choice, GlobError, Listed, Outcome, Pin, PinError, Ratchet, RatchetError, Run,
+    ScenarioIds, Selection, Suite, SuiteError, Verdict, Why, judge, tree_digest,
+};
 pub use world::AcceptanceWorld;
-
-/// A scenario with this tag is known not to work on Ljós yet. It is not run,
-/// and the summary counts it.
-pub const BACKLOG_TAG: &str = "backlog-ljos";
 
 /// A World a suite runs on: one `#[derive(cucumber::World)]` gives, with
 /// the steps written for it.
@@ -53,154 +48,6 @@ pub trait SuiteWorld:
 impl<W> SuiteWorld for W where
     W: cucumber::World + std::fmt::Debug + cucumber::codegen::WorldInventory
 {
-}
-
-/// Which of the listed scenarios a run is about, by their tags (with or
-/// without the `@`; a feature's and a rule's tags count for their
-/// scenarios).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Selection {
-    /// A scenario with any of these is not run; the summary counts it.
-    pub skip: Vec<String>,
-    /// When set, a scenario without this tag is not part of the run at all
-    /// (a suite that tags which surface each scenario is for).
-    pub require: Option<String>,
-}
-
-impl Default for Selection {
-    /// Leaves out `@backlog-ljos`, requires nothing.
-    fn default() -> Self {
-        Self {
-            skip: vec![BACKLOG_TAG.to_owned()],
-            require: None,
-        }
-    }
-}
-
-impl Selection {
-    fn has(tags: &[&String], tag: &str) -> bool {
-        let tag = tag.trim_start_matches('@');
-        tags.iter().any(|t| t.trim_start_matches('@') == tag)
-    }
-
-    /// The skip tags as the summary shows them: `@a or @b`.
-    fn skip_words(&self) -> String {
-        let tags: Vec<String> = self
-            .skip
-            .iter()
-            .map(|t| format!("@{}", t.trim_start_matches('@')))
-            .collect();
-        tags.join(" or ")
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum SuiteError {
-    #[error(transparent)]
-    Pin(#[from] PinError),
-    #[error(transparent)]
-    Globs(#[from] GlobError),
-    #[error(transparent)]
-    Ratchet(#[from] RatchetError),
-    #[error("{path}: {why}")]
-    Feature { path: String, why: String },
-    #[error("{0}: {1}")]
-    Io(String, std::io::Error),
-}
-
-/// One scenario's outcome on Ljós.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Outcome {
-    pub id: String,
-    pub passed: bool,
-}
-
-/// What the run found, before anything is judged.
-#[derive(Clone, Debug, Default)]
-pub struct Run {
-    pub files: usize,
-    pub outcomes: Vec<Outcome>,
-    /// Ids of the scenarios a skip tag left out.
-    pub skipped: Vec<String>,
-}
-
-/// Why a held scenario is not holding.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Why {
-    Failed,
-    /// The suite no longer has a scenario by this name (it was renamed or
-    /// its file left the allowlist).
-    Missing,
-    /// It has a skip tag and so was not run.
-    Skipped,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Verdict {
-    /// Held scenarios that do not pass. The run fails when there are any.
-    pub regressions: Vec<(String, Why)>,
-    /// Passing scenarios the ratchet does not hold yet.
-    pub unheld_passing: Vec<String>,
-    /// Failing scenarios the ratchet does not hold.
-    pub not_yet: Vec<String>,
-}
-
-impl Verdict {
-    #[must_use]
-    pub fn holds(&self) -> bool {
-        self.regressions.is_empty()
-    }
-}
-
-#[must_use]
-pub fn judge(ratchet: &Ratchet, run: &Run) -> Verdict {
-    let outcome: BTreeMap<&str, bool> = run
-        .outcomes
-        .iter()
-        .map(|o| (o.id.as_str(), o.passed))
-        .collect();
-    let skipped: BTreeSet<&str> = run.skipped.iter().map(String::as_str).collect();
-    let mut verdict = Verdict::default();
-    for id in &ratchet.ids {
-        match outcome.get(id.as_str()) {
-            Some(true) => {}
-            Some(false) => verdict.regressions.push((id.clone(), Why::Failed)),
-            None if skipped.contains(id.as_str()) => {
-                verdict.regressions.push((id.clone(), Why::Skipped));
-            }
-            None => verdict.regressions.push((id.clone(), Why::Missing)),
-        }
-    }
-    for o in &run.outcomes {
-        if ratchet.ids.contains(&o.id) {
-            continue;
-        }
-        if o.passed {
-            verdict.unheld_passing.push(o.id.clone());
-        } else {
-            verdict.not_yet.push(o.id.clone());
-        }
-    }
-    verdict
-}
-
-/// `feature.feature :: Rule :: Scenario [example row]`. The row of an outline
-/// is part of the name because every row is a scenario of its own.
-fn base_id(file: &str, rule: Option<&Rule>, scenario: &Scenario) -> String {
-    let mut id = format!("{file} :: ");
-    if let Some(rule) = rule {
-        id.push_str(&format!("{} :: ", rule.name));
-    }
-    id.push_str(&scenario.name);
-    let row = scenario
-        .examples
-        .first()
-        .and_then(|e| e.table.as_ref())
-        .and_then(|t| t.rows.get(1));
-    if let Some(row) = row {
-        id.push_str(&format!(" [{}]", row.join(" | ")));
-    }
-    id
 }
 
 /// Where a scenario is, as the runner reports it back.
@@ -223,25 +70,6 @@ struct Plan {
     skipped: Vec<String>,
 }
 
-/// Whether `name` matches any of the scenario-name globs `globs`.
-fn named(globs: &[globset::GlobMatcher], name: &str) -> bool {
-    globs.iter().any(|g| g.is_match(name))
-}
-
-fn matchers(rel: &str, globs: &[String]) -> Result<Vec<globset::GlobMatcher>, SuiteError> {
-    globs
-        .iter()
-        .map(|g| {
-            globset::Glob::new(g)
-                .map(|g| g.compile_matcher())
-                .map_err(|e| SuiteError::Feature {
-                    path: rel.to_owned(),
-                    why: e.to_string(),
-                })
-        })
-        .collect()
-}
-
 fn plan(root: &Path, listed: &[Listed], selection: &Selection) -> Result<Plan, SuiteError> {
     use cucumber::feature::Ext as _;
     let mut out = Plan {
@@ -249,7 +77,7 @@ fn plan(root: &Path, listed: &[Listed], selection: &Selection) -> Result<Plan, S
         ids: BTreeMap::new(),
         skipped: Vec::new(),
     };
-    let mut taken: BTreeMap<String, usize> = BTreeMap::new();
+    let mut ids = ScenarioIds::default();
     for entry in listed {
         let rel = &entry.file;
         let path = root.join(rel);
@@ -262,35 +90,28 @@ fn plan(root: &Path, listed: &[Listed], selection: &Selection) -> Result<Plan, S
             .expand_examples()
             .map_err(|e| fail(e.to_string()))?;
         let feature_tags = feature.tags.clone();
-        let (only, except) = (matchers(rel, &entry.only)?, matchers(rel, &entry.except)?);
-        let mut used = vec![false; only.len()];
+        let mut names = entry.names()?;
         let mut sort = |rule: Option<&Rule>, scenarios: Vec<Scenario>, inherited: &[String]| {
             let mut kept = Vec::new();
             for scenario in scenarios {
-                for (u, g) in used.iter_mut().zip(&only) {
-                    *u |= g.is_match(&scenario.name);
-                }
-                let tags: Vec<&String> = inherited.iter().chain(&scenario.tags).collect();
-                let listed = only.is_empty() || named(&only, &scenario.name);
-                let required = selection
-                    .require
-                    .as_ref()
-                    .is_none_or(|t| Selection::has(&tags, t));
-                if !listed || named(&except, &scenario.name) || !required {
+                let row = scenario
+                    .examples
+                    .first()
+                    .and_then(|e| e.table.as_ref())
+                    .and_then(|t| t.rows.get(1));
+                let rule_name = rule.map(|r| r.name.as_str());
+                let id = ids.next(rel, rule_name, &scenario.name, row.map(Vec::as_slice));
+                let tags = inherited.iter().chain(&scenario.tags).map(String::as_str);
+                if !names.takes(&scenario.name) {
                     continue;
                 }
-                let mut id = base_id(rel, rule, &scenario);
-                // Two scenarios of one name stay two ids: #2, #3, ...
-                let count = taken.entry(id.clone()).or_insert(0);
-                *count += 1;
-                if *count > 1 {
-                    id.push_str(&format!(" #{count}"));
-                }
-                if selection.skip.iter().any(|t| Selection::has(&tags, t)) {
-                    out.skipped.push(id);
-                } else {
-                    out.ids.insert(key(&path, &scenario), id);
-                    kept.push(scenario);
+                match selection.choose(tags) {
+                    Choice::Run => {
+                        out.ids.insert(key(&path, &scenario), id);
+                        kept.push(scenario);
+                    }
+                    Choice::Skip => out.skipped.push(id),
+                    Choice::Out => {}
                 }
             }
             kept
@@ -306,13 +127,7 @@ fn plan(root: &Path, listed: &[Listed], selection: &Selection) -> Result<Plan, S
             };
             rule.scenarios = sort(Some(&shown), scenarios, &inherited);
         }
-        // A name glob that stopped matching would quietly shrink the suite.
-        if let Some(i) = used.iter().position(|u| !u) {
-            return Err(SuiteError::Feature {
-                path: rel.clone(),
-                why: format!("no scenario is named like `{}`", entry.only[i]),
-            });
-        }
+        names.finish()?;
         out.features.push(feature);
     }
     Ok(out)
@@ -432,126 +247,19 @@ fn execute<W>(cli: &Cli, suite_dir: &Path, selection: &Selection) -> Result<bool
 where
     W: SuiteWorld,
 {
-    let name = suite_dir
-        .canonicalize()
-        .unwrap_or_else(|_| suite_dir.to_path_buf())
-        .file_name()
-        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let pin = Pin::read(&suite_dir.join("PIN"))?;
-    let root = pin.checkout(cli.path.as_deref(), suite_dir, |v| std::env::var(v).ok())?;
     if cli.digest {
+        let (_, root) = ljos_ratchet::checkout(suite_dir, cli.path.as_deref())?;
         println!("{}", tree_digest(&root)?);
         return Ok(true);
     }
-    pin.verify(&root, cli.allow_dirty)?;
-    let globs_file = suite_dir.join("features.globs");
-    let text = std::fs::read_to_string(&globs_file)
-        .map_err(|e| SuiteError::Io(globs_file.display().to_string(), e))?;
-    let files = globs::expand(&text, &root)?;
-    let ratchet_file = suite_dir.join("RATCHET");
-    let mut ratchet = Ratchet::read(&ratchet_file)?;
-
-    let run = run_features::<W>(&root, &files, selection)?;
-    let skip = selection.skip_words();
-    let verdict = judge(&ratchet, &run);
-    let passing = run.outcomes.iter().filter(|o| o.passed).count();
-    println!();
-    println!(
-        "acceptance {name}: {} feature files, {} scenarios run on Ljos: {passing} pass, {} fail; \
-         {} skipped ({skip}); ratchet holds {}",
-        run.files,
-        run.outcomes.len(),
-        run.outcomes.len() - passing,
-        run.skipped.len(),
-        ratchet.ids.len(),
-    );
-    for (id, why) in &verdict.regressions {
-        let what = match why {
-            Why::Failed => "fails",
-            Why::Missing => "is not in the suite any more",
-            Why::Skipped => "is tagged ",
-        };
-        let tags = if *why == Why::Skipped {
-            skip.as_str()
-        } else {
-            ""
-        };
-        println!("  REGRESSION  {id}: {what}{tags}");
-    }
-    for id in &verdict.not_yet {
-        println!("  not yet     {id}");
-    }
-    for id in &verdict.unheld_passing {
-        println!("  can be held {id}");
-    }
-
-    if cli.raise {
-        if !verdict.holds() {
-            println!("RATCHET not raised while a held scenario fails");
-            return Ok(false);
-        }
-        let added = ratchet.raise(verdict.unheld_passing.iter().cloned());
-        if added.is_empty() {
-            println!("RATCHET unchanged");
-        } else {
-            ratchet.write(&ratchet_file)?;
-            println!("RATCHET raised by {}", added.len());
-        }
-        return Ok(true);
-    }
-    if !verdict.holds() {
-        println!(
-            "FAILED: {} held scenarios do not pass",
-            verdict.regressions.len()
-        );
-        return Ok(false);
-    }
-    println!("ok");
-    Ok(true)
+    let mut suite = Suite::open(suite_dir, cli.path.as_deref(), cli.allow_dirty)?;
+    let run = run_features::<W>(&suite.root, &suite.listed, selection)?;
+    ljos_ratchet::conclude(&mut suite, &run, selection, cli.raise)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn run(passing: &[&str], failing: &[&str], skipped: &[&str]) -> Run {
-        let outcome = |id: &&str, passed| Outcome {
-            id: (*id).to_owned(),
-            passed,
-        };
-        Run {
-            files: 1,
-            outcomes: passing
-                .iter()
-                .map(|i| outcome(i, true))
-                .chain(failing.iter().map(|i| outcome(i, false)))
-                .collect(),
-            skipped: skipped.iter().map(|s| (*s).to_owned()).collect(),
-        }
-    }
-
-    #[test]
-    fn a_held_scenario_that_fails_or_vanishes_is_a_regression() {
-        let ratchet = Ratchet::parse("a\nb\nc\nd\n");
-        let verdict = judge(&ratchet, &run(&["a", "e"], &["b", "f"], &["c"]));
-        assert_eq!(
-            verdict.regressions,
-            [
-                ("b".to_owned(), Why::Failed),
-                ("c".to_owned(), Why::Skipped),
-                ("d".to_owned(), Why::Missing),
-            ]
-        );
-        assert_eq!(verdict.unheld_passing, ["e"]);
-        assert_eq!(verdict.not_yet, ["f"]);
-        assert!(!verdict.holds());
-    }
-
-    #[test]
-    fn failures_outside_the_ratchet_do_not_fail_the_run() {
-        let verdict = judge(&Ratchet::parse("a\n"), &run(&["a"], &["x"], &[]));
-        assert!(verdict.holds());
-    }
 
     /// An application's own World: state of its own, set up before any
     /// step, and steps that reach it directly.

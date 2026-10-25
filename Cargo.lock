@@ -3615,13 +3615,11 @@ dependencies = [
 name = "ljos_bdd"
 version = "0.0.0"
 dependencies = [
- "blake3",
  "clap",
  "cucumber",
  "futures",
  "gherkin",
  "gif",
- "globset",
  "jpeg-encoder",
  "ljos",
  "ljos_a11y",
@@ -3637,6 +3635,7 @@ dependencies = [
  "ljos_media",
  "ljos_platform",
  "ljos_quick",
+ "ljos_ratchet",
  "ljos_render",
  "ljos_runtime",
  "ljos_text",
@@ -4134,6 +4133,16 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.21",
  "zune-jpeg",
+]
+
+[[package]]
+name = "ljos_ratchet"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "globset",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

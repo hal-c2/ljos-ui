@@ -13,7 +13,7 @@ use std::path::Path;
 
 use globset::{Glob, GlobMatcher};
 
-use super::pin::{PinError, files_below};
+use crate::pin::{PinError, files_below};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GlobError {
@@ -31,6 +31,14 @@ pub enum GlobError {
     Walk(#[from] PinError),
     #[error("features.globs: {0}")]
     Io(String),
+    #[error("{file}: `{glob}`: {source}")]
+    BadName {
+        file: String,
+        glob: String,
+        source: globset::Error,
+    },
+    #[error("{file}: no scenario is named like `{glob}`")]
+    NoScenario { file: String, glob: String },
 }
 
 struct Line {
@@ -60,6 +68,75 @@ impl Listed {
         Self {
             file: file.into(),
             ..Self::default()
+        }
+    }
+
+    /// The filter its name globs make, to ask of each scenario in turn.
+    ///
+    /// # Errors
+    /// A name glob is malformed.
+    pub fn names(&self) -> Result<NameFilter, GlobError> {
+        let compile = |globs: &[String]| {
+            globs
+                .iter()
+                .map(|g| {
+                    Glob::new(g)
+                        .map(|g| g.compile_matcher())
+                        .map_err(|source| GlobError::BadName {
+                            file: self.file.clone(),
+                            glob: g.clone(),
+                            source,
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        };
+        Ok(NameFilter {
+            file: self.file.clone(),
+            globs: self.only.clone(),
+            used: vec![false; self.only.len()],
+            only: compile(&self.only)?,
+            except: compile(&self.except)?,
+        })
+    }
+}
+
+/// Which scenarios of one listed file are listed, by name; remembers
+/// which name globs matched so one that stopped matching is an error.
+#[derive(Debug)]
+pub struct NameFilter {
+    file: String,
+    globs: Vec<String>,
+    used: Vec<bool>,
+    only: Vec<GlobMatcher>,
+    except: Vec<GlobMatcher>,
+}
+
+impl NameFilter {
+    /// Whether the scenario named `name` is listed. Ask it of every
+    /// scenario of the file.
+    pub fn takes(&mut self, name: &str) -> bool {
+        let mut listed = self.only.is_empty();
+        for (u, g) in self.used.iter_mut().zip(&self.only) {
+            if g.is_match(name) {
+                *u = true;
+                listed = true;
+            }
+        }
+        listed && !self.except.iter().any(|g| g.is_match(name))
+    }
+
+    /// After every scenario was asked: an error for a name glob that
+    /// matched none, since it would quietly shrink the suite.
+    ///
+    /// # Errors
+    /// See above.
+    pub fn finish(&self) -> Result<(), GlobError> {
+        match self.used.iter().position(|u| !u) {
+            Some(i) => Err(GlobError::NoScenario {
+                file: self.file.clone(),
+                glob: self.globs[i].clone(),
+            }),
+            None => Ok(()),
         }
     }
 }
@@ -223,6 +300,23 @@ mod tests {
         assert_eq!(got, [a, b], "a file only taken out of is not listed");
         let got = expand("features/a.feature:One\nfeatures/a.feature\n", dir.path()).unwrap();
         assert_eq!(got, [Listed::file("features/a.feature")], "whole wins");
+    }
+
+    #[test]
+    fn a_name_filter_lists_takes_out_and_holds_every_glob_to_a_match() {
+        let listed = Listed {
+            only: vec!["adds *".into(), "renamed".into()],
+            except: vec!["adds three".into()],
+            ..Listed::file("t.feature")
+        };
+        let mut f = listed.names().unwrap();
+        let taken: Vec<bool> = ["adds one", "adds three", "other"]
+            .map(|n| f.takes(n))
+            .into();
+        assert_eq!(taken, [true, false, false]);
+        let e = f.finish().unwrap_err().to_string();
+        assert_eq!(e, "t.feature: no scenario is named like `renamed`");
+        assert!(Listed::file("t.feature").names().unwrap().takes("any"));
     }
 
     #[test]

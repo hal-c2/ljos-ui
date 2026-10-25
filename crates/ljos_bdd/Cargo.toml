@@ -25,10 +25,9 @@ futures.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 regex.workspace = true
-# External acceptance suites: PIN digests of a suite that is a plain directory,
-# and the allowlist globs of features.globs (src/acceptance/).
-blake3.workspace = true
-globset.workspace = true
+# External acceptance suites: reading PIN, features.globs and RATCHET, and
+# judging a run (src/acceptance/).
+ljos_ratchet = { path = "../ljos_ratchet" }
 # Image files for scenarios are made by code (src/fixture.rs).
 png.workspace = true
 jpeg-encoder.workspace = true

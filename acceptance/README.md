@@ -87,8 +87,13 @@ controllers, a fake of its server) brings its own World instead: a `#[derive(cuc
 `main` calls `ljos_bdd::acceptance::main_with::<MyWorld>(dir, &selection)`, where `Selection { skip,
 require }` lists the tags that leave a scenario out (`["backlog", "backlog-desktop"]`) and an optional
 tag a scenario must have (`Some("desktop")`). The PIN, globs, ratchet, `--raise` and exit statuses are
-the same. Such a runner still links all of `ljos_bdd`; a judging half without the Ljós backend is not
-split out yet.
+the same.
+
+A runner that parses and runs its features its own way depends on `ljos_ratchet` alone, the judging
+half, with no Gherkin, cucumber or Ljós crate in its build: `Suite::open` reads and verifies the
+directory, `Listed::names` and `Selection::choose` say which scenarios run, `ScenarioIds` names them
+as `RATCHET` does (ask it for every scenario of a file in order, skipped ones included), and
+`conclude` prints the verdict and raises on `--raise`, with the same output and exit statuses.
 
 The repository's workspace is `crates/*`, so an adapter is a workspace of its own (its `Cargo.toml`
 says `[workspace]`; like any crate outside the repository it needs nothing else to build against

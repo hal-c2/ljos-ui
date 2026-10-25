@@ -1,0 +1,25 @@
+[package]
+name = "ljos_ratchet"
+description = "The judging half of an acceptance suite: PIN, features.globs, RATCHET, tag selection, scenario ids and the verdict, without a backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# An application's own acceptance runner depends on this crate alone; it
+# must stay free of Gherkin, cucumber and every Ljós runtime crate
+# (tests/dependencies.rs holds it to that).
+[dependencies]
+thiserror.workspace = true
+# PIN digests of a suite that is a plain directory.
+blake3.workspace = true
+# The allowlist globs of features.globs and the scenario-name globs.
+globset.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
