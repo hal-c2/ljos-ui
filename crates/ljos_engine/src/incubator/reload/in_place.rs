@@ -373,6 +373,8 @@ impl Engine {
         roots: &[ObjectId],
     ) -> Option<ReloadOutcome> {
         let st = &self.inner.reload;
+        // What follows renames and moves ids one at a time.
+        self.note_context_ids();
         if !patch.removed.is_empty() {
             return not_here("a file was removed");
         }

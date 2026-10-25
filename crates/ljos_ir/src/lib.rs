@@ -28,7 +28,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 13;
+pub const IR_VERSION: u32 = 14;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -128,11 +128,18 @@ pub struct Invocable {
 }
 
 impl CompiledFile {
-    /// Writes down each object's [`ObjectDef::facts`]: the compiler's
-    /// last step, and that of anything else that writes IR.
+    /// Writes down each object's [`ObjectDef::facts`] and each
+    /// component's [`ComponentDef::ids`]: the compiler's last step, and
+    /// that of anything else that writes IR.
     pub fn note_facts(&mut self) {
-        for od in self.components.iter_mut().flat_map(|c| &mut c.objects) {
-            od.flags = od.facts();
+        for c in &mut self.components {
+            c.ids.clear();
+            for (k, od) in c.objects.iter_mut().enumerate() {
+                od.flags = od.facts();
+                if let Some(id) = &od.id {
+                    c.ids.push((id.clone(), ObjIdx(k as u32)));
+                }
+            }
         }
     }
 
@@ -235,6 +242,9 @@ pub struct ComponentDef {
     /// `[0]` is the root. An object comes before the objects inside it.
     pub objects: Vec<ObjectDef>,
     pub signature: ComponentSignature,
+    /// Each id written in it and the object it names, which an instance
+    /// resolves the id by: its objects are in the same order.
+    pub ids: Vec<(String, ObjIdx)>,
 }
 
 impl ComponentDef {

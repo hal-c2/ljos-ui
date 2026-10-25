@@ -129,6 +129,7 @@ Rectangle {
     cacheBuffer: 0
     model: 10000
     delegate: Rectangle {
+      id: row
       required property int index
       width: ListView.view.width
       height: 40
@@ -136,7 +137,7 @@ Rectangle {
       Text {
         anchors.verticalCenter: parent.verticalCenter
         x: 12
-        text: "Row " + parent.index
+        text: "Row " + row.index
       }
     }
   }
@@ -172,8 +173,9 @@ Item {
   Component {
     id: one
     Item {
+      id: item
       width: 100; height: 20
-      Text { text: "Row" }
+      Text { text: "Row"; width: item.width }
     }
   }
 }
@@ -199,8 +201,9 @@ fn ten_listview_delegates() {
     // Per delegate: 4 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 8 values, 7 bindings, 16 effects, 2 scopes,
     // 4 member lookups (the view's row, found by name for each delegate)
-    // and no type lookups, 181.6 allocations. What the component writes
-    // and binds goes by index once its plan is linked.
+    // and no type lookups, 179.6 allocations. What the component writes
+    // and binds goes by index once its plan is linked, and its id
+    // (`row`) is found by slot without being written down.
     assert_eq!(
         b,
         Budget {
@@ -217,7 +220,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1816,
+            allocations: 1796,
         }
     );
 }
@@ -228,7 +231,8 @@ fn ten_plain_items() {
     assert_eq!(made, 10);
     // Per instance: 2 objects, 6 values, 2 bindings, 15 effects, 2 scopes,
     // 1 member lookup (the property `createObject` is given, by its name)
-    // and no type lookups, 103.7 allocations.
+    // and no type lookups, 102.7 allocations; the id (`item`) is found
+    // by slot.
     assert_eq!(
         b,
         Budget {
@@ -245,7 +249,7 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1037,
+            allocations: 1027,
         }
     );
 }

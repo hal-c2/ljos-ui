@@ -211,6 +211,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 kind: ComponentKind::File,
                 objects: vec![ObjectDef::default(); *count as usize],
                 signature: ComponentSignature([0; 32]),
+                ids: Vec::new(),
             })
             .collect();
         let oracle = &project.oracle;

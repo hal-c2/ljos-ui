@@ -3261,9 +3261,26 @@ impl Engine {
     pub(crate) fn unset_context_id(&self, ctx: ContextId, name: &str, obj: ObjectId) {
         crate::lookups::name();
         if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx)
-            && c.ids.get(name) == Some(&obj)
+            && c.id(name) == Some(obj)
         {
+            c.note_ids();
             c.ids.remove(name);
+        }
+    }
+
+    /// Lets `ctx` find the ids of `inst`, the instance it is made for, by
+    /// their slots.
+    pub(crate) fn set_context_slots(&self, ctx: ContextId, inst: &Rc<crate::incubator::Instance>) {
+        if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
+            c.slots = Some(crate::context::IdSlots(inst.clone()));
+        }
+    }
+
+    /// Writes every context's ids down one by one; see
+    /// [`Context::note_ids`].
+    pub(crate) fn note_context_ids(&self) {
+        for (_, c) in self.inner.contexts.borrow_mut().iter_mut() {
+            c.note_ids();
         }
     }
 
@@ -3276,8 +3293,8 @@ impl Engine {
             let mut cur = Some(ctx);
             let mut found = None;
             while let Some(c) = cur.and_then(|c| contexts.get(c)) {
-                if let Some(o) = c.ids.get(name) {
-                    found = Some(*o);
+                if let Some(o) = c.id(name) {
+                    found = Some(o);
                     break;
                 }
                 cur = c.parent;
@@ -3343,8 +3360,8 @@ impl Engine {
             let object = {
                 let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(cur?)?;
-                if let Some(o) = c.ids.get(name) {
-                    break *o;
+                if let Some(o) = c.id(name) {
+                    break o;
                 }
                 if let Some(v) = c.props.get(name) {
                     return Some(v.clone());
@@ -3379,9 +3396,9 @@ impl Engine {
             let object = {
                 let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(id)?;
-                if ids && let Some(o) = c.ids.get(name) {
-                    return Some(Err(if self.is_alive(*o) {
-                        Value::Object(*o)
+                if ids && let Some(o) = c.id(name) {
+                    return Some(Err(if self.is_alive(o) {
+                        Value::Object(o)
                     } else {
                         Value::Null
                     }));

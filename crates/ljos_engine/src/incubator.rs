@@ -1083,6 +1083,9 @@ impl Engine {
                 outer: f.outer.take(),
                 context: f.ctx,
             });
+            if f.given.is_empty() {
+                self.set_context_slots(f.ctx, &inst);
+            }
             f.closing = Some((inst, 0));
             return Ok(None);
         };
@@ -1107,7 +1110,11 @@ impl Engine {
             self.give_absent(id);
             cr.all.push(id);
         }
-        if let Some(name) = &od.id {
+        // A reload in place writes ids down one by one; a new instance's
+        // context finds them by slot once all its objects exist.
+        if let Some(name) = &od.id
+            && !f.given.is_empty()
+        {
             self.set_context_id(f.ctx, name, id);
         }
         f.objects.push(id);

@@ -347,6 +347,7 @@ fn sample() -> CompiledFile {
                 kind: ComponentKind::File,
                 objects: vec![root, text],
                 signature,
+                ids: Vec::new(),
             },
             ComponentDef {
                 name: "Cell".into(),
@@ -357,6 +358,7 @@ fn sample() -> CompiledFile {
                 },
                 objects: vec![delegate],
                 signature,
+                ids: Vec::new(),
             },
         ],
         exprs: vec![binding, handler],
