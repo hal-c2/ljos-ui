@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#MISE description="Edit corpus examples while they run under ljos run --watch, off-screen in the desktop:cua sandbox, and list what each save kept, lost and logged and how long it took to show: gallery:hot id… (each runs from a copy; the corpus is not written)"
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+out="${GALLERY_DIR:-$target/gallery}/hot"
+
+[ $# -gt 0 ] || { echo "usage: mise run gallery:hot <id>… (mise run gallery:run lists the ids)" >&2; exit 1; }
+
+profile="${GALLERY_PROFILE:-debug}"
+if [ "$profile" = debug ]; then
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+else
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --profile "$profile"
+fi
+trap '"$root/scripts/cua-sandbox.sh" stop' EXIT
+python3 "$root/scripts/hot-drive.py" "$out" "$@"
+echo "per example: $out/<id>/report.txt; all of it: $out/summary.md"
