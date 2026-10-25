@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ljos_engine::{Engine, EngineError, LogEntry, LogLevel, ObjectId, Value};
+use ljos_platform::Platform;
 use ljos_quick::{DOUBLE_CLICK_INTERVAL, ImageStore, MouseButtons, QuickScene};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
 
@@ -248,10 +249,16 @@ impl Host {
         let clock = self.clock()?;
         let images = ImageStore::of(engine);
         let end = clock.now() + Duration::from_millis(ms);
+        let platform = Platform::of(engine);
         for _ in 0..MAX_TIMER_STEPS {
-            // Pictures that were being read have arrived, whatever the
-            // disk took: the application's time is not the machine's.
+            // Pictures that were being read, and what was fetched, have
+            // arrived, whatever the disk or the network took: the
+            // application's time is not the machine's.
             images.finish(engine);
+            if platform.pending() > 0 {
+                platform.finish(engine);
+                self.settle(engine)?;
+            }
             let wake = self.with_rig(|rig| rig.wake)?;
             let next = [engine.next_timer_deadline(), wake]
                 .into_iter()

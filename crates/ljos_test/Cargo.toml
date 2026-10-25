@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 ljos_a11y = { path = "../ljos_a11y" }
 ljos_engine = { path = "../ljos_engine" }
+# What a test fetched has come by the time its virtual time passes.
+ljos_platform = { path = "../ljos_platform" }
 ljos_quick = { path = "../ljos_quick" }
 # The audit reads the last frame for the colours text is shown in. No egui.
 ljos_render = { path = "../ljos_render", default-features = false }

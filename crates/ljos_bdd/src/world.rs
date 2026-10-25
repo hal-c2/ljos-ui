@@ -141,14 +141,7 @@ impl LjosWorld {
     /// # Errors
     /// A runner could not be run. A failing test is not an error.
     pub fn run_tests(&mut self, run: &TestRun) -> Result<(), String> {
-        let files: Vec<QmlFile> = self
-            .files
-            .iter()
-            .map(|(name, source)| QmlFile {
-                name: name.clone(),
-                source: source.clone(),
-            })
-            .collect();
+        let files = self.staged()?;
         let mut reports = Vec::new();
         let ran = self.each(|b| {
             reports.push((b.name(), b.run_tests(&files, run)?));
@@ -188,6 +181,11 @@ impl LjosWorld {
                 "no file named {entry:?}; add it with `Given the file {entry:?}:`"
             ));
         }
+        self.staged()
+    }
+
+    /// Every staged file, with `$SERVER` the scenario's web server.
+    fn staged(&mut self) -> Result<Vec<QmlFile>, String> {
         let names_server = self
             .files
             .values()

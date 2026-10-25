@@ -550,6 +550,38 @@ Feature: Test files, test cases and what they import
         """
       And the test run exits with status 0
 
+  Rule: A test reaches the network
+
+    @qt-parity
+    Scenario: A test waits for what it fetched
+      Given the web server serves the text file "act.json":
+        """
+        {"activity": "Read a book"}
+        """
+      And the file "tst_fetch.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        TestCase {
+          name: "Fetch"
+          function test_fetch() {
+            let http = new XMLHttpRequest()
+            let done = false
+            http.onload = () => done = true
+            http.open("GET", "$SERVER/act.json")
+            http.send()
+            tryVerify(() => done, 5000)
+            compare(http.status, 200)
+            compare(JSON.parse(http.responseText).activity, "Read a book")
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : Fetch::test_fetch()
+        """
+
   Rule: The results can be read by a program
 
     @ljos-only

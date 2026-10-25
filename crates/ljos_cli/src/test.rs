@@ -228,6 +228,9 @@ impl Suite {
             crate::render::register_modules(&engine);
             // A test leaves no database behind for the next run to find.
             ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
+            // The network, as qmltestrunner has it: a test may fetch.
+            ljos_platform::Platform::of(&engine)
+                .set_fetcher(std::sync::Arc::new(ljos_platform::HttpFetcher::new()));
             ljos_test::qttest::register(&engine);
             // The engine would refuse the file too, but cannot say where
             // in it the import is.
