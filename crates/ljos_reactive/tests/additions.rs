@@ -850,3 +850,39 @@ fn a_scope_disposed_in_one_pass_leaves_the_edges_of_what_stays_whole() {
     assert_eq!(*stay.borrow(), vec![(0, 2), (1, 2), (2, 2), (3, 2)]);
     assert_eq!(told.borrow().len(), 2, "it no longer reads the scope");
 }
+
+#[test]
+fn nodes_disposed_all_at_once_are_disposed_as_one_by_one() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let s = g.create_scope(r).unwrap();
+    let x = g.binding(s, 0, move |g| g.get(a) * 2).unwrap();
+    let runs = Rc::new(RefCell::new(Vec::new()));
+    let mut effects = Vec::new();
+    for k in 0..3 {
+        let seen = runs.clone();
+        effects.push(
+            g.effect(s, move |g| seen.borrow_mut().push((k, g.try_get(x))))
+                .unwrap(),
+        );
+    }
+    let seen = runs.clone();
+    g.effect(r, move |g| seen.borrow_mut().push((9, g.try_get(x))))
+        .unwrap();
+    runs.borrow_mut().clear();
+    // Twice over, and with `x` that the one that stays reads.
+    let mut going = effects.clone();
+    going.extend([effects[1], x]);
+    g.dispose_all(&going);
+    g.check_invariants().unwrap();
+    assert_eq!(*runs.borrow(), vec![(9, None)]);
+    assert!(going.iter().all(|&n| !g.is_alive(n)));
+    g.set(a, 5);
+    assert_eq!(runs.borrow().len(), 1, "nothing reads `a` any more");
+    // The scope is still whole.
+    let y = g.property(s, 3).unwrap();
+    g.dispose_scope(s).unwrap();
+    assert!(!g.is_alive(y));
+    g.check_invariants().unwrap();
+}

@@ -1365,15 +1365,9 @@ impl QuickScene {
             // Its effect is among `effects`; this also forgets the sink.
             text::unfollow(engine, obj);
         }
-        let g = engine.graph();
-        for n in entry
-            .effects
-            .iter()
-            .chain(entry.content_effect.iter())
-            .chain(entry.list_effect.iter())
-        {
-            let _ = g.dispose(*n);
-        }
+        let mut effects = entry.effects;
+        effects.extend(entry.content_effect.into_iter().chain(entry.list_effect));
+        engine.graph().dispose_all(&effects);
         self.a11y.forget(engine, obj);
         if !engine.is_alive(obj) {
             crate::focus::tree::forget(engine, obj);

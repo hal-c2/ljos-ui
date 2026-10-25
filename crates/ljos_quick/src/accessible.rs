@@ -817,8 +817,12 @@ impl A11yPass {
             return;
         };
         let g = engine.graph();
-        for n in st.describe.into_iter().chain(st.bounds) {
-            let _ = g.dispose(n);
+        match (st.describe, st.bounds) {
+            (Some(a), Some(b)) => g.dispose_all(&[a, b]),
+            (Some(n), None) | (None, Some(n)) => {
+                let _ = g.dispose(n);
+            }
+            (None, None) => {}
         }
         let mut p = self.pending.borrow_mut();
         p.described.remove(&obj);
