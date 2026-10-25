@@ -1831,6 +1831,7 @@ module QtQuick
 		prop hoverEnabled QtQml.bool named
 		prop containsMouse QtQml.bool named readonly
 		prop pressed QtQml.bool named readonly
+		prop containsPress QtQml.bool named readonly
 		prop pressedButtons Qt::MouseButtons readonly
 		prop mouseX QtQml.real named readonly
 		prop mouseY QtQml.real named readonly
@@ -1842,6 +1843,7 @@ module QtQuick
 		signal hoverEnabledChanged
 		signal containsMouseChanged
 		signal pressedChanged
+		signal containsPressChanged
 		signal pressedButtonsChanged
 		signal mouseXChanged
 		signal mouseYChanged

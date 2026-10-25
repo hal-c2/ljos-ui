@@ -371,7 +371,7 @@ pub(crate) fn filter_cancel(engine: &Engine) {
 fn press_watcher(engine: &Engine, m: ObjectId, ev: &PointerEvent) -> bool {
     let button = ev.button.unwrap_or(MouseButtons::LEFT);
     let at = scene::local_point(engine, m, ev.pos);
-    scene::set(engine, m, MouseArea::PRESSED.index, Value::Bool(true));
+    scene::set_pressed(engine, m, true);
     scene::set(
         engine,
         m,
@@ -390,7 +390,7 @@ fn press_watcher(engine: &Engine, m: ObjectId, ev: &PointerEvent) -> bool {
 }
 
 fn unpress_watcher(engine: &Engine, m: ObjectId) {
-    scene::set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
+    scene::set_pressed(engine, m, false);
     scene::set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
     if !scene::hover_enabled(engine, m) && scene::set_contains(engine, m, false) {
         scene::emit(engine, m, "exited", &[]);
@@ -411,7 +411,7 @@ fn watcher_released(engine: &Engine, m: ObjectId, ev: &PointerEvent, click: bool
     let at = scene::local_point(engine, m, ev.pos);
     let click = click && scene::contains_local(engine, m, at);
     scene::set_mouse_pos(engine, m, at);
-    scene::set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
+    scene::set_pressed(engine, m, false);
     scene::set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
     scene::emit_mouse(engine, m, "released", ev, at, click);
     if click && engine.is_alive(m) {
@@ -426,7 +426,7 @@ fn watcher_released(engine: &Engine, m: ObjectId, ev: &PointerEvent, click: bool
 }
 
 fn cancel_watcher(engine: &Engine, m: ObjectId) {
-    scene::set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
+    scene::set_pressed(engine, m, false);
     scene::set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
     if !scene::hover_enabled(engine, m) {
         scene::set_contains(engine, m, false);

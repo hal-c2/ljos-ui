@@ -188,6 +188,9 @@ pub struct MouseArea {
     pub contains_mouse: bool,
     #[qml(notify, readonly)]
     pub pressed: bool,
+    /// `pressed` while the pointer is inside the area.
+    #[qml(notify, readonly)]
+    pub contains_press: bool,
     #[qml(notify, readonly, flags = "Qt.MouseButtons")]
     pub pressed_buttons: i32,
     #[qml(notify, readonly)]
@@ -224,6 +227,7 @@ impl Default for MouseArea {
             hover_enabled: false,
             contains_mouse: false,
             pressed: false,
+            contains_press: false,
             pressed_buttons: 0,
             mouse_x: 0.0,
             mouse_y: 0.0,

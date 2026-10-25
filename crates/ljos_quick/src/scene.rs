@@ -2411,22 +2411,29 @@ impl QuickScene {
         // Areas around it that drag from their children hear it first.
         crate::mouse_drag::filter_press(engine, m, ev);
         let local = local_point(engine, m, ev.pos);
-        set(engine, m, MouseArea::PRESSED.index, Value::Bool(true));
-        set(
-            engine,
-            m,
-            MouseArea::PRESSED_BUTTONS.index,
-            Value::Int(button.bits() as i32),
-        );
         set_mouse_pos(engine, m, local);
         let entered = set_contains(engine, m, true);
         if entered {
             emit(engine, m, "entered", &[]);
         }
-        if !emit_mouse(engine, m, "pressed", ev, local, false) {
+        // As in Qt, `pressed` comes before `pressedChanged`.
+        let taken = engine.batch(|| {
+            set_pressed(engine, m, true);
+            set(
+                engine,
+                m,
+                MouseArea::PRESSED_BUTTONS.index,
+                Value::Int(button.bits() as i32),
+            );
+            let taken = emit_mouse(engine, m, "pressed", ev, local, false);
+            if !taken {
+                set_pressed(engine, m, false);
+                set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
+            }
+            taken
+        });
+        if !taken {
             // Rejected: the press goes on to the items below.
-            set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
-            set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
             if entered && !hover_enabled(engine, m) && set_contains(engine, m, false) {
                 emit(engine, m, "exited", &[]);
             }
@@ -2587,14 +2594,19 @@ impl QuickScene {
                 let inside =
                     contains_local(engine, m, local) && !crate::mouse_drag::dragged(engine, m);
                 set_mouse_pos(engine, m, local);
-                set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
-                set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
                 let was_held = crate::press_and_hold::ended(engine, m);
                 let released = MouseEvent {
                     was_held,
                     ..mouse_event(ev, local, inside)
                 };
-                emit_mouse_event(engine, m, "released", released);
+                // As in Qt, `released` reads `pressed` as false but comes
+                // before `pressedChanged`: what is bound to `pressed`, a
+                // `Drag.active` that the handler drops, still holds.
+                engine.batch(|| {
+                    set_pressed(engine, m, false);
+                    set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
+                    emit_mouse_event(engine, m, "released", released);
+                });
                 if inside && !was_held && !self.pointer.double {
                     emit_mouse(engine, m, "clicked", ev, local, true);
                     self.pointer.last_click = Some((m, ev.time, ev.pos));
@@ -2671,7 +2683,7 @@ impl QuickScene {
         match self.pointer.grab.take() {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
                 crate::press_and_hold::ended(engine, m);
-                set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
+                set_pressed(engine, m, false);
                 set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
                 if !hover_enabled(engine, m) {
                     set_contains(engine, m, false);
@@ -3187,7 +3199,22 @@ pub(crate) fn set_contains(engine: &Engine, m: ObjectId, v: bool) -> bool {
         return false;
     }
     set(engine, m, MouseArea::CONTAINS_MOUSE.index, Value::Bool(v));
+    show_contains_press(engine, m);
     true
+}
+
+/// Sets `pressed`, and `containsPress` with it.
+pub(crate) fn set_pressed(engine: &Engine, m: ObjectId, v: bool) {
+    set(engine, m, MouseArea::PRESSED.index, Value::Bool(v));
+    show_contains_press(engine, m);
+}
+
+fn show_contains_press(engine: &Engine, m: ObjectId) {
+    let on = engine.untrack(|| {
+        engine.read(m, MouseArea::PRESSED.index).to_boolean()
+            && engine.read(m, MouseArea::CONTAINS_MOUSE.index).to_boolean()
+    });
+    set(engine, m, MouseArea::CONTAINS_PRESS.index, Value::Bool(on));
 }
 
 /// Sets `mouseX` and `mouseY`. As in Qt both tell of a change at every
