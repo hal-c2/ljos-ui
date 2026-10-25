@@ -17,11 +17,10 @@ Feature: A plain item's colours are those of the items it is in
       import QtQuick
       import QtQuick.Controls.Basic
       Item {
-        id: root
-        objectName: "root"
-        width: 300; height: 200
+        id: root; objectName: "root"; width: 300; height: 200
         property color seen: inner.palette.button
         property color made: "black"
+        property color tone: "#123456"
         function make() { made = later.createObject(inner).palette.button }
         Component { id: later; Item {} }
         Item {
@@ -35,7 +34,7 @@ Feature: A plain item's colours are those of the items it is in
           }
         }
         Pane {
-          objectName: "pane"; y: 100; palette.window: "#123456"
+          objectName: "pane"; y: 100; palette.window: root.tone
           Item { objectName: "inpane" }
         }
       }
@@ -59,6 +58,14 @@ Feature: A plain item's colours are those of the items it is in
 
   Scenario: An item inside a control has the control's colours
     Then the property "palette.window" of "inpane" is "#123456"
+
+  Scenario: A control's colour set from a script reaches the items inside
+    When the property "palette.window" of "pane" is set to "#00ff00"
+    Then the property "palette.window" of "inpane" is "#00ff00"
+
+  Scenario: A control's bound colour reaches the items inside as it changes
+    When the property "tone" of "root" is set to "#abcdef"
+    Then the property "palette.window" of "inpane" is "#abcdef"
 
   Rule: Each colour group is inherited too
 

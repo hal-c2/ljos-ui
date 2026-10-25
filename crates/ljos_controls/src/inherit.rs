@@ -115,6 +115,9 @@ pub(crate) struct InheritState {
     font_above: Cell<u32>,
     /// Whether the palette ever left the defaults of an enabled control.
     palette_touched: Cell<bool>,
+    /// Whether the object is made to hold other controls: a colour of its
+    /// palette that a binding gives it again is news to them.
+    holds: Cell<bool>,
 }
 
 mod attr {
@@ -579,8 +582,8 @@ fn font_value(v: &Value) -> Arc<Font> {
 
 /// Starts keeping `obj`'s font and palette in step with its ancestors'.
 /// Called when the object completes. `has_children` says the object is
-/// made to hold other controls: it then also notices a colour set on it
-/// from a script later, at the price of a graph node per colour.
+/// made to hold other controls: a colour of its palette that a binding
+/// gives it again is then news to the controls inside ([`group_written`]).
 pub(crate) fn attach(
     engine: &Engine,
     obj: ObjectId,
@@ -660,23 +663,10 @@ pub(crate) fn attach(
     if grouped || roles.iter().any(|p| author_set(engine, obj, *p)) {
         colours_made(engine, obj);
     }
-    if has_children {
-        for (i, p) in roles.iter().copied().enumerate() {
-            let was = Cell::new(author_set(engine, obj, p));
-            engine.watch(obj, p, move |e, _| {
-                // The colours this module hands down change too; only the
-                // author's are news to the items below.
-                let mine = author_set(e, obj, p);
-                if !mine {
-                    was.set(false);
-                } else if was.replace(true) {
-                    e.after_creation(move |e| hand_down(e, vec![obj], Some(i)));
-                } else {
-                    colours_changed(e, obj);
-                }
-            })?;
-        }
-    }
+    // A colour set later is heard through its setter, which listens from
+    // then on ([`group_written`]): most containers never have one set, and
+    // a graph node per colour per container is most of what one costs.
+    state.holds.set(has_children);
     let st = state;
     engine.effect_in(obj, move |e| {
         check(e, "palette", resolve_palette(e, obj, kind, &st));
@@ -1060,6 +1050,7 @@ fn group_written(engine: &Engine, obj: ObjectId) {
         return;
     };
     plain.groups_watched.borrow_mut().insert(obj);
+    let holds = state_of(engine, obj, kind).is_some_and(|s| s.holds.get());
     let palette = (kind != Kind::Item).then(|| roles_of(kind));
     for p in groups_of(kind)
         .iter()
@@ -1074,7 +1065,19 @@ fn group_written(engine: &Engine, obj: ObjectId) {
         let watched = engine.watch(obj, p, move |e, v| {
             let given = match e.provenance(obj, p) {
                 Some(Provenance::Assigned) => true,
-                Some(Provenance::Bound) => !role,
+                Some(Provenance::Bound) if !role => true,
+                Some(Provenance::Bound) => {
+                    // A colour already the author's was read by the
+                    // controls that took it as they resolved; only the
+                    // plain items below are handed it.
+                    if holds && was.get() {
+                        let i = role_index(kind, p);
+                        e.after_creation(move |e| hand_down(e, vec![obj], i));
+                    } else if holds {
+                        colours_changed(e, obj);
+                    }
+                    false
+                }
                 _ => false,
             };
             if given {
