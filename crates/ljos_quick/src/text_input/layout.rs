@@ -588,6 +588,16 @@ pub(crate) fn relayout(
         }
         Ok(())
     })?;
+    // A size that follows what was just written has moved already, and the
+    // layout effect, which reads the size, runs again and paints what
+    // stands then: painting this placing as well is work thrown away.
+    let size_moved = engine.untrack(|| {
+        num(engine, obj, Item::WIDTH.index) != inputs.width
+            || num(engine, obj, Item::HEIGHT.index) != inputs.height
+    });
+    if size_moved {
+        return Ok(());
+    }
     for n in epochs.into_iter().flatten() {
         bump(engine, n);
     }

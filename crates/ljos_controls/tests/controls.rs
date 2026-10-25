@@ -837,3 +837,48 @@ fn colours_bound_on_menus_cost_what_each_menu_holds() {
         "4 menus read {few_reads} times, 8 read {many_reads}"
     );
 }
+
+/// Changes the font size bound on a pane that holds `fields` text fields,
+/// once, and returns the effects that ran and the field's height after.
+fn fields_resized(fields: usize) -> (u64, f64) {
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+import QtQuick.Controls.Fusion
+Pane {{
+    property int size: 12
+    font.pixelSize: size
+    Column {{ Repeater {{ model: {fields}; TextField {{ objectName: "field" }} }} }}
+}}
+"#
+        ),
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let before = e.graph().stats().effect_runs;
+    e.write_by_name(root, "size", Value::Int(20)).unwrap();
+    settle(&mut s, &e, Time::ZERO);
+    let ran = e.graph().stats().effect_runs - before;
+    let height = e
+        .read_by_name(find(&e, root, "field"), "height")
+        .to_number();
+    (ran, height)
+}
+
+/// A field's height follows the font, so its text is placed twice: once
+/// in the old height and once in the new. The first placing is not
+/// painted, as the second follows at once.
+#[test]
+fn a_field_whose_height_follows_a_new_font_is_painted_once() {
+    let (one, height) = fields_resized(1);
+    let (two, _) = fields_resized(2);
+    assert!(height > 30.0, "the field grew with its font: {height}");
+    assert!(
+        two - one <= 10,
+        "a field ran {} effects for a font change",
+        two - one
+    );
+}
