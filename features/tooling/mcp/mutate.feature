@@ -212,7 +212,7 @@ Feature: An agent that may change the application
         """json
         {"target": "#root"}
         """
-      Then the inspected property "when" has a value that matches "^Fri Jan 02 2026 03:04:05 GMT"
+      Then the inspected property "when" has a value that matches "^Fri Jan 2 03:04:05 2026 GMT"
 
     Scenario: A script object that prints nothing of itself is told as one
       When the agent calls the tool "app_inspect" with:
