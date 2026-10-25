@@ -15,9 +15,9 @@ fi
 # The build gallery:run then runs (GALLERY_BUILT), in its profile.
 profile="${GALLERY_PROFILE:-debug}"
 if [ "$profile" = debug ]; then
-  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos
 else
-  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --profile "$profile"
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos --profile "$profile"
 fi
 trap '"$root/scripts/cua-sandbox.sh" stop' EXIT
 GALLERY_BUILT=1 python3 "$root/scripts/gallery-drive.py" "$out" "${ids[@]}"

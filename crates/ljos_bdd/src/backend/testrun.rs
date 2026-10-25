@@ -177,23 +177,54 @@ fn workspace_bin(var: &str, package: &str, name: &str) -> std::result::Result<Pa
     if let Some(bin) = std::env::var_os(var) {
         return Ok(PathBuf::from(bin));
     }
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let root = workspace_root();
-    let built = Command::new(cargo)
-        .args(["build", "--quiet", "-p", package])
+    let built = build_command(package, name)
         .current_dir(&root)
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("cannot run cargo to build `{name}`: {e}"))?;
     if !built.status.success() {
         return Err(format!(
-            "`cargo build -p {package}` failed:\n{}",
+            "`cargo build -p {package} --bin {name}` failed:\n{}",
             String::from_utf8_lossy(&built.stderr)
         ));
     }
     let target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
     Ok(target.join("debug").join(name))
+}
+
+/// `cargo build` of the one program a step runs, without what cargo told
+/// this test about its own package. A build script may say it is built
+/// again when `CARGO_MANIFEST_DIR` changes (ring's does), and cargo then
+/// takes the test's value as a change: everything above it was built again
+/// here, and again by the next `cargo build` outside, minutes each time.
+fn build_command(package: &str, name: &str) -> Command {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let mut command = Command::new(cargo);
+    command.args(["build", "--quiet", "-p", package, "--bin", name]);
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(told_of_the_test) {
+            command.env_remove(key);
+        }
+    }
+    command
+}
+
+/// Whether cargo sets `key` for the test it runs, not for every build.
+fn told_of_the_test(key: &str) -> bool {
+    matches!(
+        key,
+        "CARGO_MANIFEST_DIR"
+            | "CARGO_MANIFEST_PATH"
+            | "CARGO_MANIFEST_LINKS"
+            | "CARGO_CRATE_NAME"
+            | "CARGO_BIN_NAME"
+            | "CARGO_PRIMARY_PACKAGE"
+            | "CARGO_TARGET_TMPDIR"
+            | "OUT_DIR"
+    ) || key.starts_with("CARGO_PKG_")
+        || key.starts_with("CARGO_BIN_EXE_")
 }
 
 /// Qt's runner for QML tests. The plain name is Qt 5's on some systems, so
@@ -328,6 +359,32 @@ pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The issue repro: run from a test, the build of `ljos` was told the
+    /// test's `CARGO_MANIFEST_DIR`, which ring's build script follows, so
+    /// it and everything above it were built again on every run.
+    #[test]
+    fn the_build_of_a_program_is_not_told_the_test_s_package() {
+        assert!(std::env::var_os("CARGO_MANIFEST_DIR").is_some());
+        let command = build_command("ljos_cli", "ljos");
+        let removed: Vec<_> = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .filter_map(|(key, _)| key.to_str())
+            .collect();
+        assert!(removed.contains(&"CARGO_MANIFEST_DIR"), "{removed:?}");
+        assert!(removed.contains(&"CARGO_PKG_NAME"), "{removed:?}");
+        assert!(
+            !removed
+                .iter()
+                .any(|key| *key == "CARGO_HOME" || *key == "CARGO_TARGET_DIR")
+        );
+        let args: Vec<_> = command.get_args().filter_map(|a| a.to_str()).collect();
+        assert_eq!(
+            args,
+            ["build", "--quiet", "-p", "ljos_cli", "--bin", "ljos"]
+        );
+    }
 
     #[test]
     fn banner_paths_names_and_times_are_taken_out() {

@@ -54,7 +54,10 @@ if [ -n "$desktop" ]; then
   export LJOS_CUA_HOME="$target/cua-features"
   mkdir -p "$target/features"
   if why=$(scripts/cua-sandbox.sh env 2>&1 > "$target/features/desktop.env"); then
-    cargo build --quiet -p ljos_cli
+    # Built once here, outside the test, which then runs this one: a build
+    # from inside it would be told the test's package (see testrun.rs).
+    cargo build --quiet -p ljos_cli --bin ljos
+    export LJOS_BIN="$target/debug/ljos"
     export LJOS_BDD_DESKTOP="$target/features/desktop.env"
     trap 'scripts/cua-sandbox.sh stop' EXIT
   else
