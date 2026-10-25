@@ -2053,11 +2053,19 @@ impl<V: Clone + 'static> Graph<V> {
     /// [`Provenance::Animated`] after an animation write, or
     /// [`Provenance::Host`] after a host's.
     pub fn provenance(&self, n: NodeId) -> Option<Provenance> {
-        match &self.inner.borrow().nodes.get(n)?.kind {
-            Kind::Property(p) if p.animated && p.host => Some(Provenance::Host),
-            Kind::Property(p) if p.animated => Some(Provenance::Animated),
-            Kind::Property(p) => Some(p.top().provenance),
-            Kind::Effect(_) | Kind::Told { .. } => None,
+        provenance_in(&self.inner.borrow(), n)
+    }
+
+    /// [`Graph::provenance`] of each node of `nodes`, told to `f` with the
+    /// key beside it, in one look at the graph.
+    pub fn provenance_each<K>(
+        &self,
+        nodes: impl IntoIterator<Item = (K, NodeId)>,
+        mut f: impl FnMut(K, Option<Provenance>),
+    ) {
+        let inner = self.inner.borrow();
+        for (k, n) in nodes {
+            f(k, provenance_in(&inner, n));
         }
     }
 
@@ -2179,6 +2187,16 @@ impl<V: Clone + 'static> Graph<V> {
             .nodes
             .get(n)
             .map_or_else(Vec::new, |n| n.observers.iter().map(|e| e.node).collect())
+    }
+
+    /// Whether anything observes the node: [`Graph::observers`] without
+    /// gathering them.
+    pub fn has_observers(&self, n: NodeId) -> bool {
+        self.inner
+            .borrow()
+            .nodes
+            .get(n)
+            .is_some_and(|n| !n.observers.is_empty())
     }
 
     /// Whether the node is evaluated eagerly (effects, promoted bindings,
@@ -3564,6 +3582,15 @@ impl<V: Clone + 'static> Inner<V> {
         } else if let Some(p) = parent.and_then(|p| self.scopes.get_mut(p)) {
             p.last_child = prev;
         }
+    }
+}
+
+fn provenance_in<V>(inner: &Inner<V>, n: NodeId) -> Option<Provenance> {
+    match &inner.nodes.get(n)?.kind {
+        Kind::Property(p) if p.animated && p.host => Some(Provenance::Host),
+        Kind::Property(p) if p.animated => Some(Provenance::Animated),
+        Kind::Property(p) => Some(p.top().provenance),
+        Kind::Effect(_) | Kind::Told { .. } => None,
     }
 }
 

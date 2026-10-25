@@ -205,6 +205,23 @@ impl Engine {
         all
     }
 
+    /// Whether anything observes `prop`: [`Engine::observers_of`] is not
+    /// empty, without gathering them. Asked for each colour a palette
+    /// hands down.
+    pub fn is_observed(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let store = self.inner.store.borrow();
+        let Some(h) = store.objects.get(obj) else {
+            return false;
+        };
+        let g = &self.inner.graph;
+        h.node(prop).is_some_and(|n| g.has_observers(n))
+            || h.field_reads
+                .iter()
+                .flat_map(|r| r.readers(prop))
+                .any(|r| g.is_current(r))
+    }
+
     /// Takes the maker of `prop` away, if it has one.
     fn take_maker(&self, obj: ObjectId, prop: PropIndex) -> Option<Maker> {
         let mut store = self.inner.store.borrow_mut();

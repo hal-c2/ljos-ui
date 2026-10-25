@@ -561,6 +561,69 @@ fn author_colour(
     }
 }
 
+/// Each slot's property on an object of kind `kind`: role `i` of slot
+/// `s` is at `s * ROLE_COUNT + i`.
+fn slots_of(kind: Kind) -> &'static [PropIndex; SLOTS] {
+    static SLOTS_OF: [OnceLock<[PropIndex; SLOTS]>; 6] = [const { OnceLock::new() }; 6];
+    let at = match kind {
+        Kind::Control => 0,
+        Kind::Label => 1,
+        Kind::TextField => 2,
+        Kind::TextArea => 3,
+        Kind::Item => 4,
+        Kind::Window | Kind::ApplicationWindow => 5,
+    };
+    SLOTS_OF[at].get_or_init(|| {
+        std::array::from_fn(|at| match at / ROLE_COUNT {
+            0 => roles_of(kind)[at],
+            g => groups_of(kind)[g - 1][at % ROLE_COUNT],
+        })
+    })
+}
+
+/// The slots of `wanted` on `obj` an author gave a colour, bit `at` for
+/// slot `at`: the groups' only where `groups` says it has groups of its
+/// own. Asked once of each object a palette looks in, not once for each
+/// colour.
+fn authored(engine: &Engine, obj: ObjectId, kind: Kind, groups: bool, wanted: u128) -> u128 {
+    let slots = slots_of(kind);
+    engine.authored(
+        obj,
+        if groups { slots } else { &slots[..ROLE_COUNT] },
+        wanted,
+    )
+}
+
+/// Every slot.
+const ALL_SLOTS: u128 = (1 << SLOTS) - 1;
+
+/// The slots of `open`, and the role of each: what [`given_colour`]
+/// looks at for them.
+fn with_roles(open: u128) -> u128 {
+    let role = (1u128 << ROLE_COUNT) - 1;
+    (0..4).fold(open, |w, s| w | open >> (s * ROLE_COUNT) & role)
+}
+
+/// [`author_colour`], with what [`authored`] said of `obj`.
+fn given_colour(
+    engine: &Engine,
+    obj: ObjectId,
+    kind: Kind,
+    given: u128,
+    groups: bool,
+    g: usize,
+    i: usize,
+) -> Option<Color> {
+    let p = if groups && given >> ((g + 1) * ROLE_COUNT + i) & 1 != 0 {
+        groups_of(kind)[g][i]
+    } else if given >> i & 1 != 0 {
+        roles_of(kind)[i]
+    } else {
+        return None;
+    };
+    color_of(&engine.read(obj, p))
+}
+
 fn state_of(engine: &Engine, obj: ObjectId, kind: Kind) -> Option<Rc<InheritState>> {
     match kind {
         Kind::Control => engine.with::<Control, _>(obj, |c| c.inherit.clone()),
@@ -954,14 +1017,19 @@ fn resolve_palette(
     };
     let mine_groups = has_groups(engine, obj);
     let mut found: [Option<Color>; SLOTS] = [None; SLOTS];
-    let mut mine = [false; SLOTS];
-    for (at, m) in mine.iter_mut().enumerate() {
-        *m = (at < ROLE_COUNT || mine_groups) && author_set(engine, obj, prop(at));
-    }
+    let given = authored(engine, obj, kind, mine_groups, ALL_SLOTS);
+    let mine: [bool; SLOTS] = std::array::from_fn(|at| given >> at & 1 != 0);
     let mut open = SLOTS - mine.iter().filter(|m| **m).count();
     // What `p` gives the slots still open.
     let mut look_in = |p: ObjectId, k: Kind, open: &mut usize| {
         let groups = has_groups(engine, p);
+        let open_slots = (0..SLOTS)
+            .filter(|at| !mine[*at] && found[*at].is_none())
+            .fold(0u128, |w, at| w | 1 << at);
+        let given = authored(engine, p, k, groups, with_roles(open_slots));
+        if given == 0 {
+            return;
+        }
         for i in 0..ROLE_COUNT {
             let wanting = |at: &usize| !mine[*at] && found[*at].is_none();
             if !(0..4).map(|s| s * ROLE_COUNT + i).any(|at| wanting(&at)) {
@@ -969,14 +1037,14 @@ fn resolve_palette(
             }
             // Without groups, one colour for every slot of the role.
             let all = (!groups)
-                .then(|| author_colour(engine, p, k, false, ACTIVE, i))
+                .then(|| given_colour(engine, p, k, given, false, ACTIVE, i))
                 .flatten();
             for at in (0..4).map(|s| s * ROLE_COUNT + i) {
                 if mine[at] || found[at].is_some() {
                     continue;
                 }
                 found[at] = if groups {
-                    author_colour(engine, p, k, true, group(at), i)
+                    given_colour(engine, p, k, given, true, group(at), i)
                 } else {
                     all
                 };
@@ -1330,15 +1398,14 @@ fn take_from_above(engine: &Engine, item: ObjectId, roles: u32) {
     };
     let mut inherited: [Option<Color>; SLOTS] = [None; SLOTS];
     // A group's colour the item gave on its palette is its own too.
-    let groups = has_groups(engine, item);
+    // The slots of the roles looked for.
+    let looked = (0..4).fold(0u128, |w, s| w | u128::from(roles) << (s * ROLE_COUNT));
+    let given = authored(engine, item, Kind::Item, has_groups(engine, item), looked);
     // A role not looked for is as good as the item's own.
-    let mine: Vec<bool> = (0..SLOTS)
-        .map(|at| {
-            roles & 1 << (at % ROLE_COUNT) == 0
-                || (at < ROLE_COUNT || groups) && author_set(engine, item, prop(at))
-                || author_set(engine, item, own_roles[at % ROLE_COUNT])
-        })
-        .collect();
+    let mine: [bool; SLOTS] = std::array::from_fn(|at| {
+        let i = at % ROLE_COUNT;
+        roles & 1 << i == 0 || given >> at & 1 != 0 || given >> i & 1 != 0
+    });
     let mut open = mine.iter().filter(|m| !**m).count();
     let mut cur = above(engine, item);
     for _ in 0..4096 {
@@ -1350,16 +1417,18 @@ fn take_from_above(engine: &Engine, item: ObjectId, roles: u32) {
         }
         if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k)) {
             let groups = has_groups(engine, p);
-            for at in 0..SLOTS {
+            let open_slots = (0..SLOTS)
+                .filter(|at| !mine[*at] && inherited[*at].is_none())
+                .fold(0u128, |w, at| w | 1 << at);
+            let given = authored(engine, p, k, groups, with_roles(open_slots));
+            for at in (0..SLOTS).filter(|_| given != 0) {
                 if mine[at] || inherited[at].is_some() {
                     continue;
                 }
                 let i = at % ROLE_COUNT;
                 let c = match at / ROLE_COUNT {
-                    0 => author_set(engine, p, roles_of(k)[i])
-                        .then(|| color_of(&engine.read(p, roles_of(k)[i])))
-                        .flatten(),
-                    g => author_colour(engine, p, k, groups, g - 1, i),
+                    0 => given_colour(engine, p, k, given, false, ACTIVE, i),
+                    g => given_colour(engine, p, k, given, groups, g - 1, i),
                 };
                 if c.is_some() {
                     inherited[at] = c;
@@ -1385,7 +1454,7 @@ fn take_from_above(engine: &Engine, item: ObjectId, roles: u32) {
             role.active
         };
         let c = Value::Color(inherited[at].unwrap_or(fallback));
-        let done = if engine.observers_of(item, p).is_empty() {
+        let done = if !engine.is_observed(item, p) {
             engine.make_on_read(item, p, move |_| c)
         } else {
             plain.handing.set(true);

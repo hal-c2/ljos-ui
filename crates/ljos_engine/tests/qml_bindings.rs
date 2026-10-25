@@ -624,3 +624,33 @@ Item {
     assert_eq!(e.quick_script_reads() - before, 1);
     assert_eq!(h.num(root, "seen"), 34.0);
 }
+
+#[test]
+fn which_properties_an_author_gave_is_told_in_one_answer() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property int given: 1
+  property int bound: given + 1
+  property int unset
+  property alias kidWidth: kid.width
+  property alias kidHeight: kid.height
+  property int later
+  Item { id: kid; width: 10 }
+}
+"#,
+    );
+    h.set(root, "later", Value::Int(2));
+    let e = &h.engine;
+    let props: Vec<_> = ["given", "bound", "unset", "kidWidth", "kidHeight", "later"]
+        .iter()
+        .map(|n| e.property_index(root, n).unwrap())
+        .collect();
+    // An alias answers for its target; a bit not asked for, or past the
+    // end of the properties, is not set.
+    assert_eq!(e.authored(root, &props, u128::MAX), 0b101011);
+    assert_eq!(e.authored(root, &props, 0b000110), 0b000010);
+    assert_eq!(e.authored(root, &props[..1], 0b11), 0b1);
+}

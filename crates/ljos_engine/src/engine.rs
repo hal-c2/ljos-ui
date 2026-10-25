@@ -2698,6 +2698,47 @@ impl Engine {
         }
     }
 
+    /// The bits of `wanted` whose property in `props` an author gave a
+    /// value: assigned or bound. Bit `i` stands for `props[i]`; a bit past
+    /// the end of `props` is never set. One look at the object for all of
+    /// them: a palette asks this of up to 84 colours, on the object and on
+    /// every ancestor, each time it resolves.
+    pub fn authored(&self, obj: ObjectId, props: &[PropIndex], wanted: u128) -> u128 {
+        let given =
+            |p: Option<Provenance>| matches!(p, Some(Provenance::Assigned | Provenance::Bound));
+        let mut bits = 0u128;
+        let mut aliases: SmallVec<[usize; 4]> = SmallVec::new();
+        let mut nodes: SmallVec<[(usize, NodeId); 32]> = SmallVec::new();
+        {
+            let store = self.inner.store.borrow();
+            let Some(h) = store.objects.get(obj) else {
+                return 0;
+            };
+            let mut left = wanted;
+            while left != 0 {
+                let i = left.trailing_zeros() as usize;
+                left &= left - 1;
+                let Some(&prop) = props.get(i) else {
+                    break;
+                };
+                if h.meta.property(prop).is_none_or(|p| p.is_alias()) {
+                    aliases.push(i);
+                } else if let Some(n) = h.node(prop) {
+                    nodes.push((i, n));
+                } else if h.is_assigned(prop) {
+                    bits |= 1 << i;
+                }
+            }
+        }
+        self.inner.graph.provenance_each(nodes, |i, p| {
+            bits |= u128::from(given(p)) << i;
+        });
+        for i in aliases {
+            bits |= u128::from(given(self.provenance(obj, props[i]))) << i;
+        }
+        bits
+    }
+
     /// [`Engine::provenance`] as a tracked read: the binding or effect
     /// that asks runs again when the property is given its first value,
     /// also when that value is the one it had by default. For a default
