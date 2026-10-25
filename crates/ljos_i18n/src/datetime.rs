@@ -15,6 +15,7 @@ use icu_datetime::input::{Date, DateTime, Time};
 
 use crate::calendar::NameWidth;
 use crate::locale::LocaleInfo;
+use crate::tz::TimeZone;
 
 /// Which half of a date and time a format string is read for: a date
 /// writes only the letters of a date, a time only those of a time, and the
@@ -95,11 +96,35 @@ impl Fields {
 
 /// What reading a text gave: the fields it named, the rest left at Qt's
 /// defaults (1 January 1900, midnight). `offset` is set only when the text
-/// named a time zone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// named an offset (`+02:00`, `UTC`, the local zone's `CEST`), `zone` when
+/// it named a zone by its IANA name.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parsed {
     pub fields: Fields,
     pub offset: Option<i32>,
+    pub zone: Option<TimeZone>,
+}
+
+impl Parsed {
+    /// The offset the fields are at: the one the text named, else the one
+    /// its zone, or the local zone when it named none, has at them. A
+    /// skipped or repeated local time is at the offset before the change,
+    /// as Qt reads one. `None` when the text named nothing and the local
+    /// zone is not known.
+    #[must_use]
+    pub fn resolved_offset(&self) -> Option<i32> {
+        if self.offset.is_some() {
+            return self.offset;
+        }
+        let zone = self.zone.clone().or_else(TimeZone::local)?;
+        let local = Fields {
+            offset: 0,
+            ..self.fields
+        }
+        .unix_ms();
+        let utc = zone.resolve_local(local);
+        i32::try_from((local - utc) / 1000).ok()
+    }
 }
 
 impl LocaleInfo {
@@ -342,6 +367,7 @@ impl LocaleInfo {
         let mut weekday = None;
         let mut pm = None;
         let mut offset = None;
+        let mut zone = None;
         let mut rest = text;
         for token in &tokens {
             match token {
@@ -395,8 +421,11 @@ impl LocaleInfo {
                             rest = r;
                         }
                         ('t', _) => {
-                            let (o, r) = read_zone(rest)?;
-                            offset = Some(o);
+                            let (read, r) = read_zone(rest)?;
+                            match read {
+                                ZoneRead::Offset(o) => offset = Some(o),
+                                ZoneRead::Named(z) => zone = Some(*z),
+                            }
                             rest = r;
                         }
                         _ => {
@@ -450,7 +479,11 @@ impl LocaleInfo {
         if weekday.is_some_and(|w| u8::try_from(w).ok() != Some(f.weekday())) {
             return None;
         }
-        Some(Parsed { fields: f, offset })
+        Some(Parsed {
+            fields: f,
+            offset,
+            zone,
+        })
     }
 
     /// A name of one of `count` things (months, days) at the start of
@@ -532,17 +565,44 @@ fn zone(offset: i32, letters: usize) -> String {
     }
 }
 
-/// A zone at the start of `text`, as [`zone`] writes one.
-fn read_zone(text: &str) -> Option<(i32, &str)> {
+enum ZoneRead {
+    Offset(i32),
+    Named(Box<TimeZone>),
+}
+
+/// A zone at the start of `text`: an offset as [`zone`] writes one, a zone
+/// by its IANA name, or one of the local zone's abbreviations, which Qt
+/// reads as the offset it has.
+fn read_zone(text: &str) -> Option<(ZoneRead, &str)> {
     for name in ["Coordinated Universal Time", "UTC", "GMT", "Z"] {
         if let Some(rest) = strip_name(text, name) {
             if let Some((o, r)) = read_offset(rest) {
-                return Some((o, r));
+                return Some((ZoneRead::Offset(o), r));
             }
-            return Some((0, rest));
+            return Some((ZoneRead::Offset(0), rest));
         }
     }
-    read_offset(text)
+    if let Some((o, r)) = read_offset(text) {
+        return Some((ZoneRead::Offset(o), r));
+    }
+    // The longest name the database has: a name may be followed by text
+    // the format string has.
+    let run = text
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || b"/_+-".contains(b))
+        .count()
+        .min(64);
+    for end in (1..=run).rev() {
+        if let Some(zone) = TimeZone::named(&text[..end]) {
+            return Some((ZoneRead::Named(Box::new(zone)), &text[end..]));
+        }
+    }
+    let local = TimeZone::local()?;
+    local
+        .abbreviations()
+        .filter(|(name, _)| text.starts_with(name))
+        .max_by_key(|(name, _)| name.len())
+        .map(|(name, o)| (ZoneRead::Offset(o), &text[name.len()..]))
 }
 
 fn read_offset(text: &str) -> Option<(i32, &str)> {
@@ -764,6 +824,8 @@ pub fn from_cldr(pattern: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::tz::TimeZone;
+
     use super::*;
 
     fn day() -> Fields {
@@ -849,6 +911,32 @@ mod tests {
                 .millisecond,
             250
         );
+    }
+
+    #[test]
+    fn reads_a_zone_by_its_offset_or_its_name() {
+        let en = LocaleInfo::new("en_US");
+        let r = |t| en.parse_date_time("yyyy-MM-dd HH:mm t", t, Part::DateTime);
+        for (text, offset) in [
+            ("2026-07-01 12:00 Z", 0),
+            ("2026-07-01 12:00 UTC+05:30", 19_800),
+            ("2026-07-01 12:00 +0900", 32_400),
+        ] {
+            assert_eq!(r(text).unwrap().resolved_offset(), Some(offset), "{text}");
+        }
+        assert!(r("2026-07-01 12:00 GMT+2").is_none());
+        assert!(r("2026-07-01 12:00 Foo/Bar").is_none());
+        // Where the system has a zone database.
+        if let Some(read) = r("2026-03-08 02:30 America/New_York") {
+            assert_eq!(
+                read.zone.as_ref().map(TimeZone::id),
+                Some("America/New_York")
+            );
+            // Skipped: at the offset before the clocks went forward.
+            assert_eq!(read.resolved_offset(), Some(-5 * 3600));
+            let repeated = r("2026-11-01 01:30 America/New_York").unwrap();
+            assert_eq!(repeated.resolved_offset(), Some(-4 * 3600));
+        }
     }
 
     #[test]

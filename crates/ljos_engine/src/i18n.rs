@@ -520,16 +520,24 @@ impl Engine {
             ),
             (
                 "__ljos_parseDate",
-                // (locale, pattern, text, part): the fields read, the
-                // offset null when the text named no zone; null when the
-                // text does not fit.
+                // (locale, pattern, text, part, year, month, day): the
+                // fields read, a time's on the day given, and the offset
+                // they are at, null when neither the text nor the platform
+                // names a zone; null when the text does not fit.
                 host(|e, a| {
                     let info = e.locale_info(locale_arg(a.first()));
-                    let Some(p) =
-                        info.parse_date_time(string(a.get(1)), string(a.get(2)), part(a.get(3)))
+                    let part = part(a.get(3));
+                    let Some(mut p) =
+                        info.parse_date_time(string(a.get(1)), string(a.get(2)), part)
                     else {
                         return Ok(JsValue::Null);
                     };
+                    if part == Part::Time {
+                        p.fields.year = number(a.get(4)) as i32;
+                        p.fields.month = number(a.get(5)) as u32;
+                        p.fields.day = number(a.get(6)) as u32;
+                    }
+                    let offset = p.resolved_offset();
                     let f = p.fields;
                     let n = |v: f64| JsValue::Number(v);
                     Ok(JsValue::Array(vec![
@@ -540,7 +548,7 @@ impl Engine {
                         n(f64::from(f.minute)),
                         n(f64::from(f.second)),
                         n(f64::from(f.millisecond)),
-                        p.offset.map_or(JsValue::Null, |o| n(f64::from(o))),
+                        offset.map_or(JsValue::Null, |o| n(f64::from(o))),
                     ]))
                 }),
             ),
@@ -768,13 +776,11 @@ pub(crate) const PRELUDE: &str = r##"
     const name = nameOf(locale);
     const pattern = typeof format === "string" ? format
       : localeFormat(name, part, typeof format === "number" ? format : LONG);
-    const read = parseDate(name, pattern, String(text), part);
+    const today = new Date();
+    const read = parseDate(name, pattern, String(text), part,
+      today.getFullYear(), today.getMonth() + 1, today.getDate());
     if (read === null) return new Date(NaN);
-    let [year, month, day, hours, minutes, seconds, ms, offset] = read;
-    if (part === TIME) {
-      const today = new Date();
-      year = today.getFullYear(); month = today.getMonth() + 1; day = today.getDate();
-    }
+    const [year, month, day, hours, minutes, seconds, ms, offset] = read;
     // setFullYear, because the Date constructor reads 0 to 99 as 1900 to 1999.
     const out = new Date(0);
     if (offset === null) {
