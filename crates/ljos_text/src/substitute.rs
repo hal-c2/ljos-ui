@@ -72,12 +72,12 @@ mod imp {
             FcConfigSubstitute(ptr::null_mut(), pattern.0, FcMatchPattern);
             FcDefaultSubstitute(pattern.0);
             let mut result = FcResultMatch;
-            let found = Pattern(FcFontMatch(ptr::null_mut(), pattern.0, &mut result));
+            let found = Pattern(FcFontMatch(ptr::null_mut(), pattern.0, &raw mut result));
             if found.0.is_null() || result != FcResultMatch {
                 return None;
             }
             let mut value = ptr::null_mut();
-            if FcPatternGetString(found.0, FC_FAMILY.as_ptr(), 0, &mut value) != FcResultMatch
+            if FcPatternGetString(found.0, FC_FAMILY.as_ptr(), 0, &raw mut value) != FcResultMatch
                 || value.is_null()
             {
                 return None;

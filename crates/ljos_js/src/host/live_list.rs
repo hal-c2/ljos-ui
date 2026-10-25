@@ -40,8 +40,8 @@ pub(super) unsafe fn register(rt: *mut qjs::JSRuntime) -> Option<qjs::JSClassID>
     };
     // SAFETY: as the caller's; QuickJS copies the definition.
     unsafe {
-        qjs::JS_NewClassID(rt, &mut id);
-        (qjs::JS_NewClass(rt, id, &def) == 0).then_some(id)
+        qjs::JS_NewClassID(rt, &raw mut id);
+        (qjs::JS_NewClass(rt, id, &raw const def) == 0).then_some(id)
     }
 }
 
@@ -129,7 +129,7 @@ unsafe extern "C" fn finalize(_rt: *mut qjs::JSRuntime, val: qjs::JSValue) {
     // SAFETY: QuickJS finalises only objects of the class, whose opaque is
     // the box `live_list` made.
     unsafe {
-        let p = qjs::JS_GetAnyOpaque(val, &mut class).cast::<Target>();
+        let p = qjs::JS_GetAnyOpaque(val, &raw mut class).cast::<Target>();
         if !p.is_null() {
             drop(Box::from_raw(p));
         }
@@ -142,7 +142,7 @@ unsafe fn target(obj: qjs::JSValue) -> Option<(u64, u32)> {
     let mut class = 0;
     // SAFETY: as above.
     unsafe {
-        let p = qjs::JS_GetAnyOpaque(obj, &mut class).cast::<Target>();
+        let p = qjs::JS_GetAnyOpaque(obj, &raw mut class).cast::<Target>();
         (!p.is_null()).then(|| ((*p).obj, (*p).prop))
     }
 }
@@ -308,7 +308,7 @@ unsafe extern "C" fn set(
             let now = host.list_len(o, p);
             if length {
                 let mut n = 0.0;
-                if qjs::JS_ToFloat64(ctx, &mut n, value) < 0 {
+                if qjs::JS_ToFloat64(ctx, &raw mut n, value) < 0 {
                     return Err(rquickjs::Error::Exception);
                 }
                 // What `push` sets after the entry it put, and a longer

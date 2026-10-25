@@ -166,7 +166,7 @@ mod platform {
         // SAFETY: `tm` is plain data, for which all zeros is a value.
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
         // SAFETY: both pointers are to locals that outlive the call.
-        if unsafe { libc::localtime_r(&time, &mut tm) }.is_null() {
+        if unsafe { libc::localtime_r(&raw const time, &raw mut tm) }.is_null() {
             return LocalZone::default();
         }
         let abbreviation = (!tm.tm_zone.is_null())

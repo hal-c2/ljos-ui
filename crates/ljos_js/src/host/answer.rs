@@ -44,7 +44,7 @@ unsafe fn slot(
     let mut class = 0;
     // SAFETY: the opaque of the class is a live `HostWrapper`, or null.
     unsafe {
-        let w = qjs::JS_GetAnyOpaque(obj, &mut class).cast::<HostWrapper>();
+        let w = qjs::JS_GetAnyOpaque(obj, &raw mut class).cast::<HostWrapper>();
         if w.is_null() {
             return None;
         }
@@ -204,7 +204,7 @@ unsafe fn proto_set(
                 if qjs::JS_VALUE_GET_TAG(d.setter) != qjs::JS_TAG_OBJECT {
                     return refuse(ctx, flags, "no setter for property");
                 }
-                let out = qjs::JS_Call(ctx, d.setter, receiver, 1, &mut value);
+                let out = qjs::JS_Call(ctx, d.setter, receiver, 1, &raw mut value);
                 qjs::JS_FreeValue(ctx, d.setter);
                 if qjs::JS_IsException(out) {
                     return -1;

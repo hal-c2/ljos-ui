@@ -2178,9 +2178,9 @@ fn install_prop(proto: &Object<'_>, p: &PropDef) -> rquickjs::Result<rquickjs::q
     // copies the data, `JS_DefinePropertyGetSet` takes both functions, and
     // the atom is freed after it.
     unsafe {
-        let getter = qjs::JS_NewCFunctionData(ctx, Some(raw_get), 0, 0, 1, &mut id);
+        let getter = qjs::JS_NewCFunctionData(ctx, Some(raw_get), 0, 0, 1, &raw mut id);
         let setter = if p.writable {
-            qjs::JS_NewCFunctionData(ctx, Some(raw_set), 1, 0, 1, &mut id)
+            qjs::JS_NewCFunctionData(ctx, Some(raw_set), 1, 0, 1, &raw mut id)
         } else {
             qjs::JS_UNDEFINED
         };

@@ -306,8 +306,8 @@ pub(crate) unsafe fn register_wrapper_class(
     };
     // SAFETY: as the caller's; QuickJS copies the definition.
     unsafe {
-        qjs::JS_NewClassID(rt, &mut id);
-        (qjs::JS_NewClass(rt, id, &def) == 0).then_some(id)
+        qjs::JS_NewClassID(rt, &raw mut id);
+        (qjs::JS_NewClass(rt, id, &raw const def) == 0).then_some(id)
     }
 }
 
@@ -316,7 +316,7 @@ unsafe extern "C" fn finalize_wrapper(_rt: *mut qjs::JSRuntime, val: qjs::JSValu
     // SAFETY: QuickJS finalises only objects of the class, whose opaque is
     // the box `new_wrapper` made, or null.
     unsafe {
-        let p = qjs::JS_GetAnyOpaque(val, &mut class).cast::<HostWrapper>();
+        let p = qjs::JS_GetAnyOpaque(val, &raw mut class).cast::<HostWrapper>();
         if !p.is_null() {
             drop(Box::from_raw(p));
         }
