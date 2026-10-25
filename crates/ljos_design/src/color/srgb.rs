@@ -1,6 +1,5 @@
 //! Gamma-encoded sRGB colours: the form QML writes and the screen shows.
 
-use std::fmt;
 use std::str::FromStr;
 
 use super::names::NAMES;
@@ -23,17 +22,10 @@ pub struct Srgba {
 }
 
 /// A string that is none of `#rgb`, `#rrggbb`, `#aarrggbb` or a colour
-/// keyword. Hand-written so the colour maths stays dependency-free.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// keyword.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("`{0}` is not a QML colour")]
 pub struct ParseColorError(pub String);
-
-impl fmt::Display for ParseColorError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "`{}` is not a QML colour", self.0)
-    }
-}
-
-impl std::error::Error for ParseColorError {}
 
 impl Srgb {
     pub const BLACK: Srgb = Srgb::new(0.0, 0.0, 0.0);
