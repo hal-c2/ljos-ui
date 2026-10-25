@@ -37,6 +37,50 @@ pub struct Parsed {
     pub warnings: Vec<String>,
 }
 
+// DECISION: XML shares the platform fetcher's 16 MiB document ceiling.
+// The remaining ceilings bound worker work and the result delivered to Engine.
+pub const DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+struct Limits {
+    depth: usize,
+    rows: usize,
+    cells: usize,
+    value: usize,
+    text: usize,
+    events: usize,
+}
+
+// DECISION: 128 levels, 10,000 rows, 100,000 cells, 1 MiB per value,
+// 8 MiB cumulative copied text (including replaced values), 1,000,000 events.
+// Counting replaced text also bounds repeated-element and overlapping-role work.
+const LIMITS: Limits = Limits {
+    depth: 128,
+    rows: 10_000,
+    cells: 100_000,
+    value: 1024 * 1024,
+    text: 8 * 1024 * 1024,
+    events: 1_000_000,
+};
+
+struct Budget {
+    limits: Limits,
+    copied: usize,
+}
+
+impl Budget {
+    fn copy(&mut self, current: usize, added: usize) -> Result<(), String> {
+        if added > self.limits.value.saturating_sub(current) {
+            return Err("XML value byte limit exceeded".into());
+        }
+        if added > self.limits.text.saturating_sub(self.copied) {
+            return Err("XML cumulative text limit exceeded".into());
+        }
+        self.copied += added;
+        Ok(())
+    }
+}
+
 /// The path a query names: `/rss/channel/item` is the three names.
 /// `None` when the query does not start with `/`, the one form Qt
 /// refuses (with a warning) instead of matching nothing.
@@ -61,9 +105,24 @@ struct Row {
     gathering: Vec<Option<String>>,
 }
 
-/// Reads `bytes` as the document the model shows. Never fails: what
-/// could be read is in `rows`, what went wrong is in `warnings`.
-pub fn parse(bytes: &[u8], query: &[String], roles: &[RoleSpec]) -> Parsed {
+/// Reads rows with bounded work and storage. Syntax errors keep partial
+/// rows and warnings; resource-limit errors reject the whole result.
+pub fn parse(bytes: &[u8], query: &[String], roles: &[RoleSpec]) -> Result<Parsed, String> {
+    parse_with_limits(bytes, query, roles, LIMITS)
+}
+
+fn parse_with_limits(
+    bytes: &[u8],
+    query: &[String],
+    roles: &[RoleSpec],
+    limits: Limits,
+) -> Result<Parsed, String> {
+    if bytes.len() > DOCUMENT_BYTES {
+        return Err("XML document byte limit exceeded".into());
+    }
+    let mut budget = Budget { limits, copied: 0 };
+    let mut events = 0usize;
+    let mut rows_started = 0usize;
     let mut reader = Reader::from_reader(bytes);
     reader.config_mut().check_end_names = true;
     // The full path each role gathers at: the row's path, then its own.
@@ -84,7 +143,28 @@ pub fn parse(bytes: &[u8], query: &[String], roles: &[RoleSpec]) -> Parsed {
     let mut broken: Option<String> = None;
 
     loop {
-        match reader.read_event() {
+        events += 1;
+        if events > limits.events {
+            return Err("XML event limit exceeded".into());
+        }
+        let event = reader.read_event();
+        if matches!(event, Ok(Event::Start(_) | Event::Empty(_))) {
+            if stack.len() >= limits.depth {
+                return Err("XML nesting depth limit exceeded".into());
+            }
+            // Reserve the maximum possible cells before allocating a row.
+            if stack.len() + 1 == query.len()
+                && matches!(&event, Ok(Event::Start(e) | Event::Empty(e)) if stack == query[..stack.len()] && local(e.name().as_ref()) == query[stack.len()])
+            {
+                rows_started += 1;
+                if rows_started > limits.rows
+                    || rows_started.saturating_mul(roles.len()) > limits.cells
+                {
+                    return Err("XML row or cell limit exceeded".into());
+                }
+            }
+        }
+        match event {
             Ok(Event::Start(e)) => {
                 saw_root = true;
                 stack.push(local(e.name().as_ref()));
@@ -97,7 +177,8 @@ pub fn parse(bytes: &[u8], query: &[String], roles: &[RoleSpec]) -> Parsed {
                     &mut row,
                     &mut warned,
                     &mut out.warnings,
-                );
+                    &mut budget,
+                )?;
             }
             Ok(Event::Empty(e)) => {
                 saw_root = true;
@@ -111,7 +192,8 @@ pub fn parse(bytes: &[u8], query: &[String], roles: &[RoleSpec]) -> Parsed {
                     &mut row,
                     &mut warned,
                     &mut out.warnings,
-                );
+                    &mut budget,
+                )?;
                 end_element(&stack, query, &targets, &mut row, &mut out.rows);
                 stack.pop();
             }
@@ -119,14 +201,18 @@ pub fn parse(bytes: &[u8], query: &[String], roles: &[RoleSpec]) -> Parsed {
                 end_element(&stack, query, &targets, &mut row, &mut out.rows);
                 stack.pop();
             }
-            Ok(Event::Text(t)) => gather(&mut row, &stack, &targets, &t.xml10_content()),
-            Ok(Event::CData(t)) => gather(&mut row, &stack, &targets, &t.xml10_content()),
+            Ok(Event::Text(t)) => {
+                gather(&mut row, &stack, &targets, &t.xml10_content(), &mut budget)?
+            }
+            Ok(Event::CData(t)) => {
+                gather(&mut row, &stack, &targets, &t.xml10_content(), &mut budget)?
+            }
             Ok(Event::GeneralRef(r)) => {
                 let text = r.resolve_char_ref().ok().flatten().map(|c| c.to_string());
                 let text = text
                     .or_else(|| resolve_predefined_entity(&r.xml10_content()).map(str::to_owned));
                 match text {
-                    Some(text) => gather(&mut row, &stack, &targets, &text),
+                    Some(text) => gather(&mut row, &stack, &targets, &text, &mut budget)?,
                     None => {
                         broken = Some(format!("Unknown entity &{};.", r.xml10_content()));
                         break;
@@ -153,7 +239,7 @@ pub fn parse(bytes: &[u8], query: &[String], roles: &[RoleSpec]) -> Parsed {
     if let Some(message) = broken {
         out.warnings.push(format!("Query error: \"{message}\""));
     }
-    out
+    Ok(out)
 }
 
 fn local(qname: &str) -> String {
@@ -173,7 +259,8 @@ fn start_element(
     row: &mut Option<Row>,
     warned: &mut [bool],
     warnings: &mut Vec<String>,
-) {
+    budget: &mut Budget,
+) -> Result<(), String> {
     if stack == query {
         *row = Some(Row {
             values: vec![String::new(); roles.len()],
@@ -181,7 +268,7 @@ fn start_element(
         });
     }
     let Some(current) = row.as_mut() else {
-        return;
+        return Ok(());
     };
     for (i, (role, target)) in roles.iter().zip(targets).enumerate() {
         if stack != target.as_slice() {
@@ -192,7 +279,10 @@ fn start_element(
             current.gathering[i] = Some(String::new());
         } else {
             match attribute(e, &role.attribute) {
-                Some(value) => current.values[i] = value,
+                Some(value) => {
+                    budget.copy(0, value.len())?;
+                    current.values[i] = value;
+                }
                 None => {
                     current.values[i] = String::new();
                     if !warned[i] {
@@ -206,6 +296,7 @@ fn start_element(
             }
         }
     }
+    Ok(())
 }
 
 fn end_element(
@@ -234,18 +325,26 @@ fn end_element(
 
 /// Text belongs to every role whose element is open around it: the
 /// value of an element is all the text inside it, descendants included.
-fn gather(row: &mut Option<Row>, stack: &[String], targets: &[Vec<String>], text: &str) {
+fn gather(
+    row: &mut Option<Row>,
+    stack: &[String],
+    targets: &[Vec<String>],
+    text: &str,
+    budget: &mut Budget,
+) -> Result<(), String> {
     let Some(current) = row.as_mut() else {
-        return;
+        return Ok(());
     };
     for (i, target) in targets.iter().enumerate() {
         if stack.len() >= target.len()
             && stack[..target.len()] == *target.as_slice()
             && let Some(buf) = current.gathering[i].as_mut()
         {
+            budget.copy(buf.len(), text.len())?;
             buf.push_str(text);
         }
     }
+    Ok(())
 }
 
 fn finish(mut row: Row) -> Vec<String> {
@@ -283,7 +382,74 @@ mod tests {
     }
 
     fn run(xml: &str, query: &str, roles: &[RoleSpec]) -> Parsed {
-        parse(xml.as_bytes(), &query_path(query).unwrap(), roles)
+        parse(xml.as_bytes(), &query_path(query).unwrap(), roles).unwrap()
+    }
+
+    #[test]
+    fn small_budgets_reject_each_resource_and_accept_normal_xml() {
+        let roles = [role("v", "", "")];
+        let query = query_path("/a/b").unwrap();
+        let check = |xml: &str, limits| parse_with_limits(xml.as_bytes(), &query, &roles, limits);
+        assert!(check("<a><b>ok</b></a>", LIMITS).is_ok());
+        assert!(check("<a><c/><c/><b/></a>", Limits { rows: 1, ..LIMITS }).is_ok());
+        for (xml, limits, error) in [
+            ("<a><b><c/></b></a>", Limits { depth: 2, ..LIMITS }, "depth"),
+            ("<a><b/><b/></a>", Limits { rows: 1, ..LIMITS }, "row"),
+            ("<a><b/><b/></a>", Limits { cells: 1, ..LIMITS }, "cell"),
+            (
+                "<a><b>12345</b></a>",
+                Limits { value: 4, ..LIMITS },
+                "value",
+            ),
+            (
+                "<a><b>123</b><b>123</b></a>",
+                Limits { text: 5, ..LIMITS },
+                "cumulative",
+            ),
+            (
+                "<a><b/></a>",
+                Limits {
+                    events: 2,
+                    ..LIMITS
+                },
+                "event",
+            ),
+        ] {
+            assert!(check(xml, limits).unwrap_err().contains(error));
+        }
+        let attributes = [role("v", "", "x")];
+        assert!(
+            parse_with_limits(
+                b"<a><b x='12345'/></a>",
+                &query,
+                &attributes,
+                Limits { value: 4, ..LIMITS }
+            )
+            .unwrap_err()
+            .contains("value")
+        );
+        let repeated = [role("v", "c", "")];
+        assert!(
+            parse_with_limits(
+                b"<a><b><c>123</c><c>123</c></b></a>",
+                &query,
+                &repeated,
+                Limits { text: 5, ..LIMITS }
+            )
+            .unwrap_err()
+            .contains("cumulative")
+        );
+    }
+
+    #[test]
+    fn unknown_entities_stop_without_expanding_custom_entities() {
+        let got = run(
+            "<!DOCTYPE a [<!ENTITY custom 'expanded'>]><a><b>&custom;</b><b>unread</b></a>",
+            "/a/b",
+            &[role("v", "", "")],
+        );
+        assert_eq!(got.rows, vec![vec![""]]);
+        assert!(got.warnings[0].contains("Unknown entity"));
     }
 
     #[test]

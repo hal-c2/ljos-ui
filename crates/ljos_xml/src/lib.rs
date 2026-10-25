@@ -62,6 +62,10 @@
 //! (Ready, no rows — what Qt does); a fetch that fails is `Error`
 //! with `errorString()` saying why. A document that breaks part-way
 //! keeps the rows already read, logs a query error and is `Ready`.
+//! DECISION: documents are limited to 16 MiB for files, fetches and
+//! registered resources. Parsing runs on the loading worker, subject to
+//! the depth, row, cell, value, copied-text and event limits in `parse`.
+//! A resource limit sets Error with errorString(), keeping the old rows.
 //! Nothing polls: work happens only when a load is asked for and
 //! when its answer arrives.
 
@@ -276,12 +280,21 @@ fn current(e: &Engine, me: ObjectId, generation: u64) -> bool {
 
 /// What one load asks its thread for and what the answer carries.
 enum Outcome {
-    /// The document's bytes, read or fetched.
-    Bytes(Vec<u8>),
+    /// The bounded rows, parsed on the worker.
+    Parsed(Parsed),
     /// A local file Qt would call an empty document: not openable.
     Unopenable(String),
     /// A fetch that failed, with what `errorString()` should say.
     Failed(String),
+}
+
+/// Worker input owns everything needed off the Engine thread.
+enum Input {
+    Bytes(Vec<u8>),
+    Local {
+        real: Option<std::path::PathBuf>,
+        url: String,
+    },
 }
 
 /// Starts (or restarts) reading the model's document. The status
@@ -336,42 +349,83 @@ fn load(e: &Engine, me: ObjectId) {
         set_status(e, me, status::LOADING);
     });
 
-    if let Some(bytes) = platform.resource(&url) {
-        let bytes = bytes.to_vec();
+    let resource = platform.resource(&url);
+    if resource
+        .as_ref()
+        .is_some_and(|b| b.len() > parse::DOCUMENT_BYTES)
+    {
         platform
             .expect_for("XmlListModel source", Some(me))
             .send(move |e| {
-                loaded(e, me, generation, &path, &roles, Outcome::Bytes(bytes));
+                loaded(
+                    e,
+                    me,
+                    generation,
+                    &roles,
+                    Outcome::Failed("XML document byte limit exceeded".into()),
+                );
             });
         return;
     }
+    if let Some(bytes) = resource {
+        start_worker(e, me, generation, path, roles, Input::Bytes(bytes.to_vec()));
+        return;
+    }
     if remote {
-        platform.fetch_for(Some(me), &url, move |e, got| {
-            let outcome = match got {
-                Ok(bytes) => Outcome::Bytes(bytes),
-                Err(err) => Outcome::Failed(err.to_string()),
-            };
-            loaded(e, me, generation, &path, &roles, outcome);
+        platform.fetch_for(Some(me), &url, move |e, got| match got {
+            Ok(bytes) => start_worker(e, me, generation, path, roles, Input::Bytes(bytes)),
+            Err(err) => loaded(e, me, generation, &roles, Outcome::Failed(err.to_string())),
         });
         return;
     }
-    // A local file, read off the Engine thread like a fetch, so a
-    // load never blocks it and `Loading` is what a reader sees first.
-    let reply = platform.expect_for(format!("read {url}"), Some(me));
+    // A local file, read and parsed off the Engine thread like a fetch,
+    // so a load never blocks it and `Loading` is what a reader sees first.
     let real = url_path(&url).and_then(|p| platform.env().real(&p).ok());
+    start_worker(e, me, generation, path, roles, Input::Local { real, url });
+}
+
+/// Reads and parses one source on a worker, then answers on Engine.
+fn start_worker(
+    e: &Engine,
+    me: ObjectId,
+    generation: u64,
+    path: Vec<String>,
+    roles: Vec<RoleSpec>,
+    input: Input,
+) {
+    let platform = Platform::of(e);
+    let what = match &input {
+        Input::Bytes(_) => "XmlListModel source".to_owned(),
+        Input::Local { url, .. } => format!("read {url}"),
+    };
+    let reply = platform.expect_for(what, Some(me));
     let spawned = std::thread::Builder::new()
         .name("ljos-xml".to_owned())
         .spawn(move || {
-            let outcome = match real {
-                Some(p) => match std::fs::read(&p) {
-                    Ok(bytes) => Outcome::Bytes(bytes),
-                    Err(err) => {
-                        Outcome::Unopenable(format!("Failed to open file {}: {err}", p.display()))
+            let bytes = match input {
+                Input::Bytes(bytes) => Ok(bytes),
+                Input::Local { real, url } => {
+                    if let Some(p) = real {
+                        match std::fs::File::open(&p) {
+                            Ok(file) => read_document(file).map_err(Outcome::Failed),
+                            Err(err) => Err(Outcome::Unopenable(format!(
+                                "Failed to open file {}: {err}",
+                                p.display()
+                            ))),
+                        }
+                    } else {
+                        Err(Outcome::Unopenable(format!("Failed to open file {url}")))
                     }
-                },
-                None => Outcome::Unopenable(format!("Failed to open file {url}")),
+                }
             };
-            reply.send(move |e| loaded(e, me, generation, &path, &roles, outcome));
+            let outcome = match bytes {
+                Ok(bytes) => match parse::parse(&bytes, &path, &roles) {
+                    Ok(parsed) => Outcome::Parsed(parsed),
+                    Err(err) => Outcome::Failed(err),
+                },
+                Err(outcome) => outcome,
+            };
+            reply.send(move |e| loaded(e, me, generation, &roles, outcome));
         });
     if let Err(err) = spawned {
         e.log(
@@ -430,20 +484,12 @@ fn role_specs(e: &Engine, me: ObjectId) -> Vec<RoleSpec> {
 }
 
 /// An answer has arrived: rows, an empty document, or an error.
-fn loaded(
-    e: &Engine,
-    me: ObjectId,
-    generation: u64,
-    query: &[String],
-    roles: &[RoleSpec],
-    outcome: Outcome,
-) {
+fn loaded(e: &Engine, me: ObjectId, generation: u64, roles: &[RoleSpec], outcome: Outcome) {
     if !current(e, me, generation) {
         return;
     }
     match outcome {
-        Outcome::Bytes(bytes) => {
-            let parsed = parse::parse(&bytes, query, roles);
+        Outcome::Parsed(parsed) => {
             apply(e, me, roles, parsed, status::READY, 1.0);
         }
         Outcome::Unopenable(message) => {
@@ -493,4 +539,47 @@ fn apply(e: &Engine, me: ObjectId, roles: &[RoleSpec], parsed: Parsed, status: i
         set_status(e, me, status);
     });
     e.request_wake();
+}
+
+// Read one extra byte to distinguish a complete document from a truncated one.
+fn read_document(reader: impl std::io::Read) -> Result<Vec<u8>, String> {
+    read_document_with_limit(reader, parse::DOCUMENT_BYTES)
+}
+
+fn read_document_with_limit(reader: impl std::io::Read, limit: usize) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    reader
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|err| err.to_string())?;
+    if bytes.len() > limit {
+        return Err("XML document byte limit exceeded".into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn document_reader_rejects_overflow_without_truncating() {
+        let exact = std::io::repeat(b' ').take(8);
+        assert_eq!(read_document_with_limit(exact, 8).unwrap().len(), 8);
+        let oversized = std::io::repeat(b' ').take(9);
+        assert!(
+            read_document_with_limit(oversized, 8)
+                .unwrap_err()
+                .contains("document byte limit")
+        );
+        assert_eq!(read_document_with_limit(&b"<a/>"[..], 8).unwrap(), b"<a/>");
+        let oversized = vec![b' '; parse::DOCUMENT_BYTES + 1];
+        assert!(
+            parse::parse(&oversized, &[], &[])
+                .unwrap_err()
+                .contains("document byte limit")
+        );
+    }
 }
