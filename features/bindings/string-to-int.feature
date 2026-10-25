@@ -12,7 +12,6 @@ Feature: A string given to an int property
   is reported and leaves the property at 0; a script that assigns a string is thrown an error,
   unless the string is a whole number.
 
-  @backlog
   Scenario Outline: An int bound to the string <value> says it cannot take it
     Given the QML:
       """qml
@@ -31,7 +30,6 @@ Feature: A string given to an int property
       | "#000000" |
       | "a.png"   |
 
-  @backlog
   Scenario: A script that gives an int a string that is not a number is thrown an error
     Given the QML:
       """qml
@@ -63,7 +61,6 @@ Feature: A string given to an int property
     Then the property "n" of "root" is 7
 
   # Found by ljos-fuzz (bindings), bucket value:int:reduce.
-  @backlog
   Scenario Outline: A number with a half given to an int as a string is rounded up
     Given the QML:
       """qml
@@ -83,7 +80,6 @@ Feature: A string given to an int property
       | "2"   | 3 |
 
   # Found by ljos-fuzz (bindings), bucket value:step-readonly:text-int-range.
-  @backlog
   Scenario Outline: A script that gives an int the string <value>, which is out of its range, gives the least int
     Given the QML:
       """qml

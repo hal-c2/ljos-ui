@@ -91,10 +91,10 @@ fn object(e: &Engine, a: Option<&JsValue>) -> Option<ObjectId> {
 }
 
 /// What Qt makes of `v` as the initial value of a property of type `ty`,
-/// or `None` when it takes nothing. It converts less than an assignment in
-/// a script does: a text that is no number is not 0. `createObject`
-/// converts as a value from outside QML is: a text "0" is no bool, a
-/// number is rounded to an int, and what is no colour an invalid one
+/// or `None` when it takes nothing. `createObject` converts as a value
+/// from outside QML is: a text "0" is no bool, a number is rounded to an
+/// int, and what is no colour an invalid one. `incubateObject` converts as
+/// a script does, but a text that is no number is not 0 for an int. A list of numbers is the text of those character codes
 /// (Qt 6.11.2, by running qml6).
 fn initial_value(ty: &TypeTag, v: &Value, created: bool) -> Option<Value> {
     let number = |s: &Atom| s.trim().parse::<f64>().ok().filter(|n| n.is_finite());
@@ -113,19 +113,45 @@ fn initial_value(ty: &TypeTag, v: &Value, created: bool) -> Option<Value> {
         (TypeTag::Int, Value::Real(n)) if created => Some(*n)
             .filter(|n| !n.is_nan())
             .map(|n| Value::Real(n.round())),
+        (
+            TypeTag::Real,
+            Value::Null | Value::String(_) | Value::List(_) | Value::Map(_) | Value::Js(_),
+        ) if !created => Some(Value::Real(v.to_number())),
         (TypeTag::Int | TypeTag::Real, Value::String(s)) => number(s).map(|_| v.clone()),
         (TypeTag::Int | TypeTag::Real, v) => matches!(
             v,
             Value::Bool(_) | Value::Int(_) | Value::Real(_) | Value::Enum(_)
         )
         .then(|| v.clone()),
+        (TypeTag::String, Value::List(items)) => Some(Value::String(char_codes(items).into())),
         (TypeTag::Color, Value::List(_)) if created => None,
         (TypeTag::Color, Value::String(_) | Value::Color(_)) => plain(),
-        (TypeTag::Color, _) if created => Some(Value::Color(Color::INVALID)),
+        (TypeTag::Color, _) => Some(Value::Color(Color::INVALID)),
         (TypeTag::Url, v) => matches!(v, Value::String(_) | Value::Url(_)).then(|| v.clone()),
         (TypeTag::Object(_), v) => matches!(v, Value::Object(_) | Value::Null).then(|| v.clone()),
         _ => plain(),
     }
+}
+
+/// A list as Qt makes it a text: a character for each item, a text's first
+/// and the code a number gives.
+fn char_codes(items: &[Value]) -> String {
+    let units: Vec<u16> = items
+        .iter()
+        .map(|item| match item {
+            Value::String(s) => s.encode_utf16().next().unwrap_or(0),
+            // ToUint16: what is no number is 0, the rest is cut to its whole part and wraps.
+            item => {
+                let n = item.to_number();
+                if n.is_finite() {
+                    n.trunc().rem_euclid(65536.0) as u16
+                } else {
+                    0
+                }
+            }
+        })
+        .collect();
+    String::from_utf16_lossy(&units)
 }
 
 /// Puts back who was calling before.

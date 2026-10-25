@@ -10,7 +10,7 @@
 //! |---|---|---|
 //! | `var` | anything | |
 //! | `bool` | anything but `undefined` | `ToBoolean` |
-//! | `int` | numbers, bools, strings, `null` | `ToNumber` then `ToInt32` (truncates, wraps; NaN is 0) |
+//! | `int` | numbers, bools, decimal strings, `null` | `ToNumber` then `ToInt32` (truncates, wraps; NaN is 0); a string is rounded, half away from 0, and is the least int past the range |
 //! | `real` | numbers, bools, strings, `null` | `ToNumber` (`"abc"` is NaN) |
 //! | `string` | anything but `undefined` | `ToString`; `null` is `""` |
 //! | `color` | colours, colour strings | `#rgb`, `#argb`, `#rrggbb`, `#aarrggbb`, CSS keywords |
@@ -199,6 +199,10 @@ impl TypeTag {
             },
             TypeTag::Int => match v {
                 Value::Int(_) => v.clone(),
+                Value::String(s) => match string_to_int(s) {
+                    Some(n) => Value::Int(n),
+                    None => return fail(),
+                },
                 _ => match numeric(v) {
                     Some(n) => Value::Int(to_int32(n)),
                     None => return fail(),
@@ -446,6 +450,23 @@ impl std::fmt::Display for ConvertError {
 impl std::error::Error for ConvertError {}
 
 /// What a value is, for a data error: in a script's words, not Qt's.
+/// What an `int` makes of a text, as Qt does: a decimal number, rounded
+/// half away from 0, and past the range of an int the least one, as a
+/// double cast to one is. A text that is no such number is none.
+fn string_to_int(s: &str) -> Option<i32> {
+    let n = s
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|n| n.is_finite())?
+        .round();
+    Some(if n < f64::from(i32::MIN) || n > f64::from(i32::MAX) {
+        i32::MIN
+    } else {
+        n as i32
+    })
+}
+
 fn describe_data(v: &Value) -> String {
     match v {
         Value::Undefined => "undefined".into(),
