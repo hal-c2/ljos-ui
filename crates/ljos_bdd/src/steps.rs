@@ -290,6 +290,16 @@ fn tier1_check_is(w: &mut LjosWorld, on: String) -> StepResult {
     w.each(|b| b.tier1_check(on == "on"))
 }
 
+// The time limits on JavaScript then do not depend on the machine: a poll
+// of the interrupt is ten milliseconds, and native work takes what it is said
+// to take.
+#[given(
+    regex = r"^JavaScript is timed by a clock on which native work a script asks for takes (\d+) seconds$"
+)]
+fn js_clock(w: &mut LjosWorld, secs: u64) -> StepResult {
+    w.each(|b| b.js_clock(std::time::Duration::from_secs(secs)))
+}
+
 #[given(
     regex = r#"^the application uses the key bindings of "(Linux|GNOME|KDE Plasma|Windows|macOS)"$"#
 )]

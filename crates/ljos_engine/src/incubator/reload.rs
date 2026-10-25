@@ -827,8 +827,22 @@ impl Engine {
     }
 
     /// `createObject` and `incubateObject` of `component`: a reload makes
-    /// what it makes under an object of the tree again.
+    /// what it makes under an object of the tree again. Its time is not the
+    /// script's ([`Engine::native_for_script`]).
     pub(crate) fn create_for_script(
+        &self,
+        component: ObjectId,
+        template: Rc<Template>,
+        parent: Option<ObjectId>,
+        props: Vec<(String, Value)>,
+        how: Initial,
+    ) -> Result<ObjectId, EngineError> {
+        self.native_for_script(|| {
+            self.create_for_script_now(component, template, parent, props, how)
+        })
+    }
+
+    fn create_for_script_now(
         &self,
         component: ObjectId,
         template: Rc<Template>,

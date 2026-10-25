@@ -11,7 +11,13 @@
 //! user could see anything. Time is virtual: "1 second passes" fires each
 //! timer at its own deadline without sleeping.
 
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 
 use ljos_a11y::{NodeKey, role_word};
 use ljos_compiler::{Project, compile_file, failure_reason};
@@ -215,6 +221,9 @@ pub struct LjosBackend {
     wall_clock: Option<f64>,
     /// The tier 1 cross-check the scenario asked for, when it asked.
     tier1_check: Option<bool>,
+    /// What native work takes on the clock of JavaScript's time limits,
+    /// when the scenario gave them one.
+    js_native: Option<Duration>,
     /// The platform whose key bindings the scenario asked for.
     key_bindings: Option<ljos_quick::keys::Platform>,
     /// The thread's text engine reads the machine's fonts for this scenario.
@@ -1134,6 +1143,9 @@ impl Backend for LjosBackend {
             if let Some(on) = self.tier1_check {
                 live.engine.set_tier1_check(on);
             }
+            if let Some(native) = self.js_native {
+                set_js_clock(&live.engine, native)?;
+            }
             // A scenario is not told which desktop ran it: with none asked
             // for, the build's platform, and on Linux no desktop's own keys.
             let platform = self.key_bindings.unwrap_or_else(|| {
@@ -1465,6 +1477,14 @@ impl Backend for LjosBackend {
         self.tier1_check = Some(on);
         if let Some(live) = &self.live {
             live.engine.set_tier1_check(on);
+        }
+        Ok(())
+    }
+
+    fn js_clock(&mut self, native: Duration) -> Result<()> {
+        self.js_native = Some(native);
+        if let Some(live) = &self.live {
+            set_js_clock(&live.engine, native)?;
         }
         Ok(())
     }
@@ -2004,6 +2024,23 @@ fn application_font(attrs: &[(String, String)]) -> Result<ljos_engine::Font> {
         }
     }
     Ok(font)
+}
+
+/// The clock of `Given JavaScript is timed by a clock ...`: a poll of the
+/// interrupt moves it ten milliseconds, native work by `native`.
+fn set_js_clock(engine: &Engine, native: Duration) -> Result<()> {
+    use ljos_engine::JsTiming;
+    let now = Rc::new(Cell::new(std::time::Instant::now()));
+    engine
+        .set_js_clock(Some(Rc::new(move |t| {
+            match t {
+                JsTiming::Poll => now.set(now.get() + Duration::from_millis(10)),
+                JsTiming::NativeEnd => now.set(now.get() + native),
+                _ => {}
+            }
+            now.get()
+        })))
+        .map_err(|e| failed(format!("the JS clock is not set: {e}")))
 }
 
 #[cfg(test)]

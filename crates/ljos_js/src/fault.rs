@@ -21,8 +21,15 @@ pub enum JsFault {
         /// the embedder words as an exception).
         thrown: Option<crate::JsValue>,
     },
-    #[error("JS `{label}` interrupted after {after:?}")]
-    JsInterrupted { label: String, after: Duration },
+    /// `what` says where the dispatch was, the nested run the interrupt
+    /// came in and the native work given back, as ` at Main.qml:7:5`,
+    /// `, in ...`; it is empty where nothing is known.
+    #[error("JS `{label}` interrupted after {after:?}{what}")]
+    JsInterrupted {
+        label: String,
+        after: Duration,
+        what: String,
+    },
     #[error("JS heap limit exceeded in `{label}`")]
     JsOutOfMemory { label: String },
     #[error("panic in `{label}`: {message}")]

@@ -49,10 +49,104 @@ struct FnEntry {
 
 /// What the interrupt handler reads. Separate from [`HostState`] so the
 /// handler stored in the runtime does not keep the whole state alive.
+///
+/// Each run has a deadline of its own: a run nested in a dispatch (the
+/// `Component.onCompleted` of an object a handler makes) gets a whole
+/// slice, and the time it took is given back to the runs it is in. Native
+/// work a script asks for ([`JsHost::native`]) is given back to all of
+/// them. Two limits are never given time back for nested runs: `cap`, on
+/// the dispatch's JavaScript as a whole, and `ceiling`, on its wall time.
 #[derive(Default)]
 struct InterruptState {
+    /// The earliest of the innermost run's deadline, `cap` and `ceiling`:
+    /// what the handler compares the clock with.
+    due: Cell<Option<Instant>>,
+    /// The innermost run's deadline.
     deadline: Cell<Option<Instant>>,
+    /// The deadlines of the runs it is nested in, outermost first.
+    outer: RefCell<Vec<Instant>>,
+    cap: Cell<Option<Instant>>,
+    ceiling: Cell<Option<Instant>>,
+    /// The time given back so far in this dispatch, for a run or native
+    /// call around others to give back only what they did not.
+    given: Cell<Duration>,
+    /// The native work in this dispatch, for the warning of an interrupt.
+    native: Cell<Duration>,
     fired: Cell<bool>,
+    /// The nested run an interrupt stopped, named for the dispatch's fault.
+    stopped_in: RefCell<Option<String>>,
+    clock: RefCell<Option<JsClock>>,
+}
+
+/// What the time is, for the limits on a run of JavaScript; a test sets
+/// one in place of the wall clock ([`JsHost::set_clock`]). It is told what
+/// the time is read for.
+pub type JsClock = Rc<dyn Fn(Timing) -> Instant>;
+
+/// What a [`JsClock`] is read for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Timing {
+    /// The interrupt handler, about every 10k opcodes.
+    Poll,
+    /// A run of JavaScript begins.
+    Enter,
+    /// A run of JavaScript ends.
+    Leave,
+    /// Native work a script asked for begins ([`JsHost::native`]).
+    NativeBegin,
+    /// That native work ends.
+    NativeEnd,
+}
+
+/// How many slices one dispatch's JavaScript may take with its nested runs.
+const CAP: u32 = 4;
+/// How many slices one dispatch may take on the wall clock, its native
+/// work included.
+const CEILING: u32 = 50;
+
+impl InterruptState {
+    fn now(&self, at: Timing) -> Instant {
+        match &*self.clock.borrow() {
+            Some(clock) => clock(at),
+            None => Instant::now(),
+        }
+    }
+
+    fn settle(&self) {
+        let due = [self.deadline.get(), self.cap.get(), self.ceiling.get()]
+            .into_iter()
+            .flatten()
+            .min();
+        self.due.set(due);
+    }
+
+    /// Arms a dispatch that began at `start`; `None` disarms.
+    fn arm(&self, start: Instant, slice: Option<Slice>) {
+        self.outer.borrow_mut().clear();
+        self.given.set(Duration::ZERO);
+        self.native.set(Duration::ZERO);
+        self.deadline.set(slice.map(|s| start + s.hard));
+        self.cap.set(slice.map(|s| start + s.hard * CAP));
+        self.ceiling.set(slice.map(|s| start + s.hard * CEILING));
+        self.settle();
+    }
+
+    /// Moves the deadlines on by what a run or a native call that took
+    /// `took`, from when `given` was `before`, has not given back already.
+    fn give_back(&self, took: Duration, before: Duration, native: bool) {
+        let extra = took.saturating_sub(self.given.get().saturating_sub(before));
+        self.given.set(before + took);
+        let on = |d: Option<Instant>| d.map(|d| d + extra);
+        self.deadline.set(on(self.deadline.get()));
+        for d in self.outer.borrow_mut().iter_mut() {
+            *d += extra;
+        }
+        if native {
+            self.native.set(self.native.get() + extra);
+            self.cap.set(on(self.cap.get()));
+        }
+        self.settle();
+    }
 }
 
 pub(crate) struct HostState {
@@ -1258,8 +1352,8 @@ impl JsHost {
             let st = interrupt.clone();
             // QuickJS calls this about every 10k opcodes (roughly 266 us), so
             // one clock read per call costs well under 0.5 %.
-            rt.set_interrupt_handler(Some(Box::new(move || match st.deadline.get() {
-                Some(d) if Instant::now() >= d => {
+            rt.set_interrupt_handler(Some(Box::new(move || match st.due.get() {
+                Some(d) if st.now(Timing::Poll) >= d => {
                     st.fired.set(true);
                     true
                 }
@@ -1373,11 +1467,13 @@ impl JsHost {
     /// `label`.
     ///
     /// Called from inside a run (a host callback that pulls a lazy binding
-    /// whose code is JS), it re-enters the context that is already locked
-    /// and keeps the outer deadline: the nested work is part of the outer
-    /// slice (ARCHITECTURE.md section 6.1). A failure inside the nested run
-    /// is classified and its exception drained, so the outer JS continues
-    /// unless the deadline has passed, in which case it is interrupted too.
+    /// whose code is JS, or a new object's `Component.onCompleted`), it
+    /// re-enters the context that is already locked with a slice of its
+    /// own, and the time it took is given back to the runs around it; the
+    /// dispatch as a whole is held to a few slices (ARCHITECTURE.md
+    /// section 6.1). A failure inside the nested run is classified and its
+    /// exception drained, so the outer JS continues, unless it was
+    /// interrupted: then the dispatch is too.
     pub fn enter<R>(
         &self,
         label: &str,
@@ -1398,15 +1494,16 @@ impl JsHost {
         f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
     ) -> Result<R, JsFault> {
         if self.state.entered.get() {
-            return self.enter_nested(label, f);
+            return self.enter_nested(label, what, slice, f);
         }
         self.state.entered.set(true);
         let guard = EnterGuard(&self.state.entered);
         self.state.drain_handles();
         self.interrupt.fired.set(false);
+        self.interrupt.stopped_in.take();
         self.state.stopped.set(false);
-        let start = Instant::now();
-        self.interrupt.deadline.set(Some(start + slice.hard));
+        let start = self.interrupt.now(Timing::Enter);
+        self.interrupt.arm(start, Some(slice));
 
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             self.ctx.with(|ctx| {
@@ -1420,19 +1517,50 @@ impl JsHost {
                 }
                 match r {
                     Ok(v) => Ok(v),
-                    Err(e) => Err(self.classify(&scope, e, label, start.elapsed())),
+                    Err(e) => {
+                        let after = self.interrupt.now(Timing::Leave) - start;
+                        Err(self.classify(&scope, e, label, after))
+                    }
                 }
             })
         }));
 
-        self.interrupt.deadline.set(None);
+        let elapsed = self.interrupt.now(Timing::Leave) - start;
+        let native = self.interrupt.native.get();
+        self.interrupt.arm(start, None);
         self.state.stopped.set(false);
-        let elapsed = start.elapsed();
         drop(guard);
 
         let soft = slice.soft * UNOPTIMISED;
-        if elapsed > soft {
-            let what = what();
+        let over = elapsed.saturating_sub(native) > soft;
+        let stopped = matches!(outcome, Ok(Err(JsFault::JsInterrupted { .. })));
+        let what = if over || stopped {
+            what()
+        } else {
+            String::new()
+        };
+        let outcome = match outcome {
+            Ok(Err(JsFault::JsInterrupted { label, after, .. })) => {
+                let mut said = if what.is_empty() {
+                    String::new()
+                } else {
+                    format!(" at {what}")
+                };
+                if let Some(inner) = self.interrupt.stopped_in.take() {
+                    said.push_str(&format!(", in {inner}"));
+                }
+                if !native.is_zero() {
+                    said.push_str(&format!(", {native:?} of it native work given back"));
+                }
+                Ok(Err(JsFault::JsInterrupted {
+                    label,
+                    after,
+                    what: said,
+                }))
+            }
+            other => other,
+        };
+        if over {
             if what.is_empty() {
                 tracing::warn!(
                     label,
@@ -1463,6 +1591,8 @@ impl JsHost {
     fn enter_nested<R>(
         &self,
         label: &str,
+        what: impl FnOnce() -> String,
+        slice: Slice,
         f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
     ) -> Result<R, JsFault> {
         // SAFETY: `entered` is only set while this thread holds the runtime
@@ -1474,13 +1604,33 @@ impl JsHost {
             ctx: ctx.clone(),
             state: self.state.clone(),
         };
-        let start = Instant::now();
-        let fault = match f(&scope) {
+        let st = &self.interrupt;
+        let start = st.now(Timing::Enter);
+        let before = st.given.get();
+        if let Some(d) = st.deadline.get() {
+            st.outer.borrow_mut().push(d);
+        }
+        st.deadline.set(Some(start + slice.hard));
+        st.settle();
+        let r = f(&scope);
+        let took = st.now(Timing::Leave) - start;
+        st.deadline.set(st.outer.borrow_mut().pop());
+        st.give_back(took, before, false);
+        let fault = match r {
             Ok(v) => return Ok(v),
-            Err(e) => self.classify(&scope, e, label, start.elapsed()),
+            Err(e) => self.classify(&scope, e, label, took),
         };
         if matches!(fault, JsFault::JsInterrupted { .. }) {
             self.state.stopped.set(true);
+            let mut inner = st.stopped_in.borrow_mut();
+            if inner.is_none() {
+                let what = what();
+                *inner = Some(if what.is_empty() {
+                    format!("`{label}`")
+                } else {
+                    format!("`{label}` at {what}")
+                });
+            }
         }
         Err(fault)
     }
@@ -1858,9 +2008,15 @@ impl JsHost {
         let guard = EnterGuard(&self.state.entered);
         self.interrupt.fired.set(false);
         self.state.stopped.set(false);
+        // A job's deadline is the pump's, and so is the ceiling: nested runs
+        // and native work give time back, but never past `until`.
+        let now = self.interrupt.now(Timing::Enter);
+        self.interrupt.arm(now, None);
         self.interrupt.deadline.set(Some(until));
+        self.interrupt.ceiling.set(Some(until));
+        self.interrupt.settle();
         let mut n = 0;
-        while Instant::now() < until {
+        while self.interrupt.now(Timing::Poll) < until {
             match self.rt.execute_pending_job() {
                 Ok(true) => n += 1,
                 Ok(false) => break,
@@ -1876,11 +2032,34 @@ impl JsHost {
                 }
             }
         }
-        self.interrupt.deadline.set(None);
+        self.interrupt.arm(now, None);
         self.state.stopped.set(false);
         drop(guard);
         self.flush_released();
         n
+    }
+
+    /// Runs native work a script asked for (compiling a component, making
+    /// objects): its time is not the script's, and is given back to every
+    /// run of the dispatch. JavaScript it runs itself (a new object's
+    /// `Component.onCompleted`) is a nested run, with a slice of its own.
+    /// Outside a dispatch it only runs `f`.
+    pub fn native<R>(&self, f: impl FnOnce() -> R) -> R {
+        if !self.state.entered.get() {
+            return f();
+        }
+        let st = &self.interrupt;
+        let start = st.now(Timing::NativeBegin);
+        let before = st.given.get();
+        let r = f();
+        let took = st.now(Timing::NativeEnd) - start;
+        st.give_back(took, before, true);
+        r
+    }
+
+    /// Sets the clock the limits on a run read; `None` is the wall clock.
+    pub fn set_clock(&self, clock: Option<JsClock>) {
+        *self.interrupt.clock.borrow_mut() = clock;
     }
 
     /// Whether a run nested in the current dispatch was interrupted, which
@@ -2543,6 +2722,7 @@ pub(crate) fn classify_error<'js>(
             JsFault::JsInterrupted {
                 label: label.to_owned(),
                 after: elapsed,
+                what: String::new(),
             }
         }
         rquickjs::Error::Allocation => JsFault::JsOutOfMemory {

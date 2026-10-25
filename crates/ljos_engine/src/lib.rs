@@ -137,6 +137,7 @@ pub use introspect::{BindingTier, ObjectReport, PropertyReport, SourcePlace};
 pub use item_selection::ItemSelectionModel;
 pub use list::QmlList;
 pub use listmodel::{CarriedCell, CarriedRows, ListElement, ListModel};
+pub use ljos_js::{JsClock, Timing as JsTiming};
 pub use loader::{ComponentSource, MapSource, encoded_url, file_url, url_path};
 pub use log::{LogEntry, LogLevel};
 pub use memory::TypeMemory;

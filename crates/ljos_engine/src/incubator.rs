@@ -328,6 +328,33 @@ fn handler_place(file: &ljos_ir::CompiledFile, expr: ExprId) -> SourceSpan {
         .unwrap_or(file.expr(expr).span)
 }
 
+/// What the handler of expression `expr` is called where it is written:
+/// `onClicked`, `font.onPixelSizeChanged`, `Component.onCompleted`.
+fn handler_called(file: &ljos_ir::CompiledFile, expr: ExprId) -> Option<String> {
+    let at = |m: &ljos_ir::Members| {
+        m.handlers
+            .iter()
+            .find(|h| h.expr == expr)
+            .map(|h| crate::qtqml::handler_name(&h.signal))
+    };
+    file.components
+        .iter()
+        .flat_map(|c| &c.objects)
+        .find_map(|od| {
+            at(&od.members)
+                .or_else(|| {
+                    od.grouped
+                        .iter()
+                        .find_map(|g| at(&g.members).map(|n| format!("{}.{n}", g.path.join("."))))
+                })
+                .or_else(|| {
+                    od.attached
+                        .iter()
+                        .find_map(|a| at(&a.members).map(|n| format!("{}.{n}", a.written)))
+                })
+        })
+}
+
 /// Where Qt says a binding is: at its name. IR built by hand may leave
 /// the name's place out; the expression's is the next best.
 fn name_place(pb: &PropertyBinding, expr: SourceSpan) -> SourceSpan {
@@ -2514,7 +2541,16 @@ impl Engine {
             ljos_ir::BindingKind::Handler => "signal handler",
             ljos_ir::BindingKind::Function => "function",
         };
-        let what = || format!("{}:{}:{}", file.url, b.span.line, b.span.column);
+        let what = || {
+            let at = format!("{}:{}:{}", file.url, b.span.line, b.span.column);
+            match b.kind {
+                ljos_ir::BindingKind::Handler => match handler_called(&file.ir, expr) {
+                    Some(name) => format!("{at} ({name})"),
+                    None => at,
+                },
+                _ => at,
+            }
+        };
         self.run_js_naming(label, what, |s| {
             let mut a: Vec<JsValue> = Vec::with_capacity(b.params.len() + args.len());
             for p in &b.params {

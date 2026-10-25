@@ -692,7 +692,7 @@ impl Engine {
                     }
                     // (url, parent) and (url, mode, parent) are both asked.
                     let owner = object(e, a.get(2)).or_else(|| object(e, a.get(3)));
-                    e.script_component(base, url, owner)
+                    e.native_for_script(|| e.script_component(base, url, owner))
                         .map(|c| JsValue::Object(obj_to_u64(c)))
                         .map_err(|e| HostError::msg(e.to_string()))
                 }),
@@ -726,23 +726,28 @@ impl Engine {
                         Some(JsValue::String(p)) => Some(p.as_str()),
                         _ => None,
                     };
-                    Ok(match e.text_object(base, text, parent, place) {
-                        Ok(o) => JsValue::Object(obj_to_u64(o)),
-                        Err(TextFault::Call(m)) => JsValue::String(m),
-                        Err(TextFault::Text(errors)) => JsValue::Array(
-                            errors
-                                .into_iter()
-                                .map(|(url, e)| {
-                                    JsValue::Map(vec![
-                                        ("lineNumber".into(), JsValue::Number(e.line.into())),
-                                        ("columnNumber".into(), JsValue::Number(e.column.into())),
-                                        ("fileName".into(), JsValue::String(url)),
-                                        ("message".into(), JsValue::String(e.message)),
-                                    ])
-                                })
-                                .collect(),
-                        ),
-                    })
+                    Ok(
+                        match e.native_for_script(|| e.text_object(base, text, parent, place)) {
+                            Ok(o) => JsValue::Object(obj_to_u64(o)),
+                            Err(TextFault::Call(m)) => JsValue::String(m),
+                            Err(TextFault::Text(errors)) => JsValue::Array(
+                                errors
+                                    .into_iter()
+                                    .map(|(url, e)| {
+                                        JsValue::Map(vec![
+                                            ("lineNumber".into(), JsValue::Number(e.line.into())),
+                                            (
+                                                "columnNumber".into(),
+                                                JsValue::Number(e.column.into()),
+                                            ),
+                                            ("fileName".into(), JsValue::String(url)),
+                                            ("message".into(), JsValue::String(e.message)),
+                                        ])
+                                    })
+                                    .collect(),
+                            ),
+                        },
+                    )
                 }),
             ),
         ];

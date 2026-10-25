@@ -423,6 +423,16 @@ pub trait Backend: fmt::Debug {
     fn tier1_check(&mut self, _on: bool) -> Result<()> {
         Err(BackendError::NotImplemented("the tier 1 cross-check"))
     }
+    /// The limits on a run of JavaScript read a clock that moves ten
+    /// milliseconds each time the interrupt polls it (about every 10k
+    /// opcodes), and by `native` over
+    /// each piece of native work a script asks for (compiling a component,
+    /// making an object).
+    fn js_clock(&mut self, _native: std::time::Duration) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a clock for JavaScript's time limits",
+        ))
+    }
     /// The application takes its standard keys (`StandardKey`, the keys
     /// of an entry) from `platform`'s key bindings, whatever the machine.
     fn key_bindings(&mut self, _platform: ljos_quick::keys::Platform) -> Result<()> {

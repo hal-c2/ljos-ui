@@ -1,9 +1,13 @@
 mod common;
 
-use std::time::{Duration, Instant};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use common::*;
-use ljos_js::{Bytecode, BytecodeOptions, JsConfig, JsFault, JsHost, JsValue, Slice};
+use ljos_js::{Bytecode, BytecodeOptions, JsConfig, JsFault, JsHost, JsValue, Slice, Timing};
 
 fn plain() -> JsHost {
     JsHost::new(JsConfig::default()).unwrap()
@@ -210,7 +214,7 @@ fn nested_enter_failure_is_contained() {
 }
 
 #[test]
-fn nested_enter_keeps_the_outer_deadline() {
+fn nested_runs_are_held_to_the_dispatch_cap() {
     let host = plain();
     let slice = Slice {
         soft: Duration::from_millis(5),
@@ -229,6 +233,115 @@ fn nested_enter_keeps_the_outer_deadline() {
         s.eval::<(), _>("for(;;){}")
     });
     assert!(matches!(out, Err(JsFault::JsInterrupted { .. })), "{out:?}");
+}
+
+/// A clock that moves only when it is polled (a millisecond a poll) or
+/// moved by hand, so a test of the limits does not depend on the machine.
+fn fake_clock(host: &JsHost) -> Rc<Cell<Instant>> {
+    let now = Rc::new(Cell::new(Instant::now()));
+    let at = now.clone();
+    host.set_clock(Some(Rc::new(move |t| {
+        if t == Timing::Poll {
+            at.set(at.get() + Duration::from_millis(1));
+        }
+        at.get()
+    })));
+    now
+}
+
+const TENTH: Slice = Slice {
+    soft: Duration::from_secs(10),
+    hard: Duration::from_millis(100),
+};
+
+/// About 30 polls: well inside a slice of a tenth of a second.
+const SHORT: &str =
+    "(() => { let s = 0; for (let i = 0; i < 300000; i++) s += i; return s > 0 })()";
+
+#[test]
+fn native_work_is_not_the_scripts_time() {
+    let host = plain();
+    let now = fake_clock(&host);
+    let out = host.enter("outer", TENTH, |s| {
+        // Under the ceiling of 50 slices.
+        host.native(|| now.set(now.get() + Duration::from_secs(2)));
+        s.eval::<bool, _>(SHORT)
+    });
+    assert_eq!(out, Ok(true));
+}
+
+#[test]
+fn a_nested_run_has_a_slice_of_its_own() {
+    let host = plain();
+    let now = fake_clock(&host);
+    let out = host.enter("outer", TENTH, |s| {
+        // The outer run has used most of its slice, then makes an object
+        // whose own script runs nested; then it goes on.
+        now.set(now.get() + Duration::from_millis(90));
+        let inner = host.native(|| host.enter("inner", TENTH, |s| s.eval::<bool, _>(SHORT)));
+        assert_eq!(inner, Ok(true));
+        s.eval::<bool, _>(
+            "(() => { let t = 0; for (let i = 0; i < 30000; i++) t += i; return t > 0 })()",
+        )
+    });
+    assert_eq!(out, Ok(true));
+}
+
+#[test]
+fn an_interrupt_in_a_nested_run_names_it_and_the_dispatch() {
+    let host = plain();
+    let _now = fake_clock(&host);
+    let out: Result<(), _> = host.enter_naming(
+        "outer",
+        || "Main.qml:7:5 (onUrlChanged)".into(),
+        TENTH,
+        |_| {
+            let inner = host.enter_naming(
+                "inner",
+                || "Late.qml:3:5 (Component.onCompleted)".into(),
+                TENTH,
+                |s| s.eval::<(), _>("for(;;){}"),
+            );
+            assert!(
+                matches!(inner, Err(JsFault::JsInterrupted { .. })),
+                "{inner:?}"
+            );
+            // As the callback that ran it would: the dispatch is over.
+            assert!(host.interrupted());
+            Err(ljos_js::rquickjs::Error::Exception)
+        },
+    );
+    let Err(fault) = out else { panic!("{out:?}") };
+    let text = fault.to_string();
+    assert!(
+        text.contains(
+            "at Main.qml:7:5 (onUrlChanged), in `inner` at Late.qml:3:5 (Component.onCompleted)"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_dispatch_of_native_work_is_stopped_at_its_ceiling() {
+    let host = plain();
+    let now = fake_clock(&host);
+    let out = host.enter("outer", TENTH, |s| {
+        s.eval::<(), _>("for(;;){}")?;
+        Ok(())
+    });
+    assert!(matches!(out, Err(JsFault::JsInterrupted { .. })), "{out:?}");
+    let start = now.get();
+    let out = host.enter("outer", TENTH, |s| {
+        for _ in 0..100 {
+            host.native(|| now.set(now.get() + Duration::from_secs(1)));
+            s.eval::<bool, _>(
+                "(() => { let x = 0; for (let i = 0; i < 1000; i++) x += i; return x > 0 })()",
+            )?;
+        }
+        s.eval::<bool, _>(SHORT)
+    });
+    assert!(matches!(out, Err(JsFault::JsInterrupted { .. })), "{out:?}");
+    assert!(now.get() - start < Duration::from_secs(100));
 }
 
 #[test]

@@ -40,7 +40,10 @@ pub use ahead::compile_ahead;
 pub use bytecode::{Bytecode, BytecodeOptions};
 pub use config::{JsConfig, Slice};
 pub use fault::{JsFault, SourceMapper, SourceText};
-pub use host::{DirectCall, DirectParam, FnId, HostFn, JsHost, MemoryStats, ModuleHandle, Scope};
+pub use host::{
+    DirectCall, DirectParam, FnId, HostFn, JsClock, JsHost, MemoryStats, ModuleHandle, Scope,
+    Timing,
+};
 pub use objects::{
     HostError, HostObjects, HostTypeId, MethodDef, MethodFace, PlainValue, PropDef, SignalDef,
     TypeDef,
