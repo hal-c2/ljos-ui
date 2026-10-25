@@ -80,17 +80,18 @@ impl Face {
 pub(crate) fn advances(
     font: &FontData,
     normalized_coords: &[i16],
-    glyphs: &[u32],
+    glyphs: impl Iterator<Item = u32> + Clone,
 ) -> Option<(u16, Vec<f32>)> {
     FACES.with_borrow_mut(|faces| {
         let face = faces.face(font, normalized_coords);
-        let missing: Vec<u32> = glyphs
-            .iter()
-            .copied()
-            .filter(|id| !face.advances.contains_key(id))
-            .collect();
         let mut read = 0;
-        if !missing.is_empty() || face.units_per_em.is_none() {
+        // Nearly always every glyph has been seen: no list of none missing.
+        if glyphs.clone().any(|id| !face.advances.contains_key(&id)) || face.units_per_em.is_none()
+        {
+            let missing: Vec<u32> = glyphs
+                .clone()
+                .filter(|id| !face.advances.contains_key(id))
+                .collect();
             let (units_per_em, units) =
                 ljos_render::glyph_advances(font, normalized_coords, &missing)?;
             face.units_per_em = Some(units_per_em);
@@ -98,7 +99,7 @@ pub(crate) fn advances(
             face.advances.extend(missing.into_iter().zip(units));
         }
         let units_per_em = face.units_per_em?;
-        let out = glyphs.iter().map(|id| face.advances[id]).collect();
+        let out = glyphs.map(|id| face.advances[&id]).collect();
         faces.glyphs += read;
         faces.measured += read as u64;
         Some((units_per_em, out))

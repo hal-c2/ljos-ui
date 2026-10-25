@@ -37,29 +37,31 @@ pub(crate) fn advances(
     font: &FontData,
     size: f32,
     normalized_coords: &[i16],
-    glyphs: &[(u32, f32)],
+    glyphs: impl Iterator<Item = (u32, f32)> + Clone,
 ) -> Vec<f32> {
-    let ids: Vec<u32> = glyphs.iter().map(|(id, _)| *id).collect();
-    let Some((units_per_em, units)) = crate::measure::advances(font, normalized_coords, &ids)
+    let ids = glyphs.clone().map(|(id, _)| id);
+    let Some((units_per_em, mut out)) = crate::measure::advances(font, normalized_coords, ids)
     else {
-        return glyphs.iter().map(|(_, advance)| *advance).collect();
+        return glyphs.map(|(_, advance)| advance).collect();
     };
     let (size, units_per_em) = (f64::from(size), f64::from(units_per_em));
-    glyphs
-        .iter()
-        .zip(units)
-        .map(|((_, shaped), units)| {
-            if *shaped == 0.0 {
-                return 0.0;
-            }
-            let own = nominal(f64::from(units), size, units_per_em);
+    // The font's advances become Qt's where they are: every text that is
+    // made counts its glyphs here, and a list for each step cost more than
+    // the sums.
+    for (slot, (_, shaped)) in out.iter_mut().zip(glyphs) {
+        let units = f64::from(*slot);
+        *slot = if shaped == 0.0 {
+            0.0
+        } else {
+            let own = nominal(units, size, units_per_em);
             // Against the exact advance, not the cut one: this is what the
             // shaper added, which Qt rounds separately.
-            let exact = f64::from(units) * size * UNIT / units_per_em;
-            let added = (f64::from(*shaped) * UNIT - exact + 0.5 + NOISE).floor();
+            let exact = units * size * UNIT / units_per_em;
+            let added = (f64::from(shaped) * UNIT - exact + 0.5 + NOISE).floor();
             ((own + added) / UNIT) as f32
-        })
-        .collect()
+        };
+    }
+    out
 }
 
 #[cfg(test)]

@@ -15,7 +15,8 @@ use parley::setting::Tag;
 use parley::{
     Alignment, AlignmentOptions, BaseDirection, BreakReason, FontContext, FontData, FontFamily,
     FontFamilyName, FontStyle, FontVariation, FontVariations, FontWeight, InlineBox, InlineBoxKind,
-    LayoutContext, OverflowWrap, PositionedLayoutItem, StyleProperty, WordBreak,
+    LayoutContext, OverflowWrap, PositionedLayoutItem, StyleProperty, TextStyle as ParleyStyle,
+    WordBreak,
 };
 use rustc_hash::{FxHashMap, FxHasher};
 
@@ -328,6 +329,9 @@ struct Families {
     pinned: Cell<u64>,
     /// Off only to compare against the whole stack in tests.
     pin: bool,
+    /// A text without spans or objects given to Parley as one style; off
+    /// only to compare against the style built a property at a time.
+    one_style: bool,
 }
 
 /// A style's weight bits and italic, and the first font of its stack.
@@ -668,6 +672,39 @@ fn shape(
         .collect();
     let size = usable_size(style.pixel_size);
     let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+    let (word_break, overflow_wrap) = match class {
+        BreakClass::Word => (WordBreak::Normal, OverflowWrap::Normal),
+        BreakClass::Anywhere => (WordBreak::BreakAll, OverflowWrap::Anywhere),
+        BreakClass::WordOrAnywhere => (WordBreak::Normal, OverflowWrap::Anywhere),
+    };
+    if families.one_style && ranged.spans.is_empty() && ranged.objects.is_empty() {
+        // One style for all of it, given whole: the ranged builder first
+        // resolves a default style of its own (a family list parsed from
+        // text) and then each property pushed over it, for every text made.
+        let mut b = lcx.style_run_builder(fcx, text, 1.0, false);
+        let whole = b.push_style(ParleyStyle {
+            font_family: FontFamily::List(Cow::Borrowed(&names)),
+            font_size: size,
+            font_variations: optical_size(Platform::CURRENT, size)
+                .unwrap_or(FontVariations::empty()),
+            font_weight: weight,
+            font_style: if style.italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            },
+            has_underline: style.underline,
+            has_strikethrough: style.strikeout,
+            letter_spacing: finite(style.letter_spacing),
+            word_spacing: finite(style.word_spacing),
+            word_break,
+            overflow_wrap,
+            ..ParleyStyle::default()
+        });
+        b.push_style_run(whole, ..);
+        b.set_base_direction(base);
+        return b.build(text);
+    }
     // Scale 1 and no quantising: layouts are in logical pixels and unhinted,
     // so they do not depend on the screen and one cache entry fits every scale.
     let mut b = lcx.ranged_builder(fcx, text, 1.0, false);
@@ -855,7 +892,7 @@ fn extract(
                     *rest = after;
                     Cow::Borrowed(mine)
                 }
-                _ => Cow::Owned(qt_advances(&gr, &placed)),
+                _ => Cow::Owned(qt_advances(&gr)),
             };
             // A run that draws nothing (the character an editor keeps for
             // an image) is as tall as its font only on a line without
@@ -1074,12 +1111,12 @@ fn line_widths_kept(line: &parley::Line<'_, u32>, mut keep: Option<&mut Vec<f32>
     for item in line.items() {
         match item {
             PositionedLayoutItem::GlyphRun(gr) => {
-                let (placed, qt) = snapped(&gr);
+                let qt = qt_advances(&gr);
                 width += qt.iter().sum::<f32>();
                 if let Some(keep) = keep.as_deref_mut() {
                     keep.extend_from_slice(&qt);
                 }
-                if let (Some(g), Some(a)) = (placed.last(), qt.last()) {
+                if let (Some(g), Some(a)) = (gr.glyphs().last(), qt.last()) {
                     let run = gr.run();
                     let synthesis = run.synthesis();
                     last = overhang(
@@ -1105,16 +1142,14 @@ fn line_widths_kept(line: &parley::Line<'_, u32>, mut keep: Option<&mut Vec<f32>
 /// The glyphs of a run where Parley put them, and the advance Qt gives each
 /// (see [`snap`]).
 fn snapped(gr: &parley::GlyphRun<'_, u32>) -> (Vec<parley::Glyph>, Vec<f32>) {
-    let placed: Vec<parley::Glyph> = gr.positioned_glyphs().collect();
-    let advances = qt_advances(gr, &placed);
-    (placed, advances)
+    (gr.positioned_glyphs().collect(), qt_advances(gr))
 }
 
 /// The advance Qt gives each of a run's glyphs (see [`snap`]).
-fn qt_advances(gr: &parley::GlyphRun<'_, u32>, placed: &[parley::Glyph]) -> Vec<f32> {
+fn qt_advances(gr: &parley::GlyphRun<'_, u32>) -> Vec<f32> {
     let run = gr.run();
-    let shaped: Vec<(u32, f32)> = placed.iter().map(|g| (g.id, g.advance)).collect();
-    snap::advances(run.font(), run.font_size(), &coords(run), &shaped)
+    let glyphs = gr.glyphs().map(|g| (g.id, g.advance));
+    snap::advances(run.font(), run.font_size(), &coords(run), glyphs)
 }
 
 /// Where on its variation axes a run's font is.
@@ -1183,7 +1218,8 @@ fn cluster_advances(shape: &Shape) -> Vec<(Range<usize>, f32)> {
             let coords = coords(&run);
             for cluster in run.clusters() {
                 let shaped: Vec<(u32, f32)> = cluster.glyphs().map(|g| (g.id, g.advance)).collect();
-                let qt = snap::advances(run.font(), run.font_size(), &coords, &shaped);
+                let qt =
+                    snap::advances(run.font(), run.font_size(), &coords, shaped.iter().copied());
                 // What Qt's glyphs give up, taken off the cluster's own
                 // advance, which also holds any spacing.
                 let given_up: f32 = shaped.iter().zip(qt).map(|((_, a), q)| a - q).sum();
@@ -1334,6 +1370,7 @@ impl TextEngine {
                 first_fonts: RefCell::default(),
                 pinned: Cell::new(0),
                 pin: true,
+                one_style: true,
             },
             shapes: FrameCache::new(MAX_SHAPES),
             layouts: FrameCache::new(MAX_LAYOUTS),
@@ -2303,6 +2340,100 @@ mod tests {
             assert_eq!(whole.stats().shapes_pinned, 0);
             // Latin text in an installed family is the common case it serves.
             assert!(pinned.stats().shapes_pinned >= 20, "{:?}", pinned.stats());
+        }
+    }
+
+    #[test]
+    fn a_plain_text_given_as_one_style_shapes_as_one_built_by_property() {
+        let texts = [
+            "Row 12",
+            "Hello, world!",
+            "Grüße Ωμέγα Кириллица",
+            "שלום עולם",
+            "مرحبا بالعالم",
+            "a\u{301}e\u{301}",
+            "漢字 and Latin",
+            "",
+            "two\nlines  spaced",
+        ];
+        let styles = [
+            TextStyle::default(),
+            TextStyle {
+                family: "serif".into(),
+                weight: 700.0,
+                italic: true,
+                underline: true,
+                strikeout: true,
+                pixel_size: 23.0,
+                ..TextStyle::default()
+            },
+            TextStyle {
+                letter_spacing: 1.5,
+                word_spacing: 4.0,
+                ..TextStyle::default()
+            },
+        ];
+        for system in [false, true] {
+            let mut one = TextEngine::build(system);
+            let mut built = TextEngine::build(system);
+            built.families.one_style = false;
+            for style in &styles {
+                for text in texts {
+                    for wrap in [None, Some(30.0)] {
+                        let params = LayoutParams {
+                            width: wrap,
+                            wrap: if wrap.is_some() {
+                                WrapMode::WrapAnywhere
+                            } else {
+                                WrapMode::NoWrap
+                            },
+                            ..LayoutParams::default()
+                        };
+                        // The lines' measures and each run's glyphs; a font
+                        // by its bytes, as each engine loads its own copy.
+                        let summary = |l: &TextLayout| {
+                            let lines: Vec<_> = l
+                                .lines
+                                .iter()
+                                .map(|line| {
+                                    let runs: Vec<_> = line
+                                        .runs
+                                        .iter()
+                                        .map(|r| {
+                                            let mut h = FxHasher::default();
+                                            r.glyphs.font.data.as_ref().hash(&mut h);
+                                            let g: Vec<_> = r
+                                                .glyphs
+                                                .glyphs
+                                                .iter()
+                                                .map(|p| (p.id, p.x.to_bits(), p.y.to_bits()))
+                                                .collect();
+                                            (
+                                                h.finish(),
+                                                r.glyphs.font.index,
+                                                r.glyphs.font_size.to_bits(),
+                                                g,
+                                                r.glyphs.normalized_coords.clone(),
+                                                r.glyphs.embolden,
+                                                r.glyphs.skew.to_bits(),
+                                            )
+                                        })
+                                        .collect();
+                                    let m = [line.top, line.baseline, line.width, line.height];
+                                    (m.map(f64::to_bits), line.range.clone(), runs)
+                                })
+                                .collect();
+                            let m = [l.advance, l.natural_width, l.content_width];
+                            (m.map(f64::to_bits), lines)
+                        };
+                        assert_eq!(
+                            summary(&one.layout(text, style, &params)),
+                            summary(&built.layout(text, style, &params)),
+                            "{text:?} {style:?} {wrap:?}, system fonts {system}"
+                        );
+                    }
+                }
+            }
         }
     }
 }
