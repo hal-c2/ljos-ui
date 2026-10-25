@@ -25,7 +25,7 @@ use egui_winit::winit::event_loop::EventLoopProxy;
 use ljos_controls::{
     ApplicationState, Modality, ResizeEdges, ScreenSpec, WindowRequest, WindowSpec, WindowSystem,
 };
-use ljos_egui::{QmlView, ResizeMode};
+use ljos_egui::{QmlView, ResizeMode, WindowDrag};
 use ljos_engine::{Engine, LogLevel, ObjectId};
 use ljos_host::{
     AppState, ButtonState, Event, HostApp, HostControl, PlatformHost, PointerKind, ResizeEdge,
@@ -36,7 +36,7 @@ use ljos_runtime::{MemoryPressure, SystemClock};
 use crate::present::{self, Frame, LastPicture};
 use crate::repaint::RepaintSchedule;
 use crate::surface::{self, Gpu, Painter, Starting, Surface};
-use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, windows};
+use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, wayland_drag, windows};
 
 /// The log category of what the shell has to say.
 const CATEGORY: &str = "ljos.shell";
@@ -101,6 +101,9 @@ pub(crate) enum ShellEvent {
         at_once: bool,
     },
     AccessKit(accesskit_winit::Event),
+    /// A step of a drag from another application, which the shell follows
+    /// itself where winit does not (`wayland_drag`).
+    Drag(wayland_drag::DragStep),
 }
 
 impl std::fmt::Debug for ShellEvent {
@@ -109,6 +112,7 @@ impl std::fmt::Debug for ShellEvent {
             ShellEvent::Wake => f.write_str("Wake"),
             ShellEvent::Repaint { slot, .. } => write!(f, "Repaint({slot})"),
             ShellEvent::AccessKit(_) => f.write_str("AccessKit"),
+            ShellEvent::Drag(_) => f.write_str("Drag"),
         }
     }
 }
@@ -687,6 +691,11 @@ struct Desktop<M> {
     loading: bool,
     /// When what the scripts left behind is next looked at.
     collect: AfterRest,
+    /// The thread that follows drags from other applications, where the
+    /// shell does that itself.
+    drags: Option<wayland_drag::Drags>,
+    /// The window a drag from another application is over, by its key.
+    drag_over: Option<u64>,
 }
 
 /// Something to do once the loop has rested for a while after it last
@@ -786,6 +795,8 @@ impl<M: Send + 'static> Desktop<M> {
             heap_trim: None,
             collect: AfterRest::default(),
             loading: false,
+            drags: None,
+            drag_over: None,
         }
     }
 
@@ -1754,6 +1765,73 @@ impl<M: Send + 'static> Desktop<M> {
         }
     }
 
+    /// A step of a drag from another application: the view of the window
+    /// it is over is told, and the compositor hears the view's answer.
+    fn drag_step(&mut self, step: wayland_drag::DragStep) {
+        use wayland_drag::DragStep;
+        let by_surface = |slots: &[Slot], surface: usize| {
+            slots.iter().position(|s| {
+                s.surface
+                    .as_ref()
+                    .and_then(|x| wayland_drag::surface_of(&x.window))
+                    == Some(surface)
+            })
+        };
+        let i = match &step {
+            DragStep::Entered { surface, .. } => {
+                let i = by_surface(&self.slots, *surface);
+                self.drag_over = i.map(|i| self.slots[i].key);
+                i
+            }
+            _ => self
+                .drag_over
+                .and_then(|key| self.slots.iter().position(|s| s.key == key)),
+        };
+        let Some(i) = i else {
+            // Over no window the shell shows, or one closed since.
+            match step {
+                DragStep::Entered { answer, .. } | DragStep::Moved { answer, .. } => {
+                    answer.taken(false);
+                }
+                DragStep::Dropped { answer } => answer.dropped(false),
+                DragStep::Left => {}
+            }
+            return;
+        };
+        let slot = &mut self.slots[i];
+        let key = slot.key;
+        // The compositor's logical pixels; egui's points are those over
+        // the zoom.
+        let zoom = slot.ctx.zoom_factor();
+        let point = |(x, y): (f64, f64)| egui::pos2(x as f32 / zoom, y as f32 / zoom);
+        let view = match slot.view.as_mut() {
+            Some(view) => view,
+            None => self.app.view_mut(),
+        };
+        match step {
+            DragStep::Entered {
+                at, data, answer, ..
+            } => {
+                answer.taken(view.window_drag(WindowDrag::Entered {
+                    data,
+                    at: point(at),
+                }));
+            }
+            DragStep::Moved { at, answer } => {
+                answer.taken(view.window_drag(WindowDrag::Moved(point(at))));
+            }
+            DragStep::Left => {
+                self.drag_over = None;
+                view.window_drag(WindowDrag::Left);
+            }
+            DragStep::Dropped { answer } => {
+                self.drag_over = None;
+                answer.dropped(view.window_drag(WindowDrag::Dropped));
+            }
+        }
+        self.repaints.request(key, Instant::now());
+    }
+
     /// The user asked for window `i` to be closed.
     fn close_requested(&mut self, i: usize, engine: &Engine, sys: &WindowSystem) {
         let slot = &self.slots[i];
@@ -2205,6 +2283,10 @@ impl<M: Send + 'static> Desktop<M> {
     /// The loop ends. What draws goes while the display is still there.
     fn shut_down(&mut self) {
         self.exiting = true;
+        // Before the loop lets its display go: the thread reads from it.
+        if let Some(drags) = self.drags.take() {
+            drags.stop();
+        }
         for slot in &mut self.slots {
             slot.surface = None;
             slot.painter = None;
@@ -2245,6 +2327,7 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
                 self.note_wake(|w| w.accessibility += 1);
                 self.accesskit_event(event);
             }
+            Event::User(ShellEvent::Drag(step)) => self.drag_step(step),
             Event::Reopen {
                 has_visible_windows,
             } => self.reopened(has_visible_windows),
@@ -2342,6 +2425,18 @@ pub(crate) fn run<M: Send + 'static>(
     #[cfg(feature = "mcp")]
     {
         desktop.began = began;
+    }
+    desktop.drags = wayland_drag::start(&host.display_handle(), {
+        let proxy = Arc::clone(&desktop.proxy);
+        Arc::new(move |step| {
+            if let Ok(proxy) = proxy.lock() {
+                // An error is a loop that has ended, and the drag with it.
+                let _ = proxy.send_event(ShellEvent::Drag(step));
+            }
+        })
+    });
+    if desktop.drags.is_none() && wayland_drag::is_wayland(&host.display_handle()) {
+        crate::platform::note_no_wayland_drops(desktop.app.engine());
     }
     host.run(desktop)?;
     match failure.borrow_mut().take() {

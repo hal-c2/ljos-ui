@@ -49,16 +49,19 @@ pub(crate) fn install(engine: &Engine, wayland: bool, wake: impl Fn() + Send + S
     crate::network::install(engine);
     crate::screen_reader::watch(engine);
     platform.set_plugin_name(plugin_name(wayland));
-    if wayland {
-        platform.set_external_drops_unavailable(engine, NO_WAYLAND_DROPS);
-    }
+}
+
+/// Tells the platform that drags from other applications cannot come: on
+/// Wayland, when the shell's own data device could not be set up
+/// (`wayland_drag`), as winit 0.30 has none there.
+pub(crate) fn note_no_wayland_drops(engine: &Engine) {
+    Platform::of(engine).set_external_drops_unavailable(engine, NO_WAYLAND_DROPS);
 }
 
 /// Why files from other applications do not come on Wayland, and how to
 /// have them.
-const NO_WAYLAND_DROPS: &str = "the window library (winit 0.30) has no drag-and-drop on \
-    Wayland; run the application on X11 or XWayland, with LJOS_PREFER_X11=1 or \
-    ShellConfig::prefer_x11";
+const NO_WAYLAND_DROPS: &str = "the compositor offers no data device to take drags from; run \
+    the application on X11 or XWayland, with LJOS_PREFER_X11=1 or ShellConfig::prefer_x11";
 
 /// Whether the shell asks for X11: the environment's `LJOS_PREFER_X11`
 /// when it says yes or no, else the application's choice.

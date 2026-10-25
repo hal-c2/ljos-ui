@@ -80,8 +80,8 @@ pub use animation::{
 pub use animation::{Transition, run_transition, run_transition_to, stop_transition};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
 pub use drop_area::{
-    DragData, DragEvent, DropArea, DropAreaDrag, PlatformDrag, PlatformDragKind, platform_drag,
-    platform_drag_target,
+    DragData, DragEvent, DropArea, DropAreaDrag, IGNORE_ACTION, PlatformDrag, PlatformDragKind,
+    platform_drag, platform_drag_target,
 };
 pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;

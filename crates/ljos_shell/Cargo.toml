@@ -84,6 +84,10 @@ windows-sys = { workspace = true, features = [
 egui_glow.workspace = true
 glow.workspace = true
 glutin.workspace = true
+# Drags from other applications on Wayland (src/wayland_drag.rs), on the
+# connection winit opened: libwayland's, as winit's is.
+wayland-client = { workspace = true, features = ["system"] }
+libc.workspace = true
 
 [features]
 default = ["media", "media-audio"]

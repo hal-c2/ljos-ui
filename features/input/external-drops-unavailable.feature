@@ -1,9 +1,8 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtquick-droparea.html
-# Ljós's own: the window library the desktop shell draws with (winit 0.30)
-# has no drag-and-drop on Wayland, so a native Wayland client is never told
-# of files dragged in from other applications; on X11, XWayland included,
-# it is. Qt has drops on Wayland too and has nothing to warn of.
+# Ljós's own: a host that can bring no drags from other applications says
+# so (the desktop shell does on a Wayland compositor with no data device
+# manager). Qt has nothing to warn of.
 
 @ljos-only
 Feature: A drop target that files from other applications cannot reach says so once

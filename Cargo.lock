@@ -4231,6 +4231,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing-subscriber",
+ "wayland-client",
  "windows-sys 0.52.0",
  "zbus",
 ]

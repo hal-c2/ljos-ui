@@ -49,6 +49,7 @@ mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
 mod test_bus;
+mod wayland_drag;
 mod windows;
 
 use std::rc::Rc;
@@ -97,9 +98,9 @@ pub struct ShellConfig {
     /// keeps the engine's `en_US`, the same on every machine.
     pub system_locale: bool,
     /// [`run`] shows its windows through X11 rather than Wayland where the
-    /// session has both (XWayland), so that files dragged in from other
-    /// applications reach its `DropArea`s: the window library has no
-    /// drag-and-drop on Wayland. False keeps Wayland where there is one.
+    /// session has both (XWayland), for a compositor that gives the shell
+    /// no drags from other applications. False keeps Wayland where there
+    /// is one.
     /// The environment's `LJOS_PREFER_X11` (`1` or `0`) overrides it, for
     /// the user to choose either way.
     pub prefer_x11: bool,

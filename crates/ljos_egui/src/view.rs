@@ -241,6 +241,27 @@ pub struct QmlView {
     /// Where egui last saw the pointer in the window, kept after it says
     /// the pointer is gone: where a file drag with no position is put.
     pointer_seen: Option<Pos2>,
+    /// A drag from another application that the host follows itself
+    /// ([`QmlView::window_drag`]), and where the scene was last told it is.
+    window_drag: Option<(ljos_quick::PlatformDrag, Option<kurbo::Point>)>,
+    /// Where in the window the scene was last shown: a host's drag comes in
+    /// the window's points, between passes.
+    shown_at: Option<Rect>,
+}
+
+/// One step of a drag from another application, as a window system that
+/// says where it is tells it, at points of the window.
+#[derive(Clone, Debug)]
+pub enum WindowDrag {
+    /// It came into the window, carrying `data`.
+    Entered {
+        data: ljos_quick::DragData,
+        at: Pos2,
+    },
+    Moved(Pos2),
+    Left,
+    /// It was let go where it last was.
+    Dropped,
 }
 
 /// [`Engine::prepare_scripts`], once per view.
@@ -309,6 +330,8 @@ impl QmlView {
             stats: ViewStats::default(),
             file_drag: None,
             pointer_seen: None,
+            window_drag: None,
+            shown_at: None,
             asked: None,
         })
     }
@@ -928,6 +951,8 @@ impl QmlView {
             self.scene.set_accessibility_active(&self.engine, listening);
         }
 
+        self.shown_at = Some(rect);
+
         // 1. Size and scale.
         let ppp = ctx.pixels_per_point();
         self.fit(rect.size(), ppp);
@@ -1377,6 +1402,71 @@ impl QmlView {
         } else if let Some((drag, _)) = self.file_drag.take() {
             platform_drag(engine, &drag, &PlatformDragKind::Leave);
         }
+    }
+
+    /// Tells the scene of a step of a drag from another application, for
+    /// a host that follows such drags itself rather than through egui,
+    /// which knows only of files. Says whether a `DropArea` under the drag
+    /// takes it, or, for [`WindowDrag::Dropped`], took the drop: what the
+    /// host answers the window system.
+    ///
+    /// Outside the view's place in the window the drag is outside the
+    /// scene. It runs between passes; the host asks for one after it.
+    pub fn window_drag(&mut self, step: WindowDrag) -> bool {
+        use ljos_quick::{
+            IGNORE_ACTION, PlatformDrag, PlatformDragKind, platform_drag, platform_drag_target,
+        };
+        let engine = &self.engine;
+        let rect = self.shown_at;
+        let inside = |p: Pos2| {
+            rect.filter(|r| r.contains(p))
+                .map(|r| kurbo::Point::new(f64::from(p.x - r.min.x), f64::from(p.y - r.min.y)))
+        };
+        let at = match step {
+            WindowDrag::Entered { data, at } => {
+                if let Some((drag, _)) = self.window_drag.take() {
+                    platform_drag(engine, &drag, &PlatformDragKind::Leave);
+                }
+                let drag = PlatformDrag::new(data);
+                let drag = match self.scene.root() {
+                    Some(root) => drag.over(engine, root),
+                    None => drag,
+                };
+                self.window_drag = Some((drag, None));
+                at
+            }
+            WindowDrag::Moved(at) => at,
+            WindowDrag::Left => {
+                if let Some((drag, _)) = self.window_drag.take() {
+                    platform_drag(engine, &drag, &PlatformDragKind::Leave);
+                }
+                return false;
+            }
+            WindowDrag::Dropped => {
+                let Some((drag, told)) = self.window_drag.take() else {
+                    return false;
+                };
+                return match told {
+                    Some(at) => {
+                        platform_drag(engine, &drag, &PlatformDragKind::Drop(at)) != IGNORE_ACTION
+                    }
+                    None => {
+                        platform_drag(engine, &drag, &PlatformDragKind::Leave);
+                        false
+                    }
+                };
+            }
+        };
+        let Some((drag, told)) = self.window_drag.as_mut() else {
+            return false;
+        };
+        let at = inside(at);
+        if *told != at {
+            *told = at;
+            let kind = at.map_or(PlatformDragKind::Leave, PlatformDragKind::Move);
+            platform_drag(engine, drag, &kind);
+        }
+        at.is_some() && platform_drag_target(engine).is_some()
     }
 
     /// Keeps a scroll the scene used from also scrolling an egui scroll
