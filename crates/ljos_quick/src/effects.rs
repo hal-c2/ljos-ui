@@ -1037,54 +1037,11 @@ fn gaussian_blur_rgba(src: &[u8], w: usize, h: usize, radius: f64) -> Vec<u8> {
     let Some((r, kernel)) = gaussian_kernel(radius) else {
         return src.to_vec();
     };
-    let r_i = r as isize;
-    let w_i = w as isize;
-    let h_i = h as isize;
-
-    let mut mid = vec![0.0f32; w * h * 4];
-    for y in 0..h {
-        let row_off = y * w * 4;
-        for x in 0..w {
-            let mut acc = [0.0f32; 4];
-            let k_min = (-r_i).max(-(x as isize));
-            let k_max = r_i.min(w_i - 1 - x as isize);
-            for k in k_min..=k_max {
-                let weight = kernel[(k + r_i) as usize];
-                let sx = (x as isize + k) as usize;
-                let p = row_off + sx * 4;
-                acc[0] += f32::from(src[p]) * weight;
-                acc[1] += f32::from(src[p + 1]) * weight;
-                acc[2] += f32::from(src[p + 2]) * weight;
-                acc[3] += f32::from(src[p + 3]) * weight;
-            }
-            let dst = row_off + x * 4;
-            mid[dst..dst + 4].copy_from_slice(&acc);
-        }
-    }
-
-    let mut out = vec![0u8; w * h * 4];
-    for y in 0..h {
-        let k_min = (-r_i).max(-(y as isize));
-        let k_max = r_i.min(h_i - 1 - y as isize);
-        for x in 0..w {
-            let mut acc = [0.0f32; 4];
-            for k in k_min..=k_max {
-                let weight = kernel[(k + r_i) as usize];
-                let sy = (y as isize + k) as usize;
-                let p = (sy * w + x) * 4;
-                acc[0] += mid[p] * weight;
-                acc[1] += mid[p + 1] * weight;
-                acc[2] += mid[p + 2] * weight;
-                acc[3] += mid[p + 3] * weight;
-            }
-            let dst = (y * w + x) * 4;
-            out[dst] = acc[0].round().clamp(0.0, 255.0) as u8;
-            out[dst + 1] = acc[1].round().clamp(0.0, 255.0) as u8;
-            out[dst + 2] = acc[2].round().clamp(0.0, 255.0) as u8;
-            out[dst + 3] = acc[3].round().clamp(0.0, 255.0) as u8;
-        }
-    }
-    out
+    let src: Vec<f32> = src.iter().map(|&c| f32::from(c)).collect();
+    let mid = blur_passes(&src, w, h, 4, r, &kernel);
+    mid.iter()
+        .map(|&c| c.round().clamp(0.0, 255.0) as u8)
+        .collect()
 }
 
 /// Two-pass separable 1D Gaussian blur over a single-channel alpha buffer in
@@ -1093,41 +1050,57 @@ fn gaussian_blur_alpha(src: &[f32], w: usize, h: usize, radius: f64) -> Vec<f32>
     let Some((r, kernel)) = gaussian_kernel(radius) else {
         return src.to_vec();
     };
-    let r_i = r as isize;
-    let w_i = w as isize;
-    let h_i = h as isize;
+    blur_passes(src, w, h, 1, r, &kernel)
+}
 
-    let mut mid = vec![0.0f32; w * h];
-    for y in 0..h {
-        let row_off = y * w;
-        for x in 0..w {
-            let mut acc = 0.0f32;
-            let k_min = (-r_i).max(-(x as isize));
-            let k_max = r_i.min(w_i - 1 - x as isize);
-            for k in k_min..=k_max {
-                let weight = kernel[(k + r_i) as usize];
-                let sx = (x as isize + k) as usize;
-                acc += src[row_off + sx] * weight;
-            }
-            mid[row_off + x] = acc;
+/// Blurs along the rows, then along the columns, of `w x h` pixels of
+/// `channels` values each.
+///
+/// Each pass adds one tap at a time to a whole run of pixels rather than
+/// summing one pixel's taps at a time: the column pass then reads rows
+/// one after another instead of a value from each, and the loops are the
+/// compiler's to vectorise. A pixel still sums its taps from the first to
+/// the last, from 0.0, so the numbers are the ones a pixel at a time gives.
+fn blur_passes(
+    src: &[f32],
+    w: usize,
+    h: usize,
+    channels: usize,
+    r: usize,
+    kernel: &[f32],
+) -> Vec<f32> {
+    let row = w * channels;
+    let mut mid = vec![0.0f32; src.len()];
+    if row > 0 {
+        for (out, src) in mid.chunks_exact_mut(row).zip(src.chunks_exact(row)) {
+            taps(out, src, r, kernel, channels);
         }
     }
-
-    let mut out = vec![0.0f32; w * h];
-    for y in 0..h {
-        let k_min = (-r_i).max(-(y as isize));
-        let k_max = r_i.min(h_i - 1 - y as isize);
-        for x in 0..w {
-            let mut acc = 0.0f32;
-            for k in k_min..=k_max {
-                let weight = kernel[(k + r_i) as usize];
-                let sy = (y as isize + k) as usize;
-                acc += mid[sy * w + x] * weight;
-            }
-            out[y * w + x] = acc;
-        }
-    }
+    let mut out = vec![0.0f32; src.len()];
+    taps(&mut out, &mid, r, kernel, row);
+    debug_assert_eq!(out.len(), w * h * channels);
     out
+}
+
+/// `out[i] += src[i + k * step] * kernel[k + r]` for `k` from `-r` to `r`,
+/// wherever `i + k * step` is inside `src`: one pass of the blur along a
+/// line of pixels `step` values apart, with nothing outside the line.
+fn taps(out: &mut [f32], src: &[f32], r: usize, kernel: &[f32], step: usize) {
+    let n = src.len();
+    for (i, &weight) in kernel.iter().enumerate() {
+        let shift = i.abs_diff(r) * step;
+        if shift >= n {
+            continue;
+        }
+        let (out, src) = if i < r {
+            (&mut out[shift..], &src[..n - shift])
+        } else {
+            (&mut out[..n - shift], &src[shift..])
+        };
+        for (o, s) in out.iter_mut().zip(src) {
+            *o += s * weight;
+        }
+    }
 }
 
 /// The source scaled per pixel by the mask, sampled to the source's
@@ -1288,5 +1261,141 @@ mod tests {
         assert_eq!(blurred.pixel(9, 6), outer);
         assert_eq!(blurred.pixel(6, 3), outer);
         assert_eq!(blurred.pixel(6, 9), outer);
+    }
+
+    // The blur as it was first written, one output pixel at a time: the
+    // faster one must give exactly its numbers.
+    fn tap_by_tap_rgba(src: &[u8], w: usize, h: usize, radius: f64) -> Vec<u8> {
+        let Some((r, kernel)) = gaussian_kernel(radius) else {
+            return src.to_vec();
+        };
+        let r_i = r as isize;
+        let w_i = w as isize;
+        let h_i = h as isize;
+
+        let mut mid = vec![0.0f32; w * h * 4];
+        for y in 0..h {
+            let row_off = y * w * 4;
+            for x in 0..w {
+                let mut acc = [0.0f32; 4];
+                let k_min = (-r_i).max(-(x as isize));
+                let k_max = r_i.min(w_i - 1 - x as isize);
+                for k in k_min..=k_max {
+                    let weight = kernel[(k + r_i) as usize];
+                    let sx = (x as isize + k) as usize;
+                    let p = row_off + sx * 4;
+                    acc[0] += f32::from(src[p]) * weight;
+                    acc[1] += f32::from(src[p + 1]) * weight;
+                    acc[2] += f32::from(src[p + 2]) * weight;
+                    acc[3] += f32::from(src[p + 3]) * weight;
+                }
+                let dst = row_off + x * 4;
+                mid[dst..dst + 4].copy_from_slice(&acc);
+            }
+        }
+
+        let mut out = vec![0u8; w * h * 4];
+        for y in 0..h {
+            let k_min = (-r_i).max(-(y as isize));
+            let k_max = r_i.min(h_i - 1 - y as isize);
+            for x in 0..w {
+                let mut acc = [0.0f32; 4];
+                for k in k_min..=k_max {
+                    let weight = kernel[(k + r_i) as usize];
+                    let sy = (y as isize + k) as usize;
+                    let p = (sy * w + x) * 4;
+                    acc[0] += mid[p] * weight;
+                    acc[1] += mid[p + 1] * weight;
+                    acc[2] += mid[p + 2] * weight;
+                    acc[3] += mid[p + 3] * weight;
+                }
+                let dst = (y * w + x) * 4;
+                out[dst] = acc[0].round().clamp(0.0, 255.0) as u8;
+                out[dst + 1] = acc[1].round().clamp(0.0, 255.0) as u8;
+                out[dst + 2] = acc[2].round().clamp(0.0, 255.0) as u8;
+                out[dst + 3] = acc[3].round().clamp(0.0, 255.0) as u8;
+            }
+        }
+        out
+    }
+
+    fn tap_by_tap_alpha(src: &[f32], w: usize, h: usize, radius: f64) -> Vec<f32> {
+        let Some((r, kernel)) = gaussian_kernel(radius) else {
+            return src.to_vec();
+        };
+        let r_i = r as isize;
+        let w_i = w as isize;
+        let h_i = h as isize;
+
+        let mut mid = vec![0.0f32; w * h];
+        for y in 0..h {
+            let row_off = y * w;
+            for x in 0..w {
+                let mut acc = 0.0f32;
+                let k_min = (-r_i).max(-(x as isize));
+                let k_max = r_i.min(w_i - 1 - x as isize);
+                for k in k_min..=k_max {
+                    let weight = kernel[(k + r_i) as usize];
+                    let sx = (x as isize + k) as usize;
+                    acc += src[row_off + sx] * weight;
+                }
+                mid[row_off + x] = acc;
+            }
+        }
+
+        let mut out = vec![0.0f32; w * h];
+        for y in 0..h {
+            let k_min = (-r_i).max(-(y as isize));
+            let k_max = r_i.min(h_i - 1 - y as isize);
+            for x in 0..w {
+                let mut acc = 0.0f32;
+                for k in k_min..=k_max {
+                    let weight = kernel[(k + r_i) as usize];
+                    let sy = (y as isize + k) as usize;
+                    acc += mid[sy * w + x] * weight;
+                }
+                out[y * w + x] = acc;
+            }
+        }
+        out
+    }
+
+    fn noise(n: usize, seed: u32) -> impl Iterator<Item = u32> {
+        let mut x = seed;
+        (0..n).map(move |_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x
+        })
+    }
+
+    #[test]
+    fn the_blur_gives_the_same_numbers_as_one_pixel_at_a_time() {
+        for (w, h, radius) in [
+            (1, 1, 1.0),
+            (3, 2, 5.0),
+            (17, 9, 2.5),
+            (40, 31, 7.0),
+            (64, 3, 32.0),
+        ] {
+            let rgba: Vec<u8> = noise(w * h * 4, 7 + w as u32).map(|x| x as u8).collect();
+            assert_eq!(
+                gaussian_blur_rgba(&rgba, w, h, radius),
+                tap_by_tap_rgba(&rgba, w, h, radius),
+                "{w}x{h} r{radius}"
+            );
+            let alpha: Vec<f32> = noise(w * h, 3 + h as u32)
+                .map(|x| (x % 1000) as f32 / 999.0)
+                .collect();
+            let fast = gaussian_blur_alpha(&alpha, w, h, radius);
+            let slow = tap_by_tap_alpha(&alpha, w, h, radius);
+            assert!(
+                fast.iter()
+                    .zip(&slow)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{w}x{h} r{radius}"
+            );
+        }
     }
 }
