@@ -16,8 +16,10 @@ pub enum FetchError {
     Failed(String),
 }
 
-/// The method of a [`Request`].
+/// The method of a [`Request`]. More may come, so a fetcher outside this
+/// crate matches the ones it answers and has an arm for the rest.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Method {
     #[default]
     Get,

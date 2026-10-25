@@ -315,6 +315,7 @@ impl Fetcher for FakeServer {
             Method::Get => canned(404, "{}"),
             Method::Post => canned(201, "{}"),
             Method::Put | Method::Patch | Method::Delete => canned(200, "{}"),
+            _ => canned(405, "{}"),
         })
     }
 }
