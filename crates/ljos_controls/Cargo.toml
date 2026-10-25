@@ -38,6 +38,8 @@ qml_front = { path = "../qml_front" }
 qt_types = { path = "../qt_types" }
 # The accessibility audit goes over the style in both colour schemes.
 ljos_test = { path = "../ljos_test" }
+# Tests settle, find and click through the scene driver.
+ljos_drive = { path = "../ljos_drive" }
 
 [lints]
 workspace = true

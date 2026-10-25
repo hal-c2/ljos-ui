@@ -37,14 +37,7 @@ fn load(e: &Engine, files: &[(&str, &str)]) -> ObjectId {
 }
 
 fn find(e: &Engine, root: ObjectId, name: &str) -> ObjectId {
-    let mut stack = vec![root];
-    while let Some(o) = stack.pop() {
-        if e.read_by_name(o, "objectName").to_js_string().as_str() == name {
-            return o;
-        }
-        stack.extend(e.children(o));
-    }
-    panic!("no object named {name}")
+    ljos_drive::find_below(e, root, name).unwrap_or_else(|| panic!("no object named {name}"))
 }
 
 fn scene(e: &Engine, root: ObjectId) -> QuickScene {
@@ -55,13 +48,7 @@ fn scene(e: &Engine, root: ObjectId) -> QuickScene {
 }
 
 fn settle(s: &mut QuickScene, e: &Engine) {
-    for _ in 0..16 {
-        let out = s.frame(e, Time::ZERO);
-        if !s.needs_frame() && out.next_wake.is_none_or(|t| t > Time::ZERO) {
-            return;
-        }
-    }
-    panic!("the scene did not settle");
+    ljos_drive::settle_at(e, s, Time::ZERO).unwrap();
 }
 
 fn call(e: &Engine, obj: ObjectId, name: &str) {

@@ -28,14 +28,7 @@ fn load(e: &Engine, source: &str) -> ObjectId {
 }
 
 fn find(e: &Engine, root: ObjectId, name: &str) -> ObjectId {
-    let mut stack = vec![root];
-    while let Some(o) = stack.pop() {
-        if e.read_by_name(o, "objectName").to_js_string().as_str() == name {
-            return o;
-        }
-        stack.extend(e.children(o));
-    }
-    panic!("no object named {name}")
+    ljos_drive::find_below(e, root, name).unwrap_or_else(|| panic!("no object named {name}"))
 }
 
 fn scene(e: &Engine, root: ObjectId) -> QuickScene {

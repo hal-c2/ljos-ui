@@ -39,14 +39,7 @@ fn load(e: &Engine, source: &str) -> ObjectId {
 }
 
 fn find(e: &Engine, root: ObjectId, name: &str) -> ObjectId {
-    let mut stack = vec![root];
-    while let Some(o) = stack.pop() {
-        if e.read_by_name(o, "objectName").to_js_string().as_str() == name {
-            return o;
-        }
-        stack.extend(e.children(o));
-    }
-    panic!("no object named {name}")
+    ljos_drive::find_below(e, root, name).unwrap_or_else(|| panic!("no object named {name}"))
 }
 
 fn scene(e: &Engine, root: ObjectId) -> QuickScene {
@@ -57,13 +50,7 @@ fn scene(e: &Engine, root: ObjectId) -> QuickScene {
 
 /// Frames until the scene asks for no more, and returns its next wake.
 fn settle(s: &mut QuickScene, e: &Engine, now: Time) -> Option<Time> {
-    for _ in 0..16 {
-        let out = s.frame(e, now);
-        if !s.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
-            return out.next_wake;
-        }
-    }
-    panic!("the scene did not settle");
+    ljos_drive::settle_at(e, s, now).unwrap()
 }
 
 fn text(e: &Engine, o: ObjectId, name: &str) -> String {
