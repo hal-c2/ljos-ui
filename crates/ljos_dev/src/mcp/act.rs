@@ -311,27 +311,49 @@ pub(crate) fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
 /// masked whole.
 fn mask_json(v: &mut Value, secrets: &[String]) {
     match v {
-        Value::String(s) => {
-            if secrets.iter().any(|x| x == s) {
-                *s = REDACTED.to_string();
-                return;
-            }
-            for secret in secrets {
-                if s.contains(secret.as_str()) {
-                    *s = s.replace(secret.as_str(), REDACTED);
-                }
-            }
-        }
+        Value::String(s) => mask_text(s, secrets),
         Value::Array(items) => items.iter_mut().for_each(|i| mask_json(i, secrets)),
         Value::Object(map) => map.values_mut().for_each(|i| mask_json(i, secrets)),
         _ => {}
     }
 }
 
-fn secrets_of(capture: &Capture) -> Vec<String> {
-    let mut all: Vec<String> = capture.secrets.iter().cloned().collect();
+fn mask_text(s: &mut String, secrets: &[String]) {
+    if secrets.iter().any(|x| x == s) {
+        *s = REDACTED.to_string();
+        return;
+    }
+    for secret in secrets {
+        if s.contains(secret.as_str()) {
+            *s = s.replace(secret.as_str(), REDACTED);
+        }
+    }
+}
+
+/// The secrets of every capture given, longest first. An act may have
+/// changed or cleared a field, so what it held before is a secret too.
+fn secrets_of_all(captures: &[&Capture]) -> Vec<String> {
+    let mut all: Vec<String> = captures
+        .iter()
+        .flat_map(|c| c.secrets.iter().cloned())
+        .collect();
+    all.sort_unstable();
+    all.dedup();
     all.sort_by_key(|s| std::cmp::Reverse(s.len()));
     all
+}
+
+fn secrets_of(capture: &Capture) -> Vec<String> {
+    secrets_of_all(&[capture])
+}
+
+/// A refusal is an answer too: what a method threw or a script said may
+/// hold what a field hides.
+fn mask_error(e: &mut SurfaceError, secrets: &[String]) {
+    mask_text(&mut e.message, secrets);
+    if let Some(details) = e.details.as_mut() {
+        mask_json(details, secrets);
+    }
 }
 
 // ----- the hands -------------------------------------------------------------
@@ -1004,6 +1026,11 @@ impl Hands<'_> {
     }
 
     fn invoke(&mut self, a: &InvokeArgs) -> Result<Done, SurfaceError> {
+        // A method or a signal handler is script the application wrote: it
+        // may read a masked value and answer or throw it, changed or not.
+        if self.redact_all {
+            return Err(Self::masked_everywhere());
+        }
         let obj = self.object(&a.target, "app_invoke")?;
         let engine = self.engine;
         let args: Vec<QmlValue> = a
@@ -1069,9 +1096,10 @@ impl Hands<'_> {
     fn masked_everywhere() -> SurfaceError {
         SurfaceError::new(
             ErrorCode::CapabilityDenied,
-            "script is refused while this inspector masks every editable value \
-             (`--mcp-redact`): a script reads values around the mask, and cannot be held to \
-             it. Start without `--mcp-redact` to run script",
+            "script, and a method or signal of the application, is refused while this \
+             inspector masks every editable value (`--mcp-redact`): a script reads values \
+             around the mask, and cannot be held to it. Start without `--mcp-redact` to run \
+             script",
         )
     }
 
@@ -1227,9 +1255,13 @@ impl Inspector {
         } = hands;
         // The host paints what the act did.
         scene.request_frame();
+        let secrets = secrets_of_all(&[&before, &after]);
         let done = match body {
             Ok(done) => done,
-            Err(e) => return (Err(e), after),
+            Err(mut e) => {
+                mask_error(&mut e, &secrets);
+                return (Err(e), after);
+            }
         };
         // What changed: the outline before this act against the one now.
         let since = self.kept.back().map_or(0, |k| k.epoch);
@@ -1253,8 +1285,9 @@ impl Inspector {
         fields.insert("delta".into(), json!(changes.text));
         fields.insert("settled".into(), json!(!unsettled));
         let mut value = Value::Object(fields);
-        mask_json(&mut value, &secrets_of(&after));
+        mask_json(&mut value, &secrets);
         let mut text = summary;
+        mask_text(&mut text, &secrets);
         if !changes.text.is_empty() {
             text.push('\n');
             text.push_str(&changes.text);
@@ -1328,5 +1361,27 @@ impl Hands<'_> {
             .with("completed", json!(completed))
             .with("failed", failed)
             .with("steps", Value::Array(results))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_is_masked_with_the_secrets_of_before_and_after() {
+        let secrets = vec!["hunter22".to_string(), "hunter2".to_string()];
+        let mut e = SurfaceError::new(ErrorCode::AppFaulted, "threw: hunter22 then hunter2")
+            .with_details(json!({ "said": ["hunter2"], "n": 1 }));
+        mask_error(&mut e, &secrets);
+        assert_eq!(e.message, "threw: <redacted> then <redacted>");
+        assert_eq!(e.details, Some(json!({ "said": ["<redacted>"], "n": 1 })));
+    }
+
+    #[test]
+    fn a_whole_secret_text_is_masked_once() {
+        let mut s = "hunter2".to_string();
+        mask_text(&mut s, &["hunter2".to_string()]);
+        assert_eq!(s, REDACTED);
     }
 }

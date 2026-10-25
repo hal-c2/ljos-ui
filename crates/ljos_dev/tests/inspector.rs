@@ -122,6 +122,10 @@ struct App {
 }
 
 fn app_with(main: &str, cfg: InspectorConfig) -> App {
+    app_granted(main, cfg, CapSet::of([Cap::Inspect]))
+}
+
+fn app_granted(main: &str, cfg: InspectorConfig, caps: CapSet) -> App {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().canonicalize().unwrap();
     write(&dir, "Main.qml", main);
@@ -135,8 +139,7 @@ fn app_with(main: &str, cfg: InspectorConfig) -> App {
     let wake = LocalWake::new();
     let (inspector, surface) = Inspector::new(cfg, wake.hook());
     inspector.watch_log(&engine, |_| {});
-    let client = LocalClient::connect(surface.clone(), CapSet::of([Cap::Inspect]), &wake)
-        .expect("the client connects");
+    let client = LocalClient::connect(surface.clone(), caps, &wake).expect("the client connects");
     let mut app = App {
         client,
         inspector: Some(inspector),
@@ -658,6 +661,91 @@ fn an_inspector_told_to_mask_every_editable_value_shows_none() {
     assert!(!reply.text.contains("milk"), "{}", reply.text);
     let shot = app.call("app_screenshot", json!({}));
     assert_eq!(shot.structured["masked"], 2);
+}
+
+const CALLS: &str = r##"import QtQuick
+Item {
+    objectName: "page"
+    width: 200; height: 100
+    property string note: "plain"
+    function reveal() { note = "ran"; return memo.text }
+    function blurt() { note = "ran"; throw new Error(memo.text.toUpperCase()) }
+    function blurtPin() { throw new Error("the pin is " + pin.text) }
+    function blurtPinLater() { throw new Error("later: " + pin.text) }
+    signal asked()
+    onAsked: { note = "ran"; throw new Error(memo.text) }
+    TextInput { id: memo; objectName: "memo"; width: 100; height: 20; text: "milk" }
+    TextInput {
+        id: pin
+        objectName: "pin"
+        y: 30; width: 100; height: 20
+        echoMode: TextInput.Password
+        text: "s3cret-pin"
+    }
+}
+"##;
+
+#[test]
+fn an_inspector_told_to_mask_every_editable_value_calls_no_method_or_signal() {
+    let mut app = app_granted(
+        CALLS,
+        InspectorConfig {
+            redact_all: true,
+            ..InspectorConfig::default()
+        },
+        CapSet::of([Cap::Inspect, Cap::Input, Cap::Mutate]),
+    );
+    for name in ["reveal", "blurt", "asked"] {
+        let (code, message, _) =
+            app.refused("app_invoke", json!({ "target": "#page", "name": name }));
+        assert_eq!(code, "capability_denied", "{name}: {message}");
+        assert!(message.contains("--mcp-redact"), "{message}");
+        assert!(
+            !message.contains("milk") && !message.contains("MILK"),
+            "{message}"
+        );
+    }
+    let batch = app.call(
+        "app_batch",
+        json!({ "steps": [{ "tool": "app_invoke", "args": { "target": "#page", "name": "reveal" } }] }),
+    );
+    assert_eq!(batch.structured["failed"]["code"], "capability_denied");
+    assert!(!batch.text.contains("milk"), "{}", batch.text);
+    let page = app.named("page");
+    let note = app.engine.read_by_name(page, "note");
+    assert!(
+        matches!(&note, QmlValue::String(s) if &**s == "plain"),
+        "nothing ran: {note:?}"
+    );
+}
+
+#[test]
+fn a_method_that_throws_a_hidden_text_is_refused_without_it() {
+    let mut app = app_granted(
+        CALLS,
+        InspectorConfig::default(),
+        CapSet::of([Cap::Inspect, Cap::Input, Cap::Mutate]),
+    );
+    let (code, message, _) = app.refused(
+        "app_invoke",
+        json!({ "target": "#page", "name": "blurtPin" }),
+    );
+    assert_eq!(code, "app_faulted");
+    assert!(message.contains("the pin is <redacted>"), "{message}");
+    let batch = app.call(
+        "app_batch",
+        json!({ "steps": [{ "tool": "app_invoke", "args": { "target": "#page", "name": "blurtPinLater" } }] }),
+    );
+    assert_eq!(batch.structured["failed"]["code"], "app_faulted");
+    assert!(!batch.text.contains("s3cret-pin"), "{}", batch.text);
+    assert!(
+        !batch.structured.to_string().contains("s3cret-pin"),
+        "{}",
+        batch.structured
+    );
+    // What is not masked is still called as before.
+    let shown = app.call("app_invoke", json!({ "target": "#page", "name": "reveal" }));
+    assert_eq!(shown.structured["result"], "milk");
 }
 
 // ----------------------------------------------------------------- app_find

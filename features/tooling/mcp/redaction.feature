@@ -10,7 +10,9 @@ Feature: What an agent that acts is not told
   and script is not a way around the mask. When the inspector is started
   with `--mcp-redact` every editable value is masked, and script is refused
   altogether: what a script can compute from a value cannot be told from
-  the value, so no script is run while the mask is asked for.
+  the value, so no script is run while the mask is asked for. A method or
+  a signal handler of the application is script too, and is not run then.
+  What an act answers, a refusal included, never holds a masked value.
 
   Background:
     Given the QML:
@@ -20,17 +22,24 @@ Feature: What an agent that acts is not told
         objectName: "root"
         width: 300; height: 100
         property string note: "plain"
+        function reveal() { note = "ran"; return memo.text }
+        function scramble() { note = "ran"; return memo.text.split("").reverse().join("") }
+        function blurt() { note = "ran"; throw new Error("the note is " + memo.text) }
+        function blurtBackwards() { note = "ran"; throw new Error(memo.text.split("").reverse().join("")) }
+        function blurtPin() { throw new Error("the pin is " + pin.text) }
+        signal asked()
+        onAsked: { note = "ran"; throw new Error(memo.text) }
         TextInput {
-          objectName: "pw"
-          width: 120; height: 20
-          echoMode: TextInput.Password
-          Accessible.name: "Password"
+          objectName: "pw"; width: 120; height: 20
+          echoMode: TextInput.Password; Accessible.name: "Password"
         }
         TextInput {
-          objectName: "memo"
-          y: 40; width: 120; height: 20
-          text: "private note"
-          Accessible.name: "Memo"
+          id: memo; objectName: "memo"; text: "private note"
+          y: 40; width: 120; height: 20; Accessible.name: "Memo"
+        }
+        TextInput {
+          id: pin; objectName: "pin"; text: "s3cret-pin"
+          y: 70; width: 120; height: 20; echoMode: TextInput.Password
         }
       }
       """
@@ -101,6 +110,59 @@ Feature: What an agent that acts is not told
         """
       Then the answer does not contain "fresh note"
       And the answer's "/value" is "<redacted>"
+
+  Rule: A method or a signal is not run while the mask is asked for
+
+    Scenario Outline: <what> is refused before it runs and the refusal tells nothing of it
+      Given the inspector is connected with the capabilities "inspect, mutate" and masks every editable value
+      When the agent calls the tool "app_invoke" with:
+        """json
+        {"target": "#root", "name": "<name>"}
+        """
+      Then the agent is refused with "capability_denied"
+      And the refusal mentions "--mcp-redact"
+      And the property "note" of "root" is "plain"
+      And the answer does not contain "private note"
+      And the answer does not contain "eton etavirp"
+
+      Examples:
+        | what                                       | name           |
+        | A method that answers a value              | reveal         |
+        | A method that answers a value it changed   | scramble       |
+        | A method that throws a value               | blurt          |
+        | A method that throws a value it changed    | blurtBackwards |
+        | A signal whose handler throws a value      | asked          |
+
+    Scenario: A step of a batch that calls a method is refused the same way
+      Given the inspector is connected with the capabilities "inspect, input, mutate" and masks every editable value
+      When the agent calls the tool "app_batch" with:
+        """json
+        {"steps": [{"tool": "app_invoke", "args": {"target": "#root", "name": "blurt"}}]}
+        """
+      Then the answer's "/failed/code" is "capability_denied"
+      And the property "note" of "root" is "plain"
+      And the answer does not contain "private note"
+
+  Rule: A fault is told without what a hidden field holds
+
+    Scenario: A method that throws what a password field holds is told without it
+      Given the inspector is connected with the capabilities "inspect, mutate"
+      When the agent calls the tool "app_invoke" with:
+        """json
+        {"target": "#root", "name": "blurtPin"}
+        """
+      Then the agent is refused with "app_faulted"
+      And the refusal mentions "the pin is <redacted>"
+      And the answer does not contain "s3cret-pin"
+
+    Scenario: A step of a batch that throws it is told without it either
+      Given the inspector is connected with the capabilities "inspect, input, mutate"
+      When the agent calls the tool "app_batch" with:
+        """json
+        {"steps": [{"tool": "app_invoke", "args": {"target": "#root", "name": "blurtPin"}}]}
+        """
+      Then the answer's "/failed/code" is "app_faulted"
+      And the answer does not contain "s3cret-pin"
 
   Rule: Batch holds the same masks
 

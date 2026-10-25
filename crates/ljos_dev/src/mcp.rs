@@ -33,7 +33,10 @@
 //! so is any name or string property that is exactly that text. A script
 //! cannot be held to the mask, so `app_eval` is refused under `redact_all`
 //! and in a field that hides its text; elsewhere what it returns has the
-//! secrets masked wherever they occur in a string.
+//! secrets masked wherever they occur in a string. A method or signal
+//! handler is script too, so `app_invoke` is refused under `redact_all`.
+//! A refusal is masked as an answer is, with the secrets from before the
+//! act and after it.
 
 mod act;
 mod args;
