@@ -214,6 +214,7 @@ ljos-ui/
 │   │                           QtCore, QtQuick.Dialogs, QtSensors
 │   ├── ljos_media/             QtMultimedia playback: players, outputs, SoundEffect,
 │   │                           media clock, null sink [features decode, audio] (7.6)
+│   ├── ljos_lottie/            Qt.labs.lottieqt: LottieAnimation, own Lottie model (7.7)
 │   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit loop, GL or wgpu (M2)
 │   ├── ljos_dev/               watcher, devtools WebSocket, error and `top` overlays,
 │   │                           MCP inspector [feature "mcp"]
@@ -657,6 +658,55 @@ Caret and selection geometry come from Parley's `Cursor`/`Selection`. Parley's `
 **0 % CPU when idle.** A paused or stopped player, a `SoundEffect` that is not playing and a player with no source have no deadline armed and no request in flight. An output that is not visible, or has no size, asks for no frames and uploads none, and the player paces its `position` alone; showing it again asks for the frame at the playhead. The scenarios check this through `positionChanged` counts and the engine's armed deadlines.
 
 **Not built:** a container opened before all of it has arrived, and `bufferProgress` below 1, more than one audio track playing, `playbackRate` other than 1 with sound (the clock follows the rate, the samples are not stretched), frames as objects in QML (`videoFrameChanged` carries `undefined`, as qml6 shows it), hardware decoders.
+
+
+### 7.7 Lottie (`ljos_lottie`)
+
+`Qt.labs.lottieqt` 1.0 and its `LottieAnimation`, to the Qt 6 documentation, the Lottie format as `lottie-docs` describes it, and how `qml6` behaves (`features/lottie/`). It is an opt-in module crate written against the `ljos` facade alone, like `ljos_xml`. `ljos run`, `render` and `test` and the BDD runner register it. An application registers it with `ljos_lottie::register`.
+
+**Behaviour, as Qt 6.11.2 shows it.**
+- A local file is read when the component completes: `status` goes `Loading` then `Ready` before `Component.onCompleted` runs.
+- Loading sets `frameRate`, `startFrame`, `endFrame` and the item's size from the file. `startFrame` and `endFrame` are read-only.
+- One tick of `1000 / frameRate` ms moves one frame. The last frame stays up for one tick before the run ends, so 20 frames at 10 fps finish at 2.1 s.
+- `play()` resumes without resetting the run count. `stop()` goes back to `startFrame` and does not send `finished`.
+- `gotoAndPlay` and `gotoAndStop` clamp the frame, and with a string they look up a marker by name.
+- A missing file gives `Error` and no warning. Bad JSON gives `Error` and a "JSON parse error" warning.
+- The enum is `LottieAnimation.Infinite` (-1). The docs' `Infinity` does not exist on 6.11.2.
+
+**Drawing.** DECISION: a Lottie model of our own (`model`, read with `serde_json`), whose frames become `DrawOp::Shape` paths with solid or gradient brushes and kurbo strokes in the display list QtQuick.Shapes and SVG already use. Every backend draws it, and the inspector and render tests see it.
+- dotlottie-rs was weighed and set aside. It wraps ThorVG (C++), comes only from git, and would put a C++ build into every target, Android and iOS included.
+- velato was weighed and set aside. It draws into a vello `Scene`, which needs the wgpu GPU renderer and goes around the display list, so B0 and the CPU renderer could not show it.
+- The whole crate is about 2,600 lines of Rust with its tests, and covers what most files use.
+
+**Covered:**
+- shape layers, precomps (with `tm` time remap, `st` and `sr`), solid layers, null layers, and parenting;
+- groups with their own transforms (anchor, position joined or split, scale, rotation, opacity, skew);
+- rect (rounded), ellipse, path, star and polygon;
+- fill (non-zero or even-odd), stroke (caps, joins, miter, dashes), and linear and radial gradients with opacity stops and a highlight;
+- trim paths, simultaneous and sequential;
+- keyframes with per-component bezier easing, holds, the `e` values of older files, and curved motion paths;
+- layer in and out points;
+- markers.
+
+DECISION: a hold keyframe holds, as the format says. Qt 6.11.2 does not hold it, so that scenario is `@qt-diverges`. A layer's out point is exclusive, and the composition's last frame is drawn just before `op`. `quality` is kept but changes nothing. Strokes and radial gradients under a non-uniform scale use the mean scale.
+
+**Not built yet:**
+- masks and track mattes (a matte's source layer is hidden, and a warning says so);
+- image and text layers;
+- expressions;
+- repeaters, merge paths, round corners, and star roundness;
+- the exact sign of skew;
+- clipping a precomp to its size, and clipping to the canvas;
+- 3D layers and auto-orient;
+- elliptical radial gradients and non-uniform stroke scaling;
+- `quality`.
+
+**Runtime.**
+- The clock is pure (`clock::Clock`) and counts whole ticks from an anchor time.
+- While the animation plays and can be seen (an area, visible, not fully transparent up the visual parents), one deadline is armed for each frame and the item repaints through `item::repaint`.
+- Hidden, a finite animation keeps a single deadline, at the moment it finishes, so `finished` comes on time. An endless one keeps none and catches up when shown.
+- Paused, stopped, finished or not loaded, nothing is armed.
+- A file over 256 KiB, a remote file and a resource are parsed on the compute pool (`ljos::task::spawn`). The answer comes back through the engine's message path, and a generation counter drops the answer to an older `source`.
 
 ---
 
