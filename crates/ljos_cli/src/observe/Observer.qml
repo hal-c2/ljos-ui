@@ -156,6 +156,12 @@ ApplicationWindow {
             components.show(s)
         else if (route === "component")
             components.showInstances(ok, s)
+        else if (route === "bindings" && ok)
+            hot.show(s)
+        else if (route === "growth" && ok)
+            growth.show(s)
+        else if (route === "export")
+            timeline.saved(ok, s)
         else if (route.indexOf("sample-") === 0 && ok)
             overview.part(route.substring(7), s)
     }
@@ -190,7 +196,8 @@ ApplicationWindow {
 
     // The page shown.
     readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace",
-                                   "Supervision", "Frames", "Memory", "Models", "Wakes", "Components"]
+                                   "Supervision", "Frames", "Memory", "Models", "Wakes", "Components",
+                                   "Bindings", "Growth"]
     property int page: 0
     onPageChanged: watcher.start()
 
@@ -221,6 +228,12 @@ ApplicationWindow {
             wakes.load()
         else if (page === 11 && (all || changed.indexOf("paints") >= 0 || changed.indexOf("reloads") >= 0))
             components.load()
+        // Bindings run, and instances are made and let go of, in a frame
+        // whether or not it draws anything.
+        else if (page === 12 && (all || changed.indexOf("frames") >= 0 || changed.indexOf("reloads") >= 0))
+            hot.load()
+        else if (page === 13 && (all || changed.indexOf("frames") >= 0 || changed.indexOf("reloads") >= 0))
+            growth.load()
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
         if (all || changed.indexOf("traces") >= 0)
@@ -245,6 +258,9 @@ ApplicationWindow {
         // too: no other page asks for it. The Wakes page likewise.
         property bool followsModels: false
         property bool followsWakes: false
+        // Whether it waits for every frame, drawn or not: the Bindings and
+        // Growth pages follow what runs in one.
+        property bool followsFrames: false
         // When the last answer said nothing changed.
         property string quietSince: ""
 
@@ -260,12 +276,14 @@ ApplicationWindow {
             var item = wanted()
             var withModels = page === 9
             var withWakes = page === 10
+            var withFrames = page === 12 || page === 13
             if (out > 0 && following === item && followsModels === withModels
-                    && followsWakes === withWakes)
+                    && followsWakes === withWakes && followsFrames === withFrames)
                 return
             following = item
             followsModels = withModels
             followsWakes = withWakes
+            followsFrames = withFrames
             out += 1
             var args = {}
             if (counts !== null) {
@@ -274,6 +292,8 @@ ApplicationWindow {
                     since.models = counts.models
                 if (withWakes && counts.wakes !== undefined)
                     since.wakes = counts.wakes
+                if (withFrames)
+                    since.frames = counts.frames
                 var known = item !== "" && counts.items !== undefined && counts.items[item] !== undefined
                 if (item === "")
                     since.paints = counts.paints
@@ -3373,6 +3393,8 @@ ApplicationWindow {
                     property int ownCount: 0
                     property bool hideOwn: true
                     onHideOwnChanged: refill()
+                    // Where the last trace file was written.
+                    property string savedTo: ""
                     readonly property var parts: [
                         { key: "timers", name: "timers", tone: theme.warn },
                         { key: "animations", name: "animations", tone: theme.violet },
@@ -3400,6 +3422,19 @@ ApplicationWindow {
                         a.record = on
                         a.holder = window.holder
                         window.ask("app_frames", a, "frames")
+                    }
+
+                    // The frames, wakes and runs of bindings recorded, as
+                    // a trace file the application writes beside its
+                    // token file, for a trace viewer.
+                    function save() {
+                        var name = "trace-" + Qt.formatDateTime(new Date(), "yyyyMMdd-hhmmss")
+                        window.ask("app_frames", { export: name }, "export")
+                    }
+
+                    function saved(ok, s) {
+                        savedTo = ok ? s.path + " · " + s.frames + " frames, " + s.wakes + " wakes, "
+                                       + s.runs + " runs of bindings" : ""
                     }
 
                     function add(s) {
@@ -3543,6 +3578,20 @@ ApplicationWindow {
                             text: "Clear"
                             onClicked: timeline.clear()
                         }
+                        Button {
+                            text: "Save trace"
+                            enabled: frameRows.count > 0 || timeline.recording
+                            onClicked: timeline.save()
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: timeline.savedTo !== ""
+                        elide: Text.ElideMiddle
+                        text: "Saved " + timeline.savedTo
+                        color: theme.subtle
+                        font.pixelSize: 11
                     }
 
                     // p50 · p95 · max of each part over the frames listed.
@@ -4903,6 +4952,483 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // ----- Bindings ----------------------------------------
+                // Which bindings and handlers run most and take longest,
+                // while this window records: where each is written, what
+                // it writes, its runs and their time, and what set it
+                // off. A heading sorts by it; a row opens the object on
+                // the Objects page. The binding loops the engine broke
+                // are listed whether or not anyone records. Asked when
+                // shown and when a pass is drawn, at most once a second
+                // as the watch settles.
+                ColumnLayout {
+                    id: hot
+                    spacing: 10
+                    property bool recording: false
+                    property real windowMs: 0
+                    property int count: 0
+                    property int dropped: 0
+                    property string sort: "total"
+                    property var rows: []
+                    property var loops: []
+                    property real most: 1
+                    readonly property var columns: [
+                        { key: "runs", name: "runs", width: 60 },
+                        { key: "total", name: "total", width: 76 },
+                        { key: "own", name: "own", width: 76 },
+                        { key: "longest", name: "longest", width: 76 }
+                    ]
+
+                    function load() {
+                        window.ask("app_frames", { bindings: true, sort: sort, max: 200 }, "bindings")
+                    }
+
+                    function record(on) {
+                        window.ask("app_frames", { bindings: true, sort: sort, max: 200, record: on,
+                                                   holder: window.holder }, "bindings")
+                    }
+
+                    function sortBy(key) {
+                        sort = key
+                        load()
+                    }
+
+                    function show(s) {
+                        recording = s.recording
+                        windowMs = s.window_ms || 0
+                        count = s.count
+                        dropped = s.dropped
+                        var top = 1
+                        for (var i = 0; i < s.bindings.length; ++i)
+                            top = Math.max(top, s.bindings[i][sort + "_us"] || s.bindings[i].runs)
+                        most = top
+                        rows = s.bindings
+                        loops = s.loops
+                    }
+
+                    function causes(b) {
+                        var out = []
+                        for (var i = 0; i < b.causes.length; ++i)
+                            out.push(b.causes[i].type + "." + b.causes[i].name + " ×" + b.causes[i].runs)
+                        return out.join(", ")
+                    }
+
+                    function place(at) {
+                        return at ? at.substring(at.lastIndexOf("/") + 1) : "—"
+                    }
+
+                    function open(handle, name) {
+                        window.page = 3
+                        objects.load(true)
+                        objects.pick(handle, name)
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text { text: "Bindings"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: (hot.recording ? "profiling for " + (hot.windowMs / 1000).toFixed(1) + " s"
+                                                 : "not profiling")
+                                  + " · " + hot.count + " ran"
+                                  + (hot.rows.length < hot.count ? " · " + hot.rows.length + " shown" : "")
+                                  + (hot.dropped > 0 ? " · " + hot.dropped + " runs not told apart" : "")
+                            color: hot.recording ? theme.good : theme.subtle
+                        }
+                        Button {
+                            text: hot.recording ? "Stop" : "Record"
+                            onClicked: hot.record(!hot.recording)
+                        }
+                        Button {
+                            text: "Refresh"
+                            onClicked: hot.load()
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+
+                        // The headings: a number's sorts by it.
+                        Row {
+                            id: hotHead
+                            x: 12; y: 8
+                            height: 22
+                            spacing: 10
+                            Text {
+                                width: 260
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "binding or handler"
+                                color: theme.subtle
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+                            Repeater {
+                                model: hot.columns
+                                delegate: Text {
+                                    required property var modelData
+                                    width: modelData.width
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    horizontalAlignment: Text.AlignRight
+                                    text: modelData.name + (hot.sort === modelData.key ? " ▾" : "")
+                                    color: hot.sort === modelData.key ? theme.accent : theme.subtle
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        Accessible.role: Accessible.ColumnHeader
+                                        Accessible.name: "sort by " + parent.modelData.name
+                                        onClicked: hot.sortBy(parent.modelData.key)
+                                    }
+                                }
+                            }
+                            Text {
+                                width: 150
+                                leftPadding: 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "where"
+                                color: theme.subtle
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "set off by"
+                                color: theme.subtle
+                                font.pixelSize: 11
+                                font.bold: true
+                            }
+                        }
+
+                        ListView {
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            anchors.topMargin: 34
+                            clip: true
+                            model: window.page === 12 ? hot.rows : []
+                            ScrollBar.vertical: ScrollBar {}
+                            delegate: Item {
+                                id: hotRow
+                                required property int index
+                                required property var modelData
+                                readonly property real share: (modelData[hot.sort + "_us"] !== undefined
+                                                               ? modelData[hot.sort + "_us"] : modelData.runs) / hot.most
+                                width: ListView.view.width
+                                height: 26
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 4
+                                    color: hotRow.index % 2 ? theme.cardAlt : "transparent"
+                                }
+                                // How it compares with the top row, behind it.
+                                Rectangle {
+                                    x: 0; y: parent.height - 3
+                                    height: 2
+                                    width: Math.max(1, parent.width * hotRow.share)
+                                    color: hotRow.modelData.kind === "handler" ? theme.violet : theme.accent
+                                    opacity: 0.6
+                                }
+                                Row {
+                                    x: 6
+                                    height: parent.height
+                                    spacing: 10
+                                    Text {
+                                        width: 260
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        elide: Text.ElideRight
+                                        text: hotRow.modelData.type + "." + hotRow.modelData.name
+                                              + "  " + hotRow.modelData.object
+                                        color: hotRow.modelData.kind === "handler" ? theme.violet : theme.text
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: 60
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        horizontalAlignment: Text.AlignRight
+                                        text: hotRow.modelData.runs
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Repeater {
+                                        model: ["total_us", "own_us", "longest_us"]
+                                        delegate: Text {
+                                            required property string modelData
+                                            width: 76
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            horizontalAlignment: Text.AlignRight
+                                            text: window.ms(hotRow.modelData[modelData])
+                                            color: theme.text
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                        }
+                                    }
+                                    Text {
+                                        width: 150
+                                        leftPadding: 14
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        elide: Text.ElideLeft
+                                        text: hot.place(hotRow.modelData.at)
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                    }
+                                    Text {
+                                        width: Math.max(60, hotRow.width - 790)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        elide: Text.ElideRight
+                                        text: hot.causes(hotRow.modelData) || "—"
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: hotRow.modelData.kind + " " + hotRow.modelData.type + "."
+                                                     + hotRow.modelData.name + ", " + hotRow.modelData.runs + " runs, "
+                                                     + window.ms(hotRow.modelData.total_us)
+                                    onClicked: hot.open(hotRow.modelData.object,
+                                                        hotRow.modelData.type + "." + hotRow.modelData.name)
+                                }
+                            }
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: hot.rows.length === 0
+                            text: hot.recording ? "No binding has run since profiling began"
+                                                : "Press Record to count each binding's runs and time"
+                            color: theme.subtle
+                        }
+                    }
+
+                    // The binding loops the engine broke: each with the
+                    // property it was at and the way round.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(160, 40 + hot.loops.length * 24)
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+                        Text {
+                            x: 10; y: 8
+                            text: hot.loops.length === 0 ? "No binding loop" : "Binding loops"
+                            color: hot.loops.length === 0 ? theme.subtle : theme.bad
+                            font.pixelSize: 11
+                            font.bold: true
+                        }
+                        ListView {
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            anchors.topMargin: 28
+                            clip: true
+                            model: window.page === 12 ? hot.loops : []
+                            delegate: Item {
+                                id: loopRow
+                                required property var modelData
+                                width: ListView.view.width
+                                height: 24
+                                Text {
+                                    x: 6
+                                    width: parent.width - 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    elide: Text.ElideRight
+                                    text: {
+                                        var c = []
+                                        for (var i = 0; i < loopRow.modelData.cycle.length; ++i)
+                                            c.push(loopRow.modelData.cycle[i].type + "." + loopRow.modelData.cycle[i].property)
+                                        return loopRow.modelData.type + "." + loopRow.modelData.property
+                                               + " " + loopRow.modelData.object + " at " + hot.place(loopRow.modelData.at)
+                                               + " · " + loopRow.modelData.times + "× · through " + c.join(" → ")
+                                    }
+                                    color: theme.text
+                                    font.pixelSize: 12
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: "binding loop at " + loopRow.modelData.type + "." + loopRow.modelData.property
+                                    onClicked: hot.open(loopRow.modelData.object,
+                                                        loopRow.modelData.type + "." + loopRow.modelData.property)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ----- Growth ------------------------------------------
+                // The instances of each component over time, while this
+                // window samples: a component whose count goes up and
+                // does not come down, as an action is repeated or while
+                // the application rests, is marked and shown first. The
+                // application samples at its own passes at most once a
+                // second and at each answer, so one at rest is not woken
+                // for it. Asked when shown and when a pass is drawn.
+                ColumnLayout {
+                    id: growth
+                    spacing: 10
+                    property bool recording: false
+                    property real windowMs: 0
+                    property int samples: 0
+                    property int growing: 0
+                    property int count: 0
+                    property var list: []
+
+                    function load() {
+                        window.ask("app_frames", { growth: true, max: 60 }, "growth")
+                    }
+
+                    function record(on) {
+                        window.ask("app_frames", { growth: true, max: 60, record: on, holder: window.holder },
+                                   "growth")
+                    }
+
+                    function show(s) {
+                        recording = s.recording
+                        windowMs = s.window_ms
+                        samples = s.samples
+                        growing = s.growing
+                        count = s.count
+                        list = s.components
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text { text: "Growth"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: (growth.recording ? "sampling for " + (growth.windowMs / 1000).toFixed(1) + " s · "
+                                                      + growth.samples + " samples"
+                                                    : "not sampling")
+                                  + " · " + growth.growing + " of " + growth.count + " keep growing"
+                            color: growth.growing > 0 ? theme.bad : growth.recording ? theme.good : theme.subtle
+                        }
+                        Button {
+                            text: growth.recording ? "Stop" : "Record"
+                            onClicked: growth.record(!growth.recording)
+                        }
+                        Button {
+                            text: "Refresh"
+                            onClicked: growth.load()
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+                        ListView {
+                            id: growthView
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            clip: true
+                            spacing: 6
+                            model: window.page === 13 ? growth.list : []
+                            ScrollBar.vertical: ScrollBar {}
+                            // One chart a component: its instances at each
+                            // sample, scaled to its own highest.
+                            delegate: Rectangle {
+                                id: chart
+                                required property int index
+                                required property var modelData
+                                readonly property real top: Math.max(1, modelData.max)
+                                width: ListView.view.width
+                                height: 64
+                                radius: 6
+                                color: chart.index % 2 ? theme.cardAlt : "transparent"
+                                border.color: chart.modelData.growing ? theme.bad : "transparent"
+                                Accessible.role: Accessible.ListItem
+                                Accessible.name: chart.modelData.kind + " " + chart.modelData.name
+                                                 + (chart.modelData.growing ? ", keeps growing" : "")
+                                                 + ", " + chart.modelData.first + " to " + chart.modelData.last + " instances"
+                                Column {
+                                    x: 10
+                                    width: 250
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 2
+                                    Text {
+                                        width: parent.width
+                                        elide: Text.ElideRight
+                                        text: chart.modelData.name + "  " + chart.modelData.kind
+                                        color: chart.modelData.growing ? theme.bad : theme.text
+                                        font.pixelSize: 12
+                                        font.bold: chart.modelData.growing
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        elide: Text.ElideLeft
+                                        text: chart.modelData.kind === "file"
+                                              ? chart.modelData.url.substring(chart.modelData.url.lastIndexOf("/") + 1)
+                                              : chart.modelData.component
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                    }
+                                    Text {
+                                        text: chart.modelData.first + " → " + chart.modelData.last + " instances · "
+                                              + chart.modelData.rises + " up, " + chart.modelData.falls + " down · "
+                                              + window.bytes(chart.modelData.bytes)
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                    }
+                                }
+                                // The series, a bar a sample.
+                                Item {
+                                    id: plot
+                                    x: 270
+                                    y: 8
+                                    width: chart.width - 280
+                                    height: chart.height - 16
+                                    Rectangle {
+                                        anchors.bottom: parent.bottom
+                                        width: parent.width
+                                        height: 1
+                                        color: theme.rule
+                                    }
+                                    Repeater {
+                                        model: chart.modelData.series
+                                        delegate: Rectangle {
+                                            required property int index
+                                            required property var modelData
+                                            readonly property real step: plot.width / Math.max(1, chart.modelData.series.length)
+                                            x: index * step
+                                            width: Math.max(1, step - 1)
+                                            height: Math.max(1, plot.height * modelData[1] / chart.top)
+                                            anchors.bottom: parent.bottom
+                                            color: chart.modelData.growing ? theme.bad : theme.accent
+                                            opacity: 0.75
+                                        }
+                                    }
+                                    Text {
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        text: chart.top
+                                        color: theme.subtle
+                                        font.pixelSize: 10
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            visible: growth.list.length === 0
+                            text: growth.recording ? "No component has instances yet"
+                                                   : "Press Record, then repeat an action or let the application rest"
+                            color: theme.subtle
                         }
                     }
                 }
