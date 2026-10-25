@@ -629,17 +629,36 @@ impl Surface {
         Some([f64::from(px.width) / ppp, f64::from(px.height) / ppp])
     }
 
-    /// How the platform shows the window now.
-    pub(crate) fn shown_as(&self) -> WindowState {
+    /// How the platform shows the window now; `known` is how the shell
+    /// last knew it to be.
+    pub(crate) fn shown_as(&self, known: Option<WindowState>) -> WindowState {
         if self.window.fullscreen().is_some() {
             WindowState::FullScreen
         } else if self.window.is_minimized() == Some(true) {
             WindowState::Minimized
-        } else if self.window.is_maximized() {
+        } else if maximized(
+            cfg!(target_os = "macos") && !self.window.is_decorated(),
+            known,
+            || self.window.is_maximized(),
+        ) {
             WindowState::Maximized
         } else {
             WindowState::Normal
         }
+    }
+}
+
+/// Whether a window is maximized. AppKit answers only for a window with a
+/// title bar, so winit gives a window without one a title bar for the
+/// question and takes it away again; the change ends its user's drag of
+/// an edge after its first step and cuts the window to the screen's
+/// visible frame (#133). Such a window has no zoom button: it is
+/// maximized when the application asked, and the platform is not asked.
+fn maximized(untitled_mac: bool, known: Option<WindowState>, ask: impl FnOnce() -> bool) -> bool {
+    if untitled_mac {
+        known == Some(WindowState::Maximized)
+    } else {
+        ask()
     }
 }
 
@@ -721,6 +740,21 @@ mod tests {
         assert_eq!(Choice::from_env(Some("wgpu")), Choice::Wgpu);
         assert_eq!(Choice::from_env(Some(" WGPU ")), Choice::Wgpu);
         assert_eq!(Choice::from_env(Some("gl")), Choice::Gl);
+    }
+
+    #[test]
+    fn a_mac_window_without_a_title_bar_is_not_asked_whether_it_is_maximized() {
+        let asked = std::cell::Cell::new(false);
+        let ask = || {
+            asked.set(true);
+            true
+        };
+        assert!(!maximized(true, Some(WindowState::Normal), ask));
+        assert!(maximized(true, Some(WindowState::Maximized), ask));
+        assert!(!maximized(true, None, ask));
+        assert!(!asked.get());
+        assert!(maximized(false, Some(WindowState::Normal), ask));
+        assert!(asked.get());
     }
 
     fn picture() -> ImageDelta {

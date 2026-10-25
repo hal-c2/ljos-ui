@@ -515,7 +515,7 @@ fn note_state(slot: &mut Slot, engine: &Engine, sys: &WindowSystem) {
     if !surface.shown {
         return;
     }
-    let state = surface.shown_as();
+    let state = surface.shown_as(slot.told_state);
     if slot.told_state != Some(state) {
         slot.told_state = Some(state);
         if let Some(win) = slot.window {
