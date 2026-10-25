@@ -38,12 +38,12 @@ For coffee and todolist it is the object count: the pushed page's objects were a
 | todolist | `ListView`s of `ListModel`s, `StackView`, dialogs, several directories | 569 | the page a click opened | sibling 23 ms; add skipped (\*) | — | `Main.qml:10:18: Unexpected token`, app goes on | state kept |
 | calqlatr | a pad of buttons, a `ListView` display, several files | 233 | after a click | 18–19 ms | — | told, app goes on | state kept |
 | alarms | Controls `ListView`, a `Dialog`, a form | 274 | the dialog `+` opens, still open | 17–18 ms | — | told, app goes on | state kept |
-| clocks | `ListView` of delegates, a `Timer` | 142 | none it can reach (†) | 17 ms | — | told, app goes on | state kept |
+| clocks | `ListView` of delegates, a `Timer` | 142 | where its row of clocks was scrolled to (†) | 17 ms; colour 33 ms once | — | told, app goes on | state kept |
 | coffee | `StackView` of pages, `MultiEffect`s, several files | 266 | the page a click pushed | 23–24 ms | 191 ms before the fix below, 47–61 ms after | told, app goes on | state kept |
 | stocqt | `ListView`s, a `TextField`, popups, several directories | 377 | typed text | 24 ms | 25 ms | told, app goes on | state kept |
-| samegame | a game board of `Repeater`, `Loader` and `Timer` | 220 | none it can reach (†) | 21–34 ms (‡) | 21 ms | told, app goes on | state kept |
+| samegame | a game board of `Repeater`, `Loader` and `Timer` | 2560 | the game a click on the menu started (†) | 23–24 ms; 21–34 ms on the menu (‡) | 22 ms | told, app goes on | state kept |
 | thermostat | `SwipeView`, `TabBar`, `StackView`, `MultiEffect`s, a module | 1426 | the mode `At home` chose | 18 ms; sibling 31 ms | — | told, app goes on | state kept |
-| hangman | `StackView`, a `Loader`, several files | 52 | none it can reach (†) | 20–22 ms | — | told, app goes on | state kept |
+| hangman | `StackView`, a `Loader`, several files | 52 | none: its page needs the application's own module (†) | 21–22 ms | — | told, app goes on | state kept |
 | photosurface | `Repeater` of images, `PinchHandler`, an animation | 36 | where the surface was scrolled to | 17 ms; 24–27 ms scrolled | 17 ms; 25 ms scrolled | told, app goes on | state kept |
 
 Across the 10 examples and 61 saves:
@@ -56,11 +56,22 @@ Across the 10 examples and 61 saves:
 skips that edit in such a file.
 
 (†) clocks, samegame and hangman are drawn with `Rectangle`s, `Image`s and `MouseArea`s that have no
-accessible role or name. Their outline is a window with hidden nodes only (7, 13 and 1), so there is
-no field to type into, no named line a scroll could bring into view and no control to click.
-Wheel, swipe and tap at the window's middle changed no `contentX`, `contentY`, `currentIndex` or
-`state` that `app_eval` could read either. The edits were still applied in place, with every object
-kept.
+accessible role or name, so their plain outline is a window with hidden nodes only. The driver now asks
+the snapshot for `pointer` lines too: each shown item that takes the pointer, by the text in it or its
+id, with a reference a click takes. The accessibility tree is not changed by it.
+- **clocks** lists one line, `pointer [e2] id=clockview`. Its list runs across, so the driver turns the
+  wheel sideways when the vertical turn moved nothing, and reads where the list stopped with `app_eval`
+  (`contentX` 213.33, one clock along). Every save found it there.
+- **samegame**'s menu buttons are `pointer` lines. The first click starts a game, and the board's 35
+  hidden nodes are the mark (13 before). The driver stops at the first click that changes the outline:
+  a later one ended the game and the app with it.
+- **hangman** shows nothing past its window: its page uses `Store`, the application's own in-app
+  purchase module, which a QML-only run does not have. Once (of 2 runs) the save of `LetterSelector.qml`,
+  12 kB written in place, was told as `Expected } but found EOF` at its 8192nd byte and reloaded right
+  after. 30 such saves by hand and a test that pauses between the parts
+  (`a_file_written_in_place_in_parts_is_built_once_it_is_closed`) did not show it again.
+
+The windows now take the root's size, as `qml6` opens them: clocks 640x320, hangman 320x480.
 
 photosurface's scroll brings no named line into view either: its pictures have no names. The
 driver now takes the scroll bar that moved as the mark (`scrollbar value=0.24`), read once the
@@ -88,7 +99,7 @@ saved files and the files that name their types. For a small file the quiet time
 wait. It is kept: it is what lets an editor that writes several files at once give one reload
 and not a reload of half the edit.
 
-(‡) **samegame's 34 ms is the display's frame, not the reload.**
+(‡) **samegame's 34 ms on its menu is the display's frame, not the reload.**
 - **Why.** Its menu runs a `SequentialAnimation` with `loops: -1`, so its frames come at the display's pace. A reload ready 17–21 ms after the save is shown at the next of those frames, up to one frame later. Any change waits for that frame while an animation runs.
 - **Why it is the same each time.** The driver takes a snapshot just before each save, and a snapshot is a pass. That puts the save at the same point of the frame each time.
 - **Measured.** Off-screen, four saves 1 s apart with no snapshot between them were shown 22.3, 20.9, 24.4 and 24.2 ms after the save. With a snapshot before each save they were shown 26.1, 21.0, 34.7 and 26.1 ms after. The wakes show the watcher's message at 5287.1 ms and the reload's pass at the next paced frame, 5293.7 ms.

@@ -771,3 +771,45 @@ fn the_warnings_of_the_files_loaded_are_told_at_the_start_and_not_again() {
     app.save("Main.qml", &main.replace("n: 1", "n: 2"));
     assert_eq!(told(&app.wait()), Vec::<String>::new());
 }
+
+/// Saves as an editor that writes in place does: the file emptied, then
+/// written in two parts with a pause between them, then closed.
+fn write_in_place(path: &Path, text: &str, pause: Duration) {
+    use std::io::Write as _;
+    let mut file = fs::File::create(path).unwrap();
+    let (first, rest) = text.split_at(text.len() / 2);
+    file.write_all(first.as_bytes()).unwrap();
+    file.flush().unwrap();
+    std::thread::sleep(pause);
+    file.write_all(rest.as_bytes()).unwrap();
+}
+
+#[test]
+fn a_file_written_in_place_in_parts_is_built_once_it_is_closed() {
+    // A save that is not yet closed waits the whole quiet time, so the
+    // pause between its parts is not taken for its end.
+    let rows: String = (0..300)
+        .map(|i| format!("  property int p{i}: {i}\n"))
+        .collect();
+    let used = |n: u32| {
+        format!(
+            "import QtQuick\nItem {{\n  objectName: \"used\"\n  property int n: {n}\n{rows}}}\n"
+        )
+    };
+    let main = "import QtQuick\nItem {\n  Used { }\n}\n";
+    let mut app = app(&[("Main.qml", main), ("Used.qml", &used(1))]);
+    for n in 2..6 {
+        write_in_place(
+            &app.dir.join("Used.qml"),
+            &used(n),
+            Duration::from_millis(40),
+        );
+        let reports = app.wait();
+        assert_eq!(
+            reloaded(&reports).generation,
+            u64::from(n - 1),
+            "{reports:?}"
+        );
+        assert_eq!(app.num("used", "n"), f64::from(n));
+    }
+}

@@ -45,6 +45,8 @@ ADDED = 'Item { objectName: "hotDriveAdded"; width: 1; height: 1 }'
 # How the watcher's line for a save starts, on stderr.
 WATCHER = ("ljos: reloaded", "ljos: reload failed", "ljos: the files are what runs again")
 # An outline line of a scroll bar, with where it is.
+# A line for an item that takes the pointer and has no role, as CONTROL reads a control's.
+POINTER = re.compile(gd.CONTROL.pattern.replace("(?:" + gd.ROLES + ")", "pointer", 1), re.M)
 SCROLLED = re.compile(r'^[ \t]*- (scrollbar)[ \t]+value=(\S+)[ \t]', re.M)
 # A line no QML file can hold.
 BROKEN = "property int : 3"
@@ -160,11 +162,30 @@ def outline(app):
     return "\n".join(l for l in app.call("app_snapshot").splitlines() if not l.startswith("(snapshot"))
 
 
+# A line of the outline for an item with an id: a list drawn without a role, a scroll view.
+WITH_ID = re.compile(r'^[ \t]*- (?:pointer|scrollview)\b.*\] id=(\w+)', re.M)
+WHERE = "typeof contentX === 'number' ? contentX + ',' + contentY : ''"
+
+
+def where(app, ids):
+    """Where each flickable of `ids` is scrolled to, read with app_eval."""
+    said = {i: app.call("app_eval", {"target": "id=" + i, "source": WHERE}) for i in ids}
+    return {i: (v.splitlines() or [""])[0].strip('"') for i, v in said.items()}
+
+
+def state(app, reads):
+    """The outline, and a line for each flickable whose place is a mark."""
+    return app.call("app_snapshot") + "".join(f"\nread {i}: {v}" for i, v in where(app, reads).items())
+
+
 def put_in_state(app, w):
-    """Makes the state a reload should keep. Returns what to look for after each save:
-    (label, regex over the outline)."""
-    marks = []
-    snap = app.call("app_snapshot")
+    """Makes the state a reload should keep. Returns what to look for after each save,
+    (label, regex over `state`), and the ids `state` reads."""
+    marks, reads = [], []
+    # The items drawn without a role (a game's tiles, a clock face) are listed too, as `pointer` lines.
+    snap = app.call("app_snapshot", {"pointer": True})
+    flicks = sorted(set(WITH_ID.findall(snap)))
+    placed = where(app, flicks)
     m = gd.FIELD.search(snap)
     if m:
         ref = m.group(3)
@@ -172,17 +193,22 @@ def put_in_state(app, w):
         res = app.call("app_type", {"text": "kept text"})
         w(f"== typed into {m.group(1)} [{ref}]", res.splitlines()[0] if res else "")
         marks.append(("typed text", re.compile(r'value="[^"]*kept text')))
-    before = app.call("app_snapshot")
-    res = app.call("app_scroll", {"dy": -3})
-    w("== scrolled", res.splitlines()[0] if res else "")
-    # A flick goes on moving after the wheel: the outline is read once it has stopped.
-    after, end = outline(app), time.monotonic() + 2
-    while time.monotonic() < end:
-        time.sleep(0.2)
-        again = outline(app)
-        if again == after:
+    before = outline(app)
+    # A list that runs across (a row of clock faces) takes the wheel's sideways turn.
+    for wheel in ({"dy": -3}, {"dx": -3}, {"dx": 3}):
+        res = app.call("app_scroll", wheel)
+        w(f"== scrolled {wheel}", res.splitlines()[0] if res else "")
+        # A flick goes on moving after the wheel: the outline is read once it has stopped.
+        after, end = outline(app), time.monotonic() + 2
+        while time.monotonic() < end:
+            time.sleep(0.2)
+            again = outline(app)
+            if again == after:
+                break
+            after = again
+        moved = {i: v for i, v in where(app, flicks).items() if v and v != placed[i]}
+        if after != before or moved:
             break
-        after = again
     if after != before:
         # What the scroll brought into view, as the outline names it.
         gone = set(after.splitlines()) - set(before.splitlines())
@@ -197,21 +223,45 @@ def put_in_state(app, w):
                 role, value = moved[0].groups()
                 marks.append((f"{role} scrolled to {value}",
                               re.compile(rf'^[ \t]*- {role}[ \t]+value={re.escape(value)}[ \t]', re.M)))
-    for c in gd.CONTROL.finditer(after):
+    if after == before:
+        # Nothing the outline shows moved (a row of clock faces): the place the list was
+        # scrolled to is the mark, read below once the clicks are done and it has stopped.
+        reads = sorted(moved)
+    for c in [*gd.CONTROL.finditer(after), *POINTER.finditer(after)]:
         name, ref = c.group(2) or "", c.group(3)
         if gd.ENDS.search(name) or "disabled" in c.group(4):
             continue
-        prev = app.call("app_snapshot")
+        prev = outline(app)
         res = app.call("app_click", {"target": ref})
         app.settle(0)
-        now = app.call("app_snapshot")
-        new = [l for l in set(now.splitlines()) - set(prev.splitlines()) if re.search(r'"[^"]{3,}"', l)]
+        now = outline(app)
         w(f"== clicked {name!r} [{ref}]", res.splitlines()[0] if res else "")
-        if new:
-            shown = re.search(r'"([^"]{3,})"', sorted(new)[0]).group(1)
+        if now == prev:
+            continue
+        # The first click that changed the outline made the state: a later one could end the app
+        # (a game's quit button).
+        new = sorted(set(now.splitlines()) - set(prev.splitlines()))
+        named = [l for l in new if re.search(r'"[^"]{3,}"', l)]
+        if named:
+            shown = re.search(r'"([^"]{3,})"', named[0]).group(1)
             marks.append((f"after clicking {name[:20]!r}: {shown[:30]}", re.compile(re.escape('"' + shown + '"'))))
+        elif new:
+            # Nothing named came (a board of tiles): the line itself is the mark, as a reload in
+            # place keeps the references.
+            line = new[0]
+            marks.append((f"after clicking {name[:20]!r}: {line.strip()[:40]}",
+                          re.compile("^" + re.escape(line) + "$", re.M)))
+        break
+    now, end = where(app, reads), time.monotonic() + 3
+    while time.monotonic() < end:
+        time.sleep(0.2)
+        again = where(app, reads)
+        if again == now:
             break
-    return marks
+        now = again
+    for i, v in now.items():
+        marks.append((f"{i} scrolled to {v}", re.compile(rf"^read {i}: {re.escape(v)}$", re.M)))
+    return marks, reads
 
 
 def stderr_lines(log, seen):
@@ -232,13 +282,11 @@ def drive(out, e):
     shutil.copytree(os.path.join(ROOT, "corpus", "qtdoc", e["dir"]), src)
     shutil.rmtree(gd.XDG, ignore_errors=True)
     gd.seed_pictures()
-    win = e.get("window") or {}
-    size = f"{win.get('width', 800)}x{win.get('height', 600)}"
     log_path = os.path.join(d, "stderr.log")
     log = open(log_path, "w")
     before = set(gd.glob.glob(TARGET + "/ljos/mcp-*.json"))
     cmd = [SANDBOX, "exec", os.path.join(TARGET, PROFILE, "ljos"), "run", os.path.join(src, e["entry"]),
-           "--project", src, "--size", size, "--example", eid, "--watch", "--mcp=inspect,input,eval"]
+           "--project", src, "--example", eid, "--watch", "--mcp=inspect,input,eval"]
     p = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
     rep = open(os.path.join(d, "report.txt"), "w")
 
@@ -262,12 +310,12 @@ def drive(out, e):
         app = gd.Inspector(path)
         seen = [0]
         w("== logged while starting", *app.new_logs(), *stderr_lines(log_path, seen))
-        marks = put_in_state(app, w)
+        marks, reads = put_in_state(app, w)
         w("== state to keep: " + "; ".join(l for l, _ in marks), *app.new_logs())
         stderr_lines(log_path, seen)
         for name, apply in edits(src, e["entry"]):
             gen = generation(status(app))
-            prev = app.call("app_snapshot")
+            prev = state(app, reads)
             did = apply()
             if did is None:
                 rows.append({"edit": name, "skipped": True})
@@ -288,7 +336,7 @@ def drive(out, e):
             alive = p.poll() is None
             st = status(app) if alive else {}
             logs = app.new_logs() if alive else []
-            now = app.call("app_snapshot") if alive else ""
+            now = state(app, reads) if alive else ""
             windows = len(st.get("windows") or []) if alive else 0
             kept = [l for l, rx in marks if rx.search(now)]
             lost = [l for l, rx in marks if rx.search(prev) and not rx.search(now)]
