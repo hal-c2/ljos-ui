@@ -38,22 +38,33 @@ For coffee and todolist it is the object count: the pushed page's objects were a
 | todolist | `ListView`s of `ListModel`s, `StackView`, dialogs, several directories | 569 | the page a click opened | sibling 23 ms; add skipped (\*) | — | `Main.qml:10:18: Unexpected token`, app goes on | state kept |
 | calqlatr | a pad of buttons, a `ListView` display, several files | 233 | after a click | 18–19 ms | — | told, app goes on | state kept |
 | alarms | Controls `ListView`, a `Dialog`, a form | 274 | the dialog `+` opens, still open | 17–18 ms | — | told, app goes on | state kept |
-| clocks | `ListView` of delegates, a `Timer` | 142 | — | 17 ms | — | told, app goes on | state kept |
+| clocks | `ListView` of delegates, a `Timer` | 142 | none it can reach (†) | 17 ms | — | told, app goes on | state kept |
 | coffee | `StackView` of pages, `MultiEffect`s, several files | 266 | the page a click pushed | 23–24 ms | 191 ms before the fix below, 47–61 ms after | told, app goes on | state kept |
 | stocqt | `ListView`s, a `TextField`, popups, several directories | 377 | typed text | 24 ms | 25 ms | told, app goes on | state kept |
-| samegame | a game board of `Repeater`, `Loader` and `Timer` | 220 | — | 21–34 ms | 21 ms | told, app goes on | state kept |
+| samegame | a game board of `Repeater`, `Loader` and `Timer` | 220 | none it can reach (†) | 21–34 ms (‡) | 21 ms | told, app goes on | state kept |
 | thermostat | `SwipeView`, `TabBar`, `StackView`, `MultiEffect`s, a module | 1426 | the mode `At home` chose | 18 ms; sibling 31 ms | — | told, app goes on | state kept |
-| hangman | `StackView`, a `Loader`, several files | 52 | — | 20–22 ms | — | told, app goes on | state kept |
-| photosurface | `Repeater` of images, `PinchHandler`, an animation | 36 | — | 17 ms | 17 ms | told, app goes on | state kept |
+| hangman | `StackView`, a `Loader`, several files | 52 | none it can reach (†) | 20–22 ms | — | told, app goes on | state kept |
+| photosurface | `Repeater` of images, `PinchHandler`, an animation | 36 | where the surface was scrolled to | 17 ms; 24–27 ms scrolled | 17 ms; 25 ms scrolled | told, app goes on | state kept |
 
 Across the 10 examples and 61 saves:
 - **Nothing crashed and no window was lost.**
-- **Every successful reload was applied in place** (0 made again), so the state the reload rules keep was kept wherever the driver had made some: typed text, a dialog that was open, a pushed page, a chosen mode.
+- **Every successful reload was applied in place** (0 made again), so the state the reload rules keep was kept wherever the driver had made some: typed text, a dialog that was open, a pushed page, a chosen mode, a scroll position.
 - **A syntax error was told as the file and line** (`reload failed: Main.qml:7:18: Unexpected token`), and the app went on as it was. The save that took it out says `the files are what runs again`.
 - **The warnings of every loaded file were told with the first reload**, the reload lint among them, and not again until they changed. They are now told as the app starts, as each file is loaded, and a reload tells only the new ones.
 
 (\*) todolist's `Main.qml` imports only its own module, so it has no `Item` to add. The driver now
 skips that edit in such a file.
+
+(†) clocks, samegame and hangman are drawn with `Rectangle`s, `Image`s and `MouseArea`s that have no
+accessible role or name. Their outline is a window with hidden nodes only (7, 13 and 1), so there is
+no field to type into, no named line a scroll could bring into view and no control to click.
+Wheel, swipe and tap at the window's middle changed no `contentX`, `contentY`, `currentIndex` or
+`state` that `app_eval` could read either. The edits were still applied in place, with every object
+kept.
+
+photosurface's scroll brings no named line into view either: its pictures have no names. The
+driver now takes the scroll bar that moved as the mark (`scrollbar value=0.24`), read once the
+flick has stopped. Every save found it where it was.
 
 ## What a save costs
 
@@ -77,8 +88,11 @@ saved files and the files that name their types. For a small file the quiet time
 wait. It is kept: it is what lets an editor that writes several files at once give one reload
 and not a reload of half the edit.
 
-samegame's 34 ms for some saves is one frame more than its compile and apply. Why that frame is
-waited for was not looked into (it has a running `Timer`).
+(‡) **samegame's 34 ms is the display's frame, not the reload.**
+- **Why.** Its menu runs a `SequentialAnimation` with `loops: -1`, so its frames come at the display's pace. A reload ready 17–21 ms after the save is shown at the next of those frames, up to one frame later. Any change waits for that frame while an animation runs.
+- **Why it is the same each time.** The driver takes a snapshot just before each save, and a snapshot is a pass. That puts the save at the same point of the frame each time.
+- **Measured.** Off-screen, four saves 1 s apart with no snapshot between them were shown 22.3, 20.9, 24.4 and 24.2 ms after the save. With a snapshot before each save they were shown 26.1, 21.0, 34.7 and 26.1 ms after. The wakes show the watcher's message at 5287.1 ms and the reload's pass at the next paced frame, 5293.7 ms.
+- **Not changed.** Showing the reload before the paced frame would draw two frames in one interval.
 
 **Measured and fixed: an edit that changes a size where `MultiEffect` draws a shadow.**
 - **Before.** coffee's binding edit (`width: (parent.width) + 1` on the root's content) took 105 ms to apply and showed 191 ms after the save. The edit itself was cheap: the reload was applied in place, and its whole apply was the binding's own effect. Every shadow on the page (8 `MultiEffect`s) was composed again at its new size, and the shadow's Gaussian blur was 90 % of that.

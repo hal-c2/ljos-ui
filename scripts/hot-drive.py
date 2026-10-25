@@ -44,6 +44,8 @@ QTQUICK = re.compile(r'^import QtQuick(\s+[\d.]+)?\s*$', re.M)
 ADDED = 'Item { objectName: "hotDriveAdded"; width: 1; height: 1 }'
 # How the watcher's line for a save starts, on stderr.
 WATCHER = ("ljos: reloaded", "ljos: reload failed", "ljos: the files are what runs again")
+# An outline line of a scroll bar, with where it is.
+SCROLLED = re.compile(r'^[ \t]*- (scrollbar)[ \t]+value=(\S+)[ \t]', re.M)
 # A line no QML file can hold.
 BROKEN = "property int : 3"
 
@@ -153,6 +155,11 @@ def generation(st):
     return reload.get("generation", 0) if isinstance(reload, dict) else 0
 
 
+def outline(app):
+    """The outline without the line that numbers the snapshot."""
+    return "\n".join(l for l in app.call("app_snapshot").splitlines() if not l.startswith("(snapshot"))
+
+
 def put_in_state(app, w):
     """Makes the state a reload should keep. Returns what to look for after each save:
     (label, regex over the outline)."""
@@ -168,7 +175,14 @@ def put_in_state(app, w):
     before = app.call("app_snapshot")
     res = app.call("app_scroll", {"dy": -3})
     w("== scrolled", res.splitlines()[0] if res else "")
-    after = app.call("app_snapshot")
+    # A flick goes on moving after the wheel: the outline is read once it has stopped.
+    after, end = outline(app), time.monotonic() + 2
+    while time.monotonic() < end:
+        time.sleep(0.2)
+        again = outline(app)
+        if again == after:
+            break
+        after = again
     if after != before:
         # What the scroll brought into view, as the outline names it.
         gone = set(after.splitlines()) - set(before.splitlines())
@@ -176,6 +190,13 @@ def put_in_state(app, w):
         if lines:
             name = re.search(r'"([^"]{3,})"', lines[0]).group(1)
             marks.append(("scrolled to " + name[:30], re.compile(re.escape('"' + name + '"'))))
+        else:
+            # Nothing named came into view (a surface of pictures): the scroll bar that moved is the mark.
+            moved = [m for m in map(SCROLLED.search, sorted(gone)) if m]
+            if moved:
+                role, value = moved[0].groups()
+                marks.append((f"{role} scrolled to {value}",
+                              re.compile(rf'^[ \t]*- {role}[ \t]+value={re.escape(value)}[ \t]', re.M)))
     for c in gd.CONTROL.finditer(after):
         name, ref = c.group(2) or "", c.group(3)
         if gd.ENDS.search(name) or "disabled" in c.group(4):
