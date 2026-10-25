@@ -5454,7 +5454,7 @@ budget QML now gives each component an id and uses it in a binding (`row.index`,
 | Type lookups by name | 20 (2) | 0 | 10 (1) | 0 |
 | Context name lookups | 0 | 0 | 0 | 0 |
 | Atoms interned | 0 | 0 | 0 | 0 |
-| Heap allocations | 1856 (185.6) | 1786 (178.6) | 1057 (105.7) | 1027 (102.7) |
+| Heap allocations | 1866 (186.6) | 1796 (179.6) | 1057 (105.7) | 1027 (102.7) |
 
 Objects, graph values, bindings, effects and scopes are unchanged (ADR 0001's work).
 

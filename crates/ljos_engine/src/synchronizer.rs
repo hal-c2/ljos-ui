@@ -17,6 +17,7 @@ use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
 use crate::log::LogLevel;
+use crate::types::TypeTag;
 use crate::value::Value;
 use crate::{NodeId, QmlObject, qml_impl};
 
@@ -217,15 +218,12 @@ fn spread(engine: &Engine, me: ObjectId, from: Place) {
         }
         let _ = engine.with_mut::<Synchronizer, _>(me, |s| s.heard.clear());
         let old = read(to);
-        let _ = engine.write_derived(to.0, to.1, v.clone());
+        let given = given_to(engine, to, &v);
+        let _ = engine.write_derived(to.0, to.1, given.clone());
         let now = read(to);
         let heard = engine
             .with::<Synchronizer, _>(me, |s| s.heard.contains(&to))
             .unwrap_or(false);
-        let given = engine
-            .meta_of(to.0)
-            .and_then(|m| m.property(to.1).and_then(|p| p.ty.coerce(&v).ok()))
-            .unwrap_or_else(|| v.clone());
         if !heard && now.change_equals(&old) {
             said.push(("valueIgnored", to));
         } else if !now.change_equals(&given) {
@@ -242,5 +240,22 @@ fn spread(engine: &Engine, me: ObjectId, from: Place) {
             .and_then(|m| m.property(prop).map(|p| p.name.to_string()))
             .unwrap_or_default();
         let _ = engine.emit_by_name(me, signal, &[Value::Object(obj), Value::string(name)]);
+    }
+}
+
+/// What `to` is given of `v`. The Synchronizer writes as a property
+/// written from C++ is, not as a binding: a text that is no number makes
+/// an int 0 there (checked on qml6), where a binding or a script refuses it.
+fn given_to(engine: &Engine, to: Place, v: &Value) -> Value {
+    let Some(ty) = engine
+        .meta_of(to.0)
+        .and_then(|m| m.property(to.1).map(|p| p.ty.clone()))
+    else {
+        return v.clone();
+    };
+    match ty.coerce(v) {
+        Ok(c) => c,
+        Err(_) if ty == TypeTag::Int && matches!(v, Value::String(_)) => Value::Int(0),
+        Err(_) => v.clone(),
     }
 }

@@ -449,7 +449,6 @@ impl std::fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
-/// What a value is, for a data error: in a script's words, not Qt's.
 /// What an `int` makes of a text, as Qt does: a decimal number, rounded
 /// half away from 0, and past the range of an int the least one, as a
 /// double cast to one is. A text that is no such number is none.
@@ -467,6 +466,7 @@ fn string_to_int(s: &str) -> Option<i32> {
     })
 }
 
+/// What a value is, for a data error: in a script's words, not Qt's.
 fn describe_data(v: &Value) -> String {
     match v {
         Value::Undefined => "undefined".into(),
