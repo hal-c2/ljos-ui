@@ -7,6 +7,7 @@
 //! graph says the value changed, after the write that changed it and in
 //! the graph's flush order.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use ljos_reactive::NodeId;
@@ -48,6 +49,11 @@ pub(crate) struct Connection {
     pub(crate) handler: Handler,
     /// The graph subscription behind a change-signal connection.
     pub(crate) watch: Option<NodeId>,
+    /// Of a handler the document gives the object itself: how many stand
+    /// in for it now ([`Engine::stand_in_handler`]). It runs at none.
+    stood_in: Option<Rc<Cell<u32>>>,
+    /// Of a stand-in: those it silences while it is connected.
+    silences: Vec<Rc<Cell<u32>>>,
 }
 
 #[derive(Default)]
@@ -86,6 +92,9 @@ impl Signals {
 
     fn remove(&mut self, id: ConnectionId) -> Option<Connection> {
         let c = self.conns.remove(id)?;
+        for s in &c.silences {
+            s.set(s.get().saturating_sub(1));
+        }
         self.unlink(c.sender, id);
         if let Some(r) = c.receiver {
             self.unlink(r, id);
@@ -222,6 +231,37 @@ impl Engine {
         self.connect_impl(obj, signal, receiver, handler, order)
     }
 
+    /// Connects `handler` in place of the handlers the document gives
+    /// `obj` itself for `signal` (and of the stand-ins before it): those
+    /// do not run until the connection is gone. A `PropertyChanges`
+    /// does this with the handler it is given, as Qt's does.
+    pub fn stand_in_handler(
+        &self,
+        obj: ObjectId,
+        signal: SignalIndex,
+        handler: impl Fn(&Engine, &[Value]) + 'static,
+    ) -> Result<ConnectionId, EngineError> {
+        let id = self.connect_impl(obj, signal, None, Rc::new(handler), Order::Own)?;
+        let mut signals = self.inner.signals.borrow_mut();
+        let own: Vec<Rc<Cell<u32>>> = signals
+            .by_object
+            .get(obj)
+            .into_iter()
+            .flatten()
+            .filter(|c| **c != id)
+            .filter_map(|c| signals.conns.get(*c))
+            .filter(|c| c.sender == obj && c.signal == signal)
+            .filter_map(|c| c.stood_in.clone())
+            .collect();
+        for s in &own {
+            s.set(s.get() + 1);
+        }
+        if let Some(c) = signals.conns.get_mut(id) {
+            c.silences = own;
+        }
+        Ok(id)
+    }
+
     fn connect_impl(
         &self,
         obj: ObjectId,
@@ -230,6 +270,18 @@ impl Engine {
         handler: Handler,
         order: Order,
     ) -> Result<ConnectionId, EngineError> {
+        let stood_in = (order == Order::Own).then(|| Rc::new(Cell::new(0)));
+        let handler: Handler = match &stood_in {
+            Some(s) => {
+                let s = s.clone();
+                Rc::new(move |e: &Engine, args: &[Value]| {
+                    if s.get() == 0 {
+                        handler(e, args);
+                    }
+                })
+            }
+            None => handler,
+        };
         let notify_of = {
             let store = self.inner.store.borrow();
             let h = store
@@ -281,6 +333,8 @@ impl Engine {
             receiver,
             handler,
             watch,
+            stood_in,
+            silences: Vec::new(),
         }))
     }
 

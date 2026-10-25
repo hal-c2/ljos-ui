@@ -88,6 +88,9 @@ pub(crate) fn register(engine: &Engine) {
             group::changed(e, obj);
         }
     });
+    // `Binding { box.width: 10 }`: properties of other objects.
+    engine.register_open_body(Binding::static_meta());
+    engine.register_foreign_members(Binding::static_meta(), binding::keep);
     // `script: ...` is a statement to run when the state is entered.
     engine.register_script_property(
         StateChangeScript::static_meta(),

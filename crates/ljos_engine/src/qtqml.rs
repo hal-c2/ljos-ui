@@ -1412,7 +1412,7 @@ impl Engine {
 }
 
 /// `foo` → `onFoo`.
-pub(crate) fn handler_name(signal: &str) -> String {
+pub fn handler_name(signal: &str) -> String {
     let mut c = signal.chars();
     match c.next() {
         Some(f) => format!("on{}{}", f.to_uppercase(), c.as_str()),

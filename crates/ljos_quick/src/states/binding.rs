@@ -5,10 +5,14 @@
 //! state is: what the property had before is underneath, a binding there
 //! goes on following what it reads, and `restoreMode` says what of it
 //! shows again when the `Binding` lets go.
+//!
+//! `Binding { box.width: 10 }` gives properties of other objects, by
+//! their ids: each is a layer of its own, under the one `when`.
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, LogLevel, ObjectId, OverrideContent, OverrideId, PropIndex,
-    QmlObject, QtObject, RestoreMode, Value, qml_impl,
+    Atom, Cx, Engine, EngineError, ForeignMember, ForeignValue, LogLevel, ObjectId,
+    OverrideContent, OverrideId, PropIndex, QmlObject, QtObject, RestoreMode, TypeTag, Value,
+    qml_impl,
 };
 use ljos_reactive::WriteKind;
 
@@ -64,6 +68,14 @@ pub struct Binding {
     waiting: bool,
     #[qml(skip)]
     warned: bool,
+    /// What it gives other objects (`box.width: 10`).
+    #[qml(skip)]
+    members: Vec<ForeignMember>,
+    /// Their layers, while it holds them.
+    #[qml(skip)]
+    holds: Option<Vec<(ObjectId, PropIndex, OverrideId)>>,
+    #[qml(skip)]
+    complete: bool,
 }
 
 impl Default for Binding {
@@ -79,6 +91,9 @@ impl Default for Binding {
             held: None,
             waiting: false,
             warned: false,
+            members: Vec::new(),
+            holds: None,
+            complete: false,
         }
     }
 }
@@ -96,6 +111,7 @@ impl Binding {
             engine.watch(me, p, move |e, _| sync(e, me))?;
         }
         engine.watch(me, Binding::VALUE.index, move |e, _| pass_on(e, me))?;
+        let _ = engine.with_mut::<Binding, _>(me, |b| b.complete = true);
         sync(engine, me);
         Ok(())
     }
@@ -125,6 +141,7 @@ fn held(engine: &Engine, me: ObjectId) -> Option<(ObjectId, PropIndex, OverrideI
 /// Takes or lets go of the property, as `target`, `property` and `when`
 /// say now.
 fn sync(engine: &Engine, me: ObjectId) {
+    sync_members(engine, me);
     let read = |p: PropIndex| engine.untrack(|| engine.read(me, p));
     let target = read(Binding::TARGET.index)
         .as_object()
@@ -147,13 +164,7 @@ fn sync(engine: &Engine, me: ObjectId) {
     }
     engine.batch(|| {
         if let Some((t, p, id)) = has {
-            let mode = match read(Binding::RESTORE_MODE.index).to_number() as i32 {
-                0 => RestoreMode::None,
-                1 => RestoreMode::Binding,
-                2 => RestoreMode::Value,
-                _ => RestoreMode::BindingOrValue,
-            };
-            let _ = engine.remove_override(t, p, id, mode);
+            let _ = engine.remove_override(t, p, id, restore_mode(engine, me));
         }
         let mut now = None;
         if let Some((t, p)) = want {
@@ -172,6 +183,117 @@ fn sync(engine: &Engine, me: ObjectId) {
             b.waiting = false;
         });
     });
+}
+
+/// Takes `member` (one given again by a reload takes the place of the one
+/// of its name).
+pub(crate) fn keep(engine: &Engine, me: ObjectId, member: ForeignMember) {
+    let complete = engine
+        .with_mut::<Binding, _>(me, |b| {
+            match b
+                .members
+                .iter()
+                .position(|m| m.object == member.object && m.name == member.name)
+            {
+                Some(i) => b.members[i] = member,
+                None => b.members.push(member),
+            }
+            b.complete
+        })
+        .unwrap_or(false);
+    if complete {
+        engine.batch(|| {
+            let mode = restore_mode(engine, me);
+            let_go_of_members(engine, me, mode);
+            sync(engine, me);
+        });
+    }
+}
+
+fn restore_mode(engine: &Engine, me: ObjectId) -> RestoreMode {
+    let mode = engine
+        .untrack(|| engine.read(me, Binding::RESTORE_MODE.index))
+        .to_number() as i32;
+    match mode {
+        0 => RestoreMode::None,
+        1 => RestoreMode::Binding,
+        2 => RestoreMode::Value,
+        _ => RestoreMode::BindingOrValue,
+    }
+}
+
+fn let_go_of_members(engine: &Engine, me: ObjectId, mode: RestoreMode) {
+    let holds = engine
+        .with_mut::<Binding, _>(me, |b| b.holds.take())
+        .ok()
+        .flatten();
+    for (t, p, id) in holds.into_iter().flatten().rev() {
+        let _ = engine.remove_override(t, p, id, mode);
+    }
+}
+
+/// Holds or lets go of what it gives other objects, as `when` says now.
+fn sync_members(engine: &Engine, me: ObjectId) {
+    let Ok((members, has)) =
+        engine.with::<Binding, _>(me, |b| (b.members.clone(), b.holds.is_some()))
+    else {
+        return;
+    };
+    if members.is_empty() {
+        return;
+    }
+    let want = engine
+        .untrack(|| engine.read(me, Binding::WHEN.index))
+        .to_boolean();
+    if want == has {
+        return;
+    }
+    if !want {
+        let_go_of_members(engine, me, restore_mode(engine, me));
+        return;
+    }
+    let mut holds = Vec::new();
+    for ForeignMember {
+        object,
+        name,
+        value,
+        ..
+    } in members
+    {
+        let Some(t) = object.filter(|t| engine.is_alive(*t)) else {
+            continue;
+        };
+        let Ok(p) = engine.property_index(t, &name) else {
+            warn_once(engine, me, t, &name);
+            continue;
+        };
+        if is_item(engine, t) {
+            let _ = init_item(engine, t);
+        }
+        let ty = engine
+            .meta_of(t)
+            .and_then(|m| m.property(p).map(|p| p.ty.clone()))
+            .unwrap_or(TypeTag::Var);
+        let content = match value {
+            ForeignValue::Value(v) => OverrideContent::Value(v),
+            ForeignValue::Binding(f) => {
+                // A run that failed keeps the value of the last that did
+                // not.
+                let mut last = engine.untrack(|| engine.read(t, p));
+                OverrideContent::Binding(Box::new(move |e| {
+                    if let Some(v) = f(e, &ty) {
+                        last = v;
+                    }
+                    last.clone()
+                }))
+            }
+            ForeignValue::Handler(_) => continue,
+        };
+        if let Ok(id) = engine.push_override(t, p, content) {
+            holds.push((t, p, id));
+        }
+    }
+    let _ = engine.with_mut::<Binding, _>(me, |b| b.holds = Some(holds));
 }
 
 fn warn_once(engine: &Engine, me: ObjectId, target: ObjectId, name: &str) {

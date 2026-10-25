@@ -23,8 +23,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Engine, ForeignMember, ForeignValue, Interception, LogLevel, ObjectId, OverrideContent,
-    OverrideId, PropIndex, RestoreMode, TypeTag, Value,
+    Atom, ConnectionId, Engine, ForeignMember, ForeignValue, Interception, LogLevel, ObjectId,
+    OverrideContent, OverrideId, PropIndex, RestoreMode, TypeTag, Value, handler_name,
 };
 use ljos_reactive::WriteKind;
 use ljos_render::kurbo::{Affine, Point};
@@ -118,6 +118,8 @@ enum Applied {
         target: ObjectId,
         old: Option<ObjectId>,
     },
+    /// A handler in place of the target's own.
+    Handler(ConnectionId),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -545,6 +547,9 @@ impl Group {
                         let _ = crate::tree::set_parent_item(engine, target, old);
                     }
                 }
+                Applied::Handler(id) => {
+                    engine.disconnect(id);
+                }
             }
         }
     }
@@ -621,6 +626,25 @@ impl Group {
                     Ok(a) => target = a,
                     Err(_) => continue,
                 }
+            }
+            if let ForeignValue::Handler(h) = value {
+                match engine.signal_index(target, &name) {
+                    Ok(s) => {
+                        let h = move |e: &Engine, args: &[Value]| h(e, args);
+                        if let Ok(id) = engine.stand_in_handler(target, s, h) {
+                            self.applied.borrow_mut().push(Applied::Handler(id));
+                        }
+                    }
+                    Err(_) => engine.log(
+                        LogLevel::Warning,
+                        "qml",
+                        format!(
+                            "{at}: QML PropertyChanges: Cannot assign to non-existent property \"{}\"",
+                            handler_name(&name)
+                        ),
+                    ),
+                }
+                continue;
             }
             let written = name;
             let mut name: &str = &written;
@@ -702,6 +726,8 @@ impl Group {
                         last.clone()
                     }))
                 }
+                // Put in place above.
+                ForeignValue::Handler(_) => continue,
             };
             round.note(engine, target, prop, ChangeKind::Property);
             self.push(engine, (target, prop), content, restore, Layer::Property);
@@ -720,6 +746,7 @@ impl Group {
             let given = move |e: &Engine, value: &ForeignValue| match value {
                 ForeignValue::Value(v) => Some(v.clone()),
                 ForeignValue::Binding(f) => f(e, &TypeTag::Var),
+                ForeignValue::Handler(_) => None,
             };
             let content = if explicit
                 || members

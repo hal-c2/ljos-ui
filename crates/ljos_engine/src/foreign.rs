@@ -26,7 +26,8 @@ pub struct ForeignMember {
     /// (`box.width`); `None` when the member is of whatever the keeping
     /// object aims at (`width`).
     pub object: Option<ObjectId>,
-    /// The property, dotted for a group's (`border.width`).
+    /// The property, dotted for a group's (`border.width`); the signal's
+    /// name for a handler (`clicked` of `button.onClicked`).
     pub name: String,
     /// The type whose attached object has the property (`Layout` of
     /// `Layout.fillWidth: true`), attached to the object the member is of.
@@ -47,6 +48,8 @@ pub enum ForeignValue {
     /// A value written out.
     Value(Value),
     Binding(ForeignBinding),
+    /// A signal handler (`button.onClicked: ...`).
+    Handler(crate::Handler),
 }
 
 impl fmt::Debug for ForeignValue {
@@ -54,6 +57,7 @@ impl fmt::Debug for ForeignValue {
         match self {
             Self::Value(v) => f.debug_tuple("Value").field(v).finish(),
             Self::Binding(_) => f.write_str("Binding(..)"),
+            Self::Handler(_) => f.write_str("Handler(..)"),
         }
     }
 }

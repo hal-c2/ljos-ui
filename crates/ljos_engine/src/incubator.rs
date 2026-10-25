@@ -1806,6 +1806,12 @@ impl Engine {
             }
         }
         for h in &m.handlers {
+            // `onClicked` of what a PropertyChanges aims at, or
+            // `button.onClicked` of another object.
+            let own = path.is_empty() && self.signal_index(obj, &h.signal).is_ok();
+            if !own && self.keep_foreign_handler(inst, obj, path, h, scope) {
+                continue;
+            }
             if path.is_empty() {
                 self.connect_handler(inst, obj, &h.signal, h, scope);
             } else if let Some(target) = self.object_at_path(obj, path) {
@@ -2121,6 +2127,22 @@ impl Engine {
         self.keep_foreign(inst, obj, (path, &pb.name), span, value, attached)
     }
 
+    fn keep_foreign_handler(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        path: &[String],
+        h: &ljos_ir::Handler,
+        scope: ObjectId,
+    ) -> bool {
+        if self.foreign_keeper(obj).is_none() {
+            return false;
+        }
+        let span = handler_place(&inst.file.ir, h.expr);
+        let value = ForeignValue::Handler(self.make_handler(inst, obj, &h.signal, h, scope));
+        self.keep_foreign(inst, obj, (path, &h.signal), span, value, None)
+    }
+
     fn no_property(&self, inst: &Instance, line: u32, col: u32, path: &[String], name: &str) {
         let full = if path.is_empty() {
             name.to_owned()
@@ -2347,14 +2369,15 @@ impl Engine {
         }
     }
 
-    fn connect_handler(
+    /// The handler `h` written in `obj` makes, dying with `scope`.
+    fn make_handler(
         &self,
         inst: &Rc<Instance>,
         obj: ObjectId,
         signal: &str,
         h: &ljos_ir::Handler,
         scope: ObjectId,
-    ) {
+    ) -> crate::Handler {
         let expr = h.expr;
         // The first of the signal's parameters the handler uses without
         // declaring them, which Qt has deprecated.
@@ -2368,7 +2391,7 @@ impl Engine {
             .map(|r| Atom::new(&r.name));
         let code = self.reload_code(inst, expr);
         let signal_name = Atom::new(signal);
-        let handler: crate::Handler = Rc::new(move |e: &Engine, args: &[Value]| {
+        Rc::new(move |e: &Engine, args: &[Value]| {
             // Dev reload: the tree being replaced, or the one being
             // made, is not to act on what the other does.
             if e.reload_muted(scope) {
@@ -2385,7 +2408,19 @@ impl Engine {
             let _profiled = e.profile_handler(scope, obj, expr.0, &signal_name, at);
             let _journaled = e.journal_handler(scope, &signal_name, at);
             e.call_expr(&i, expr, args);
-        });
+        })
+    }
+
+    fn connect_handler(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        signal: &str,
+        h: &ljos_ir::Handler,
+        scope: ObjectId,
+    ) {
+        let handler = self.make_handler(inst, obj, signal, h, scope);
+        let expr = h.expr;
         // Every handler of a `Connections` is for its target, also one
         // named like a change of its own (`onTargetChanged`), as in Qt.
         let connections = self
