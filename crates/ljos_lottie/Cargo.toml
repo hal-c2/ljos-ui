@@ -1,0 +1,19 @@
+[package]
+name = "ljos_lottie"
+description = "The Qt.labs.lottieqt module for Ljós: LottieAnimation plays Lottie (Bodymovin) JSON files, drawn through the display list, as an opt-in crate written against the ljos facade alone"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The facade alone: a module crate opens no windows. Paths, strokes and
+# gradients go through the display list every painted item uses.
+ljos = { path = "../ljos", default-features = false }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

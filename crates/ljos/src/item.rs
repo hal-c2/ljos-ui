@@ -113,9 +113,9 @@ pub use ljos_quick::{
     flickable::WheelItem,
 };
 pub use ljos_render::{
-    Border, Brush, Decorations, DisplayList, DisplayListBuilder, DrawOp, FillRule, GlyphRun,
-    GradientStop, LinearGradient, Paint, PathStyle, PositionedGlyph, Rgba, ShapeStyle, Spread,
-    TextAlign, kurbo, peniko,
+    Border, Brush, BrushGradient, Decorations, DisplayList, DisplayListBuilder, DrawOp, FillRule,
+    GlyphRun, GradientGeometry, GradientStop, LinearGradient, Paint, PathStyle, PositionedGlyph,
+    Rgba, ShapeStyle, Spread, TextAlign, kurbo, peniko,
 };
 pub use ljos_render::{
     ImageAlign, ImageError, ImageFit, ImageHandle, ImagePlacement, painted_size, place_image,

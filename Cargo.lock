@@ -3631,6 +3631,7 @@ dependencies = [
  "ljos_folderlistmodel",
  "ljos_i18n",
  "ljos_localstorage",
+ "ljos_lottie",
  "ljos_mcp_core",
  "ljos_media",
  "ljos_platform",
@@ -3685,6 +3686,7 @@ dependencies = [
  "ljos_i18n",
  "ljos_ir",
  "ljos_localstorage",
+ "ljos_lottie",
  "ljos_mcp_author",
  "ljos_mcp_core",
  "ljos_media",
@@ -3975,6 +3977,15 @@ dependencies = [
  "ljos_platform",
  "rusqlite",
  "tempfile",
+]
+
+[[package]]
+name = "ljos_lottie"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
