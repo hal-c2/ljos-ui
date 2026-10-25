@@ -46,3 +46,17 @@ reach it) and reads the accessibility tree and the picture, by one set of
 rules, so that they all see a scene behave the same. Its clock is the test
 clock or the real one. Lives in `crates/ljos_drive`, whose module comment
 gives the rules.
+
+**Backend capability.** What a scenario backend can do beyond its core
+(load, set, get, call, let time pass, click, type a key, move the pointer,
+read the accessibility tree, the log and the picture): richer input, an
+assistive technology's requests, files, the environment, the system's
+services, the application around the QML, hot reload, probes into the
+runtime, and Ljós's own tooling. Each is a trait in
+`crates/ljos_bdd/src/backend`; a step that needs one a backend lacks is
+pending on that backend, or unsupported for what only Ljós has.
+
+**Fake platform.** The system a scenario's application runs on when it runs
+in the runner's own process: its own file system and home, dialogs the
+scenario answers, a permission asker, sensors, a position, and an opener
+that only notes URLs. Nothing reaches the real ones.
