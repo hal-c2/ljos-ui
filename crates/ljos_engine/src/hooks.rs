@@ -310,6 +310,40 @@ impl Engine {
             .any(|f| f(self, source, target, prop, member))
     }
 
+    /// Says that the objects declared inside an object of `meta` (or of
+    /// what derives from it) have bindings that run when first read, also
+    /// in eager mode ([`Engine::set_eager_bindings`]): Qt makes them only
+    /// when they are first needed, as it does a `Transition`'s animations,
+    /// so one that would fail is not reported while it is never needed.
+    pub fn register_deferred_contents(&self, meta: &'static MetaObject) {
+        let all = self.extension::<DeferredContents>();
+        let mut all = all.0.borrow_mut();
+        if !all.iter().any(|known| std::ptr::eq(*known, meta)) {
+            all.push(meta);
+        }
+    }
+
+    /// Whether `obj` is declared, at any depth, inside an object of a type
+    /// [`Engine::register_deferred_contents`] named.
+    pub(crate) fn in_deferred_contents(&self, obj: ObjectId) -> bool {
+        let all = self.extension::<DeferredContents>();
+        let all = all.0.borrow();
+        if all.is_empty() {
+            return false;
+        }
+        let mut at = self.owner(obj);
+        while let Some(o) = at {
+            if self
+                .meta_of(o)
+                .is_some_and(|m| all.iter().any(|d| m.inherits(d)))
+            {
+                return true;
+            }
+            at = self.owner(o);
+        }
+        false
+    }
+
     /// Makes `prop` of `meta` (and of what derives from it) a script
     /// property: what QML writes for it is kept as a statement and runs
     /// only through [`Engine::run_script`].
@@ -378,3 +412,7 @@ impl Engine {
         self.wake_host();
     }
 }
+
+/// The types [`Engine::register_deferred_contents`] named.
+#[derive(Default)]
+struct DeferredContents(RefCell<Vec<&'static MetaObject>>);

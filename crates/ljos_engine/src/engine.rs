@@ -2441,7 +2441,7 @@ impl Engine {
         };
         let wrapper = self.binding_wrapper(obj, prop, ty, last.unwrap_or_default(), f, free);
         g.bind(n, wrapper)?;
-        if self.inner.eager_bindings.get() {
+        if self.inner.eager_bindings.get() && !self.in_deferred_contents(obj) {
             let held = match self.inner.eager_hold.borrow_mut().as_mut() {
                 Some(held) => {
                     held.push(Held {
