@@ -239,14 +239,24 @@ fn a_reload_tells_the_warnings_of_the_files_the_program_uses_only() {
             "import QtQuick\nItem {\n  property var v: strayUnknown\n}\n",
         ),
     ]);
-    app.save("Main.qml", &main.replace("n: 1", "n: 2"));
+    let files = |w: &[ljos_compiler::CompileFault]| -> Vec<String> {
+        w.iter().map(|w| w.file.clone()).collect()
+    };
+    let [Report::Warnings(started)] = &app.pump()[..] else {
+        panic!("the start tells the warnings of what it loaded");
+    };
+    assert_eq!(files(started), ["Used.qml"]);
+    // A new warning in each: the one the program never made says nothing.
+    app.save(
+        "stray/Stray.qml",
+        "import QtQuick\nItem {\n  property var v: strayUnknown\n  property var w: more\n}\n",
+    );
+    app.save(
+        "Used.qml",
+        "import QtQuick\nItem {\n  property var v: usedUnknown\n  property var w: more\n}\n",
+    );
     let reports = app.wait();
-    let files: Vec<&str> = reloaded(&reports)
-        .warnings
-        .iter()
-        .map(|w| w.file.as_str())
-        .collect();
-    assert_eq!(files, ["Used.qml"]);
+    assert_eq!(files(&reloaded(&reports).warnings), ["Used.qml"]);
 }
 
 #[test]
@@ -261,8 +271,12 @@ fn a_reload_tells_a_warning_once_until_it_goes_away() {
             .map(|w| format!("{}:{}", w.file, w.line))
             .collect()
     };
+    let [Report::Warnings(started)] = &app.pump()[..] else {
+        panic!("the start tells the warnings of what it loaded");
+    };
+    assert_eq!(started[0].line, 3);
     app.save("Main.qml", &main.replace("n: 1", "n: 2"));
-    assert_eq!(told(&app.wait()), ["Used.qml:3"]);
+    assert_eq!(told(&app.wait()), Vec::<String>::new());
     // Another save to a file that has none: the warning was told.
     app.save("Main.qml", &main.replace("n: 1", "n: 3"));
     assert_eq!(told(&app.wait()), Vec::<String>::new());
@@ -724,4 +738,36 @@ fn a_finished_save_does_not_wait_the_quiet_time() {
     let (at, msg) = rx.recv_timeout(PATIENCE).expect("a build");
     assert!(matches!(msg, ljos_dev::DevMsg::Reload { .. }), "{msg:?}");
     assert!(at - closed < quiet, "took {:?}", at - closed);
+}
+
+#[test]
+fn the_warnings_of_the_files_loaded_are_told_at_the_start_and_not_again() {
+    let main = "import QtQuick\nItem {\n  Used { }\n  property int n: 1\n}\n";
+    let used = "import QtQuick\nItem {\n  property var v: usedUnknown\n}\n";
+    let mut app = app(&[
+        ("Main.qml", main),
+        ("Used.qml", used),
+        // Nothing makes one: Qt never loads it, so it says nothing.
+        (
+            "Stray.qml",
+            "import QtQuick\nItem {\n  property var v: strayUnknown\n}\n",
+        ),
+    ]);
+    let told = |reports: &[Report]| -> Vec<String> {
+        reports
+            .iter()
+            .flat_map(|r| match r {
+                Report::Warnings(w) => w.clone(),
+                Report::Reloaded(s) => s.warnings.clone(),
+                _ => Vec::new(),
+            })
+            .map(|w| format!("{}:{}", w.file, w.line))
+            .collect()
+    };
+    // The first frame, before any save.
+    assert_eq!(told(&app.pump()), ["Used.qml:3"]);
+    assert_eq!(told(&app.pump()), Vec::<String>::new());
+    // A save to another file does not tell it again.
+    app.save("Main.qml", &main.replace("n: 1", "n: 2"));
+    assert_eq!(told(&app.wait()), Vec::<String>::new());
 }

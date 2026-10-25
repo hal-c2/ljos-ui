@@ -294,6 +294,12 @@ pub fn describe(report: &Report) -> String {
         Report::Cleared => "the files are what runs again".to_owned(),
         Report::Pictures { shown: 1 } => "1 image shows the saved picture".to_owned(),
         Report::Pictures { shown } => format!("{shown} images show the saved pictures"),
+        // One line each, as a run that does not watch tells them.
+        Report::Warnings(warnings) => warnings
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\nljos: "),
     }
 }
 
@@ -916,6 +922,17 @@ mod tests {
         assert_eq!(
             describe(&Report::Pictures { shown: 2 }),
             "2 images show the saved pictures"
+        );
+        let warning = |line| ljos_compiler::CompileFault {
+            file: "Used.qml".to_owned(),
+            line,
+            column: 19,
+            message: "`usedUnknown` is not a name in sight".to_owned(),
+        };
+        assert_eq!(
+            describe(&Report::Warnings(vec![warning(3), warning(4)])),
+            "Used.qml:3:19: `usedUnknown` is not a name in sight\n\
+             ljos: Used.qml:4:19: `usedUnknown` is not a name in sight"
         );
     }
 }

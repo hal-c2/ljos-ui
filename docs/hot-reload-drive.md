@@ -50,7 +50,7 @@ Across the 10 examples and 61 saves:
 - **Nothing crashed and no window was lost.**
 - **Every successful reload was applied in place** (0 made again), so the state the reload rules keep was kept wherever the driver had made some: typed text, a dialog that was open, a pushed page, a chosen mode.
 - **A syntax error was told as the file and line** (`reload failed: Main.qml:7:18: Unexpected token`), and the app went on as it was. The save that took it out says `the files are what runs again`.
-- **The warnings of every loaded file are told with the first reload**, the reload lint among them, and are not told again until they change.
+- **The warnings of every loaded file were told with the first reload**, the reload lint among them, and not again until they changed. They are now told as the app starts, as each file is loaded, and a reload tells only the new ones.
 
 (\*) todolist's `Main.qml` imports only its own module, so it has no `Item` to add. The driver now
 skips that edit in such a file.

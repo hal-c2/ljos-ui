@@ -112,11 +112,20 @@ struct DevSource<O> {
     /// URL is beside it, in whichever root has it.
     roots: Vec<(PathBuf, String)>,
     reloader: Arc<Mutex<Reloader<O>>>,
+    /// The keys the engine loaded and whose warnings are not yet told:
+    /// the next pump tells them. No frame is asked for, as the objects
+    /// made of a file loaded in a frame ask for the next one.
+    loaded: Arc<Mutex<Vec<String>>>,
 }
 
 impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
     fn load(&self, key: &str) -> Option<Arc<CompiledFile>> {
-        lock(&self.reloader).provide(key)?.ok()
+        let file = lock(&self.reloader).provide(key)?.ok()?;
+        self.loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(key.to_owned());
+        Some(file)
     }
 
     fn failure(&self, key: &str) -> Option<String> {
@@ -234,6 +243,11 @@ pub enum Report {
     Pictures {
         shown: usize,
     },
+    /// What the files the program just loaded warn of, told once as each
+    /// is loaded (at the start, or when a `Loader` first reaches one), as
+    /// Qt tells a file's warnings when it loads it. A reload tells only
+    /// the ones that are new since.
+    Warnings(Vec<CompileFault>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -257,6 +271,17 @@ struct Runs(Rc<dyn Fn(&str) -> bool>);
 impl std::fmt::Debug for Runs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Runs")
+    }
+}
+
+/// The warnings the session's files have now, for the keys given.
+type WarningsFn = dyn Fn(&[String]) -> Vec<CompileFault>;
+
+struct WarningsOf(Rc<WarningsFn>);
+
+impl std::fmt::Debug for WarningsOf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WarningsOf")
     }
 }
 
@@ -285,6 +310,9 @@ pub struct DevSession {
     /// The one of `entries` the root is made of.
     entry: String,
     runs: Runs,
+    warnings_of: WarningsOf,
+    /// The keys the engine loaded since the last pump.
+    loaded: Arc<Mutex<Vec<String>>>,
     /// What the root is given when this session makes it.
     properties: Vec<(String, Value)>,
     root: Option<ObjectId>,
@@ -292,7 +320,7 @@ pub struct DevSession {
     settling: bool,
     more_errors: usize,
     reloads: u64,
-    /// The warnings the last reload had, by file and message: a later
+    /// The warnings told, by file and message: a later
     /// reload tells only the ones that are new, so a save to one file does
     /// not repeat what another's were. Not by line, which an edit above
     /// moves.
@@ -441,10 +469,12 @@ impl DevSession {
             .cloned()
             .collect();
         let reloader = Arc::new(Mutex::new(reloader));
+        let loaded: Arc<Mutex<Vec<String>>> = Arc::default();
         engine.set_component_source(DevSource {
             urls: MapSource::new().with_base_url(base_url(&roots[0])),
             roots: roots.iter().map(|r| (r.clone(), base_url(r))).collect(),
             reloader: reloader.clone(),
+            loaded: loaded.clone(),
         });
         let mut root = None;
         let mut entry = entries[0].clone();
@@ -482,6 +512,18 @@ impl DevSession {
                 lock(&reloader).session().live().contains_key(key)
             }))
         };
+        let warnings_of = {
+            let reloader = reloader.clone();
+            WarningsOf(Rc::new(move |keys| {
+                let files: Vec<String> = keys.iter().map(|k| format!("{k}.qml")).collect();
+                lock(&reloader)
+                    .session()
+                    .warnings()
+                    .filter(|w| files.contains(&w.file))
+                    .cloned()
+                    .collect()
+            }))
+        };
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
         inbox.observe_as("reload", Some(DevMsg::kind));
         let pictures: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
@@ -508,6 +550,8 @@ impl DevSession {
             entries,
             entry,
             runs,
+            warnings_of,
+            loaded,
             properties,
             root,
             settling: false,
@@ -575,6 +619,9 @@ impl DevSession {
         self.inbox
             .drain(DrainBudget::count(INBOX), clock, |m| messages.push(m));
         let mut out = Vec::new();
+        if let Some(report) = self.tell_loaded() {
+            out.push(report);
+        }
         if !messages.is_empty() {
             // Every message follows a save.
             self.texts.changed();
@@ -637,6 +684,35 @@ impl DevSession {
             }
         }
         out
+    }
+
+    /// The warnings of the files loaded since the last pump that were not
+    /// told yet.
+    fn tell_loaded(&mut self) -> Option<Report> {
+        let keys = std::mem::take(
+            &mut *self
+                .loaded
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        if keys.is_empty() {
+            return None;
+        }
+        let mut now: HashMap<(String, String), usize> = HashMap::new();
+        let mut new = Vec::new();
+        for w in (self.warnings_of.0)(&keys) {
+            let place = (w.file.clone(), w.message.clone());
+            let seen = now.entry(place.clone()).or_insert(0);
+            *seen += 1;
+            if *seen > self.told.get(&place).copied().unwrap_or(0) {
+                new.push(w);
+            }
+        }
+        for (place, n) in now {
+            let told = self.told.entry(place).or_insert(0);
+            *told = (*told).max(n);
+        }
+        (!new.is_empty()).then_some(Report::Warnings(new))
     }
 
     /// Makes the root of the first entry `has` that can be made and puts
