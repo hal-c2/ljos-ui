@@ -4986,3 +4986,93 @@ DECISIONs:
 - Off-screen text keeps dropping its glyph runs (§7.5).
 - The GL painter's whole-frame run during a scroll is kept. A swap with damage costs the
   driver more per frame (291 k against 119 k) than a whole one.
+
+### B22 (H2): a new delegate's text, a moved node's meshes, GridView's in-buffer scroll (2026-10-25)
+
+B21's measures again, on the same machine and in the same way. The start is a profiling
+build from before this batch's commits; the end has all three. Both are release builds with
+line tables, run back to back, with the load between 7 and 25 from other workers' builds.
+
+| listview under callgrind (main thread, 20 s after 40 s) | Start | End |
+|---|---:|---:|
+| Per delegate (total ÷ text layouts) | 385.6 k | 386.6 k |
+| Text layout (`TextEngine::build_layout`) | 57.1 k | 53.1 k |
+| — Parley's `ranged_builder` | 4.8 k | — |
+| — resolving the font family | 6.4 k | 1.9 k |
+| — Parley's build (shaping, line breaking) | 28.5 k | 28.2 k |
+| Adoption (`QuickScene::adopt`) | 74.1 k | 75.2 k |
+| b0 `encode`, per frame | 144 k | 161 k |
+
+| `lvstill.qml` under callgrind (in-buffer, every delegate kept) | Start | End |
+|---|---:|---:|
+| b0 `encode`, per frame | 43.4 k | 38.7 k |
+| World segments built again, in about 750 frames | 11 613 | 400 |
+
+A delegate did not get cheaper; its text did, by 4 k, and the rest moved by as much from run
+to run (a third end run gave 383.9 k). listview's `encode` per frame rose because that run
+made 14.3 delegates a frame against 13.6, and a new node builds its meshes either way; only
+nodes that were kept are moved.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Start | End | qml6 (same run) |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.48 | 19.43 | 15.22 |
+| listview | 209.56 | 212.18 | 102.93 |
+| listview with `reuseItems: true` | 89.08 | 88.85 | 60.60 |
+
+The scroll rates did not move. CPU % was not measured: the machine was not quiet.
+
+The commits:
+
+- e6bf4c01: a GridView scrolled inside its cache buffer lays no cells out. It kept its
+  laid-out cells only when every line held all its cells; it now takes ListView's in-buffer
+  path, which only culls when the same lines are on both sides of the window, and leaves
+  its sections alone. The Rust test
+  `a_grid_scrolled_inside_the_cache_buffer_lays_no_cells_out` pins the pass count and the
+  cells' positions.
+- ed70f6af: b0 keeps a node's meshes when only its translation changed, and moves them. A
+  node whose list and opacity are the same and whose transform differs only in its offset
+  translates its meshes in place, shifts its text rects and carries its glyph meshes when
+  they still land on the same pixel phase. A shape or shader segment, or a node moved 32
+  times in a row, is built again. The new `world_moves` counter counts moves. The test
+  moves a rounded rect 40 times by 2.37 px and checks each frame against a fresh backend to
+  1e-3, with one tessellation.
+- d6bf1e3d: a text with no spans and no objects goes to Parley through its style-run
+  builder with one full style. Parley's ranged builder resolves a default style, with its
+  `sans-serif` family, and then each property. The Qt and measured advances read the run's
+  glyphs from their iterator instead of collecting them. The test shapes nine strings
+  (Latin, Greek, Cyrillic, Hebrew, Arabic, combining marks, CJK, empty, two lines with
+  spaces) in three styles, wrapped and not, with bundled and system fonts. It checks that
+  each comes out as the ranged builder gives it: line measures, ranges and every glyph.
+
+**A new delegate is still about 386 k, against qml6's ~200 k.** Where it goes, per delegate:
+
+- Text measured at completion, 61 k. Parley's build is 28 k of it: shaping a unique string.
+  The bench's strings are all different, so the shaped-text cache (keyed by text and style)
+  cannot help.
+- Adoption, 75 k:
+  - anchors, 20.7 k for the two items: nine tracked reads and the `verticalCenter`
+    binding (`read_values<9>` 12.8 k; the binding's first run 5.3 k, 17 field reads
+    3.4 k at 195 each, `FieldReads::add` 1.4 k);
+  - geometry, 18 k;
+  - inherit, 5.8 k;
+  - a11y, 5.7 k.
+- Destruction, about 62 k: `sync_parent` 13 k, graph disposal of about 30 nodes, the header
+  drop 7.9 k.
+
+DECISIONs:
+
+- No features/ scenario for any of the three: none changes what QML can see. GridView's
+  positions, culling and current item come out as the full pass gives them; b0's frames
+  match a fresh build to 1e-3 px; a plain text shapes glyph for glyph as before.
+- No shape cache by font, size and string beyond the existing one. It is already keyed so,
+  and the bench's strings do not repeat. A cache of shaped words would break Parley's
+  shaping across word boundaries (kerning, Arabic joining), and §7.5 limits what a culled
+  text may keep.
+- Looking up each native part once per multi-property read (`NativeReads`) was tried again
+  for the anchors' reads. It took the `part` calls from nine per item to one, but a read
+  still cost 196, not 195: the cost is the group's getter, its own lookup, and the value's
+  clone and drop. Not kept. A cheaper anchors read needs the anchors group to hand back its
+  nine lines in one call; every path that sets a line (`anchors.*`, `PropertyChanges`,
+  `AnchorChanges`) already writes those fields, so they stay the tracked reads.
+- A move stops after 32 in a row (`MAX_MOVES`), so float error from repeated translation
+  does not build up.
