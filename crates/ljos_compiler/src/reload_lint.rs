@@ -65,8 +65,9 @@ pub fn lint<'a>(
             out.push(Diagnostic::warning(
                 Code::ReloadIdentity,
                 format!(
-                    "{} {ty} objects here have neither an id nor an objectName: a reload tells \
-                     them apart by their order only. Give each an id to keep its state",
+                    "{} {ty} objects here have neither an id nor an objectName, so a reload \
+                     matches them by their order only: add, remove or move one and its state \
+                     goes to another. Give each an id or an objectName to keep its own state",
                     defs.len()
                 ),
                 defs[0].span,

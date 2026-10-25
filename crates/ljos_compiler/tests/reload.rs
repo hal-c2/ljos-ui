@@ -414,6 +414,19 @@ fn the_lint_asks_for_ids_on_stateful_siblings_of_one_type() {
 }
 
 #[test]
+fn the_lint_says_what_goes_wrong_and_what_to_add() {
+    let out = lint("import QtQuick\nItem {\n  Counter { }\n  Counter { }\n}\n");
+    assert_eq!(
+        out,
+        [
+            "3:3: warning: 2 Counter objects here have neither an id nor an objectName, so a reload \
+          matches them by their order only: add, remove or move one and its state goes to \
+          another. Give each an id or an objectName to keep its own state"
+        ]
+    );
+}
+
+#[test]
 fn the_lint_is_quiet_about_ids_names_single_objects_and_stateless_types() {
     for source in [
         "import QtQuick\nItem { TextInput { id: a } TextInput { id: b } }\n",
