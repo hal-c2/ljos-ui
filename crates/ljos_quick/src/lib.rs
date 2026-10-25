@@ -109,7 +109,7 @@ pub use input::{HandlerPoint, WheelEventObject};
 pub use input::{KeyEvent, KeyKind};
 pub use input::{
     Modifiers, MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerId, PointerKind,
-    TapHandler, tap_handler_target,
+    PointerSource, TapHandler, tap_handler_target,
 };
 pub use input::{ScrollPhase, WheelEvent};
 pub use item::{

@@ -11,7 +11,7 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use crate::handlers::{PinchGesture, PinchPhase};
-use crate::input::{MouseArea, MouseButtons, PointerEvent, PointerId, PointerKind};
+use crate::input::{MouseArea, MouseButtons, PointerEvent, PointerId, PointerKind, PointerSource};
 use crate::item::is_a;
 use crate::pinch_area::{self, Fingers};
 use crate::scene::{DRAG_THRESHOLD, QuickScene};
@@ -104,6 +104,7 @@ fn pointer(kind: PointerKind, ev: &TouchEvent, id: PointerId) -> PointerEvent {
     let mut p = PointerEvent::moved(ev.pos.x, ev.pos.y, held, ev.time);
     p.kind = kind;
     p.id = id;
+    p.source = PointerSource::FINGER;
     if matches!(kind, PointerKind::Press | PointerKind::Release) {
         p.button = Some(MouseButtons::LEFT);
     }

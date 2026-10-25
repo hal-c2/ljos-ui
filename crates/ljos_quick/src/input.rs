@@ -57,6 +57,34 @@ pub enum PointerKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct PointerId(pub u64);
 
+/// What a pointer event came from, as a handler's `acceptedDevices` and
+/// `acceptedPointerTypes` see it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PointerSource {
+    /// A `PointerDevice.DeviceType`.
+    pub device: i32,
+    /// A `PointerDevice.PointerType`.
+    pub pointer: i32,
+}
+
+impl PointerSource {
+    pub const MOUSE: Self = Self {
+        device: 0x1,
+        pointer: 0x1,
+    };
+    /// A finger on a touch screen.
+    pub const FINGER: Self = Self {
+        device: 0x2,
+        pointer: 0x2,
+    };
+}
+
+impl Default for PointerSource {
+    fn default() -> Self {
+        Self::MOUSE
+    }
+}
+
 /// One pointer event in scene (logical pixel) coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointerEvent {
@@ -68,6 +96,7 @@ pub struct PointerEvent {
     pub buttons: MouseButtons,
     pub modifiers: Modifiers,
     pub id: PointerId,
+    pub source: PointerSource,
     pub time: Time,
 }
 
@@ -80,6 +109,7 @@ impl PointerEvent {
             buttons: MouseButtons::empty(),
             modifiers: Modifiers::empty(),
             id: PointerId::default(),
+            source: PointerSource::MOUSE,
             time,
         }
     }
@@ -132,6 +162,11 @@ impl PointerEvent {
 
     pub fn with_id(mut self, id: PointerId) -> Self {
         self.id = id;
+        self
+    }
+
+    pub fn with_source(mut self, source: PointerSource) -> Self {
+        self.source = source;
         self
     }
 }
@@ -349,6 +384,15 @@ pub struct HandlerPoint {
     /// handler does not measure it.
     #[qml(notify, readonly)]
     pub velocity: Vector2d,
+    /// What the pointer came from: a plain object with the `type`,
+    /// `pointerType` and `name` of Qt's `PointerDevice`
+    /// ([`crate::handlers::device_value`]). The mouse while nothing
+    /// presses the handler.
+    #[qml(notify, readonly)]
+    pub device: Value,
+    /// The modifiers held as the pointer last did something.
+    #[qml(notify, readonly, flags = "Qt.KeyboardModifiers")]
+    pub modifiers: i32,
 }
 
 impl Default for HandlerPoint {
@@ -361,6 +405,8 @@ impl Default for HandlerPoint {
             pressed_buttons: mouse_button::NO_BUTTON,
             id: -1,
             velocity: Vector2d::default(),
+            device: crate::handlers::device_value(PointerSource::MOUSE),
+            modifiers: 0,
         }
     }
 }
@@ -395,8 +441,8 @@ pub struct TapHandler {
     #[qml(group)]
     pub point: HandlerPoint,
     /// The properties every pointer handler has (`crate::handlers`).
-    /// Only `grabPermissions` acts: the rest are kept for what binds to
-    /// them.
+    /// `acceptedDevices`, `acceptedPointerTypes` and `acceptedModifiers`
+    /// choose the presses it takes ([`TAP_ACCEPTED`]).
     #[qml(notify)]
     pub target: Option<ObjectId>,
     #[qml(notify)]
@@ -425,6 +471,13 @@ pub struct TapHandler {
     #[qml(skip)]
     pub(crate) long_press: std::rc::Rc<crate::long_press::LongPress>,
 }
+
+/// Where a tap handler keeps what it accepts.
+pub(crate) const TAP_ACCEPTED: crate::handlers::Accepted = crate::handlers::Accepted {
+    devices: TapHandler::ACCEPTED_DEVICES.index,
+    pointer_types: TapHandler::ACCEPTED_POINTER_TYPES.index,
+    modifiers: TapHandler::ACCEPTED_MODIFIERS.index,
+};
 
 impl Default for TapHandler {
     fn default() -> Self {
@@ -522,6 +575,8 @@ struct PointProps {
     scene_press_position: PropIndex,
     pressed_buttons: PropIndex,
     id: PropIndex,
+    device: PropIndex,
+    modifiers: PropIndex,
 }
 
 fn point_props() -> Option<PointProps> {
@@ -534,6 +589,8 @@ fn point_props() -> Option<PointProps> {
         scene_press_position: p("point.scenePressPosition")?,
         pressed_buttons: p("point.pressedButtons")?,
         id: p("point.id")?,
+        device: p("point.device")?,
+        modifiers: p("point.modifiers")?,
     })
 }
 
@@ -582,6 +639,8 @@ pub(crate) fn tap_point_pressed(engine: &Engine, h: ObjectId, ev: &PointerEvent)
             (p.scene_press_position, scene),
             (p.pressed_buttons, Value::Int(ev.buttons.bits() as i32)),
             (p.id, Value::Int(ev.id.0 as i32)),
+            (p.device, crate::handlers::device_value(ev.source)),
+            (p.modifiers, Value::Int(ev.modifiers.bits() as i32)),
         ],
     );
 }
@@ -598,6 +657,7 @@ pub(crate) fn tap_point_moved(engine: &Engine, h: ObjectId, ev: &PointerEvent) {
             (p.position, point_value(in_tap_item(engine, h, ev.pos))),
             (p.scene_position, point_value(ev.pos)),
             (p.pressed_buttons, Value::Int(ev.buttons.bits() as i32)),
+            (p.modifiers, Value::Int(ev.modifiers.bits() as i32)),
         ],
     );
     if changed && ev.kind != PointerKind::Release {
@@ -645,6 +705,7 @@ fn event_point_at(
         _ => kurbo::Point::ZERO,
     };
     let id = (engine.untrack(|| engine.read(h, p.id)).to_number() as i32).max(0);
+    let source = crate::handlers::source_of(&engine.untrack(|| engine.read(h, p.device)));
     PointValues {
         position,
         scene_position: at,
@@ -653,6 +714,8 @@ fn event_point_at(
         pressed_buttons: mouse_button::NO_BUTTON,
         id,
         velocity: kurbo::Vec2::ZERO,
+        source,
+        modifiers: 0,
     }
     .event_point(state)
 }
@@ -671,6 +734,11 @@ pub(crate) fn tap_point_clear(engine: &Engine, h: ObjectId) -> bool {
             (p.scene_press_position, none),
             (p.pressed_buttons, Value::Int(mouse_button::NO_BUTTON)),
             (p.id, Value::Int(-1)),
+            (
+                p.device,
+                crate::handlers::device_value(PointerSource::MOUSE),
+            ),
+            (p.modifiers, Value::Int(0)),
         ],
     )
 }

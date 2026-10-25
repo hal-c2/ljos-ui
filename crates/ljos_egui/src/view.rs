@@ -12,8 +12,8 @@ use egui::{
 };
 use ljos_engine::{Engine, EngineError, ObjectId};
 use ljos_quick::{
-    Clipboard, Item, MouseButtons, PointerEvent, PointerId, PointerKind, QuickScene, TimerHook,
-    WheelEvent,
+    Clipboard, Item, MouseButtons, PointerEvent, PointerId, PointerKind, PointerSource, QuickScene,
+    TimerHook, WheelEvent,
 };
 use ljos_render::b0::{EguiSink, EpaintBackend};
 use ljos_render::{FrameView, RenderBackend, kurbo};
@@ -1096,6 +1096,7 @@ impl QmlView {
             buttons: MouseButtons::empty(),
             modifiers: mods,
             id: PointerId::default(),
+            source: PointerSource::MOUSE,
             time: now,
         };
 

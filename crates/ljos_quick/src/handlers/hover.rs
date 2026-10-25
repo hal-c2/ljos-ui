@@ -84,7 +84,7 @@ pub(super) fn update(
             if !crate::item::is_a::<HoverHandler>(engine, h) || !super::usable(engine, h) {
                 continue;
             }
-            if !super::modifiers_fit(engine, h, ev) {
+            if !super::pointer_fits(engine, h, ev) {
                 continue;
             }
             let margin = num(engine, h, PointerHandler::MARGIN.index);

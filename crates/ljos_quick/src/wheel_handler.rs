@@ -17,7 +17,7 @@ use ljos_engine::{
 use ljos_render::kurbo;
 
 use crate::flickable::wheel::wheel_angle;
-use crate::input::{MouseArea, MouseButtons, WheelEvent};
+use crate::input::{MouseArea, MouseButtons, PointerSource, WheelEvent};
 use crate::item::{
     Item, is_a, is_item, is_unset, local_transform, scene_transform, write_computed,
 };
@@ -48,7 +48,12 @@ pub(crate) struct HandlerState {
 /// `WheelHandler` (QtQuick). Its parent item is the object that owns it,
 /// and it lives in that item's `resources`.
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick", name = "WheelHandler", extends = QtObject)]
+#[qml(
+    module = "QtQuick",
+    name = "WheelHandler",
+    extends = QtObject,
+    enums = crate::handlers::device_enums
+)]
 pub struct WheelHandler {
     #[qml(base)]
     pub object: QtObject,
@@ -72,6 +77,11 @@ pub struct WheelHandler {
     /// Which way of turning the handler adds up.
     #[qml(notify, enumeration = "Qt.Orientation")]
     pub orientation: i32,
+    /// Every wheel of Ljós is a mouse's: no host tells a touchpad's apart.
+    #[qml(notify, flags = "DeviceTypes")]
+    pub accepted_devices: i32,
+    #[qml(notify, flags = "PointerTypes")]
+    pub accepted_pointer_types: i32,
     /// The modifiers that must be held, no more and no fewer;
     /// `Qt.KeyboardModifierMask` for any.
     #[qml(notify, flags = "Qt.KeyboardModifiers")]
@@ -116,6 +126,8 @@ impl Default for WheelHandler {
             rotation: 0.0,
             rotation_scale: 1.0,
             orientation: VERTICAL,
+            accepted_devices: PointerSource::MOUSE.device,
+            accepted_pointer_types: crate::handlers::ALL_POINTER_TYPES,
             accepted_modifiers: ANY_MODIFIERS,
             invertible: true,
             target_scale_multiplier: 2f64.powf(1.0 / 3.0),
@@ -359,17 +371,19 @@ fn along(engine: &Engine, h: ObjectId, ev: &WheelEvent) -> f64 {
     }
 }
 
-/// Whether the handler takes the event: it is enabled, the modifiers are
-/// its own, and the wheel turned its way at all. While it is active it
+/// Whether the handler takes the event: it is enabled, it takes a
+/// mouse's wheel and the modifiers are its own, and the wheel turned its way at all. While it is active it
 /// takes a turn the other way as well, as Qt's does.
 fn takes(engine: &Engine, h: ObjectId, ev: &WheelEvent) -> bool {
     if !engine.read(h, WheelHandler::ENABLED.index).to_boolean() {
         return false;
     }
-    let wanted = engine
-        .read(h, WheelHandler::ACCEPTED_MODIFIERS.index)
-        .to_number() as i32;
-    if wanted != ANY_MODIFIERS && wanted != ev.modifiers.bits() as i32 {
+    let accepted = crate::handlers::Accepted {
+        devices: WheelHandler::ACCEPTED_DEVICES.index,
+        pointer_types: WheelHandler::ACCEPTED_POINTER_TYPES.index,
+        modifiers: WheelHandler::ACCEPTED_MODIFIERS.index,
+    };
+    if !accepted.fit(engine, h, PointerSource::MOUSE, ev.modifiers) {
         return false;
     }
     along(engine, h, ev) != 0.0 || engine.read(h, WheelHandler::ACTIVE.index).to_boolean()

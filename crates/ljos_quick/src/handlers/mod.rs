@@ -37,7 +37,7 @@ pub use pinch::{PinchGesture, PinchHandler, PinchPhase};
 pub use point::PointHandler;
 
 use crate::enums::mouse_button;
-use crate::input::{MouseArea, PointerEvent, TapHandler};
+use crate::input::{Modifiers, MouseArea, PointerEvent, PointerSource, TapHandler};
 use crate::item::{Item, is_a, is_item, is_unset, scene_transform};
 use crate::scene::{DRAG_THRESHOLD, item_enabled};
 use crate::tree::resources;
@@ -211,11 +211,18 @@ pub(crate) fn grab_permission_enums() -> EnumTable {
             g::APPROVES_TAKE_OVER_BY_ANYTHING,
         ),
     ];
+    vec![(
+        "GrabPermissions",
+        keys.iter().map(|(k, v)| (*k, i64::from(*v))).collect(),
+    )]
+    .into_iter()
+    .chain(device_enums())
+    .collect()
+}
+
+/// The enums `acceptedDevices` and `acceptedPointerTypes` are written with.
+pub(crate) fn device_enums() -> EnumTable {
     vec![
-        (
-            "GrabPermissions",
-            keys.iter().map(|(k, v)| (*k, i64::from(*v))).collect(),
-        ),
         ("DeviceType", device_type_keys()),
         ("DeviceTypes", device_type_keys()),
         ("PointerType", pointer_type_keys()),
@@ -261,10 +268,10 @@ pub struct PointerHandler {
     /// Stored: the shell shows the cursor of what is under the pointer.
     #[qml(notify, reset, enumeration = "Qt.CursorShape")]
     pub cursor_shape: i32,
-    /// Stored: every pointer of Ljós is accepted.
+    /// The devices whose pointers the handler takes: a mouse, or a
+    /// finger on a touch screen.
     #[qml(notify, flags = "DeviceTypes")]
     pub accepted_devices: i32,
-    /// Stored: every pointer of Ljós is accepted.
     #[qml(notify, flags = "PointerTypes")]
     pub accepted_pointer_types: i32,
     #[qml(notify, flags = "Qt.MouseButtons")]
@@ -482,15 +489,49 @@ pub(crate) fn usable(engine: &Engine, h: ObjectId) -> bool {
     engine.untrack(|| item_enabled(engine, item)) && visible(engine, item)
 }
 
-/// Whether the modifiers held are the ones the handler takes.
-pub(crate) fn modifiers_fit(engine: &Engine, h: ObjectId, ev: &PointerEvent) -> bool {
-    let modifiers = num(engine, h, PointerHandler::ACCEPTED_MODIFIERS.index) as i32;
-    modifiers == ANY_MODIFIERS || modifiers == ev.modifiers.bits() as i32
+/// Where a handler keeps `acceptedDevices`, `acceptedPointerTypes` and
+/// `acceptedModifiers`: the handlers that are not [`PointerHandler`]s
+/// have their own.
+#[derive(Clone, Copy)]
+pub(crate) struct Accepted {
+    pub devices: PropIndex,
+    pub pointer_types: PropIndex,
+    pub modifiers: PropIndex,
+}
+
+impl Accepted {
+    pub(crate) const POINTER_HANDLER: Self = Self {
+        devices: PointerHandler::ACCEPTED_DEVICES.index,
+        pointer_types: PointerHandler::ACCEPTED_POINTER_TYPES.index,
+        modifiers: PointerHandler::ACCEPTED_MODIFIERS.index,
+    };
+
+    /// Whether the handler takes a pointer from `source` with `modifiers`
+    /// held: the device and the pointer type are among those it accepts,
+    /// and the modifiers are its own, no more and no fewer.
+    pub(crate) fn fit(
+        self,
+        engine: &Engine,
+        h: ObjectId,
+        source: PointerSource,
+        modifiers: Modifiers,
+    ) -> bool {
+        let read = |p| engine.untrack(|| engine.read(h, p)).to_number() as i32;
+        let wanted = read(self.modifiers);
+        read(self.devices) & source.device != 0
+            && read(self.pointer_types) & source.pointer != 0
+            && (wanted == ANY_MODIFIERS || wanted == modifiers.bits() as i32)
+    }
+}
+
+/// Whether the pointer, and the modifiers held, are ones the handler takes.
+pub(crate) fn pointer_fits(engine: &Engine, h: ObjectId, ev: &PointerEvent) -> bool {
+    Accepted::POINTER_HANDLER.fit(engine, h, ev.source, ev.modifiers)
 }
 
 /// Whether a handler reacts to a press with this button and modifiers.
 fn accepts(engine: &Engine, h: ObjectId, ev: &PointerEvent) -> bool {
-    if !usable(engine, h) || !modifiers_fit(engine, h, ev) {
+    if !usable(engine, h) || !pointer_fits(engine, h, ev) {
         return false;
     }
     let button = ev.button.map_or(ev.buttons.bits(), |b| b.bits()) as i32;
@@ -509,6 +550,8 @@ pub(crate) struct PointValues {
     pub pressed_buttons: i32,
     pub id: i32,
     pub velocity: kurbo::Vec2,
+    pub source: PointerSource,
+    pub modifiers: i32,
 }
 
 impl PointValues {
@@ -521,6 +564,8 @@ impl PointValues {
             pressed_buttons: mouse_button::NO_BUTTON,
             id: -1,
             velocity: kurbo::Vec2::ZERO,
+            source: PointerSource::MOUSE,
+            modifiers: 0,
         }
     }
 
@@ -530,6 +575,8 @@ impl PointValues {
         Self {
             pressed_buttons: ev.buttons.bits() as i32,
             id: ev.id.0 as i32,
+            source: ev.source,
+            modifiers: ev.modifiers.bits() as i32,
             ..Self::at(engine, h, ev.pos, press)
         }
     }
@@ -547,6 +594,8 @@ impl PointValues {
             pressed_buttons: mouse_button::NO_BUTTON,
             id: 0,
             velocity: kurbo::Vec2::ZERO,
+            source: PointerSource::MOUSE,
+            modifiers: 0,
         }
     }
 
@@ -580,9 +629,32 @@ impl PointValues {
             ("globalGrabPosition", scene_press),
             ("globalLastPosition", scene),
             ("velocity", vector_value(self.velocity)),
+            ("device", device_value(self.source)),
             ("x", Value::Real(self.scene_position.x)),
             ("y", Value::Real(self.scene_position.y)),
         ])
+    }
+}
+
+/// `point.device`: what Qt's `PointerDevice` tells of the device a
+/// pointer came from, as a plain object.
+pub(crate) fn device_value(source: PointerSource) -> Value {
+    Value::map([
+        ("type", Value::Int(source.device)),
+        ("pointerType", Value::Int(source.pointer)),
+        ("name", Value::from("")),
+    ])
+}
+
+/// The device a [`device_value`] tells of.
+pub(crate) fn source_of(device: &Value) -> PointerSource {
+    let read = |key| match device.get(key) {
+        Some(v) => v.to_number() as i32,
+        None => 0,
+    };
+    match (read("type"), read("pointerType")) {
+        (0, _) | (_, 0) => PointerSource::MOUSE,
+        (device, pointer) => PointerSource { device, pointer },
     }
 }
 
@@ -599,6 +671,8 @@ pub(crate) fn put_point(engine: &Engine, h: ObjectId, group: &str, v: &PointValu
         ("pressedButtons", Value::Int(v.pressed_buttons)),
         ("id", Value::Int(v.id)),
         ("velocity", vector_value(v.velocity)),
+        ("device", device_value(v.source)),
+        ("modifiers", Value::Int(v.modifiers)),
     ];
     let changed = engine.batch(|| {
         let mut changed = false;

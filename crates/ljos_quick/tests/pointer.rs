@@ -308,6 +308,57 @@ fn tap_handler_does_not_block_the_mouse_area_below() {
     assert!(got.contains(&"under:clicked".to_owned()), "{got:?}");
 }
 
+/// The two handlers of a link that a mouse opens with Ctrl held and a
+/// finger opens with a tap (issue 134): each takes only its own presses,
+/// once, and its point tells the device and the modifiers. As qml6 does
+/// (`features/input/pointer-handler-accepted.feature`).
+#[test]
+fn tap_handlers_take_only_the_devices_and_modifiers_they_accept() {
+    use ljos_quick::touch::{TouchEvent, TouchPhase};
+    let (e, root, mut s) = wheel_world(
+        r#"
+        function seen(who, p) {
+          log += who + " " + p.device.type + "/" + p.device.pointerType + " " + p.modifiers + "|"
+        }
+        TapHandler {
+          acceptedButtons: Qt.LeftButton
+          acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+          acceptedModifiers: Qt.ControlModifier
+          onTapped: root.seen("mouse", point)
+        }
+        TapHandler {
+          acceptedDevices: PointerDevice.TouchScreen
+          onTapped: root.seen("finger", point)
+        }"#,
+    );
+    let click_holding = |s: &mut QuickScene, m: Modifiers, t: u64| {
+        s.pointer_event(
+            &e,
+            &PointerEvent::press(50.0, 50.0, ms(t)).with_modifiers(m),
+        );
+        s.pointer_event(
+            &e,
+            &PointerEvent::release(50.0, 50.0, ms(t + 10)).with_modifiers(m),
+        );
+    };
+    click_holding(&mut s, Modifiers::empty(), 0);
+    assert_eq!(text(&e, root, "log"), "");
+    click_holding(&mut s, Modifiers::CONTROL, 1000);
+    assert_eq!(text(&e, root, "log"), "mouse 1/1 67108864|");
+    click_holding(&mut s, Modifiers::CONTROL | Modifiers::SHIFT, 2000);
+    assert_eq!(text(&e, root, "log"), "mouse 1/1 67108864|");
+    for (phase, t) in [(TouchPhase::Begin, 3000), (TouchPhase::End, 3010)] {
+        let finger = TouchEvent {
+            id: ljos_quick::PointerId(1),
+            phase,
+            pos: ljos_render::kurbo::Point::new(50.0, 50.0),
+            time: ms(t),
+        };
+        s.touch_event(&e, &[finger]);
+    }
+    assert_eq!(text(&e, root, "log"), "mouse 1/1 67108864|finger 2/2 0|");
+}
+
 // ------------------------------------------------------------------ wheel
 //
 // What Qt does with each of these was read off Qt 6.11.2 with

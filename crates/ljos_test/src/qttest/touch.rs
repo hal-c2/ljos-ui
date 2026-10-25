@@ -6,7 +6,7 @@
 //! pointer: one finger works as in Qt, two at once do not.
 
 use ljos_engine::{Cx, Engine, EngineError, ObjectId, QmlObject, QtObject, Value, qml_impl};
-use ljos_quick::{Modifiers, MouseButtons, PointerEvent, PointerId};
+use ljos_quick::{Modifiers, MouseButtons, PointerEvent, PointerId, PointerSource};
 use ljos_render::kurbo::Point;
 
 use super::host::Host;
@@ -121,7 +121,9 @@ impl TouchEventSequence {
                     PointerEvent::release(at.x, at.y, rig.event_time()).with_id(PointerId(id + 1))
                 }
             })?;
-            let ev = ev.with_modifiers(Modifiers::empty());
+            let ev = ev
+                .with_modifiers(Modifiers::empty())
+                .with_source(PointerSource::FINGER);
             host.with_rig(|rig| rig.scene.pointer_event(cx.engine, &ev))?;
             host.settle(cx.engine)?;
         }

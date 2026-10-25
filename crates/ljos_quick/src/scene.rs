@@ -2393,6 +2393,7 @@ impl QuickScene {
                     || num(engine, h, TapHandler::ACCEPTED_BUTTONS.index) as i32
                         & button.bits() as i32
                         == 0
+                    || !crate::input::TAP_ACCEPTED.fit(engine, h, ev.source, ev.modifiers)
                 {
                     continue;
                 }

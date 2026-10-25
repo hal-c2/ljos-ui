@@ -3296,6 +3296,10 @@ module QtQuick
 		prop accepted QtQml.bool named
 	type QtQuick.WheelHandler WheelHandler
 		prototype QtQml.QtObject named
+		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		flags PointerTypes Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
 		prop enabled QtQml.bool named
 		prop parent QtQml.QtObject named pointer readonly
 		prop target QtQml.QtObject named pointer
@@ -3303,6 +3307,8 @@ module QtQuick
 		prop rotation QtQml.real named
 		prop rotationScale QtQml.real named
 		prop orientation Qt::Orientation
+		prop acceptedDevices DeviceTypes
+		prop acceptedPointerTypes PointerTypes
 		prop acceptedModifiers Qt::KeyboardModifiers
 		prop invertible QtQml.bool named
 		prop targetScaleMultiplier QtQml.real named
@@ -3318,6 +3324,8 @@ module QtQuick
 		signal rotationChanged
 		signal rotationScaleChanged
 		signal orientationChanged
+		signal acceptedDevicesChanged
+		signal acceptedPointerTypesChanged
 		signal acceptedModifiersChanged
 		signal invertibleChanged
 		signal targetScaleMultiplierChanged
@@ -3561,6 +3569,8 @@ module QtQuick
 		prop pressedButtons Qt::MouseButtons readonly
 		prop id QtQml.int named readonly
 		prop velocity QtQuick.vector2d named readonly
+		prop device QtQml.var named readonly
+		prop modifiers Qt::KeyboardModifiers readonly
 		signal positionChanged
 		signal scenePositionChanged
 		signal pressPositionChanged
@@ -3568,6 +3578,8 @@ module QtQuick
 		signal pressedButtonsChanged
 		signal idChanged
 		signal velocityChanged
+		signal deviceChanged
+		signal modifiersChanged
 	type QtQuick.DragAxis DragAxis
 		is uncreatable
 		prop minimum QtQml.real named
