@@ -4842,6 +4842,92 @@ item's colours back to the popup (`popup/item.rs` `mirror_look`). Each copy runs
 resolve again. This accounts for most of the 210 effects. `Engine::provenance` is 12 % of what
 is left in callgrind.
 
+### A theme or font switch against qml6 (2026-10-25)
+
+This follows the section above. The theme scene is the same Fusion window: a `MenuBar` with 5
+bound colours, 3 `Menu`s of 4 items with 3 bound colours each, 40 `Button`s and 40 `Label`s. Each
+`tst_*.qml` runs 400 switches with nothing drawn, through `ljos test` and through qml6's
+`qmltestrunner` (release builds of both).
+
+#### A theme switch
+
+- **A menu's colours reach its item once.** A popup gave each colour set on it to its item with a
+  watch of its own, and read all 84 of the item's colours back each time one changed. Now one
+  effect hands the popup's colours down in a batch. The item's colours go back one at a time,
+  and only when they change. A colour that the item makes its own without a change no longer
+  moves the palette epoch.
+- **The plain items in a menu look once.** The item's watch and its groups' watch each handed a
+  changed colour down on its own. Each object's roles now go down together.
+- **Frozen values are made once.** A colour or font that comes back across the JS boundary
+  reuses one of the last four values made for that kind.
+
+`colours_bound_on_menus_cost_what_each_menu_holds` (`crates/ljos_controls/tests/controls.rs`)
+pins the count. With 8 menus, the first switch went from 1022 effects to 368, and every later
+switch runs 368.
+
+| | Ljós | qml6 |
+|---|---|---|
+| before | 1.12 ms | 0.50 ms |
+| a menu's colours reach its item once | 0.845 ms | 0.51 ms |
+| and the plain items look once | **0.405 ms** | 0.51–0.53 ms |
+
+With `frame_profile`, Ljós takes 0.98 ms for the first switch, then about 0.50 ms with 189
+effect runs. The first switch was 1.2–1.7 ms before, with 184–210 effect runs.
+
+#### A `font.*` change on a root that controls inherit from
+
+The root is a `Pane` whose font is written by the test. One write is `font.bold`, the other a
+`font.pixelSize` that a property binds.
+
+| scene | Ljós bold / size | qml6 bold / size |
+|---|---|---|
+| empty root, before | 0.005 / 0.013–0.015 ms | 0.005 / 0.003 ms |
+| 80 labels, 40 buttons, 20 checks, 20 fields, before | 0.320–0.325 / 0.352–0.365 ms | 0.258–0.275 / 0.292–0.315 ms |
+| the same, after | 0.297–0.315 / 0.33–0.357 ms | as above |
+| 80 labels | 0.125 / 0.133 ms | 0.125 / 0.130 ms |
+| 40 buttons | 0.152 / 0.165 ms | 0.135 / 0.150 ms |
+| 20 checks | 0.040 / 0.050 ms | 0.063 / 0.087 ms |
+| 20 fields | 0.092–0.095 / 0.168–0.177 ms | 0.058 / 0.065 ms |
+
+The changes:
+- **Reading and writing `font`.** Reading the root's font went from about 109K to 12K
+  instructions. A member write through the value went from 196K to 34K. `__ljos_with` keeps
+  the value it made last for each source.
+- **A field resized by its font is placed once.** A `TextField` whose height follows the font
+  placed its text twice. The first placing was painted, and then the size moved.
+  `a_field_whose_height_follows_a_new_font_is_painted_once` pins this at 10 effect runs a
+  field, down from 11.
+
+#### Left for a font switch
+
+- **Fields cost more than on qml6.** A size change costs about 117K instructions per field: 90K
+  in the editor's effect, of which the relayout is 75K.
+- **Buttons are 10 % slower.**
+- **Labels and checks** are even with qml6, or faster.
+
+#### mediaplayer's theme radio
+
+The theme tab is shown in the desktop:cua sandbox (llvmpipe, release). The switch is
+`Config.activeTheme` written by an eval with the observer's recording off.
+
+| | switch |
+|---|---|
+| before this section, from the hot bindings | 1.41–1.42 ms |
+| from the hot bindings | 4.5 ms on the first switch, then 1.06–1.38 ms |
+| eval, recording off | 1.01–1.33 ms |
+| eval, playback paused | 1.02–1.44 ms (the first 1.82 ms) |
+| the same app off-screen (`frame_profile`) | 0.30–0.39 ms |
+
+callgrind counts 4.46M instructions a switch in the sandbox and 3.85M off-screen. The off-screen
+profile breaks down as:
+- `Engine::provenance`: 329K. Of that, 213K is `resolve_palette`, which asks it 2496 times.
+- Six palette resolves: about 161K each.
+- `try_read`: 136K.
+
+The wall time in the sandbox is about three times the off-screen time, for only 16 % more
+instructions. Pausing playback does not close that gap. **The 1 ms target holds off-screen and
+not in the sandbox.**
+
 ### `vello_common` and `fearless_simd` at opt-level 3 in a debug build (2026-10-25)
 
 The question was whether to build `vello_common` and `fearless_simd` at opt-level 3 in the dev
