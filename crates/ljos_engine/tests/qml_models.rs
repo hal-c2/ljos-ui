@@ -82,6 +82,34 @@ fn list_elements_are_the_rows_and_not_objects() {
 }
 
 #[test]
+fn a_list_model_says_how_many_rows_it_holds_and_about_their_bytes() {
+    let h = engine();
+    let root = h.load(FRUIT);
+    let lm = h.find(root, "lm");
+    let (rows, bytes) = h.engine.list_model_memory(lm).expect("a ListModel");
+    assert_eq!(rows, 3);
+    call(
+        &h,
+        root,
+        "add",
+        &[Value::from("a longer name than the others"), Value::Int(4)],
+    );
+    let (more, larger) = h.engine.list_model_memory(lm).unwrap();
+    assert_eq!(more, 4);
+    assert!(larger > bytes, "{larger} after {bytes}");
+    // Only a ListModel holds rows of its own.
+    assert_eq!(h.engine.list_model_memory(root), None);
+    // The file loaded is a compiled unit, counted once.
+    let compiled = h.engine.compiled_memory();
+    assert!(compiled.files >= 1, "{} files", compiled.files);
+    assert!(
+        compiled.bytes >= FRUIT.len() / 4,
+        "{} bytes",
+        compiled.bytes
+    );
+}
+
+#[test]
 fn list_model_methods_edit_the_rows() {
     let h = engine();
     let root = h.load(FRUIT);

@@ -38,6 +38,13 @@ pub(crate) struct QmlTypes {
     keys: HashMap<usize, Atom>,
 }
 
+impl QmlTypes {
+    /// The library files loaded.
+    pub(crate) fn loaded(&self) -> impl Iterator<Item = &Rc<LoadedFile>> {
+        self.files.values()
+    }
+}
+
 impl Engine {
     /// Adds compiled files that module types are made of
     /// ([`Engine::register_qml_type`]). A library keeps its keys apart from

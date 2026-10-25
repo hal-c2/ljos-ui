@@ -3,7 +3,7 @@
 //! when the source has it), the type made for each declaring object, and
 //! the bindings simple enough to run without JS.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -509,6 +509,8 @@ pub(crate) struct LoadedFile {
     /// The handlers, by expression, already warned of using a signal's
     /// parameters they do not declare.
     pub(crate) injected_warned: RefCell<rustc_hash::FxHashSet<u32>>,
+    /// What [`LoadedFile::bytes`] found: a file does not change once loaded.
+    size: OnceCell<usize>,
 }
 
 impl LoadedFile {
@@ -532,7 +534,26 @@ impl LoadedFile {
             epoch: Cell::new(0),
             text: Cell::new(0),
             injected_warned: RefCell::default(),
+            size: OnceCell::new(),
         }
+    }
+
+    /// About the bytes its compiled form holds: the IR as it is written
+    /// out (a floor: in memory its strings and lists have headers too),
+    /// its script's bytecode and the paths of its tier-0 bindings. Found
+    /// once, when first asked.
+    pub(crate) fn bytes(&self) -> usize {
+        *self.size.get_or_init(|| {
+            self.ir.to_bytes().map_or(0, |b| b.len())
+                + self.bytecode.as_ref().map_or(0, |b| b.as_bytes().len())
+                + self.tier0.capacity() * std::mem::size_of::<Option<Tier0>>()
+                + self
+                    .tier0
+                    .iter()
+                    .flatten()
+                    .map(|t| t.path.capacity() * std::mem::size_of::<Atom>())
+                    .sum::<usize>()
+        })
     }
 
     /// The file's inline component `name`, or its file component.

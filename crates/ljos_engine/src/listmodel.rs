@@ -207,6 +207,30 @@ impl ListState {
         self.rows.borrow().len()
     }
 
+    /// About the bytes its rows hold: the table, each row's values and
+    /// the text of each string. A nested model is an object of its own
+    /// and counts its own.
+    fn bytes(&self) -> usize {
+        use std::mem::size_of;
+        let rows = self.rows.borrow();
+        size_of::<ListState>()
+            + self.roles.borrow().capacity() * size_of::<Role>()
+            + rows.capacity() * size_of::<ListRow>()
+            + rows
+                .iter()
+                .map(|r| {
+                    r.values.capacity() * size_of::<Value>()
+                        + r.values
+                            .iter()
+                            .map(|v| match v {
+                                Value::String(s) | Value::Url(s) => s.len(),
+                                _ => 0,
+                            })
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+
     fn names(&self) -> Vec<Atom> {
         self.roles.borrow().iter().map(|r| r.name.clone()).collect()
     }
@@ -1026,6 +1050,13 @@ impl Engine {
     /// The state of the `ListModel` `obj`, for a view.
     pub(crate) fn list_model_state(&self, obj: ObjectId) -> Option<Rc<dyn ItemModel>> {
         ListState::of(self, obj).map(|s| s as Rc<dyn ItemModel>)
+    }
+
+    /// The rows of the `ListModel` `obj` and about the bytes they hold;
+    /// `None` for an object that is no `ListModel`.
+    pub fn list_model_memory(&self, obj: ObjectId) -> Option<(usize, usize)> {
+        let state = self.with::<ListModel, _>(obj, |m| m.state.clone()).ok()?;
+        Some((state.len(), state.bytes()))
     }
 }
 

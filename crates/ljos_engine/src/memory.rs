@@ -17,6 +17,15 @@ use crate::ids::ObjectId;
 use crate::object::{ObjectExt, ObjectHeader};
 use crate::value::Value;
 
+/// The compiled form of the files loaded, the application's and its
+/// libraries'.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CompiledMemory {
+    pub files: usize,
+    /// About what they hold ([`crate::loader`]'s `LoadedFile::bytes`).
+    pub bytes: usize,
+}
+
 /// The objects of one type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeMemory {
@@ -104,6 +113,18 @@ impl Engine {
     /// ([`ljos_reactive::Graph::bytes`]).
     pub fn graph_bytes(&self) -> usize {
         self.inner.graph.bytes()
+    }
+
+    /// The files loaded and about the bytes their compiled form holds.
+    pub fn compiled_memory(&self) -> CompiledMemory {
+        let loader = self.inner.loader.borrow();
+        loader.files.values().chain(loader.qml_types.loaded()).fold(
+            CompiledMemory::default(),
+            |m, f| CompiledMemory {
+                files: m.files + 1,
+                bytes: m.bytes + f.bytes(),
+            },
+        )
     }
 
     /// What the script engine holds from the system allocator, as the
