@@ -1012,6 +1012,7 @@ module QtQuick
 	Font QtQuick.Font
 	FontLoader QtQuick.FontLoader
 	FontMetrics QtQuick.FontMetrics
+	FrameAnimation QtQuick.FrameAnimation
 	Gradient QtQuick.Gradient
 	GradientStop QtQuick.GradientStop
 	Grid QtQuick.Grid
@@ -1620,6 +1621,27 @@ module QtQuick
 		method boundingRect
 		method tightBoundingRect
 		method elidedText
+	type QtQuick.FrameAnimation FrameAnimation
+		prototype QtQml.QtObject named
+		prop running QtQml.bool named
+		prop paused QtQml.bool named
+		prop currentFrame QtQml.int named readonly
+		prop frameTime QtQml.real named readonly
+		prop smoothFrameTime QtQml.real named readonly
+		prop elapsedTime QtQml.real named readonly
+		signal runningChanged
+		signal pausedChanged
+		signal currentFrameChanged
+		signal frameTimeChanged
+		signal smoothFrameTimeChanged
+		signal elapsedTimeChanged
+		signal triggered
+		method start
+		method stop
+		method pause
+		method resume
+		method restart
+		method reset
 	type QtQuick.Gradient Gradient
 		prototype QtQml.QtObject named
 		default stops

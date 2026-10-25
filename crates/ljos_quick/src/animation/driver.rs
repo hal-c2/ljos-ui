@@ -52,6 +52,9 @@ pub(crate) struct Driver {
     pub(crate) registered: Cell<bool>,
     /// What [`later`] was given, until the next frame.
     later: RefCell<Vec<Deferred>>,
+    /// The `FrameAnimation`s that run and are not paused, in the order
+    /// they started: each wants every frame.
+    frames: RefCell<Vec<ObjectId>>,
 }
 
 /// Something to do in the next frame.
@@ -323,6 +326,37 @@ pub(crate) fn start_timeline(engine: &Engine, key: ObjectId, timeline: Timed, do
     }
 }
 
+/// The frame clock's time now; `None` before the first frame.
+pub(crate) fn frame_now(engine: &Engine) -> Option<Time> {
+    driver(engine).now(engine)
+}
+
+/// `me` is triggered from the next frame on.
+pub(crate) fn add_frames(engine: &Engine, me: ObjectId) {
+    let d = driver(engine);
+    let mut frames = d.frames.borrow_mut();
+    if !frames.contains(&me) {
+        frames.push(me);
+        engine.request_wake();
+    }
+}
+
+pub(crate) fn remove_frames(engine: &Engine, me: ObjectId) {
+    driver(engine).frames.borrow_mut().retain(|f| *f != me);
+}
+
+pub(crate) fn has_frames(engine: &Engine, me: ObjectId) -> bool {
+    driver(engine).frames.borrow().contains(&me)
+}
+
+/// Whether a `FrameAnimation` wants the next frame.
+fn frames_want(engine: &Engine, d: &Driver) -> bool {
+    d.frames
+        .borrow()
+        .iter()
+        .any(|f| engine.is_alive(*f) && !engine.is_frozen(*f))
+}
+
 /// Calls `f` at the start of the next frame, and asks for that frame.
 /// For what must not happen before the code that caused it has returned.
 pub(crate) fn later(engine: &Engine, f: Box<dyn FnOnce(&Engine)>) {
@@ -592,6 +626,20 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
         f(engine);
     }
     d.compact();
+    let frames: Vec<ObjectId> = d.frames.borrow().clone();
+    if !frames.is_empty() {
+        d.ticking.set(Some(now));
+        engine.batch(|| {
+            for f in frames {
+                if !engine.is_alive(f) {
+                    remove_frames(engine, f);
+                } else if !engine.is_frozen(f) && has_frames(engine, f) {
+                    super::frame::advance(engine, f, now);
+                }
+            }
+        });
+        d.ticking.set(None);
+    }
     if d.runs.borrow().is_empty() {
         d.last_frame.set(Some((now, engine.now())));
         return;
@@ -658,7 +706,8 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
         return Some(now);
     }
     d.compact();
-    if d.runs.borrow().is_empty() && d.boundary.get().is_none() {
+    let frames = frames_want(engine, &d);
+    if d.runs.borrow().is_empty() && d.boundary.get().is_none() && !frames {
         return None;
     }
     let mut sched = d.sched.borrow_mut();
@@ -666,7 +715,7 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
     if let Some(id) = d.boundary.take() {
         sched.cancel(id);
     }
-    let mut animating = false;
+    let mut animating = frames;
     let mut soonest: Option<Time> = None;
     let calm = crate::system_prefs::reduced_motion_now(engine);
     for run in d.runs.borrow().iter() {
@@ -720,24 +769,26 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
 pub(crate) fn run_count(engine: &Engine) -> usize {
     let d = driver(engine);
     d.compact();
-    d.runs.borrow().len()
+    d.runs.borrow().len() + d.frames.borrow().len()
 }
 
 /// Whether a run that is not paused is under way: the next tick steps it.
 pub(crate) fn any_stepping(engine: &Engine) -> bool {
-    driver(engine)
-        .runs
-        .borrow()
-        .iter()
-        .any(|r| !r.cancelled.get() && !r.paused.get())
+    let d = driver(engine);
+    !d.frames.borrow().is_empty()
+        || d.runs
+            .borrow()
+            .iter()
+            .any(|r| !r.cancelled.get() && !r.paused.get())
 }
 
 pub(crate) fn runs(engine: &Engine) -> Vec<(ObjectId, bool)> {
-    driver(engine)
-        .runs
-        .borrow()
+    let d = driver(engine);
+    let runs = d.runs.borrow();
+    let runs = runs
         .iter()
         .filter(|r| !r.cancelled.get())
-        .map(|r| (r.anim, r.paused.get()))
-        .collect()
+        .map(|r| (r.anim, r.paused.get()));
+    let frames = d.frames.borrow();
+    runs.chain(frames.iter().map(|f| (*f, false))).collect()
 }

@@ -207,6 +207,44 @@ fn a_stopped_animation_asks_for_no_frames() {
     assert_eq!(rig.num("box", "x"), 30.0);
 }
 
+const FRAMES: &str = r#"import QtQuick
+Item {
+  objectName: "root"
+  FrameAnimation { objectName: "frames" }
+}
+"#;
+
+#[test]
+fn a_frame_animation_asks_for_every_frame_only_while_it_runs() {
+    let mut rig = Rig::new(FRAMES);
+    assert!(rig.idle(), "a FrameAnimation not started asks for nothing");
+
+    rig.call("frames", "start");
+    // The first frame, then one each 10 ms.
+    assert_eq!(rig.run_until(ms(100)), 11);
+    assert_eq!(rig.num("frames", "currentFrame"), 11.0);
+    assert!((rig.num("frames", "elapsedTime") - 0.1).abs() < 1e-9);
+    assert!((rig.num("frames", "frameTime") - 0.01).abs() < 1e-9);
+
+    rig.call("frames", "pause");
+    assert_eq!(rig.run_until(ms(1000)), 1, "the frame asked for already");
+    assert!(rig.idle(), "a paused FrameAnimation asks for nothing");
+    assert_eq!(running_animation_count(&rig.e), 0);
+
+    rig.call("frames", "resume");
+    assert_eq!(rig.run_until(ms(1050)), 6);
+    assert_eq!(
+        rig.num("frames", "frameTime"),
+        0.01,
+        "the pause is no frame"
+    );
+
+    rig.call("frames", "stop");
+    assert_eq!(rig.run_until(ms(2000)), 1);
+    assert!(rig.idle(), "a stopped FrameAnimation asks for nothing");
+    assert_eq!(rig.run_until(ms(60_000)), 0);
+}
+
 #[test]
 fn a_pause_inside_a_sequence_costs_one_wake() {
     let mut rig = Rig::new(

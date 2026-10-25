@@ -8,6 +8,7 @@
 //!   many frames there were.
 //! - [`driver`]: what is running, the per-frame tick, and when the next
 //!   frame is needed (none while nothing runs).
+//! - [`frame`]: `FrameAnimation`, a script once a frame.
 //! - [`easing`]: the curves.
 //! - [`smooth`]: the way a `SmoothedAnimation` takes.
 //! - [`spring`]: the way a `SpringAnimation` takes.
@@ -26,6 +27,7 @@ pub(crate) mod behavior;
 pub(crate) mod controller;
 pub(crate) mod driver;
 pub mod easing;
+pub(crate) mod frame;
 pub(crate) mod shown;
 pub(crate) mod smooth;
 pub(crate) mod spring;
@@ -42,6 +44,7 @@ use crate::item::is_a;
 
 pub use behavior::{Behavior, BehaviorTarget};
 pub use controller::AnimationController;
+pub use frame::FrameAnimation;
 pub use transition::{Transition, run_transition, run_transition_to, stop_transition};
 pub use types::{
     AnchorAnimation, Animation, Animator, ColorAnimation, Easing, EasingGroup, NumberAnimation,
@@ -62,7 +65,7 @@ pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [
         Animation, PropertyAnimation, NumberAnimation, ColorAnimation, SequentialAnimation,
         ParallelAnimation, PauseAnimation, ScriptAction, PropertyAction, Behavior,
-        AnimationController, Easing, RotationAnimation, SmoothedAnimation, Transition,
+        AnimationController, FrameAnimation, Easing, RotationAnimation, SmoothedAnimation, Transition,
         AnchorAnimation, ParentAnimation, SpringAnimation, Animator, OpacityAnimator, XAnimator,
         YAnimator, ScaleAnimator, RotationAnimator, UniformAnimator,
     ]));
