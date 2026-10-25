@@ -4085,6 +4085,7 @@ module QtQuick.Controls
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
+	ContextMenu QtQuick.Controls.ContextMenu
 	Control QtQuick/Controls/Basic/Control.qml
 	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
@@ -4156,6 +4157,14 @@ module QtQuick.Controls
 		method monthAt
 		method yearAt
 		method indexOf
+	type QtQuick.Controls.ContextMenu ContextMenu
+		attached QtQuick.Controls.ContextMenuAttached
+		is uncreatable
+	type QtQuick.Controls.ContextMenuAttached ContextMenuAttached
+		is uncreatable
+		prop menu QtQuick.Controls.Basic.Menu named pointer
+		signal menuChanged
+		signal requested position
 
 module QtQuick.Controls.Basic
 	AbstractButton QtQuick.Templates.AbstractButton
@@ -4171,6 +4180,7 @@ module QtQuick.Controls.Basic
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
+	ContextMenu QtQuick.Controls.ContextMenu
 	Control QtQuick/Controls/Basic/Control.qml
 	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
@@ -4376,6 +4386,7 @@ module QtQuick.Controls.Fusion
 	CheckDelegate QtQuick/Controls/Fusion/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Fusion/ComboBox.qml
 	Container QtQuick.Templates.Container
+	ContextMenu QtQuick.Controls.ContextMenu
 	Control QtQuick/Controls/Basic/Control.qml
 	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Fusion/DelayButton.qml
@@ -4627,6 +4638,7 @@ module QtQuick.Controls.Material
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
+	ContextMenu QtQuick.Controls.ContextMenu
 	Control QtQuick/Controls/Basic/Control.qml
 	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
@@ -4787,6 +4799,7 @@ module QtQuick.Controls.Universal
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
+	ContextMenu QtQuick.Controls.ContextMenu
 	Control QtQuick/Controls/Basic/Control.qml
 	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml

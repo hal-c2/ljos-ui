@@ -25,6 +25,7 @@ mod calendar;
 mod combobox;
 mod container;
 mod containers;
+mod context_menu;
 mod control;
 mod delay_button;
 mod delegates;
@@ -77,6 +78,7 @@ pub use calendar::{Calendar, CalendarModel, DayOfWeekRow, MonthGrid, WeekNumberC
 pub use combobox::{ComboBox, ItemDelegate};
 pub use container::Container;
 pub use containers::{Frame, GroupBox, Page, Pane, ToolBar};
+pub use context_menu::{ContextMenu, ContextMenuAttached};
 pub use control::Control;
 pub use delay_button::{DelayButton, RoundButton};
 pub use delegates::{CheckDelegate, RadioDelegate, SwitchDelegate, TreeViewDelegate};
@@ -173,6 +175,7 @@ pub fn register(engine: &Engine) {
     group::register(engine);
     popup::register(engine);
     tooltip::register(engine);
+    context_menu::register(engine);
     combobox::register(engine);
     menu_bar::register(engine);
     // Only asked while a reload is tracked (`ljos run --watch`).
@@ -253,6 +256,7 @@ pub fn register(engine: &Engine) {
             Overlay::static_meta(),
             Calendar::static_meta(),
             CalendarModel::static_meta(),
+            ContextMenu::static_meta(),
         ] {
             engine.register_type(uri, Version::new(2, 15), MetaRef::Static(meta));
         }

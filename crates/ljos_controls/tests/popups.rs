@@ -825,3 +825,67 @@ Item {{
     assert_eq!(warnings(&e), Vec::<String>::new(), "once put in");
     opens_centred(&mut s, &e, made, &["loose", "outer", "inner"]);
 }
+
+fn right_click(s: &mut QuickScene, e: &Engine, x: f64, y: f64) {
+    let right = ljos_quick::MouseButtons::RIGHT;
+    s.pointer_event(e, &PointerEvent::press(x, y, Time::ZERO).with_button(right));
+    s.pointer_event(
+        e,
+        &PointerEvent::release(x, y, Time::ZERO).with_button(right),
+    );
+    settle(s, e, Time::ZERO);
+}
+
+#[test]
+fn an_editor_makes_its_edit_menu_once_and_rests_when_it_closes() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    width: 400; height: 400
+    property var menu: null
+    function look() { menu = field.ContextMenu.menu }
+    function shut() { field.ContextMenu.menu.close() }
+    TextField { id: field; width: 200; height: 40 }
+}
+"#,
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    assert_eq!(
+        e.read_by_name(root, "menu"),
+        Value::Null,
+        "before a request"
+    );
+
+    right_click(&mut s, &e, 50.0, 20.0);
+    call(&e, root, "look", &[]);
+    let Value::Object(menu) = e.read_by_name(root, "menu") else {
+        panic!("no edit menu after a right-click: {:?}", e.take_log());
+    };
+    assert!(flag(&e, menu, "opened"), "the edit menu is not open");
+    // Undo, Redo, Cut, Copy, Paste, Delete, Select All and two separators.
+    assert_eq!(e.read_by_name(menu, "count"), Value::from(9.0));
+
+    call(&e, root, "shut", &[]);
+    for _ in 0..8 {
+        if settle(&mut s, &e, Time::ZERO).is_none() {
+            break;
+        }
+    }
+    assert!(!flag(&e, menu, "opened"), "the edit menu did not close");
+    assert_idle(&mut s, &e, "once the edit menu is closed");
+
+    right_click(&mut s, &e, 50.0, 20.0);
+    call(&e, root, "look", &[]);
+    assert_eq!(
+        e.read_by_name(root, "menu"),
+        Value::Object(menu),
+        "a second request made another menu"
+    );
+    assert!(flag(&e, menu, "opened"), "the edit menu did not open again");
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}

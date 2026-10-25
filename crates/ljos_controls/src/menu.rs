@@ -1438,6 +1438,31 @@ fn is_number(v: &Value) -> bool {
     matches!(v, Value::Int(_) | Value::Real(_))
 }
 
+/// Opens `menu` on `parent`, at `at` in its coordinates, as
+/// `menu.popup(parent, at)` does.
+pub(crate) fn popup_on(
+    e: &Engine,
+    menu: ObjectId,
+    parent: ObjectId,
+    at: kurbo::Point,
+) -> Result<(), EngineError> {
+    popup_at(
+        e,
+        menu,
+        &[
+            Value::Object(parent),
+            Value::point(at.x, at.y),
+            Value::Undefined,
+            Value::Undefined,
+        ],
+    )
+}
+
+/// Puts `item` at the end of `menu`, as `menu.addItem(item)` does.
+pub(crate) fn add_entry(e: &Engine, menu: ObjectId, item: ObjectId) -> Result<(), EngineError> {
+    add(e, menu, Some(item), None, Kind::Item)
+}
+
 fn popup_at(e: &Engine, menu: ObjectId, args: &[Value; 4]) -> Result<(), EngineError> {
     let entries = items(e, menu);
     let mut next = 0;
