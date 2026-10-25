@@ -4631,7 +4631,7 @@ LJOS=path/to/ljos mise run bench:js
 | bench | rounds | Ljós before, ms | Ljós after, ms | qml6, ms | Ljós Ir before | Ljós Ir after |
 |---|---:|---:|---:|---:|---:|---:|
 | bindings | 20 000 | 134 | 132 | 197 | 93.6 k | 92.8 k |
-| handlers | 1 000 000 | 1036 | 539 | 297 | 16.6 k | 7.5 k |
+| handlers | 1 000 000 | 1036 | 435 | 297 | 16.6 k | 6.78 k |
 | arrays | 50 | 147 | 149 | 114 | 55.6 M | 55.6 M |
 | strings | 200 | 52 | 54 | 99 | 6.69 M | 6.83 M |
 | json | 40 | 88 | 90–106 | 124 | 46.4 M | 46.3–53.6 M |
@@ -4639,7 +4639,7 @@ LJOS=path/to/ljos mise run bench:js
 | props | 1 000 000 | 359 | 367 | 252 | 6.73 k | 6.74 k |
 | model | 100 | 53 | 26 | 15 | 7.33 M | 3.69 M |
 
-**Ljós is faster than qml6 on bindings, strings and json.** It is slower on handlers (1.8×),
+**Ljós is faster than qml6 on bindings, strings and json.** It is slower on handlers (1.5×),
 math (1.9×), model (1.7×), props (1.5×) and arrays (1.3×).
 
 The commits:
@@ -4656,6 +4656,12 @@ The commits:
 - 42ce35dd: a QML method read from a script is a plain C function with the object and the
   method in its data, instead of an rquickjs closure. That saves about 425 Ir a call.
   model: 29 → 26 ms.
+- 1a97c3f4: tier 1 keeps the property a write goes to per type, as it keeps a member read,
+  instead of looking it up by name on every run. Its write of a number, bool or text to a
+  plain property goes the way a script's does (`plain_script_write`), without the looks for
+  an alias, a reset, a group, a setter or a Behavior. A signal's number and bool arguments
+  are read off their tag. handlers: 7.52 k → 6.78 k Ir; 502 → 435 ms at the same load
+  (load 8).
 
 These are left:
 
@@ -4670,12 +4676,14 @@ These are left:
   QuickJS (keep one empty arena per size), which rquickjs-sys 0.14 builds without a switch
   for it.
 - **handlers**: what remains of an emit is the handler. The tier-1 VM runs
-  `total += step(i)` and the call to `step` (3.0 k Ir), the write to `total` (0.8 k), and
-  the argument conversions.
+  `total += step(i)` and the call to `step` (about 2.8 k Ir: the register loop itself, its
+  frame and the values it drops), the write to `total`, and the emit's dispatch.
 - **props**: about 1.1 k Ir per read or write of another object's property, split between
   the host accessors (`answer::get` and `answer::set`, `raw_plain`) and the engine's
   `quick_script_read` and `plain_script_write`. The engine side overlaps H2's
-  `read_access` work and was left to it.
+  `read_access` work and was left to it. A write to `b.x`, which has a node, is about
+  1.1 k on its own: the graph write, the flush its batch ends with (an item's `x` has an
+  effect to run), and the field it updates.
 - **model**: about 3.7 k Ir per `get(i).value`. That is the method call (1 k in
   `EngineHost::call` and `Engine::invoke`), the read of `.value` on the row object
   (0.85 k), and the read of `m.count` in the loop condition.
@@ -4688,3 +4696,4 @@ DECISIONs:
   the host is made. A host without objects is left as QuickJS makes it, and the 8 MiB
   out-of-memory test runs right at its limit.
 - QuickJS's arena allocator is left unpatched.
+- props is left as it is: what is left of it is the engine's read and write, H2's.
