@@ -25,6 +25,10 @@ pub enum Method {
     Put,
     Patch,
     Delete,
+    Head,
+    Options,
+    /// WebDAV's, which XMLHttpRequest also sends.
+    Propfind,
 }
 
 impl fmt::Display for Method {
@@ -35,6 +39,9 @@ impl fmt::Display for Method {
             Method::Put => "PUT",
             Method::Patch => "PATCH",
             Method::Delete => "DELETE",
+            Method::Head => "HEAD",
+            Method::Options => "OPTIONS",
+            Method::Propfind => "PROPFIND",
         })
     }
 }
@@ -194,11 +201,27 @@ pub fn is_remote(url: &str) -> bool {
     matches!(scheme.as_deref(), Some("http" | "https" | "ftp"))
 }
 
-/// The reason phrase HTTP gives a status, for saying why a reply was
-/// refused when the reply's own phrase is not at hand: the error a QML
-/// type logs names it after the status, as Qt's does.
+/// The reason phrase HTTP gives a status, where the reply's own phrase is
+/// not at hand: the error a QML type logs for a refused reply names it
+/// after the status, as Qt's does, and XMLHttpRequest's `statusText` is it.
 pub fn reason_phrase(status: u16) -> &'static str {
     match status {
+        100 => "Continue",
+        101 => "Switching Protocols",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        203 => "Non-Authoritative Information",
+        204 => "No Content",
+        205 => "Reset Content",
+        206 => "Partial Content",
+        300 => "Multiple Choices",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
         400 => "Bad Request",
         401 => "Unauthorized",
         402 => "Payment Required",

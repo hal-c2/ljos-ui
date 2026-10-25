@@ -6,9 +6,14 @@
 //!
 //! The QML names it as `$SERVER`, which a scenario's files have replaced
 //! by `http://127.0.0.1:<port>` before they are loaded.
+//!
+//! `/echo` answers any method with what it was sent, for a script that
+//! sends requests of its own (XMLHttpRequest): the method, the
+//! content type and the `x-` headers, one per line by name, a blank line, then
+//! the body.
 
 use std::collections::HashMap;
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -93,49 +98,90 @@ impl Drop for WebServer {
     }
 }
 
-/// Reads one request and answers it: the file, or 404 for a name nobody
-/// served. The connection closes after it.
+/// Reads one request and answers it: the file, what `/echo` was sent, or
+/// 404 for a name nobody served. The connection closes after it.
 fn answer(stream: TcpStream, files: &Files) {
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
     if reader.read_line(&mut line).is_err() {
         return;
     }
-    let path = line.split_whitespace().nth(1).unwrap_or("/");
+    let mut words = line.split_whitespace();
+    let method = words.next().unwrap_or("GET").to_owned();
+    let path = words.next().unwrap_or("/");
     let path = path.split(['?', '#']).next().unwrap_or(path).to_owned();
-    // The headers say nothing this server needs.
+    let mut headers = Vec::new();
     loop {
         let mut header = String::new();
         match reader.read_line(&mut header) {
             Ok(0) | Err(_) => break,
             Ok(_) if header.trim().is_empty() => break,
-            Ok(_) => {}
+            Ok(_) => {
+                if let Some((name, value)) = header.split_once(':') {
+                    headers.push((name.trim().to_ascii_lowercase(), value.trim().to_owned()));
+                }
+            }
         }
     }
-    let body = files
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&path)
-        .cloned();
-    let (status, body) = match body {
-        Some(bytes) => ("200 OK", bytes),
-        None => ("404 Not Found", b"Not Found".to_vec()),
+    let length = headers
+        .iter()
+        .find(|(name, _)| name == "content-length")
+        .and_then(|(_, value)| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    let mut sent = Vec::new();
+    if (&mut reader).take(length).read_to_end(&mut sent).is_err() {
+        return;
+    }
+    let (status, content_type, body) = if path == "/echo" {
+        let mut text = format!("{method}\n");
+        // By name: clients send headers in orders of their own.
+        headers.sort();
+        for (name, value) in &headers {
+            if name == "content-type" || name.starts_with("x-") {
+                text.push_str(&format!("{name}: {value}\n"));
+            }
+        }
+        text.push('\n');
+        let mut body = text.into_bytes();
+        body.extend_from_slice(&sent);
+        ("200 OK", "text/plain", body)
+    } else {
+        let served = files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&path)
+            .cloned();
+        match served {
+            Some(bytes) => ("200 OK", content_type_of(&path), bytes),
+            None => ("404 Not Found", "text/plain", b"Not Found".to_vec()),
+        }
     };
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     let mut stream = &stream;
     let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(&body);
+    if method != "HEAD" {
+        let _ = stream.write_all(&body);
+    }
     let _ = stream.flush();
     let _ = stream.shutdown(Shutdown::Write);
 }
 
+/// What a file is said to be, by its suffix: text a script reads by its
+/// type, and bytes for the rest (images and media are told by their bytes).
+fn content_type_of(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, suffix)| suffix) {
+        Some("json") => "application/json",
+        Some("txt") => "text/plain",
+        Some("xml") => "text/xml",
+        _ => "application/octet-stream",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::io::Read as _;
-
     use super::*;
 
     fn get(server: &WebServer, path: &str) -> String {
@@ -154,5 +200,22 @@ mod tests {
         assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
         assert!(reply.ends_with("\r\n\r\nhello"), "{reply}");
         assert!(get(&server, "/b.txt").starts_with("HTTP/1.1 404 Not Found\r\n"));
+    }
+
+    #[test]
+    fn echo_answers_with_what_it_was_sent() {
+        let server = WebServer::start().unwrap();
+        let mut stream = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        write!(
+            stream,
+            "PUT /echo HTTP/1.1\r\nHost: x\r\nX-Probe: yes\r\nContent-Length: 2\r\n\r\nhi"
+        )
+        .unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).unwrap();
+        assert!(
+            reply.ends_with("\r\n\r\nPUT\nx-probe: yes\n\nhi"),
+            "{reply}"
+        );
     }
 }

@@ -258,6 +258,14 @@ fn the_text_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     w.each(|b| b.text_file(&name, &text))
 }
 
+// The same, at `$SERVER/X` on the scenario's web server.
+#[given(regex = r#"^the web server serves the text file "([^"]+)":$"#)]
+fn a_served_text_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.web()?.serve(&name, text.trim().as_bytes().to_vec());
+    Ok(())
+}
+
 // A text file under the user's home directory.
 #[given(regex = r#"^the user has the text file "([^"]+)":$"#)]
 fn the_user_file(w: &mut LjosWorld, path: String, step: &Step) -> StepResult {

@@ -47,6 +47,7 @@ mod platform;
 mod sensors;
 mod settings;
 mod window_handle;
+mod xhr;
 
 use std::cell::Cell;
 
@@ -97,9 +98,8 @@ pub use window_handle::NativeWindow;
 struct Registered(Cell<bool>);
 
 /// Registers `QtQuick.Dialogs`, `QtCore`, `QtSensors`, `QtNetwork`'s
-/// `NetworkInformation`, `Qt.platform` and
-/// `Qt.openUrlExternally`. Calling it
-/// again does nothing. The drawn dialogs are QtQuick.Controls, so a host
+/// `NetworkInformation`, `Qt.platform`, `Qt.openUrlExternally` and the
+/// `XMLHttpRequest` global. Calling it again does nothing. The drawn dialogs are QtQuick.Controls, so a host
 /// registers those too.
 pub fn register(engine: &Engine) {
     if engine.extension::<Registered>().0.replace(true) {
@@ -139,6 +139,7 @@ pub fn register(engine: &Engine) {
     }
 
     open_url::register(engine);
+    xhr::register(engine);
     engine.on_js_started(|e| {
         let platform = Platform::of(e);
         let installed = e.eval_js(INSTALL_PLATFORM).map(|install| {
