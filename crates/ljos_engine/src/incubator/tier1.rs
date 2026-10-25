@@ -879,9 +879,18 @@ impl Engine {
                 None => st.spying.set(false),
             }
         }
+        // A record tier 1 would write is, written by the script, the
+        // object made of it, as with the result above.
         let wrote = |w: &Written| {
-            seen.iter()
-                .any(|s| s.0 == w.0 && s.1 == w.1 && same(&s.2, &w.2))
+            seen.iter().any(|s| {
+                s.0 == w.0
+                    && s.1 == w.1
+                    && if holds_map(&w.2) {
+                        same(&self.deep_copy(&s.2), &w.2)
+                    } else {
+                        same(&s.2, &w.2)
+                    }
+            })
         };
         let agree = match (&js_plain, &done.write) {
             (Some(v), None) => same(&done.value, v) && seen.is_empty(),

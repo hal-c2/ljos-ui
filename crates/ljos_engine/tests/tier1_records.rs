@@ -1,6 +1,7 @@
 //! A record (`Value::Map`) read through tier 1 and through tier 2: one
 //! holds the record and the other the script object made of it, and the
-//! cross-check takes them for the same value by their fields.
+//! cross-check takes them for the same value by their fields, read or
+//! written to a `var`.
 
 use std::sync::Arc;
 
@@ -15,6 +16,9 @@ QtObject {
   property var b: owner.route ?? null
   property var c: holder.route
   property var d: holder.route ?? null
+  property var e: null
+  signal moved(var point)
+  onMoved: point => e = point
 }
 "#;
 
@@ -39,7 +43,14 @@ fn a_record_through_a_nullish_coalescing_agrees_with_tier_two() {
         .create_from_url("Main", None, Vec::new())
         .expect("creates");
 
-    for p in ["a", "b", "c", "d"] {
+    engine
+        .emit_by_name(
+            root,
+            "moved",
+            &[Value::map([(Atom::intern("x"), Value::Real(3.0))])],
+        )
+        .expect("emits");
+    for p in ["a", "b", "c", "d", "e"] {
         let v = engine.plain(&engine.read_by_name(root, p));
         assert!(!matches!(v, Value::Undefined | Value::Null), "{p} is {v:?}");
     }
