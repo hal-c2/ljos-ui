@@ -153,7 +153,7 @@ jobs:
             FUZZ_OUT="$RUNNER_TEMP/fuzz/pinned-$seed" mise run fuzz:qt bindings --cases 2000 --seed "$seed" || failed=1
           done
           # The other areas are smaller, and one triaged seed each holds what they found.
-          for area in geometry connections creation models builtins; do
+          for area in geometry connections creation models builtins states loaders; do
             FUZZ_OUT="$RUNNER_TEMP/fuzz/pinned-$area" mise run fuzz:qt "$area" --cases 2000 --seed 101 || failed=1
           done
           exit "$failed"
