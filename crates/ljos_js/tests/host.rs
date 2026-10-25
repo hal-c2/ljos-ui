@@ -636,8 +636,9 @@ fn the_wrapper_answers_its_properties_with_no_accessor_call() {
             "own.js",
             "export function f(o) { o.width = o.height + 1; return o.width; }\n\
              export function g(o) { var d = Object.getOwnPropertyDescriptor(\
-             Object.getPrototypeOf(o), 'width'); var c = Object.create(o); \
-             o.mark = 7; return [d.get.call(o), o.mark, c.mark, 'width' in c]; }",
+             Object.getPrototypeOf(o), 'width'); var c = Object.create(o); var e; \
+             try { o.mark = 7; } catch (x) { e = x.message; } c.mark = 8; \
+             return [d.get.call(o), e, o.mark, c.mark, 'width' in c]; }",
         )
         .unwrap();
     let before = JsHost::accessor_calls();
@@ -647,15 +648,17 @@ fn the_wrapper_answers_its_properties_with_no_accessor_call() {
         JsValue::Number(5.0)
     );
     assert_eq!(JsHost::accessor_calls(), before);
-    // What asks the prototype still finds the accessors, and a name of no
-    // property is the wrapper's own, seen through an object made over it.
+    // What asks the prototype still finds the accessors. A name of no
+    // property cannot be given to the wrapper, but can to an object made
+    // over it.
     assert_eq!(
         host.call(m.function("g").unwrap(), &[JsValue::Object(1)])
             .unwrap(),
         JsValue::Array(vec![
             JsValue::Number(5.0),
-            JsValue::Number(7.0),
-            JsValue::Number(7.0),
+            JsValue::String("Cannot assign to non-existent property \"mark\"".into()),
+            JsValue::Undefined,
+            JsValue::Number(8.0),
             JsValue::Bool(true)
         ])
     );

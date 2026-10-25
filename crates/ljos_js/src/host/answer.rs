@@ -55,6 +55,24 @@ unsafe fn slot(
     }
 }
 
+/// Whether a write of a name `obj`'s type has not is an error: `obj` is
+/// the receiver, not the prototype of another object, and its type is a
+/// QML object's.
+///
+/// # Safety
+/// As [`slot`].
+unsafe fn closed(obj: qjs::JSValue, receiver: qjs::JSValue) -> bool {
+    let mut class = 0;
+    // SAFETY: as in `slot`.
+    unsafe {
+        let w = qjs::JS_GetAnyOpaque(obj, &raw mut class).cast::<HostWrapper>();
+        !w.is_null()
+            && (*w).listing.as_ref().is_some_and(|l| l.closed)
+            && qjs::JS_VALUE_GET_TAG(receiver) == qjs::JS_TAG_OBJECT
+            && qjs::JS_VALUE_GET_PTR(obj) == qjs::JS_VALUE_GET_PTR(receiver)
+    }
+}
+
 unsafe extern "C" fn get(
     ctx: *mut qjs::JSContext,
     obj: qjs::JSValue,
@@ -96,7 +114,15 @@ unsafe extern "C" fn set(
                 }
             }
             Some(_) => refuse(ctx, flags, "no setter for property"),
-            None => proto_set(ctx, obj, atom, value, receiver, flags),
+            None => proto_set(
+                ctx,
+                obj,
+                atom,
+                value,
+                receiver,
+                flags,
+                closed(obj, receiver),
+            ),
         }
     }
 }
@@ -111,6 +137,25 @@ unsafe fn refuse(ctx: *mut qjs::JSContext, flags: c_int, message: &str) -> c_int
     // SAFETY: a live context.
     let ctx = unsafe { Ctx::from_raw(std::ptr::NonNull::new_unchecked(ctx)) };
     let _ = Exception::throw_type(&ctx, message);
+    -1
+}
+
+/// qml6's `Error` for a write of a property the object has not, which it
+/// throws whether the code writing is strict or not.
+unsafe fn missing(ctx: *mut qjs::JSContext, atom: qjs::JSAtom) -> c_int {
+    // SAFETY: a live context; the name's value is owned by the `Value`.
+    unsafe {
+        let ctx = Ctx::from_raw(std::ptr::NonNull::new_unchecked(ctx));
+        let name = rquickjs::Value::from_raw(
+            ctx.clone(),
+            qjs::JS_AtomToString(ctx.as_raw().as_ptr(), atom),
+        );
+        let text = name.get::<String>().unwrap_or_default();
+        let _ = Exception::throw_message(
+            &ctx,
+            &format!("Cannot assign to non-existent property \"{text}\""),
+        );
+    }
     -1
 }
 
@@ -193,6 +238,7 @@ unsafe fn proto_set(
     mut value: qjs::JSValue,
     receiver: qjs::JSValue,
     flags: c_int,
+    closed: bool,
 ) -> c_int {
     // SAFETY: as in `proto_get`; `value` is borrowed.
     unsafe {
@@ -220,6 +266,7 @@ unsafe fn proto_set(
                     return refuse(ctx, flags, "property is read-only");
                 }
             }
+            Ok(None) if closed => return missing(ctx, atom),
             Ok(None) => {}
         }
         // A new entry of the receiver's own, or the one it has when it is

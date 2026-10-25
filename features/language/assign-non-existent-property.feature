@@ -29,7 +29,6 @@ Feature: A script writing a property an object does not have
       }
       """
 
-  @backlog
   Scenario: Each object is thrown an Error, whatever its type and however it was made
     When the method "run" of "root" is called
     Then the property "seen" of "root" is "Error: Cannot assign to non-existent property 'q' | Error: Cannot assign to non-existent property 'q' | Error: Cannot assign to non-existent property 'q'"

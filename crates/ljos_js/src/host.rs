@@ -1876,7 +1876,10 @@ impl JsHost {
             let listing = self.state.listings.borrow().get(at).cloned().flatten();
             proto.zip(listing)
         });
-        let mut listing = Listing::default();
+        let mut listing = Listing {
+            closed: !def.plain,
+            ..Listing::default()
+        };
         let proto = self.enter("register_type", self.cfg.load_slice, |scope| {
             let proto = Object::new(scope.ctx.clone())?;
             let weak = Rc::downgrade(&scope.state);
@@ -3423,6 +3426,9 @@ pub(crate) struct Listing {
     /// The property each name a wrapper answers itself is, by its atom,
     /// which the prototype's entry keeps (host/answer.rs).
     pub(crate) slots: FxHashMap<rquickjs::qjs::JSAtom, Slot>,
+    /// A write of a name the type has not is thrown an `Error`, as a QML
+    /// object holds only the properties its type gives it.
+    pub(crate) closed: bool,
 }
 
 /// A property of a type, as its wrappers answer for it.
