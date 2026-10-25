@@ -4499,3 +4499,98 @@ DECISIONs:
 - Fontique's family-name lookup is left as it is: parley 0.12 has no family given by id.
 - The a11y cost in the sandbox is noted, not removed: the driver needs the tree.
 - The unparenting of a released delegate is kept, because qml6 does it.
+
+### B20 (H2): fewer runs and nodes per delegate (2026-10-25)
+
+B19's measures again, on the same machine and in the same way: off-screen in the cua sandbox
+on the GPU, against `qml6` 6.11.2 with the Basic style. The start is d567e542; the end is this
+batch's four commits, rebased onto 6b072a0c. Both are profiling builds (release, line tables),
+and the start was measured again next to the end.
+
+**Per delegate, by callgrind.** The main thread, with a 40 s warm-up and a 20 s window.
+Delegates are counted as in B19.
+
+| Bench | Binary | Delegates | Instructions | Per delegate | `malloc` per delegate |
+|---|---|---:|---:|---:|---:|
+| listview | Start | 9833 | 4.17 G | 424.0 k | 203 |
+| listview | After the first two commits | 9771 | 3.76 G | 385.1 k | 196 |
+| listview | End | 9851 | 3.78 G | 384.2 k | 192 |
+| `reuseItems` | Start | 9968 | 1.58 G | 158.3 k | 58 |
+| `reuseItems` | End | 9985 | 1.58 G | 157.9 k | 57 |
+
+qml6 makes a delegate of this bench for about 200 k.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Start | End | qml6 (same run) |
+|---|---:|---:|---:|
+| listview | 210.5 | 207.1 to 207.3 | 103.1 |
+| listview with `reuseItems: true` | 88.2 | 87.5 | 60.5 |
+
+The scroll rate falls by much less than the per-delegate count: the wheel run makes far fewer
+delegates per second than the 500 a second of the bench's own animation, so per-frame work
+dominates its count.
+
+| `ljos bench --gesture scroll`, end binary | ljos | qml6 (same run) |
+|---|---:|---:|
+| listview, CPU while driven (% of one core) | 7.85 | 3.03 |
+| rssnews | 3.25 | 2.04 |
+| thermostat | 3.22 | 2.64 |
+| listview, first frame (ms) | 39.0 | 91.1 |
+
+The load was 2.5 to 14.8 while these ran.
+
+The commits:
+
+- c402861f: `Graph::effect_now` makes an effect whose first run happens before it returns,
+  also inside a batch (a frozen scope still waits for the thaw).
+- 1bf96414: a Text's 19 inputs are read once as it is made. The effect that follows them is
+  made at completion and measures from that read; the scene's polish takes what it read
+  instead of reading them all again. A change that does not change the layout (colour,
+  style colour, alignment within the width) no longer measures the text again, and a shown
+  text has no content effect of its own (features/text/measured-once.feature: two new
+  scenarios). The text's binding is evaluated at completion as before, so nothing a binding
+  logs moves.
+- e0705aee: a scope's nodes are disposed together. An edge between two of its nodes is not
+  unlinked, only observers that stay are marked, and marks spread once.
+- 787651fa: `Graph::dispose_all` does the same for a few nodes; the scene's `unadopt` and the
+  a11y pass's `forget` use it. The nodes taken out go to a list kept for the next disposal.
+
+The text commit and the scope disposal together took 39 k off a new delegate (424.0 k to
+385.1 k): the second read of the text's inputs and its polish run, and the text's content
+effect, a node and its first run. `dispose_all` took off another 1 k. Disposal is still
+about 17 k a delegate, but nearly all of that is dropping the nodes themselves (about 200
+instructions each for their closures and the `Rc`s they hold), not unlinking them. A reused
+delegate creates and disposes nothing, so it barely moved.
+
+**listview is still 2.0× qml6's instructions per second, and 1.45× with `reuseItems`.**
+
+These are left:
+
+- Text shaping, 49 k of a new delegate's 384 k and most of a reused one's 158 k. For "Row N"
+  it is parley's builder (`shape_text` 20 k, `analyze_text` 5 k, resolving the style set
+  4.6 k), then 6.8 k to take advances and widths out and 5.6 k to extract the runs. A reused
+  delegate pays all of it, because its text changes.
+- Adoption is 73 k: anchors 23 k (an item anchored by nothing still reads its 9 lines,
+  5.6 k), geometry 21 k (mostly the first evaluation of `width` and `height` bindings),
+  inherit 8 k, a11y 5.5 k, place 4.6 k, structure 4 k. Folding anchors into geometry would
+  make an effect that writes what it reads; it was not done.
+- Creating the delegate (`create_delegate`) is 58 k; the text's follow effect 19.5 k, most of
+  it the first evaluation of `text`.
+- The a11y pass runs in the sandbox because its driver reads the tree (B19).
+
+DECISIONs:
+
+- A shown Text gets no content effect: its content is made once, untracked, as it is shown,
+  and later changes reach it through the text's own effect.
+- What a Text read as it was completed is handed to the polish (`text::follow_into`), not
+  read again. The Text's effect is disposed when the scene forgets it, so an item off the
+  scene follows nothing.
+- A change that only paints differently (colour, style colour, alignment within the width)
+  does not measure again.
+- No cache of shaped runs beyond the one there is. ljos_text already shares shaped runs and
+  layouts between delegates, keyed by text, style and constraints, and keeps them 30 frames.
+  In this bench every text is new within a sweep, so a cache misses unless it holds a whole
+  sweep: one "Row N" shaped and laid out holds 3.2 KB (measured with `TextEngine::memory`
+  over 1000 texts), so 10 000 rows are 32 MB to save 49 k a delegate on the way back. Not
+  worth it in memory, and not what a real list repeats.
+- Batch disposal tells a scope's nodes apart by their scope (a node never changes scope), so
+  `Node` grows no flag; it is kept at 224 bytes.
