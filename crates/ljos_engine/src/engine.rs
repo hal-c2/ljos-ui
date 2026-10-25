@@ -141,6 +141,8 @@ pub(crate) struct Inner {
     pub(crate) timing: crate::timing::Timing,
     /// Hot bindings and the binding loops seen (`profile.rs`).
     pub(crate) profile: crate::profile::Profiler,
+    /// What each turn did, while an inspector asks (`journal.rs`).
+    pub(crate) journal: crate::journal::JournalState,
     /// The properties whose setters (those that get a `Cx`) are running,
     /// innermost last: a write to one of them from inside is refused.
     setters: RefCell<SmallVec<[(ObjectId, PropIndex); 2]>>,
@@ -307,6 +309,7 @@ impl Engine {
             shown: Default::default(),
             timing: Default::default(),
             profile: Default::default(),
+            journal: Default::default(),
             setters: RefCell::new(SmallVec::new()),
             frozen: Cell::new(0),
         });
@@ -1952,6 +1955,8 @@ impl Engine {
             // and what follows a property until its author sets it
             // (a control's font) would stop following.
             (None, WriteKind::Override(_) | WriteKind::Host) => self.ensure_node(obj, prop)?,
+            // Journaled, a change is the graph's to keep: it gets a node.
+            (None, _) if self.is_journaled() => self.ensure_node(obj, prop)?,
             (None, _) => {
                 // Nobody observes it: the field is the only copy.
                 let mut store = self.inner.store.borrow_mut();
@@ -2034,8 +2039,9 @@ impl Engine {
                 return Ok(false);
             }
             let node = h.node(prop);
-            // A reader follows it without a node: the long way makes one.
-            if node.is_none() && h.read_without_node(prop) {
+            // A reader follows it without a node, or the change is to be
+            // journaled: the long way makes one.
+            if node.is_none() && (h.read_without_node(prop) || self.is_journaled()) {
                 return Ok(false);
             }
             let Ok(v) = p.ty.coerce(v) else {
@@ -2512,6 +2518,7 @@ impl Engine {
             // Otherwise this is one look at a flag.
             let _timed = engine.inner.timing.binding();
             let _profiled = engine.profile_binding(obj, prop);
+            let _journaled = engine.journal_binding(obj, prop);
             let followed = if engine.inner.traces.follows_bindings() {
                 engine
                     .binding_runs(obj, prop)

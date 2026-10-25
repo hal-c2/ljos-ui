@@ -2284,10 +2284,12 @@ impl Engine {
             if let Some(name) = &injected {
                 e.warn_injected(&i, expr, name);
             }
-            let _profiled = e.profile_handler(scope, obj, expr.0, &signal_name, || {
+            let at = || {
                 let at = handler_place(&i.file.ir, expr);
                 Some(format!("{}:{}:{}", i.url(), at.line, at.column))
-            });
+            };
+            let _profiled = e.profile_handler(scope, obj, expr.0, &signal_name, at);
+            let _journaled = e.journal_handler(scope, &signal_name, at);
             e.call_expr(&i, expr, args);
         });
         // Every handler of a `Connections` is for its target, also one

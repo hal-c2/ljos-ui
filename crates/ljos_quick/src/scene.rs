@@ -36,8 +36,8 @@ pub(crate) fn polishes() -> u64 {
 }
 
 use ljos_engine::{
-    Engine, EngineError, LogLevel, NodeId as GraphNode, ObjectId, OverrideContent, OverrideId,
-    PropIndex, Provenance, RestoreMode, Value,
+    Engine, EngineError, JournalKind, LogLevel, NodeId as GraphNode, ObjectId, OverrideContent,
+    OverrideId, PropIndex, Provenance, RestoreMode, Value,
 };
 use ljos_render::{ClipSpec, FrameSnapshot, ImageHandle, NodeId, RenderTree, hit_test, kurbo};
 use ljos_runtime::{FrameBudget, Scheduler, Time};
@@ -998,6 +998,7 @@ impl QuickScene {
         self.reconcile(engine);
         self.apply_geometry(engine);
         self.refresh_culled(engine);
+        self.journal_content(engine);
         self.apply_content();
         self.draw_effect_sources(engine);
         // 9. Compose; then pull paint inputs for newly visible items.
@@ -1012,6 +1013,7 @@ impl QuickScene {
             if !installed {
                 break;
             }
+            self.journal_content(engine);
             self.apply_content();
             self.draw_effect_sources(engine);
             snap = self.tree.compose(self.viewport, self.frame);
@@ -1217,6 +1219,7 @@ impl QuickScene {
                 let Some(kind) = self.entries.get(&obj).map(|e| e.kind) else {
                     continue;
                 };
+                let journaled = engine.is_journaled().then(std::time::Instant::now);
                 let r = match kind {
                     Kind::Row => positioners::layout(engine, obj, Axis::Horizontal),
                     Kind::Column => positioners::layout(engine, obj, Axis::Vertical),
@@ -1237,6 +1240,11 @@ impl QuickScene {
                     | Kind::Source
                     | Kind::External => Ok(()),
                 };
+                if let Some(started) = journaled
+                    && kind.polishes()
+                {
+                    engine.journal_step(JournalKind::LaidOut, obj, Some(started.elapsed()));
+                }
                 if let Err(e) = r {
                     engine.log(
                         LogLevel::Warning,
@@ -1579,6 +1587,11 @@ impl QuickScene {
             let geoms: Vec<(ObjectId, Geom)> = s.geom.drain().collect();
             (geoms, moved)
         };
+        if engine.is_journaled() {
+            for obj in geoms.iter().map(|g| g.0).chain(moved.iter().copied()) {
+                engine.journal_step(JournalKind::Placed, obj, None);
+            }
+        }
         for (obj, g) in &geoms {
             if self
                 .entries
@@ -1667,6 +1680,20 @@ impl QuickScene {
             crate::transform::Projective::IDENTITY
         };
         e.list = list;
+    }
+
+    /// Tells a journaling engine which items step 8c redraws.
+    fn journal_content(&self, engine: &Engine) {
+        if !engine.is_journaled() {
+            return;
+        }
+        let mut redrawn: Vec<ObjectId> = self.shared.borrow().content.keys().copied().collect();
+        redrawn.sort_unstable();
+        for obj in redrawn {
+            if self.entries.contains_key(&obj) {
+                engine.journal_step(JournalKind::Redrawn, obj, None);
+            }
+        }
     }
 
     /// Step 8c: rebuild the display lists of items whose paint inputs or
