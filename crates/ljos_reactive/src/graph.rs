@@ -34,9 +34,10 @@ struct Edge {
 type Edges = SmallVec<[Edge; 2]>;
 type DiagnosticHandler = Box<dyn FnMut(&Diagnostic)>;
 
-/// One layer of a property: the base, or an override above it.
+/// One layer of a property: the base, or an override above it. An
+/// override's id is kept beside it ([`Overrides`]): the base, which every
+/// property has, needs none.
 struct Layer<V> {
-    id: OverrideId,
     content: Content<V>,
     provenance: Provenance,
 }
@@ -60,26 +61,40 @@ struct Prop<V> {
     host: bool,
 }
 
-/// The layers over a property's base, as a `Vec` behind a box that only a
-/// property with an override has: a node holds a pointer where it held a
-/// `Vec`, and nearly none has an override.
-#[allow(
-    clippy::box_collection,
-    reason = "a thin pointer: a boxed slice is twice as wide"
-)]
-struct Overrides<V>(Option<Box<Vec<Layer<V>>>>);
+/// The layers over a property's base, behind a box that only a property
+/// with an override has: a node holds a pointer, and nearly none has an
+/// override.
+struct Overrides<V>(Option<Box<OverrideList<V>>>);
+
+/// The layers, bottom first, and the id of each.
+struct OverrideList<V> {
+    layers: Vec<Layer<V>>,
+    ids: Vec<OverrideId>,
+}
 
 impl<V> Overrides<V> {
     const NONE: Self = Overrides(None);
 
-    fn push(&mut self, layer: Layer<V>) {
-        self.0.get_or_insert_default().push(layer);
+    fn push(&mut self, id: OverrideId, layer: Layer<V>) {
+        let list = self.0.get_or_insert_with(|| {
+            Box::new(OverrideList {
+                layers: Vec::new(),
+                ids: Vec::new(),
+            })
+        });
+        list.layers.push(layer);
+        list.ids.push(id);
+    }
+
+    fn position(&self, id: OverrideId) -> Option<usize> {
+        self.0.as_ref()?.ids.iter().position(|i| *i == id)
     }
 
     fn remove(&mut self, idx: usize) -> Layer<V> {
-        let layers = self.0.as_mut().expect("an override to remove");
-        let removed = layers.remove(idx);
-        if layers.is_empty() {
+        let list = self.0.as_mut().expect("an override to remove");
+        list.ids.remove(idx);
+        let removed = list.layers.remove(idx);
+        if list.layers.is_empty() {
             self.0 = None;
         }
         removed
@@ -90,13 +105,15 @@ impl<V> std::ops::Deref for Overrides<V> {
     type Target = [Layer<V>];
 
     fn deref(&self) -> &[Layer<V>] {
-        self.0.as_deref().map_or(&[], Vec::as_slice)
+        self.0.as_deref().map_or(&[], |l| l.layers.as_slice())
     }
 }
 
 impl<V> std::ops::DerefMut for Overrides<V> {
     fn deref_mut(&mut self) -> &mut [Layer<V>] {
-        self.0.as_deref_mut().map_or(&mut [], Vec::as_mut_slice)
+        self.0
+            .as_deref_mut()
+            .map_or(&mut [], |l| l.layers.as_mut_slice())
     }
 }
 
@@ -133,32 +150,29 @@ enum Compute<V> {
     Effect(EffectFn<V>),
 }
 
-struct Node<V> {
-    kind: Kind<V>,
-    /// `Some` for properties, `None` for effects.
-    value: Option<V>,
-    state: NodeState,
+/// A node's yes-or-no states, a bit each: as fields they took a byte
+/// each, and every node has them.
+#[derive(Clone, Copy, Default)]
+struct Flags(u16);
+
+impl Flags {
     /// Marked while computing: run again afterwards.
-    pending: bool,
+    const PENDING: u16 = 1 << 0;
     /// Promoted (or explicitly made) an effect root.
-    eager: bool,
-    queued: bool,
-    /// The flush level its queue entry sits on (see `Inner::queues`). A
-    /// level is a flush nested in an effect's run, so the call stack ends
-    /// long before 65 536 of them.
-    queued_level: u16,
+    const EAGER: u16 = 1 << 1;
+    const QUEUED: u16 = 1 << 2;
     /// Parked on a frozen scope until thaw.
-    deferred: bool,
+    const DEFERRED: u16 = 1 << 3;
     /// On the current check-walk stack; meeting it again is a cycle.
-    walking: bool,
+    const WALKING: u16 = 1 << 4;
     /// Read itself in the run that is in progress.
-    self_read: bool,
+    const SELF_READ: u16 = 1 << 5;
     /// The change this node's last run produced came back to it through
     /// its observers: it sits on a dependency cycle and has to settle.
-    cyclic: bool,
+    const CYCLIC: u16 = 1 << 6;
     /// Its cycle is being settled: marks that reach it are dropped, which
     /// is what breaks the loop.
-    settling: bool,
+    const SETTLING: u16 = 1 << 7;
     /// While it settles: a source of it took a new value, so its change
     /// came back round as a change. That is the binding loop; a cycle whose
     /// other members give the values they had is none.
@@ -166,9 +180,45 @@ struct Node<V> {
     /// While a binding computes, outside a settle: it changed, as it ran,
     /// what it had already read. On Qt that is a binding loop too; it is
     /// reported when the run finishes and the binding is not run again.
-    came_back: bool,
+    const CAME_BACK: u16 = 1 << 8;
     /// A binding set aside by [`Graph::hold`]: installed, not run.
-    held: bool,
+    const HELD: u16 = 1 << 9;
+    /// Something asked whether the property was given a value at all
+    /// ([`Graph::provenance_tracked`]): its observers are told when that
+    /// changes, also when the value stays what it was.
+    const ASKED_IF_SET: u16 = 1 << 10;
+
+    fn has(self, f: u16) -> bool {
+        self.0 & f != 0
+    }
+
+    fn set(&mut self, f: u16, on: bool) {
+        if on {
+            self.0 |= f;
+        } else {
+            self.0 &= !f;
+        }
+    }
+
+    /// Whether `f` was set; it is not now.
+    fn take(&mut self, f: u16) -> bool {
+        let was = self.has(f);
+        self.0 &= !f;
+        was
+    }
+}
+
+struct Node<V> {
+    kind: Kind<V>,
+    /// `Some` for properties, `None` for effects.
+    value: Option<V>,
+    state: NodeState,
+    /// Its yes-or-no states ([`Flags`]).
+    flags: Flags,
+    /// The flush level its queue entry sits on (see `Inner::queues`). A
+    /// level is a flush nested in an effect's run, so the call stack ends
+    /// long before 65 536 of them.
+    queued_level: u16,
     height: u32,
     /// Creation order; breaks height ties so flush order is deterministic.
     seq: u64,
@@ -189,10 +239,6 @@ struct Node<V> {
     /// Bumped whenever the active layer changes, so a closure that was
     /// running when its binding was replaced is not put back.
     binding_gen: u32,
-    /// Something asked whether the property was given a value at all
-    /// ([`Graph::provenance_tracked`]): its observers are told when that
-    /// changes, also when the value stays what it was.
-    asked_if_set: bool,
     /// The change ([`Inner::change`]) that took it from what it was last
     /// brought up to date with. One byte, in room the flags leave: a wrap
     /// only makes a long-dirty binding read as it was in a handler ahead.
@@ -203,7 +249,7 @@ impl<V> Node<V> {
     fn is_eager(&self, all: bool) -> bool {
         match &self.kind {
             Kind::Effect(_) | Kind::Told { .. } => true,
-            Kind::Property(p) => self.eager || (all && p.is_bound()),
+            Kind::Property(p) => self.flags.has(Flags::EAGER) || (all && p.is_bound()),
         }
     }
 }
@@ -447,7 +493,7 @@ impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
         for entry in left.drain() {
             let n = entry.2;
             if let Some(node) = i.nodes.get_mut(n)
-                && node.queued
+                && node.flags.has(Flags::QUEUED)
                 && node.queued_level as usize == below + 1
             {
                 node.queued_level = below as u16;
@@ -478,7 +524,7 @@ struct SettleGuard<'g, V: Clone + 'static>(&'g Graph<V>, NodeId);
 impl<V: Clone + 'static> Drop for SettleGuard<'_, V> {
     fn drop(&mut self) {
         if let Some(node) = self.0.inner.borrow_mut().nodes.get_mut(self.1) {
-            node.settling = false;
+            node.flags.set(Flags::SETTLING, false);
         }
     }
 }
@@ -827,7 +873,6 @@ impl<V: Clone + 'static> Graph<V> {
             scope,
             Kind::Property(Prop {
                 base: Layer {
-                    id: OverrideId(0),
                     content: Content::Value(None),
                     provenance,
                 },
@@ -855,7 +900,6 @@ impl<V: Clone + 'static> Graph<V> {
                 scope,
                 Kind::Property(Prop {
                     base: Layer {
-                        id: OverrideId(0),
                         content: Content::Binding(Some(Box::new(f))),
                         provenance: Provenance::Bound,
                     },
@@ -1486,7 +1530,7 @@ impl<V: Clone + 'static> Graph<V> {
                 && let Some(r) = i.nodes.get_mut(running)
                 && matches!(r.kind, Kind::Property(_))
             {
-                r.eager = true;
+                r.flags.set(Flags::EAGER, true);
             }
             let was_unset = i.unset(n);
             let Kind::Property(p) = &mut i.nodes[n].kind else {
@@ -1536,8 +1580,7 @@ impl<V: Clone + 'static> Graph<V> {
                 WriteKind::Override(id) => {
                     let idx = p
                         .overrides
-                        .iter()
-                        .position(|l| l.id == id)
+                        .position(id)
                         .ok_or(ReactiveError::UnknownOverride(n, id))?;
                     let is_top = idx + 1 == p.overrides.len();
                     let layer = &mut p.overrides[idx];
@@ -1603,14 +1646,14 @@ impl<V: Clone + 'static> Graph<V> {
             }
             // Animated, it is set now: what asked whether it was is told
             // when it was not (`tell_if_set`).
-            let tell = node.asked_if_set && was_unset;
+            let tell = node.flags.has(Flags::ASKED_IF_SET) && was_unset;
             // As in `write`: a binding that writes becomes a root.
             if let Some(&running) = i.eval_stack.last()
                 && running != n
                 && let Some(r) = i.nodes.get_mut(running)
                 && matches!(r.kind, Kind::Property(_))
             {
-                r.eager = true;
+                r.flags.set(Flags::EAGER, true);
             }
             if changed {
                 i.stats.propagations += 1;
@@ -1687,7 +1730,7 @@ impl<V: Clone + 'static> Graph<V> {
                 && !p.animated
                 && matches!(p.base.content, Content::Value(None))
                 && node.state == NodeState::Clean
-                && !node.held;
+                && !node.flags.has(Flags::HELD);
             let Some(v) = node.value.as_mut().filter(|_| plain) else {
                 return Ok(false);
             };
@@ -1699,7 +1742,7 @@ impl<V: Clone + 'static> Graph<V> {
                 && let Some(r) = i.nodes.get_mut(running)
                 && matches!(r.kind, Kind::Property(_))
             {
-                r.eager = true;
+                r.flags.set(Flags::EAGER, true);
             }
             if let Kind::Property(p) = &mut i.nodes[n].kind {
                 p.base.provenance = Provenance::Assigned;
@@ -1732,7 +1775,7 @@ impl<V: Clone + 'static> Graph<V> {
                 && !p.animated
                 && matches!(p.base.content, Content::Value(None))
                 && node.state == NodeState::Clean
-                && !node.held;
+                && !node.flags.has(Flags::HELD);
             if !plain || node.value.is_none() {
                 return Ok(false);
             }
@@ -1788,7 +1831,7 @@ impl<V: Clone + 'static> Graph<V> {
         };
         if p.is_bound() && node.state == NodeState::Dirty {
             node.state = NodeState::Clean;
-            node.held = true;
+            node.flags.set(Flags::HELD, true);
         }
         Ok(())
     }
@@ -1800,7 +1843,7 @@ impl<V: Clone + 'static> Graph<V> {
         {
             let mut i = self.inner.borrow_mut();
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
-            if !node.held {
+            if !node.flags.has(Flags::HELD) {
                 return Ok(());
             }
             i.make_bound_dirty(n);
@@ -1811,7 +1854,11 @@ impl<V: Clone + 'static> Graph<V> {
 
     /// Whether [`Graph::hold`] has set `n` aside.
     pub fn is_held(&self, n: NodeId) -> bool {
-        self.inner.borrow().nodes.get(n).is_some_and(|x| x.held)
+        self.inner
+            .borrow()
+            .nodes
+            .get(n)
+            .is_some_and(|x| x.flags.has(Flags::HELD))
     }
 
     /// Forces a change notification (`emit xChanged()`): observers re-run
@@ -1866,7 +1913,7 @@ impl<V: Clone + 'static> Graph<V> {
             }
             if node.state == NodeState::Computing {
                 // `finish` re-dirties it.
-                node.pending = true;
+                node.flags.set(Flags::PENDING, true);
             } else {
                 node.state = NodeState::Dirty;
                 if node.is_eager(all) {
@@ -1904,20 +1951,24 @@ impl<V: Clone + 'static> Graph<V> {
             }
             match value {
                 OverrideValue::Value(v) => {
-                    p.overrides.push(Layer {
+                    p.overrides.push(
                         id,
-                        content: Content::Value(None),
-                        provenance: Provenance::Assigned,
-                    });
+                        Layer {
+                            content: Content::Value(None),
+                            provenance: Provenance::Assigned,
+                        },
+                    );
                     i.make_plain(n);
                     i.set_value(n, v);
                 }
                 OverrideValue::Binding(f) => {
-                    p.overrides.push(Layer {
+                    p.overrides.push(
                         id,
-                        content: Content::Binding(Some(f)),
-                        provenance: Provenance::Bound,
-                    });
+                        Layer {
+                            content: Content::Binding(Some(f)),
+                            provenance: Provenance::Bound,
+                        },
+                    );
                     i.make_bound_dirty(n);
                 }
             }
@@ -1950,8 +2001,7 @@ impl<V: Clone + 'static> Graph<V> {
             };
             let idx = p
                 .overrides
-                .iter()
-                .position(|l| l.id == id)
+                .position(id)
                 .ok_or(ReactiveError::UnknownOverride(n, id))?;
             let removed = p.overrides.remove(idx);
             if idx < p.overrides.len() {
@@ -2019,7 +2069,7 @@ impl<V: Clone + 'static> Graph<V> {
     pub fn provenance_tracked(&self, n: NodeId) -> Option<Provenance> {
         let p = self.provenance(n)?;
         let mut g = self.inner.borrow_mut();
-        g.nodes[n].asked_if_set = true;
+        g.nodes[n].flags.set(Flags::ASKED_IF_SET, true);
         g.record_read(n);
         Some(p)
     }
@@ -2060,7 +2110,7 @@ impl<V: Clone + 'static> Graph<V> {
             && let Some(r) = i.nodes.get_mut(running)
             && matches!(r.kind, Kind::Property(_))
         {
-            r.eager = true;
+            r.flags.set(Flags::EAGER, true);
         }
         same
     }
@@ -2148,7 +2198,7 @@ impl<V: Clone + 'static> Graph<V> {
             let i = &mut *g;
             let all = i.options.eager;
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
-            node.eager = eager;
+            node.flags.set(Flags::EAGER, eager);
             if node.state != NodeState::Clean
                 && node.state != NodeState::Computing
                 && node.is_eager(all)
@@ -2509,7 +2559,7 @@ impl<V: Clone + 'static> Graph<V> {
         }
         let mut stack = {
             let mut i = self.inner.borrow_mut();
-            i.nodes[n].walking = true;
+            i.nodes[n].flags.set(Flags::WALKING, true);
             let mut s = i.walk_pool.pop().unwrap_or_default();
             s.push((n, 0));
             s
@@ -2527,7 +2577,11 @@ impl<V: Clone + 'static> Graph<V> {
                             if let Some(e) = stack.last_mut() {
                                 e.1 += 1;
                             }
-                            match i.nodes.get(src).map(|s| (s.state, s.walking)) {
+                            match i
+                                .nodes
+                                .get(src)
+                                .map(|s| (s.state, s.flags.has(Flags::WALKING)))
+                            {
                                 // A source that is computing or already
                                 // on a walk counts as unchanged for now.
                                 // If it does change, its marks come back
@@ -2538,7 +2592,7 @@ impl<V: Clone + 'static> Graph<V> {
                                 | Some((NodeState::Check, true))
                                 | Some((NodeState::Computing, _)) => Step::Next,
                                 Some((NodeState::Check, false)) => {
-                                    i.nodes[src].walking = true;
+                                    i.nodes[src].flags.set(Flags::WALKING, true);
                                     Step::Push(src)
                                 }
                                 Some((NodeState::Dirty, _)) => Step::Recompute(src),
@@ -2571,7 +2625,7 @@ impl<V: Clone + 'static> Graph<V> {
 
     fn unwalk(&self, n: NodeId) {
         if let Some(node) = self.inner.borrow_mut().nodes.get_mut(n) {
-            node.walking = false;
+            node.flags.set(Flags::WALKING, false);
         }
     }
 
@@ -2597,12 +2651,12 @@ impl<V: Clone + 'static> Graph<V> {
                 return;
             };
             node.state = NodeState::Computing;
-            node.pending = false;
-            node.held = false;
+            node.flags.set(Flags::PENDING, false);
+            node.flags.set(Flags::HELD, false);
             // A node run by a check below its queue entry: the run is what
             // the entry was waiting for. Left there, the first flush of a
             // write the run makes would find it computing and run it again.
-            node.queued = false;
+            node.flags.set(Flags::QUEUED, false);
             match compute {
                 Compute::Binding(_) => i.stats.evaluations += 1,
                 Compute::Effect(_) => i.stats.effect_runs += 1,
@@ -2699,11 +2753,11 @@ impl<V: Clone + 'static> Graph<V> {
             let Some(node) = i.nodes.get_mut(n) else {
                 return;
             };
-            if !node.cyclic {
+            if !node.flags.has(Flags::CYCLIC) {
                 return;
             }
-            node.cyclic = false;
-            node.settling = true;
+            node.flags.set(Flags::CYCLIC, false);
+            node.flags.set(Flags::SETTLING, true);
             let sources = node.sources.iter().map(|e| e.node).collect();
             // Found now, while the members the change went through are
             // still marked.
@@ -2718,7 +2772,7 @@ impl<V: Clone + 'static> Graph<V> {
         let mut g = self.inner.borrow_mut();
         let i = &mut *g;
         if let Some(node) = i.nodes.get_mut(n)
-            && std::mem::take(&mut node.came_back)
+            && node.flags.take(Flags::CAME_BACK)
         {
             i.emit(Diagnostic::BindingLoop { node: n, cycle });
         }
@@ -2767,8 +2821,9 @@ impl<V: Clone + 'static> Graph<V> {
                     i.nodes[n].done_stamp = stamp;
                     let node = &mut i.nodes[n];
                     node.state = NodeState::Clean;
-                    let self_read = std::mem::take(&mut node.self_read);
-                    let wrote_back = !node.settling && std::mem::take(&mut node.came_back);
+                    let self_read = node.flags.take(Flags::SELF_READ);
+                    let wrote_back =
+                        !node.flags.has(Flags::SETTLING) && node.flags.take(Flags::CAME_BACK);
                     if let Some(v) = value {
                         if let Kind::Property(p) = &mut node.kind {
                             p.animated = false;
@@ -2783,8 +2838,8 @@ impl<V: Clone + 'static> Graph<V> {
                         // a change of what it read is its change coming
                         // back.
                         if changed && self_read {
-                            i.nodes[n].cyclic = true;
-                            i.nodes[n].came_back = true;
+                            i.nodes[n].flags.set(Flags::CYCLIC, true);
+                            i.nodes[n].flags.set(Flags::CAME_BACK, true);
                         }
                     }
                     // Qt stops there, with the binding's result standing
@@ -2795,11 +2850,11 @@ impl<V: Clone + 'static> Graph<V> {
                             cycle: vec![n],
                         });
                     }
-                    if i.nodes[n].pending {
+                    if i.nodes[n].flags.has(Flags::PENDING) {
                         // It runs again anyway; that run settles the cycle
                         // if its result still travels round.
-                        i.nodes[n].pending = false;
-                        i.nodes[n].cyclic = false;
+                        i.nodes[n].flags.set(Flags::PENDING, false);
+                        i.nodes[n].flags.set(Flags::CYCLIC, false);
                         i.redirty(n);
                     }
                 } else {
@@ -2807,10 +2862,10 @@ impl<V: Clone + 'static> Graph<V> {
                     // about changes. A binding retries on its next read; an
                     // effect waits for its next change rather than looping.
                     let node = &mut i.nodes[n];
-                    node.pending = false;
-                    node.self_read = false;
-                    if !node.settling {
-                        node.came_back = false;
+                    node.flags.set(Flags::PENDING, false);
+                    node.flags.set(Flags::SELF_READ, false);
+                    if !node.flags.has(Flags::SETTLING) {
+                        node.flags.set(Flags::CAME_BACK, false);
                     }
                     if matches!(node.kind, Kind::Effect(_) | Kind::Told { .. }) {
                         node.state = NodeState::Clean;
@@ -2839,7 +2894,7 @@ fn record_read_of<V>(n: NodeId, node: &mut Node<V>, frames: &mut [Frame], stats:
     };
     match frame.node {
         None => {}
-        Some(owner) if owner == n => node.self_read = true,
+        Some(owner) if owner == n => node.flags.set(Flags::SELF_READ, true),
         Some(_) if node.read_stamp != frame.stamp => {
             node.read_stamp = frame.stamp;
             frame.reads.push(n);
@@ -2965,10 +3020,12 @@ const SHARED_FLUSH_DEPTH: u32 = 8;
 /// is no longer queued there.
 fn enqueue<V>(queues: &mut [Queue], n: NodeId, node: &mut Node<V>) {
     let top = queues.len().saturating_sub(1);
-    if node.deferred || (node.queued && node.queued_level as usize >= top) {
+    if node.flags.has(Flags::DEFERRED)
+        || (node.flags.has(Flags::QUEUED) && node.queued_level as usize >= top)
+    {
         return;
     }
-    node.queued = true;
+    node.flags.set(Flags::QUEUED, true);
     node.queued_level = top as u16;
     queues[top].push((node.height, node.seq, n));
 }
@@ -2998,17 +3055,8 @@ impl<V: Clone + 'static> Inner<V> {
             kind,
             value,
             state,
-            pending: false,
-            eager: false,
-            queued: false,
             queued_level: 0,
-            deferred: false,
-            walking: false,
-            self_read: false,
-            cyclic: false,
-            settling: false,
-            came_back: false,
-            held: false,
+            flags: Flags::default(),
             height: 0,
             seq: self.seq,
             scope,
@@ -3021,7 +3069,6 @@ impl<V: Clone + 'static> Inner<V> {
             runs: 0,
             run_epoch: 0,
             binding_gen: 0,
-            asked_if_set: false,
             marked_by: 0,
         });
         self.scopes[scope].nodes.push(n);
@@ -3036,14 +3083,14 @@ impl<V: Clone + 'static> Inner<V> {
             let Some(node) = self.nodes.get_mut(n) else {
                 continue;
             };
-            if !node.queued || node.queued_level as usize != level {
+            if !node.flags.has(Flags::QUEUED) || node.queued_level as usize != level {
                 continue;
             }
-            node.queued = false;
+            node.flags.set(Flags::QUEUED, false);
             match node.state {
                 NodeState::Clean => continue,
                 NodeState::Computing => {
-                    node.pending = true;
+                    node.flags.set(Flags::PENDING, true);
                     continue;
                 }
                 NodeState::Check | NodeState::Dirty => {}
@@ -3051,7 +3098,7 @@ impl<V: Clone + 'static> Inner<V> {
             if let Some(scope) = self.scopes.get_mut(node.scope)
                 && scope.frozen
             {
-                node.deferred = true;
+                node.flags.set(Flags::DEFERRED, true);
                 scope.deferred.push(n);
                 continue;
             }
@@ -3148,7 +3195,12 @@ impl<V: Clone + 'static> Inner<V> {
     /// it is now set where it was not, or the other way round. A change of
     /// the value has told them already; telling twice costs nothing.
     fn tell_if_set(&mut self, n: NodeId, was_unset: bool) {
-        if self.nodes.get(n).is_some_and(|node| node.asked_if_set) && self.unset(n) != was_unset {
+        if self
+            .nodes
+            .get(n)
+            .is_some_and(|node| node.flags.has(Flags::ASKED_IF_SET))
+            && self.unset(n) != was_unset
+        {
             self.mark_observers(n, NodeState::Dirty);
         }
     }
@@ -3166,12 +3218,12 @@ impl<V: Clone + 'static> Inner<V> {
         // Its last run's reads are no longer its sources: what it read
         // without a node (`Graph::reader`) must not reach it either.
         node.done_stamp = 0;
-        node.held = false;
+        node.flags.set(Flags::HELD, false);
         node.height = 0;
         if node.state != NodeState::Computing {
             node.state = NodeState::Clean;
         } else {
-            node.pending = false;
+            node.flags.set(Flags::PENDING, false);
         }
     }
 
@@ -3180,9 +3232,9 @@ impl<V: Clone + 'static> Inner<V> {
         let all = self.options.eager;
         let node = &mut self.nodes[n];
         node.binding_gen = node.binding_gen.wrapping_add(1);
-        node.held = false;
+        node.flags.set(Flags::HELD, false);
         node.state = NodeState::Dirty;
-        node.pending = false;
+        node.flags.set(Flags::PENDING, false);
         if node.is_eager(all) {
             enqueue(&mut self.queues, n, node);
         }
@@ -3280,15 +3332,15 @@ impl<V: Clone + 'static> Inner<V> {
             if self.wave_origin == Some(m) {
                 // The node's own change came back: a dependency cycle.
                 // `settle` reports it and brings the members up to date.
-                node.cyclic = true;
+                node.flags.set(Flags::CYCLIC, true);
                 continue;
             }
-            if node.settling {
+            if node.flags.has(Flags::SETTLING) {
                 // Its cycle is settling against the value it just
                 // produced. Running it again would be the loop; a source
                 // that changed says the change came back.
                 if st == NodeState::Dirty {
-                    node.came_back = true;
+                    node.flags.set(Flags::CAME_BACK, true);
                 }
                 continue;
             }
@@ -3305,9 +3357,9 @@ impl<V: Clone + 'static> Inner<V> {
                 if read {
                     let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
                     if bound && from_stamp != ALWAYS_STALE {
-                        node.came_back = true;
+                        node.flags.set(Flags::CAME_BACK, true);
                     } else {
-                        node.pending = true;
+                        node.flags.set(Flags::PENDING, true);
                     }
                 }
                 continue;
@@ -3482,7 +3534,7 @@ impl<V: Clone + 'static> Inner<V> {
         let all = self.options.eager;
         for n in thawed {
             if let Some(node) = self.nodes.get_mut(n) {
-                node.deferred = false;
+                node.flags.set(Flags::DEFERRED, false);
                 if node.state != NodeState::Clean && node.is_eager(all) {
                     enqueue(&mut self.queues, n, node);
                 }
@@ -3569,6 +3621,10 @@ mod tests {
     #[test]
     fn a_node_holds_little_inline() {
         assert_eq!(std::mem::size_of::<Edges>(), 32);
-        assert!(std::mem::size_of::<Node<[u64; 2]>>() <= 224);
+        // A value of two words with room for `None` in them, as the
+        // engine's is: an override's id beside it and the flags as bits
+        // took a node from 216 bytes to 200.
+        assert!(std::mem::size_of::<Node<(Box<u8>, u64)>>() <= 200);
+        assert!(std::mem::size_of::<Node<[u64; 2]>>() <= 208);
     }
 }
