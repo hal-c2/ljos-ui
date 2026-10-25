@@ -456,6 +456,9 @@ struct PointerState {
     held: MouseButtons,
     /// The `Qt.CursorShape` the pointer shows.
     cursor: i32,
+    /// The item a right-click no one else took asks for its context menu
+    /// when the button comes up, as in Qt.
+    context: Option<ObjectId>,
 }
 
 /// What a scene keeps, for a tool that shows where memory went. Counts
@@ -2378,7 +2381,7 @@ impl QuickScene {
             self.pointer.grab = Some(Grab::Item(v));
             return true;
         }
-        for obj in hits {
+        for &obj in &hits {
             // Drag and point handlers grab passively, and see it first.
             handled |= crate::handlers::press(engine, obj, ev);
             // An item's pointer handlers see the event before the item.
@@ -2436,6 +2439,13 @@ impl QuickScene {
                 }
                 crate::mouse_drag::filter_undo(engine);
             }
+        }
+        if !handled
+            && button == MouseButtons::RIGHT
+            && let Some((o, _)) = crate::context_menu::taker(engine, hits)
+        {
+            self.pointer.context = Some(o);
+            return true;
         }
         handled
     }
@@ -2611,6 +2621,16 @@ impl QuickScene {
     }
 
     fn release(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
+        if let Some(o) = self.pointer.context.take() {
+            self.pointer.grab = None;
+            if engine.is_alive(o)
+                && let Some((o, hook)) = crate::context_menu::taker(engine, [o])
+            {
+                let at = local_point(engine, o, ev.pos);
+                (hook.request)(engine, o, at, crate::context_menu::ContextMenuReason::Mouse);
+            }
+            return true;
+        }
         let mut handled = false;
         crate::layer::release(engine, self.layer, ev);
         crate::mouse_drag::filter_release(engine, ev);
@@ -2718,7 +2738,7 @@ impl QuickScene {
     }
 
     fn cancel(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
-        let mut handled = false;
+        let mut handled = self.pointer.context.take().is_some();
         match self.pointer.grab.take() {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
                 crate::press_and_hold::ended(engine, m);

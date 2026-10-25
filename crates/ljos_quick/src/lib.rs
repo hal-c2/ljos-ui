@@ -13,6 +13,7 @@ mod animation;
 mod app_font;
 pub use app_font::application_font_changed;
 mod canvas;
+mod context_menu;
 mod drag;
 mod drop_area;
 mod effects;
@@ -79,6 +80,7 @@ pub use animation::{
     easing, running_animation_count, running_animations, set_animation_frame_period,
 };
 pub use animation::{Transition, run_transition, run_transition_to, stop_transition};
+pub use context_menu::{ContextMenuHook, ContextMenuReason, register_context_menu};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
 pub use drop_area::{
     DragData, DragEvent, DropArea, DropAreaDrag, IGNORE_ACTION, PlatformDrag, PlatformDragKind,

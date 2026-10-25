@@ -352,6 +352,19 @@ fn bubble(
     false
 }
 
+/// `from` and the items it is in, innermost first.
+fn focus_chain(engine: &Engine, from: ObjectId) -> Vec<ObjectId> {
+    let mut chain = Vec::new();
+    let mut cur = Some(from);
+    while let Some(item) = cur.filter(|o| engine.is_alive(*o))
+        && chain.len() < DEPTH
+    {
+        chain.push(item);
+        cur = engine.visual_parent(item);
+    }
+    chain
+}
+
 /// Delivers a key event to the window whose content is `root`. Returns
 /// whether anything took it; the host passes on what nothing took.
 ///
@@ -380,6 +393,25 @@ pub fn deliver_key(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
     // A handler above may have moved focus.
     let item = focus::active_focus_item(engine, root);
     if item.is_some_and(|f| bubble(engine, root, f, ev, item_press)) {
+        return true;
+    }
+    // A key nothing took that asks for a context menu asks the item with
+    // focus, then the items it is in, at their middle.
+    if crate::context_menu::is_request_key(ev)
+        && let Some(f) = item
+        && let Some((o, hook)) = crate::context_menu::taker(engine, focus_chain(engine, f))
+    {
+        let half = |p: ljos_engine::PropIndex| engine.read(o, p).to_number() / 2.0;
+        let middle = ljos_render::kurbo::Point::new(
+            half(crate::item::Item::WIDTH.index),
+            half(crate::item::Item::HEIGHT.index),
+        );
+        (hook.request)(
+            engine,
+            o,
+            middle,
+            crate::context_menu::ContextMenuReason::Keyboard,
+        );
         return true;
     }
     if let Some(forward) = tab_direction(ev)
