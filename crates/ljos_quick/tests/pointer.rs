@@ -730,3 +730,54 @@ fn a_cancelled_press_reads_its_point_before_the_point_is_emptied() {
     );
     assert_eq!(text(&e, root, "now"), EMPTY_POINT);
 }
+
+/// An application evaluates bindings when they are read (the scenarios run
+/// them eagerly). A `Drag.active` bound to `pressed` is read by nothing,
+/// and still starts the drag, which the release drops.
+#[test]
+fn a_drag_bound_to_pressed_starts_although_nothing_reads_it() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 200
+    property string log: ""
+    Rectangle {
+        id: dragged
+        width: 50; height: 50
+        Drag.active: area.pressed
+        Drag.hotSpot.x: 25; Drag.hotSpot.y: 25
+        MouseArea {
+            id: area
+            anchors.fill: parent
+            drag.target: parent
+            onReleased: parent.Drag.drop()
+        }
+    }
+    DropArea {
+        y: 100; width: 200; height: 100
+        onEntered: parent.log += "entered "
+        onDropped: parent.log += "dropped"
+    }
+}
+"#,
+    );
+    let mut s = ready(&e, root);
+    let left = MouseButtons::LEFT;
+    s.pointer_event(&e, &PointerEvent::press(25.0, 25.0, ms(0)));
+    for (i, y) in [40.0, 80.0, 120.0, 150.0].into_iter().enumerate() {
+        s.pointer_event(
+            &e,
+            &PointerEvent::moved(25.0, y, left, ms(10 * i as u64 + 10)),
+        );
+        frame(&mut s, &e);
+    }
+    s.pointer_event(&e, &PointerEvent::release(25.0, 150.0, ms(60)));
+    frame(&mut s, &e);
+    assert_eq!(
+        get(&e, root, "log").to_js_string().as_str(),
+        "entered dropped"
+    );
+}

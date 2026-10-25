@@ -8,9 +8,10 @@
 Feature: Reordering a list by dragging its delegates
   Each delegate is dragged by a MouseArea and holds a DropArea. A delegate
   dragged down the list and let go is dropped on the one under it, not on
-  its own area, and the drop can move it in the model.
+  its own area, and the drop can move it in the model. Nothing but the
+  drag reads its Drag.active, which is bound to the area's pressed.
 
-  Scenario: A delegate dropped on the last one moves there
+  Background:
     Given the file "TaskRow.qml":
       """qml
       import QtQuick
@@ -61,6 +62,19 @@ Feature: Reordering a list by dragging its delegates
         }
       }
       """
+
+  Scenario: A delegate dropped on the last one moves there
+    When the user presses the pointer at 100, 30
+    And the user moves the pointer to 100, 60
+    And the user moves the pointer to 100, 100
+    And the user moves the pointer to 100, 150
+    And the user releases the pointer at 100, 150
+    Then the property "log" of "root" is "dropped on C|BCA|"
+
+  # An application works a binding out when something reads it; in the
+  # sandbox the list is dragged as in one.
+  @desktop
+  Scenario: A delegate is dragged in an application as in a test
     When the user presses the pointer at 100, 30
     And the user moves the pointer to 100, 60
     And the user moves the pointer to 100, 100

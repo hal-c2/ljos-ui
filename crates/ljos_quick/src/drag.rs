@@ -481,6 +481,9 @@ pub(crate) fn register(engine: &Engine) {
                 true
             })),
         );
+        // A binding runs when it is read, and nothing else reads `active`:
+        // watched, a binding on `pressed` starts and ends the drag.
+        let _ = e.watch(att, DragAttached::ACTIVE.index, |_, _| {});
         true
     });
 }
