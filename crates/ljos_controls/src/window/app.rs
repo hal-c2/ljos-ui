@@ -181,8 +181,12 @@ pub struct Application {
     pub state: i32,
     #[qml(notify, readonly)]
     pub active: bool,
+    /// The program's file name without its extension until something
+    /// names the application, as Qt's.
     #[qml(notify)]
     pub name: Atom,
+    /// The name, until something gives the application a display name of
+    /// its own (features/window/application-name.feature).
     #[qml(notify)]
     pub display_name: Atom,
     #[qml(notify)]
@@ -227,8 +231,8 @@ impl Default for Application {
         Application {
             state: ApplicationState::Active.qt_value(),
             active: true,
-            name: Atom::default(),
-            display_name: Atom::default(),
+            name: program_name(),
+            display_name: program_name(),
             version: Atom::default(),
             organization: Atom::default(),
             domain: Atom::default(),
@@ -240,6 +244,13 @@ impl Default for Application {
             quit_on_last_window_closed: true,
         }
     }
+}
+
+/// What the application is called before anything names it.
+fn program_name() -> Atom {
+    let exe = std::env::current_exe().ok();
+    let stem = exe.as_deref().and_then(|p| p.file_stem()?.to_str());
+    Atom::from(stem.unwrap_or("ljos"))
 }
 
 /// The host says what command line the application was started with,
@@ -327,6 +338,10 @@ pub(super) fn register(engine: &Engine) {
     // for whoever reads it first.
     if let Ok(app) = engine.singleton::<Application>() {
         WindowSystem::of(engine).adopt_application(engine, app);
+        // A binding nobody wrote: a write from QML replaces it for good.
+        let _ = engine.bind_computed(app, Application::DISPLAY_NAME.index, move |e| {
+            e.read(app, Application::NAME.index)
+        });
         if let Some(hints) = ljos_quick::style_hints(engine) {
             let _ = engine.write_internal(
                 app,
