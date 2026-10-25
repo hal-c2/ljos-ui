@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+#MISE description="Play a Lottie file in a window: lottie [file.json|file.qml] [--qt] [ljos run args…]; bench/lottie/mid.json by default, --qt plays it on qml6 instead, click to pause"
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+
+file="$root/bench/lottie/mid.json"
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+  file="$(realpath "$1")"
+  shift
+fi
+qt=
+if [ $# -gt 0 ] && [ "$1" = --qt ]; then
+  qt=1
+  shift
+fi
+[ -f "$file" ] || { echo "no such file: $file" >&2; exit 1; }
+
+# A .qml is played as it is; a bare .json gets a small viewer, so any file
+# downloaded from the web can be tried without writing QML for it.
+case "$file" in
+  *.qml) entry="$file" ;;
+  *)
+    dir="$target/lottie"
+    mkdir -p "$dir"
+    entry="$dir/view.qml"
+    url="file://$file"
+    cat > "$entry" <<EOF
+import QtQuick
+import Qt.labs.lottieqt
+
+Rectangle {
+    width: 640
+    height: 680
+    color: "#202020"
+
+    LottieAnimation {
+        id: anim
+        anchors.centerIn: parent
+        source: "$url"
+        loops: LottieAnimation.Infinite
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        onClicked: anim.togglePause()
+    }
+
+    Text {
+        anchors.bottom: parent.bottom
+        anchors.margins: 8
+        x: 8
+        color: "white"
+        text: "$(basename "$file") · " + ["Null", "Loading", "Ready", "Error"][anim.status]
+              + " · " + anim.frameRate + " fps · frames " + anim.startFrame + "–" + anim.endFrame
+              + " · click to pause"
+    }
+}
+EOF
+    ;;
+esac
+
+if [ -n "$qt" ]; then
+  exec qml6 "$entry" "$@"
+fi
+
+# Release by default: a debug build's frame times say nothing about how
+# Lottie plays.
+profile="${LOTTIE_PROFILE:-release}"
+cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos --profile "$profile"
+exec "$target/$profile/ljos" run "$entry" "$@"
