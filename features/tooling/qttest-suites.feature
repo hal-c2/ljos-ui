@@ -444,6 +444,112 @@ Feature: Test files, test cases and what they import
         """
       And the test run exits with status 1
 
+  Rule: A test file imports the modules an application file can
+
+    @qt-parity
+    Scenario: A test keeps rows in a local database
+      Given the file "tst_storage.qml":
+        """qml
+        import QtQuick
+        import QtQuick.LocalStorage
+        import QtTest
+        TestCase {
+          name: "Storage"
+          function test_rows() {
+            let db = LocalStorage.openDatabaseSync("Notes", "1.0", "notes")
+            let names = []
+            db.transaction(function (tx) {
+              tx.executeSql("CREATE TABLE IF NOT EXISTS notes (title TEXT)")
+              tx.executeSql("DELETE FROM notes")
+              tx.executeSql("INSERT INTO notes VALUES (?)", ["milk"])
+              tx.executeSql("INSERT INTO notes VALUES (?)", ["bread"])
+              let rs = tx.executeSql("SELECT title FROM notes ORDER BY title")
+              for (let i = 0; i < rs.rows.length; i++)
+                names.push(rs.rows.item(i).title)
+            })
+            compare(names.join(","), "bread,milk")
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : Storage::test_rows()
+        """
+      And the test run exits with status 0
+
+    @qt-parity
+    Scenario: A test reads the items of an XML file next to it
+      Given the file "feed.xml":
+        """
+        <feed><item><title>First</title></item><item><title>Second</title></item></feed>
+        """
+      And the file "tst_xml.qml":
+        """qml
+        import QtQuick
+        import QtQml.XmlListModel
+        import QtTest
+        TestCase {
+          name: "Xml"
+          XmlListModel {
+            id: feed
+            source: Qt.resolvedUrl("feed.xml")
+            query: "/feed/item"
+            XmlListModelRole { name: "title"; elementName: "title" }
+          }
+          function test_items() {
+            tryCompare(feed, "status", XmlListModel.Ready)
+            compare(feed.count, 2)
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : Xml::test_items()
+        """
+      And the test run exits with status 0
+
+    @qt-parity
+    Scenario: A test lists the files of a folder next to it
+      Given the file "notes/one.txt":
+        """
+        one
+        """
+      And the file "notes/two.txt":
+        """
+        two
+        """
+      And the file "notes/three.md":
+        """
+        three
+        """
+      And the file "tst_folder.qml":
+        """qml
+        import QtQuick
+        import Qt.labs.folderlistmodel
+        import QtTest
+        TestCase {
+          name: "Folder"
+          FolderListModel {
+            id: folder
+            folder: Qt.resolvedUrl("notes")
+            nameFilters: ["*.txt"]
+          }
+          function test_files() {
+            tryCompare(folder, "status", FolderListModel.Ready)
+            compare(folder.count, 2)
+            compare(folder.get(0, "fileName"), "one.txt")
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : Folder::test_files()
+        """
+      And the test run exits with status 0
+
   Rule: The results can be read by a program
 
     @ljos-only

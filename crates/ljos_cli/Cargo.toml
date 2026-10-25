@@ -31,8 +31,11 @@ ljos_gallery_backends = { path = "../../examples/gallery_backends" }
 # The engine-backed type oracle for `--example` compiles.
 ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "render"] }
 ljos_controls = { path = "../ljos_controls" }
-# QtQuick.LocalStorage, which `ljos render` and `ljos run` offer.
+# The modules a shipped application registers only when it uses them;
+# `ljos run`, `render` and `test` offer them all, as `qml6` does.
 ljos_localstorage = { path = "../ljos_localstorage" }
+ljos_xml = { path = "../ljos_xml" }
+ljos_folderlistmodel = { path = "../ljos_folderlistmodel" }
 # The runner shows every format an Image reads, PDF documents too.
 ljos_quick = { path = "../ljos_quick", features = ["pdf"] }
 # `ljos shaders`: `.ljsh` artifacts made at build time.

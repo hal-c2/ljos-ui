@@ -180,8 +180,8 @@ impl Render {
         // The render's clock is virtual: sound on a device would play at
         // the wrong pace.
         ljos_media::use_null_audio(&engine);
+        register_modules(&engine);
         // A picture leaves no file behind: databases stay in memory.
-        ljos_localstorage::register(&engine);
         ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
         if self.network {
             ljos_platform::Platform::of(&engine)
@@ -269,6 +269,16 @@ pub(crate) fn stage(engine: &Engine, files: &[(String, std::path::PathBuf)]) {
     }
 }
 
+/// Registers the modules Ljós has besides QtQuick, its controls and
+/// multimedia, which a shipped application registers only when it uses
+/// them: `ljos run`, `render` and `test` stand where `qml6` and
+/// `qmltestrunner` do, which have every module Qt installed.
+pub(crate) fn register_modules(engine: &Engine) {
+    ljos_localstorage::register(engine);
+    ljos_xml::register(engine);
+    ljos_folderlistmodel::register(engine);
+}
+
 /// Registers the backends of the gallery example `example` on `engine`;
 /// without an example, nothing. Shared with `ljos run --example`.
 pub(crate) fn register_example(engine: &Engine, example: Option<&str>) {
@@ -301,7 +311,7 @@ pub(crate) fn oracle_for_example(id: &str) -> EngineOracle {
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);
     ljos_media::register(&engine);
-    ljos_localstorage::register(&engine);
+    register_modules(&engine);
     register_example(&engine, Some(id));
     EngineOracle::from_engine(&engine)
 }

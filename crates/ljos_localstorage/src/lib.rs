@@ -2,8 +2,10 @@
 //! singleton whose `openDatabaseSync` opens a SQLite database of the
 //! application's own by name, and the database objects it gives.
 //!
-//! This is an opt-in module crate. A host registers it like any native
-//! module, and may say where the databases are kept:
+//! This is an opt-in module crate. The `ljos` command has it in `run`,
+//! `render` and `test` (in memory for the last two); any other host
+//! registers it like any native module, and may say where the databases
+//! are kept:
 //!
 //! ```ignore
 //! ljos_localstorage::register(&engine);

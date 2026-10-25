@@ -2,7 +2,8 @@
 //! `XmlListModelRole`, a read-only list model over an XML document.
 //!
 //! This is an opt-in module crate written against the public `ljos`
-//! facade alone. A host registers it like any native module:
+//! facade alone. The `ljos` command has it in `run`, `render` and
+//! `test`; any other host registers it like any native module:
 //!
 //! ```ignore
 //! let engine = ljos::engine();

@@ -225,6 +225,9 @@ impl Suite {
             ljos_controls::register(&engine);
             ljos_media::register(&engine);
             ljos_media::use_null_audio(&engine);
+            crate::render::register_modules(&engine);
+            // A test leaves no database behind for the next run to find.
+            ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
             ljos_test::qttest::register(&engine);
             // The engine would refuse the file too, but cannot say where
             // in it the import is.

@@ -409,8 +409,8 @@ impl Run {
             let project = self.project.is_some().then(|| dir.clone());
             let resources = dir.clone();
             ljos_shell::run::<()>(config, move |setup| {
-                // The application's databases where Qt keeps them.
-                ljos_localstorage::register(setup.engine());
+                // Every module qml6 would have; databases where Qt keeps them.
+                crate::render::register_modules(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 ljos_controls::set_application_arguments(setup.engine(), arguments);
@@ -471,8 +471,8 @@ impl Run {
                     }
                     None => unreachable!("setup runs once"),
                 };
-                // The application's databases where Qt keeps them.
-                ljos_localstorage::register(setup.engine());
+                // Every module qml6 would have; databases where Qt keeps them.
+                crate::render::register_modules(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 let engine = setup.engine();
