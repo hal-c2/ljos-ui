@@ -22,6 +22,7 @@ use crate::clipboard::{ClipboardService, MemoryClipboard};
 use crate::dialogs::{DialogService, NoSystemDialogs};
 use crate::drop::ExternalDrag;
 use crate::fetch::{FetchError, Fetcher, NoNetwork, Request, Response};
+use crate::icon::Icon;
 use crate::open_url::{OpenUrlService, RecordedUrls};
 use crate::paths::PathEnv;
 use crate::permissions::{PermissionService, UngatedPermissions};
@@ -245,6 +246,10 @@ pub struct Platform {
     next_fetch: Cell<u64>,
     resources: RefCell<HashMap<String, Rc<[u8]>>>,
     window_hooks: RefCell<Vec<WindowHook>>,
+    application_icon: RefCell<Option<Icon>>,
+    window_icons: RefCell<HashMap<ObjectId, Icon>>,
+    /// Counts the changes to the icons, for a host to see that there are.
+    icons_changed: Cell<u64>,
 }
 
 type WindowHook = Box<dyn FnMut(&Engine, Option<ObjectId>, &dyn NativeWindow)>;
@@ -295,6 +300,9 @@ impl Default for Platform {
             next_fetch: Cell::new(0),
             resources: RefCell::new(HashMap::new()),
             window_hooks: RefCell::new(Vec::new()),
+            application_icon: RefCell::new(None),
+            window_icons: RefCell::new(HashMap::new()),
+            icons_changed: Cell::new(0),
         }
     }
 }
@@ -696,6 +704,51 @@ impl Platform {
             .ok()
             .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "ljos".to_owned())
+    }
+
+    /// Gives the application an icon of its own, for the desktop to show
+    /// for it and for each of its windows that has none of its own
+    /// ([`Platform::set_window_icon`]): the Dock's on macOS, the task
+    /// bar's and the title bar's on Windows and X11, and on Wayland the
+    /// one a compositor with `xdg-toplevel-icon-v1` shows. Without one the
+    /// desktop finds the icon by the desktop entry
+    /// ([`Platform::desktop_file_name`]), or by the bundle on macOS.
+    /// `None` gives that back.
+    pub fn set_application_icon(&self, icon: Option<Icon>) {
+        *self.application_icon.borrow_mut() = icon;
+        self.icons_changed.set(self.icons_changed.get() + 1);
+    }
+
+    /// The icon [`Platform::set_application_icon`] gave.
+    pub fn application_icon(&self) -> Option<Icon> {
+        self.application_icon.borrow().clone()
+    }
+
+    /// Gives the QML `Window` `window` an icon of its own, in place of the
+    /// application's; `None` gives it the application's again. Kept
+    /// while the window is hidden, and for a window that is not open yet.
+    pub fn set_window_icon(&self, window: ObjectId, icon: Option<Icon>) {
+        let mut icons = self.window_icons.borrow_mut();
+        match icon {
+            Some(icon) => icons.insert(window, icon),
+            None => icons.remove(&window),
+        };
+        self.icons_changed.set(self.icons_changed.get() + 1);
+    }
+
+    /// The icon the window shows: its own, or else the application's.
+    /// `window` is `None` for the window a host gives a root that is a
+    /// plain item.
+    pub fn window_icon(&self, window: Option<ObjectId>) -> Option<Icon> {
+        window
+            .and_then(|w| self.window_icons.borrow().get(&w).cloned())
+            .or_else(|| self.application_icon())
+    }
+
+    /// Changes with every icon given: a host compares it with the one it
+    /// last saw to know whether to show the icons again.
+    pub fn icons_changed(&self) -> u64 {
+        self.icons_changed.get()
     }
 
     /// Who hears of drags from other applications: the drag-and-drop of

@@ -249,3 +249,24 @@ fn a_drop_target_files_cannot_reach_is_warned_of_once_in_either_order() {
     p.note_external_drop_target(&e);
     assert_eq!(warnings(&e), 1);
 }
+
+#[test]
+fn a_window_shows_its_own_icon_or_else_the_applications() {
+    let e = Engine::new();
+    register(&e);
+    let (a, b) = (make::<FileDialog>(&e), make::<FileDialog>(&e));
+    let platform = Platform::of(&e);
+    let pixel = |v: u8| crate::Icon::from_rgba(1, 1, vec![v, v, v, 255]).unwrap();
+    let seen = platform.icons_changed();
+    assert_eq!(platform.window_icon(Some(a)), None);
+    platform.set_application_icon(Some(pixel(1)));
+    platform.set_window_icon(a, Some(pixel(2)));
+    assert_eq!(platform.window_icon(Some(a)), Some(pixel(2)));
+    assert_eq!(platform.window_icon(Some(b)), Some(pixel(1)));
+    assert_eq!(platform.window_icon(None), Some(pixel(1)));
+    platform.set_window_icon(a, None);
+    assert_eq!(platform.window_icon(Some(a)), Some(pixel(1)));
+    platform.set_application_icon(None);
+    assert_eq!(platform.window_icon(Some(a)), None);
+    assert_eq!(platform.icons_changed(), seen + 4);
+}
