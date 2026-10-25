@@ -404,7 +404,13 @@ impl Hands<'_> {
     /// Copies the scene again, so that the next act and the answer see what
     /// the last one did.
     fn refresh(&mut self) {
-        self.capture = Rc::new(capture::capture(self.engine, self.scene, self.redact_all));
+        let pointer = self.capture.pointer;
+        self.capture = Rc::new(capture::capture(
+            self.engine,
+            self.scene,
+            self.redact_all,
+            pointer,
+        ));
     }
 
     fn look(&mut self) -> Look<'_> {

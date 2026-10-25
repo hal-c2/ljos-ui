@@ -99,6 +99,14 @@
             "null"
           ]
         },
+        "pointer": {
+          "default": null,
+          "description": "`true`: from now on also list the shown items that take the pointer\nand have no accessible role (a `MouseArea`, an item with a\n`TapHandler`, a `Flickable`), as `pointer` lines with a reference\nthat the click and touch tools take. `false`: stop. What the\naccessibility tree reports does not change.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "root": {
           "default": null,
           "description": "List only this item and what is below it: a reference (`e12`) or a\nlocator that matches exactly one item.",

@@ -189,6 +189,13 @@ pub struct SnapshotArgs {
     /// The `epoch` of an earlier snapshot: list only what changed since.
     #[serde(default)]
     pub since: Option<u64>,
+    /// `true`: from now on also list the shown items that take the pointer
+    /// and have no accessible role (a `MouseArea`, an item with a
+    /// `TapHandler`, a `Flickable`), as `pointer` lines with a reference
+    /// that the click and touch tools take. `false`: stop. What the
+    /// accessibility tree reports does not change.
+    #[serde(default)]
+    pub pointer: Option<bool>,
     /// Also attach a PNG of the window.
     #[serde(default)]
     pub image: bool,

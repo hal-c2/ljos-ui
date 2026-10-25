@@ -273,6 +273,9 @@ pub struct Inspector {
     refs: RefTable,
     epoch: u64,
     kept: VecDeque<Kept>,
+    /// Whether outlines list the items that take the pointer and have no
+    /// accessible node: what the last `app_snapshot` that said asked for.
+    pointer_lines: bool,
     logs: Rc<RefCell<LogRing>>,
     /// What `app_trace` wrote down.
     traces: Rc<RefCell<trace::TraceLog>>,
@@ -374,6 +377,7 @@ impl Inspector {
             refs: RefTable::new(REFS),
             epoch: 0,
             kept: VecDeque::new(),
+            pointer_lines: false,
             logs: Rc::new(RefCell::new(LogRing::default())),
             traces,
             stats: FrameStats::new(),
@@ -829,6 +833,14 @@ impl Inspector {
         let asked_by: Vec<_> = requests.iter().map(|r| r.client.clone()).collect();
         let mut lease: Option<Lease> = None;
         let mut capture: Option<Rc<Capture>> = None;
+        for request in &requests {
+            if let Kind::Snapshot(SnapshotArgs {
+                pointer: Some(on), ..
+            }) = &request.kind
+            {
+                self.pointer_lines = *on;
+            }
+        }
         for request in requests {
             if Instant::now() >= request.deadline || request.reply.is_closed() {
                 let _ = request.reply.send(Err(timed_out()));
@@ -840,6 +852,7 @@ impl Inspector {
                     engine,
                     scene,
                     self.cfg.redact_all,
+                    self.pointer_lines,
                 )));
             }
             self.answer(engine, scene, clock, &mut capture, request);

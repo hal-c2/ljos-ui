@@ -416,6 +416,59 @@ fn a_snapshot_is_an_outline_with_a_reference_per_item() {
     assert!(!reply.structured.to_string().contains("hunter2"));
 }
 
+/// Items drawn with no accessible role: a letter tile, an arrow image
+/// with a `TapHandler`, a plain rectangle, a `MouseArea` that is hidden.
+const POINTER_MAIN: &str = r#"
+import QtQuick
+Item {
+    width: 300; height: 200
+    property int letters: 0
+    property int arrows: 0
+    Rectangle {
+        x: 10; y: 10; width: 40; height: 40
+        Text { anchors.centerIn: parent; text: "Q" }
+        MouseArea { objectName: "tile"; anchors.fill: parent; onClicked: letters += 1 }
+    }
+    Image { id: arrow; x: 100; y: 10; width: 30; height: 30; TapHandler { onTapped: arrows += 1 } }
+    Rectangle { x: 150; y: 10; width: 30; height: 30 }
+    MouseArea { objectName: "gone"; x: 200; y: 10; width: 30; height: 30; visible: false }
+}
+"#;
+
+/// The issue repro: an app drawn with `Rectangle`s, `Image`s and
+/// `MouseArea`s had an outline of hidden nodes only, with nothing to click.
+#[test]
+fn the_items_that_take_the_pointer_can_be_listed_without_changing_the_tree() {
+    let mut app = app_with(POINTER_MAIN, InspectorConfig::default());
+    let before = app.scene.accessibility_tree().len();
+    let plain = app.outline(json!({}));
+    assert!(!plain.contains("pointer"), "{plain}");
+
+    let listed = app.outline(json!({ "pointer": true }));
+    let lines: Vec<&str> = listed.lines().filter(|l| l.contains("- pointer")).collect();
+    assert_eq!(lines.len(), 2, "{listed}");
+    assert!(
+        lines[0].ends_with("- pointer \"Q\" [e2] obj=tile"),
+        "{listed}"
+    );
+    assert!(
+        lines[1].ends_with("- pointer [e3] id=arrow ⚠unnamed"),
+        "{listed}"
+    );
+    assert!(
+        !listed.contains("gone"),
+        "a hidden item is not listed: {listed}"
+    );
+
+    // It holds until it is turned off, as a reference to one of them does.
+    let again = app.outline(json!({}));
+    assert_eq!(again, listed);
+    // What the accessibility tree has is not changed: the lines are the
+    // inspector's.
+    assert_eq!(app.scene.accessibility_tree().len(), before, "{listed}");
+    assert_eq!(app.outline(json!({ "pointer": false })), plain);
+}
+
 #[test]
 fn an_item_keeps_its_reference_and_a_new_item_gets_a_new_one() {
     let mut app = app();

@@ -14,6 +14,7 @@ use ljos_engine::{Engine, ObjectId, Value};
 use ljos_mcp_core::{NodeValue, SnapNode, SnapTree};
 use ljos_quick::QuickScene;
 use ljos_runtime::Clock;
+use slotmap::Key as _;
 
 /// What a masked value is written as outside the outline.
 pub(crate) const REDACTED: &str = "<redacted>";
@@ -75,7 +76,16 @@ pub(crate) struct Capture {
     pub(crate) secrets: HashSet<String>,
     /// The fields whose own text is masked.
     pub(crate) secret_items: HashSet<ObjectId>,
+    /// Whether the items that take the pointer and have no node of their
+    /// own are listed too ([`POINTER_ROLE`]).
+    pub(crate) pointer: bool,
 }
+
+/// The role word of a line for an item the accessibility tree has no node
+/// for that takes the pointer (a `MouseArea`, an `Image` with a
+/// `TapHandler`). Its id is the item's own, as an item's node has, so a
+/// reference to it holds while the item lives.
+pub(crate) const POINTER_ROLE: &str = "pointer";
 
 impl Capture {
     pub(crate) fn node(&self, index: usize) -> &SnapNode {
@@ -153,17 +163,32 @@ pub(crate) fn is_secret(engine: &Engine, obj: ObjectId, redact_all: bool) -> boo
 
 /// Copies what `scene` shows. The scene's accessibility tree must be up to
 /// date ([`Lease::take`]). Nothing read here is tracked.
-pub(crate) fn capture(engine: &Engine, scene: &QuickScene, redact_all: bool) -> Capture {
-    engine.untrack(|| capture_untracked(engine, scene, redact_all))
+/// With `pointer`, the items that take the pointer and have no node are
+/// listed under the nearest item that has one; the accessibility tree is
+/// left as it is.
+pub(crate) fn capture(
+    engine: &Engine,
+    scene: &QuickScene,
+    redact_all: bool,
+    pointer: bool,
+) -> Capture {
+    engine.untrack(|| capture_untracked(engine, scene, redact_all, pointer))
 }
 
-fn capture_untracked(engine: &Engine, scene: &QuickScene, redact_all: bool) -> Capture {
+fn capture_untracked(
+    engine: &Engine,
+    scene: &QuickScene,
+    redact_all: bool,
+    pointer: bool,
+) -> Capture {
     let root = scene.root();
     let mut secrets = HashSet::new();
     let mut secret_items = HashSet::new();
     // Every item, shown or not: which fields are secret, and how many
     // items are not shown below each exposed one.
     let mut hidden: HashMap<u64, usize> = HashMap::new();
+    // The pointer items below each node, in the order they are drawn.
+    let mut extras: HashMap<u64, Vec<ObjectId>> = HashMap::new();
     if let Some(root) = root {
         // (item, nearest exposed ancestor, inside something not shown)
         let mut stack = vec![(root, NodeKey::ROOT, false)];
@@ -191,6 +216,9 @@ fn capture_untracked(engine: &Engine, scene: &QuickScene, redact_all: bool) -> C
                 *hidden.entry(above.0).or_default() += 1;
             } else if let Some(key) = scene.accessible_node(obj) {
                 above = key;
+            } else if pointer && obj != root && takes_pointer_here(engine, obj) {
+                extras.entry(above.0).or_default().push(obj);
+                above = NodeKey(obj.data().as_ffi());
             }
             for child in engine.visual_children(obj).into_iter().rev() {
                 stack.push((child, above, unseen));
@@ -228,14 +256,33 @@ fn capture_untracked(engine: &Engine, scene: &QuickScene, redact_all: bool) -> C
             text.to_string()
         }
     };
+    // The nodes whose children may still come, innermost last. A node's
+    // pointer items follow its own children, once the walk has left it.
+    let mut open: Vec<u64> = vec![NodeKey::ROOT.0];
+    let close_to = |tree: &mut SnapTree,
+                    items: &mut Vec<Option<ObjectId>>,
+                    open: &mut Vec<u64>,
+                    parent: Option<u64>| {
+        while let Some(&top) = open.last() {
+            if Some(top) == parent {
+                break;
+            }
+            open.pop();
+            if let Some(index) = tree.index_of(top) {
+                push_extras(engine, tree, items, &extras, &hidden, index, top);
+            }
+        }
+    };
     a11y.walk(|key, parent, d| {
         // An announcement is something said, not something shown.
         if key.is_announcement() {
             return;
         }
-        let Some(&parent) = index_of.get(&parent.0) else {
+        let Some(&parent_index) = index_of.get(&parent.0) else {
             return;
         };
+        close_to(&mut tree, &mut items, &mut open, Some(parent.0));
+        let parent = parent_index;
         let obj = scene.accessible_item(key);
         let is_focus = focus_key == Some(key);
         let mut node = SnapNode::new(key.0, role_word(d.role));
@@ -278,10 +325,13 @@ fn capture_untracked(engine: &Engine, scene: &QuickScene, redact_all: bool) -> C
         let index = tree.push(Some(parent), node);
         index_of.insert(key.0, index);
         items.push(obj);
+        open.push(key.0);
         if is_focus {
             focus = Some(index);
         }
     });
+
+    close_to(&mut tree, &mut items, &mut open, None);
 
     // One pass over the loaded files for every `id`, instead of one per node.
     let objs: Vec<ObjectId> = items.iter().skip(1).flatten().copied().collect();
@@ -301,7 +351,90 @@ fn capture_untracked(engine: &Engine, scene: &QuickScene, redact_all: bool) -> C
         focus,
         secrets,
         secret_items,
+        pointer,
     }
+}
+
+/// Whether a shown item without a node is listed as a [`POINTER_ROLE`]
+/// line: it takes the pointer and has somewhere to put it.
+fn takes_pointer_here(engine: &Engine, obj: ObjectId) -> bool {
+    ljos_quick::takes_pointer(engine, obj)
+        && super::tools::number_property(engine, obj, "width") > 0.0
+        && super::tools::number_property(engine, obj, "height") > 0.0
+}
+
+/// Adds the pointer items below the node at `index` (whose id is `id`), and
+/// theirs below them.
+fn push_extras(
+    engine: &Engine,
+    tree: &mut SnapTree,
+    items: &mut Vec<Option<ObjectId>>,
+    extras: &HashMap<u64, Vec<ObjectId>>,
+    hidden: &HashMap<u64, usize>,
+    index: usize,
+    id: u64,
+) {
+    let Some(below) = extras.get(&id) else {
+        return;
+    };
+    for &obj in below {
+        let key = obj.data().as_ffi();
+        let mut node = SnapNode::new(key, POINTER_ROLE);
+        node.name = pointer_label(engine, obj);
+        node.object_name = super::tools::text_property(engine, obj, "objectName");
+        node.type_name = engine.meta_of(obj).map(|m| m.name.to_string());
+        node.bounds = super::tools::window_box(engine, obj);
+        if super::tools::flag(engine, obj, "enabled") == Some(false) {
+            node.states.push("disabled");
+        }
+        node.actionable = true;
+        node.hidden_below = hidden.get(&key).copied().unwrap_or(0);
+        let at = tree.push(Some(index), node);
+        items.push(Some(obj));
+        push_extras(engine, tree, items, extras, hidden, at, key);
+    }
+}
+
+/// What a pointer item reads as: its own text, or the first text inside
+/// it, or that of an item beside it that it covers (a `MouseArea` filling
+/// a tile next to the tile's `Text`).
+fn pointer_label(engine: &Engine, obj: ObjectId) -> String {
+    let text = |o: ObjectId| {
+        super::tools::text_property(engine, o, "text")
+            .filter(|_| super::tools::flag(engine, o, "visible") != Some(false))
+    };
+    let first_inside = |top: ObjectId, levels: usize| {
+        let mut row = vec![top];
+        for _ in 0..=levels {
+            for &o in &row {
+                if let Some(t) = text(o) {
+                    return Some(t);
+                }
+            }
+            row = row
+                .iter()
+                .flat_map(|&o| engine.visual_children(o))
+                .take(64)
+                .collect();
+        }
+        None
+    };
+    let label = first_inside(obj, 3).or_else(|| {
+        let [x, y, w, h] = super::tools::window_box(engine, obj);
+        let parent = engine.visual_parent(obj)?;
+        engine
+            .visual_children(parent)
+            .into_iter()
+            .filter(|&s| s != obj)
+            .filter(|&s| {
+                let [sx, sy, sw, sh] = super::tools::window_box(engine, s);
+                sx >= x - 0.5 && sy >= y - 0.5 && sx + sw <= x + w + 0.5 && sy + sh <= y + h + 0.5
+            })
+            .find_map(|s| first_inside(s, 2))
+    });
+    label.map_or_else(String::new, |l| {
+        super::tools::clip(&l, ljos_mcp_core::MAX_NAME_CHARS)
+    })
 }
 
 /// Every object below the scene's root, items or not, each once: where an

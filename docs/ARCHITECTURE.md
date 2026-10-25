@@ -1358,7 +1358,7 @@ Static resources carry long `ttlMs` values.
 | Tool | Does | Cap |
 |---|---|---|
 | `app_status` | Windows, size, scale, appearance, focus, visibility state, clock (real or virtual), animations under way, capabilities | inspect |
-| `app_snapshot` | Accessibility-tree outline with refs; `root`, `depth`, `include`, `max_nodes`, `cursor`, `since` (delta), optional image | inspect |
+| `app_snapshot` | Accessibility-tree outline with refs; `root`, `depth`, `include`, `max_nodes`, `cursor`, `since` (delta), `pointer` (also the shown items that take the pointer and have no accessible role, as `pointer` lines), optional image | inspect |
 | `app_find` | Nodes by role, name (exact, substring or regex), `objectName`, text or state. Cheaper than a snapshot | inspect |
 | `app_inspect` | One node in depth: type, `ObjectKey`, source location, properties with **provenance** (assigned, bound at tier 0, 1 or JS, animated, host (what the toolkit wrote itself), default), geometry, lattice state; `dependencies` names one property and gives what its binding read, what reads it and its tier, and `bindings` gives the same for every binding written for the object (not those a type keeps for itself, such as `childrenRect`). Each end names its object as the file does (its `id`, else its objectName, else its type) and gives its handle, which is a target of its own | inspect |
 | `app_binding_graph` | Sources and dependents of a property, and why it last evaluated | inspect |
@@ -1400,6 +1400,7 @@ Static resources carry long `ttlMs` values.
 - `id=` and `obj=` show the QML `id` and `objectName`.
 - Virtual lists show only their window and do not materialise every row.
 - Hidden and frozen subtrees are summarised, for example `(hidden: 18 nodes)`.
+- With `pointer: true`, a shown `MouseArea`, `Flickable` or item with a pointer handler that the tree has no node for is a `pointer` line, named by the text in it. Its reference is the item's, so the click and touch tools take it; the accessibility tree is not changed.
 - Unnamed actionable nodes are flagged `⚠unnamed`, which nudges authors towards `Accessible.name`.
 
 **Addressing**

@@ -77,6 +77,27 @@ pub(crate) fn pointer_item(engine: &Engine, obj: ObjectId) -> Option<PointerItem
     (!unmet).then_some(hooks)
 }
 
+/// Whether `obj` takes pointer input of its own: a `MouseArea`, a
+/// `Flickable`, an item with a pointer handler (`TapHandler`,
+/// `DragHandler`, `PointHandler`, `PinchHandler`, `WheelHandler`), or an
+/// item of a type registered here. For a tool that reaches the items an
+/// accessibility tree has no node for; hover alone does not count.
+pub fn takes_pointer(engine: &Engine, obj: ObjectId) -> bool {
+    use crate::item::is_a;
+    engine.untrack(|| {
+        is_a::<crate::input::MouseArea>(engine, obj)
+            || is_a::<crate::flickable::Flickable>(engine, obj)
+            || pointer_item(engine, obj).is_some()
+            || crate::tree::resources(engine, obj).into_iter().any(|h| {
+                is_a::<crate::input::TapHandler>(engine, h)
+                    || is_a::<crate::handlers::DragHandler>(engine, h)
+                    || is_a::<crate::handlers::PointHandler>(engine, h)
+                    || is_a::<crate::handlers::PinchHandler>(engine, h)
+                    || is_a::<crate::wheel_handler::WheelHandler>(engine, h)
+            })
+    })
+}
+
 /// Whether an item of a registered type takes the pointer just now.
 pub type PointerCondition = fn(&Engine, ObjectId) -> bool;
 
