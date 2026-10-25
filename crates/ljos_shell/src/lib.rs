@@ -300,13 +300,17 @@ pub(crate) struct Hosting {
 
 impl<M: Send + 'static> ShellApp<M> {
     /// Creates the Engine, registers QtQuick, runs `setup` to build the
-    /// root item and wires the inbox to wake `ctx`.
+    /// root item and wires the inbox to wake `ctx`. `ctx` is given the
+    /// bundled font family for what egui itself writes (the dev overlay).
     pub fn new(
         ctx: &egui::Context,
         config: &ShellConfig,
         clock: Arc<dyn Clock>,
         setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError>,
     ) -> Result<Self, ShellError> {
+        // eframe is built without its defaults, which leaves egui with no
+        // fonts; the shell's own loop gives its contexts the family too.
+        ctx.set_fonts(ljos_egui::font_definitions());
         Self::build(ctx, config, clock, setup, None)
     }
 
