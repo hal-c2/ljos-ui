@@ -500,15 +500,40 @@ pub(crate) const FACES: &str = r##"
       0, 1, "", 0, 0].join(",") + ")");
   {
     const change = font.proto.__ljos_with;
-    hide(font.proto, "__ljos_with", function (member, value) {
+    // A script's write of a whole member reads it as Qt reads a value
+    // for an int, which rounds and refuses what is no number;
+    // `Qt.font` cuts what it is given instead.
+    const scriptInt = (v) => {
+      if (v === undefined) return 0;
+      if (v === null) throw new Error("Cannot assign std::nullptr_t to int");
+      if (typeof v === "string") {
+        const n = /^\s*[+-]?\d+\s*$/.test(v) ? Number(v) : NaN;
+        if (!(n >= -2147483648 && n <= 2147483647)) throw new Error("Cannot assign QString to int");
+        return n;
+      }
+      if (typeof v === "object" || typeof v === "function") throw new Error("Cannot assign QJSValue to int");
+      v = Number(v);
+      if (v !== v) throw new Error("Cannot assign double to int");
+      return (v < 0 ? -Math.round(-v) : Math.round(v)) | 0;
+    };
+    hide(font.proto, "__ljos_with", function (member, value, script) {
       if (member === "bold") return change.call(this, "weight", value ? 700 : 400);
       // One size, as `Value::with_member` keeps it.
+      // Qt keeps the size it had for one of none, and holds a weight
+      // between 1 and 1000.
       if (member === "pointSize") {
+        if (!(Number(value) > 0)) return this;
         return this.__ljos_pixelSize > 0 ? this : change.call(this, "__ljos_pointSize", value);
       }
       if (member === "pixelSize") {
-        const next = change.call(this, "__ljos_pixelSize", value);
-        return next.__ljos_pixelSize > 0 ? change.call(next, "__ljos_pointSize", -1) : next;
+        const size = script ? scriptInt(value) : whole(value);
+        if (!(size > 0)) return this;
+        const next = change.call(this, "__ljos_pixelSize", size);
+        return change.call(next, "__ljos_pointSize", -1);
+      }
+      if (member === "weight") {
+        const weight = script ? scriptInt(value) : whole(value);
+        return change.call(this, "weight", Math.min(1000, Math.max(1, weight)));
       }
       if (typeof member === "string" && member.startsWith("__ljos_")) return undefined;
       return change.call(this, member, value);
@@ -588,7 +613,7 @@ pub(crate) const FACES: &str = r##"
     return new Proxy({}, {
       get(_, member) { return now[member]; },
       set(_, member, v) {
-        const next = now.__ljos_with(member, v);
+        const next = now.__ljos_with(member, v, true);
         if (next !== undefined && put(next) !== false) now = next;
         return true;
       },
