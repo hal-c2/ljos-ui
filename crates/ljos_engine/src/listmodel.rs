@@ -29,7 +29,8 @@ use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
 use crate::meta::MetaRef;
 use crate::model::{
-    ItemModel, ModelChange, ModelListener, ModelListeners, ModelRow, RowKey, RowKind, row_shape,
+    ItemModel, ModelChange, ModelListener, ModelListeners, ModelRow, RowKey, RowKind, RowShape,
+    row_shape,
 };
 use crate::object::QmlType;
 use crate::value::Value;
@@ -149,6 +150,11 @@ struct ListRow {
     values: Vec<Value>,
     /// The object `get()` returned for the row.
     element: Option<ObjectId>,
+    /// How many roles the model had when `element` was last brought up
+    /// to date. Every change to the row's values brings it up to date, and
+    /// a write to it goes through the row, so it is behind only when the
+    /// model has gained roles since.
+    synced: usize,
 }
 
 /// Who is setting a value, which decides what a type mismatch does.
@@ -169,6 +175,9 @@ pub(crate) struct ListState {
     /// through it.
     me: Cell<Option<ObjectId>>,
     roles: RefCell<Vec<Role>>,
+    /// The shape of a `get()` object for as many roles as it says. Roles
+    /// are only added, so the count tells whether it is current.
+    shape: RefCell<Option<(usize, Rc<RowShape>)>>,
     rows: RefCell<Vec<ListRow>>,
     next_key: Cell<RowKey>,
     listeners: ModelListeners,
@@ -180,6 +189,7 @@ impl ListState {
             this: this.clone(),
             me: Cell::new(None),
             roles: RefCell::new(Vec::new()),
+            shape: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
             next_key: Cell::new(0),
             listeners: ModelListeners::default(),
@@ -199,6 +209,19 @@ impl ListState {
 
     fn names(&self) -> Vec<Atom> {
         self.roles.borrow().iter().map(|r| r.name.clone()).collect()
+    }
+
+    /// The shape of a `get()` object for the roles the model has now.
+    fn element_shape(&self) -> Rc<RowShape> {
+        let count = self.roles.borrow().len();
+        if let Some((n, s)) = &*self.shape.borrow()
+            && *n == count
+        {
+            return s.clone();
+        }
+        let shape = row_shape(RowKind::Element, &self.names());
+        *self.shape.borrow_mut() = Some((count, shape.clone()));
+        shape
     }
 
     fn role_index(&self, name: &str) -> Option<usize> {
@@ -393,6 +416,7 @@ impl ListState {
                     key,
                     values,
                     element: None,
+                    synced: 0,
                 }
             })
             .collect()
@@ -591,15 +615,17 @@ impl ListState {
 
     /// The live object for `row`, made on first use.
     fn element(&self, engine: &Engine, row: usize) -> Value {
-        let (existing, key) = match self.rows.borrow().get(row) {
-            Some(r) => (r.element, r.key),
+        let (existing, key, synced) = match self.rows.borrow().get(row) {
+            Some(r) => (r.element, r.key, r.synced),
             None => return Value::Undefined,
         };
         if let Some(e) = existing.filter(|e| engine.is_alive(*e)) {
-            self.sync_element(engine, row);
+            if synced != self.roles.borrow().len() {
+                self.sync_element(engine, row);
+            }
             return Value::Object(e);
         }
-        let shape = row_shape(RowKind::Element, &self.names());
+        let shape = self.element_shape();
         let Ok(e) = engine.create_with(
             shape.meta.clone(),
             Box::new(ModelRow::default()),
@@ -640,7 +666,7 @@ impl ListState {
         let Some(e) = element.filter(|e| engine.is_alive(*e)) else {
             return;
         };
-        let shape = row_shape(RowKind::Element, &self.names());
+        let shape = self.element_shape();
         let current = engine
             .meta_of(e)
             .is_some_and(|m| MetaRef::ptr_eq(&m, &shape.meta));
@@ -651,6 +677,10 @@ impl ListState {
             if let Some(i) = self.role_index(name) {
                 let _ = engine.write_internal(e, *p, self.value(row, i), WriteKind::Imperative);
             }
+        }
+        let count = self.roles.borrow().len();
+        if let Some(r) = self.rows.borrow_mut().get_mut(row) {
+            r.synced = count;
         }
     }
 }
