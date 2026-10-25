@@ -651,7 +651,12 @@ impl Engine {
     fn finish_props(&self, root: ObjectId, props: &[(String, Value)]) -> Result<(), EngineError> {
         for (name, v) in props {
             let p = self.property_index(root, name)?;
-            self.write_internal(root, p, v.clone(), WriteKind::Imperative)?;
+            // A `Qt.binding` given by a native caller (Loader.setSource) is
+            // a binding, as it is when a script gives it to createObject.
+            match self.initial_binding(root, p, v) {
+                Some(bound) => bound?,
+                None => self.write_internal(root, p, v.clone(), WriteKind::Imperative)?,
+            }
         }
         Ok(())
     }

@@ -457,7 +457,7 @@ impl Engine {
 
     /// Binds `prop` when `v` is what `Qt.binding(f)` gave; `None` for any
     /// other value.
-    fn initial_binding(
+    pub(crate) fn initial_binding(
         &self,
         obj: ObjectId,
         prop: PropIndex,
