@@ -156,8 +156,7 @@ Feature: Text whose font shrinks to fit its item
             id: low; height: whole.implicitHeight / 2
             text: root.words; font.pixelSize: 40; fontSizeMode: Text.VerticalFit
           }
-          property bool styledFits: styled.contentWidth <= styled.width
-            && styled.contentWidth > styled.width * 0.8
+          property bool styledFits: styled.contentWidth <= styled.width && styled.contentWidth > styled.width * 0.8
           property bool richIsWhole: rich.contentWidth === wholeRich.contentWidth
           property bool lowFits: low.contentHeight <= Math.ceil(low.height)
             && low.contentHeight > low.height * 0.7
