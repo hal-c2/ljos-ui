@@ -60,6 +60,13 @@ pub mod grab_permission {
         | APPROVES_TAKE_OVER_BY_ANYTHING;
 }
 
+/// `eventPoint.state` values (`EventPoint.State` in Qt).
+pub(crate) mod point_state {
+    pub const PRESSED: i32 = 0x01;
+    pub const UPDATED: i32 = 0x02;
+    pub const RELEASED: i32 = 0x08;
+}
+
 /// `PointerDevice.GrabTransition` values, as `grabChanged` tells them.
 pub mod grab_transition {
     pub const GRAB_PASSIVE: i32 = 0x01;
@@ -290,13 +297,13 @@ impl Default for PointerHandler {
 
 #[qml_impl]
 impl PointerHandler {
-    /// `grabChanged(transition, point)`. Deviation: `point` is the scene
-    /// position as a `point`, not Qt's `eventPoint`.
+    /// `grabChanged(transition, point)`: `point` is an `eventPoint`
+    /// ([`PointValues::event_point`]).
     #[qml(signal, name = "grabChanged")]
-    fn grab_changed(transition: i32, point: Point);
+    fn grab_changed(transition: i32, point: Value);
     /// The gesture was taken away. `point` as in `grabChanged`.
     #[qml(signal)]
-    fn canceled(point: Point);
+    fn canceled(point: Value);
 }
 
 /// Fills in `parent` and, when nobody gave one, `target` (a `target: null`
@@ -518,16 +525,60 @@ impl PointValues {
     /// A pointer at `ev`, pressed at `press` (both in the scene), as the
     /// handler's item sees it.
     pub(crate) fn of(engine: &Engine, h: ObjectId, ev: &PointerEvent, press: kurbo::Point) -> Self {
+        Self {
+            pressed_buttons: ev.buttons.bits() as i32,
+            id: ev.id.0 as i32,
+            ..Self::at(engine, h, ev.pos, press)
+        }
+    }
+
+    /// A pointer at `pos`, pressed at `press` (both in the scene), as the
+    /// handler's item sees it, with no buttons and the mouse's id.
+    pub(crate) fn at(engine: &Engine, h: ObjectId, pos: kurbo::Point, press: kurbo::Point) -> Self {
         let item = handler_item(engine, h);
         let at = |p| item.map_or(p, |i| local(engine, i, p));
         Self {
-            position: at(ev.pos),
-            scene_position: ev.pos,
+            position: at(pos),
+            scene_position: pos,
             press_position: at(press),
             scene_press_position: press,
-            pressed_buttons: ev.buttons.bits() as i32,
-            id: ev.id.0 as i32,
+            pressed_buttons: mouse_button::NO_BUTTON,
+            id: 0,
         }
+    }
+
+    /// Qt's `eventPoint`, as a handler's signal is given it: a plain
+    /// object a script reads the point's members off. Ljós has no window
+    /// position, so the global positions are the scene's; the point is
+    /// where the grab began, and was last, where it was pressed and is.
+    /// Deviation: `x` and `y` (the scene position) are kept for scripts
+    /// written when the argument was a `point`.
+    pub(crate) fn event_point(&self, state: i32) -> Value {
+        let at = point_value(self.position);
+        let press = point_value(self.press_position);
+        let scene = point_value(self.scene_position);
+        let scene_press = point_value(self.scene_press_position);
+        Value::map([
+            ("accepted", Value::Bool(true)),
+            ("id", Value::Int(self.id)),
+            ("state", Value::Int(state)),
+            ("pressure", Value::Real(1.0)),
+            ("rotation", Value::Real(0.0)),
+            ("position", at.clone()),
+            ("pressPosition", press.clone()),
+            ("grabPosition", press),
+            ("lastPosition", at),
+            ("scenePosition", scene.clone()),
+            ("scenePressPosition", scene_press.clone()),
+            ("sceneGrabPosition", scene_press.clone()),
+            ("sceneLastPosition", scene.clone()),
+            ("globalPosition", scene.clone()),
+            ("globalPressPosition", scene_press.clone()),
+            ("globalGrabPosition", scene_press),
+            ("globalLastPosition", scene),
+            ("x", Value::Real(self.scene_position.x)),
+            ("y", Value::Real(self.scene_position.y)),
+        ])
     }
 }
 
@@ -571,12 +622,21 @@ fn scene_point(engine: &Engine, h: ObjectId, group: &str) -> kurbo::Point {
 }
 
 fn grab_changed(engine: &Engine, h: ObjectId, transition: i32, at: kurbo::Point) {
-    emit(
-        engine,
-        h,
-        "grabChanged",
-        &[Value::Int(transition), point_value(at)],
-    );
+    use grab_transition as t;
+    // As qml6 tells it: a grab at the press, an exclusive one as the point
+    // moves, the end of one where it is let go; one taken away mid-way.
+    let state = match transition {
+        t::GRAB_PASSIVE => point_state::PRESSED,
+        t::UNGRAB_PASSIVE | t::UNGRAB_EXCLUSIVE => point_state::RELEASED,
+        _ => point_state::UPDATED,
+    };
+    let point = event_point(engine, h, at, state);
+    emit(engine, h, "grabChanged", &[Value::Int(transition), point]);
+}
+
+/// The `eventPoint` of a handler's signal for the pointer at `at`.
+fn event_point(engine: &Engine, h: ObjectId, at: kurbo::Point, state: i32) -> Value {
+    PointValues::at(engine, h, at, grabs(engine).press.get()).event_point(state)
 }
 
 pub(crate) fn set_active(engine: &Engine, h: ObjectId, on: bool) {
@@ -808,7 +868,8 @@ fn deactivate(engine: &Engine, h: ObjectId, transition: i32) {
     };
     grab_changed(engine, h, transition, at);
     if transition == grab_transition::CANCEL_GRAB_EXCLUSIVE {
-        emit(engine, h, "canceled", &[point_value(at)]);
+        let point = event_point(engine, h, at, point_state::UPDATED);
+        emit(engine, h, "canceled", &[point]);
     }
 }
 

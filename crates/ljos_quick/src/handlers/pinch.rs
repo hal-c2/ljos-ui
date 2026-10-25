@@ -452,7 +452,8 @@ fn finish(engine: &Engine, h: ObjectId, canceled: bool) {
     set_active(engine, h, false);
     put_point(engine, h, "centroid", &PointValues::empty());
     if canceled {
-        emit(engine, h, "canceled", &[point_value(at)]);
+        let point = PointValues::at(engine, h, at, at).event_point(super::point_state::UPDATED);
+        emit(engine, h, "canceled", &[point]);
     }
     for (p, v) in [
         (PinchHandler::ACTIVE_SCALE.index, Value::Real(1.0)),

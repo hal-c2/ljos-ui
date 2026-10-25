@@ -13,6 +13,7 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use crate::enums::{gesture_policy, mouse_button};
+use crate::handlers::PointValues;
 use crate::item::{Item, scene_transform};
 
 bitflags::bitflags! {
@@ -449,19 +450,19 @@ impl TapHandler {
     #[qml(signal, name = "pointChanged")]
     fn point_changed();
 
-    /// `tapped(eventPoint, button)`. Deviation: `eventPoint` is the
-    /// scene position as a `point`, not Qt's `eventPoint` value type.
-    /// The button has no name, as in Qt: a handler that does not declare
-    /// it is not given it, and `button` is whatever the document calls so.
+    /// `tapped(eventPoint, button)`: `eventPoint` is where the button came
+    /// up ([`tap_event_point`]). The button has no name, as in Qt: a
+    /// handler that does not declare it is not given it, and `button` is
+    /// whatever the document calls so.
     #[qml(signal)]
-    fn tapped(event_point: Point, _: i32);
+    fn tapped(event_point: Value, _: i32);
     #[qml(signal, name = "singleTapped")]
-    fn single_tapped(event_point: Point, _: i32);
+    fn single_tapped(event_point: Value, _: i32);
     #[qml(signal, name = "doubleTapped")]
-    fn double_tapped(event_point: Point, _: i32);
+    fn double_tapped(event_point: Value, _: i32);
     /// `canceled(point)`: Qt names it `point`, not `eventPoint`.
     #[qml(signal)]
-    fn canceled(point: Point);
+    fn canceled(point: Value);
     /// The press was held for `longPressThreshold`.
     #[qml(signal, name = "longPressed")]
     fn long_pressed();
@@ -587,6 +588,28 @@ pub(crate) fn tap_point_moved(engine: &Engine, h: ObjectId, ev: &PointerEvent) {
     if changed && ev.kind != PointerKind::Release {
         tap_point_changed(engine, h);
     }
+}
+
+/// The `eventPoint` a tap handler's signal is given: the pointer at `at`
+/// in the scene, pressed where its `point` says.
+pub(crate) fn tap_event_point(engine: &Engine, h: ObjectId, at: kurbo::Point, state: i32) -> Value {
+    let Some(p) = point_props() else {
+        return Value::Undefined;
+    };
+    let read = |i| match engine.untrack(|| engine.read(h, i)) {
+        Value::Point(p) => kurbo::Point::new(p.x, p.y),
+        _ => kurbo::Point::ZERO,
+    };
+    let id = (engine.untrack(|| engine.read(h, p.id)).to_number() as i32).max(0);
+    PointValues {
+        position: in_tap_item(engine, h, at),
+        scene_position: at,
+        press_position: read(p.press_position),
+        scene_press_position: read(p.scene_press_position),
+        pressed_buttons: mouse_button::NO_BUTTON,
+        id,
+    }
+    .event_point(state)
 }
 
 /// Empties `point`. Whether it held anything.

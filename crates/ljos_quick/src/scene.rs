@@ -37,7 +37,7 @@ pub(crate) fn polishes() -> u64 {
 
 use ljos_engine::{
     Engine, EngineError, LogLevel, NodeId as GraphNode, ObjectId, OverrideContent, OverrideId,
-    Point, PropIndex, Provenance, RestoreMode, Value,
+    PropIndex, Provenance, RestoreMode, Value,
 };
 use ljos_render::{ClipSpec, FrameSnapshot, ImageHandle, NodeId, RenderTree, hit_test, kurbo};
 use ljos_runtime::{FrameBudget, Scheduler, Time};
@@ -48,6 +48,7 @@ use crate::accessible::A11yPass;
 use crate::anchors::{self, AnchorState};
 use crate::animation::shown::Shown;
 use crate::enums::gesture_policy;
+use crate::handlers::point_state;
 use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKind, TapHandler};
 use crate::item::{Item, init_item, is_a, is_item, num, scene_transform, write_computed};
 use crate::loader::{Loader, shown_children};
@@ -2682,7 +2683,8 @@ impl QuickScene {
         // in it; then the handler is not pressed, then the point is empty.
         crate::input::tap_point_moved(engine, h, ev);
         set(engine, h, TapHandler::TAP_COUNT.index, Value::Int(count));
-        let args = [point_value(ev.pos), Value::Int(button.bits() as i32)];
+        let point = crate::input::tap_event_point(engine, h, ev.pos, point_state::RELEASED);
+        let args = [point, Value::Int(button.bits() as i32)];
         emit(engine, h, "tapped", &args);
         match count {
             1 => emit(engine, h, "singleTapped", &args),
@@ -3175,10 +3177,6 @@ pub(crate) fn contains_local(engine: &Engine, obj: ObjectId, p: kurbo::Point) ->
     p.x >= 0.0 && p.y >= 0.0 && p.x < w && p.y < h
 }
 
-fn point_value(p: kurbo::Point) -> Value {
-    Value::Point(Arc::new(Point { x: p.x, y: p.y }))
-}
-
 fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point) {
     if !engine.is_alive(h) {
         return;
@@ -3189,8 +3187,9 @@ fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point) {
     // it says `canceled`; one that only watched still has the point.
     let alone =
         num(engine, h, TapHandler::GESTURE_POLICY.index) as i32 != gesture_policy::DRAG_THRESHOLD;
+    let point = crate::input::tap_event_point(engine, h, pos, point_state::UPDATED);
     let mut changed = alone && crate::input::tap_point_clear(engine, h);
-    emit(engine, h, "canceled", &[point_value(pos)]);
+    emit(engine, h, "canceled", &[point]);
     if engine.is_alive(h) {
         changed |= crate::input::tap_point_clear(engine, h);
         if changed {
