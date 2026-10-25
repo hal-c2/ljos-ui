@@ -2236,19 +2236,21 @@ impl Engine {
             }
             e.call_expr(&i, expr, args);
         });
+        // Every handler of a `Connections` is for its target, also one
+        // named like a change of its own (`onTargetChanged`), as in Qt.
+        let connections = self
+            .meta_of(obj)
+            .is_some_and(|m| m.inherits(<Connections as QmlType>::static_meta()));
+        if connections {
+            if let Err(e) = self.connections_add(obj, signal, handler) {
+                self.warn(e.to_string());
+            }
+            return;
+        }
         match self.signal_index(obj, signal) {
             Ok(s) => {
                 let h = handler.clone();
                 if let Err(e) = self.connect_to(obj, s, scope, move |e, a| h(e, a)) {
-                    self.warn(e.to_string());
-                }
-            }
-            Err(_)
-                if self
-                    .meta_of(obj)
-                    .is_some_and(|m| m.inherits(<Connections as QmlType>::static_meta())) =>
-            {
-                if let Err(e) = self.connections_add(obj, signal, handler) {
                     self.warn(e.to_string());
                 }
             }
