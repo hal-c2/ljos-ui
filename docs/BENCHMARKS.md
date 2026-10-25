@@ -5222,3 +5222,123 @@ DECISIONs:
   instantiates its component once before it counts, so the process-wide caches (fonts, the
   text engine) are warm whichever test runs first. The counts are the same over repeated
   runs, in parallel and with one test thread, and with 2, 4 or 40 frames after the step.
+
+### MEM1: resident memory against qml6, and what driving adds (2026-10-25)
+
+Fifteen corpus examples, off-screen in the cua sandbox (headless sway, pixman), Ljós release
+builds against `qml6` 6.11.2 with the Basic style. Each app is measured after its first frame
+has settled ("start"), then driven for 60 s with `--gesture click` (a grid of clicks over the
+window) and measured again ("end"). The machine was short of memory and swapped while these
+ran, so RSS at the end says more about the kernel than the app. "Private" is
+`Pss_Anon + SwapPss` from `smaps_rollup`: what the process holds of its own, swapped or not.
+Sizes are MiB. "Before" is aef1a811; "after" is this batch's commits. qml6's columns come from
+the same run as "before"; the commits change only Ljós.
+
+| App | RSS start, Ljós | qml6 | Private start, Ljós | qml6 | Private end, Ljós before | Ljós after | qml6 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| alarms | 156.2 | 244.2 | 49.4 | 95.9 | 51.0 | 57.3 | 103.1 |
+| animations | 166.2 | 230.4 | 44.3 | 98.5 | 52.2 | 47.8 | 147.5 |
+| calqlatr | 158.6 | 248.0 | 45.6 | 101.0 | 45.4 | 46.1 | 101.1 |
+| clocks | 155.1 | 234.4 | 42.9 | 93.0 | 43.0 | 42.9 | 95.4 |
+| form | 173.5 | 268.8 | 55.4 | 117.1 | 51.8 | 55.5 | 113.2 |
+| hangman | 153.4 | 229.1 | 40.5 | 88.4 | 40.5 | 38.5 | 88.4 |
+| listview | 162.8 | 229.6 | 43.9 | 90.4 | 46.9 | 46.8 | 90.4 |
+| maroon | 168.4 | 262.9 | 53.5 | 118.1 | 62.6 | 59.7 | 124.2 |
+| photosurface | 168.5 | 256.8 | 52.4 | 104.6 | 61.2 | 65.3 | 122.0 |
+| rssnews | 170.5 | 803.7 | 52.4 | 649.1 | 53.3 | 52.6 | 148.9 |
+| samegame | 156.4 | 245.0 | 45.4 | 103.1 | 59.9 | 59.7 | 150.8 |
+| snippet-texteditor | 122.5 | 226.2 | 34.4 | 92.1 | 39.0 | 42.9 | 92.1 |
+| text | 160.7 | 249.7 | 51.8 | 109.2 | 53.5 | 49.6 | 109.2 |
+| thermostat | 193.0 | 297.3 | 83.4 | 141.0 | 184.6 | 175.4 | 178.0 |
+| todolist | 175.3 | 261.5 | 60.3 | 110.4 | 61.2 | 60.5 | 110.4 |
+| **Sum** | **2441** | **4288** | **756** | **2112** | **906** | **901** | **1774** |
+
+Ljós holds less than half of qml6's private memory at the start in every app, and at the end
+in every app but thermostat. The before and after columns at the end differ by a few MiB
+either way from run to run; the clicks do not land on the same things twice.
+
+**Growth.** The four apps that grew most were driven three times back to back
+(`--rounds 3`), with memory read after each 60 s:
+
+| App | Start | Round 1 | Round 2 | Round 3 |
+|---|---:|---:|---:|---:|
+| thermostat, before | 84.6 | 186.1 | 258.9 | 252.7 |
+| thermostat, after | 77.4 | 172.1 | 237.3 | 237.3 |
+| thermostat, qml6 | 141.1 | 178.3 | 183.1 | 169.9 |
+| samegame, before → after | 43.5 → 45.5 | 61.5 → 59.6 | 61.6 → 62.3 | 62.6 → 62.3 |
+| maroon, before → after | 53.6 → 53.4 | 59.7 → 59.2 | 65.2 → 63.4 | 66.2 → 64.4 |
+| maroon, qml6 | 118.1 | 122.8 | 122.7 | 122.9 |
+| photosurface, before → after | 54.7 → 52.2 | 69.8 → 62.5 | 71.0 → 62.9 | 71.0 → 62.9 |
+
+None of it is a leak. Each stops growing once the clicks have been everywhere they reach:
+
+- thermostat's grows with the page shown. Its Schedule page is a grid of about 12 000
+  objects; at the end the engine holds 222 000 graph nodes and 64 MB of reactive state, with
+  1136 accessible objects. A StackView keeps its declared `initialItem` while pages are
+  pushed over it, as Qt's does, so the start page is still there too. A StackView whose
+  pages are files replaced again and again keeps a constant count of objects and nodes
+  (`pages_replaced_by_file_leave_nothing_behind`).
+- samegame and photosurface settle after the first round: the tiles and images made once.
+- maroon creeps by about 1 MiB a round. Its object and node counts do not grow, so this is
+  the allocator and caches, not the engine's objects; it was not chased further.
+
+**What held the memory, and the cuts.** dhat on thermostat put most of the engine's share in
+graph nodes. Its "58 MB in `Graph::with_options`" is the node table's capacity, of which only
+the touched part is resident. Counted with a Repeater of 100 of each, settled, in graph nodes
+per instance:
+
+| Type | Before | After |
+|---|---:|---:|
+| Item, Rectangle, Text | 12.3, 13.3, 13.3 | same |
+| Label | 33.4 | 28.4 |
+| Slider | 125.4 | 120.4 |
+| Switch | 141.4 | 136.4 |
+| RadioButton | 142.4 | 137.4 |
+| Button | 145.4 | 140.4 |
+| Pane holding an item | 131.4 | 84.4 |
+
+The Button row is before the last cut; a Button with no mnemonic now also has no `Shortcut`
+object and the nodes of its sequence, enablement and connection.
+
+- A container watched each of its 21 palette colours with a graph node, so that a colour set
+  later reached the controls inside. The colour's write filter now tells them, and a colour
+  bound on a container starts to listen the first time the binding gives it a new value
+  (features/controls/item-palette-inherited.feature, two new scenarios, also on qml6).
+- A graph node is 200 bytes, not 216: an override's id is kept beside the list of layers, not
+  in each layer, and a node's eleven flags are bits of one `u16`.
+- An accessible object followed its role and its labels with graph effects; write filters do
+  the same with no node, so one costs one node (`an_accessible_object_costs_one_graph_node`).
+- A button makes its mnemonic's `Shortcut` with the first text that has one
+  (features/controls/mnemonics.feature, a new scenario for a mnemonic given later, also on
+  qml6).
+
+Together they took thermostat's start from 84.6 to 77.4 MiB and its plateau from 253 to
+237 MiB. The other apps hold few controls, and their private memory moved by less than the
+noise.
+
+**The bench.** `ljos bench --rounds N` drives the load span N times and reads memory after
+each; the report gives every process's `loaded` memory and `rounds`, and counts `SwapPss` as
+part of what a process holds.
+
+**What is left.** Thermostat after driving is still about 35 % above qml6, and it is all page
+size: about 18 graph nodes an object. Next:
+
+- Control's own effects: a bare Control is still about 60 nodes, most of them effects that
+  place its parts and follow its font and palette.
+- Accessible objects are made for every item the a11y pass reaches; one costs an object as
+  well as its node.
+- `Shortcut` objects for the actions and menus that have no sequence.
+- maroon's creep of about 1 MiB a round.
+
+DECISIONs:
+
+- Swapped pages count as the process's own memory; RSS alone made Ljós and qml6 look smaller
+  the more the machine swapped.
+- The load is grid clicks for 60 s, the same for both runtimes. Round 1 of the first measure
+  was run again, and the second run is the one shown.
+- Thermostat's growth is page size and stays, not a leak: Qt keeps the declared initial item
+  the same way.
+- A container's colour watches are made by the colour's setter when one is first set, not
+  when the container is made.
+- The graph's u64 stamps were not narrowed: a 32-bit tick could wrap while frames are live.
+- The a11y object's role and label watches became write filters.
