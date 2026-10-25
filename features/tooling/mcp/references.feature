@@ -59,6 +59,32 @@ Feature: Inspector references
     And the agent inspects the reference of the "button" named "Save"
     Then the answer's "/geometry/width" is 120
 
+  Scenario: A reference survives a reload that keeps the item
+    When the file "Scenario.qml" is changed to:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        width: 200; height: 100
+        function drop() { children[0].destroy() }
+        Rectangle {
+          objectName: "save"
+          width: 95; height: 30
+          Accessible.role: Accessible.Button
+          Accessible.name: "Save"
+        }
+        Rectangle {
+          objectName: "other"
+          y: 40; width: 80; height: 30
+          Accessible.role: Accessible.Button
+          Accessible.name: "Other"
+        }
+      }
+      """
+    And a reload happens
+    And the agent inspects the reference of the "button" named "Save"
+    Then the answer's "/geometry/width" is 95
+
   Scenario: A locator survives a reload that makes the item anew
     When the file "Scenario.qml" is changed to:
       """qml
