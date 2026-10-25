@@ -225,6 +225,26 @@ Feature: Checking files on a machine that has no Qt
         ljos: 1 errors
         """
 
+    Scenario: The models the runner has besides Qt Quick are known with their members
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQml.XmlListModel
+        import Qt.labs.folderlistmodel
+        Item {
+          XmlListModel {
+            query: "/rss/channel/item"
+            XmlListModelRole { name: "title"; elementName: "title" }
+          }
+          FolderListModel { nameFilters: ["*.ttf"]; showDirs: false }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
   Rule: A name no type has may be a type of Qt's that this build has not heard of
 
     @no-qt-table

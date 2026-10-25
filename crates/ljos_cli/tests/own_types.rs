@@ -77,6 +77,7 @@ fn engine() -> Engine {
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);
     ljos_media::register(&engine);
+    // What `render::register_modules` gives `run`, `render` and `test`.
     ljos_localstorage::register(&engine);
     ljos_xml::register(&engine);
     ljos_folderlistmodel::register(&engine);
