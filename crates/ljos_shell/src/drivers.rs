@@ -19,7 +19,10 @@
 //! use only by its environment, so the shell caps that too, unless the
 //! user chose. Hardware drivers do not read it.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Once,
+};
 
 /// Present while NVIDIA's kernel driver is loaded.
 const NVIDIA_DRIVER: &str = "/proc/driver/nvidia";
@@ -42,10 +45,23 @@ const RASTER_THREADS: &str = "LP_NUM_THREADS";
 /// chose: more woke the process more often and showed no more frames.
 const MOST_RASTER_THREADS: usize = 4;
 
+/// Whether the drivers have been chosen, in this process.
+static CHOSEN: Once = Once::new();
+
 /// Caps the software rasteriser's threads, and leaves NVIDIA's EGL vendor
 /// and Vulkan driver out when its kernel driver is not loaded. Leaves each
-/// alone when the user chose themselves.
+/// alone when the user chose themselves. Only the first call chooses: the
+/// font reader's start and `run` both call it, whichever comes first, so
+/// the environment is set before either starts a thread.
 pub(crate) fn choose() {
+    once(&CHOSEN, choose_now);
+}
+
+fn once(chosen: &Once, choose: impl FnOnce()) {
+    chosen.call_once(choose);
+}
+
+fn choose_now() {
     let raster = raster_threads(
         std::env::var_os(RASTER_THREADS).is_some(),
         std::thread::available_parallelism().map_or(1, usize::from),
@@ -60,9 +76,10 @@ pub(crate) fn choose() {
     #[cfg(gl_painter)]
     let egl = egl_vendors();
     let vulkan = vulkan_drivers();
-    // SAFETY: called by `run` on the main thread before the shell starts
-    // any thread of its own or loads anything that reads the environment
-    // from C. Rust's own readers take std's lock; glibc (2.40 on) never
+    // SAFETY: called once, through `choose`, on the main thread by `run`
+    // or by the font reader's start, before the shell starts any thread of
+    // its own (the font reader is started after it) or loads anything that
+    // reads the environment from C. Rust's own readers take std's lock; glibc (2.40 on) never
     // frees an environment block a concurrent `getenv` could be reading.
     unsafe {
         #[cfg(gl_painter)]
@@ -316,6 +333,15 @@ mod tests {
             nvidia_names(&drivers).as_deref(),
             Some("nvidia_icd.json,nvidia_layers.json")
         );
+    }
+
+    #[test]
+    fn only_the_first_choice_chooses() {
+        let chosen = Once::new();
+        let mut times = 0;
+        once(&chosen, || times += 1);
+        once(&chosen, || times += 1);
+        assert_eq!(times, 1);
     }
 
     #[test]

@@ -372,7 +372,8 @@ impl Run {
             // below and the stderr writer at the first line written.
             unsafe { std::env::set_var("QT_QUICK_CONTROLS_STYLE", style) };
         }
-        // While the project is compiled.
+        // While the project is compiled. It chooses the graphics drivers,
+        // which sets their variables, before it starts the font reader.
         ljos_shell::read_system_fonts_early();
         let (dir, key) = match &self.project {
             Some(project) => entry_in(&self.file, project)?,

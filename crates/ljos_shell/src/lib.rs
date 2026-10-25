@@ -555,6 +555,8 @@ pub fn run<M: Send + 'static>(
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
     large_buffers_from_the_system();
+    // Before anything starts a thread; done already when the fonts were
+    // read early.
     #[cfg(target_os = "linux")]
     drivers::choose();
     desktop::run(config, setup)
@@ -564,6 +566,10 @@ pub fn run<M: Send + 'static>(
 /// what a program does before [`run`], such as loading or compiling its
 /// QML, runs meanwhile. [`run`] starts it itself when it has not been
 /// started, and with [`ShellConfig::system_fonts`] off does not wait for it.
+///
+/// It chooses the graphics drivers first, as [`run`] would, since that
+/// sets the environment, which must not change once the reader starts.
+/// Call it on the main thread before starting threads of your own.
 pub fn read_system_fonts_early() {
     system_fonts::start();
 }

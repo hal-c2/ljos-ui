@@ -11,15 +11,31 @@ use ljos_quick::TextEngine;
 
 static READING: Mutex<Option<JoinHandle<TextEngine>>> = Mutex::new(None);
 
-/// Starts reading them unless that has been started.
+/// Starts reading them unless that has been started. The drivers are
+/// chosen first: that sets the environment, which fontconfig and the
+/// threads the reader starts read from C while it is set.
 pub(crate) fn start() {
-    let mut reading = READING
+    start_in(&READING, choose_drivers, TextEngine::with_system_fonts);
+}
+
+fn choose_drivers() {
+    #[cfg(target_os = "linux")]
+    crate::drivers::choose();
+}
+
+fn start_in<T: Send + 'static>(
+    reading: &Mutex<Option<JoinHandle<T>>>,
+    choose: impl FnOnce(),
+    read: impl FnOnce() -> T + Send + 'static,
+) {
+    let mut reading = reading
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if reading.is_none() {
+        choose();
         *reading = thread::Builder::new()
             .name("ljos-fonts".into())
-            .spawn(TextEngine::with_system_fonts)
+            .spawn(read)
             .ok();
     }
 }
@@ -40,4 +56,52 @@ pub(crate) fn forget() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Once};
+
+    use super::*;
+
+    type Log = Arc<Mutex<Vec<&'static str>>>;
+
+    fn note(log: &Log, what: &'static str) {
+        log.lock().unwrap().push(what);
+    }
+
+    #[test]
+    fn the_drivers_are_chosen_before_the_fonts_are_read() {
+        let reading = Mutex::new(None);
+        let log = Log::default();
+        let read_log = log.clone();
+        start_in(
+            &reading,
+            || note(&log, "chosen"),
+            move || note(&read_log, "read"),
+        );
+        reading.lock().unwrap().take().unwrap().join().unwrap();
+        assert_eq!(*log.lock().unwrap(), ["chosen", "read"]);
+    }
+
+    #[test]
+    fn an_early_start_and_run_choose_and_read_once() {
+        // `run` chooses through the same `Once` as the early start.
+        let reading = Mutex::new(None);
+        let chosen = Once::new();
+        let log = Log::default();
+        let early = |log: &Log| {
+            let read_log = log.clone();
+            start_in(
+                &reading,
+                || chosen.call_once(|| note(log, "chosen")),
+                move || note(&read_log, "read"),
+            );
+        };
+        early(&log);
+        early(&log);
+        chosen.call_once(|| note(&log, "chosen"));
+        reading.lock().unwrap().take().unwrap().join().unwrap();
+        assert_eq!(*log.lock().unwrap(), ["chosen", "read"]);
+    }
 }
