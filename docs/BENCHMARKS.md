@@ -4688,6 +4688,26 @@ These are left:
   `EngineHost::call` and `Engine::invoke`), the read of `.value` on the row object
   (0.85 k), and the read of `m.count` in the loop condition.
 
+**samegame's new game** (`Logic.startNewGame(gameCanvas)`, Main.qml:114 of the qtdoc demo)
+was reported at 270 ms, over its 32 ms soft budget. It is timed by a `TestCase` that makes the
+demo's `GameArea` at 800×600 (450 blocks) and calls `startNewGame` six times. To run it under
+qml6 the `content` directory needs a `qmldir` that makes `Settings` a singleton. The best of
+two runs of six, load 7 to 13:
+
+| build | ms per new game | per round, Ir |
+|---|---:|---:|
+| Ljós, release | 21–27 (best 21) | 266 M |
+| qml6 | 20–26 (best 20) | — |
+| Ljós, debug | about 92 for 150 blocks | — |
+
+The 270 ms is a debug build's: `gallery:drive` builds debug unless `GALLERY_PROFILE` says
+otherwise, and a debug build warns at eight times the soft budget (256 ms). Released, the
+handler is within its budget and level with qml6. Its cost is spread over making each block's
+fifteen or so objects: `createObject` is 172 M Ir a round (380 k a block), `Image`'s
+completion 39 k an image (its pictures come from the cache: 13 loads for 1360 images), and
+the destruction of the last game's blocks 54 M. Nothing takes more than 6 % on its own; the
+largest share is malloc and free. That is the per-object cost of creation, H2's.
+
 DECISIONs:
 
 - Qt is compared by wall time only. Under valgrind its JIT is off, so its Ir is not what it
@@ -4754,3 +4774,6 @@ DECISIONs:
 - There is no features scenario. What changed is when a picture is made, and QML cannot see
   that: the shadow shown is the same before and after. The behaviour is pinned by the tests
   named above.
+
+- samegame's new game is left as it is: a release build is within the budget, and what it
+  costs is the creation of objects, H2's.
