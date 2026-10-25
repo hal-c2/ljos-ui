@@ -95,6 +95,8 @@ Feature: What a delegate of a ListView can read
             objectName: "d-" + name
             width: 200; height: 20
             function rename(to) { lm.setProperty(index, "name", to) }
+            function keep(to) { name = to }
+            function pin(to) { index = to }
           }
         }
         """
@@ -123,3 +125,14 @@ Feature: What a delegate of a ListView can read
     Scenario: A delegate changes its own row
       When the method "rename" of "d-cy" is called with "cleo"
       Then the property "name" of "d-cleo" is "cleo"
+
+    Scenario: A role the delegate assigned itself no longer follows its row
+      When the method "keep" of "d-bo" is called with "mine"
+      And the method "setProperty" of "lm" is called with 1, "name", "bea"
+      Then the property "name" of "d-mine" is "mine"
+
+    Scenario: An index the delegate assigned itself no longer follows its row
+      When the method "pin" of "d-cy" is called with 7
+      And the method "insert" of "lm" is called with 0, {"name": "zed"}
+      And 100 milliseconds pass
+      Then the property "index" of "d-cy" is 7
