@@ -608,7 +608,9 @@ fn adopt_model(engine: &Engine, combo: ObjectId, restart: bool) {
     }
     st.subscription.set(id);
     set_count(engine, combo, &st);
-    if restart {
+    // A bound index that the same change ran again is evaluated after the
+    // reset on Qt, so it keeps the row it names.
+    if restart && !engine.ran_this_change(combo, ComboBox::CURRENT_INDEX.index) {
         let first = if st.rows() > 0 { 0 } else { -1 };
         put(
             engine,

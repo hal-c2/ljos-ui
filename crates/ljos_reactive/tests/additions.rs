@@ -886,3 +886,30 @@ fn nodes_disposed_all_at_once_are_disposed_as_one_by_one() {
     assert!(!g.is_alive(y));
     g.check_invariants().unwrap();
 }
+
+#[test]
+fn ran_this_flush_tells_a_run_the_change_reached_from_one_it_did_not() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let b = g.property(r, 1).unwrap();
+    let by_a = g.binding(r, 0, move |g| g.get(a) * 2).unwrap();
+    // Lazy: nothing reads it, so it is still due when the watch runs.
+    let by_b = g.binding(r, 0, move |g| g.get(b) * 3).unwrap();
+    g.get(by_b);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let s = seen.clone();
+    g.watch(r, by_a, move |g, _| {
+        s.borrow_mut().push(g.ran_this_flush(by_b))
+    })
+    .unwrap();
+
+    g.set(a, 2);
+    g.batch(|| {
+        g.set(a, 3);
+        g.set(b, 2);
+    });
+    assert_eq!(*seen.borrow(), [false, true]);
+    assert_eq!(g.peek(by_b), Some(6), "the due run was made");
+    assert!(!g.ran_this_flush(by_b), "no flush is under way");
+}

@@ -2711,6 +2711,21 @@ impl Engine {
         node.is_some_and(|n| self.inner.graph.is_bound(n))
     }
 
+    /// Whether the property's binding ran again for the change that is
+    /// still spreading. Qt evaluates such a binding after what the change
+    /// did natively, so its value has the last word over a native reset.
+    pub fn ran_this_change(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let node = self
+            .inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .and_then(|h| h.node(prop));
+        node.is_some_and(|n| self.inner.graph.is_bound(n) && self.inner.graph.ran_this_flush(n))
+    }
+
     /// Pushes an override (`Binding {}`, `PropertyChanges`).
     pub fn push_override(
         &self,

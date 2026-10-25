@@ -2036,6 +2036,18 @@ impl<V: Clone + 'static> Graph<V> {
     }
 
     /// Whether the node still exists.
+    /// Whether the node ran in the flush that is under way: a change that
+    /// is still spreading reached it, and it has run again for it. A run
+    /// that is due is made first, as it is part of that change.
+    pub fn ran_this_flush(&self, n: NodeId) -> bool {
+        self.settled(n);
+        let i = self.inner.borrow();
+        i.flush_depth > 0
+            && i.nodes
+                .get(n)
+                .is_some_and(|node| node.run_epoch == i.flush_epoch)
+    }
+
     pub fn is_alive(&self, n: NodeId) -> bool {
         self.inner.borrow().nodes.contains_key(n)
     }
@@ -2499,6 +2511,12 @@ impl<V: Clone + 'static> Graph<V> {
             match compute {
                 Compute::Binding(_) => i.stats.evaluations += 1,
                 Compute::Effect(_) => i.stats.effect_runs += 1,
+            }
+            // Also a lazy run, pulled by a reader, marks the flush it ran in
+            // (`ran_this_flush`); the re-run cap counts from it as before.
+            if node.run_epoch != i.flush_epoch {
+                node.run_epoch = i.flush_epoch;
+                node.runs = 0;
             }
             i.tick += 1;
             let reads = i.read_pool.pop().unwrap_or_default();

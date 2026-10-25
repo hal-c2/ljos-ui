@@ -318,6 +318,42 @@ fn the_rows_of_a_combo_box_follow_its_model() {
 }
 
 #[test]
+fn a_bound_index_outlives_the_model_change_that_ran_it() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    function pick(value) {
+        combo.opt = { value: value, choices: [{ id: "a" }, { id: "b" }, { id: "c" }] }
+    }
+    ComboBox {
+        id: combo; objectName: "combo"
+        property var opt: ({ value: "a", choices: [{ id: "a" }, { id: "b" }, { id: "c" }] })
+        model: opt.choices.map(c => c.id)
+        currentIndex: opt.choices.findIndex(c => c.id === opt.value)
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root);
+    let combo = find(&e, root, "combo");
+    settle(&mut s, &e, Time::ZERO);
+    e.invoke_by_name(root, "pick", &[Value::string("c")])
+        .unwrap();
+    // However long it is left.
+    for _ in 0..3 {
+        settle(&mut s, &e, Time::ZERO);
+    }
+    assert_eq!(text(&e, combo, "currentIndex"), "2");
+    assert_eq!(text(&e, combo, "currentText"), "c");
+    assert_eq!(text(&e, combo, "displayText"), "c");
+    assert!(e.is_bound(combo, ljos_controls::ComboBox::CURRENT_INDEX.index));
+}
+
+#[test]
 fn a_model_that_outlives_its_combo_box_does_not_reach_it() {
     let e = engine();
     let root = load(&e, COMBO);

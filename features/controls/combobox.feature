@@ -263,6 +263,127 @@ Feature: ComboBox
       And the method "append" of "root" is called with "New"
       Then the property "seen" of "c" is "1 -1 [] undefined"
 
+  Rule: A new model and a bound current index
+
+    A new model makes the first row current. A binding of the current index
+    that the same change runs again is evaluated after it, wherever it is
+    written, and keeps its row; one the change does not run is set over and
+    still follows what it reads.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root
+          objectName: "root"
+          width: 400; height: 400
+          function abc(value) { return { value: value, choices: [{ id: "a" }, { id: "b" }, { id: "c" }] } }
+          function choose(value) { both.opt = abc(value); first.opt = abc(value) }
+          function offerXY(value) { both.opt = { value: value, choices: [{ id: "x" }, { id: "y" }] } }
+          function wantThenList() { apart.want = 2; apart.list = ["x", "y", "z"] }
+          function listThenWant() { apart.list = ["p", "q", "r"]; apart.want = 1 }
+          ComboBox { id: both; objectName: "both"; property var opt: root.abc("a")
+            model: opt.choices.map(c => c.id)
+            currentIndex: opt.choices.findIndex(c => c.id === opt.value)
+            property string seen: currentIndex + " [" + currentText + "] [" + displayText + "]" }
+          ComboBox { id: first; objectName: "first"; property var opt: root.abc("a")
+            currentIndex: opt.choices.findIndex(c => c.id === opt.value)
+            model: opt.choices.map(c => c.id)
+            property string seen: currentIndex + " [" + currentText + "]" }
+          ComboBox { id: apart; objectName: "apart"; property var list: ["a", "b", "c"]; property int want: 2
+            model: list; currentIndex: want
+            property string seen: currentIndex + " [" + currentText + "]" }
+        }
+        """
+
+    Scenario: One change that gives both a new model and a new index keeps the index
+      When the method "choose" of "root" is called with "c"
+      Then the property "seen" of "both" is "2 [c] [c]"
+      And the property "seen" of "first" is "2 [c]"
+
+    Scenario: The index follows its binding into a model of other rows
+      When the method "offerXY" of "root" is called with "y"
+      Then the property "seen" of "both" is "1 [y] [y]"
+
+    Scenario: A new model the index binding does not read makes the first row current
+      When the property "list" of "apart" is set to ["x", "y", "z"]
+      Then the property "seen" of "apart" is "0 [x]"
+
+    Scenario: The binding that was set over still follows what it reads
+      When the property "list" of "apart" is set to ["x", "y", "z"]
+      And the property "want" of "apart" is set to 1
+      Then the property "seen" of "apart" is "1 [y]"
+
+    Scenario: An index given before the new model is set over
+      When the method "wantThenList" of "root" is called
+      Then the property "seen" of "apart" is "0 [x]"
+
+    Scenario: An index given after the new model stays
+      When the method "listThenWant" of "root" is called
+      Then the property "seen" of "apart" is "1 [q]"
+
+  Rule: A bound current index over a model that grows and shrinks
+
+    Rows put in, taken out or cleared change the count and leave a bound
+    index where it is, as an index that was given; a binding that reads the
+    rows runs again and gives the index it then names.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root
+          objectName: "root"
+          width: 400; height: 400
+          property int want: 1
+          ListModel {
+            id: rows
+            ListElement { name: "Alpha" }
+            ListElement { name: "Beta" }
+            ListElement { name: "Gamma" }
+          }
+          function insert() { rows.insert(0, { name: "Zero" }) }
+          function remove(i) { rows.remove(i) }
+          function clear() { rows.clear() }
+          function append(name) { rows.append({ name: name }) }
+          ComboBox { id: wanted; objectName: "wanted"; model: rows; textRole: "name"; currentIndex: root.want
+            property string seen: count + " " + currentIndex + " [" + currentText + "]" }
+          ComboBox { id: last; objectName: "last"; model: rows; textRole: "name"; currentIndex: rows.count - 1
+            property string seen: count + " " + currentIndex + " [" + currentText + "]" }
+        }
+        """
+
+    Scenario: A row put in before keeps the bound index and changes its row
+      When the method "insert" of "root" is called
+      Then the property "seen" of "wanted" is "4 1 [Alpha]"
+      And the property "seen" of "last" is "4 3 [Gamma]"
+
+    Scenario: A row taken out keeps the bound index
+      When the method "remove" of "root" is called with 2
+      Then the property "seen" of "wanted" is "2 1 [Beta]"
+      And the property "seen" of "last" is "2 1 [Beta]"
+
+    Scenario: Clearing the model leaves a bound index with no row
+      When the method "clear" of "root" is called
+      Then the property "seen" of "wanted" is "0 -1 []"
+      And the property "seen" of "last" is "0 -1 []"
+
+    Scenario: A row added to a cleared model is current only where the binding says so
+      When the method "clear" of "root" is called
+      And the method "append" of "root" is called with "New"
+      Then the property "seen" of "wanted" is "1 -1 []"
+      And the property "seen" of "last" is "1 0 [New]"
+
+    Scenario: The binding cleared over still follows what it reads
+      When the method "clear" of "root" is called
+      And the method "append" of "root" is called with "New"
+      And the property "want" of "root" is set to 0
+      Then the property "seen" of "wanted" is "1 0 [New]"
+
   Rule: The rows can be asked for
 
     Background:
