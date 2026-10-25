@@ -25,8 +25,7 @@ Feature: Tracing what happens to an object over time
       """qml
       import QtQuick
       Item {
-        id: top
-        objectName: "root"
+        id: top; objectName: "root"
         component Card: Item {
           property alias caption: label.text; property alias size: label.font.pixelSize
           Text { id: label; objectName: "label" } }
@@ -42,11 +41,10 @@ Feature: Tracing what happens to an object over time
         Item { objectName: "sign"; property bool positive: top.count > 0 }
         Rectangle { objectName: "box"; width: 10; height: 10; border.color: top.open ? "red" : "blue" }
         Card { objectName: "card"; caption: "n " + top.count; size: top.count + 10 }
-        TextInput { objectName: "secret"; width: 100; height: 20; echoMode: TextInput.Password }
-        Loader {
-          active: top.open
-          sourceComponent: Item { objectName: "inner"; property int n: 0 }
-        }
+        TextInput { id: field; objectName: "secret"; width: 100; height: 20; echoMode: TextInput.Password }
+        Item { objectName: "mirror"; property string copy: field.text; signal said(string what)
+          onCopyChanged: said("was " + copy) }
+        Loader { active: top.open; sourceComponent: Item { objectName: "inner"; property int n: 0 } }
       }
       """
     And the inspector is connected
@@ -574,4 +572,34 @@ Feature: Tracing what happens to an object over time
       And the agent calls the tool "app_trace"
       Then the answer's "/events/1/name" is "text"
       And the answer's "/events/1/value" is "<redacted>"
+      And the answer does not contain "hunter2"
+
+    # Another object may copy what the field hides; the field may change or
+    # let it go before the trace is read.
+    Scenario: What another object copies from a hidden field is masked
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#mirror", "names": ["copy"]}
+        """
+      And the property "text" of "secret" is set to "hunter2"
+      And the property "text" of "secret" is set to "swordfish"
+      And the property "text" of "secret" is set to ""
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events" has 3 entries
+      And the answer's "/events/0/value" is "<redacted>"
+      And the answer's "/events/1/value" is "<redacted>"
+      And the answer's "/events/2/value" is ""
+      And the answer's text contains "copy = \"<redacted>\""
+      And the answer does not contain "hunter2"
+      And the answer does not contain "swordfish"
+
+    Scenario: A signal and a binding that repeat a hidden field are masked
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#mirror", "bindings": true}
+        """
+      And the property "text" of "secret" is set to "hunter2"
+      And the property "text" of "secret" is set to ""
+      And the agent calls the tool "app_trace"
+      Then the answer's text contains "said(\"was <redacted>\")"
       And the answer does not contain "hunter2"

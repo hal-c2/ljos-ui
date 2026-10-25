@@ -878,11 +878,13 @@ impl Inspector {
             }
             if let Some(c) = &capture {
                 self.logs.borrow_mut().learn(&c.secrets);
+                self.traces.borrow_mut().learn(&c.secrets);
             }
             self.answer(engine, scene, clock, &mut capture, request);
             // An act may have left a field holding another secret.
             if let Some(c) = &capture {
                 self.logs.borrow_mut().learn(&c.secrets);
+                self.traces.borrow_mut().learn(&c.secrets);
             }
         }
         if let Some(lease) = lease {
@@ -1183,7 +1185,9 @@ impl Inspector {
                     },
                     (None, _) => Ok(None),
                 };
-                found.and_then(|found| trace::trace(engine, &self.traces, args, found, per_copy))
+                found.and_then(|found| {
+                    trace::trace(engine, scene.root(), &self.traces, args, found, per_copy)
+                })
             }
             // The server answers it without the UI thread.
             (Kind::Watch(_), _) => Err(SurfaceError::new(

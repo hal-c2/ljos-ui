@@ -2350,6 +2350,53 @@ fn a_traced_value_larger_than_one_answer_is_cut_inside_its_event() {
     assert_eq!(answer["more"], false);
 }
 
+const MIRRORED: &str = r#"
+import QtQuick
+Item {
+    objectName: "page"
+    width: 200; height: 100
+    TextInput { id: pw; objectName: "pw"; width: 100; height: 20; echoMode: TextInput.Password }
+    Item {
+        objectName: pw.text === "" ? "mirror" : "copy of " + pw.text
+        property string mirror: pw.text
+        signal said(string what)
+        onMirrorChanged: said("was " + mirror)
+    }
+}
+"#;
+
+#[test]
+fn a_trace_masks_what_another_object_copies_from_a_hidden_field() {
+    let mut app = app_with(MIRRORED, InspectorConfig::default());
+    app.call("app_trace", json!({ "target": "#mirror" }));
+    app.set("pw", "text", QmlValue::from("hunter2"));
+    // The field moves on and then lets go: what was copied stays masked.
+    app.set("pw", "text", QmlValue::from("swordfish"));
+    app.set("pw", "text", QmlValue::from(""));
+    let reply = app.call("app_trace", json!({}));
+    let told = format!("{}\n{}", reply.structured, reply.text);
+    for secret in ["hunter2", "swordfish"] {
+        assert!(!told.contains(secret), "{secret} is told:\n{told}");
+    }
+    let events = reply.structured["events"].as_array().unwrap();
+    let mirror: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["name"] == "mirror")
+        .map(|e| &e["value"])
+        .collect();
+    assert_eq!(
+        mirror,
+        [&json!("<redacted>"), &json!("<redacted>"), &json!("")]
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e["name"] == "said" && e["args"] == json!(["was <redacted>"])),
+        "{told}"
+    );
+    assert!(reply.text.contains("<redacted>"), "{}", reply.text);
+}
+
 fn timers(n: usize) -> String {
     format!(
         r#"import QtQuick

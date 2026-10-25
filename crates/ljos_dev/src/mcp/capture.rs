@@ -441,9 +441,12 @@ fn pointer_label(engine: &Engine, obj: ObjectId) -> String {
 /// `#objectName` or an `id=` is looked for when the outline has no such
 /// node (an item with no role, or one that is not shown).
 pub(crate) fn all_objects(engine: &Engine, scene: &QuickScene) -> Vec<ObjectId> {
-    let Some(root) = scene.root() else {
-        return Vec::new();
-    };
+    scene
+        .root()
+        .map_or_else(Vec::new, |root| objects_below(engine, root))
+}
+
+fn objects_below(engine: &Engine, root: ObjectId) -> Vec<ObjectId> {
     engine.untrack(|| {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
@@ -466,7 +469,15 @@ pub(crate) fn all_objects(engine: &Engine, scene: &QuickScene) -> Vec<ObjectId> 
 /// that does not look at the scene but may repeat a secret (a log line, a
 /// fault).
 pub(crate) fn secrets(engine: &Engine, scene: &QuickScene, redact_all: bool) -> HashSet<String> {
-    let objects = all_objects(engine, scene);
+    scene
+        .root()
+        .map_or_else(HashSet::new, |root| secrets_below(engine, root, redact_all))
+}
+
+/// [`secrets`] of the objects below `root`: for what has the engine but not
+/// the scene (a trace written down as the application runs).
+pub(crate) fn secrets_below(engine: &Engine, root: ObjectId, redact_all: bool) -> HashSet<String> {
+    let objects = objects_below(engine, root);
     engine.untrack(|| {
         let mut out = HashSet::new();
         for obj in objects {

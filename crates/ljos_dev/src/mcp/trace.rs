@@ -14,6 +14,12 @@
 //! Asked with `bindings`, a trace also writes down each time a binding of
 //! the object runs again, with what it read that changed and whether it
 //! gave the value it had: why the object is busy, not only what changed.
+//!
+//! What a hidden field holds is masked wherever an event repeats it, not
+//! only in the field's own events: another object may copy it
+//! (`mirror: password.text`). Each event is masked with the secrets the
+//! fields hold as it is written down, the events kept are masked again with
+//! a secret once it becomes known, and an answer is masked once more.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -29,6 +35,7 @@ use serde_json::{Value, json};
 
 use super::capture::{self, REDACTED};
 use super::objects::handle;
+use super::redact::{SecretBook, mask_json, mask_text};
 use super::room::Room;
 use super::watch::ChangeFeed;
 
@@ -108,6 +115,28 @@ struct Run {
     same: bool,
 }
 
+impl Event {
+    /// Masks each of `secrets` (longest first) in every string the event
+    /// holds: a label or a cause can repeat a secret as a value can.
+    fn mask(&mut self, secrets: &[String]) {
+        if secrets.is_empty() {
+            return;
+        }
+        mask_text(&mut self.label, secrets);
+        mask_text(&mut self.name, secrets);
+        self.values.iter_mut().for_each(|v| mask_json(v, secrets));
+        if let Some(key) = self.key.as_mut() {
+            mask_text(key, secrets);
+        }
+        if let Some(run) = self.run.as_mut() {
+            for (_, label, prop) in &mut run.cause {
+                mask_text(label, secrets);
+                mask_text(prop, secrets);
+            }
+        }
+    }
+}
+
 /// What one client was told, newest last.
 #[derive(Default)]
 struct Ring {
@@ -140,6 +169,11 @@ pub(crate) struct TraceLog {
     redact_all: bool,
     /// Who traces each object.
     watches: HashMap<ObjectId, Vec<Watch>>,
+    /// The secrets the events are masked with.
+    book: SecretBook,
+    /// The scene's root as of the last request: the hidden fields below it
+    /// hold the secrets an event is masked with as it is written down.
+    root: Option<ObjectId>,
 }
 
 impl TraceLog {
@@ -150,7 +184,22 @@ impl TraceLog {
             changes,
             redact_all,
             watches: HashMap::new(),
+            book: SecretBook::default(),
+            root: None,
         }))
+    }
+
+    /// Makes `secrets` known, and masks the events kept with what is new
+    /// among them: an event written down before its secret was seen must
+    /// not show it once the field lets the secret go.
+    pub(crate) fn learn<'a>(&mut self, secrets: impl IntoIterator<Item = &'a String>) {
+        let new = self.book.learn(secrets);
+        if new.is_empty() {
+            return;
+        }
+        for ring in self.rings.values_mut() {
+            ring.events.iter_mut().for_each(|e| e.mask(&new));
+        }
     }
 
     /// Writes `event` into the ring of each client that wants it.
@@ -240,7 +289,18 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
             }
             Traced::Destroyed => ("destroyed", String::new(), Vec::new()),
         };
+        // What the fields hide now, before the event is kept: another
+        // object may repeat it, and the field may let it go before anyone
+        // reads the trace.
+        let (root, redact_all) = {
+            let log = log.borrow();
+            (log.root, log.redact_all)
+        };
+        let active = root.map(|root| capture::secrets_below(engine, root, redact_all));
         let mut log = log.borrow_mut();
+        if let Some(active) = &active {
+            log.learn(active);
+        }
         // What a field that hides its text was told is masked as it is
         // written down: what it held then is not what it holds when read.
         let masked =
@@ -250,7 +310,7 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
         } else {
             values
         };
-        let event = Event {
+        let mut event = Event {
             seq: log.next,
             at_us: engine.clock().now().as_micros(),
             object: obj,
@@ -261,6 +321,7 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
             key: key.filter(|_| !masked),
             run,
         };
+        event.mask(log.book.secrets());
         log.push(event);
     })
 }
@@ -278,8 +339,12 @@ fn mask_strings(v: Value) -> Value {
 
 /// Starts or stops what `args` asks, then answers with what is traced and
 /// what was written down after `since`.
+///
+/// `root` is the scene's: what the fields below it hide is masked in what
+/// is written down and told.
 pub(crate) fn trace(
     engine: &Engine,
+    root: Option<ObjectId>,
     log: &Rc<RefCell<TraceLog>>,
     args: &TraceArgs,
     target: Option<ObjectId>,
@@ -289,6 +354,16 @@ pub(crate) fn trace(
         return Err(SurfaceError::invalid_argument(
             "`app_trace`: `bindings` goes with a `target` to start tracing",
         ));
+    }
+    // Read with the log let go: a read can run a binding a trace writes down.
+    let redact_all = log.borrow().redact_all;
+    let now = root.map(|root| capture::secrets_below(engine, root, redact_all));
+    {
+        let mut log = log.borrow_mut();
+        log.root = root;
+        if let Some(now) = &now {
+            log.learn(now);
+        }
     }
     let traced = engine.traced();
     // An object that ended is traced no longer, whoever held it.
@@ -412,7 +487,13 @@ pub(crate) fn trace(
     let mut tracing: Vec<(ObjectId, String, Vec<String>)> = engine
         .traced()
         .into_iter()
-        .filter_map(|o| names_of(o).map(|names| (o, super::observe::label(engine, o).0, names)))
+        .filter_map(|o| {
+            names_of(o).map(|names| {
+                let mut label = super::observe::label(engine, o).0;
+                log.book.mask_text(&mut label);
+                (o, label, names)
+            })
+        })
         .collect();
     let follows = |o: ObjectId| engine.traces_bindings(o);
     tracing.sort_by(|a, b| a.1.cmp(&b.1));
@@ -542,7 +623,9 @@ pub(crate) fn trace(
     let mut events: Vec<Value> = Vec::new();
     let mut told = None;
     for e in after.iter().take(max) {
-        let (v, line) = row(e);
+        let (mut v, mut line) = row(e);
+        log.book.mask_json(&mut v);
+        log.book.mask_text(&mut line);
         let (v, line) = if room.take(&v, &line) {
             (v, line)
         } else if events.is_empty() {
@@ -581,4 +664,72 @@ pub(crate) fn needs_scene(args: &TraceArgs) -> bool {
     args.target
         .as_deref()
         .is_some_and(|t| !t.trim_start().starts_with('@'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(label: &str, values: Vec<Value>, cause: &str) -> Event {
+        Event {
+            seq: 1,
+            at_us: 0,
+            object: ObjectId::default(),
+            label: label.to_string(),
+            kind: "change",
+            name: "copy".to_string(),
+            values,
+            key: Some(format!("Key.{label}")),
+            run: Some(Run {
+                cause: vec![(ObjectId::default(), cause.to_string(), "text".to_string())],
+                us: 1,
+                same: false,
+            }),
+        }
+    }
+
+    #[test]
+    fn an_event_is_masked_in_every_string_it_holds() {
+        let mut e = event(
+            "Item \"hunter2\"",
+            vec![
+                json!("hunter2"),
+                json!({ "said": ["was hunter2"] }),
+                json!(7),
+            ],
+            "hunter2 field",
+        );
+        e.mask(&["hunter2".to_string()]);
+        assert_eq!(e.label, "Item \"<redacted>\"");
+        assert_eq!(e.values[0], json!("<redacted>"));
+        assert_eq!(e.values[1], json!({ "said": ["was <redacted>"] }));
+        assert_eq!(e.values[2], json!(7));
+        assert_eq!(e.key.as_deref(), Some("Key.Item \"<redacted>\""));
+        assert_eq!(e.run.unwrap().cause[0].1, "<redacted> field");
+    }
+
+    #[test]
+    fn a_secret_learnt_later_masks_the_events_kept_and_is_not_forgotten() {
+        let log = TraceLog::new(ChangeFeed::new(), false);
+        let mut log = log.borrow_mut();
+        log.rings.entry(None).or_default().events.push_back(event(
+            "mirror",
+            vec![json!("hunter2")],
+            "field",
+        ));
+        log.learn(&["hunter2".to_string()]);
+        // The field lets it go; what was written down stays masked.
+        log.learn(&["swordfish".to_string()]);
+        let kept = &log.rings[&None].events[0];
+        assert_eq!(kept.values[0], json!("<redacted>"));
+        assert_eq!(log.book.secrets().len(), 2);
+    }
+
+    #[test]
+    fn an_ordinary_event_is_told_as_it_was() {
+        let mut e = event("mirror", vec![json!("hello")], "field");
+        e.mask(&["hunter2".to_string()]);
+        assert_eq!(e.values[0], json!("hello"));
+        assert_eq!(e.label, "mirror");
+    }
 }
