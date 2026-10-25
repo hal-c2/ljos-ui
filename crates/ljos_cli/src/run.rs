@@ -38,6 +38,11 @@ pub struct Run {
     /// application, keeping its state.
     #[arg(long)]
     watch: bool,
+    /// A picture the desktop shows for the application: its windows'
+    /// icon, and the Dock's on macOS. Without it the desktop's own is
+    /// shown.
+    #[arg(long, value_name = "FILE")]
+    icon: Option<PathBuf>,
     /// The window's size in logical pixels. Without it, a root that is a
     /// plain item opens at its own size, as `qml6` opens it, and 800x600
     /// for a side it leaves at 0.
@@ -411,6 +416,10 @@ impl Run {
         };
         let example = self.example.clone();
         let arguments = self.arguments();
+        let icon = self.icon.as_deref().map(|path| {
+            let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+            ljos_engine::file_url(&path)
+        });
         if self.watch {
             let main = dir.join(format!("{key}.qml"));
             let project = self.project.is_some().then(|| dir.clone());
@@ -420,6 +429,9 @@ impl Run {
                 crate::render::register_modules(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
+                if let Some(icon) = &icon {
+                    ljos::window::load_application_icon(setup.engine(), icon);
+                }
                 ljos_controls::set_application_arguments(setup.engine(), arguments);
                 // As the program is built with them; a save of one is
                 // shown again like a save of any picture.
@@ -483,6 +495,9 @@ impl Run {
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 let engine = setup.engine();
+                if let Some(icon) = &icon {
+                    ljos::window::load_application_icon(engine, icon);
+                }
                 ljos_controls::set_application_arguments(engine, arguments);
                 crate::render::stage(engine, &source.resources());
                 engine.set_component_source(source);

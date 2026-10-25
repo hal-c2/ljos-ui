@@ -687,7 +687,8 @@ variant field by field adds `value` (or `..`); the same holds for
   applies every save to the running application. `--mcp[=<CAPS>]`
   serves the running application to MCP clients (capabilities
   `inspect`, `input`, `mutate`, `eval`, each granted by name;
-  `--mcp` alone means `inspect`). This runs QML on its own; an
+  `--mcp` alone means `inspect`). `--icon <FILE>` gives the desktop a
+  picture for the application (`App::icon_file` in code). This runs QML on its own; an
   application with native types runs its own binary through
   `ljos::App` (section 6), whose `run_with` keeps the same shell
   setup `ljos run` builds on. Built with `ljos`'s `mcp` feature, such
