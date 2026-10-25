@@ -1424,14 +1424,16 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         }
     }
     let first_shown = slots.iter().find(|s| s.end() > v_now).map(|s| s.line);
+    // Every line laid out holds all its rows: a grid's line all its cells.
+    let whole = |s: &Slot| {
+        let cells = (rows - s.line * g.per_line).min(g.per_line);
+        items.iter().filter(|i| g.line_of(i.0) == s.line).count() == cells
+    };
     let keeps = over.is_none()
-        && !g.grid
         && !fill.waiting
         && !fill.held
         && slots.len() < MAX_LINES
-        && slots
-            .iter()
-            .all(|s| s.measured && s.size > 0.0 && items.iter().any(|i| i.0 == s.line))
+        && slots.iter().all(|s| s.measured && s.size > 0.0 && whole(s))
         && vt_start.is_empty()
         && running_to.is_empty();
     *st.slots.borrow_mut() = slots.into_iter().collect();
@@ -1600,16 +1602,18 @@ fn keep_rows(e: &Engine, view: ObjectId, st: &ViewState) -> bool {
     let first_shown = slots.iter().find(|s| s.end() > v).map(|s| s.line);
     drop(slots);
     current::sync(e, view, st, &g, content, s.span);
-    let name = match Sections::read(e, view, st).as_mut() {
-        Some(sections) => sections.of(e, &d, first_shown),
-        None => String::new(),
-    };
-    put(
-        e,
-        view,
-        ListView::CURRENT_SECTION.index,
-        Value::string(name),
-    );
+    if !g.grid {
+        let name = match Sections::read(e, view, st).as_mut() {
+            Some(sections) => sections.of(e, &d, first_shown),
+            None => String::new(),
+        };
+        put(
+            e,
+            view,
+            ListView::CURRENT_SECTION.index,
+            Value::string(name),
+        );
+    }
     true
 }
 

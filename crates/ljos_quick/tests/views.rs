@@ -797,3 +797,52 @@ ListView {
     assert_eq!(at.to_number(), 16.0);
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
+
+/// A GridView scrolled inside its cache buffer keeps its cells too, the
+/// last line short of a whole one included.
+#[test]
+fn a_grid_scrolled_inside_the_cache_buffer_lays_no_cells_out() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+GridView {
+  id: v
+  width: 200; height: 100
+  cellWidth: 50; cellHeight: 20
+  cacheBuffer: 1000
+  model: 58
+  property int created: 0
+  delegate: Item { width: 50; height: 20; Component.onCompleted: v.created++ }
+}
+"##,
+    );
+    let mut s = settled(&e, root);
+    assert_eq!(num(&e, root, "created"), 58.0);
+    let before = view_layout_passes(&e, root);
+    for (i, y) in [50.0, 120.0, 190.0, 0.0].into_iter().enumerate() {
+        e.write_by_name(root, "contentY", Value::Real(y)).unwrap();
+        settle(&mut s, &e, 1000 + i as u64 * 1000);
+        assert_eq!(num(&e, root, "contentY"), y);
+        let at = e
+            .invoke_by_name(root, "indexAt", &[Value::Real(60.0), Value::Real(y + 30.0)])
+            .unwrap();
+        assert_eq!(at.to_number(), ((y + 30.0) / 20.0).floor() * 4.0 + 1.0);
+    }
+    assert_eq!(view_layout_passes(&e, root), before);
+    assert_eq!(num(&e, root, "created"), 58.0);
+
+    // Cells outside the buffer: they are laid out.
+    e.write_by_name(root, "cacheBuffer", Value::Int(0)).unwrap();
+    settle(&mut s, &e, 9000);
+    let before = view_layout_passes(&e, root);
+    e.write_by_name(root, "contentY", Value::Real(200.0))
+        .unwrap();
+    settle(&mut s, &e, 10_000);
+    assert!(view_layout_passes(&e, root) > before);
+    let at = e
+        .invoke_by_name(root, "indexAt", &[Value::Real(60.0), Value::Real(230.0)])
+        .unwrap();
+    assert_eq!(at.to_number(), 45.0);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
