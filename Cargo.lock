@@ -3770,6 +3770,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_drive"
+version = "0.0.0"
+dependencies = [
+ "ljos_a11y",
+ "ljos_compiler",
+ "ljos_engine",
+ "ljos_platform",
+ "ljos_quick",
+ "ljos_render",
+ "ljos_runtime",
+ "qml_front",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ljos_egui"
 version = "0.0.0"
 dependencies = [

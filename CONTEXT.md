@@ -36,3 +36,13 @@ view hands a row to a delegate: which required properties it writes
 directly, and whether the delegate reads `model.*` or unqualified roles at
 all, so that a row object is made only when it does. Rebuilt when the view
 gets a new model or the model's roles change.
+
+**Scene driver.** What drives a scene as a host does, for everything that
+is not one: an application's tests, the headless pictures, the scenario
+runner, the QtTest runner and the MCP inspector. It settles the scene, lets
+time pass on a test clock, finds items by object path, sends input as a
+person would (aimed at an item's middle, refused where a person could not
+reach it) and reads the accessibility tree and the picture, by one set of
+rules, so that they all see a scene behave the same. Its clock is the test
+clock or the real one. Lives in `crates/ljos_drive`, whose module comment
+gives the rules.

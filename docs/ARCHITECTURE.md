@@ -221,6 +221,8 @@ ljos-ui/
 │   │                           MCP inspector [feature "mcp"]
 │   ├── ljos_mcp_core/          McpSurface, ToolRegistry, caps/tokens, snapshot renderer (rmcp)
 │   ├── ljos_mcp_author/        `ljos mcp` authoring tools (CLI only)
+│   ├── ljos_drive/             scene driver: settle, advance a test clock, find, input,
+│   │                           a11y and pictures by one set of rules (no egui, no parser)
 │   ├── ljos_test/              kittest harness wrapper, a11y audit, QtTest TestCase runner
 │   ├── ljos_bdd/               cucumber World, Backend trait, Ljós + Qt backends, steps
 │   ├── ljos_ratchet/           acceptance suites' PIN, globs and RATCHET, judged without a backend
