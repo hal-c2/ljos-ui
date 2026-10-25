@@ -742,7 +742,11 @@ Window {{
 
 #[test]
 fn a_loose_window_takes_the_overlay_of_the_tree_it_is_put_in() {
+    // A timer is due at a whole step of the clock after it is asked for:
+    // on the wall clock a frame in the same step would not run it.
+    let clock = Arc::new(VirtualClock::new());
     let e = engine();
+    e.set_clock(Rc::new(clock.clone()));
     let root = load(
         &e,
         &format!(
@@ -774,8 +778,9 @@ Item {{
     let made = made.as_object().expect("createObject made nothing");
     assert_eq!(warnings(&e), Vec::<String>::new(), "after createObject");
     // The window is put in once the work that made it is over: at the
-    // engine's present time, which runs on the wall clock here.
-    settle(&mut s, &e, e.now());
+    // timer step after.
+    clock.advance(ljos_runtime::TIMER_GRANULARITY);
+    settle(&mut s, &e, clock.now());
     assert_eq!(
         e.visual_parent(made),
         Some(root),
