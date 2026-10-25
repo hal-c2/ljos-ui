@@ -214,11 +214,14 @@ fn written(pattern: &str) -> Option<String> {
                 let inside: String = chars[at + 1..close].iter().collect();
                 let quoted = at > 0 && chars[at - 1] == '"' && chars.get(close + 1) == Some(&'"');
                 if let Some(words) = inside.strip_prefix("?:") {
-                    // A group that is not a value: letters of the sentence.
+                    // A group that is not a value: letters of the sentence,
+                    // or an optional part of it that has values of its own.
                     if !choice(words) {
-                        return None;
-                    }
-                    if optional(close) {
+                        if !optional(close) {
+                            return None;
+                        }
+                        write!(out, "[{}]", written(words)?).ok()?;
+                    } else if optional(close) {
                         write!(out, "[{words}]").ok()?;
                     } else {
                         write!(out, "{{{words}}}").ok()?;
@@ -332,6 +335,10 @@ mod tests {
         assert_eq!(
             one(r"^(\d+) reloads? ha(?:s|ve) happened$"),
             "N reload[s] ha{s|ve} happened"
+        );
+        assert_eq!(
+            one(r"^at (-?[0-9.]+)(?:, height (-?[0-9.]+))?$"),
+            "at <value>[, height <value>]"
         );
     }
 
