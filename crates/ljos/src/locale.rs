@@ -52,6 +52,10 @@ pub use ljos_i18n::ZoneNames;
 /// the zone's `offset` in seconds east of UTC), as a script's `Date`
 /// has them. [`DateTime::from_unix_ms`] makes them from an instant.
 pub use ljos_i18n::datetime::Fields as DateTime;
+/// A time zone by its IANA name, from the platform's zone database: its
+/// offset and abbreviation at an instant, and the instants a local time
+/// is ([`TimeZone::from_local`]).
+pub use ljos_i18n::{LocalTime, TimeZone};
 
 /// A locale's long or short format (`Locale.LongFormat`,
 /// `Locale.ShortFormat`).
