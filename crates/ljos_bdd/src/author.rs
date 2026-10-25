@@ -321,9 +321,19 @@ fn tool_answer(mut result: Value) -> Answer {
     }
 }
 
+/// `name` under `dir`, if it names something below it.
+fn below(dir: &Path, name: &str) -> Option<PathBuf> {
+    let inside = Path::new(name)
+        .components()
+        .all(|part| matches!(part, Component::Normal(_)));
+    (inside && !name.is_empty()).then(|| dir.join(name))
+}
+
 /// The project of one scenario and what was done in it.
 struct Rig {
     dir: tempfile::TempDir,
+    /// Beside the project, for a link of the project to lead out to.
+    outside: tempfile::TempDir,
     /// The staged text each file was last written from. A file is written
     /// again only when the scenario gives it anew, so that what a tool
     /// wrote stays.
@@ -339,8 +349,13 @@ impl Rig {
             .prefix("ljos-bdd-author-")
             .tempdir()
             .map_err(|e| format!("cannot make a directory for the project: {e}"))?;
+        let outside = tempfile::Builder::new()
+            .prefix("ljos-bdd-outside-")
+            .tempdir()
+            .map_err(|e| format!("cannot make a directory outside the project: {e}"))?;
         Ok(Rig {
             dir,
+            outside,
             written: BTreeMap::new(),
             server: None,
             seen: Seen::default(),
@@ -350,14 +365,14 @@ impl Rig {
 
     /// The place of a file of the project, which must be inside it.
     fn path(&self, name: &str) -> Result<PathBuf, String> {
-        let inside = Path::new(name)
-            .components()
-            .all(|part| matches!(part, Component::Normal(_)));
-        if inside && !name.is_empty() {
-            Ok(self.dir.path().join(name))
-        } else {
-            Err(format!("{name:?} is not a file of the scenario's project"))
-        }
+        below(self.dir.path(), name)
+            .ok_or_else(|| format!("{name:?} is not a file of the scenario's project"))
+    }
+
+    /// The place of a file beside the project, which must be inside that.
+    fn outside_path(&self, name: &str) -> Result<PathBuf, String> {
+        below(self.outside.path(), name)
+            .ok_or_else(|| format!("{name:?} is not a file beside the scenario's project"))
     }
 
     /// Writes the files the scenario gave since the last time.
@@ -634,6 +649,38 @@ impl Slot {
     /// The name is outside the project, or a file cannot be written.
     pub fn project_path(&mut self, files: &Files, name: &str) -> Result<PathBuf, String> {
         self.rig(files)?.path(name)
+    }
+
+    /// Writes a file outside the project, for a link of the project to
+    /// lead to.
+    ///
+    /// # Errors
+    /// The name climbs out, or the file cannot be written.
+    pub fn outside_file(&mut self, files: &Files, name: &str, text: &str) -> Result<(), String> {
+        let path = self.rig(files)?.outside_path(name)?;
+        let failed = |e: std::io::Error| format!("cannot write {name:?}: {e}");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(failed)?;
+        }
+        fs::write(&path, format!("{}\n", text_of(text))).map_err(failed)
+    }
+
+    /// Makes `link` in the project a symbolic link to `target` outside it.
+    ///
+    /// # Errors
+    /// A name climbs out, the link cannot be made, or the platform has no
+    /// symbolic links.
+    pub fn link_out(&mut self, files: &Files, link: &str, target: &str) -> Result<(), String> {
+        let rig = self.rig(files)?;
+        let (from, to) = (rig.outside_path(target)?, rig.path(link)?);
+        let failed = |e: std::io::Error| format!("cannot link {link:?} to {target:?}: {e}");
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(failed)?;
+        }
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(&from, &to).map_err(failed);
+        #[cfg(not(unix))]
+        return Err(format!("no symbolic link for {from:?} on this platform"));
     }
 
     /// Checks a value of a JSON file of the project.

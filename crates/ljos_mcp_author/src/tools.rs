@@ -79,7 +79,7 @@ struct ProjectInfo {
 }
 
 fn load_ledger(project: &Project) -> Result<Ledger, SurfaceError> {
-    Ledger::load(&project.ledger_path()).map_err(|e| match e {
+    Ledger::load(&project.ledger_file()?).map_err(|e| match e {
         crate::LedgerError::Read { .. } => SurfaceError::not_found(e.to_string()),
         other => SurfaceError::new(ljos_mcp_core::ErrorCode::Internal, other.to_string()),
     })
@@ -287,7 +287,11 @@ pub(crate) fn registry(
                 let wired = front.wired();
                 let project = project.clone();
                 typed(move |ctx: &CallCtx, _: NoArgs| {
-                    let ledger = match Ledger::load(&project.ledger_path()) {
+                    let loaded = project
+                        .ledger_file()
+                        .map_err(|e| e.message)
+                        .and_then(|path| Ledger::load(&path).map_err(|e| e.to_string()));
+                    let ledger = match loaded {
                         Ok(l) => LedgerSummary {
                             present: true,
                             rows: l.rows().len(),
@@ -300,7 +304,7 @@ pub(crate) fn registry(
                             rows: 0,
                             modules: Vec::new(),
                             by_status: Default::default(),
-                            error: Some(e.to_string()),
+                            error: Some(e),
                         },
                     };
                     Ok(ProjectInfo {

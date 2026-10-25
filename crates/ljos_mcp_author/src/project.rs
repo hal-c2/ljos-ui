@@ -36,6 +36,12 @@ impl Project {
         self.root.join("ledger").join("qtquick.toml")
     }
 
+    /// The ledger, resolved as a path an agent names is: a `ledger/` or a
+    /// `qtquick.toml` that links out of the project is not read.
+    pub fn ledger_file(&self) -> Result<PathBuf, SurfaceError> {
+        self.confine("ledger/qtquick.toml")
+    }
+
     pub fn docs_dir(&self) -> PathBuf {
         self.root.join("docs")
     }
@@ -49,8 +55,10 @@ impl Project {
     }
 
     /// Resolves `requested` (relative to the project, or absolute) to a
-    /// canonical path that must lie inside `base`. Canonicalising first means
-    /// `..` and symlinks cannot escape; a missing path is `not_found`.
+    /// canonical path that must lie inside `base` and inside the project.
+    /// Canonicalising first means `..` and symlinks cannot escape, and
+    /// checking the root too means `base` itself cannot be a link out; a
+    /// missing path is `not_found`.
     pub fn confine_within(&self, base: &Path, requested: &str) -> Result<PathBuf, SurfaceError> {
         let outside = || {
             SurfaceError::new(
@@ -86,7 +94,7 @@ impl Project {
         let base = base
             .canonicalize()
             .map_err(|e| SurfaceError::new(ErrorCode::Internal, e.to_string()))?;
-        if canonical.starts_with(&base) {
+        if canonical.starts_with(&self.root) && canonical.starts_with(&base) {
             Ok(canonical)
         } else {
             Err(outside())
@@ -155,5 +163,51 @@ mod tests {
             p.confine("link/x.qml").unwrap_err().code,
             ErrorCode::PathDenied
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_base_that_links_out_is_not_inside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("x.md"), "").unwrap();
+        for base in ["docs", "features"] {
+            std::os::unix::fs::symlink(outside.path(), dir.path().join(base)).unwrap();
+        }
+        let p = Project::open(dir.path()).unwrap();
+        for base in [p.docs_dir(), p.features_dir()] {
+            for requested in [".", "x.md"] {
+                assert_eq!(
+                    p.confine_within(&base, requested).unwrap_err().code,
+                    ErrorCode::PathDenied,
+                    "{}: {requested}",
+                    base.display()
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_ledger_that_links_out_is_not_read() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("qtquick.toml"), "").unwrap();
+
+        let file = tempfile::tempdir().unwrap();
+        std::fs::create_dir(file.path().join("ledger")).unwrap();
+        let link = file.path().join("ledger/qtquick.toml");
+        std::os::unix::fs::symlink(outside.path().join("qtquick.toml"), link).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("ledger")).unwrap();
+        for dir in [&file, &root] {
+            let p = Project::open(dir.path()).unwrap();
+            assert_eq!(p.ledger_file().unwrap_err().code, ErrorCode::PathDenied);
+        }
+
+        let inside = tempfile::tempdir().unwrap();
+        std::fs::create_dir(inside.path().join("ledger")).unwrap();
+        std::fs::write(inside.path().join("ledger/qtquick.toml"), "").unwrap();
+        let p = Project::open(inside.path()).unwrap();
+        assert_eq!(p.ledger_file().unwrap(), p.ledger_path());
     }
 }

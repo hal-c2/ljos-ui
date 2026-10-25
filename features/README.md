@@ -359,6 +359,8 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Given the authoring tools are connected` | `ljos mcp` is started on the scenario's files with no capability; give the files first |
 | `Given the authoring tools are connected with the capabilities "fs, run"` | the same, started with `--caps` |
 | `Given the authoring tools are connected with the capabilities "run" and the features runner "runner.sh"` | the same, started with `--features-runner` naming a file of the scenario |
+| `Given the file "X" outside the project:` + doc string | a file in a directory beside the project, which no path of the project names; give it before the link to it |
+| `Given the project's "docs" is a link to "X" outside the project` | a symbolic link in the project to a file or directory of the one beside it; give it before the agent connects |
 | `Given the agent has called the tool "name" with:` + doc string | a call whose answer a later step builds on |
 | `When the agent asks for the prompt "name"` / `When the agent asks for the prompt "name" with:` + doc string | an MCP prompt, with the arguments in the doc string (labelled `json`) |
 | `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` (or `ljos-fuzz`, the differential fuzzer) |

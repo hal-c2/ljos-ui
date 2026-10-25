@@ -586,7 +586,11 @@ fn corpus(project: &Project) -> Vec<Section> {
             &text,
         ));
     }
-    if let Ok(ledger) = Ledger::load(&project.ledger_path()) {
+    if let Some(ledger) = project
+        .ledger_file()
+        .ok()
+        .and_then(|path| Ledger::load(&path).ok())
+    {
         for row in ledger.rows() {
             let Some(reason) = row.reason.as_deref().filter(|r| !r.trim().is_empty()) else {
                 continue;

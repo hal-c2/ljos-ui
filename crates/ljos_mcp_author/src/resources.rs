@@ -241,8 +241,8 @@ fn ledger_rows(project: &Project, rest: &str) -> Result<String, SurfaceError> {
                 "expected ljos://ledger/{module}/{type}, as in ljos://ledger/QtQuick/Item",
             )
         })?;
-    let ledger =
-        Ledger::load(&project.ledger_path()).map_err(|e| SurfaceError::not_found(e.to_string()))?;
+    let ledger = Ledger::load(&project.ledger_file()?)
+        .map_err(|e| SurfaceError::not_found(e.to_string()))?;
     let rows: Vec<&LedgerRow> = ledger
         .rows()
         .iter()
@@ -273,7 +273,7 @@ pub(crate) fn read(
         }])
     };
     if uri == "ljos://ledger" {
-        let path = project.ledger_path();
+        let path = project.ledger_file()?;
         if !path.is_file() {
             return Err(SurfaceError::not_found(
                 "ledger/qtquick.toml does not exist",

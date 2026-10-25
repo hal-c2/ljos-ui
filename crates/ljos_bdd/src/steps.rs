@@ -2987,6 +2987,19 @@ fn author_connected_with_runner(w: &mut LjosWorld, caps: String, runner: String)
     author.connect(files, &caps, Some(&runner))
 }
 
+#[given(regex = r#"^the file "([^"]+)" outside the project:$"#)]
+fn author_outside_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    let (author, files) = w.author();
+    author.outside_file(files, &name, &text)
+}
+
+#[given(regex = r#"^the project's "([^"]+)" is a link to "([^"]+)" outside the project$"#)]
+fn author_link_out(w: &mut LjosWorld, link: String, target: String) -> StepResult {
+    let (author, files) = w.author();
+    author.link_out(files, &link, &target)
+}
+
 #[when(regex = r#"^the agent asks for the prompt "([^"]+)"$"#)]
 fn agent_asks_prompt(w: &mut LjosWorld, name: String) -> StepResult {
     let (author, files) = w.author();
