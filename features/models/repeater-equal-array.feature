@@ -29,7 +29,6 @@ Feature: A Repeater given an array equal to the one it shows
       }
       """
 
-  @backlog
   Scenario: An equal array keeps the delegates
     When the method "giveSame" of "root" is called
     Then the property "log" of "root" is "+0;"
