@@ -4880,3 +4880,109 @@ DECISION: the dev profile is left as it is. The build would cost little (about 1
 measured got faster.
 
 The theme radio in debug went from 31–40 ms to 6–9 ms with the palette fix above.
+
+### B21 (H2): per-frame cost while scrolling (2026-10-25)
+
+B20's measures again, on the same machine and in the same way: off-screen in the cua sandbox
+on the GPU, against `qml6` 6.11.2 with the Basic style. The start is B20's end; the end is
+this batch's two commits on 219fedfa. Both are profiling builds (release, line tables), run
+back to back.
+
+**First, which frames cost.** B20 guessed that per-frame work, not making delegates, set the
+wheel run's count. For listview that is wrong. The bench's own animation moves `contentY`
+about 400 px a frame under callgrind, so each frame makes and drops about 10 delegates. Its
+4.0 M instructions a frame (1008 frames, 9862 delegates) are about 396 k per delegate, and
+an in-buffer frame is 0.5 M. A scroll that makes no delegate was measured on its own with
+`lvstill.qml`: a ListView of 30 rows with `cacheBuffer: 4000`, whose `contentY` runs 0 to 600
+and back every 2 s, so all its delegates are made once and kept.
+
+| An in-buffer scroll frame (main thread, callgrind) | Start | View pass kept | End |
+|---|---:|---:|---:|
+| Whole frame | 498 k | 408 k | 395 k |
+| The view's layout effect | 146 k | 26 k | 26 k |
+| Finding what changed (`LastPicture::change`), per frame | — | 42 k | 21.6 k |
+
+Where an end frame goes:
+- Paint, 156 k. Of that, 113 k is the driver's `eglSwapBuffers` (mesa); on a device a scroll
+  is drawn whole for 30 frames (`WHOLE_RUN`).
+- egui's pass, 149 k:
+  - the scene's frame, 76 k: the animation tick and its effects 26 k, `compose` 24 k,
+    `apply_content` 9 k;
+  - b0 `encode`, 44 k: a translated list is a new segment key, so its world segments and
+    glyph meshes are built again;
+  - egui itself, about 17 k.
+- `prepare` (fill rectangles), 22 k.
+- `LastPicture::change`, 21.6 k.
+- Tessellation, 6.8 k.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Start | End | qml6 (same run) |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 25.65 | 17.51 | 13.32 |
+| listview | 205.49 | 206.13 | 99.87 |
+| listview with `reuseItems: true` | 85.06 | 84.79 | 59.08 |
+
+The in-buffer scroll fell by a third. listview and `reuseItems` did not move: every frame
+of theirs brings a row in, and that frame runs the full pass.
+
+| `ljos bench --gesture scroll`, CPU while driven (% of one core) | Start | End | qml6 (with the end) |
+|---|---:|---:|---:|
+| listview | 7.28, 10.6, 9.42 | 9.51, 5.49, 6.34 | 5.40 |
+| rssnews | 3.22, 7.81, 12.3 | 3.06, 6.54, 11.3 | 4.91 |
+| thermostat | 3.86, 2.68, 2.45 | 2.51, 2.25, 3.53 | 3.49 |
+
+Three runs each, with the load at 3 to 57 while they ran: other workers were building on
+the same machine. These numbers do not separate the two binaries; the instruction counts
+above do.
+
+The commits:
+
+- b7b94025: a ListView scrolled with the same rows on both sides of its window lays none
+  out. The last pass records what it laid out with: geometry, count, the delegate trigger,
+  reuse, the current item's span. A new effect follows only the view's position. When the
+  position moves and the rows the pass kept are still exactly those the window needs (the
+  first begins at or before it, the last ends at or after it, and neither neighbour does),
+  the effect only culls, keeps the anchor row, moves the current item's span and updates
+  `currentSection`. Anything else runs the full pass as before. GridView still always runs
+  it. `a_row_appended_and_shown_at_the_end_is_laid_out_once_each_way` now counts three
+  passes, not four: going to the end no longer lays the rows out a second time.
+- 2e53a1ed: the present layer tries up to three clips and distances for a scroll. Each one
+  after a fit now gets the best one's areas as its budget, so it stops as soon as it cannot
+  win. The scroll picked is the same.
+
+**listview is still 2.1× qml6's instructions per second, and 1.4× with `reuseItems`;
+the in-buffer scroll is 1.3×.**
+
+These are left:
+
+- A new delegate is still about 396 k. The parts are:
+  - Text measured at completion, 64 k: parley's builder 28 k, `ranged_builder` 4.8 k, line
+    widths 6.8 k, extracting runs 5.7 k.
+  - Adoption, 71 k: geometry 13 k on the Rectangle, anchors 5.5 k on the unanchored
+    Rectangle, inherit 4.2 k, a11y 2.3 k, place 2.2 k, structure 2 k, and the same again
+    for the Text.
+  - Completion and binding evaluation, the rest.
+- Anchors on an item anchored by nothing: 5.5 k. The nine tracked reads (3.7 k) are what
+  lets a later `anchors.*` write, a `PropertyChanges` or an `AnchorChanges` reach the item.
+  Skipping them needs a hook on every path that can set a line.
+- Geometry's first run (8.2 k an item): 6 k of it is the first evaluation of the item's
+  own `width`/`height` bindings (`ListView.view.width`), JS work that happens once either way.
+- Looking up each field's native part once per multi-property read (`read_values`,
+  `read_numbers`) was tried. It took 54 M off `read_access` but nothing off a delegate
+  (396 k before, 400 k after), so it was not kept.
+- A text culled for more than 30 frames loses its layout (`KEEP_FRAMES`) and its glyph runs
+  (ARCHITECTURE §7.5). Coming back into view lays it out again: 151 times in 950 frames of
+  `lvstill`, about 8 k a frame on average.
+- b0 `encode` rebuilds a translated list's world segments, 44 k a frame. Moving segments by
+  the translation instead is the next per-frame cut.
+
+DECISIONs:
+
+- `view_layout_passes` counts full passes only; a scroll that keeps the rows is not one.
+- No features/ scenario: the fast path changes no order or timing QML can see. Position,
+  `indexAt`, culling, `currentSection` and the current item come out as the full pass gives
+  them. The Rust test `a_scroll_inside_the_cache_buffer_lays_no_rows_out` pins the pass
+  count and positions.
+- The fast path is ListView only. GridView keeps the full pass.
+- Off-screen text keeps dropping its glyph runs (§7.5).
+- The GL painter's whole-frame run during a scroll is kept. A swap with damage costs the
+  driver more per frame (291 k against 119 k) than a whole one.
