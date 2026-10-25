@@ -9,7 +9,6 @@ Feature: A member of a read-only value-type property
   A script that writes a member of a `readonly` value-type property is not thrown an error, and
   the property keeps its value.
 
-  @backlog
   Scenario: Writing a member of a read-only size is ignored
     Given the QML:
       """qml

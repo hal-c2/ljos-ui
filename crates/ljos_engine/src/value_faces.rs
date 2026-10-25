@@ -578,7 +578,7 @@ pub(crate) const FACES: &str = r##"
       get(_, member) { return now[member]; },
       set(_, member, v) {
         const next = now.__ljos_with(member, v);
-        if (next !== undefined) { put(next); now = next; }
+        if (next !== undefined && put(next) !== false) now = next;
         return true;
       },
     });
@@ -586,7 +586,15 @@ pub(crate) const FACES: &str = r##"
   const isValue = (v) => v !== null && typeof v === "object" && v.__ljos_with !== undefined;
   g.__ljos_vt = function (object, name) {
     const now = object[name];
-    return isValue(now) ? standIn(now, (next) => { object[name] = next; }) : now;
+    // A member of a read-only property is not written, and nothing is thrown.
+    return isValue(now) ? standIn(now, (next) => {
+      try {
+        object[name] = next;
+      } catch (e) {
+        if (e instanceof TypeError && e.message.startsWith("Cannot assign to read-only property")) return false;
+        throw e;
+      }
+    }) : now;
   };
   // The same for a variable, which only its own script can assign to.
   g.__ljos_vl = function (now, put) {
