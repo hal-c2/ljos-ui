@@ -129,21 +129,23 @@ impl Decoder {
     /// Takes the next bytes of the stream and gives the pictures they
     /// finish. A JPEG is decoded once its last byte is there, an H.264
     /// picture once the next one begins (or, from a [`Decoder::live`]
-    /// one, at the end of the push).
+    /// one, at the end of the push). Completed pictures precede a later
+    /// budget failure in the same input: that failure is reported by the
+    /// next push, poll or finish, and permanently ends the stream.
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<VideoFrame>, DecodeError> {
         let mut units = self
             .splitter
             .push(bytes)
             .map_err(|e| DecodeError::Codec(e.into()))?;
-        if self.live {
-            units.extend(
-                self.splitter
-                    .finish()
-                    .map_err(|e| DecodeError::Codec(e.into()))?,
-            );
+        if self.live && !self.splitter.has_failed() {
+            match self.splitter.finish() {
+                Ok(last) => units.extend(last),
+                Err(_) if !units.is_empty() => {}
+                Err(e) => return Err(DecodeError::Codec(e.into())),
+            }
         }
         let mut out = self.decode_units(units)?;
-        if self.in_order && self.held {
+        if (self.in_order || self.splitter.has_failed()) && self.held {
             out.extend(self.flush());
         }
         Ok(out)
@@ -152,6 +154,11 @@ impl Decoder {
     /// The pictures a decoder working on threads of its own has finished
     /// since it was last called; see [`Decoder::finishes_later`].
     pub fn poll(&mut self) -> Result<Vec<VideoFrame>, DecodeError> {
+        if self.splitter.has_failed() {
+            return Err(DecodeError::Codec(
+                "media unit exceeds byte or NAL budget".into(),
+            ));
+        }
         self.decode(&[])
     }
 
@@ -289,6 +296,35 @@ mod tests {
     use super::*;
 
     const H264: &[u8] = include_bytes!("../../../features/multimedia/media/clip.h264");
+
+    #[test]
+    fn completed_frames_precede_overflow_including_live_delivery() {
+        let clip = include_bytes!("../../../features/multimedia/media/clip.mjpeg");
+        let mut splitter = Splitter::new(Cut::Jpeg);
+        let picture = splitter.push(clip).unwrap().remove(0);
+        let mut bytes = picture.clone();
+        bytes.extend([0xff, 0xd8, 0xff, 0xda, 0, 2]);
+        bytes.resize(bytes.len() + crate::container_bytes::LIMIT, 1);
+        for live in [false, true] {
+            for split in [0, picture.len()] {
+                let mut d = if live {
+                    Decoder::live(&StreamFormat::Mjpeg)
+                } else {
+                    Decoder::new(&StreamFormat::Mjpeg)
+                }
+                .unwrap();
+                let mut frames = d.push(&bytes[..split]).unwrap();
+                match d.push(&bytes[split..]) {
+                    Ok(next) => frames.extend(next),
+                    Err(_) => assert_eq!(split, picture.len()),
+                }
+                assert_eq!(frames.len(), 1);
+                assert!(d.finish().is_err());
+                assert!(d.poll().is_err());
+                assert!(d.push(&picture).is_err());
+            }
+        }
+    }
 
     #[test]
     fn an_avcc_record_says_whether_its_stream_reorders() {
