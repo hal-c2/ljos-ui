@@ -484,8 +484,10 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
         warn(e, "rootIndex", made);
     }
 
-    // A new model, delegate or root: every cell is made again.
+    // A new model, delegate or root: every cell is made again. A model
+    // equal to the one shown is not new (qml6).
     let source = st.clone();
+    let seen = ljos_engine::ModelSeen::default();
     e.effect_in(me, move |e| {
         let model = e.get(me, TableView::MODEL).unwrap_or_default();
         let delegate = e.get(me, TableView::DELEGATE).ok().flatten();
@@ -495,8 +497,12 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
             Value::Undefined
         };
         // A model made in completion, after the view, is read when made.
-        e.track_model(&model);
+        let generation = e.track_model(&model);
         e.untrack(|| {
+            let rest = models::rest(delegate, generation, [root.clone()]);
+            if !seen.fresh(e, &model, rest) {
+                return;
+            }
             let object = e.plain(&model).as_object();
             let list =
                 models::model_of(e, &model).unwrap_or_else(|| e.model_from_value(&model, Some(me)));

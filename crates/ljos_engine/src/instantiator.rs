@@ -114,13 +114,24 @@ impl Instantiator {
         let me = cx.this;
         let delegates = Delegates::new(me, Rc::new(Host(me)), RemovalOrder::FirstToLast);
         cx.with_mut::<Instantiator, _>(|i| i.delegates = Some(delegates.clone()))?;
+        // A model equal to the one shown is not new (qml6).
+        let seen = crate::ModelSeen::default();
         cx.engine.effect_in(me, move |e| {
             let model = e.get(me, Instantiator::MODEL).unwrap_or_default();
             let delegate = e.get(me, Instantiator::DELEGATE).ok().flatten();
             let active = e.get(me, Instantiator::ACTIVE).unwrap_or(false);
             let asynchronous = e.get(me, Instantiator::ASYNCHRONOUS).unwrap_or(false);
-            e.track_model(&model);
+            let generation = e.track_model(&model);
             e.untrack(|| {
+                let rest = vec![
+                    delegate.map_or(Value::Null, Value::Object),
+                    Value::Real(generation as f64),
+                    Value::Bool(active),
+                    Value::Bool(asynchronous),
+                ];
+                if !seen.fresh(e, &model, rest) {
+                    return;
+                }
                 delegates.set_asynchronous(asynchronous);
                 let model = active.then(|| e.model_from_value(&model, Some(me)));
                 delegates.set_source(e, model, delegate);

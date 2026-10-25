@@ -472,11 +472,15 @@ fn start(cx: &Cx) -> Result<(), EngineError> {
     // A new model or delegate: every row is made again, and a model that
     // replaces one starts from its first row (qml6).
     let source = st.clone();
+    let seen = ljos_engine::ModelSeen::default();
     e.effect_in(me, move |e| {
         let model = e.get(me, PathView::MODEL).unwrap_or_default();
         let delegate = e.get(me, PathView::DELEGATE).ok().flatten();
-        e.track_model(&model);
+        let generation = e.track_model(&model);
         e.untrack(|| {
+            if !seen.fresh(e, &model, models::rest(delegate, generation, [])) {
+                return;
+            }
             let model =
                 models::model_of(e, &model).unwrap_or_else(|| e.model_from_value(&model, Some(me)));
             layout::release_all(e, me, &source);

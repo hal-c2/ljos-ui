@@ -609,13 +609,18 @@ fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
     let delegates = ViewDelegates::new(me, Rc::new(changes::Host(me)));
     *st.delegates.borrow_mut() = Some(delegates.clone());
 
-    // A new model or delegate: every row is made again.
+    // A new model or delegate: every row is made again. A model equal
+    // to the one shown is not new (qml6).
     let source = st.clone();
+    let seen = ljos_engine::ModelSeen::default();
     e.effect_in(me, move |e| {
         let model = e.get(me, ItemView::MODEL).unwrap_or_default();
         let delegate = e.get(me, ItemView::DELEGATE).ok().flatten();
-        e.track_model(&model);
+        let generation = e.track_model(&model);
         e.untrack(|| {
+            if !seen.fresh(e, &model, models::rest(delegate, generation, [])) {
+                return;
+            }
             let model =
                 models::model_of(e, &model).unwrap_or_else(|| e.model_from_value(&model, Some(me)));
             changes::forget(e, me, &source);

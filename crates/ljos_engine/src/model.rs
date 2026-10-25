@@ -950,6 +950,59 @@ impl Engine {
         }
     }
 
+    /// `v` as a view keeps it to ask [`Engine::same_model`] of the next
+    /// one: an array a script holds as it is now, as qml6 keeps a copy
+    /// (an array pushed to and given again is the model it was).
+    pub fn model_snapshot(&self, v: &Value) -> Value {
+        self.plain(v)
+    }
+
+    /// Whether `new` is the model `old` (a [`Engine::model_snapshot`])
+    /// is, so that a view given it keeps its delegates, as qml6's views
+    /// do: arrays are the same when their items are, objects when their
+    /// fields are (in any order), and items compare loosely (`1` is
+    /// `true` and `"1"`, not `"1.0"`; `NaN` is nothing, `null` is not
+    /// `undefined`).
+    pub fn same_model(&self, old: &Value, new: &Value) -> bool {
+        self.same_model_at(old, &self.plain(new), 0)
+    }
+
+    fn same_model_at(&self, a: &Value, b: &Value, depth: u32) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        let item = |x: &Value, y: &Value| self.same_model_at(x, &self.plain(y), depth + 1);
+        match (a, b) {
+            (Value::Js(x), Value::Js(y)) if x == y => true,
+            (Value::List(x), Value::List(y)) => {
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(x, y)| item(&self.plain(x), y))
+            }
+            (Value::Js(_) | Value::Map(_), Value::Js(_) | Value::Map(_)) => {
+                let (Some(x), Some(y)) = (self.fields(a), self.fields(b)) else {
+                    return false;
+                };
+                x.len() == y.len()
+                    && x.iter().all(|(k, v)| {
+                        y.iter()
+                            .find(|(l, _)| l == k)
+                            .is_some_and(|(_, w)| item(&self.plain(v), w))
+                    })
+            }
+            _ => loosely_equal(a, b),
+        }
+    }
+
+    /// The fields of a record or of a plain JS object; `None` for a
+    /// function, which is only itself.
+    fn fields(&self, v: &Value) -> Option<Vec<(String, Value)>> {
+        match v {
+            Value::Map(m) => Some(m.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()),
+            Value::Js(_) if self.is_callable(v) => None,
+            Value::Js(_) => Some(self.js_object_entries(v)),
+            _ => None,
+        }
+    }
+
     /// Makes `obj` a model: `model: obj` then shows `model`'s rows rather
     /// than `obj` as one row. For model types written in Rust.
     pub fn set_object_model(
@@ -1325,6 +1378,64 @@ impl Engine {
 
 /// A write to a row object from QML or JS (`model.cost = 5`): it goes to
 /// the model, whose change notification brings the value back.
+/// What a view last made its delegates from, so that a model equal to it
+/// ([`Engine::same_model`]) keeps them, as qml6's `setModel` returns
+/// early on one.
+#[derive(Debug, Default)]
+pub struct ModelSeen(RefCell<Option<(Value, Vec<Value>)>>);
+
+impl ModelSeen {
+    /// Whether the view is to make its delegates again for `model` with
+    /// `rest` (its delegate, what [`Engine::track_model`] gave, anything
+    /// else that remakes them): not when `model` is the model it has and
+    /// `rest` is unchanged. Call it untracked.
+    pub fn fresh(&self, e: &Engine, model: &Value, rest: Vec<Value>) -> bool {
+        // Cloned out: the comparison runs scripts.
+        let seen = self.0.borrow().clone();
+        if let Some((old, was)) = seen
+            && was == rest
+            && e.same_model(&old, model)
+        {
+            return false;
+        }
+        let now = e.model_snapshot(model);
+        *self.0.borrow_mut() = Some((now, rest));
+        true
+    }
+}
+
+/// Two items of models as qml6 compares them: numbers by value (`NaN` is
+/// nothing), and a number, a bool or a string by what the other reads as
+/// (a string read as a whole number when the number is one).
+fn loosely_equal(a: &Value, b: &Value) -> bool {
+    fn number(v: &Value) -> Option<f64> {
+        match v {
+            Value::Bool(b) => Some(f64::from(u8::from(*b))),
+            _ => v.as_number(),
+        }
+    }
+    fn reads_as(s: &str, n: f64) -> bool {
+        let s = s.trim();
+        if n.fract() == 0.0 && n.abs() <= f64::from(i32::MAX) {
+            s.parse::<i64>().is_ok_and(|i| i as f64 == n)
+        } else {
+            s.parse::<f64>().is_ok_and(|f| f == n)
+        }
+    }
+    match (a, b) {
+        (Value::String(s), Value::Bool(t)) | (Value::Bool(t), Value::String(s)) => {
+            s.as_str() == if *t { "true" } else { "false" }
+        }
+        (Value::String(s), n) | (n, Value::String(s)) if n.as_number().is_some() => {
+            number(n).is_some_and(|n| reads_as(s.as_str(), n))
+        }
+        _ => match (number(a), number(b)) {
+            (Some(x), Some(y)) => x == y,
+            _ => a.change_equals(b),
+        },
+    }
+}
+
 pub(crate) fn row_hook(model: Rc<dyn ItemModel>, shape: Rc<RowShape>, data: ObjectId) -> WriteHook {
     Rc::new(move |e: &Engine, prop: PropIndex, v: &Value| {
         if Some(prop) == shape.index || Some(prop) == shape.model {

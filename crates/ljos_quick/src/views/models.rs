@@ -630,6 +630,21 @@ impl DelegateModel {
     }
 }
 
+/// What remakes a view's delegates besides its model, for
+/// [`ljos_engine::ModelSeen::fresh`].
+pub(crate) fn rest<const N: usize>(
+    delegate: Option<ObjectId>,
+    generation: u64,
+    more: [Value; N],
+) -> Vec<Value> {
+    let mut rest = vec![
+        delegate.map_or(Value::Null, Value::Object),
+        Value::Real(generation as f64),
+    ];
+    rest.extend(more);
+    rest
+}
+
 /// The model a view shows when `model:` holds one of the two types here.
 /// A view asks before it asks the engine: the answer does not depend on
 /// which of the two objects was completed first.

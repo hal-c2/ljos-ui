@@ -149,7 +149,7 @@ pub use meta::{
 };
 pub use model::{DelegateGone, DelegateMade, DelegateRows, DelegateSource, ObjectRows};
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};
-pub use model::{ModelSignals, QmlListModel, list_model};
+pub use model::{ModelSeen, ModelSignals, QmlListModel, list_model};
 pub use number::{number_to_string, string_to_number, to_int32};
 pub use number_slot::NumberSlot;
 pub use object::{

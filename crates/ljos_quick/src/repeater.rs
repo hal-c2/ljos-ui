@@ -231,21 +231,25 @@ impl Repeater {
         let me = cx.this;
         let delegates = Delegates::new(me, Rc::new(Host(me)), RemovalOrder::LastToFirst);
         cx.with_mut::<Repeater, _>(|r| r.delegates = Some(delegates.clone()))?;
-        let seen = std::cell::RefCell::new(None);
+        let seen = ljos_engine::ModelSeen::default();
+        let parent = std::cell::Cell::new(None);
         cx.engine.effect_in(me, move |e| {
             let model = e.get(me, Repeater::MODEL).unwrap_or_default();
             let delegate = e.get(me, Repeater::DELEGATE).ok().flatten();
             // Tracked: the items live in the parent.
-            let _ = e.visual_parent(me);
-            e.track_model(&model);
+            let moved = parent.replace(e.visual_parent(me)) != parent.get();
+            let generation = e.track_model(&model);
             let carried = e
                 .with_mut::<Repeater, _>(me, |r| std::mem::take(&mut r.carried))
                 .unwrap_or(false);
-            let now = (model.clone(), delegate);
-            if carried && seen.borrow().as_ref() == Some(&now) {
+            let rest = vec![
+                delegate.map_or(Value::Null, Value::Object),
+                Value::Real(generation as f64),
+            ];
+            let fresh = e.untrack(|| seen.fresh(e, &model, rest));
+            if !fresh && (carried || !moved) {
                 return;
             }
-            *seen.borrow_mut() = Some(now);
             e.untrack(|| {
                 let model = e.model_from_value(&model, Some(me));
                 delegates.set_source(e, Some(model), delegate);
