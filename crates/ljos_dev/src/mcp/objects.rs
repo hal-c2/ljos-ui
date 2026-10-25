@@ -71,12 +71,23 @@ pub struct ObjectsArgs {
     /// The most rows or instances to read (default 50, at most 500).
     #[serde(default)]
     pub limit: Option<usize>,
-    /// Follow the model read: each change moves `app_watch`'s `models`
-    /// count while a watch with this `holder` keeps coming back. One
-    /// model per holder.
+    /// Mark this point: the objects alive now. A later `since_mark` lists
+    /// what was made after it and is still alive.
+    #[serde(default)]
+    pub mark: bool,
+    /// List what was made since the mark and is still alive, by where
+    /// each is declared, with the bytes held. The script collector runs
+    /// first.
+    #[serde(default)]
+    pub since_mark: bool,
+    /// With `model`: follow the model read, each change moving
+    /// `app_watch`'s `models` count while a watch with this `holder` keeps
+    /// coming back. With `mark` and `since_mark`: the client's own mark,
+    /// kept while its watch does.
     #[serde(default)]
     pub holder: Option<String>,
-    /// Sent by the surface when a holder lapses: stop following its model.
+    /// Sent by the surface when a holder lapses: stop following its model
+    /// and forget its mark.
     #[serde(skip)]
     #[schemars(skip)]
     pub release: bool,

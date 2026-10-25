@@ -659,7 +659,7 @@
         },
         "holder": {
           "default": null,
-          "description": "Follow the model read: each change moves `app_watch`'s `models`\ncount while a watch with this `holder` keeps coming back. One\nmodel per holder.",
+          "description": "With `model`: follow the model read, each change moving\n`app_watch`'s `models` count while a watch with this `holder` keeps\ncoming back. With `mark` and `since_mark`: the client's own mark,\nkept while its watch does.",
           "type": [
             "string",
             "null"
@@ -674,6 +674,11 @@
             "integer",
             "null"
           ]
+        },
+        "mark": {
+          "default": false,
+          "description": "Mark this point: the objects alive now. A later `since_mark` lists\nwhat was made after it and is still alive.",
+          "type": "boolean"
         },
         "max": {
           "default": null,
@@ -715,6 +720,11 @@
             "string",
             "null"
           ]
+        },
+        "since_mark": {
+          "default": false,
+          "description": "List what was made since the mark and is still alive, by where\neach is declared, with the bytes held. The script collector runs\nfirst.",
+          "type": "boolean"
         }
       },
       "title": "ObjectsArgs",

@@ -401,7 +401,7 @@ impl McpSurface for InspectorSurface {
             let holds = match &kind {
                 Kind::Trace(a) if a.target.is_some() && !a.stop => a.holder.clone(),
                 Kind::Frames(a) if a.record == Some(true) => a.holder.clone(),
-                Kind::Objects(a) if a.model.is_some() => a.holder.clone(),
+                Kind::Objects(a) if a.model.is_some() || a.mark => a.holder.clone(),
                 _ => None,
             };
             let answer = self.ask(kind, per_copy, ctx).await;

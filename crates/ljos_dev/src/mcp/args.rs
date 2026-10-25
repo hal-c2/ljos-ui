@@ -1102,19 +1102,22 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                 a.model.is_some(),
                 a.components,
                 a.component.is_some(),
+                a.mark,
+                a.since_mark,
             ];
             if modes.iter().filter(|m| **m).count() > 1 {
                 return Err(bad(
                     tool,
-                    "give one of `models`, `model`, `components` and `component`",
+                    "give one of `models`, `model`, `components`, `component`, `mark` and \
+                     `since_mark`",
                 ));
             }
             let reads = modes.contains(&true);
             if reads && (a.root.is_some() || a.depth.is_some() || a.cursor.is_some()) {
                 return Err(bad(
                     tool,
-                    "`models`, `model`, `components` and `component` do not read the tree: give \
-                     them without `root`, `depth` or `cursor`",
+                    "`models`, `model`, `components`, `component`, `mark` and `since_mark` do \
+                     not read the tree: give them without `root`, `depth` or `cursor`",
                 ));
             }
             let paged = a.model.is_some() || a.component.is_some();
@@ -1124,8 +1127,11 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                     "`offset` and `limit` go with `model` or `component`",
                 ));
             }
-            if a.model.is_none() && a.holder.is_some() {
-                return Err(bad(tool, "`holder` goes with `model`"));
+            if !(a.model.is_some() || a.mark || a.since_mark) && a.holder.is_some() {
+                return Err(bad(
+                    tool,
+                    "`holder` goes with `model`, `mark` or `since_mark`",
+                ));
             }
             let most = super::models::MAX_LIMIT;
             match a.limit {

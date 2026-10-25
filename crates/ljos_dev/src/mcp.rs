@@ -47,6 +47,7 @@ mod holders;
 mod hot;
 mod logs;
 mod mappings;
+mod marks;
 mod memory;
 mod models;
 mod objects;
@@ -324,6 +325,7 @@ pub struct Inspector {
     /// The model each client follows (`app_objects`' `model` with a
     /// `holder`).
     models: models::Follows,
+    marks: marks::Marks,
     /// The mailbox and timer counters move while an inspector is served
     /// (`ljos_runtime::observe`).
     _observing: ljos_runtime::ObserveGuard,
@@ -407,6 +409,7 @@ impl Inspector {
             growth: growth::Growth::default(),
             edits: edits::Edits::default(),
             models: models::Follows::new(changes_for_models),
+            marks: marks::Marks::default(),
             _observing: ljos_runtime::observe::enable(),
         };
         (inspector, surface)
@@ -1054,8 +1057,15 @@ impl Inspector {
             (Kind::Objects(args), _) if args.release => {
                 if let Some(holder) = &args.holder {
                     self.models.end(holder);
+                    self.marks.end(holder);
                 }
                 Ok(ToolReply::from(json!({})))
+            }
+            (Kind::Objects(args), _) if args.mark => {
+                self.marks.mark(engine, args.holder.as_deref())
+            }
+            (Kind::Objects(args), _) if args.since_mark => {
+                self.marks.since(engine, args.holder.as_deref(), args.max)
             }
             (Kind::Objects(args), _) if args.models => Ok(models::list(engine, args.max, per_copy)),
             (Kind::Objects(args), _) if args.components => Ok(components::list(engine, per_copy)),
