@@ -734,8 +734,8 @@ struct Desktop<M> {
     loading: bool,
     /// When what the scripts left behind is next looked at.
     collect: AfterRest,
-    /// The thread that follows drags from other applications, where the
-    /// shell does that itself.
+    /// What follows drags from other applications, where the shell does
+    /// that itself.
     drags: Option<wayland_drag::Drags>,
     /// The window a drag from another application is over, by its key.
     drag_over: Option<u64>,
@@ -2404,6 +2404,9 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
                 {
                     let dirty = self.dirty.get();
                     self.note_wake(|w| w.dirty = dirty);
+                }
+                if let Some(drags) = self.drags.as_mut() {
+                    drags.dispatch();
                 }
                 self.settle(host);
                 #[cfg(feature = "mcp")]

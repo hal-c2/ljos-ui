@@ -1,11 +1,16 @@
 //! Drags from other applications on Wayland, which winit 0.30 does not
 //! follow at all: a `wl_data_device` of the shell's own, on the connection
-//! winit opened, read on a thread that sleeps until the compositor speaks.
+//! winit opened.
 //!
-//! The thread reads what the drag carries when it comes in (a `DropArea`
-//! decides in `entered` from its `urls`, `text` and `formats`) and posts
-//! each step into the loop, which tells the view of the window the drag is
-//! over and gives the compositor the view's answer.
+//! winit reads the connection, and the device's events wait in a queue of
+//! their own until the loop is about to sleep ([`Drags::dispatch`]). A
+//! thread that read the connection too would wake for every event any
+//! window gets. A thread still reads what a drag carries when it comes in
+//! (a `DropArea` decides in `entered` from its `urls`, `text` and
+//! `formats`), as the source may be this application, which writes it from
+//! the loop. It posts each step into the loop in order, which tells the
+//! view of the window the drag is over and gives the compositor the view's
+//! answer.
 
 use std::sync::Arc;
 
@@ -51,10 +56,16 @@ pub(crate) fn is_wayland(display: &OwnedDisplayHandle) -> bool {
     imp::is_wayland(display)
 }
 
-/// The thread that follows drags; [`Drags::stop`] ends it.
+/// What follows drags; [`Drags::stop`] ends it.
 pub(crate) struct Drags(imp::Thread);
 
 impl Drags {
+    /// Handles what the compositor said of drags since the last time; the
+    /// loop calls it each time before it sleeps.
+    pub(crate) fn dispatch(&mut self) {
+        self.0.dispatch();
+    }
+
     pub(crate) fn stop(self) {
         self.0.stop();
     }
@@ -70,7 +81,7 @@ impl std::fmt::Debug for Drags {
 mod imp {
     use std::io::Read;
     use std::os::fd::{AsFd, AsRawFd};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::{Sender, channel};
     use std::sync::{Arc, Mutex};
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
@@ -83,13 +94,14 @@ mod imp {
     use ljos_platform::DragData;
     use wayland_client::backend::Backend;
     use wayland_client::globals::{GlobalListContents, registry_queue_init};
-    use wayland_client::protocol::wl_callback::{self, WlCallback};
     use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
     use wayland_client::protocol::wl_data_device_manager::{DndAction, WlDataDeviceManager};
     use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
     use wayland_client::protocol::wl_registry::{self, WlRegistry};
     use wayland_client::protocol::wl_seat::{self, WlSeat};
-    use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
+    use wayland_client::{
+        Connection, Dispatch, EventQueue, Proxy, QueueHandle, event_created_child,
+    };
 
     use super::DragStep;
 
@@ -146,23 +158,38 @@ mod imp {
     }
 
     pub(crate) struct Thread {
-        stop: Arc<AtomicBool>,
-        conn: Connection,
-        qh: QueueHandle<State>,
-        thread: Option<JoinHandle<()>>,
+        queue: EventQueue<State>,
+        state: State,
+        /// Kept alive with the queue: dropping them sends nothing, but
+        /// their events need them.
+        _devices: Vec<WlDataDevice>,
+        _manager: WlDataDeviceManager,
+        thread: JoinHandle<()>,
     }
 
     impl Thread {
-        pub(crate) fn stop(mut self) {
-            self.stop.store(true, Ordering::Release);
-            // The answer to a sync wakes the thread, which then sees `stop`.
-            self.conn.display().sync(&self.qh, ());
-            if self.conn.flush().is_ok()
-                && let Some(thread) = self.thread.take()
-            {
-                let _ = thread.join();
-            }
+        pub(crate) fn dispatch(&mut self) {
+            // An error is a gone compositor, which winit hears of too.
+            let _ = self.queue.dispatch_pending(&mut self.state);
         }
+
+        pub(crate) fn stop(self) {
+            // The thread ends when its jobs end.
+            drop(self.state);
+            let _ = self.thread.join();
+        }
+    }
+
+    /// What the thread does, in the order the compositor said it.
+    enum Job {
+        /// Reads what the drag carries, then posts that it came in.
+        Entered {
+            surface: usize,
+            at: (f64, f64),
+            formats: Vec<String>,
+            answer: Answer,
+        },
+        Post(DragStep),
     }
 
     /// The offer of the drag in progress and what is said back with it.
@@ -174,11 +201,15 @@ mod imp {
 
     struct State {
         conn: Connection,
-        post: Arc<dyn Fn(DragStep) + Send + Sync>,
+        jobs: Sender<Job>,
         current: Option<Current>,
     }
 
     impl State {
+        fn post(&self, step: DragStep) {
+            let _ = self.jobs.send(Job::Post(step));
+        }
+
         fn answer(&self) -> Option<Answer> {
             self.current.as_ref().map(|c| Answer {
                 conn: self.conn.clone(),
@@ -212,7 +243,7 @@ mod imp {
         // `Desktop::shut_down`, before the loop is let go.
         let backend = unsafe { Backend::from_foreign_display(handle.display.as_ptr().cast()) };
         let conn = Connection::from_backend(backend);
-        let (globals, mut queue) = registry_queue_init::<State>(&conn).ok()?;
+        let (globals, queue) = registry_queue_init::<State>(&conn).ok()?;
         let qh = queue.handle();
         let manager: WlDataDeviceManager = globals.bind(&qh, 1..=3, ()).ok()?;
         // The seats there at start; one plugged in later is not followed.
@@ -229,35 +260,46 @@ mod imp {
             return None;
         }
         conn.flush().ok()?;
-        let stop = Arc::new(AtomicBool::new(false));
+        let (jobs, todo) = channel::<Job>();
         let thread = std::thread::Builder::new()
             .name("ljos-wayland-drags".into())
             .spawn({
-                let stop = Arc::clone(&stop);
                 let conn = conn.clone();
                 move || {
-                    let mut state = State {
-                        conn,
-                        post,
-                        current: None,
-                    };
-                    // Kept alive with the thread: dropping them sends nothing,
-                    // but their events need them.
-                    let _devices = devices;
-                    let _manager = manager;
-                    while !stop.load(Ordering::Acquire) {
-                        if queue.blocking_dispatch(&mut state).is_err() {
-                            break;
+                    for job in todo {
+                        match job {
+                            Job::Entered {
+                                surface,
+                                at,
+                                formats,
+                                answer,
+                            } => {
+                                let data = DragData::from_formats(formats.iter().filter_map(|f| {
+                                    read(&conn, &answer.offer, f).map(|bytes| (f, bytes))
+                                }));
+                                post(DragStep::Entered {
+                                    surface,
+                                    at,
+                                    data,
+                                    answer,
+                                });
+                            }
+                            Job::Post(step) => post(step),
                         }
                     }
                 }
             })
             .ok()?;
         Some(Thread {
-            stop,
-            conn,
-            qh,
-            thread: Some(thread),
+            queue,
+            state: State {
+                conn,
+                jobs,
+                current: None,
+            },
+            _devices: devices,
+            _manager: manager,
+            thread,
         })
     }
 
@@ -338,41 +380,36 @@ mod imp {
                         .data::<Formats>()
                         .map(|f| f.0.lock().map(|f| f.clone()).unwrap_or_default())
                         .unwrap_or_default();
-                    let data = DragData::from_formats(
-                        formats
-                            .iter()
-                            .filter_map(|f| read(conn, &offer, f).map(|bytes| (f, bytes))),
-                    );
                     state.current = Some(Current {
                         offer,
                         serial,
                         format: chosen(&formats),
                     });
                     let Some(answer) = state.answer() else { return };
-                    (state.post)(DragStep::Entered {
+                    let _ = state.jobs.send(Job::Entered {
                         surface,
                         at: (x, y),
-                        data,
+                        formats,
                         answer,
                     });
                 }
                 wl_data_device::Event::Motion { x, y, .. } => {
                     if let Some(answer) = state.answer() {
-                        (state.post)(DragStep::Moved { at: (x, y), answer });
+                        state.post(DragStep::Moved { at: (x, y), answer });
                     }
                 }
                 wl_data_device::Event::Leave => {
                     if let Some(old) = state.current.take() {
                         old.offer.destroy();
                         let _ = conn.flush();
-                        (state.post)(DragStep::Left);
+                        state.post(DragStep::Left);
                     }
                 }
                 wl_data_device::Event::Drop => {
                     // The loop finishes the offer and lets it go.
                     if let Some(answer) = state.answer() {
                         state.current = None;
-                        (state.post)(DragStep::Dropped { answer });
+                        state.post(DragStep::Dropped { answer });
                     }
                 }
                 // A selection's offer: the clipboard is the platform's.
@@ -433,18 +470,6 @@ mod imp {
             _: &mut Self,
             _: &WlDataDeviceManager,
             _: <WlDataDeviceManager as Proxy>::Event,
-            _: &(),
-            _: &Connection,
-            _: &QueueHandle<Self>,
-        ) {
-        }
-    }
-
-    impl Dispatch<WlCallback, ()> for State {
-        fn event(
-            _: &mut Self,
-            _: &WlCallback,
-            _: wl_callback::Event,
             _: &(),
             _: &Connection,
             _: &QueueHandle<Self>,
