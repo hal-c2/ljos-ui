@@ -202,6 +202,7 @@ ljos-ui/
 │   ├── ljos_input/             InputRouter, FocusTree, key dispatch, Shortcut,
 │   │                           gesture arena, ScrollPhysics, TextInputClient
 │   ├── ljos_a11y/              a11y pass, role table, live regions, SystemPrefs model
+│   ├── ljos_design/            design rules (codes, limits), colour maths, motion and palette tokens; no deps
 │   ├── ljos_i18n/              Catalog, I18n, .ts import/export, .ljl, ICU4X glue
 │   ├── ljos_render/            RenderTree, DisplayList, B0 epaint, R vello_cpu, B1 wgpu
 │   ├── ljos_shader/            ShaderEffect programs: GLSL 440 → GLSL ES 300 / GL 330 with
@@ -1121,6 +1122,11 @@ Source: 05 §3.1.
   - Gap: accesskit_unix 0.21 activates on `ScreenReaderEnabled` only, so an app is not exposed to a client that sets only `IsEnabled`, as Qt would be.
   - Gap: AccessKit's AT-SPI layer registers no `EditableText` interface, so a client can read, select in and move the caret of an entry but not type into it or set its text; Ljós already takes the requests it would send. What upstream would need: `docs/upstream/accesskit-editable-text.md`.
 - **As built: live regions (M2).** A text whose role is a status bar, a notification or an alert tells an assistive technology each new thing it says, a status politely and an alert at once, and so does `Accessible.announce`. A control that is partly checked reports a mixed state.
+- **Design guardrails (wave 11).** An interface should be hard to get wrong by accident, so the guidelines are checks, not prose. `ljos_design` is the one table of rules (`RULES`: code, area, severity, whether the source or the scene tells it) and of their limits (`limits`), which every check below reads; `docs/design/` explains each rule at `<page>#<code>` with its sources. Four layers use it:
+  - *Make the right thing easy*: design tokens (a palette from a seed in OKLCH with contrast-checked pairs, motion tokens by kind and frequency, spacing and type scales) in a QML module that is plain QML, so an application that also runs on Qt can take it along; and the MCP tools `design_palette`, `design_contrast`, `design_motion` and `design_rules`.
+  - *Static lints* in `ljos check` and `qml_lint` (motion curves and durations, scale from zero, layout properties animated, anchors in layouts, text with no elide or wrap, pointer-only and hover-only actions, fixed popup sizes, literal colours).
+  - *Runtime audit* of the real scene (`ljos audit`, the inspector's `app_audit`, BDD steps, the observer's Audit page) over a matrix: light and dark, normal and high contrast, font scales up to 200 %, and narrow and short windows. It measures what was drawn: text contrast against the composited background, clipped and hidden-elided text, controls off the window or covered by another item, focus that is not drawn, popups that do not fit, motion that runs. A finding names the rule, the item's locator and its source line, the matrix point and the fix.
+  - *Severity is confidence*: an `Error` is certain and fails `ljos check` and `ljos audit`; a `Warning` needs `// ljos-allow(code): reason` to keep; a `Hint` is advice. DECISION: third-party code (the qtdoc corpus) is reported, never gated.
 
 ---
 

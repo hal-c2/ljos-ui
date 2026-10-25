@@ -1,0 +1,15 @@
+[package]
+name = "ljos_design"
+description = "The design rules Ljós holds an interface to: their codes, thresholds and guidelines, shared by the lints, the runtime audit, the MCP tools and the docs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[lints]
+workspace = true

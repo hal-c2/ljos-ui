@@ -3718,6 +3718,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_design"
+version = "0.0.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "ljos_dev"
 version = "0.0.0"
 dependencies = [
