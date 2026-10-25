@@ -7,7 +7,7 @@
 
 use ljos_engine::{
     Cx, Engine, EngineError, IntPoint, ObjectId, Point, PropIndex, QmlObject, QmlType, QmlValue,
-    QtObject, Value, WriteKind, qml_impl,
+    QtObject, Value, Vector2d, WriteKind, qml_impl,
 };
 use ljos_render::kurbo;
 use ljos_runtime::Time;
@@ -345,6 +345,10 @@ pub struct HandlerPoint {
     pub pressed_buttons: i32,
     #[qml(notify, readonly)]
     pub id: i32,
+    /// Pixels per second, smoothed over the last moves. Zero where the
+    /// handler does not measure it.
+    #[qml(notify, readonly)]
+    pub velocity: Vector2d,
 }
 
 impl Default for HandlerPoint {
@@ -356,6 +360,7 @@ impl Default for HandlerPoint {
             scene_press_position: Point::default(),
             pressed_buttons: mouse_button::NO_BUTTON,
             id: -1,
+            velocity: Vector2d::default(),
         }
     }
 }
@@ -647,6 +652,7 @@ fn event_point_at(
         scene_press_position: read(p.scene_press_position),
         pressed_buttons: mouse_button::NO_BUTTON,
         id,
+        velocity: kurbo::Vec2::ZERO,
     }
     .event_point(state)
 }

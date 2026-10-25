@@ -3372,12 +3372,14 @@ module QtQuick
 		prop scenePressPosition QtQml.point named readonly
 		prop pressedButtons Qt::MouseButtons readonly
 		prop id QtQml.int named readonly
+		prop velocity QtQuick.vector2d named readonly
 		signal positionChanged
 		signal scenePositionChanged
 		signal pressPositionChanged
 		signal scenePressPositionChanged
 		signal pressedButtonsChanged
 		signal idChanged
+		signal velocityChanged
 	type QtQuick.DragAxis DragAxis
 		is uncreatable
 		prop minimum QtQml.real named

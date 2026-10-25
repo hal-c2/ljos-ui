@@ -508,6 +508,7 @@ pub(crate) struct PointValues {
     pub scene_press_position: kurbo::Point,
     pub pressed_buttons: i32,
     pub id: i32,
+    pub velocity: kurbo::Vec2,
 }
 
 impl PointValues {
@@ -519,6 +520,7 @@ impl PointValues {
             scene_press_position: kurbo::Point::ZERO,
             pressed_buttons: mouse_button::NO_BUTTON,
             id: -1,
+            velocity: kurbo::Vec2::ZERO,
         }
     }
 
@@ -544,6 +546,7 @@ impl PointValues {
             scene_press_position: press,
             pressed_buttons: mouse_button::NO_BUTTON,
             id: 0,
+            velocity: kurbo::Vec2::ZERO,
         }
     }
 
@@ -576,6 +579,7 @@ impl PointValues {
             ("globalPressPosition", scene_press.clone()),
             ("globalGrabPosition", scene_press),
             ("globalLastPosition", scene),
+            ("velocity", vector_value(self.velocity)),
             ("x", Value::Real(self.scene_position.x)),
             ("y", Value::Real(self.scene_position.y)),
         ])
@@ -594,6 +598,7 @@ pub(crate) fn put_point(engine: &Engine, h: ObjectId, group: &str, v: &PointValu
         ("scenePressPosition", point_value(v.scene_press_position)),
         ("pressedButtons", Value::Int(v.pressed_buttons)),
         ("id", Value::Int(v.id)),
+        ("velocity", vector_value(v.velocity)),
     ];
     let changed = engine.batch(|| {
         let mut changed = false;

@@ -13,6 +13,7 @@ use ljos_engine::{
     Cx, Engine, EngineError, ObjectId, QmlObject, Value, Vector2d, WriteKind, qml_impl,
 };
 use ljos_render::kurbo;
+use ljos_runtime::Time;
 
 use super::{
     EnumTable, PointValues, PointerHandler, emit, flag, handler_item, handler_target, local, num,
@@ -85,7 +86,14 @@ pub(crate) struct DragState {
     persistent: Cell<kurbo::Vec2>,
     /// Added to the drag so the target's centre comes under the pointer.
     snap: Cell<kurbo::Vec2>,
+    /// The time and scene position of the last event, and the speed.
+    last: Cell<Option<(Time, kurbo::Point)>>,
+    velocity: Cell<kurbo::Vec2>,
 }
+
+/// How much of a move's speed the centroid's velocity takes, the rest
+/// being the speed it had (as a flick's, `flickable::physics`).
+const VELOCITY_GAIN: f64 = 0.7;
 
 /// `DragHandler` (QtQuick).
 #[derive(Debug, QmlObject)]
@@ -194,16 +202,35 @@ fn dragged(engine: &Engine, h: ObjectId, ev: &PointerEvent, press: kurbo::Point)
 }
 
 fn centroid(engine: &Engine, h: ObjectId, ev: &PointerEvent, press: kurbo::Point) {
+    let velocity = state(engine, h).map_or(kurbo::Vec2::ZERO, |st| {
+        if let Some((t0, p0)) = st.last.get() {
+            let dt = ev.time.saturating_since(t0).as_secs_f64();
+            if dt > 0.0 {
+                let speed = (ev.pos - p0) / dt;
+                let v = speed * VELOCITY_GAIN + st.velocity.get() * (1.0 - VELOCITY_GAIN);
+                st.velocity.set(v);
+                st.last.set(Some((ev.time, ev.pos)));
+            }
+        }
+        st.velocity.get()
+    });
     put_point(
         engine,
         h,
         "centroid",
-        &PointValues::of(engine, h, ev, press),
+        &PointValues {
+            velocity,
+            ..PointValues::of(engine, h, ev, press)
+        },
     );
 }
 
-/// A press reached the handler.
+/// A press reached the handler: the pointer is at rest.
 pub(super) fn pressed(engine: &Engine, h: ObjectId, ev: &PointerEvent) {
+    if let Some(st) = state(engine, h) {
+        st.last.set(Some((ev.time, ev.pos)));
+        st.velocity.set(kurbo::Vec2::ZERO);
+    }
     centroid(engine, h, ev, ev.pos);
 }
 
