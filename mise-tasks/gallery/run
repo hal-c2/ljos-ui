@@ -51,7 +51,7 @@ if [ -z "$row" ]; then
   list >&2
   exit 1
 fi
-IFS=$'\t' read -r dir entry size renders <<< "$row"
+IFS=$'\t' read -r dir entry _ renders <<< "$row"
 if [ "$renders" = no ]; then
   echo "note: '$id' did not render in the last gallery run; trying anyway" >&2
 fi
@@ -69,10 +69,12 @@ project=(--project "$root/corpus/qtdoc/$dir")
 profile="${GALLERY_PROFILE:-debug}"
 if [ -z "${GALLERY_BUILT:-}" ]; then
   if [ "$profile" = debug ]; then
-    cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+    cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos
   else
-    cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --profile "$profile"
+    cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos --profile "$profile"
   fi
 fi
+# The window is as large as the root says, as qml6 opens it; the manifest's
+# size is the gallery's picture. A `--size` among the arguments sets one.
 exec "$target/$profile/ljos" run "$root/corpus/qtdoc/$dir/$entry" \
-  "${project[@]}" --size "$size" --example "$id" "$@"
+  "${project[@]}" --example "$id" "$@"
