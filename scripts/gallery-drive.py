@@ -142,6 +142,24 @@ class Inspector:
             time.sleep(0.1)
         return True
 
+    def seen(self, x, y, limit=2.0):
+        """Waits until a pass of the window saw the pointer up at x, y: `app_watch` tells each time
+        the UI thread goes to sleep where its last pass saw the pointer (`rests`). A click sent
+        through the compositor has then been handled. False: not within `limit` s. An animating app
+        rests every frame: after the first, a watch gathers a burst so the calls stay few."""
+        end, args = time.monotonic() + limit, {"topics": ["rests"]}
+        while True:
+            r = self.rpc("tools/call", {"name": "app_watch", "arguments": args})
+            told = (r.get("result") or {}).get("structuredContent") or {}
+            p = (told.get("rest") or {}).get("pointer") or {}
+            if p.get("pressed") is False and abs(p["x"] - x) <= 1 and abs(p["y"] - y) <= 1:
+                return True
+            left = end - time.monotonic()
+            if left <= 0 or "counts" not in told:
+                return False
+            args = {"since": {"rests": told["counts"]["rests"]}, "topics": ["rests"], "wait_ms": int(left * 1000) + 1,
+                    "settle_ms": 100}
+
     def new_logs(self):
         """The lines logged since the last call, without the paging note."""
         text = self.call("app_logs", {} if self.since is None else {"since": self.since})
@@ -256,8 +274,9 @@ def grid_clicks(app, w, d):
         for i in range(GRID):
             x, y = int(win["width"] * (i + 0.5) / GRID), int(win["height"] * (j + 0.5) / GRID)
             r = cua("click", {"pid": app.pid, "window_id": win["window_id"], "x": x, "y": y})
-            time.sleep(0.4)
             err = r.get("error") or r.get("code") or ""
+            if not err and not app.seen(x, y):
+                err = "the window did not see it"
             w(f"== grid click ({x},{y}) {err}".rstrip(), *app.new_logs())
     app.call("app_screenshot", {}, os.path.join(d, "grid.png"))
 
