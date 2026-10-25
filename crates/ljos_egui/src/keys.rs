@@ -265,8 +265,11 @@ impl KeyTrack {
                 // The platform layer turns the press of the clipboard
                 // chords into these and sends no key. The scene's
                 // shortcuts and Keys handlers still get to see the chord;
-                // the release arrives as an ordinary key.
-                Event::Copy | Event::Cut | Event::Paste(_) => {
+                // the release arrives as an ordinary key. A paste of a
+                // picture, with no text on the clipboard, is the same
+                // chord: the scene reads the picture from the platform's
+                // clipboard, as it does any other.
+                Event::Copy | Event::Cut | Event::Paste(_) | Event::PasteImage(_) => {
                     let (k, c) = match e {
                         Event::Copy => (Key::C, 'C'),
                         Event::Cut => (Key::X, 'X'),
@@ -518,9 +521,16 @@ mod tests {
     #[test]
     fn the_clipboard_events_are_presses_of_their_chords() {
         let mut track = KeyTrack::default();
+        // A paste with only a picture on the clipboard is still the chord.
+        let picture = std::sync::Arc::new(egui::ColorImage::filled([1, 1], egui::Color32::RED));
         let out = events(
             &mut track,
-            &[Event::Copy, Event::Cut, Event::Paste("x".into())],
+            &[
+                Event::Copy,
+                Event::Cut,
+                Event::Paste("x".into()),
+                Event::PasteImage(picture),
+            ],
         );
         let chords: Vec<(i32, Modifiers)> = out.iter().map(|e| (e.key, e.modifiers)).collect();
         assert_eq!(
@@ -528,6 +538,7 @@ mod tests {
             [
                 (0x43, Modifiers::CONTROL),
                 (0x58, Modifiers::CONTROL),
+                (0x56, Modifiers::CONTROL),
                 (0x56, Modifiers::CONTROL)
             ]
         );
