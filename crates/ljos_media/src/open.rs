@@ -155,7 +155,7 @@ pub(crate) fn start(
         }
         return;
     }
-    let real = url_path(&url).map(|p| platform.env().real(&p));
+    let real = url_path(&url).and_then(|p| platform.env().real(&p).ok());
     spawn(e, me, generation, done, move || match real {
         Some(path) => from_path(&path, samples.and_then(|s| s.wait())),
         None => Err(OpenError::Resource),

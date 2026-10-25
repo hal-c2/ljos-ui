@@ -358,7 +358,7 @@ fn load(e: &Engine, me: ObjectId) {
     // A local file, read off the Engine thread like a fetch, so a
     // load never blocks it and `Loading` is what a reader sees first.
     let reply = platform.expect_for(format!("read {url}"), Some(me));
-    let real = url_path(&url).map(|p| platform.env().real(&p));
+    let real = url_path(&url).and_then(|p| platform.env().real(&p).ok());
     let spawned = std::thread::Builder::new()
         .name("ljos-xml".to_owned())
         .spawn(move || {

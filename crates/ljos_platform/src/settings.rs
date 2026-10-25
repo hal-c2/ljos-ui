@@ -350,7 +350,7 @@ fn bound(engine: &Engine, obj: ObjectId) -> Option<Bound> {
 
 /// The file a `Settings` with no location keeps: the application's, in
 /// the user's configuration directory.
-fn default_path(engine: &Engine) -> PathBuf {
+fn default_path(engine: &Engine) -> std::io::Result<PathBuf> {
     let platform = Platform::of(engine);
     let (org, app) = platform.application(engine);
     let env = platform.env();
@@ -362,7 +362,7 @@ fn default_path(engine: &Engine) -> PathBuf {
     env.real(&path)
 }
 
-fn file_for(engine: &Engine, obj: ObjectId) -> PathBuf {
+fn file_for(engine: &Engine, obj: ObjectId) -> std::io::Result<PathBuf> {
     let location = engine
         .untrack(|| engine.get(obj, Settings::LOCATION))
         .map(|u| u.0.to_string())
@@ -393,7 +393,17 @@ fn kept_properties(engine: &Engine, obj: ObjectId) -> Vec<(PropIndex, String, Ty
 
 fn bind(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     let files = engine.extension::<SettingsFiles>();
-    let path = file_for(engine, obj);
+    let path = match file_for(engine, obj) {
+        Ok(path) => path,
+        Err(err) => {
+            engine.log(
+                ljos_engine::LogLevel::Warning,
+                "settings",
+                format!("Settings: cannot resolve file: {err}"),
+            );
+            return Ok(());
+        }
+    };
     let file = Rc::clone(
         files
             .files

@@ -152,7 +152,7 @@ fn directory(engine: &Engine) -> Option<PathBuf> {
             let dir = Location::AppData
                 .writable(&env, &org, &app)
                 .join("QML/OfflineStorage/Databases");
-            Some(env.real(&dir))
+            env.real(&dir).ok()
         }
     }
 }

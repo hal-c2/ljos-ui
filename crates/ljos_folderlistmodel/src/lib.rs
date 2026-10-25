@@ -431,12 +431,12 @@ fn load(e: &Engine, me: ObjectId) {
         .then(|| url_path(&e.resolve_url(me, &written)))
         .flatten();
     let named = match named {
-        Some(path) if env.real(&path).is_dir() => Some(path),
+        Some(path) if env.real(&path).is_ok_and(|p| p.is_dir()) => Some(path),
         // Qt lists the working directory instead of a folder that is not
         // one when the model completes, and says that is its folder.
         _ if first => std::env::current_dir()
             .ok()
-            .filter(|cwd| env.real(cwd).is_dir())
+            .filter(|cwd| env.real(cwd).is_ok_and(|p| p.is_dir()))
             .inspect(|cwd| {
                 let _ = Cx::new(e, me).set(
                     FolderListModel::FOLDER,
@@ -467,7 +467,7 @@ fn load(e: &Engine, me: ObjectId) {
     let spawned = std::thread::Builder::new()
         .name("ljos-folder".to_owned())
         .spawn(move || {
-            let found = list(&real, &opts);
+            let found = real.map(|real| list(&real, &opts)).unwrap_or_default();
             reply.send(move |e| apply(e, me, generation, &named, found));
         });
     if let Err(err) = spawned {

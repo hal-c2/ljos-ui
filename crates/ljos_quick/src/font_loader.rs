@@ -138,7 +138,13 @@ fn load(e: &Engine, me: ObjectId) {
         return;
     }
     // A sandboxed run (a test) keeps every file under its root.
-    let bytes = url_path(&url).and_then(|p| std::fs::read(platform.env().real(&p)).ok());
+    let bytes = url_path(&url).and_then(|p| {
+        platform
+            .env()
+            .real(&p)
+            .ok()
+            .and_then(|p| std::fs::read(p).ok())
+    });
     loaded(e, me, &url, bytes);
 }
 

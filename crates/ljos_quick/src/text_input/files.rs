@@ -170,8 +170,14 @@ struct Target {
 }
 
 /// The file of `url`, which `doc` gives relative to its editor's file.
-/// `None`: not a local file, which is said on the document.
-fn local_path(engine: &Engine, doc: ObjectId, edit: ObjectId, url: &str) -> Option<Target> {
+/// `None`: non-local or denied by the sandbox, reported on the document.
+fn local_path(
+    engine: &Engine,
+    doc: ObjectId,
+    edit: ObjectId,
+    url: &str,
+    error_status: i32,
+) -> Option<Target> {
     let resolved = engine.resolve_url(edit, url);
     let Some(named) = url_path(&resolved) else {
         fail(
@@ -183,7 +189,13 @@ fn local_path(engine: &Engine, doc: ObjectId, edit: ObjectId, url: &str) -> Opti
         return None;
     };
     // A sandboxed application's `/` is a directory of its own.
-    let real = Platform::of(engine).env().real(&named);
+    let real = match Platform::of(engine).env().real(&named) {
+        Ok(real) => real,
+        Err(err) => {
+            fail(engine, doc, error_status, io_message(&named, &err));
+            return None;
+        }
+    };
     Some(Target { named, real })
 }
 
@@ -204,7 +216,8 @@ pub(crate) fn load(engine: &Engine, doc: ObjectId, edit: ObjectId, st: &SharedSt
         set_status(engine, doc, status::NULL, "");
         return;
     }
-    let Some(Target { named, real }) = local_path(engine, doc, edit, url) else {
+    let Some(Target { named, real }) = local_path(engine, doc, edit, url, status::READ_ERROR)
+    else {
         return;
     };
     set_status(engine, doc, status::LOADING, "");
@@ -284,7 +297,8 @@ pub(crate) fn save(engine: &Engine, doc: ObjectId, to: Option<&str>) {
         );
         return;
     }
-    let Some(Target { named, real }) = local_path(engine, doc, edit, &url) else {
+    let Some(Target { named, real }) = local_path(engine, doc, edit, &url, status::WRITE_ERROR)
+    else {
         return;
     };
     let Some(generation) = next_generation(engine, doc) else {

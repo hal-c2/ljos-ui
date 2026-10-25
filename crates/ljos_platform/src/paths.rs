@@ -165,12 +165,56 @@ impl PathEnv {
             .collect()
     }
 
-    /// The file a path the application names is.
-    pub fn real(&self, path: &Path) -> PathBuf {
-        match &self.root {
-            Some(root) => root.join(path.strip_prefix("/").unwrap_or(path)),
-            None => path.to_path_buf(),
+    /// Resolves a virtual path under the sandbox, or leaves an unrestricted
+    /// process path unchanged. One leading slash names the virtual root.
+    pub fn real(&self, path: &Path) -> std::io::Result<PathBuf> {
+        use std::path::Component;
+
+        let Some(root) = &self.root else {
+            return Ok(path.to_path_buf());
+        };
+        let denied =
+            || std::io::Error::new(std::io::ErrorKind::PermissionDenied, "path escapes sandbox");
+        // Check foreign platform spellings too: a scenario's URL is not
+        // necessarily authored on the platform running it.
+        let spelling = path.as_os_str().to_string_lossy();
+        if spelling.starts_with("//") || spelling.contains('\\') {
+            return Err(denied());
         }
+        let relative = path.strip_prefix("/").unwrap_or(path);
+        if relative.components().any(|c| match c {
+            Component::Normal(name) => matches!(
+                name.as_encoded_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic()
+            ),
+            Component::CurDir => false,
+            _ => true,
+        }) {
+            return Err(denied());
+        }
+        let root = root.canonicalize()?;
+        let target = root.join(relative);
+        let mut ancestor = target.as_path();
+        let mut missing = Vec::new();
+        loop {
+            match std::fs::symlink_metadata(ancestor) {
+                Ok(_) => break,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push(ancestor.file_name().ok_or_else(denied)?);
+                    ancestor = ancestor.parent().ok_or_else(denied)?;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        // Existing targets and the existing ancestor of new targets must
+        // stay under the root. A dangling symlink fails canonicalization.
+        let mut real = ancestor.canonicalize()?;
+        if !real.starts_with(&root) {
+            return Err(denied());
+        }
+        for name in missing.into_iter().rev() {
+            real.push(name);
+        }
+        Ok(real)
     }
 
     pub fn config_home(&self) -> PathBuf {
@@ -364,7 +408,7 @@ fn user_dir(env: &PathEnv, location: Location) -> Option<PathBuf> {
         Location::Templates => "XDG_TEMPLATES_DIR",
         _ => return None,
     };
-    let file = env.real(&env.config_home().join("user-dirs.dirs"));
+    let file = env.real(&env.config_home().join("user-dirs.dirs")).ok()?;
     let text = std::fs::read_to_string(file).ok()?;
     let line = text
         .lines()
@@ -396,7 +440,9 @@ fn find_executable(env: &PathEnv, name: &str, paths: &[PathBuf]) -> Option<PathB
         };
         dirs.into_iter().map(|d| d.join(name)).collect()
     };
-    candidates.into_iter().find(|p| is_executable(&env.real(p)))
+    candidates
+        .into_iter()
+        .find(|p| env.real(p).is_ok_and(|p| is_executable(&p)))
 }
 
 #[cfg(unix)]
@@ -458,7 +504,9 @@ fn locate_in(cx: &Cx, which: &Value, name: &Value, options: &Value, all: bool) -
             .into_iter()
             .map(|d| d.join(&name))
             .filter(|p| {
-                let real = env.real(p);
+                let Ok(real) = env.real(p) else {
+                    return false;
+                };
                 if directory {
                     real.is_dir()
                 } else {
@@ -567,12 +615,85 @@ mod tests {
     }
 
     #[test]
-    fn a_sandboxed_path_is_under_the_root() {
-        let env = user();
+    fn sandbox_paths_are_checked_before_access() {
+        let temp = tempfile::tempdir().unwrap();
+        let env = PathEnv::sandbox("/home/user", temp.path());
+        std::fs::create_dir(temp.path().join("docs")).unwrap();
+        std::fs::write(temp.path().join("docs/existing.txt"), "inside").unwrap();
+        for path in [
+            "docs/existing.txt",
+            "/docs/existing.txt",
+            "docs/new.txt",
+            "docs//new.txt",
+        ] {
+            let real = env.real(Path::new(path)).unwrap();
+            assert!(real.starts_with(temp.path().canonicalize().unwrap()));
+        }
         assert_eq!(
-            env.real(Path::new("/home/user/.config/a")),
-            Path::new("/nowhere/home/user/.config/a")
+            std::fs::read_to_string(env.real(Path::new("docs/existing.txt")).unwrap()).unwrap(),
+            "inside"
         );
+        let new = env.real(Path::new("docs/new.txt")).unwrap();
+        std::fs::write(&new, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(new).unwrap(), "new");
+        for path in [
+            "../outside",
+            "/../outside",
+            "a//../../outside",
+            "//host/share",
+            "C:/outside",
+            "C:outside",
+            "/C:/outside",
+            r"\\host\share",
+            r"\outside",
+            r"a\..\outside",
+            r"\\?\C:\outside",
+        ] {
+            assert_eq!(
+                env.real(Path::new(path)).unwrap_err().kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "{path}"
+            );
+        }
+        let unrestricted = PathEnv::default();
+        assert_eq!(
+            unrestricted.real(Path::new("../outside")).unwrap(),
+            Path::new("../outside")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sandbox_rejects_symlinked_targets_and_parents_outside_root() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let outside = temp.path().join("root-outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret"), "outside").unwrap();
+        symlink(&outside, root.join("link")).unwrap();
+        symlink(outside.join("secret"), root.join("file")).unwrap();
+        symlink(outside.join("missing"), root.join("dangling")).unwrap();
+        let env = PathEnv::sandbox("/home/user", &root);
+        for path in ["link/secret", "link/new", "link/missing/new", "file"] {
+            assert_eq!(
+                env.real(Path::new(path)).unwrap_err().kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+        }
+        assert!(env.real(Path::new("dangling")).is_err());
+        symlink(&root, temp.path().join("root-link")).unwrap();
+        let env = PathEnv::sandbox("/home/user", temp.path().join("root-link"));
+        assert_eq!(
+            env.real(Path::new("new")).unwrap(),
+            root.canonicalize().unwrap().join("new")
+        );
+        assert_eq!(
+            std::fs::read_to_string(outside.join("secret")).unwrap(),
+            "outside"
+        );
+        assert!(!outside.join("new").exists());
     }
 
     fn process(home: &str, vars: &[(&str, &str)]) -> PathEnv {

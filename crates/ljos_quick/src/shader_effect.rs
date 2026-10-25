@@ -316,7 +316,11 @@ fn prepare(e: &Engine, me: ObjectId) {
         let resolved = e.resolve_url(me, url.as_str());
         let located = match url_path(&resolved) {
             // A sandboxed application's `/` is a directory of its own.
-            Some(path) => ljos_shader::locate(&Platform::of(e).env().real(&path)),
+            Some(path) => Platform::of(e)
+                .env()
+                .real(&path)
+                .map_err(|err| ljos_shader::Error::Missing(format!("{resolved}: {err}")))
+                .and_then(|path| ljos_shader::locate(&path)),
             None => Err(ljos_shader::Error::Missing(resolved.clone())),
         };
         let want = match located {
