@@ -8,6 +8,11 @@
 //! thread. The UI thread is never woken for a watch: an application at
 //! rest runs nothing, and a client waiting on it costs one sleeping task.
 //!
+//! Each time the UI thread goes to sleep it tells when it wakes next and
+//! where the primary window's pointer was in its last pass (`rests`): a
+//! client that drove the pointer from outside, or wants the application
+//! at rest, waits for that instead of for a while.
+//!
 //! A client can also follow a few items: each pass that changed the
 //! picture where one of them lies counts for it. Only while some client
 //! watches items does the host work out where a pass changed the picture,
@@ -25,9 +30,10 @@ use serde_json::json;
 use tokio::sync::watch;
 
 pub const WATCH: &str = "\
-Wait until the app changes: frames, passes drawn (`paints`), logs, reloads, `traces`, followed \
-`models`, kept `wakes`, passes that drew the `items` given. Give the last `counts` as `since`; it \
-answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.";
+Wait until the app changes: frames, drawn passes (`paints`), logs, reloads, `traces`, followed \
+`models`, kept `wakes`, `items` drawn; by name, `rests` (the UI thread slept: `rest`). Answers \
+when a `topics` count differs from `since` (last `counts`), else after `wait_ms`; \
+`settle_ms` gathers a burst.";
 
 /// The longest a watch waits: a client that follows an application at
 /// rest is answered, and asks again, this often.
@@ -62,13 +68,20 @@ pub enum Topic {
     /// Wakes of the UI thread kept for `app_frames`' `wakes` that not only
     /// an agent's requests caused.
     Wakes,
+    /// Times the UI thread went to sleep with a different wake time or
+    /// pointer than the last: the answer's `rest` says which.
+    Rests,
     /// Passes that changed the picture where one of the watch's `items`
     /// lies.
     Items,
 }
 
 impl Topic {
-    const ALL: [Topic; 8] = [
+    /// What a watch that names no topics waits for. Not `rests`: the
+    /// thread rests after every turn that did anything, which the other
+    /// topics already tell, so a client following everything would be
+    /// answered twice as often for nothing new.
+    const DEFAULT: [Topic; 8] = [
         Topic::Frames,
         Topic::Paints,
         Topic::Logs,
@@ -88,6 +101,7 @@ impl Topic {
             Topic::Traces => "traces",
             Topic::Models => "models",
             Topic::Wakes => "wakes",
+            Topic::Rests => "rests",
             Topic::Items => "items",
         }
     }
@@ -111,6 +125,8 @@ pub struct Since {
     pub models: Option<u64>,
     #[serde(default)]
     pub wakes: Option<u64>,
+    #[serde(default)]
+    pub rests: Option<u64>,
     /// By handle; an item left out is not compared.
     #[serde(default)]
     pub items: Option<BTreeMap<String, u64>>,
@@ -124,7 +140,8 @@ pub struct WatchArgs {
     #[serde(default)]
     pub since: Option<Since>,
     /// Wait for these only: `frames`, `paints`, `logs`, `reloads`,
-    /// `traces`, `models`, `wakes`, `items`. All by default.
+    /// `traces`, `models`, `wakes`, `rests`, `items`. All but `rests` by
+    /// default.
     #[serde(default)]
     pub topics: Vec<Topic>,
     /// Items to follow, by handle (`@12.3`, as `app_objects` gives them),
@@ -156,6 +173,7 @@ pub(crate) struct Counts {
     pub(crate) traces: u64,
     pub(crate) models: u64,
     pub(crate) wakes: u64,
+    pub(crate) rests: u64,
     /// Passes counted for any watched item: it moves so that a waiting
     /// watch looks at its own items again.
     pub(crate) items: u64,
@@ -172,6 +190,7 @@ impl Counts {
             Topic::Traces => Some(self.traces),
             Topic::Models => Some(self.models),
             Topic::Wakes => Some(self.wakes),
+            Topic::Rests => Some(self.rests),
             Topic::Items => None,
         }
     }
@@ -187,8 +206,40 @@ impl Since {
             Topic::Traces => self.traces,
             Topic::Models => self.models,
             Topic::Wakes => self.wakes,
+            Topic::Rests => self.rests,
             Topic::Items => None,
         }
+    }
+}
+
+/// What the UI thread said when it last went to sleep.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Rest {
+    /// When it wakes by itself next: a timer, an animation's frame, a
+    /// pass asked for. `None` when only input or a message wakes it.
+    pub wake_at: Option<Instant>,
+    /// The pointer as the primary window's last pass saw it, in the
+    /// window's points; `None` when it is not over the window.
+    pub pointer: Option<PointerSeen>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointerSeen {
+    pub x: f32,
+    pub y: f32,
+    /// A button is held.
+    pub pressed: bool,
+}
+
+impl Rest {
+    fn to_json(self, now: Instant) -> serde_json::Value {
+        let wake_in_ms = self.wake_at.map(|t| {
+            u64::try_from(t.saturating_duration_since(now).as_millis()).unwrap_or(u64::MAX)
+        });
+        let pointer = self
+            .pointer
+            .map(|p| json!({"x": p.x, "y": p.y, "pressed": p.pressed}));
+        json!({"wake_in_ms": wake_in_ms, "pointer": pointer})
     }
 }
 
@@ -208,6 +259,7 @@ pub(crate) struct ChangeFeed {
     /// Written by watches on the server's thread, counted on the UI
     /// thread after a pass.
     followed: Mutex<Vec<Followed>>,
+    rest: Mutex<Rest>,
 }
 
 impl ChangeFeed {
@@ -216,6 +268,7 @@ impl ChangeFeed {
         Arc::new(ChangeFeed {
             tx,
             followed: Mutex::new(Vec::new()),
+            rest: Mutex::new(Rest::default()),
         })
     }
 
@@ -312,6 +365,21 @@ impl ChangeFeed {
         self.tx.send_modify(|c| c.wakes += 1);
     }
 
+    /// The UI thread goes to sleep. Counted only when it says something
+    /// new, so that a loop that turns without change wakes no watch.
+    pub(crate) fn rested(&self, rest: Rest) {
+        let mut was = self.rest.lock().unwrap_or_else(|e| e.into_inner());
+        if *was != rest {
+            *was = rest;
+            drop(was);
+            self.tx.send_modify(|c| c.rests += 1);
+        }
+    }
+
+    fn rest(&self) -> Rest {
+        *self.rest.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[cfg(test)]
     fn counts(&self) -> Counts {
         *self.tx.borrow()
@@ -343,7 +411,7 @@ fn changed(
 /// Answers `app_watch`, on the server's thread.
 pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
     let wanted: Vec<Topic> = if args.topics.is_empty() {
-        Topic::ALL.to_vec()
+        Topic::DEFAULT.to_vec()
     } else {
         args.topics.clone()
     };
@@ -390,9 +458,10 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         None => Vec::new(),
     };
     let names: Vec<&str> = moved.iter().map(|t| t.name()).collect();
+    let rest = feed.rest();
     let mut text = format!(
-        "frames {}, paints {}, logs {}, reloads {}, traces {}, models {}, wakes {}",
-        now.frames, now.paints, now.logs, now.reloads, now.traces, now.models, now.wakes
+        "frames {}, paints {}, logs {}, reloads {}, traces {}, models {}, wakes {}, rests {}",
+        now.frames, now.paints, now.logs, now.reloads, now.traces, now.models, now.wakes, now.rests
     );
     for (h, n) in &drawn {
         let _ = write!(text, ", {h} drawn {n}");
@@ -404,6 +473,22 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
     } else {
         let _ = write!(text, "; changed: {}", names.join(", "));
     }
+    let answered = Instant::now();
+    match rest.wake_at {
+        Some(t) if t <= answered => text.push_str(". The UI thread is due to run"),
+        Some(t) => {
+            let _ = write!(
+                text,
+                ". The UI thread sleeps for {} ms",
+                t.duration_since(answered).as_millis()
+            );
+        }
+        None => text.push_str(". The UI thread sleeps until something happens"),
+    }
+    if let Some(p) = rest.pointer {
+        let held = if p.pressed { ", held" } else { "" };
+        let _ = write!(text, "; pointer at {}, {}{held}", p.x, p.y);
+    }
     let mut counts = json!({
         "frames": now.frames,
         "paints": now.paints,
@@ -412,6 +497,7 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         "traces": now.traces,
         "models": now.models,
         "wakes": now.wakes,
+        "rests": now.rests,
     });
     if !args.items.is_empty() {
         counts["items"] = json!(drawn);
@@ -421,6 +507,7 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         "changed": names,
         "waited": waited,
         "settled": settled,
+        "rest": rest.to_json(answered),
     }))
     .with_text(text)
 }
@@ -507,6 +594,42 @@ mod tests {
         assert_eq!(reply.structured["changed"], json!(["paints"]));
         assert_eq!(reply.structured["waited"], json!(true));
         assert_eq!(feed.counts().frames, 1);
+    }
+
+    #[test]
+    fn a_rest_is_told_only_when_it_says_something_new() {
+        let feed = ChangeFeed::new();
+        let at = Instant::now() + Duration::from_secs(60);
+        let rest = Rest {
+            wake_at: Some(at),
+            pointer: Some(PointerSeen {
+                x: 50.0,
+                y: 30.0,
+                pressed: true,
+            }),
+        };
+        feed.rested(rest);
+        feed.rested(rest);
+        assert_eq!(feed.counts().rests, 1);
+        let args = WatchArgs {
+            topics: vec![Topic::Rests],
+            ..WatchArgs::default()
+        };
+        let reply = run(watch(&feed, &args));
+        let told = &reply.structured["rest"];
+        assert_eq!(
+            told["pointer"],
+            json!({"x": 50.0, "y": 30.0, "pressed": true})
+        );
+        let wake_in = told["wake_in_ms"].as_u64().unwrap();
+        assert!((59_000..=60_000).contains(&wake_in), "{wake_in}");
+        feed.rested(Rest::default());
+        let reply = run(watch(&feed, &args));
+        assert_eq!(reply.structured["counts"]["rests"], json!(2));
+        assert_eq!(
+            reply.structured["rest"],
+            json!({"wake_in_ms": null, "pointer": null})
+        );
     }
 
     fn items(handles: &[&str]) -> Vec<String> {

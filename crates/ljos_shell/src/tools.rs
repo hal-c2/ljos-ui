@@ -253,6 +253,12 @@ impl<M> ShellApp<M> {
         }
     }
 
+    pub(crate) fn record_rest(&mut self, rest: ljos_dev::mcp::Rest) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().record_rest(rest);
+        }
+    }
+
     /// Before a pass over another window: its scene is timed while a
     /// client records.
     pub(crate) fn time_window(&mut self, view: &mut ljos_egui::QmlView) {

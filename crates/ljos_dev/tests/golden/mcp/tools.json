@@ -426,7 +426,7 @@
     "read_only": true
   },
   {
-    "description": "Wait until the app changes: frames, passes drawn (`paints`), logs, reloads, `traces`, followed `models`, kept `wakes`, passes that drew the `items` given. Give the last `counts` as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.",
+    "description": "Wait until the app changes: frames, drawn passes (`paints`), logs, reloads, `traces`, followed `models`, kept `wakes`, `items` drawn; by name, `rests` (the UI thread slept: `rest`). Answers when a `topics` count differs from `since` (last `counts`), else after `wait_ms`; `settle_ms` gathers a burst.",
     "input_schema": {
       "$defs": {
         "Since": {
@@ -483,6 +483,15 @@
               ]
             },
             "reloads": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rests": {
               "default": null,
               "format": "uint64",
               "minimum": 0,
@@ -551,6 +560,11 @@
               "type": "string"
             },
             {
+              "const": "rests",
+              "description": "Times the UI thread went to sleep with a different wake time or\npointer than the last: the answer's `rest` says which.",
+              "type": "string"
+            },
+            {
               "const": "items",
               "description": "Passes that changed the picture where one of the watch's `items`\nlies.",
               "type": "string"
@@ -598,7 +612,7 @@
           "description": "The `counts` of the last answer. Without them the counts are\nanswered at once."
         },
         "topics": {
-          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`, `models`, `wakes`, `items`. All by default.",
+          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`, `models`, `wakes`, `rests`, `items`. All but `rests` by\ndefault.",
           "items": {
             "$ref": "#/$defs/Topic"
           },

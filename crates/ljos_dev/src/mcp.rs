@@ -113,6 +113,7 @@ pub use paint::{Drawn, PaintReport, PainterInfo, StartupStep};
 pub use rust_heap::CountingAlloc;
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
 pub use wakes::HostWake;
+pub use watch::{PointerSeen, Rest};
 
 use args::{Act, Include as Col, Kind, Resource, SnapshotArgs};
 use capture::{Capture, Lease};
@@ -540,6 +541,12 @@ impl Inspector {
         if self.wakes.record(host, engine.take_journal()) {
             self.changes.wake();
         }
+    }
+
+    /// The host's loop goes to sleep: when it wakes by itself next, and
+    /// where the primary window's pointer was, for `app_watch`'s `rests`.
+    pub fn record_rest(&mut self, rest: Rest) {
+        self.changes.rested(rest);
     }
 
     /// Whether a client follows items with `app_watch`: only then need the

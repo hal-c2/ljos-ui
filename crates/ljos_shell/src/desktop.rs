@@ -2332,7 +2332,32 @@ impl<M: Send + 'static> Desktop<M> {
             // want. Not in a spin: at the pace of the display.
             next = earlier(next, Some(Instant::now() + HEARTBEAT));
         }
+        #[cfg(feature = "mcp")]
+        self.record_rest(next);
         host.wake_at(next);
+    }
+
+    /// Tells the inspector the loop sleeps until `next`, and where the
+    /// primary window's last pass saw the pointer: a client that sent
+    /// input from outside waits for this, not for a while.
+    #[cfg(feature = "mcp")]
+    fn record_rest(&mut self, next: Option<Instant>) {
+        if !self.app.inspected() {
+            return;
+        }
+        let pointer = self.slots.iter().find(|s| s.is_root()).and_then(|slot| {
+            slot.ctx.input(|i| {
+                i.pointer.latest_pos().map(|p| ljos_dev::mcp::PointerSeen {
+                    x: p.x,
+                    y: p.y,
+                    pressed: i.pointer.any_down(),
+                })
+            })
+        });
+        self.app.record_rest(ljos_dev::mcp::Rest {
+            wake_at: next,
+            pointer,
+        });
     }
 
     #[cfg(feature = "mcp")]
