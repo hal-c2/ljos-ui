@@ -6,7 +6,7 @@
 # Found by ljos-fuzz (creation), buckets value:load-handlers:empty-qt,
 # warning:assign(qt-only):Unable_to_assign_QPointF_to_QString,
 # warning:assign(ljos-only):Unable_to_assign_double_to_color, …_bool_to_color, …_QJSValue_to_color
-# and …_QColor_to_point.
+# and …_QColor_to_point; ljos-fuzz (bindings), …_QPointF_to_color.
 
 @qt-parity
 Feature: A binding to a value of another type
@@ -24,11 +24,12 @@ Feature: A binding to a value of another type
         property color fromNumber: Math.abs(3)
         property color fromBool: Number.isInteger(1)
         property color fromArray: [].concat([])
+        property color fromPoint: Qt.point(1, 2)
         property point fromColor: Qt.lighter("#000000")
-        property string seen: [fromNumber.valid, fromBool.valid, fromArray.valid, fromColor.x, fromColor.y].join(",")
+        property string seen: [fromNumber.valid, fromBool.valid, fromArray.valid, fromPoint.valid, fromColor.x, fromColor.y].join(",")
       }
       """
-    Then the property "seen" of "root" is "false,false,false,0,0"
+    Then the property "seen" of "root" is "false,false,false,false,0,0"
     And the log has no warning matching "Unable to assign"
 
   @backlog
