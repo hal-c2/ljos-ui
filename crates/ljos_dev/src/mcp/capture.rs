@@ -16,6 +16,8 @@ use ljos_quick::QuickScene;
 use ljos_runtime::Clock;
 use slotmap::Key as _;
 
+use super::redact::mask_text;
+
 /// What a masked value is written as outside the outline.
 pub(crate) const REDACTED: &str = "<redacted>";
 
@@ -95,10 +97,7 @@ impl Capture {
     /// [`secrets`](Self::secrets), longest first, as the masks of
     /// [`super::redact`] want them.
     pub(crate) fn masks(&self) -> Vec<String> {
-        let mut all: Vec<String> = self.secrets.iter().cloned().collect();
-        all.sort_unstable();
-        all.sort_by_key(|s| std::cmp::Reverse(s.len()));
-        all
+        longest_first(&self.secrets)
     }
 
     /// `text`, or the mask when it is something that must not be shown.
@@ -109,6 +108,15 @@ impl Capture {
             text
         }
     }
+}
+
+/// `secrets` in the order the masks want them: a secret that holds another
+/// is masked whole.
+pub(crate) fn longest_first(secrets: &HashSet<String>) -> Vec<String> {
+    let mut all: Vec<String> = secrets.iter().cloned().collect();
+    all.sort_unstable();
+    all.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    all
 }
 
 fn truthy(v: &Value) -> bool {
@@ -249,22 +257,23 @@ fn capture_untracked(
         viewport.width().round().max(0.0) as u32,
         viewport.height().round().max(0.0) as u32,
     ));
+    // What names a node is masked where a secret is part of it: a title,
+    // an objectName or an id may be bound to what a field hides.
+    let masks = longest_first(&secrets);
+    let mask_part = |text: &str| -> String {
+        let mut s = text.to_string();
+        mask_text(&mut s, &masks);
+        s
+    };
     if let Some(root) = root
         && let Value::String(title) = engine.read_by_name(root, "title")
     {
-        window.name = title.to_string();
+        window.name = mask_part(&title);
     }
     window.hidden_below = hidden.get(&NodeKey::ROOT.0).copied().unwrap_or(0);
     index_of.insert(NodeKey::ROOT.0, tree.push(None, window));
     items.push(root);
 
-    let mask = |text: &str| -> String {
-        if !text.is_empty() && secrets.contains(text) {
-            REDACTED.to_string()
-        } else {
-            text.to_string()
-        }
-    };
     // The nodes whose children may still come, innermost last. A node's
     // pointer items follow its own children, once the walk has left it.
     let mut open: Vec<u64> = vec![NodeKey::ROOT.0];
@@ -295,10 +304,10 @@ fn capture_untracked(
         let obj = scene.accessible_item(key);
         let is_focus = focus_key == Some(key);
         let mut node = SnapNode::new(key.0, role_word(d.role));
-        node.name = mask(&d.name);
-        node.description = mask(&d.description);
+        node.name = mask_part(&d.name);
+        node.description = mask_part(&d.description);
         if !d.author_id.is_empty() {
-            node.object_name = Some(d.author_id.clone());
+            node.object_name = Some(mask_part(&d.author_id));
         }
         node.type_name = obj
             .and_then(|o| engine.meta_of(o))
@@ -350,7 +359,7 @@ fn capture_untracked(
             && let Some(Some(id)) = ids.next()
             && let Some(node) = tree.get_mut(index)
         {
-            node.qml_id = Some(id);
+            node.qml_id = Some(mask_part(&id));
         }
     }
 

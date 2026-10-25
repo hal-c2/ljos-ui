@@ -969,14 +969,19 @@ impl Look<'_> {
         let visible = root
             .and_then(|r| engine.untrack(|| flag(engine, r, "visible")))
             .unwrap_or(root.is_some());
-        let title = self.capture.node(0).name.clone();
+        // Masked as they are told, as well as when the scene was captured.
+        let masks = self.capture.masks();
+        let mut title = self.capture.node(0).name.clone();
+        mask_text(&mut title, &masks);
         let focus = match self.capture.focus {
             Some(index) => {
                 let reference = self.reference(index);
                 let node = self.capture.node(index);
+                let mut name = clip(&node.name, MAX_VALUE_CHARS);
+                mask_text(&mut name, &masks);
                 json!({
                     "role": node.role,
-                    "name": clip(&node.name, MAX_VALUE_CHARS),
+                    "name": name,
                     "ref": reference,
                 })
             }

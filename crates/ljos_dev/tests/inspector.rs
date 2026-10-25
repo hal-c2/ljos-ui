@@ -1069,6 +1069,60 @@ fn eval_masks_secret_keys_without_merging_them() {
     tells_neither(&kept);
 }
 
+/// A title, an objectName and an id that repeat what a field hides.
+const NAMED_AFTER: &str = r#"
+import QtQuick
+Item {
+    objectName: "root"; width: 300; height: 200
+    property string title: "Signed in with " + pw.text
+    TextInput {
+        id: pw; objectName: "pw"; width: 120; height: 20
+        echoMode: TextInput.Password; text: "hunter2"; focus: true
+    }
+    Rectangle {
+        id: hunter2Box; objectName: "box-" + pw.text
+        y: 40; width: 80; height: 30
+        Accessible.role: Accessible.Button; Accessible.name: "Box"
+    }
+}
+"#;
+
+#[test]
+fn metadata_that_repeats_a_secret_is_masked_in_every_answer() {
+    let mut app = app_with(NAMED_AFTER, InspectorConfig::default());
+    let outline = app.outline(json!({}));
+    assert!(!outline.contains("hunter2"), "{outline}");
+    assert!(outline.contains(r#"obj="box-<redacted>""#), "{outline}");
+    assert!(outline.contains(r#"id="<redacted>Box""#), "{outline}");
+    for (tool, args) in [
+        ("app_status", json!({})),
+        ("app_objects", json!({})),
+        ("app_find", json!({ "locator": "role=button" })),
+        ("app_inspect", json!({ "target": "role=button" })),
+        ("app_inspect", json!({ "target": "#root" })),
+    ] {
+        let reply = app.call(tool, args);
+        assert!(!reply.text.contains("hunter2"), "{tool}: {}", reply.text);
+        let data = reply.structured.to_string();
+        assert!(!data.contains("hunter2"), "{tool}: {data}");
+    }
+    // The title is told, with the secret masked, not left out.
+    assert!(
+        outline.starts_with(r#"- window "Signed in with <redacted>""#),
+        "{outline}"
+    );
+    let status = app.call("app_status", json!({}));
+    assert_eq!(
+        status.structured["windows"][0]["title"],
+        "Signed in with <redacted>"
+    );
+    assert!(
+        status.text.contains("Signed in with <redacted>"),
+        "{}",
+        status.text
+    );
+}
+
 // ----------------------------------------------------------- app_screenshot
 
 #[test]

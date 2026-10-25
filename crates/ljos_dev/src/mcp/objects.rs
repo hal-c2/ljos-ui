@@ -19,6 +19,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use slotmap::{Key, KeyData};
 
+use super::redact::mask_text;
 use super::tools::{flag, text_property};
 
 pub const OBJECTS: &str = "\
@@ -199,6 +200,7 @@ pub(crate) fn objects(
     scene: &QuickScene,
     args: &ObjectsArgs,
     found: Option<ObjectId>,
+    secrets: &[String],
     per_copy: usize,
 ) -> Result<ToolReply, SurfaceError> {
     let cursor = args
@@ -279,7 +281,13 @@ pub(crate) fn objects(
                     .meta_of(obj)
                     .map_or_else(|| "object".to_owned(), |m| m.name.to_string());
                 let item = ljos_quick::is_item(engine, obj);
-                let name = text_property(engine, obj, "objectName");
+                // An id or an objectName may be bound to what a field hides.
+                let masked = |mut s: String| {
+                    mask_text(&mut s, secrets);
+                    s
+                };
+                let id = id.map(masked);
+                let name = text_property(engine, obj, "objectName").map(masked);
                 let h = handle(obj);
                 let mut row = json!({
                     "handle": h,

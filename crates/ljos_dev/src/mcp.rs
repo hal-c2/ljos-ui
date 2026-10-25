@@ -32,7 +32,8 @@
 //! searches, properties, pictures and in what the acts report back, and
 //! so is any name or string property that is exactly that text, and the
 //! text wherever it is part of a property's value, an expression or what
-//! a script answers (a key of an object included). A script
+//! a script answers (a key of an object included). A title, a name, an
+//! objectName and an id are masked where a secret is part of them. A script
 //! cannot be held to the mask, so `app_eval` is refused under `redact_all`
 //! and in a field that hides its text; elsewhere what it returns has the
 //! secrets masked wherever they occur in a string. A method or signal
@@ -1165,7 +1166,16 @@ impl Inspector {
                     }
                     _ => Ok(None),
                 };
-                found.and_then(|found| objects::objects(engine, scene, args, found, per_copy))
+                // The secrets of the fields now, and of every look before.
+                let now = match capture {
+                    Some(c) => c.secrets.clone(),
+                    None => capture::secrets(engine, scene, self.cfg.redact_all),
+                };
+                self.logs.borrow_mut().learn(&now);
+                let secrets = self.logs.borrow().book().secrets().to_vec();
+                found.and_then(|found| {
+                    objects::objects(engine, scene, args, found, &secrets, per_copy)
+                })
             }
             (Kind::Trace(args), capture) => {
                 let found = match (&args.target, capture) {
