@@ -466,6 +466,12 @@ impl TapHandler {
     /// The press was held for `longPressThreshold`.
     #[qml(signal, name = "longPressed")]
     fn long_pressed();
+    /// `grabChanged(transition, point)`, as every pointer handler has: the
+    /// handler took the point at the press, passively with the
+    /// `DragThreshold` policy and on its own with the others, or let go
+    /// of it ([`tap_grab_point`]).
+    #[qml(signal, name = "grabChanged")]
+    fn grab_changed(transition: i32, point: Value);
 
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
@@ -593,6 +599,35 @@ pub(crate) fn tap_point_moved(engine: &Engine, h: ObjectId, ev: &PointerEvent) {
 /// The `eventPoint` a tap handler's signal is given: the pointer at `at`
 /// in the scene, pressed where its `point` says.
 pub(crate) fn tap_event_point(engine: &Engine, h: ObjectId, at: kurbo::Point, state: i32) -> Value {
+    event_point_at(engine, h, in_tap_item(engine, h, at), at, state)
+}
+
+/// The `eventPoint` of a tap handler's `grabChanged`. A point let go of
+/// (`grabbed` false) has its place in the scene for its position: where
+/// in the item qml6 says it is depends on how the event came
+/// (`features/input/tap-handler-grabs.feature`).
+pub(crate) fn tap_grab_point(
+    engine: &Engine,
+    h: ObjectId,
+    at: kurbo::Point,
+    state: i32,
+    grabbed: bool,
+) -> Value {
+    let position = if grabbed {
+        in_tap_item(engine, h, at)
+    } else {
+        at
+    };
+    event_point_at(engine, h, position, at, state)
+}
+
+fn event_point_at(
+    engine: &Engine,
+    h: ObjectId,
+    position: kurbo::Point,
+    at: kurbo::Point,
+    state: i32,
+) -> Value {
     let Some(p) = point_props() else {
         return Value::Undefined;
     };
@@ -602,7 +637,7 @@ pub(crate) fn tap_event_point(engine: &Engine, h: ObjectId, at: kurbo::Point, st
     };
     let id = (engine.untrack(|| engine.read(h, p.id)).to_number() as i32).max(0);
     PointValues {
-        position: in_tap_item(engine, h, at),
+        position,
         scene_position: at,
         press_position: read(p.press_position),
         scene_press_position: read(p.scene_press_position),

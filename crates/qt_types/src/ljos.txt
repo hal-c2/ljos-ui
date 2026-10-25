@@ -2791,6 +2791,7 @@ module QtQuick
 		signal doubleTapped eventPoint _
 		signal canceled point
 		signal longPressed
+		signal grabChanged transition point
 	type QtQuick.Text Text
 		prototype QtQuick.Item named
 		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8

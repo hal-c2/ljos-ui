@@ -48,7 +48,7 @@ use crate::accessible::A11yPass;
 use crate::anchors::{self, AnchorState};
 use crate::animation::shown::Shown;
 use crate::enums::gesture_policy;
-use crate::handlers::point_state;
+use crate::handlers::{grab_transition, point_state};
 use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKind, TapHandler};
 use crate::item::{Item, init_item, is_a, is_item, num, scene_transform, write_computed};
 use crate::loader::{Loader, shown_children};
@@ -440,6 +440,9 @@ struct PointerState {
     grab: Option<Grab>,
     /// TapHandlers with a passive grab (`DragThreshold` policy).
     passive: Vec<ObjectId>,
+    /// The same, and those of them whose tap was cancelled: as in Qt they
+    /// watch the point until it comes up.
+    watched: Vec<ObjectId>,
     press_pos: kurbo::Point,
     /// The grabbing MouseArea accepted `doubleClicked` on this press.
     double: bool,
@@ -2224,7 +2227,17 @@ impl QuickScene {
             PointerKind::Move => self.moved(engine, ev),
             PointerKind::Release => self.release(engine, ev),
             PointerKind::Cancel => {
-                let handled = self.cancel(engine, ev);
+                let mut handled = self.cancel(engine, ev);
+                for h in std::mem::take(&mut self.pointer.watched) {
+                    tap_ungrab(
+                        engine,
+                        h,
+                        grab_transition::CANCEL_GRAB_PASSIVE,
+                        ev.pos,
+                        point_state::UPDATED,
+                    );
+                    handled = true;
+                }
                 crate::handlers::canceled(engine);
                 handled
             }
@@ -2301,6 +2314,7 @@ impl QuickScene {
         }
         self.pointer.grab = None;
         self.pointer.passive.clear();
+        self.pointer.watched.clear();
         self.pointer.press_pos = ev.pos;
         self.pointer.double = false;
         crate::flickable::drag::pressed(engine, ev.time);
@@ -2341,12 +2355,26 @@ impl QuickScene {
                 // As in Qt the point is there when `pressed` changes, and
                 // says so after it.
                 crate::input::tap_point_pressed(engine, h, ev);
+                // The grab is told first, as in Qt.
+                let policy = num(engine, h, TapHandler::GESTURE_POLICY.index) as i32;
+                let passive = policy == gesture_policy::DRAG_THRESHOLD;
+                let grab = if passive {
+                    grab_transition::GRAB_PASSIVE
+                } else {
+                    grab_transition::GRAB_EXCLUSIVE
+                };
+                let point =
+                    crate::input::tap_grab_point(engine, h, ev.pos, point_state::PRESSED, true);
+                emit(engine, h, "grabChanged", &[Value::Int(grab), point]);
+                if !engine.is_alive(h) {
+                    continue;
+                }
                 set(engine, h, TapHandler::PRESSED.index, Value::Bool(true));
                 crate::input::tap_point_changed(engine, h);
                 crate::long_press::pressed(engine, h, ev.time);
-                let policy = num(engine, h, TapHandler::GESTURE_POLICY.index) as i32;
-                if policy == gesture_policy::DRAG_THRESHOLD {
+                if passive {
                     self.pointer.passive.push(h);
+                    self.pointer.watched.push(h);
                     handled = true;
                 } else {
                     self.pointer.grab = Some(Grab::Tap(h));
@@ -2445,7 +2473,7 @@ impl QuickScene {
             self.cancel(engine, ev);
             crate::handlers::activate(engine, h, ev, held);
             for t in watching {
-                cancel_tap(engine, t, ev.pos);
+                cancel_tap(engine, t, ev.pos, None);
             }
             self.pointer.grab = Some(Grab::Item(h));
             handled = true;
@@ -2455,7 +2483,7 @@ impl QuickScene {
         {
             // A drag is not a tap.
             for h in std::mem::take(&mut self.pointer.passive) {
-                cancel_tap(engine, h, ev.pos);
+                cancel_tap(engine, h, ev.pos, None);
             }
             // Nor a long press, for a handler that keeps the press.
             if let Some(Grab::Tap(h)) = self.pointer.grab {
@@ -2517,7 +2545,7 @@ impl QuickScene {
                     )
                 {
                     self.pointer.grab = None;
-                    cancel_tap(engine, h, ev.pos);
+                    cancel_tap(engine, h, ev.pos, Some(LetGo::Moved));
                 } else {
                     crate::input::tap_point_moved(engine, h, ev);
                 }
@@ -2589,8 +2617,15 @@ impl QuickScene {
                     .is_some_and(|t| contains_local(engine, t, local_point(engine, t, ev.pos)));
                 if inside {
                     self.tap(engine, h, ev);
+                    tap_ungrab(
+                        engine,
+                        h,
+                        grab_transition::UNGRAB_EXCLUSIVE,
+                        ev.pos,
+                        point_state::RELEASED,
+                    );
                 } else {
-                    cancel_tap(engine, h, ev.pos);
+                    cancel_tap(engine, h, ev.pos, Some(LetGo::Released));
                 }
                 handled = true;
             }
@@ -2608,6 +2643,17 @@ impl QuickScene {
                 self.tap(engine, h, ev);
                 handled = true;
             }
+        }
+        // After every tap, as in Qt, and for a tap that was cancelled too.
+        for h in std::mem::take(&mut self.pointer.watched) {
+            tap_ungrab(
+                engine,
+                h,
+                grab_transition::UNGRAB_PASSIVE,
+                ev.pos,
+                point_state::RELEASED,
+            );
+            handled = true;
         }
         // After the taps, as in Qt: a PointHandler lets go after the
         // TapHandler beside it has tapped.
@@ -2635,7 +2681,7 @@ impl QuickScene {
                 handled = true;
             }
             Some(Grab::Tap(h)) if engine.is_alive(h) => {
-                cancel_tap(engine, h, ev.pos);
+                cancel_tap(engine, h, ev.pos, Some(LetGo::Taken));
                 handled = true;
             }
             Some(Grab::Item(o)) if engine.is_alive(o) => {
@@ -2647,7 +2693,7 @@ impl QuickScene {
             _ => {}
         }
         for h in std::mem::take(&mut self.pointer.passive) {
-            cancel_tap(engine, h, ev.pos);
+            cancel_tap(engine, h, ev.pos, None);
             handled = true;
         }
         crate::mouse_drag::filter_cancel(engine);
@@ -3177,12 +3223,47 @@ pub(crate) fn contains_local(engine: &Engine, obj: ObjectId, p: kurbo::Point) ->
     p.x >= 0.0 && p.y >= 0.0 && p.x < w && p.y < h
 }
 
-fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point) {
+/// How a TapHandler that held the point alone let go of it.
+#[derive(Clone, Copy)]
+enum LetGo {
+    /// The pointer left its bounds.
+    Moved,
+    /// The button came up outside them.
+    Released,
+    /// Something else took the point.
+    Taken,
+}
+
+/// Tells that the TapHandler `h` let go of the point at `at`.
+fn tap_ungrab(engine: &Engine, h: ObjectId, transition: i32, at: kurbo::Point, state: i32) {
+    if engine.is_alive(h) {
+        let point = crate::input::tap_grab_point(engine, h, at, state, false);
+        emit(engine, h, "grabChanged", &[Value::Int(transition), point]);
+    }
+}
+
+/// `let_go`: how a handler that held the point alone let go of it, told
+/// between `pressed` and `canceled` as in Qt. A handler that only watched
+/// the point lets go of it at the release.
+fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point, let_go: Option<LetGo>) {
     if !engine.is_alive(h) {
         return;
     }
     crate::long_press::ended(engine, h);
     set(engine, h, TapHandler::PRESSED.index, Value::Bool(false));
+    if let Some(how) = let_go
+        && num(engine, h, TapHandler::GESTURE_POLICY.index) as i32 != gesture_policy::DRAG_THRESHOLD
+    {
+        let (transition, state) = match how {
+            LetGo::Moved => (grab_transition::UNGRAB_EXCLUSIVE, point_state::UPDATED),
+            LetGo::Released => (grab_transition::UNGRAB_EXCLUSIVE, point_state::RELEASED),
+            LetGo::Taken => (grab_transition::CANCEL_GRAB_EXCLUSIVE, point_state::UPDATED),
+        };
+        tap_ungrab(engine, h, transition, pos, state);
+        if !engine.is_alive(h) {
+            return;
+        }
+    }
     // As in Qt a handler that held the press alone has an empty point when
     // it says `canceled`; one that only watched still has the point.
     let alone =
