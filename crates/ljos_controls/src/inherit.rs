@@ -299,7 +299,16 @@ struct PlainItems {
     /// Colours made the author's by a write of the value they had, which
     /// their watches did not hear ([`made_own`]).
     made_own: RefCell<HashSet<(ObjectId, PropIndex)>>,
+    /// How many times a plain item looked for the colours above it.
+    /// What is handed down once [`handed_together`] returns: each object
+    /// with the roles of it that changed.
+    gathered: RefCell<Option<Vec<(ObjectId, u32)>>>,
+    #[cfg(test)]
+    looks: Cell<u64>,
 }
+
+/// Every role of a palette, as a set of [`hand_down`].
+const ALL_ROLES: u32 = (1 << ROLE_COUNT) - 1;
 
 /// The engine's application font: a graph node, so that what reads it runs
 /// again when it changes, and its attributes that differ from the default.
@@ -1075,7 +1084,9 @@ fn group_written(engine: &Engine, obj: ObjectId) {
                     // plain items below are handed it.
                     if holds && was.get() {
                         let i = role_index(kind, p);
-                        e.after_creation(move |e| hand_down(e, vec![obj], i));
+                        e.after_creation(move |e| {
+                            hand_down(e, vec![obj], i.map_or(ALL_ROLES, |i| 1 << i))
+                        });
                     } else if holds {
                         colours_changed(e, obj);
                     }
@@ -1157,7 +1168,7 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
         colours_changed(engine, item);
     } else if !own {
         // Made inside items that hand colours down: they did so before it was.
-        engine.untrack(|| take_from_above(engine, item, None));
+        engine.untrack(|| take_from_above(engine, item, ALL_ROLES));
     }
 }
 
@@ -1232,23 +1243,51 @@ fn colours_made(engine: &Engine, obj: ObjectId) {
 /// scene look again for each colour of a theme bound on a menu bar.
 fn colour_written(engine: &Engine, obj: ObjectId, role: Option<usize>, was: bool) {
     if was {
-        hand_down(engine, vec![obj], role);
+        hand_down(engine, vec![obj], role.map_or(ALL_ROLES, |i| 1 << i));
     } else {
         colours_changed(engine, obj);
         move_pending(engine);
     }
 }
 
+/// Runs `f`, and hands the colours it changes down to the plain items
+/// once it returns, each object's once with all of its roles that changed.
+/// One by one, a theme bound on a menu had each plain item in it look for
+/// its colours twice for each colour: once for the watch on the popup's
+/// item, once for the watch on its groups.
+pub(crate) fn handed_together<R>(engine: &Engine, f: impl FnOnce() -> R) -> R {
+    let plain = engine.extension::<PlainItems>();
+    if plain.gathered.borrow().is_some() {
+        return f();
+    }
+    *plain.gathered.borrow_mut() = Some(Vec::new());
+    let r = f();
+    let gathered = plain.gathered.borrow_mut().take().unwrap_or_default();
+    for (obj, roles) in gathered {
+        hand_down(engine, vec![obj], roles);
+    }
+    r
+}
+
 /// Hands the colours of the objects an author changed down to the plain
 /// items below them.
 fn hand_down_to_plain_items(engine: &Engine) {
     let from = std::mem::take(&mut *engine.extension::<PlainItems>().from.borrow_mut());
-    hand_down(engine, from, None);
+    hand_down(engine, from, ALL_ROLES);
 }
 
-/// Hands the colours of `from` down to the plain items below them: role
-/// `only` of them, or all.
-fn hand_down(engine: &Engine, from: Vec<ObjectId>, only: Option<usize>) {
+/// Hands the colours of `from` down to the plain items below them: the
+/// roles in the set `roles`.
+fn hand_down(engine: &Engine, from: Vec<ObjectId>, roles: u32) {
+    if let Some(gathered) = &mut *engine.extension::<PlainItems>().gathered.borrow_mut() {
+        for obj in from {
+            match gathered.iter_mut().find(|(o, _)| *o == obj) {
+                Some((_, r)) => *r |= roles,
+                None => gathered.push((obj, roles)),
+            }
+        }
+        return;
+    }
     let mut seen = HashSet::new();
     let mut stack: Vec<ObjectId> = Vec::new();
     for obj in from {
@@ -1263,7 +1302,7 @@ fn hand_down(engine: &Engine, from: Vec<ObjectId>, only: Option<usize>) {
             }
             stack.extend(engine.visual_children(item));
             if kind_of(engine, item) == Some(Kind::Item) {
-                engine.untrack(|| take_from_above(engine, item, only));
+                engine.untrack(|| take_from_above(engine, item, roles));
             }
         }
     }
@@ -1272,9 +1311,14 @@ fn hand_down(engine: &Engine, from: Vec<ObjectId>, only: Option<usize>) {
 /// Gives a plain item the colours of the items it is in, for each role
 /// and each group's it did not set itself: on its next read, or now if
 /// something observes it. A colour nobody above set is the style's
-/// again, where it had another. `only` is the one role to look for, in
+/// again, where it had another. `roles` are the roles to look for, in
 /// each group, where the others are as they were.
-fn take_from_above(engine: &Engine, item: ObjectId, only: Option<usize>) {
+fn take_from_above(engine: &Engine, item: ObjectId, roles: u32) {
+    #[cfg(test)]
+    {
+        let looks = &engine.extension::<PlainItems>().looks;
+        looks.set(looks.get() + 1);
+    }
     // Each role, then each group's: a colour set on a palette is set in
     // each of its groups, and one set in a group there alone, so the
     // groups too are the nearest ancestor's (checked on qml6).
@@ -1290,7 +1334,7 @@ fn take_from_above(engine: &Engine, item: ObjectId, only: Option<usize>) {
     // A role not looked for is as good as the item's own.
     let mine: Vec<bool> = (0..SLOTS)
         .map(|at| {
-            only.is_some_and(|i| at % ROLE_COUNT != i)
+            roles & 1 << (at % ROLE_COUNT) == 0
                 || (at < ROLE_COUNT || groups) && author_set(engine, item, prop(at))
                 || author_set(engine, item, own_roles[at % ROLE_COUNT])
         })
@@ -1468,5 +1512,53 @@ mod tests {
             ..Font::default()
         };
         assert_eq!(merged(&base, &Font::default(), 0), base);
+    }
+
+    /// How many times the plain items in a menu looked for their colours
+    /// when `bound` of the colours bound on the menu changed.
+    fn looks_on_switch(bound: &[&str]) -> u64 {
+        let colours: String = bound
+            .iter()
+            .map(|r| format!("palette.{r}: dark ? \"black\" : \"white\"\n"))
+            .collect();
+        let source = format!(
+            r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {{
+    property bool dark: false
+    Menu {{
+        {colours}
+        Repeater {{ model: 4; MenuItem {{ }} }}
+    }}
+}}
+"#
+        );
+        let mut project = ljos_compiler::Project::new(qml_front::QtTypeOracle);
+        project.add("Main", &source);
+        let c = ljos_compiler::compile_file(&project, "Main").unwrap_or_else(|d| panic!("{d:?}"));
+        assert!(!c.has_errors(), "{:?}", c.diagnostics);
+        let mut files = ljos_engine::MapSource::new();
+        files.insert("Main", c.file);
+        let e = Engine::new();
+        ljos_quick::register(&e);
+        crate::register(&e);
+        e.set_component_source(files);
+        let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+        let looks = &e.extension::<PlainItems>().looks;
+        let before = looks.get();
+        e.write_by_name(root, "dark", Value::Bool(true)).unwrap();
+        looks.get() - before
+    }
+
+    /// Each colour bound on a menu was handed to the plain items in it on
+    /// its own, and twice: by the watch on the popup's item and by the
+    /// watch on its groups. They are handed down together, once.
+    #[test]
+    fn colours_bound_together_are_handed_down_once() {
+        let one = looks_on_switch(&["base"]);
+        let three = looks_on_switch(&["base", "text", "highlight"]);
+        assert!(one > 0);
+        assert_eq!(three, one, "3 colours: {three} looks, 1 colour: {one}");
     }
 }

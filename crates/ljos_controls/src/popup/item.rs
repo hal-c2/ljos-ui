@@ -262,11 +262,14 @@ pub(super) fn mirror_look(
             }
         }
         carried.set(read);
+        // The plain items in the item take the colours together too.
         e.untrack(|| {
-            e.batch(|| {
-                for (i, v) in &given {
-                    hand_down(e, mine[*i], theirs[*i], v);
-                }
+            crate::inherit::handed_together(e, || {
+                e.batch(|| {
+                    for (i, v) in &given {
+                        hand_down(e, mine[*i], theirs[*i], v);
+                    }
+                })
             });
         });
     })?;
