@@ -20,13 +20,13 @@ use std::sync::Arc;
 use ljos_engine::{Atom, Color, Engine, ObjectId, Value};
 use ljos_reactive::NodeId;
 use ljos_render::{Decorations, DisplayListBuilder, ImageHandle, Rgba, kurbo};
-use ljos_text::TextEngine;
 use ljos_text::rich::{
     Block, DocMetrics, DocParams, HAlign, InlineImage, ParseOptions, RichDoc, TextFormat, View,
     default_image_size,
 };
+use ljos_text::{TextEngine, WrapMode};
 
-use super::{Text, TextInputs, vertical_offset};
+use super::{Fit, Text, TextInputs, vertical_offset};
 use crate::enums::align;
 use crate::image::{ImageKey, ImageStore, Request};
 use crate::item::{Item, num};
@@ -71,6 +71,10 @@ pub(crate) struct RichState {
     pub(crate) keyboard: bool,
     /// What a `SelectionScope` has selected of the document.
     pub(crate) selection: Option<std::ops::Range<usize>>,
+    /// The size `fontSizeMode` fitted the text to, what it was fitted
+    /// with, and what the text measures at its own size; `None` again when
+    /// the document changes.
+    fitted: Option<((DocParams, Fit), Option<f64>, DocMetrics)>,
 }
 
 impl std::fmt::Debug for RichState {
@@ -126,13 +130,59 @@ impl RichHandle {
 
 impl RichState {
     fn layout(&mut self, te: &mut TextEngine, t: &TextInputs) -> DocMetrics {
-        let params = DocParams {
+        let own = DocParams {
             style: t.style.clone(),
             layout: t.params,
         };
+        // Measured on qml6: styled text fits as plain text does, and rich
+        // text keeps its size.
+        let fit = t
+            .fit
+            .as_ref()
+            .filter(|_| self.doc.format() == TextFormat::Styled);
+        let Some(fit) = fit else {
+            self.fitted = None;
+            return self.layout_with(te, &own);
+        };
+        let key = (own.clone(), fit.clone());
+        let px = match &self.fitted {
+            Some((k, px, _)) if *k == key => *px,
+            _ => {
+                let wants = self.layout_with(te, &own);
+                let wraps = t.params.wrap != WrapMode::NoWrap;
+                let px = fit.size(f64::from(t.style.pixel_size), |px| {
+                    let at = DocParams {
+                        style: crate::text::sized(&t.style, px),
+                        layout: t.params,
+                    };
+                    let m = self.layout_with(te, &at);
+                    fit.holds(wraps, m.natural_width, m.content_width, m.implicit_height)
+                });
+                self.fitted = Some((key, px, wants));
+                px
+            }
+        };
+        let Some(px) = px else {
+            return self.layout_with(te, &own);
+        };
+        let at = DocParams {
+            style: crate::text::sized(&t.style, px),
+            layout: t.params,
+        };
+        let shown = self.layout_with(te, &at);
+        // A fitted text wants the room of its font's own size.
+        let wants = self.fitted.as_ref().map_or(shown, |(_, _, w)| *w);
+        DocMetrics {
+            natural_width: wants.natural_width,
+            implicit_height: wants.implicit_height,
+            ..shown
+        }
+    }
+
+    fn layout_with(&mut self, te: &mut TextEngine, params: &DocParams) -> DocMetrics {
         let images = &self.images;
         self.doc
-            .layout(te, &params, &mut |image| image_size(images, image))
+            .layout(te, params, &mut |image| image_size(images, image))
     }
 }
 
@@ -182,6 +232,7 @@ pub(crate) fn prepare(
         if changed {
             s.has_links = s.doc.has_links();
             s.pressed = None;
+            s.fitted = None;
         }
         (changed, s.doc.has_images())
     };

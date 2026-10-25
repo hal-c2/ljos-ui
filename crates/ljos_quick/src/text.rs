@@ -126,7 +126,8 @@ pub fn font_families() -> Vec<String> {
 /// and Return activates the one it is on; the links are children of the
 /// `Text` in the accessibility tree.
 ///
-/// `fontSizeMode` fits plain text; text with markup keeps its size.
+/// `fontSizeMode` fits plain and styled text; rich text keeps its size,
+/// as on qml6.
 /// `renderType` is kept and not applied; there is one way of drawing text.
 /// `font.capitalization` applies to plain text only; small capitals are a
 /// small letter's capital at seven tenths of the size, as Qt draws them.
@@ -887,39 +888,15 @@ impl TextInputs {
         let Some(fit) = &self.fit else {
             return Cow::Borrowed(&self.style);
         };
-        let at = |px: f64| TextStyle {
-            pixel_size: px as f32,
-            ..self.style.clone()
-        };
-        let fits = |te: &mut TextEngine, style: &TextStyle| {
-            let l = self.layout_at(te, style);
-            let wide = if self.params.wrap != WrapMode::NoWrap && fit.height.is_some() {
-                l.content_width
-            } else {
-                l.natural_width
-            };
-            // A height is room up to the whole pixel above it: on qml6 a
-            // line 23 px high fits in 22.5.
-            fit.width.is_none_or(|w| wide <= w)
-                && fit.height.is_none_or(|h| l.implicit_height <= h.ceil())
-        };
-        let own = f64::from(self.style.pixel_size);
-        let smallest = fit.smallest.max(1.0);
-        if smallest >= own || fits(te, &self.style) {
-            return Cow::Borrowed(&self.style);
+        let wraps = self.params.wrap != WrapMode::NoWrap;
+        let size = fit.size(f64::from(self.style.pixel_size), |px| {
+            let l = self.layout_at(te, &sized(&self.style, px));
+            fit.holds(wraps, l.natural_width, l.content_width, l.implicit_height)
+        });
+        match size {
+            Some(px) => Cow::Owned(sized(&self.style, px)),
+            None => Cow::Borrowed(&self.style),
         }
-        let (mut low, mut high) = (smallest.ceil(), own.ceil() - 1.0);
-        let mut best = smallest;
-        while low <= high {
-            let mid = ((low + high) / 2.0).floor();
-            if fits(te, &at(mid)) {
-                best = mid;
-                low = mid + 1.0;
-            } else {
-                high = mid - 1.0;
-            }
-        }
-        Cow::Owned(at(best))
     }
 
     fn layout_at(&self, te: &mut TextEngine, style: &TextStyle) -> Arc<TextLayout> {
@@ -956,6 +933,50 @@ impl TextInputs {
             baseline: l.baseline,
             rtl: l.rtl,
         }
+    }
+}
+
+/// `style` at `px` pixels.
+pub(crate) fn sized(style: &TextStyle, px: f64) -> TextStyle {
+    TextStyle {
+        pixel_size: px as f32,
+        ..style.clone()
+    }
+}
+
+impl Fit {
+    /// The largest whole pixel size below `own` at which `fits` says the
+    /// text fits, or the smallest size if none does; `None` when the text
+    /// fits at its own size, or cannot shrink.
+    pub(crate) fn size(&self, own: f64, mut fits: impl FnMut(f64) -> bool) -> Option<f64> {
+        let smallest = self.smallest.max(1.0);
+        if smallest >= own || fits(own) {
+            return None;
+        }
+        let (mut low, mut high) = (smallest.ceil(), own.ceil() - 1.0);
+        let mut best = smallest;
+        while low <= high {
+            let mid = ((low + high) / 2.0).floor();
+            if fits(mid) {
+                best = mid;
+                low = mid + 1.0;
+            } else {
+                high = mid - 1.0;
+            }
+        }
+        Some(best)
+    }
+
+    /// Whether text that measures this is inside the room.
+    pub(crate) fn holds(&self, wraps: bool, natural: f64, content: f64, height: f64) -> bool {
+        let wide = if wraps && self.height.is_some() {
+            content
+        } else {
+            natural
+        };
+        // A height is room up to the whole pixel above it: on qml6 a line
+        // 23 px high fits in 22.5.
+        self.width.is_none_or(|w| wide <= w) && self.height.is_none_or(|h| height <= h.ceil())
     }
 }
 
