@@ -152,6 +152,10 @@ jobs:
           for seed in 1792876201 1792873519 1792881048; do
             FUZZ_OUT="$RUNNER_TEMP/fuzz/pinned-$seed" mise run fuzz:qt bindings --cases 2000 --seed "$seed" || failed=1
           done
+          # The other areas are smaller, and one triaged seed each holds what they found.
+          for area in geometry connections creation models builtins; do
+            FUZZ_OUT="$RUNNER_TEMP/fuzz/pinned-$area" mise run fuzz:qt "$area" --cases 2000 --seed 101 || failed=1
+          done
           exit "$failed"
         if: ${{ !cancelled() }}
       - run: mise run fuzz:qt bindings --cases 2000 --seed "$GITHUB_RUN_ID"
