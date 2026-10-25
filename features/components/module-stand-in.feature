@@ -119,3 +119,26 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
     Then the property "made" of "root" is 0
     And the log has 1 warnings matching "QtQuick3D"
     And the log has no warning matching "Required property"
+
+  # Qt names a property that takes a Component `delegate`, or ends it in
+  # `Delegate` or `Component`; what is written there is made by the type
+  # that is missing, so it is not made at all, as no model drives it.
+  Scenario: What is written for the delegate of a missing type is not made
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      Item {
+        id: root
+        objectName: "root"
+        property int made: 0
+        Node {
+          Repeater3D {
+            model: 2
+            delegate: Node { Component.onCompleted: root.made += 1 }
+          }
+        }
+      }
+      """
+    Then the property "made" of "root" is 0
+    And the log has 1 warnings matching "QtQuick3D"

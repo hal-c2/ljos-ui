@@ -591,7 +591,10 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
                         .or_else(|| self.attached(&path))
                     {
                         Some(property) => property.is_component,
-                        None => self.stands_in(owner) && leaves_required(&binding.value),
+                        None => {
+                            self.stands_in(owner)
+                                && (leaves_required(&binding.value) || takes_component(&path))
+                        }
                     };
                     self.values(&binding.value, context, template);
                 }
@@ -696,6 +699,14 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
 /// set itself. Qt makes no such object, so where the type of the property
 /// is not known (a type that stands in) it can only be a template, which
 /// whatever has the property makes and sets it on (a delegate).
+/// Whether `path` names a property that takes a Component in Qt, for a
+/// type whose properties are not known: Qt names those `delegate`, or ends
+/// them in `Delegate` or `Component`.
+fn takes_component(path: &[&str]) -> bool {
+    let [name] = path else { return false };
+    *name == "delegate" || name.ends_with("Delegate") || name.ends_with("Component")
+}
+
 fn leaves_required(value: &QmlBindingValue<'_>) -> bool {
     let objects = match value {
         QmlBindingValue::Object(object) => std::slice::from_ref(object),
