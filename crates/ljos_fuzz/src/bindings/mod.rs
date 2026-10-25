@@ -489,7 +489,107 @@ fn catalogue_step(st: &Stmt) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::looped_builtin;
+    use super::{
+        ast::{Decl, Expr, Kind, Obj, ObjType, PType, Program, Prop},
+        looped_builtin, reads_alias_and_target,
+    };
+
+    fn real(name: &str, init: Option<Expr>) -> Prop {
+        let decl = Decl::New {
+            ty: PType::Real,
+            readonly: false,
+        };
+        Prop {
+            name: name.into(),
+            decl,
+            init,
+            in_loop: false,
+        }
+    }
+
+    fn alias(name: &str, target: &str) -> Prop {
+        let decl = Decl::Alias {
+            target: target.into(),
+            ty: PType::Real,
+        };
+        Prop {
+            name: name.into(),
+            decl,
+            init: None,
+            in_loop: false,
+        }
+    }
+
+    fn reads(refs: &[(&str, &str)]) -> Expr {
+        let args: Vec<Expr> = refs
+            .iter()
+            .map(|&(obj, prop)| Expr::Ref {
+                obj: obj.into(),
+                prop: prop.into(),
+                kind: Kind::Num,
+            })
+            .collect();
+        let tpl = (0..args.len())
+            .map(|i| format!("${i}"))
+            .collect::<Vec<_>>()
+            .join(" + ");
+        Expr::Op {
+            label: "add",
+            tpl,
+            args,
+            kind: Kind::Num,
+        }
+    }
+
+    /// `root` has `p0` and, in `o1`, an alias `a1` of `target`; `o2` binds `p2` to what `refs` reads.
+    fn program(target: &str, refs: &[(&str, &str)]) -> Program {
+        let mut root = Obj::new("root".into(), ObjType::Item);
+        root.props.push(real("p0", None));
+        let mut o1 = Obj::new("o1".into(), ObjType::Item);
+        o1.props.push(alias("a1", target));
+        let mut o2 = Obj::new("o2".into(), ObjType::QtObject);
+        o2.props.push(real("p2", Some(reads(refs))));
+        root.children = vec![o1, o2];
+        Program {
+            root,
+            enums: Vec::new(),
+            steps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_binding_reading_an_alias_and_its_target_is_found() {
+        assert!(reads_alias_and_target(&program(
+            "root.p0",
+            &[("o1", "a1"), ("root", "p0")]
+        )));
+        // An alias of a member is of the property the member is in.
+        assert!(reads_alias_and_target(&program(
+            "root.p0.r",
+            &[("root", "p0"), ("o1", "a1")]
+        )));
+    }
+
+    #[test]
+    fn a_binding_reading_only_one_of_them_is_not() {
+        assert!(!reads_alias_and_target(&program(
+            "root.p0",
+            &[("o1", "a1")]
+        )));
+        assert!(!reads_alias_and_target(&program(
+            "root.p0",
+            &[("root", "p0")]
+        )));
+        // The alias's name on another object is another property.
+        assert!(!reads_alias_and_target(&program(
+            "root.p0",
+            &[("o2", "a1"), ("root", "p0")]
+        )));
+        assert!(!reads_alias_and_target(&program(
+            "root.p0",
+            &[("o1", "a1"), ("root", "p3")]
+        )));
+    }
 
     #[test]
     fn a_loop_is_keyed_by_an_items_own_property_only() {
