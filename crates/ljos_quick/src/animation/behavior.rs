@@ -289,6 +289,14 @@ pub(crate) fn attach(engine: &Engine, behavior: ObjectId, target: ObjectId, prop
             intercept(e, behavior, (target, prop), &ty, v, how)
         })),
     );
+    run_unread(engine, target, prop);
+}
+
+/// A binding runs when it is read, and a property nothing reads (one of
+/// an object's own, say) would never start its Behavior: watched, its
+/// binding runs at each change, as Qt's does.
+fn run_unread(engine: &Engine, target: ObjectId, prop: PropIndex) {
+    let _ = engine.watch(target, prop, |_, _| {});
 }
 
 /// Puts `behavior` in front of the member `member` of the value `prop` of
@@ -352,6 +360,7 @@ pub(crate) fn attach_member(
             intercept_member(e, (behavior, proxy), (target, prop), (&ty, &member), v, how)
         })),
     );
+    run_unread(engine, target, prop);
     true
 }
 
