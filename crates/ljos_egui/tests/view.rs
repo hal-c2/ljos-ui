@@ -443,6 +443,41 @@ fn touch_is_a_pointer_with_its_own_id() {
 }
 
 #[test]
+fn two_touches_in_a_pass_are_one_step_of_a_pinch() {
+    let s = scene();
+    let area = make::<ljos_quick::PinchArea>(&s.engine, Some(s.root));
+    geom(&s.engine, area, 0.0, 0.0, 200.0, 120.0);
+    let updates = Rc::new(Cell::new(0));
+    let u = Rc::clone(&updates);
+    s.engine
+        .connect_by_name(area, "pinchUpdated", move |_, _| u.set(u.get() + 1))
+        .unwrap();
+    let mut h = harness(&s, None);
+    h.run();
+    let origin = at(&h, 0.0, 0.0);
+    let touch = |id, phase, x| Event::Touch {
+        device_id: egui::TouchDeviceId(0),
+        id: egui::TouchId(id),
+        phase,
+        pos: origin + Vec2::new(x, 60.0),
+        force: None,
+    };
+    h.event(touch(1, egui::TouchPhase::Start, 50.0));
+    h.event(touch(2, egui::TouchPhase::Start, 150.0));
+    h.run();
+    // Queued events get a pass each; a platform's touch frame is one.
+    for k in 1..=20 {
+        let k = k as f32;
+        let events = &mut h.input_mut().events;
+        events.push(touch(1, egui::TouchPhase::Move, 50.0 - k));
+        events.push(touch(2, egui::TouchPhase::Move, 150.0 + k));
+        h.run();
+    }
+    // 10 px further apart at the fifth pass, then one a pass.
+    assert_eq!(updates.get(), 15);
+}
+
+#[test]
 fn idle_runs_no_frames_and_requests_no_repaint() {
     let s = scene();
     let mut h = harness(&s, None);

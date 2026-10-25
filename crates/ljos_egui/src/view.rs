@@ -158,9 +158,9 @@ struct PointerTrack {
     held: MouseButtons,
     /// The pointer was last seen over the view (hover is live).
     inside: bool,
-    /// The touch the scene is following. The scene has one pointer, so
-    /// further touches are ignored until this one ends.
-    touch: Option<TouchId>,
+    /// The touches that came down on the view, the first first; the
+    /// scene follows two.
+    touches: Vec<TouchId>,
 }
 
 /// An egui widget that shows a [`QuickScene`] rooted at a QML item.
@@ -1103,6 +1103,9 @@ impl QmlView {
         // one as mouse events; once a touch is seen, the emulation is noise.
         let touch_pass = events.iter().any(|e| matches!(e, Event::Touch { .. }));
         let mut out: Vec<PointerEvent> = Vec::new();
+        // The touch points of a pass go together: a pinch's step is both
+        // fingers' moves.
+        let mut touches = Vec::new();
         let mut presses = Vec::new();
         let mut focuses = Vec::new();
         let mut actions = Vec::new();
@@ -1144,38 +1147,33 @@ impl QmlView {
                     }
                 }
                 Event::Touch { id, phase, pos, .. } => {
-                    let pid = PointerId(id.0.wrapping_add(1));
-                    let following = self.pointer.touch == Some(*id);
-                    let ev = |kind, held| {
-                        let mut ev = base(kind, *pos);
-                        ev.id = pid;
-                        ev.buttons = held;
-                        ev
+                    use ljos_quick::touch::{TouchEvent, TouchPhase as Phase};
+                    let mine = self.pointer.touches.contains(id);
+                    let phase = match phase {
+                        // The fingers after the first belong to it.
+                        TouchPhase::Start
+                            if !mine && (!self.pointer.touches.is_empty() || over(*pos)) =>
+                        {
+                            self.pointer.touches.push(*id);
+                            Phase::Begin
+                        }
+                        TouchPhase::Move if mine => Phase::Move,
+                        TouchPhase::End | TouchPhase::Cancel if mine => {
+                            self.pointer.touches.retain(|t| t != id);
+                            if *phase == TouchPhase::End {
+                                Phase::End
+                            } else {
+                                Phase::Cancel
+                            }
+                        }
+                        _ => continue,
                     };
-                    match phase {
-                        TouchPhase::Start if self.pointer.touch.is_none() && over(*pos) => {
-                            self.pointer.touch = Some(*id);
-                            let mut p = ev(PointerKind::Press, MouseButtons::LEFT);
-                            p.button = Some(MouseButtons::LEFT);
-                            out.push(p);
-                        }
-                        TouchPhase::Move if following => {
-                            out.push(ev(PointerKind::Move, MouseButtons::LEFT));
-                        }
-                        TouchPhase::End if following => {
-                            self.pointer.touch = None;
-                            let mut r = ev(PointerKind::Release, MouseButtons::empty());
-                            r.button = Some(MouseButtons::LEFT);
-                            out.push(r);
-                            // A lifted finger does not hover.
-                            out.push(ev(PointerKind::Leave, MouseButtons::empty()));
-                        }
-                        TouchPhase::Cancel if following => {
-                            self.pointer.touch = None;
-                            out.push(ev(PointerKind::Cancel, MouseButtons::empty()));
-                        }
-                        _ => {}
-                    }
+                    touches.push(TouchEvent {
+                        id: PointerId(id.0.wrapping_add(1)),
+                        phase,
+                        pos: local(*pos),
+                        time: now,
+                    });
                 }
                 Event::MouseWheel {
                     unit,
@@ -1196,6 +1194,11 @@ impl QmlView {
                         self.scene.pointer_event(&self.engine, &ev);
                         self.stats.pointer_events += 1;
                     }
+                    if !touches.is_empty() {
+                        self.scene.touch_event(&self.engine, &touches);
+                        self.stats.pointer_events += touches.len() as u64;
+                        touches.clear();
+                    }
                     let ev = WheelEvent {
                         pos: local(p),
                         angle_delta: scroll.angle_delta,
@@ -1210,7 +1213,7 @@ impl QmlView {
                         self.stats.wheels_accepted += 1;
                     }
                 }
-                _ if touch_pass || self.pointer.touch.is_some() => {}
+                _ if touch_pass || !self.pointer.touches.is_empty() => {}
                 Event::PointerMoved(p) => {
                     if !self.pointer.held.is_empty() || over(*p) {
                         self.pointer.inside = over(*p);
@@ -1269,10 +1272,13 @@ impl QmlView {
                 _ => {}
             }
         }
+        if !touches.is_empty() {
+            self.scene.touch_event(&self.engine, &touches);
+        }
         for ev in &out {
             self.scene.pointer_event(&self.engine, ev);
         }
-        self.stats.pointer_events += out.len() as u64;
+        self.stats.pointer_events += (out.len() + touches.len()) as u64;
         self.show_cursor(ctx);
         self.keep_wheel(ui);
         for key in focuses {
@@ -1295,7 +1301,7 @@ impl QmlView {
         }
         // The press is a click of its own on the scene's one pointer; in the
         // middle of a real press it would break that press's grab.
-        if self.pointer.held.is_empty() && self.pointer.touch.is_none() {
+        if self.pointer.held.is_empty() && self.pointer.touches.is_empty() {
             for key in presses {
                 if self.scene.accessible_press(&self.engine, key, now) {
                     self.stats.accessible_presses += 1;
