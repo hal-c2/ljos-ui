@@ -4594,3 +4594,97 @@ DECISIONs:
   worth it in memory, and not what a real list repeats.
 - Batch disposal tells a scope's nodes apart by their scope (a node never changes scope), so
   `Node` grows no flag; it is kept at 224 bytes.
+
+### JS1: JavaScript cost against qml6 (2026-10-25)
+
+Eight small JavaScript-heavy programs (`bench/js1/`), each a `TestCase` that times its own loop
+with `Date.now()` and logs it:
+
+- **bindings**: make and destroy an item with seven bindings, through `createObject`;
+- **handlers**: a QML signal emitted from a loop, whose handler calls a QML function;
+- **arrays**: `map`, `filter`, `sort` with a comparator and `reduce` over 10 000 numbers;
+- **strings**: building strings with `+=`, template literals and `join`;
+- **json**: `JSON.parse` and `JSON.stringify` of 102 kB;
+- **math**: five `Math` calls a step;
+- **props**: reads and writes of properties of two other objects;
+- **model**: `ListModel.get(i).value` over 1000 rows, and a `setProperty` each round.
+
+Ljós runs them with `ljos test`, a release build. qml6 runs them with Qt 6's
+`qmltestrunner` (`/usr/lib/qt6/bin/qmltestrunner`; the one on `PATH` may be Qt 5's), offscreen.
+Qt 6.11.2, load 7 to 12.
+
+- **Wall** is the best of 5 runs, in ms of the loop alone.
+- **Ir per round** is callgrind's count for a run of 2n rounds minus a run of n, divided by
+  n. That takes out start-up and everything before the clock.
+- Under valgrind, qml6 runs without its JIT. **Its Ir counts the interpreter**: compare against
+  qml6 by wall time. Ir is for Ljós before and after.
+
+To reproduce:
+
+```sh
+cargo build --release -p ljos_cli
+mise run bench:js                 # all eight, Ljós and qml6
+NO_QT=1 mise run bench:js model   # Ljós only, one bench
+LJOS=path/to/ljos mise run bench:js
+```
+
+| bench | rounds | Ljós before, ms | Ljós after, ms | qml6, ms | Ljós Ir before | Ljós Ir after |
+|---|---:|---:|---:|---:|---:|---:|
+| bindings | 20 000 | 134 | 132 | 197 | 93.6 k | 92.8 k |
+| handlers | 1 000 000 | 1036 | 539 | 297 | 16.6 k | 7.5 k |
+| arrays | 50 | 147 | 149 | 114 | 55.6 M | 55.6 M |
+| strings | 200 | 52 | 54 | 99 | 6.69 M | 6.83 M |
+| json | 40 | 88 | 90–106 | 124 | 46.4 M | 46.3–53.6 M |
+| math | 1 000 000 | 199 | 199 | 103 | 3.20 k | 3.21 k |
+| props | 1 000 000 | 359 | 367 | 252 | 6.73 k | 6.74 k |
+| model | 100 | 53 | 26 | 15 | 7.33 M | 3.69 M |
+
+**Ljós is faster than qml6 on bindings, strings and json.** It is slower on handlers (1.8×),
+math (1.9×), model (1.7×), props (1.5×) and arrays (1.3×).
+
+The commits:
+
+- 5727bbb2: a signal read from a script is one small callable object. It used to be three
+  named functions (the emitter, `connect` and `disconnect`), half of an emit's cost. As on
+  Qt, `connect` and `disconnect` are on `Function.prototype`, and each read is a new function
+  with no properties of its own (features/language/signals-read-from-script.feature, which
+  also passes on qml6). handlers: 1036 → 539 ms.
+- 4eaf2551: `ListModel.get()` of a row whose object exists brings the object up to date only
+  when the model has gained roles since. Every change to a row already updates its object.
+  `get()` used to write every role again, and rebuild the object's shape, on each call.
+  model: 53 → 29 ms.
+- 42ce35dd: a QML method read from a script is a plain C function with the object and the
+  method in its data, instead of an rquickjs closure. That saves about 425 Ir a call.
+  model: 29 → 26 ms.
+
+These are left:
+
+- **arrays and math** spend almost all of their instructions in QuickJS's interpreter
+  (`JS_CallInternal`, `js_call_c_function`, `find_own_property`, its sort). qml6 JIT-compiles
+  the same loops. Nothing of Ljós's is in the way.
+- **json** depends on where the heap's boundaries fall. quickjs-ng frees a 4 KiB arena of
+  small blocks when its last block goes, and builds a new one for the next allocation. A
+  loop that allocates and frees right at that boundary rebuilds about 800 arenas a round
+  (`arena_new`, 4.3 M Ir). The final binary hits it with `bench/js1/json.qml` and the base
+  does not; with the rounds as a constant instead of a property, neither does. The fix is in
+  QuickJS (keep one empty arena per size), which rquickjs-sys 0.14 builds without a switch
+  for it.
+- **handlers**: what remains of an emit is the handler. The tier-1 VM runs
+  `total += step(i)` and the call to `step` (3.0 k Ir), the write to `total` (0.8 k), and
+  the argument conversions.
+- **props**: about 1.1 k Ir per read or write of another object's property, split between
+  the host accessors (`answer::get` and `answer::set`, `raw_plain`) and the engine's
+  `quick_script_read` and `plain_script_write`. The engine side overlaps H2's
+  `read_access` work and was left to it.
+- **model**: about 3.7 k Ir per `get(i).value`. That is the method call (1 k in
+  `EngineHost::call` and `Engine::invoke`), the read of `.value` on the row object
+  (0.85 k), and the read of `m.count` in the loop condition.
+
+DECISIONs:
+
+- Qt is compared by wall time only. Under valgrind its JIT is off, so its Ir is not what it
+  runs.
+- `connect` and `disconnect` go on `Function.prototype` with the first host type, not when
+  the host is made. A host without objects is left as QuickJS makes it, and the 8 MiB
+  out-of-memory test runs right at its limit.
+- QuickJS's arena allocator is left unpatched.

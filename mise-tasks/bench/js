@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#MISE description="JavaScript cost on Ljós and qml6 (docs/BENCHMARKS.md, JS1): wall ms of each bench/js1 program, best of 5, and callgrind instructions per round. Takes bench names (all by default)."
+#MISE dir="{{config_root}}"
+set -euo pipefail
+# LJOS is the binary measured (a release build); QMLTESTRUNNER is Qt 6's
+# (Qt 5's is the one on PATH on some systems); NO_QT=1 measures Ljós only.
+root="$(pwd)"
+ljos="${LJOS:-${CARGO_TARGET_DIR:-$root/target}/release/ljos}"
+qt="${QMLTESTRUNNER:-/usr/lib/qt6/bin/qmltestrunner}"
+out="${OUT:-${CARGO_TARGET_DIR:-$root/target}/bench-js}"
+export QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=offscreen
+command -v valgrind > /dev/null || { echo "valgrind not found" >&2; exit 1; }
+[[ -x $ljos ]] || { echo "no $ljos; cargo build --release -p ljos_cli, or set LJOS" >&2; exit 1; }
+
+# Rounds for the wall clock, and for the instruction count (which also runs
+# twice as many: the difference over the rounds is one round's cost, with
+# start-up and the set-up before the clock taken out).
+declare -A wall=([bindings]=20000 [handlers]=1000000 [arrays]=50 [strings]=200 [json]=40
+  [math]=1000000 [props]=1000000 [model]=100)
+declare -A count=([bindings]=500 [handlers]=20000 [arrays]=2 [strings]=5 [json]=2
+  [math]=20000 [props]=20000 [model]=4)
+benches=("$@")
+[[ ${#benches[@]} -gt 0 ]] || benches=(bindings handlers arrays strings json math props model)
+
+# A directory holding the bench as a test file, with its rounds.
+program() {
+  local d="$out/gen/$1-$2"
+  mkdir -p "$d"
+  sed "s/property int rounds: 1\$/property int rounds: $2/" "$root/bench/js1/$1.qml" > "$d/tst_$1.qml"
+  echo "$d"
+}
+run() {
+  if [[ $1 == qt ]]; then timeout 300 "$qt" -input "$2" 2>&1; else timeout 300 "$ljos" test "$2" 2>&1; fi
+}
+ms() { awk '/qml: ms / && !m { for (i = 1; i < NF; i++) if ($i == "ms") m = $(i + 1) } END { print m }'; }
+ir() {
+  local f="$out/cg.$1" s=0 c
+  rm -f "$f".*
+  if [[ $1 == qt ]]; then
+    valgrind --tool=callgrind --callgrind-out-file="$f.%p" "$qt" -input "$2" > /dev/null 2>&1
+  else
+    valgrind --tool=callgrind --callgrind-out-file="$f.%p" "$ljos" test "$2" > /dev/null 2>&1
+  fi
+  for c in "$f".*; do s=$((s + $(awk '/^summary:/ { print $2 }' "$c"))); done
+  rm -f "$f".*
+  echo "$s"
+}
+
+printf '%-9s %-5s %8s %14s\n' bench on wall_ms ir_per_round
+for b in "${benches[@]}"; do
+  dw="$(program "$b" "${wall[$b]}")"
+  d1="$(program "$b" "${count[$b]}")"
+  d2="$(program "$b" $((count[$b] * 2)))"
+  for on in ljos qt; do
+    [[ $on == qt && -n ${NO_QT:-} ]] && continue
+    best=
+    for _ in 1 2 3 4 5; do
+      m="$(run "$on" "$dw" | ms)"
+      [[ -z $best || $m -lt $best ]] && best=$m
+    done
+    i1="$(ir "$on" "$d1")"
+    i2="$(ir "$on" "$d2")"
+    printf '%-9s %-5s %8s %14s\n' "$b" "$on" "$best" $(((i2 - i1) / count[$b]))
+  done
+done
