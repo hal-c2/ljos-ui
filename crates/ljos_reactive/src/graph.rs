@@ -143,8 +143,10 @@ struct Node<V> {
     /// Promoted (or explicitly made) an effect root.
     eager: bool,
     queued: bool,
-    /// The flush level its queue entry sits on (see `Inner::queues`).
-    queued_level: u32,
+    /// The flush level its queue entry sits on (see `Inner::queues`). A
+    /// level is a flush nested in an effect's run, so the call stack ends
+    /// long before 65 536 of them.
+    queued_level: u16,
     /// Parked on a frozen scope until thaw.
     deferred: bool,
     /// On the current check-walk stack; meeting it again is a cycle.
@@ -191,6 +193,10 @@ struct Node<V> {
     /// ([`Graph::provenance_tracked`]): its observers are told when that
     /// changes, also when the value stays what it was.
     asked_if_set: bool,
+    /// The change ([`Inner::change`]) that took it from what it was last
+    /// brought up to date with. One byte, in room the flags leave: a wrap
+    /// only makes a long-dirty binding read as it was in a handler ahead.
+    marked_by: u8,
 }
 
 impl<V> Node<V> {
@@ -283,6 +289,18 @@ struct Inner<V> {
     /// [`Kind::Told`] nodes a change reached, to be told when it has
     /// spread.
     told: Vec<NodeId>,
+    /// Counts the changes that mark observers, wrapping: what a node's
+    /// `marked_by` is told of.
+    change: u8,
+    /// The change the marks being passed on are of.
+    marking: u8,
+    /// While a [`Graph::watch_ahead`] handler runs: the change it is told
+    /// of. A binding that change reached reads as it was.
+    ahead: Option<u8>,
+    /// What was read so, to be brought up to date when the flush has run
+    /// what it had to, as Qt's bindings are once their change has spread:
+    /// the next change reads them as they were then. Kept for the next.
+    read_ahead: Vec<NodeId>,
     flush_epoch: u64,
     tick: u64,
     seq: u64,
@@ -395,7 +413,7 @@ impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
                 && node.queued
                 && node.queued_level as usize == below + 1
             {
-                node.queued_level = below as u32;
+                node.queued_level = below as u16;
                 i.queues[below].push(entry);
             }
         }
@@ -425,6 +443,16 @@ impl<V: Clone + 'static> Drop for SettleGuard<'_, V> {
         if let Some(node) = self.0.inner.borrow_mut().nodes.get_mut(self.1) {
             node.settling = false;
         }
+    }
+}
+
+/// Puts back the change an enclosing [`Graph::watch_ahead`] handler was
+/// told of, on every exit.
+struct AheadGuard<'g, V: Clone + 'static>(&'g Graph<V>, Option<u8>);
+
+impl<V: Clone + 'static> Drop for AheadGuard<'_, V> {
+    fn drop(&mut self) {
+        self.0.inner.borrow_mut().ahead = self.1;
     }
 }
 
@@ -486,6 +514,10 @@ impl<V: Clone + 'static> Graph<V> {
                 flush_depth: 0,
                 freeze_later: Vec::new(),
                 told: Vec::new(),
+                change: 0,
+                marking: 0,
+                ahead: None,
+                read_ahead: Vec::new(),
                 flush_epoch: 0,
                 tick: 0,
                 seq: 0,
@@ -851,6 +883,26 @@ impl<V: Clone + 'static> Graph<V> {
             scope,
             target,
             Box::new(move |g: &Graph<V>| g.watched(target, &mut handler)),
+            false,
+        )
+    }
+
+    /// [`Graph::watch`] for a handler that runs once what the change set
+    /// off at its height and below has run, in the flush it comes in: as a
+    /// handler connected to a QML change signal after the object was made
+    /// (`Connections`, `connect()`) runs in Qt after the bindings that read
+    /// the property and their own handlers.
+    pub fn watch_behind(
+        &self,
+        scope: ScopeId,
+        target: NodeId,
+        mut handler: impl FnMut(&Graph<V>, &V) + 'static,
+    ) -> Result<NodeId, ReactiveError> {
+        self.watch_with(
+            scope,
+            target,
+            Box::new(move |g: &Graph<V>| g.watched(target, &mut handler)),
+            true,
         )
     }
 
@@ -861,12 +913,51 @@ impl<V: Clone + 'static> Graph<V> {
         }
     }
 
+    /// [`Graph::watch`] for a handler that is to run before what depends
+    /// on `target` is brought up to date, as a QML object's own
+    /// `onXChanged` runs in Qt before the bindings that read `x`: while
+    /// it runs, a binding the same change reached reads as it was, also
+    /// in the handlers ahead of the bindings further down. Those read are
+    /// brought up to date at the end of the flush. A binding a write of
+    /// the handler's own reaches first is read as it is now.
+    pub fn watch_ahead(
+        &self,
+        scope: ScopeId,
+        target: NodeId,
+        mut handler: impl FnMut(&Graph<V>, &V) + 'static,
+    ) -> Result<NodeId, ReactiveError> {
+        self.watch_with(
+            scope,
+            target,
+            Box::new(move |g: &Graph<V>| g.watched_ahead(target, &mut handler)),
+            false,
+        )
+    }
+
+    #[inline(never)]
+    fn watched_ahead(&self, target: NodeId, handler: &mut dyn FnMut(&Graph<V>, &V)) {
+        let Some(v) = self.try_get(target) else {
+            return;
+        };
+        let outer = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            // The running node is this watch: what marked it is the change.
+            let change = i.eval_stack.last().and_then(|w| i.nodes.get(*w));
+            let change = change.map(|w| w.marked_by);
+            std::mem::replace(&mut i.ahead, change)
+        };
+        let _ahead = AheadGuard(self, outer);
+        self.untrack(|| handler(self, &v));
+    }
+
     #[inline(never)]
     fn watch_with(
         &self,
         scope: ScopeId,
         target: NodeId,
         f: EffectFn<V>,
+        behind: bool,
     ) -> Result<NodeId, ReactiveError> {
         // The target must be clean before we link to it, or a later change
         // would stop at the already-dirty target and never reach us.
@@ -883,7 +974,10 @@ impl<V: Clone + 'static> Graph<V> {
             node: target,
             back: at,
         });
-        node.height = h + 1;
+        node.height = (h & !BEHIND) + 1;
+        if behind {
+            node.height |= BEHIND;
+        }
         Ok(n)
     }
 
@@ -1053,6 +1147,9 @@ impl<V: Clone + 'static> Graph<V> {
 
     #[cold]
     fn read_slow(&self, n: NodeId) -> Option<V> {
+        if let Some(v) = self.read_as_it_was(n) {
+            return Some(v);
+        }
         // Update before recording the read: marks that `n` sends to the
         // reader while it catches up are not news to the reader.
         self.update(n);
@@ -1063,6 +1160,22 @@ impl<V: Clone + 'static> Graph<V> {
         };
         self.dispatch_diagnostics();
         v
+    }
+
+    /// In a [`Graph::watch_ahead`] handler, a binding the change it is
+    /// told of reached gives the value it had, and is brought up to date
+    /// at the end of the flush.
+    fn read_as_it_was(&self, n: NodeId) -> Option<V> {
+        let mut g = self.inner.borrow_mut();
+        let change = g.ahead?;
+        let node = g.nodes.get(n)?;
+        let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
+        if !bound || node.marked_by != change || node.state == NodeState::Computing {
+            return None;
+        }
+        g.read_ahead.push(n);
+        g.record_read(n);
+        g.nodes[n].value.clone()
     }
 
     /// Runs `f` without recording reads as dependencies of the running
@@ -1823,7 +1936,7 @@ impl<V: Clone + 'static> Graph<V> {
 
     /// The node's height as of its last evaluation (sources are 0).
     pub fn height(&self, n: NodeId) -> Option<u32> {
-        Some(self.inner.borrow().nodes.get(n)?.height)
+        Some(self.inner.borrow().nodes.get(n)?.height & !BEHIND)
     }
 
     /// The scope that owns the node.
@@ -2073,10 +2186,32 @@ impl<V: Clone + 'static> Graph<V> {
         let _guard = FlushGuard(self);
         loop {
             self.tell();
-            // A statement, so the borrow ends before user code runs.
-            let next = self.inner.borrow_mut().next_to_run();
+            // A statement, so the borrow ends before user code runs. A
+            // root run by a flush nested in a handler ahead is no part of
+            // that handler: it reads as it would have outside it.
+            let (next, ahead) = {
+                let mut i = self.inner.borrow_mut();
+                let next = i.next_to_run();
+                let ahead = if next.is_some() { i.ahead.take() } else { None };
+                (next, ahead)
+            };
+            let _ahead = ahead.map(|a| AheadGuard(self, Some(a)));
             let Some(n) = next else {
-                break;
+                let late = {
+                    let mut i = self.inner.borrow_mut();
+                    if i.flush_depth == 1 {
+                        i.read_ahead.pop()
+                    } else {
+                        None
+                    }
+                };
+                match late {
+                    Some(n) => {
+                        self.update(n);
+                        continue;
+                    }
+                    None => break,
+                }
             };
             let _level = {
                 let mut i = self.inner.borrow_mut();
@@ -2523,6 +2658,11 @@ fn drop_source_slot<V>(nodes: &mut SlotMap<NodeId, Node<V>>, obs: NodeId, at: u3
 
 type Entry = (u32, u64, NodeId);
 
+/// The bit of an effect's height that queues it behind every root without
+/// it ([`Graph::watch_behind`]). Heights stay far below it; an effect is
+/// nothing's source, so no other height is made from it.
+const BEHIND: u32 = 1 << 31;
+
 /// The roots waiting on one flush level, smallest (height, creation) first.
 ///
 /// They nearly always come in that order: the effects of a frame's writes
@@ -2583,7 +2723,7 @@ fn enqueue<V>(queues: &mut [Queue], n: NodeId, node: &mut Node<V>) {
         return;
     }
     node.queued = true;
-    node.queued_level = top as u32;
+    node.queued_level = top as u16;
     queues[top].push((node.height, node.seq, n));
 }
 
@@ -2636,6 +2776,7 @@ impl<V: Clone + 'static> Inner<V> {
             run_epoch: 0,
             binding_gen: 0,
             asked_if_set: false,
+            marked_by: 0,
         });
         self.scopes[scope].nodes.push(n);
         Ok(n)
@@ -2835,6 +2976,15 @@ impl<V: Clone + 'static> Inner<V> {
     }
 
     fn mark_observers(&mut self, n: NodeId, first: NodeState) {
+        // A binding's new result is the change that made it dirty, still
+        // spreading; anything else is a change of its own.
+        self.marking = match self.nodes.get(n) {
+            Some(node) if self.wave_origin == Some(n) => node.marked_by,
+            _ => {
+                self.change = self.change.wrapping_add(1);
+                self.change
+            }
+        };
         let mut stack = std::mem::take(&mut self.mark_stack);
         if let Some(node) = self.nodes.get(n) {
             let stamp = node.read_stamp;
@@ -2943,6 +3093,9 @@ impl<V: Clone + 'static> Inner<V> {
                 enqueue(&mut self.queues, m, node);
             }
             if was_clean {
+                // Not when a binding it was waiting on has changed: what it
+                // waits on still came from the change that reached it.
+                node.marked_by = self.marking;
                 let stamp = node.read_stamp;
                 stack.extend(
                     node.observers
@@ -2960,7 +3113,8 @@ impl<V: Clone + 'static> Inner<V> {
         // effect that follows a few properties of an item every frame.
         // Then every edge stays where it is, and only the height may move.
         if let Some(height) = self.same_sources(n, reads) {
-            self.nodes[n].height = height;
+            let node = &mut self.nodes[n];
+            node.height = height | (node.height & BEHIND);
             return;
         }
         self.stats.source_rebuilds += 1;
@@ -3024,7 +3178,7 @@ impl<V: Clone + 'static> Inner<V> {
         }
         let node = &mut self.nodes[n];
         node.sources = fresh;
-        node.height = height.max(1);
+        node.height = height.max(1) | (node.height & BEHIND);
     }
 
     /// `n`'s height if `reads` are its sources as they stand, in order and
