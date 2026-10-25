@@ -5155,3 +5155,70 @@ frame into paths.
 - qml6 never stops its frame clock while the animation runs. Ljós sets one deadline a frame,
   and none once a finite animation has stopped or while it is hidden. The "nothing scheduled"
   scenarios in `features/lottie/` pin that.
+
+### B23 (H2): the delegate track's baseline (2026-10-25)
+
+B18–B22 made each piece of a new delegate cheaper and the total stayed near 386 k, against
+qml6's ~200 k. The delegate track now removes work instead: the scene's bookkeeping moves
+out of the reactive graph ([ADR 0001](adr/0001-scene-bookkeeping-outside-the-graph.md)) and
+what every instance of a component shares is linked once
+([ADR 0002](adr/0002-component-plans.md)). This batch records where it starts. Its code
+only counts: `Graph::census`, the `lookup-counts` feature of `ljos_engine` and
+`crates/ljos_quick/tests/budget.rs`. The profiling build is 483042e5 with them, in which the
+counting compiles to nothing.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances, after the component has been
+instantiated once; per instance in brackets):
+
+| | ListView delegate (`bench/listview.qml`'s) | Item with a Text, by `createObject` |
+|---|---:|---:|
+| Engine objects | 40 (4) | 20 (2) |
+| Graph values | 80 (8) | 60 (6) |
+| Graph bindings | 70 (7) | 20 (2) |
+| Graph effects | 160 (16) | 150 (15) |
+| Graph scopes | 20 (2) | 20 (2) |
+| Member lookups by name | 191 (19.1) | 61 (6.1) |
+| Type lookups by name | 20 (2) | 10 (1) |
+| Context name lookups | 0 | 0 |
+| Atoms interned | 0 | 0 |
+| Heap allocations | 1856 (185.6) | 1057 (105.7) |
+
+Most effects are the scene's, not the delegate's: the plain Item and Text have two
+bindings and fifteen effects. ADR 0001 takes those down; ADR 0002 takes the lookups to zero.
+
+| listview under callgrind (main thread, 20 s after 40 s) | Run 1 | Run 2 |
+|---|---:|---:|
+| Per delegate (total ÷ text layouts) | 401.1 k (3.374 G / 8413) | 409.6 k (4.007 G / 9782) |
+| Delegates per frame | 11.3 | 10.3 |
+| Adoption (`QuickScene::adopt`) | 74.9 k | 74.5 k |
+| Text layout (`TextEngine::build_layout`) | 53.0 k | 53.0 k |
+| Teardown: `Engine::destroy_now` | 30.2 k | 29.9 k |
+| — `ViewShared::destroy` | 18.5 k | 18.5 k |
+| — `QuickScene::unadopt` | 16.0 k | 15.8 k |
+
+The parts are B22's end to within 1 k. The total is higher than B22's 386.6 k because these
+runs made fewer delegates a frame (B22's made 14.3), so each one carries more of the
+per-frame work (encode alone is about 150 k a frame); per delegate, the target stays the
+parts above. qml6 makes one for about 200 k (B20).
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós | qml6 (same run) |
+|---|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.40 | 15.32 |
+| listview | 211.93 | 102.92 |
+| listview with `reuseItems: true` | 88.64 | 60.55 |
+
+The target of the track: under 200 k a new delegate, and scroll at or under qml6's rates.
+
+DECISIONs:
+
+- The lookup counters are a cargo feature, not `cfg(test)`: the test that reads them is in
+  `ljos_quick`, which links `ljos_engine` as a normal crate. Without the feature
+  `ljos_engine::lookups()` does not exist, so a test cannot read zeros that were never
+  counted. `ljos_quick` turns it on for its tests only; in a workspace test build it is on
+  for every crate, which costs a thread-local add per lookup.
+- Atoms interned are counted beside lookups: `Atom::intern` hashes its text, and the plan
+  should leave none per instance.
+- Allocations are counted per thread by the test binary's own global allocator, and each case
+  instantiates its component once before it counts, so the process-wide caches (fonts, the
+  text engine) are warm whichever test runs first. The counts are the same over repeated
+  runs, in parallel and with one test thread, and with 2, 4 or 40 frames after the step.
