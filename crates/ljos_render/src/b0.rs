@@ -575,13 +575,13 @@ fn places_all(seg: &GlyphSeg, ppp: f32, clip: ERect) -> bool {
 /// How far, in points, every glyph of `new` is placed from where it is in
 /// `old`, the same run under another transform: `None` unless that is whole
 /// device pixels for each glyph, so each keeps its atlas key and bin.
-fn glyph_shift(old: &GlyphSeg, new: &GlyphSeg, ppp: f32) -> Option<egui::Vec2> {
-    if new.cmd.decorations.bars().next().is_some() {
+fn glyph_shift(cmd: &GlyphsCmd, from: Affine, to: Affine, ppp: f32) -> Option<egui::Vec2> {
+    if cmd.decorations.bars().next().is_some() {
         return None;
     }
     let ppp = f64::from(ppp);
-    let from = Affine::scale(ppp) * old.to_screen;
-    let to = Affine::scale(ppp) * new.to_screen;
+    let from = Affine::scale(ppp) * from;
+    let to = Affine::scale(ppp) * to;
     let [a, b, c, d, e0, f0] = from.as_coeffs();
     let [a1, b1, c1, d1, e1, f1] = to.as_coeffs();
     if [a, b, c, d] != [a1, b1, c1, d1]
@@ -596,7 +596,7 @@ fn glyph_shift(old: &GlyphSeg, new: &GlyphSeg, ppp: f32) -> Option<egui::Vec2> {
     }
     // Each glyph is rounded from the snapped baseline: a move of it is a
     // move of every glyph.
-    let baseline = d * (f64::from(new.cmd.run.baseline) + new.cmd.origin.y);
+    let baseline = d * (f64::from(cmd.run.baseline) + cmd.origin.y);
     let dy = (baseline + f1).round() - (baseline + f0).round();
     Some(egui::vec2((dx / ppp) as f32, (dy / ppp) as f32))
 }
@@ -612,7 +612,7 @@ fn carry_glyphs(old: &[WorldSeg], new: &mut [WorldSeg], clip: ERect, ppp: f32) {
         let Some(m) = o.mesh.as_ref().filter(|m| m.whole) else {
             continue;
         };
-        let Some(by) = glyph_shift(o, n, ppp) else {
+        let Some(by) = glyph_shift(&n.cmd, o.to_screen, n.to_screen, ppp) else {
             continue;
         };
         if !places_all(n, ppp, clip) {
@@ -627,6 +627,44 @@ fn carry_glyphs(old: &[WorldSeg], new: &mut [WorldSeg], clip: ERect, ppp: f32) {
             mesh: Arc::new(mesh),
         });
     }
+}
+
+/// The segments of a node drawn again under a transform that only moved it
+/// by `by` points, moved where they are: a scrolled list's rows keep their
+/// meshes rather than map each again into a new one. `false`, with nothing
+/// changed, where a segment keeps more than its vertices (a shape's cache, a
+/// shader's callback) and is built again.
+fn move_segs(segs: &mut [WorldSeg], by: Vec2, to_screen: Affine, clip: ERect, ppp: f32) -> bool {
+    if segs
+        .iter()
+        .any(|s| matches!(s, WorldSeg::Shape(_) | WorldSeg::Shader(_)))
+    {
+        return false;
+    }
+    let shift = egui::vec2(by.x as f32, by.y as f32);
+    for seg in segs {
+        match seg {
+            WorldSeg::Mesh(m) => Arc::make_mut(m).translate(shift),
+            WorldSeg::Image(i) => Arc::make_mut(&mut i.mesh).translate(shift),
+            WorldSeg::Text { rect, .. } => *rect = *rect + by,
+            WorldSeg::Glyphs(g) => {
+                let from = std::mem::replace(&mut g.to_screen, to_screen);
+                let mesh = g.mesh.take().filter(|m| m.whole);
+                // Only a whole-pixel move keeps each glyph's atlas key; any
+                // other is built from the atlas when it is drawn.
+                if let Some(mut m) = mesh
+                    && let Some(by) = glyph_shift(&g.cmd, from, to_screen, ppp)
+                    && places_all(g, ppp, clip)
+                {
+                    Arc::make_mut(&mut m.mesh).translate(by);
+                    m.clip = clip;
+                    g.mesh = Some(m);
+                }
+            }
+            WorldSeg::Shape(_) | WorldSeg::Shader(_) => unreachable!("checked above"),
+        }
+    }
+    true
 }
 
 fn push_quad(mesh: &mut Mesh, corners: [Pos2; 4], uv: [Pos2; 4], color: Color32) {
@@ -817,17 +855,31 @@ struct ListEntry {
     owner: Weak<DisplayList>,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 struct Sig {
     list: DisplayListId,
     to_screen: [f64; 6],
     opacity: f32,
 }
 
+/// How far `new` places a list from where `old` did, when that is all that
+/// changed.
+fn moved_by(old: &Sig, new: &Sig) -> Option<Vec2> {
+    let (a, b) = (old.to_screen, new.to_screen);
+    (old.list == new.list && old.opacity == new.opacity && a[..4] == b[..4])
+        .then(|| Vec2::new(b[4] - a[4], b[5] - a[5]))
+}
+
+/// Moves in a row before a node's meshes are mapped again from its list:
+/// each adds the rounding of an `f32` sum, and that must not add up.
+const MAX_MOVES: u8 = 32;
+
 struct NodeEntry {
     sig: Sig,
     segs: Vec<WorldSeg>,
     last_used: u64,
+    /// Moves since the meshes were last mapped from the list.
+    moves: u8,
 }
 
 /// The epaint backend.
@@ -842,6 +894,7 @@ pub struct EpaintBackend {
     encoded: u64,
     tessellations: u64,
     world_rebuilds: u64,
+    world_moves: u64,
     glyph_meshes_built: u64,
     atlas: GlyphAtlas,
     textures: FxHashMap<TextureKey, TextureEntry>,
@@ -1171,6 +1224,7 @@ impl EpaintBackend {
             encoded: 0,
             tessellations: 0,
             world_rebuilds: 0,
+            world_moves: 0,
             glyph_meshes_built: 0,
             atlas: GlyphAtlas::default(),
             textures: FxHashMap::default(),
@@ -1330,6 +1384,12 @@ impl EpaintBackend {
     /// How many per-node world meshes were re-mapped so far.
     pub fn world_rebuilds(&self) -> u64 {
         self.world_rebuilds
+    }
+
+    /// Of [`Self::world_rebuilds`], those that moved the meshes a node
+    /// already had, as a translation alone does.
+    pub fn world_moves(&self) -> u64 {
+        self.world_moves
     }
 
     /// Glyph runs whose quads were built from the atlas, not moved.
@@ -1936,7 +1996,21 @@ impl RenderBackend for EpaintBackend {
             let local = Arc::clone(&le.segs);
 
             let reuse = self.nodes.get(item.node).is_some_and(|n| n.sig == sig);
-            if !reuse {
+            let moved = !reuse
+                && self.nodes.get_mut(item.node).is_some_and(|n| {
+                    let Some(by) = moved_by(&n.sig, &sig).filter(|_| n.moves < MAX_MOVES) else {
+                        return false;
+                    };
+                    move_segs(&mut n.segs, by, to_screen, clip, self.ppp) && {
+                        n.sig = sig;
+                        n.moves += 1;
+                        true
+                    }
+                });
+            if moved {
+                self.world_rebuilds += 1;
+                self.world_moves += 1;
+            } else if !reuse {
                 let mut segs = Self::world_segs(&local, to_screen, item.opacity);
                 if let Some(old) = self.nodes.get_mut(item.node) {
                     hand_over(&mut self.shapes, &mut old.segs, &mut segs);
@@ -1951,6 +2025,7 @@ impl RenderBackend for EpaintBackend {
                         sig,
                         segs,
                         last_used: self.frame,
+                        moves: 0,
                     },
                 );
             } else {

@@ -209,6 +209,46 @@ fn transform_change_remaps_vertices_without_tessellating_again() {
 }
 
 #[test]
+fn a_node_only_moved_keeps_its_meshes_moved_as_a_fresh_map_places_them() {
+    let mut s = Scene::new(200.0, 200.0);
+    let n = s.node(None, 0.0, 0.0, 20.0, 20.0);
+    let mut b = DisplayListBuilder::new();
+    b.rounded_rect(
+        Rect::new(0.0, 0.0, 20.0, 20.0),
+        [4.0; 4],
+        Paint::Solid(RED),
+        None,
+    );
+    s.tree.set_content(n, Some(b.finish_arc()));
+    let mut be = EpaintBackend::new();
+    run(&mut s, &mut be, None, Pos2::ZERO);
+
+    // Scrolled by fractions of a pixel, as a flick moves a list's rows.
+    for step in 1..=40 {
+        s.tree.set_pos(n, 0.0, f64::from(step) * 2.37);
+        let (moved, _) = run(&mut s, &mut be, None, Pos2::ZERO);
+        let mut fresh = EpaintBackend::new();
+        let (mapped, _) = run(&mut s, &mut fresh, None, Pos2::ZERO);
+        let (a, b) = (mesh(&moved[0]), mesh(&mapped[0]));
+        assert_eq!(a.indices, b.indices);
+        for (v, w) in a.vertices.iter().zip(&b.vertices) {
+            assert!((v.pos - w.pos).length() < 1e-3, "{:?} {:?}", v.pos, w.pos);
+            assert_eq!((v.uv, v.color), (w.uv, w.color));
+        }
+    }
+    assert_eq!(be.tessellations(), 1);
+    assert_eq!(be.world_rebuilds(), 41);
+    // Every move after the first map, less the one that mapped again so
+    // rounding cannot add up.
+    assert_eq!(be.world_moves(), 39);
+
+    // Turned, it is mapped again.
+    s.tree.set_local(n, Affine::rotate(0.3));
+    run(&mut s, &mut be, None, Pos2::ZERO);
+    assert_eq!((be.world_rebuilds(), be.world_moves()), (42, 39));
+}
+
+#[test]
 fn opacity_scales_vertex_colours() {
     let mut s = Scene::new(40.0, 40.0);
     let n = s.node(None, 0.0, 0.0, 20.0, 20.0);
