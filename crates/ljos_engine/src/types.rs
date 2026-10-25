@@ -160,7 +160,7 @@ impl TypeTag {
             // QML's default colour is invalid; it reads as opaque black.
             TypeTag::Color => Value::Color(Color::INVALID),
             TypeTag::Point => Value::Point(Arc::default()),
-            TypeTag::Size => Value::Size(Arc::default()),
+            TypeTag::Size => Value::size(-1.0, -1.0),
             TypeTag::Rect => Value::Rect(Arc::default()),
             TypeTag::Font => Value::Font(Arc::default()),
             TypeTag::Vector2d => Value::Vector2d(Vector2d::default()),

@@ -9,7 +9,6 @@ Feature: The value a value-type property starts with
   A value-type property declared without a value holds its type's empty value. For a size
   that is an invalid size, -1 by -1, not 0 by 0.
 
-  @backlog
   Scenario: A size declared without a value is -1 by -1
     Given the QML:
       """qml
