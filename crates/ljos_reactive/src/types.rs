@@ -271,3 +271,17 @@ pub struct Stats {
     /// each run.
     pub reads: u64,
 }
+
+/// What the live nodes are, by kind: what a budget test pins, so a change
+/// that moves bookkeeping out of the graph shows up as a number.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Census {
+    /// Properties whose top layer is a value.
+    pub values: usize,
+    /// Properties whose top layer is a binding.
+    pub bindings: usize,
+    /// Effects, told ones included.
+    pub effects: usize,
+    /// Live scopes, the root included.
+    pub scopes: usize,
+}

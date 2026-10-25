@@ -10,7 +10,7 @@ use slotmap::SlotMap;
 use smallvec::SmallVec;
 
 use crate::types::{
-    BindingFn, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
+    BindingFn, Census, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
     OverrideValue, Provenance, ReactiveError, Reader, RestoreMode, ScopeId, Stats, WriteKind,
 };
 
@@ -2247,6 +2247,24 @@ impl<V: Clone + 'static> Graph<V> {
     /// Live nodes.
     pub fn len(&self) -> usize {
         self.inner.borrow().nodes.len()
+    }
+
+    /// The live nodes by kind, and the live scopes. One pass over the
+    /// nodes, for tests that pin what an instance costs.
+    pub fn census(&self) -> Census {
+        let i = self.inner.borrow();
+        let mut c = Census {
+            scopes: i.scopes.len(),
+            ..Census::default()
+        };
+        for n in i.nodes.values() {
+            match &n.kind {
+                Kind::Property(p) if p.is_bound() => c.bindings += 1,
+                Kind::Property(_) => c.values += 1,
+                Kind::Effect(_) | Kind::Told { .. } => c.effects += 1,
+            }
+        }
+        c
     }
 
     /// About the bytes the graph holds: its node and scope tables as

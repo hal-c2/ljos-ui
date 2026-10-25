@@ -113,6 +113,6 @@ mod types;
 
 pub use graph::{Changed, Graph, MAX_JOURNAL, ScopeHandle};
 pub use types::{
-    BindingFn, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
+    BindingFn, Census, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
     OverrideValue, Provenance, ReactiveError, Reader, RestoreMode, ScopeId, Stats, WriteKind,
 };
