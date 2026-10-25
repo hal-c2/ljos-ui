@@ -51,6 +51,7 @@
 // paths that carry them are unreachable but kept, to keep one shape.
 #![cfg_attr(not(feature = "decode"), allow(dead_code))]
 
+mod container_bytes;
 mod devices;
 mod frame_input;
 mod meta;

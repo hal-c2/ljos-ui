@@ -3147,3 +3147,9 @@ mod tests {
         assert_eq!(strip_label("import QtQuick"), "import QtQuick");
     }
 }
+
+#[given(regex = r#"^the web server streams (\d+) bytes at "([^"]+)"$"#)]
+fn streamed_bytes(w: &mut LjosWorld, count: usize, name: String) -> StepResult {
+    w.web()?.stream_bytes(&name, count);
+    Ok(())
+}

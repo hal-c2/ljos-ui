@@ -22,7 +22,13 @@ use std::thread::JoinHandle;
 /// What the QML writes for the server's address.
 pub const PLACEHOLDER: &str = "$SERVER";
 
-type Files = Arc<Mutex<HashMap<String, Vec<u8>>>>;
+type Files = Arc<Mutex<HashMap<String, Body>>>;
+
+#[derive(Clone, Debug)]
+enum Body {
+    Bytes(Vec<u8>),
+    Repeated(usize),
+}
 
 #[derive(Debug)]
 pub struct WebServer {
@@ -77,12 +83,26 @@ impl WebServer {
         format!("http://127.0.0.1:{}", self.port)
     }
 
+    /// Streams a synthetic body without allocating its total length.
+    pub fn stream_bytes(&self, name: &str, count: usize) {
+        self.files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                format!("/{}", name.trim_start_matches('/')),
+                Body::Repeated(count),
+            );
+    }
+
     /// From now on `/name` answers `bytes`.
     pub fn serve(&self, name: &str, bytes: Vec<u8>) {
         self.files
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(format!("/{}", name.trim_start_matches('/')), bytes);
+            .insert(
+                format!("/{}", name.trim_start_matches('/')),
+                Body::Bytes(bytes),
+            );
     }
 }
 
@@ -151,8 +171,31 @@ fn answer(stream: TcpStream, files: &Files) {
             .unwrap_or_else(PoisonError::into_inner)
             .get(&path)
             .cloned();
+        if let Some(Body::Repeated(count)) = served {
+            let mut stream = &stream;
+            let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+            if stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: video/mp4\r\nConnection: close\r\n\r\n").is_err() {
+                return;
+            }
+            let piece = [0u8; 8192];
+            let mut remaining = count;
+            while remaining > 0 {
+                let n = remaining.min(piece.len());
+                if write!(stream, "{n:x}\r\n")
+                    .and_then(|()| stream.write_all(&piece[..n]))
+                    .and_then(|()| stream.write_all(b"\r\n"))
+                    .is_err()
+                {
+                    return;
+                }
+                remaining -= n;
+            }
+            let _ = stream.write_all(b"0\r\n\r\n");
+            return;
+        }
         match served {
-            Some(bytes) => ("200 OK", content_type_of(&path), bytes),
+            Some(Body::Bytes(bytes)) => ("200 OK", content_type_of(&path), bytes),
+            Some(Body::Repeated(_)) => unreachable!(),
             None => ("404 Not Found", "text/plain", b"Not Found".to_vec()),
         }
     };

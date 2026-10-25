@@ -57,7 +57,7 @@ impl TraceDir {
                 let (org, app) = platform.application(engine);
                 let env = platform.env();
                 let dir = ljos_platform::Location::State.writable(&env, &org, &app);
-                Some(env.real(&dir.join("traces")))
+                Some(env.real(&dir.join("traces")).ok()?)
             }
         }
     }

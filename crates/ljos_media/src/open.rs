@@ -131,7 +131,13 @@ pub(crate) fn start(
                     .flatten()
                 else {
                     let outcome = read
-                        .and_then(|()| incoming.body.read_to_end(&mut head).map(drop))
+                        .and_then(|()| {
+                            crate::container_bytes::read(
+                                &mut *incoming.body,
+                                &mut head,
+                                crate::container_bytes::LIMIT,
+                            )
+                        })
                         .map_err(|err| OpenError::Network(err.to_string()))
                         .and_then(|()| from_bytes(&name, head, samples.and_then(|s| s.wait())));
                     reply.send(move |e| done(e, me, generation, outcome));

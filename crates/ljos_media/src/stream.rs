@@ -535,7 +535,11 @@ fn container(name: &str, bytes: &Receiver<Vec<u8>>, wake: &Wake) {
         if wake.closed() {
             return;
         }
-        all.extend(chunk);
+        if let Err(err) =
+            crate::container_bytes::append(&mut all, &chunk, crate::container_bytes::LIMIT)
+        {
+            return wake.end(Some(err.to_string()));
+        }
     }
     let opened = crate::open::from_bytes(name, all, None);
     wake.shared.lock().opened = Some(opened);
