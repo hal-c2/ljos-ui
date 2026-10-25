@@ -357,7 +357,7 @@ fn parse(text: &str) -> (Vec<(usize, Outcome)>, Option<usize>, bool) {
 
 /// The harness: loads each case of the batch as a child of a 400 × 400 item
 /// (as the scenario driver does), observes it after the load and after
-/// each step, and destroys it. Everything the case does is in the case's
+/// each step, and unparents and destroys it. Everything the case does is in the case's
 /// own functions, which the Ljós side calls the same way.
 const HARNESS: &str = r#"import QtQuick
 
@@ -389,6 +389,9 @@ Item {
                 var r = o["__step" + s]()
                 say({n: c.n, p: s + 1, res: r, obs: o.__obs()})
             }
+            // destroy() waits for the event loop, which a batch never returns to:
+            // unparented, a case done with no longer sees the cases after it.
+            o.parent = null
             o.destroy()
             say({n: c.n, done: 1})
         }
