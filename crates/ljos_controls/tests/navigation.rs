@@ -439,3 +439,51 @@ fn a_non_current_swipe_page_is_frozen_until_made_current() {
     call(&e, root, "takeSecond");
     assert!(!e.is_frozen(second), "a taken page is thawed");
 }
+
+/// A StackView whose pages are files, replaced again and again as an
+/// application's menu does: every page replaced is gone with all it made.
+#[test]
+fn pages_replaced_by_file_leave_nothing_behind() {
+    let e = engine();
+    let main = r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    id: root
+    width: 300; height: 200
+    property var rooms: [1, 2, 3]
+    property int turn: 0
+    StackView { id: stack; objectName: "stack"; anchors.fill: parent; initialItem: "A.qml" }
+    function next() {
+        turn += 1
+        stack.replace((turn % 2 ? "B" : "A") + ".qml", {"rooms": root.rooms}, StackView.Immediate)
+    }
+}
+"#;
+    let page = r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Page {
+    property var rooms
+    header: Label { text: "rooms " + rooms.length }
+    Column {
+        Repeater { model: rooms; delegate: Button { text: modelData } }
+        Canvas { width: 20; height: 20; onPaint: getContext("2d").fillRect(0, 0, 4, 4) }
+        SwipeView { width: 100; height: 50; Item {} Item {} }
+        ComboBox { model: rooms }
+    }
+}
+"#;
+    let root = load(&e, &[("Main", main), ("A", page), ("B", page)]);
+    let mut s = scene(&e, root);
+    let mut counts = Vec::new();
+    for _ in 0..20 {
+        call(&e, root, "next");
+        e.process_deferred_deletes();
+        settle(&mut s, &e);
+        counts.push((e.object_count(), e.node_count()));
+    }
+    // A first replace may make what is made once; after it the counts
+    // must stay where they are.
+    assert_eq!(counts[19], counts[3], "{counts:?}");
+}
