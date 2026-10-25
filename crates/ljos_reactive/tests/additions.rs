@@ -807,3 +807,46 @@ fn an_effect_made_now_in_a_frozen_scope_waits_for_the_thaw() {
     g.set_frozen(s, false).unwrap();
     assert_eq!(runs.get(), 1);
 }
+
+#[test]
+fn a_scope_disposed_in_one_pass_leaves_the_edges_of_what_stays_whole() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let s = g.create_scope(r).unwrap();
+    // Observers of `a` that stay and that go, interleaved, so removing the
+    // ones that go swaps entries of both kinds about.
+    let stay = Rc::new(RefCell::new(Vec::new()));
+    let mut inside = Vec::new();
+    for k in 0..4 {
+        let seen = stay.clone();
+        g.effect(r, move |g| seen.borrow_mut().push((k, g.get(a))))
+            .unwrap();
+        let x = g.binding(s, 0, move |g| g.get(a) + k).unwrap();
+        let y = g.binding(s, 0, move |g| g.get(x) + g.get(a)).unwrap();
+        inside.push(y);
+    }
+    let ys = inside.clone();
+    g.effect(s, move |g| {
+        for &y in &ys {
+            let _ = g.get(y);
+        }
+    })
+    .unwrap();
+    // One that stays reads what goes: it is told once, and reads nothing.
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let (t, last) = (told.clone(), inside[3]);
+    g.effect(r, move |g| t.borrow_mut().push(g.try_get(last)))
+        .unwrap();
+    assert_eq!(*told.borrow(), vec![Some(5)]);
+
+    g.dispose_scope(s).unwrap();
+    g.check_invariants().unwrap();
+    assert_eq!(*told.borrow(), vec![Some(5), None]);
+    assert!(inside.iter().all(|&y| !g.is_alive(y)));
+    stay.borrow_mut().clear();
+    g.set(a, 2);
+    g.check_invariants().unwrap();
+    assert_eq!(*stay.borrow(), vec![(0, 2), (1, 2), (2, 2), (3, 2)]);
+    assert_eq!(told.borrow().len(), 2, "it no longer reads the scope");
+}

@@ -634,10 +634,7 @@ impl<V: Clone + 'static> Graph<V> {
             Some(s) => std::mem::take(&mut s.nodes),
             None => return,
         };
-        for &n in nodes.iter().rev() {
-            // Nodes disposed one by one earlier are already gone.
-            let _ = self.dispose(n);
-        }
+        self.dispose_together(scope, &nodes);
         nodes.clear();
         self.inner.borrow_mut().give_back_node_list(nodes);
         let mut leftover = {
@@ -651,9 +648,7 @@ impl<V: Clone + 'static> Graph<V> {
             }
         };
         // Nodes a cleanup created in this scope go too.
-        for &n in leftover.iter().rev() {
-            let _ = self.dispose(n);
-        }
+        self.dispose_together(scope, &leftover);
         leftover.clear();
         self.inner.borrow_mut().give_back_node_list(leftover);
     }
@@ -1052,6 +1047,63 @@ impl<V: Clone + 'static> Graph<V> {
         };
         self.flush_if_idle();
         Ok(n)
+    }
+
+    /// Disposes `ids`, all of `scope`'s live nodes (newest last), as
+    /// [`Graph::dispose`] would one by one, newest first, but in one pass:
+    /// a delegate's nodes mostly observe each other, and those edges need
+    /// no unlinking when both ends go. Only observers that stay are marked,
+    /// and marks spread once. The caller removes the scope, so its count of
+    /// dead nodes is not kept.
+    fn dispose_together(&self, scope: ScopeId, ids: &[NodeId]) {
+        let dead = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            // Nodes disposed one by one earlier are already gone.
+            let dying: Vec<NodeId> = ids
+                .iter()
+                .rev()
+                .copied()
+                .filter(|&n| i.nodes.contains_key(n))
+                .collect();
+            // A node never changes scope, so the scope says which go.
+            let stays = |nodes: &SlotMap<NodeId, Node<V>>, m: NodeId| {
+                nodes.get(m).is_some_and(|o| o.scope != scope)
+            };
+            let mut stack = std::mem::take(&mut i.mark_stack);
+            for &n in &dying {
+                // By index, with the node in place: a swap in a list that
+                // stays repairs the back-index of a dying node not yet seen.
+                for k in 0..i.nodes[n].sources.len() {
+                    let e = i.nodes[n].sources[k];
+                    if stays(&i.nodes, e.node) {
+                        drop_observer_slot(&mut i.nodes, e.node, e.back);
+                    }
+                }
+                for k in 0..i.nodes[n].observers.len() {
+                    let e = i.nodes[n].observers[k];
+                    if stays(&i.nodes, e.node)
+                        && drop_source_slot(&mut i.nodes, e.node, e.back).is_some()
+                    {
+                        stack.push((e.node, NodeState::Dirty, ALWAYS_STALE));
+                    }
+                }
+            }
+            i.mark_stack = stack;
+            let has_tags = !i.tags.is_empty();
+            let mut dead = Vec::with_capacity(dying.len());
+            for n in dying {
+                if has_tags {
+                    i.tags.remove(&n);
+                }
+                dead.extend(i.nodes.remove(n));
+            }
+            i.propagate_marks();
+            dead
+        };
+        // User closures may own graph handles; drop them unborrowed.
+        drop(dead);
+        self.flush_if_idle();
     }
 
     /// Disposes one node. Its observers are marked dirty: their next run
