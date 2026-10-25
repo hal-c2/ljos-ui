@@ -134,6 +134,10 @@ Item {
                 try { touches(op.frames); out.push({}) } catch (e) { out.push({ error: String(e.message || e) }) }
                 continue
             }
+            if (op.op === "click") {
+                try { click(op.x, op.y, op.modifiers); out.push({}) } catch (e) { out.push({ error: String(e.message || e) }) }
+                continue
+            }
             try { out.push({ value: exec(op) }) } catch (e) { out.push({ error: String(e.message || e) }) }
         }
         finish()
@@ -141,13 +145,23 @@ Item {
 
     Timer { id: pause; repeat: false; onTriggered: driver.run() }
 
+    // QtTest's events, made when used so that only the programs that send
+    // them import QtTest.
+    property var tester: null
+    function test() {
+        if (!tester) tester = Qt.createQmlObject("import QtTest; TestCase { when: false; running: false }", driver)
+        return tester
+    }
+    // A left click with modifiers held, which the input platform cannot
+    // give a mouse event.
+    function click(x, y, modifiers) {
+        test().mouseClick(driver.Window.window.contentItem, x, y, Qt.LeftButton, modifiers)
+    }
     // Fingers, frame by frame, 16 ms apart, through QtTest's touch events:
     // a finger that stays where it was is told as stationary, which a
-    // PinchArea needs. Made when used, so that only these programs import
-    // QtTest.
-    property var tester: null
+    // PinchArea needs.
     function touches(frames) {
-        if (!tester) tester = Qt.createQmlObject("import QtTest; TestCase { when: false; running: false }", driver)
+        test()
         var c = driver.Window.window.contentItem
         var seq = tester.touchEvent(c)
         var down = {}

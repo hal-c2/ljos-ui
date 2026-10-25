@@ -846,6 +846,29 @@ impl Backend for QtBackend {
         Ok(())
     }
 
+    /// Through QtTest, as touches are: the input platform gives a mouse
+    /// event no modifiers, whatever keys are down (checked on Qt 6.11).
+    fn click_holding(&mut self, modifiers: &str, x: f64, y: f64) -> Result<()> {
+        let mut held = 0;
+        for m in modifiers.split('+').filter(|m| !m.is_empty()) {
+            held |= match m.to_ascii_lowercase().as_str() {
+                "shift" => 0x0200_0000,
+                "ctrl" => 0x0400_0000,
+                "alt" => 0x0800_0000,
+                "meta" => 0x1000_0000,
+                _ => {
+                    return Err(BackendError::Failed(format!(
+                        "unknown modifier {m:?} in {modifiers:?}"
+                    )));
+                }
+            };
+        }
+        let (x, y) = on_screen(x, y)?;
+        self.not_held()?;
+        self.push(json!({"op": "click", "x": x, "y": y, "modifiers": held}));
+        Ok(())
+    }
+
     fn click_button(&mut self, button: super::OtherButton, x: f64, y: f64) -> Result<()> {
         let (x, y) = on_screen(x, y)?;
         self.not_held()?;

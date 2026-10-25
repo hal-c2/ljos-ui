@@ -285,6 +285,11 @@ pub trait Backend: fmt::Debug {
     fn click_button(&mut self, _button: OtherButton, _x: f64, _y: f64) -> Result<()> {
         Err(BackendError::NotImplemented("a click of another button"))
     }
+    /// A click of the left button with the modifiers of `"Ctrl+Shift"`
+    /// held.
+    fn click_holding(&mut self, _modifiers: &str, _x: f64, _y: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a click with modifiers held"))
+    }
     /// Two clicks at one place in quick succession.
     fn double_click(&mut self, _x: f64, _y: f64) -> Result<()> {
         Err(BackendError::NotImplemented("a double click"))

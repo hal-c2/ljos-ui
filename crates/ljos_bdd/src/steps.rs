@@ -844,6 +844,21 @@ fn user_touches(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
     w.each(|b| b.touch(x, y))
 }
 
+// A click with keys held, as a link opened with Ctrl is.
+#[rustfmt::skip]
+#[when(regex = r#"^the user clicks at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?) holding "([^"]+)"$"#)]
+fn user_clicks_holding(w: &mut LjosWorld, x: f64, y: f64, modifiers: String) -> StepResult {
+    w.each(|b| b.click_holding(&modifiers, x, y))
+}
+
+// A finger on a touch screen, down and up at one place; "touches" is a
+// click of the mouse.
+#[when(regex = r"^the user taps (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?) with a finger$")]
+fn user_taps_finger(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
+    let frames = vec![vec![(0, x.round(), y.round())]];
+    w.each(|b| b.touch_frames(&frames))
+}
+
 // A click in parts, for what happens while the button is held.
 #[when(regex = r"^the user presses the pointer at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
 fn user_presses_pointer(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {

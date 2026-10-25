@@ -97,6 +97,21 @@ const MODIFIER_KEYS: [(Modifiers, i32); 4] = [
     (Modifiers::META, key::META),
 ];
 
+/// The modifiers of `"Ctrl+Shift"`.
+fn parse_modifiers(mods: &str) -> std::result::Result<Modifiers, String> {
+    let mut modifiers = Modifiers::empty();
+    for m in mods.split('+').filter(|m| !m.is_empty()) {
+        modifiers |= match m.to_ascii_lowercase().as_str() {
+            "shift" => Modifiers::SHIFT,
+            "ctrl" => Modifiers::CONTROL,
+            "alt" => Modifiers::ALT,
+            "meta" => Modifiers::META,
+            _ => return Err(format!("unknown modifier {m:?} in {mods:?}")),
+        };
+    }
+    Ok(modifiers)
+}
+
 /// One key with the modifiers held around it, as a step names it
 /// (`"Ctrl+Shift+S"`, `"Tab"`, `"Ctrl++"`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,16 +131,7 @@ impl Chord {
                 _ => ("", text),
             },
         };
-        let mut modifiers = Modifiers::empty();
-        for m in mods.split('+').filter(|m| !m.is_empty()) {
-            modifiers |= match m.to_ascii_lowercase().as_str() {
-                "shift" => Modifiers::SHIFT,
-                "ctrl" => Modifiers::CONTROL,
-                "alt" => Modifiers::ALT,
-                "meta" => Modifiers::META,
-                _ => return Err(format!("unknown modifier {m:?} in the chord {text:?}")),
-            };
-        }
+        let modifiers = parse_modifiers(mods)?;
         // The spellings the Qt oracle's keyboard also takes.
         let name = match name {
             n if n.eq_ignore_ascii_case("PageUp") => "PgUp",
@@ -1013,11 +1019,19 @@ impl Live {
     }
 
     fn tap(&mut self, x: f64, y: f64) -> Result<()> {
+        self.tap_holding(Modifiers::empty(), x, y)
+    }
+
+    fn tap_holding(&mut self, held: Modifiers, x: f64, y: f64) -> Result<()> {
         let now = self.clock.now();
-        self.scene
-            .pointer_event(&self.engine, &PointerEvent::press(x, y, now));
-        self.scene
-            .pointer_event(&self.engine, &PointerEvent::release(x, y, now));
+        self.scene.pointer_event(
+            &self.engine,
+            &PointerEvent::press(x, y, now).with_modifiers(held),
+        );
+        self.scene.pointer_event(
+            &self.engine,
+            &PointerEvent::release(x, y, now).with_modifiers(held),
+        );
         self.settle()
     }
 
@@ -1394,6 +1408,11 @@ impl Backend for LjosBackend {
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
         self.live()?.pointer(step, x, y)
+    }
+
+    fn click_holding(&mut self, modifiers: &str, x: f64, y: f64) -> Result<()> {
+        let held = parse_modifiers(modifiers).map_err(failed)?;
+        self.live()?.tap_holding(held, x, y)
     }
 
     fn touch_frames(&mut self, frames: &[super::TouchFrame]) -> Result<()> {
