@@ -18,9 +18,8 @@
 //! file at the place the script names, so the types beside that place
 //! are found. Under `qml_dirs` the files are those on disk as the text
 //! is made, a file added since the start among them, and a text placed
-//! in a directory none of them is finds the files beside it there;
-//! [`install_text_compiler`] compiles against the directories as they
-//! were at its first text.
+//! in a directory none of them is finds the files beside it there; the
+//! same holds under [`install_text_compiler`].
 //!
 //! The same compiler serves a `.qml` file the program was not built
 //! with, such as a page fetched while it runs: `Qt.createComponent` and

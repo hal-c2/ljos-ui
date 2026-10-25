@@ -691,6 +691,12 @@ impl Engine {
         self.singletons_sources_changed();
     }
 
+    /// The source [`Engine::set_component_source`] set: for a layer that
+    /// answers what it lacks and puts itself in its place.
+    pub fn component_source(&self) -> Option<Rc<dyn ComponentSource>> {
+        self.inner.loader.borrow().source.clone()
+    }
+
     /// Starts the JS host and loads the script of every file loaded so far
     /// that has a handler or a method, so that the first click or key
     /// does not pay for them (about 3 ms on a desktop, started from

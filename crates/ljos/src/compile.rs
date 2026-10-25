@@ -178,7 +178,10 @@ pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled
 /// place as a file there would. [`App::qml_dirs`](crate::App::qml_dirs)
 /// does this itself; an engine whose components came from
 /// [`compile_dirs`] or [`compile_quiet`] (a harness, a
-/// [`TestWindow`](crate::testing)) is given one with this call.
+/// [`TestWindow`](crate::testing)) is given one with this call, after
+/// its components are set: it answers what they lack, as under
+/// `qml_dirs`, so a text or a file placed outside `dirs` finds the files
+/// beside it, and a file added since the start is found.
 ///
 /// The directories are read when the first text is made, not before:
 /// most programs never make an object from text. A program without
@@ -186,12 +189,14 @@ pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled
 /// catch.
 #[cfg(feature = "dev-qml")]
 pub fn install_text_compiler(engine: &Engine, dirs: &[&Path]) {
-    engine.set_qml_text_compiler(Some(text_compiler(dirs, Some(engine))));
+    crate::texts::DiskTexts::new(dirs, EngineOracle::from_engine(engine)).install_over(engine);
 }
 
-/// The compiler [`install_text_compiler`] installs, for a host that
-/// installs it itself (`Engine::set_qml_text_compiler`); without an
-/// `engine` against the table of types alone.
+/// A compiler for a host that installs it itself
+/// (`Engine::set_qml_text_compiler`); without an `engine` against the
+/// table of types alone. It reads `dirs` at its first text and gives the
+/// engine no source, so unlike [`install_text_compiler`] it finds no file
+/// outside them.
 #[cfg(feature = "dev-qml")]
 #[must_use]
 pub fn text_compiler(dirs: &[&Path], engine: Option<&Engine>) -> QmlTextCompiler {

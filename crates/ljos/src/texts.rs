@@ -67,8 +67,21 @@ impl DiskTexts {
     /// Gives `engine` the components of `source`, and whatever the texts
     /// read beyond them, and the compiler for the texts.
     pub(crate) fn install(self, engine: &Engine, source: Option<MapSource>) {
+        self.install_with(engine, Rc::new(source.unwrap_or_default()));
+    }
+
+    /// [`DiskTexts::install`] over the source the engine has now, for an
+    /// engine set up by hand.
+    pub(crate) fn install_over(self, engine: &Engine) {
+        let source = engine
+            .component_source()
+            .unwrap_or_else(|| Rc::new(MapSource::default()));
+        self.install_with(engine, source);
+    }
+
+    fn install_with(self, engine: &Engine, source: Rc<dyn ComponentSource>) {
         engine.set_component_source(Fallback {
-            source: source.unwrap_or_default(),
+            source,
             state: Rc::clone(&self.state),
         });
         let state = self.state;
@@ -247,7 +260,7 @@ fn add_beside(
 
 /// The application's own source, then what the texts read.
 struct Fallback {
-    source: MapSource,
+    source: Rc<dyn ComponentSource>,
     state: Rc<RefCell<State>>,
 }
 

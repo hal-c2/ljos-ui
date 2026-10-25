@@ -114,6 +114,26 @@ fn an_application_shows_a_fetched_page_with_the_files_beside_it() {
 }
 
 #[test]
+fn an_engine_set_up_by_hand_shows_a_fetched_page_with_the_files_beside_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let engine = ljos::engine();
+    let source = ljos::dev::compile_dirs(&[&app], Some(&engine), ljos::dev::OnError::Fail).unwrap();
+    engine.set_component_source(source);
+    ljos::dev::install_text_compiler(&engine, &[&app]);
+    let root = engine.create_from_url("Main", None, Vec::new()).unwrap();
+    let page = fetched(tmp.path());
+
+    engine
+        .invoke_by_name(root, "make", &[Value::from(page.as_str())])
+        .unwrap();
+    assert_eq!(text(&engine, root, "problem"), "");
+    assert_eq!(text(&engine, root, "made"), "page");
+    let note = named(&engine, root, "note").expect("the page made its note");
+    assert_eq!(engine.read_by_name(note, "n").to_number(), 3.0);
+}
+
+#[test]
 fn a_loader_shows_a_page_written_after_start_up() {
     let tmp = tempfile::tempdir().unwrap();
     let built = ljos::App::new("loaded")
