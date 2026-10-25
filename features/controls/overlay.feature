@@ -78,6 +78,43 @@ Feature: Overlay
         PASS   : Parent::test_parent()
         """
 
+    # qmltestrunner makes the window after an Item root, and an item's
+    # Overlay.overlay is null there in Qt too; qml6 reads the same of an
+    # ApplicationWindow it shows (6.11.2, offscreen).
+    @ljos-only @api-QtQuick.Controls.Overlay.overlay
+    Scenario: An item declared in a window whose parent is the overlay is in it from the start
+      Given the file "tst_item_parent.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import QtTest
+        ApplicationWindow {
+          id: w
+          width: 300; height: 200
+          visible: true
+          Item {
+            id: sheet
+            parent: Overlay.overlay
+            anchors.bottom: parent.bottom
+            width: 50; height: 50
+            Rectangle { id: inner; anchors.bottom: sheet.bottom; width: 10; height: 10 }
+          }
+          TestCase {
+            name: "ItemParent"
+            when: windowShown
+            function test_parent() {
+              compare(sheet.parent, w.Overlay.overlay)
+              compare([sheet.y, inner.y], [150, 40])
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : ItemParent::test_parent()
+        """
+
     Scenario: The overlay stays, hidden, after the last popup is destroyed
       Given the file "tst_stays.qml":
         """qml

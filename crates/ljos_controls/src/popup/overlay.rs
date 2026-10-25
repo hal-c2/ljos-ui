@@ -154,13 +154,17 @@ pub(super) fn stack(engine: &Engine, overlay: ObjectId) -> Vec<(ObjectId, Object
 }
 
 /// A popup was shown or hidden: the overlay is there while one is shown,
-/// and while the window has a drawer, which can be dragged in at any time
-/// (measured on qml6: so it is with one that is not interactive too).
+/// while the window has a drawer, which can be dragged in at any time
+/// (measured on qml6: so it is with one that is not interactive too), and
+/// while it holds an item of the application's, shown or not (measured
+/// too).
 pub(super) fn changed(engine: &Engine, overlay: ObjectId) {
     if !engine.is_alive(overlay) {
         return;
     }
-    let any = !stack(engine, overlay).is_empty() || has_drawer(engine, overlay);
+    let any = !stack(engine, overlay).is_empty()
+        || has_drawer(engine, overlay)
+        || has_own_item(engine, overlay);
     check(
         engine,
         "overlay",
@@ -174,6 +178,17 @@ fn has_drawer(engine: &Engine, overlay: ObjectId) -> bool {
             .into_iter()
             .filter_map(|item| popup_of(engine, item))
             .any(|popup| super::drawer::is_drawer(engine, popup))
+    })
+}
+
+/// An item put in the overlay by the application (`parent:
+/// Overlay.overlay`): neither a popup's, which is there while the popup
+/// is closed too, nor its shade.
+fn has_own_item(engine: &Engine, overlay: ObjectId) -> bool {
+    engine.untrack(|| {
+        child_items(engine, overlay)
+            .into_iter()
+            .any(|item| !engine.owner(item).is_some_and(|o| is_a::<Popup>(engine, o)))
     })
 }
 
@@ -430,6 +445,13 @@ fn window_top(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
         }
         match engine.visual_parent(cur) {
             Some(p) => cur = p,
+            // The overlay is out of its window item's `children`; its
+            // `parent` says which item that is.
+            None if is_a::<OverlayItem>(engine, cur)
+                && let Some(p) = object(engine, cur, Item::PARENT.index) =>
+            {
+                cur = p;
+            }
             None => {
                 return ljos_quick::window_of(engine, cur)
                     .or_else(|| is_a::<crate::Window>(engine, cur).then_some(cur));
@@ -465,6 +487,11 @@ pub(super) fn register(engine: &Engine) {
                     .as_object()
                     .filter(|p| e.is_alive(*p) && Some(*p) != given)
                     .or_else(|| super::default_parent(e, owner))
+            } else if e.visual_parent(owner).is_none() {
+                // An item being made (`parent: Overlay.overlay` is this
+                // binding's reader) is in no tree yet: as in Qt, it goes
+                // by the window it is declared in.
+                super::default_parent(e, owner).or(Some(owner))
             } else {
                 Some(owner)
             };
