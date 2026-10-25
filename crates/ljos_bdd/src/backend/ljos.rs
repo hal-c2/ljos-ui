@@ -30,6 +30,7 @@ use ljos_runtime::{Clock as _, VirtualClock};
 use qml_front::project::ControlsStyle;
 use serde_json::{Map, Number, Value, json};
 
+use super::fake_platform::{self, FakePlatform};
 use super::{
     A11yNode, Application, ApplicationFault, Assistive, Backend, BackendError, Environment, Files,
     Input, LogEntry, LogLevel, Platform, PointerStep, Probes, QmlFile, Reload, Result, Tooling,
@@ -40,7 +41,6 @@ mod fixtures;
 mod inspect;
 mod lazy;
 mod paged;
-mod platform;
 mod reload;
 mod text;
 mod top;
@@ -138,7 +138,7 @@ pub struct LjosBackend {
     /// The inspector of a scenario that an agent looks at.
     inspector: Option<inspect::Rig>,
     /// The scenario's file system and the system's dialogs.
-    platform: platform::Rig,
+    platform: FakePlatform,
     /// The wall clock the scenario pinned, in milliseconds since the UNIX
     /// epoch; given before anything was loaded.
     wall_clock: Option<f64>,
@@ -1305,12 +1305,12 @@ impl Files for LjosBackend {
 
     fn user_file(&mut self, path: &str, text: &str) -> Result<()> {
         self.platform
-            .write(&format!("{}/{path}", platform::HOME), text)
+            .write(&format!("{}/{path}", fake_platform::HOME), text)
     }
 
     fn read_text_file(&mut self, name: &str) -> Result<Option<String>> {
         if let Some(live) = self.live.as_ref() {
-            platform::settle_writes(&live.engine);
+            fake_platform::settle_writes(&live.engine);
         }
         self.platform.read(name)
     }

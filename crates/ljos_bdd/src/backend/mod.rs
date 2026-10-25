@@ -5,6 +5,7 @@ use std::fmt;
 use serde_json::Value;
 
 pub mod desktop;
+pub mod fake_platform;
 pub mod inspector;
 pub mod ljos;
 pub mod qt;
