@@ -70,6 +70,9 @@ id, with a reference a click takes. The accessibility tree is not changed by it.
   12 kB written in place, was told as `Expected } but found EOF` at its 8192nd byte and reloaded right
   after. 30 such saves by hand and a test that pauses between the parts
   (`a_file_written_in_place_in_parts_is_built_once_it_is_closed`) did not show it again.
+  A change that does not compile is now held back and the files are read again after a second
+  quiet time. Only an error then is told, so the first part of such a save is no longer told
+  (`a_file_closed_after_its_first_part_is_built_once_the_rest_is_written`).
 
 The windows now take the root's size, as `qml6` opens them: clocks 640x320, hangman 320x480.
 

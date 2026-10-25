@@ -39,6 +39,12 @@ pub enum Build {
     /// The next event of the file brings the build again; the owner sets
     /// no timer for it.
     Waiting,
+    /// A change does not compile, and is not told yet: an editor can write
+    /// a file in parts with a pause longer than the quiet time between
+    /// them. The owner waits the quiet time again and builds: the files
+    /// are read again, and that build tells the error if there still is
+    /// one, as [`Build::Failed`].
+    Unsettled,
 }
 
 /// A project's files as they change, and the patches that follow.
@@ -66,6 +72,12 @@ pub struct Reloader<O> {
     carried: bool,
     /// Pictures saved since they were last taken, to be shown again.
     pictures: BTreeSet<PathBuf>,
+    /// The paths the last build read: read again by the build after a
+    /// [`Build::Unsettled`].
+    read: BTreeSet<PathBuf>,
+    /// The faults of a [`Build::Unsettled`], told by the next build when
+    /// the files still say the same.
+    held: Option<Vec<CompileFault>>,
 }
 
 impl<O: TypeOracle + Clone> Reloader<O> {
@@ -110,6 +122,8 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             parked: BTreeSet::new(),
             carried: false,
             pictures: BTreeSet::new(),
+            read: BTreeSet::new(),
+            held: None,
         }
     }
 
@@ -245,10 +259,12 @@ impl<O: TypeOracle + Clone> Reloader<O> {
                 changed |= self.prints.replace(texts(&self.session));
             }
         }
+        self.read.clear();
         for path in std::mem::take(&mut self.touched) {
             let Some(key) = self.session.key_of(&path) else {
                 continue;
             };
+            self.read.insert(path.clone());
             self.parked.remove(&path);
             // With more than one root, the file that has the key may be
             // another root's.
@@ -309,14 +325,26 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             return Build::Waiting;
         }
         if !changed {
-            return Build::NoChange;
+            // Read again, the files say what they said: the error stands.
+            return self.held.take().map_or(Build::NoChange, Build::Failed);
         }
-        match self.session.build() {
+        let built = self.session.build();
+        let held = self.held.take();
+        match built {
             Ok(None) => Build::UpToDate,
             Ok(Some(patch)) => Build::Patch {
                 patch: Box::new(patch),
                 warnings: self.session.warnings().cloned().collect(),
             },
+            // Once only, and not when a reload was asked for.
+            Err(faults) if may_wait && held.is_none() => {
+                let read = std::mem::take(&mut self.read);
+                // What a rescan found is found by the next one.
+                self.rescan |= read.is_empty() && !self.session.roots().is_empty();
+                self.touched.extend(read);
+                self.held = Some(faults);
+                Build::Unsettled
+            }
             Err(faults) => Build::Failed(faults),
         }
     }

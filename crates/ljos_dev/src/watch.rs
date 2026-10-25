@@ -471,6 +471,11 @@ impl<O: TypeOracle + Clone> Run<O> {
         match built {
             // The file's next event brings the build again.
             Build::Waiting => true,
+            // `saved` stays: the save is still the one told of.
+            Build::Unsettled => {
+                self.debounce.touch(Instant::now());
+                true
+            }
             Build::NoChange => {
                 self.saved = None;
                 true

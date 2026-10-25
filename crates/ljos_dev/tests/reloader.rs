@@ -18,6 +18,15 @@ fn started(files: &[(&str, &str)]) -> Reloader<QtTypeOracle> {
     r
 }
 
+/// A build, and the build after the quiet time again when the first held
+/// back an error: what a watcher with no event between them tells.
+fn told(r: &mut Reloader<QtTypeOracle>) -> Build {
+    match r.build() {
+        Build::Unsettled => r.build(),
+        other => other,
+    }
+}
+
 fn patch_of(r: &mut Reloader<QtTypeOracle>) -> u64 {
     match r.build() {
         Build::Patch { patch, .. } => patch.generation,
@@ -70,7 +79,7 @@ fn a_file_that_does_not_compile_fails_the_build_and_says_where() {
         "Main",
         Some("import QtQuick\nItem {\n  width: \n".to_owned()),
     );
-    let Build::Failed(faults) = r.build() else {
+    let Build::Failed(faults) = told(&mut r) else {
         panic!("expected a failure");
     };
     assert_eq!(faults[0].file, "Main.qml");
@@ -87,7 +96,7 @@ fn a_file_that_does_not_compile_fails_the_build_and_says_where() {
 fn undoing_a_broken_edit_says_all_is_well_again() {
     let mut r = started(&[("Main", MAIN)]);
     r.save("Main", Some("import QtQuick\nItem {".to_owned()));
-    assert!(matches!(r.build(), Build::Failed(_)));
+    assert!(matches!(told(&mut r), Build::Failed(_)));
     r.save("Main", Some(MAIN.to_owned()));
     assert_eq!(r.build(), Build::UpToDate);
 }
@@ -162,7 +171,7 @@ fn a_file_that_failed_at_the_start_does_not_hold_back_a_save_of_another() {
     // A save of the broken file that is still broken is a reload error,
     // and what runs is kept.
     r.save("Broken", Some(broken.replace("NoSuchThing", "NorThis")));
-    let Build::Failed(faults) = r.build() else {
+    let Build::Failed(faults) = told(&mut r) else {
         panic!("expected the save to fail");
     };
     assert_eq!(faults[0].file, "Broken.qml");
@@ -273,7 +282,7 @@ fn a_file_found_empty_while_being_written_waits_for_its_next_event() {
     // Its writer closed it empty: that is the save.
     fs::write(&main, "").unwrap();
     assert!(r.closed(&main));
-    assert!(matches!(r.build(), Build::Failed(_)));
+    assert!(matches!(told(&mut r), Build::Failed(_)));
 }
 
 #[test]
@@ -315,7 +324,7 @@ fn a_saved_script_recompiles_the_files_that_import_it() {
     // build after its fix is offered.
     fs::write(&logic, "\nfunction size() { return 20 * }\n").unwrap();
     assert!(r.closed(&logic));
-    let Build::Failed(faults) = r.build() else {
+    let Build::Failed(faults) = told(&mut r) else {
         panic!("expected a failure");
     };
     assert_eq!((faults[0].file.as_str(), faults[0].line), ("logic.js", 2));
@@ -377,4 +386,49 @@ fn paths_that_are_nothing_to_a_build_are_told_apart() {
     );
     // The root itself.
     assert_eq!(classify(&root, &root, true), Touch::Rescan);
+}
+
+#[test]
+fn an_error_right_after_a_change_is_told_by_the_build_after_it() {
+    let mut r = started(&[("Main", MAIN)]);
+    let broken = "import QtQuick\nItem {\n  width: \n";
+    r.save("Main", Some(broken.to_owned()));
+    assert_eq!(r.build(), Build::Unsettled);
+    let Build::Failed(faults) = r.build() else {
+        panic!("expected the error once the files still say the same");
+    };
+    assert_eq!(faults[0].file, "Main.qml");
+    assert_eq!(r.build(), Build::NoChange);
+
+    // Another broken text after it is a new change, held back once too.
+    r.save("Main", Some(broken.replace("width", "height")));
+    assert_eq!(r.build(), Build::Unsettled);
+    r.save("Main", Some(broken.replace("width", "x")));
+    assert!(matches!(r.build(), Build::Failed(_)), "held back once only");
+}
+
+#[test]
+fn a_file_written_in_parts_is_read_again_after_its_first_part_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let main = root.join("Main.qml");
+    fs::write(&main, MAIN).unwrap();
+    let mut r = Reloader::open(&root, QtTypeOracle).unwrap();
+    r.start();
+
+    let whole = MAIN.replace("10", "20");
+    fs::write(&main, &whole[..whole.len() / 2]).unwrap();
+    assert!(r.closed(&main));
+    assert_eq!(r.build(), Build::Unsettled);
+    // The rest is written, and its event is late or lost: the build after
+    // the quiet time reads the file again.
+    fs::write(&main, &whole).unwrap();
+    assert!(matches!(r.build(), Build::Patch { .. }));
+}
+
+#[test]
+fn a_reload_asked_for_tells_an_error_at_once() {
+    let mut r = started(&[("Main", MAIN)]);
+    r.save("Main", Some("import QtQuick\nItem {".to_owned()));
+    assert!(matches!(r.build_now(), Build::Failed(_)));
 }

@@ -178,6 +178,11 @@ impl Live {
         };
         let patch = match built {
             Build::NoChange | Build::Waiting => return Ok(()),
+            Build::Unsettled => {
+                let now = self.clock.now();
+                rig.quiet.touch(now);
+                return Ok(());
+            }
             Build::UpToDate => {
                 self.engine.set_last_reload_error(None);
                 return Ok(());

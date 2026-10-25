@@ -9,7 +9,9 @@ Feature: When a changed file is reloaded
   change is applied once the files have been quiet for 120 milliseconds, so
   an editor that saves in several steps causes one reload. A save the editor
   finished, closing the file or renaming it into place, waits 15
-  milliseconds only. A save that changes nothing causes none.
+  milliseconds only. A save that changes nothing causes none. A file that
+  does not compile right after a change is read again once the files have
+  been quiet once more, and only then is its error told.
 
   Rule: A change is applied once the files have been quiet for 120 milliseconds
 
@@ -196,7 +198,7 @@ Feature: When a changed file is reloaded
           width: 20 +
         }
         """
-      And 120 milliseconds pass
+      And 240 milliseconds pass
       Then the reload error is in "Scenario.qml" at line 5
       And 0 reloads have happened
       When the file "Scenario.qml" is changed to:
@@ -211,6 +213,69 @@ Feature: When a changed file is reloaded
       Then there is no reload error
       And the property "width" of "root" is 20
       And 1 reload has happened
+
+  Rule: A file that does not compile right after a change is read again before its error is told
+
+    # An editor can write a file in parts with a pause longer than the
+    # quiet time between them. The error of the first part alone is not
+    # told: the file is read and compiled again once the files have been
+    # quiet once more, and an error then is told.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+        }
+        """
+
+    Scenario: A file written in two parts is applied without an error
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+        """
+      And 120 milliseconds pass
+      Then there is no reload error
+      And 0 reloads have happened
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 20
+        }
+        """
+      And 120 milliseconds pass
+      Then there is no reload error
+      And the property "width" of "root" is 20
+      And 1 reload has happened
+
+    Scenario: A file left as it was written is told after the second quiet time
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+        """
+      And 120 milliseconds pass
+      Then there is no reload error
+      When 120 milliseconds pass
+      Then the reload error is in "Scenario.qml" at line 4
+      And the property "width" of "root" is 10
+
+    Scenario: A reload asked for tells the error at once
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+        """
+      And a reload happens
+      Then the reload error is in "Scenario.qml" at line 4
 
   Rule: A file emptied by a save that has not finished waits for the save
 
@@ -249,7 +314,7 @@ Feature: When a changed file is reloaded
       When the file "Scenario.qml" is changed to:
         """qml
         """
-      And 120 milliseconds pass
+      And 240 milliseconds pass
       Then the reload error is in "Scenario.qml" at line 1
       And the property "width" of "root" is 10
 
@@ -293,7 +358,7 @@ Feature: When a changed file is reloaded
         """js
         function size(n) { return n * }
         """
-      And 120 milliseconds pass
+      And 240 milliseconds pass
       Then the property "width" of "root" is 10
       And the reload error is in "logic.js" at line 1
       When the file "logic.js" is changed to:

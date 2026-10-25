@@ -813,3 +813,25 @@ fn a_file_written_in_place_in_parts_is_built_once_it_is_closed() {
         assert_eq!(app.num("used", "n"), f64::from(n));
     }
 }
+
+#[test]
+fn a_file_closed_after_its_first_part_is_built_once_the_rest_is_written() {
+    // Each part closed, the pause between them longer than a finished
+    // save's quiet time: the first part alone does not compile, and is
+    // not told.
+    let main = "import QtQuick\nItem {\n  objectName: \"root\"\n  width: 10\n}\n";
+    let mut app = app(&[("Main.qml", main)]);
+    let whole = main.replace("10", "20");
+    let (first, rest) = whole.split_at(whole.len() / 2);
+    let path = app.dir.join("Main.qml");
+    fs::write(&path, first).unwrap();
+    std::thread::sleep(Duration::from_millis(60));
+    {
+        use std::io::Write as _;
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(rest.as_bytes()).unwrap();
+    }
+    let reports = app.wait();
+    assert_eq!(reloaded(&reports).generation, 1, "{reports:?}");
+    assert_eq!(app.num("root", "width"), 20.0);
+}
