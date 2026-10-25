@@ -7,11 +7,17 @@
 //! takes the path a mouse does; what the application holds is read through
 //! its inspector (`--mcp`), over `ljos attach`.
 //!
+//! Nothing here waits for a while. The compositor and the inspector are
+//! two sockets, so nothing orders a read after the input it follows; the
+//! inspector's `app_watch` says each time the UI thread goes to sleep where
+//! the window's last pass saw the pointer and when the thread wakes next
+//! (`rests`), and the backend waits for the rest it needs.
+//!
 //! `mise run features:ljos` brings the sandbox up and names its sockets in
 //! the file `LJOS_BDD_DESKTOP` points at, one `KEY=VALUE` a line, as
 //! `cua-sandbox.sh env` prints them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -33,14 +39,19 @@ pub const SKIP_ENV: &str = "LJOS_BDD_DESKTOP_SKIP";
 
 /// How long the application may take to show its window.
 const STARTUP: Duration = Duration::from_secs(60);
-/// How long input takes to reach the application through the compositor
-/// before what it did is read. The compositor and the inspector are two
-/// sockets, so nothing orders a read after the input it follows.
-const INPUT_SETTLES: Duration = Duration::from_millis(150);
-/// How long the window must show no change before its picture is taken:
-/// longer than a frame, so a scroll or a slide still under way is seen
-/// through to its end.
-const STILL: Duration = Duration::from_millis(250);
+/// The longest the application may take to see input, or to come to rest
+/// before what one reading of it costs is measured.
+const SEEN: Duration = Duration::from_secs(10);
+/// How long a watch gathers the rests of a busy application: at most ten
+/// watches a second, half of what the inspector answers.
+const BURST_MS: u64 = 100;
+/// The most calls sent in any second: the inspector answers twenty and
+/// refuses the rest for a second; two spare cover the time to deliver one.
+const CALLS_PER_SECOND: usize = 18;
+/// How long the compositor's picture of a window at rest must show no
+/// change before it is taken: the application has presented its last
+/// frame, and the compositor shows it within a frame or two of its own.
+const STILL: Duration = Duration::from_millis(100);
 /// How long a picture may take, the window settling included.
 const PICTURE: Duration = Duration::from_secs(10);
 
@@ -98,6 +109,8 @@ struct Running {
     to_app: ChildStdin,
     from_app: BufReader<ChildStdout>,
     next_id: u64,
+    /// When the calls of the last second were sent.
+    sent: VecDeque<Instant>,
     /// Where its window's content is, in the layout's pixels.
     rect: (i32, i32, i32, i32),
 }
@@ -119,6 +132,7 @@ impl Running {
             to_app,
             from_app,
             next_id: 0,
+            sent: VecDeque::new(),
             rect,
         })
     }
@@ -155,8 +169,29 @@ impl Running {
         }
     }
 
+    /// Waits until a call more keeps to the inspector's calls per second.
+    /// Steps that no longer wait for a while send them faster than that.
+    fn pace(&mut self) {
+        let second = Duration::from_secs(1);
+        if self.sent.len() >= CALLS_PER_SECOND
+            && let Some(first) = self.sent.pop_front()
+        {
+            std::thread::sleep((first + second).saturating_duration_since(Instant::now()));
+        }
+        let now = Instant::now();
+        while self
+            .sent
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= second)
+        {
+            self.sent.pop_front();
+        }
+        self.sent.push_back(now);
+    }
+
     /// A tool's answer as an agent sees it, a refusal among them.
     fn call(&mut self, tool: &str, arguments: Value) -> Result<Answer> {
+        self.pace();
         self.next_id += 1;
         let id = self.next_id;
         let message = json!({
@@ -209,6 +244,58 @@ impl Running {
         }
     }
 
+    /// The UI thread's last rest (`app_watch`'s `rest`), and the count of
+    /// rests to wait from.
+    fn rest(&mut self) -> Result<(u64, Value)> {
+        let told = self.ask("app_watch", json!({"topics": ["rests"]}))?;
+        Ok((
+            told["counts"]["rests"].as_u64().unwrap_or(0),
+            told["rest"].clone(),
+        ))
+    }
+
+    /// Waits until the UI thread rests as `done` wants, or until
+    /// `deadline`: whether it did. The watch waits on the inspector's
+    /// thread, so the application runs no pass for it.
+    fn rest_until(&mut self, deadline: Instant, done: impl Fn(&Value) -> bool) -> Result<bool> {
+        let (mut count, mut rest) = self.rest()?;
+        let mut settle_ms = 0;
+        loop {
+            if done(&rest) {
+                return Ok(true);
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(false);
+            }
+            let wait_ms = u64::try_from(left.as_millis()).unwrap_or(u64::MAX).max(1);
+            let told = self.ask(
+                "app_watch",
+                json!({
+                    "since": {"rests": count}, "topics": ["rests"],
+                    "wait_ms": wait_ms, "settle_ms": settle_ms,
+                }),
+            )?;
+            // An animating application rests every frame. Once a rest has
+            // not been the one wanted, the rests of a burst are gathered so
+            // the watches stay under the inspector's calls per second.
+            settle_ms = BURST_MS;
+            count = told["counts"]["rests"].as_u64().unwrap_or(count);
+            rest = told["rest"].clone();
+        }
+    }
+
+    /// Waits until no pass of the UI thread is due: what was asked of it
+    /// has run, and what that asked for after.
+    fn settle(&mut self) -> Result<()> {
+        self.rest_until(Instant::now() + SEEN, |rest| {
+            rest["wake_in_ms"].as_u64() != Some(0)
+        })?;
+        // An application that keeps animating never rests; what it costs
+        // is then measured as it goes.
+        Ok(())
+    }
+
     fn eval(&mut self, object: &str, source: &str) -> Result<Value> {
         let answer = self.ask(
             "app_eval",
@@ -247,6 +334,8 @@ pub struct DesktopBackend {
     work_from: Vec<(&'static str, Counted)>,
     /// What the agent was last answered.
     seen: Seen,
+    /// Whether the pointer's button is held.
+    held: bool,
     /// What the application's environment has besides the sandbox's.
     env: Vec<(String, String)>,
 }
@@ -328,6 +417,9 @@ impl DesktopBackend {
 
     fn start(&mut self, entry: &str) -> Result<()> {
         self.seen = Seen::default();
+        self.passes_from = None;
+        self.wakes_from = None;
+        self.work_from.clear();
         self.observer = None;
         self.running = None;
         let sandbox = match &self.sandbox {
@@ -570,8 +662,28 @@ impl Backend for DesktopBackend {
     }
 
     fn advance(&mut self, ms: u64) -> Result<()> {
-        // The application runs on the real clock here.
-        std::thread::sleep(Duration::from_millis(ms));
+        // The application runs on the real clock here. What it does in
+        // the next `ms` by itself is what it woke for by then: once it
+        // sleeps with no wake of its own due by then, the time has passed
+        // as far as it can tell. While work, passes or wakes are counted,
+        // or another process is watched, the time is waited out: they
+        // measure the threads and processes whose clocks no rest tells.
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        let counting = self.passes_from.is_some()
+            || self.wakes_from.is_some()
+            || !self.work_from.is_empty()
+            || self.observer.is_some();
+        if counting {
+            std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            return Ok(());
+        }
+        // An inspector that tells no rests is waited out too.
+        let quiet = |rest: &Value| match rest["wake_in_ms"].as_u64() {
+            Some(n) => Instant::now() + Duration::from_millis(n) >= deadline,
+            None => rest.is_object(),
+        };
+        // A busy application spends the time waited on it.
+        self.running()?.rest_until(deadline, quiet)?;
         Ok(())
     }
 
@@ -602,9 +714,10 @@ impl Backend for DesktopBackend {
     }
 
     fn count_passes(&mut self) -> Result<()> {
-        // Two readings a while apart say what one costs.
+        // Two readings say what one costs: its own pass, and any that pass
+        // asked for, which have run once the thread rests.
         let first = self.passes()?;
-        std::thread::sleep(INPUT_SETTLES);
+        self.running()?.settle()?;
         let second = self.passes()?;
         self.passes_from = Some((second, second.saturating_sub(first)));
         Ok(())
@@ -634,6 +747,9 @@ impl Backend for DesktopBackend {
         Ok(now
             .into_iter()
             .filter(|(tid, _)| *tid != pid)
+            // The inspector's own thread answers the waits that tell when
+            // input was seen; it is the probe's, as its passes are.
+            .filter(|(_, (name, _))| name != "ljos-mcp")
             .filter_map(|(tid, (name, n))| {
                 let was = from.get(&tid).map_or(0, |(_, w)| *w);
                 let woke = n.saturating_sub(was);
@@ -649,9 +765,12 @@ impl Backend for DesktopBackend {
     }
 
     fn count_work(&mut self) -> Result<()> {
-        // Two readings a while apart say what one costs.
+        // Two readings say what one costs, once what each asked for ran.
         let first = self.work()?;
-        std::thread::sleep(INPUT_SETTLES);
+        self.running()?.settle()?;
+        if let Some(observer) = self.observer.as_mut() {
+            observer.settle()?;
+        }
         let second = self.work()?;
         self.work_from = first
             .into_iter()
@@ -710,18 +829,38 @@ impl Backend for DesktopBackend {
     }
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
-        let (x, y, extent) = self.at(x, y)?;
+        let (px, py, extent) = self.at(x, y)?;
         let pointer = self.pointer_device()?;
         let sent = match step {
-            PointerStep::Press => pointer.press(x, y, extent),
-            PointerStep::Move => pointer.move_to(x, y, extent),
+            PointerStep::Press => pointer.press(px, py, extent),
+            PointerStep::Move => pointer.move_to(px, py, extent),
             PointerStep::Release => pointer
-                .move_to(x, y, extent)
+                .move_to(px, py, extent)
                 .and_then(|()| pointer.release()),
         };
         sent.map_err(|e| BackendError::Failed(format!("the sandbox's pointer: {e}")))?;
-        std::thread::sleep(INPUT_SETTLES);
-        Ok(())
+        let held = match step {
+            PointerStep::Press => true,
+            PointerStep::Release => false,
+            PointerStep::Move => self.held,
+        };
+        self.held = held;
+        // Where the window got it: the layout's pixels are whole.
+        let (wx, wy) = (x.round(), y.round());
+        let near = |v: &Value, want: f64| v.as_f64().is_some_and(|v| (v - want).abs() <= 1.0);
+        let seen = self.running()?.rest_until(Instant::now() + SEEN, |rest| {
+            let p = &rest["pointer"];
+            p["pressed"] == held && near(&p["x"], wx) && near(&p["y"], wy)
+        })?;
+        if seen {
+            Ok(())
+        } else {
+            let state = if held { "held" } else { "up" };
+            Err(BackendError::Failed(format!(
+                "the window did not see the pointer at {x}, {y} ({state}) in {} s",
+                SEEN.as_secs()
+            )))
+        }
     }
 
     fn a11y_tree(&mut self) -> Result<A11yNode> {
@@ -739,6 +878,9 @@ impl Backend for DesktopBackend {
     fn grab(&mut self) -> Result<Vec<u8>> {
         // What the compositor shows, as a person sees it: the frames the
         // application sent, after whatever it painted them with.
+        // The application has drawn all it was going to once it rests;
+        // the compositor shows its last frame a moment later.
+        self.running()?.settle()?;
         let rect = self.running()?.rect;
         let display = self
             .sandbox
