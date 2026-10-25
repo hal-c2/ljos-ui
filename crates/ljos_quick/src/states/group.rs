@@ -231,6 +231,16 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
     // A bound `state` arrives here.
     let on_change = Rc::clone(&g);
     let _ = engine.watch(owner, state, move |e, _| on_change.sync(e));
+    // A nameless state is named for `state` to hold once its `when`
+    // picks it, counted over the nameless ones of the item (qml6).
+    let nameless = g
+        .all_states(engine)
+        .into_iter()
+        .filter(|s| text(engine, *s, State::NAME.index).is_empty());
+    for (n, s) in nameless.enumerate() {
+        let name = Value::string(format!("anonymousState{}", n + 1));
+        let _ = engine.write_internal(s, State::NAME.index, name, WriteKind::Imperative);
+    }
     for s in g.all_states(engine) {
         let on_when = Rc::clone(&g);
         let _ = engine.watch(s, State::WHEN.index, move |e, _| on_when.follow_when(e));
