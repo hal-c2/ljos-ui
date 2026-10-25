@@ -1,6 +1,6 @@
 //! `features:lint`: checks on the ledger that cucumber itself does not make.
 //!
-//! The step patterns are read from `steps.rs` so that there is one list of
+//! The step patterns are read from `steps/` so that there is one list of
 //! phrasings, the one the macros register.
 
 use std::{

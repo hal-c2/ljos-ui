@@ -1,10 +1,10 @@
 //! `mise run features:lint`: structure, step coverage and phrasing sprawl.
 
-use std::{fs, path::Path, process::ExitCode};
+use std::{path::Path, process::ExitCode};
 
 fn main() -> ExitCode {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let steps = fs::read_to_string(root.join("src/steps.rs")).expect("steps.rs is readable");
+    let steps = ljos_bdd::steps::source();
     let report = ljos_bdd::lint::lint(&root.join("../../features"), &steps);
     for e in &report.errors {
         eprintln!("error: {e}");

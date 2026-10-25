@@ -55,7 +55,9 @@ impl LjosWorld {
     /// from the first load on.
     pub fn watch_files(&mut self) {
         for b in &mut self.backends {
-            b.watch_files();
+            if let Some(reload) = b.as_reload() {
+                reload.watch_files();
+            }
         }
     }
 
@@ -69,7 +71,7 @@ impl LjosWorld {
             Some(text) => self.files.insert(name.to_owned(), text.to_owned()),
             None => self.files.remove(name),
         };
-        self.each(|b| b.change_file(name, source))
+        self.each(|b| b.reloading()?.change_file(name, source))
     }
 
     /// As [`change_file`](Self::change_file), by an editor that closes
@@ -79,7 +81,7 @@ impl LjosWorld {
     /// A backend cannot change files under a running application.
     pub fn save_file_whole(&mut self, name: &str, source: &str) -> Result<(), String> {
         self.change_file(name, Some(source))?;
-        self.each(|b| b.finish_save(name))
+        self.each(|b| b.reloading()?.finish_save(name))
     }
 
     /// A file of the running application is emptied by a save that has not
@@ -89,7 +91,7 @@ impl LjosWorld {
     /// A backend cannot change files under a running application.
     pub fn empty_file(&mut self, name: &str) -> Result<(), String> {
         self.files.insert(name.to_owned(), String::new());
-        self.each(|b| b.empty_file(name))
+        self.each(|b| b.reloading()?.empty_file(name))
     }
 
     /// The scenario's web server, started if it is not yet.
@@ -144,7 +146,7 @@ impl LjosWorld {
         let files = self.staged()?;
         let mut reports = Vec::new();
         let ran = self.each(|b| {
-            reports.push((b.name(), b.run_tests(&files, run)?));
+            reports.push((b.name(), b.tooling()?.run_tests(&files, run)?));
             Ok(())
         });
         self.test_reports = reports;

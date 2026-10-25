@@ -114,7 +114,7 @@ The ledger is not part of `cargo test --workspace` (its test target sets `test =
 ## Step catalogue
 
 Use these phrasings exactly. A scenario that needs something else first adds a step here and in
-`crates/ljos_bdd/src/steps.rs`; `features:lint` fails on a phrasing that is not here.
+the file of its domain in `crates/ljos_bdd/src/steps/`; `features:lint` fails on a phrasing that is not here.
 `"…"` is a quoted string, `V` a value: `5`, `0.5`, `true`, `false`, `null`, `"text"` or `[1, 2]`.
 Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be dotted
 (`anchors.margins`).

@@ -28,7 +28,9 @@ use ljos_bench::wayland::Pointer;
 use serde_json::{Value, json};
 
 use super::inspector::{Answer, Ask, Refusal, Seen};
-use super::{A11yNode, Backend, BackendError, LogEntry, PointerStep, QmlFile, Result};
+use super::{
+    A11yNode, Backend, BackendError, Files, LogEntry, PointerStep, Probes, QmlFile, Result, Tooling,
+};
 
 /// Names the file with the sandbox's sockets; set when one runs.
 pub const ENV: &str = "LJOS_BDD_DESKTOP";
@@ -698,21 +700,110 @@ impl Backend for DesktopBackend {
         })
     }
 
-    fn key_hold(&mut self, chord: &str, _: u32) -> Result<()> {
-        self.key(chord)
+    fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
+        let (px, py, extent) = self.at(x, y)?;
+        let pointer = self.pointer_device()?;
+        let sent = match step {
+            PointerStep::Press => pointer.press(px, py, extent),
+            PointerStep::Move => pointer.move_to(px, py, extent),
+            PointerStep::Release => pointer
+                .move_to(px, py, extent)
+                .and_then(|()| pointer.release()),
+        };
+        sent.map_err(|e| BackendError::Failed(format!("the sandbox's pointer: {e}")))?;
+        let held = match step {
+            PointerStep::Press => true,
+            PointerStep::Release => false,
+            PointerStep::Move => self.held,
+        };
+        self.held = held;
+        // Where the window got it: the layout's pixels are whole.
+        let (wx, wy) = (x.round(), y.round());
+        let near = |v: &Value, want: f64| v.as_f64().is_some_and(|v| (v - want).abs() <= 1.0);
+        let seen = self.running()?.rest_until(Instant::now() + SEEN, |rest| {
+            let p = &rest["pointer"];
+            p["pressed"] == held && near(&p["x"], wx) && near(&p["y"], wy)
+        })?;
+        if seen {
+            Ok(())
+        } else {
+            let state = if held { "held" } else { "up" };
+            Err(BackendError::Failed(format!(
+                "the window did not see the pointer at {x}, {y} ({state}) in {} s",
+                SEEN.as_secs()
+            )))
+        }
     }
 
-    fn window_active(&mut self, _: bool) -> Result<()> {
-        Err(BackendError::Unsupported {
-            backend: "desktop",
-            what: "the compositor, not the scenario, says which window is active",
-        })
+    fn a11y_tree(&mut self) -> Result<A11yNode> {
+        Err(not_yet("the accessibility tree on the desktop"))
     }
 
-    fn touch(&mut self, _: f64, _: f64) -> Result<()> {
-        Err(not_yet("touch on the desktop"))
+    fn log(&mut self) -> Result<Vec<LogEntry>> {
+        Err(not_yet("the log on the desktop"))
     }
 
+    fn grab(&mut self) -> Result<Vec<u8>> {
+        // What the compositor shows, as a person sees it: the frames the
+        // application sent, after whatever it painted them with.
+        // The application has drawn all it was going to once it rests;
+        // the compositor shows its last frame a moment later.
+        self.running()?.settle()?;
+        let rect = self.running()?.rect;
+        let display = self
+            .sandbox
+            .as_ref()
+            .ok_or_else(|| BackendError::Failed("no sandbox".into()))?
+            .path("WAYLAND_DISPLAY")?;
+        let deadline = Instant::now() + PICTURE;
+        let failed = |e: ljos_bench::wayland::Error| {
+            BackendError::Failed(format!("the sandbox's screencopy: {e}"))
+        };
+        ljos_bench::wayland::quiet(&display, rect, STILL, deadline)
+            .map_err(failed)?
+            .ok_or_else(|| {
+                BackendError::Failed(format!(
+                    "the window kept changing for {} s",
+                    PICTURE.as_secs()
+                ))
+            })?;
+        let (width, height, rgba) =
+            ljos_bench::wayland::picture(&display, rect, deadline).map_err(failed)?;
+        let encoding =
+            |e: png::EncodingError| BackendError::Failed(format!("encoding the picture: {e}"));
+        let mut png = Vec::new();
+        let mut encoder = png::Encoder::new(std::io::Cursor::new(&mut png), width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fastest);
+        let mut writer = encoder.write_header().map_err(encoding)?;
+        writer.write_image_data(&rgba).map_err(encoding)?;
+        writer.finish().map_err(encoding)?;
+        Ok(png)
+    }
+
+    fn as_files(&mut self) -> Option<&mut dyn Files> {
+        Some(self)
+    }
+
+    fn as_probes(&mut self) -> Option<&mut dyn Probes> {
+        Some(self)
+    }
+
+    fn as_tooling(&mut self) -> Option<&mut dyn Tooling> {
+        Some(self)
+    }
+}
+
+impl Files for DesktopBackend {
+    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
+        let path = self.dir()?.join(name);
+        std::fs::write(path, bytes)?;
+        Ok(())
+    }
+}
+
+impl Probes for DesktopBackend {
     fn count_passes(&mut self) -> Result<()> {
         // Two readings say what one costs: its own pass, and any that pass
         // asked for, which have run once the thread rests.
@@ -791,22 +882,6 @@ impl Backend for DesktopBackend {
         Ok(())
     }
 
-    fn inspector(&mut self, ask: &Ask) -> Result<()> {
-        let Ask::Call { tool, args } = ask else {
-            return Err(BackendError::Unsupported {
-                backend: "desktop",
-                what: "an agent here only calls tools",
-            });
-        };
-        let answer = self.running()?.call(tool, args.clone())?;
-        self.seen.answer = Some(answer);
-        Ok(())
-    }
-
-    fn inspector_seen(&mut self) -> Result<Seen> {
-        Ok(self.seen.clone())
-    }
-
     fn work_counted(&mut self) -> Result<Vec<String>> {
         if self.work_from.is_empty() {
             return Err(BackendError::Failed(
@@ -827,104 +902,22 @@ impl Backend for DesktopBackend {
         }
         Ok(did)
     }
+}
 
-    fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
-        let (px, py, extent) = self.at(x, y)?;
-        let pointer = self.pointer_device()?;
-        let sent = match step {
-            PointerStep::Press => pointer.press(px, py, extent),
-            PointerStep::Move => pointer.move_to(px, py, extent),
-            PointerStep::Release => pointer
-                .move_to(px, py, extent)
-                .and_then(|()| pointer.release()),
+impl Tooling for DesktopBackend {
+    fn inspector(&mut self, ask: &Ask) -> Result<()> {
+        let Ask::Call { tool, args } = ask else {
+            return Err(BackendError::Unsupported {
+                backend: "desktop",
+                what: "an agent here only calls tools",
+            });
         };
-        sent.map_err(|e| BackendError::Failed(format!("the sandbox's pointer: {e}")))?;
-        let held = match step {
-            PointerStep::Press => true,
-            PointerStep::Release => false,
-            PointerStep::Move => self.held,
-        };
-        self.held = held;
-        // Where the window got it: the layout's pixels are whole.
-        let (wx, wy) = (x.round(), y.round());
-        let near = |v: &Value, want: f64| v.as_f64().is_some_and(|v| (v - want).abs() <= 1.0);
-        let seen = self.running()?.rest_until(Instant::now() + SEEN, |rest| {
-            let p = &rest["pointer"];
-            p["pressed"] == held && near(&p["x"], wx) && near(&p["y"], wy)
-        })?;
-        if seen {
-            Ok(())
-        } else {
-            let state = if held { "held" } else { "up" };
-            Err(BackendError::Failed(format!(
-                "the window did not see the pointer at {x}, {y} ({state}) in {} s",
-                SEEN.as_secs()
-            )))
-        }
-    }
-
-    fn a11y_tree(&mut self) -> Result<A11yNode> {
-        Err(not_yet("the accessibility tree on the desktop"))
-    }
-
-    fn a11y_focus(&mut self, _: &str, _: &str) -> Result<()> {
-        Err(not_yet("the accessibility tree on the desktop"))
-    }
-
-    fn log(&mut self) -> Result<Vec<LogEntry>> {
-        Err(not_yet("the log on the desktop"))
-    }
-
-    fn grab(&mut self) -> Result<Vec<u8>> {
-        // What the compositor shows, as a person sees it: the frames the
-        // application sent, after whatever it painted them with.
-        // The application has drawn all it was going to once it rests;
-        // the compositor shows its last frame a moment later.
-        self.running()?.settle()?;
-        let rect = self.running()?.rect;
-        let display = self
-            .sandbox
-            .as_ref()
-            .ok_or_else(|| BackendError::Failed("no sandbox".into()))?
-            .path("WAYLAND_DISPLAY")?;
-        let deadline = Instant::now() + PICTURE;
-        let failed = |e: ljos_bench::wayland::Error| {
-            BackendError::Failed(format!("the sandbox's screencopy: {e}"))
-        };
-        ljos_bench::wayland::quiet(&display, rect, STILL, deadline)
-            .map_err(failed)?
-            .ok_or_else(|| {
-                BackendError::Failed(format!(
-                    "the window kept changing for {} s",
-                    PICTURE.as_secs()
-                ))
-            })?;
-        let (width, height, rgba) =
-            ljos_bench::wayland::picture(&display, rect, deadline).map_err(failed)?;
-        let encoding =
-            |e: png::EncodingError| BackendError::Failed(format!("encoding the picture: {e}"));
-        let mut png = Vec::new();
-        let mut encoder = png::Encoder::new(std::io::Cursor::new(&mut png), width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_compression(png::Compression::Fastest);
-        let mut writer = encoder.write_header().map_err(encoding)?;
-        writer.write_image_data(&rgba).map_err(encoding)?;
-        writer.finish().map_err(encoding)?;
-        Ok(png)
-    }
-
-    fn translation(&mut self, _: &str, _: &str) -> Result<()> {
-        Err(not_yet("translations on the desktop"))
-    }
-
-    fn set_ui_language(&mut self, _: &str) -> Result<()> {
-        Err(not_yet("the UI language on the desktop"))
-    }
-
-    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
-        let path = self.dir()?.join(name);
-        std::fs::write(path, bytes)?;
+        let answer = self.running()?.call(tool, args.clone())?;
+        self.seen.answer = Some(answer);
         Ok(())
+    }
+
+    fn inspector_seen(&mut self) -> Result<Seen> {
+        Ok(self.seen.clone())
     }
 }

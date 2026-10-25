@@ -2,8 +2,8 @@
 //! themselves.
 //!
 //! A step is known to the runner by the attribute on its function in
-//! `steps.rs`, so that file is the one place that cannot be out of date.
-//! This reads the attributes out of its text and writes each pattern the
+//! `steps/`, so those files are the one place that cannot be out of date.
+//! This reads the attributes out of their text and writes each pattern the
 //! way a step is written in a `.feature` file. Tools that help people and
 //! agents write scenarios show the result; nobody keeps it by hand.
 
@@ -44,10 +44,10 @@ pub struct Step {
     pub pattern: Option<String>,
 }
 
-/// The steps of `steps.rs`, in the order they are defined.
+/// The steps of `steps/`, in the order they are defined.
 #[must_use]
 pub fn steps() -> Vec<Step> {
-    parse(include_str!("steps.rs"))
+    parse(&crate::steps::source())
 }
 
 fn parse(source: &str) -> Vec<Step> {
@@ -263,7 +263,7 @@ pub fn markdown() -> String {
     let mut out = String::from(
         "# Steps\n\n\
          Every step the runner knows, read from the steps themselves. A scenario may use no \
-         other; a behaviour that needs a new one gets it in `crates/ljos_bdd/src/steps.rs`.\n\n\
+         other; a behaviour that needs a new one gets it in `crates/ljos_bdd/src/steps/`.\n\n\
          A placeholder stands where a value goes: `\"…\"` is a text in quotes, `N` a number, \
          `<value>` a value written as JSON (`12`, `\"red\"`, `true`), `<word>` one word, \
          `{a|b}` one of the words, and `[s]` letters that may be left out. A step that ends in a \
@@ -374,7 +374,7 @@ mod tests {
     /// catalogue as a regular expression.
     #[test]
     fn every_step_of_the_runner_is_in_the_catalogue() {
-        let source = include_str!("steps.rs");
+        let source = crate::steps::source();
         let attributes = source
             .lines()
             .map(str::trim)

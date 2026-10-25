@@ -195,44 +195,317 @@ pub enum A11yTextAction {
     SetValue(String),
 }
 
-/// The surface the steps drive. `!Send` is fine: cucumber 0.23 does not need `Send`.
+/// The surface the steps drive: a running application a scenario loads,
+/// reads, writes and acts on. `!Send` is fine: cucumber 0.23 does not need
+/// `Send`.
+///
+/// Every backend has these verbs. What only some have (more kinds of
+/// input, the system around the application, the runtime's own tools) is
+/// a capability trait, reached through the `as_` method of its name. A
+/// step asks for it by the method of `dyn Backend` of the same name
+/// (`b.input()?`), which says which backend lacks it.
 pub trait Backend: fmt::Debug {
     fn name(&self) -> &'static str;
+
     /// Stage `files` and instantiate `entry` (one of them). May be called repeatedly.
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()>;
+
     fn set(&mut self, object: &str, property: &str, value: &Value) -> Result<()>;
+
     /// Replace the property by a binding to `expression`, as `Qt.binding` does.
     fn bind(&mut self, object: &str, property: &str, expression: &str) -> Result<()>;
+
     fn get(&mut self, object: &str, property: &str) -> Result<Value>;
+
     fn call(&mut self, object: &str, method: &str, args: &[Value]) -> Result<Value>;
+
     fn exists(&mut self, object: &str) -> Result<bool>;
+
     /// Let `ms` of application time pass (virtual on Ljós, real on Qt).
     fn advance(&mut self, ms: u64) -> Result<()>;
+
+    /// Click the control with this accessible role and name, as a hand
+    /// would: in its middle, with the pointer moved there first.
     fn click(&mut self, role: &str, name: &str) -> Result<()>;
+
     /// Press and release a key chord (`"Ctrl+S"`, `"Tab"`), as a keyboard does.
     fn key(&mut self, chord: &str) -> Result<()>;
-    /// Hold a chord down until the keyboard has repeated it `repeats` times,
-    /// then let go.
-    fn key_hold(&mut self, chord: &str, repeats: u32) -> Result<()>;
-    /// The window becomes, or stops being, the one the keyboard types into.
-    fn window_active(&mut self, active: bool) -> Result<()>;
-    fn touch(&mut self, x: f64, y: f64) -> Result<()>;
+
     /// One half of a click, or a move between the two: what a held or
     /// dragged pointer is made of.
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()>;
+
     fn a11y_tree(&mut self) -> Result<A11yNode>;
+
+    fn log(&mut self) -> Result<Vec<LogEntry>>;
+
+    /// PNG bytes of the window.
+    fn grab(&mut self) -> Result<Vec<u8>>;
+
+    fn as_input(&mut self) -> Option<&mut dyn Input> {
+        None
+    }
+
+    fn as_assistive(&mut self) -> Option<&mut dyn Assistive> {
+        None
+    }
+
+    fn as_files(&mut self) -> Option<&mut dyn Files> {
+        None
+    }
+
+    fn as_environment(&mut self) -> Option<&mut dyn Environment> {
+        None
+    }
+
+    fn as_platform(&mut self) -> Option<&mut dyn Platform> {
+        None
+    }
+
+    fn as_application(&mut self) -> Option<&mut dyn Application> {
+        None
+    }
+
+    fn as_reload(&mut self) -> Option<&mut dyn Reload> {
+        None
+    }
+
+    fn as_probes(&mut self) -> Option<&mut dyn Probes> {
+        None
+    }
+
+    fn as_tooling(&mut self) -> Option<&mut dyn Tooling> {
+        None
+    }
+}
+
+/// A capability the backend lacks: not yet written, or, for Ljós's own
+/// extensions, something the oracle has nothing like.
+fn lacks(backend: &'static str, what: &'static str, own: bool) -> BackendError {
+    if own {
+        BackendError::Unsupported { backend, what }
+    } else {
+        BackendError::NotImplemented(what)
+    }
+}
+
+impl dyn Backend + '_ {
+    /// What the backend can do as [`Input`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn input(&mut self) -> Result<&mut dyn Input> {
+        let backend = self.name();
+        self.as_input().ok_or_else(|| {
+            lacks(
+                backend,
+                "input beyond a click, a key and the pointer",
+                false,
+            )
+        })
+    }
+
+    /// What the backend can do as [`Assistive`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn assistive(&mut self) -> Result<&mut dyn Assistive> {
+        let backend = self.name();
+        self.as_assistive()
+            .ok_or_else(|| lacks(backend, "an assistive technology's requests", false))
+    }
+
+    /// What the backend can do as [`Files`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn files(&mut self) -> Result<&mut dyn Files> {
+        let backend = self.name();
+        self.as_files()
+            .ok_or_else(|| lacks(backend, "files beside the QML", false))
+    }
+
+    /// What the backend can do as [`Environment`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn environment(&mut self) -> Result<&mut dyn Environment> {
+        let backend = self.name();
+        self.as_environment()
+            .ok_or_else(|| lacks(backend, "the environment the application starts in", false))
+    }
+
+    /// What the backend can do as [`Platform`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn platform(&mut self) -> Result<&mut dyn Platform> {
+        let backend = self.name();
+        self.as_platform()
+            .ok_or_else(|| lacks(backend, "the system's services", false))
+    }
+
+    /// What the backend can do as [`Application`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn application(&mut self) -> Result<&mut dyn Application> {
+        let backend = self.name();
+        self.as_application()
+            .ok_or_else(|| lacks(backend, "the application around the QML", false))
+    }
+
+    /// What the backend can do as [`Reload`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn reloading(&mut self) -> Result<&mut dyn Reload> {
+        let backend = self.name();
+        self.as_reload()
+            .ok_or_else(|| lacks(backend, "hot reload", true))
+    }
+
+    /// What the backend can do as [`Probes`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn probes(&mut self) -> Result<&mut dyn Probes> {
+        let backend = self.name();
+        self.as_probes()
+            .ok_or_else(|| lacks(backend, "seeing inside the runtime", true))
+    }
+
+    /// What the backend can do as [`Tooling`].
+    ///
+    /// # Errors
+    /// It cannot.
+    pub fn tooling(&mut self) -> Result<&mut dyn Tooling> {
+        let backend = self.name();
+        self.as_tooling()
+            .ok_or_else(|| lacks(backend, "Ljós's own tooling", true))
+    }
+}
+
+/// Input besides a click by name, a key and the pointer's steps.
+pub trait Input: Backend {
+    /// Hold a chord down until the keyboard has repeated it `repeats` times,
+    /// then let go.
+    fn key_hold(&mut self, chord: &str, repeats: u32) -> Result<()>;
+
+    /// The window becomes, or stops being, the one the keyboard types into.
+    fn window_active(&mut self, active: bool) -> Result<()>;
+
+    fn touch(&mut self, x: f64, y: f64) -> Result<()>;
+
+    /// Type `text` on the keyboard, one key press per character.
+    fn type_text(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("typing text"))
+    }
+
+    /// A click of `button` at one place: down and up, with nothing between.
+    fn click_button(&mut self, _button: OtherButton, _x: f64, _y: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a click of another button"))
+    }
+
+    /// A click of the left button with the modifiers of `"Ctrl+Shift"`
+    /// held.
+    fn click_holding(&mut self, _modifiers: &str, _x: f64, _y: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a click with modifiers held"))
+    }
+
+    /// Two clicks at one place in quick succession.
+    fn double_click(&mut self, _x: f64, _y: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a double click"))
+    }
+
+    /// Press at `from`, move to `to` with the button held, release there.
+    fn drag(&mut self, _from: (f64, f64), _to: (f64, f64)) -> Result<()> {
+        Err(BackendError::NotImplemented("a drag"))
+    }
+
+    /// Fingers on the screen, frame by frame: in each, every finger down
+    /// then, as `(id, x, y)`. A finger new in a frame comes down, one gone
+    /// from it is lifted, and after the last frame every finger is. Frames
+    /// are some milliseconds apart, as a touch screen reports them.
+    fn touch_frames(&mut self, _frames: &[TouchFrame]) -> Result<()> {
+        Err(BackendError::NotImplemented("fingers on a touch screen"))
+    }
+
+    /// The wheel turns, or a touchpad scrolls, with the pointer at `at`.
+    fn wheel(&mut self, _at: (f64, f64), _by: WheelBy) -> Result<()> {
+        Err(BackendError::NotImplemented("the wheel"))
+    }
+
+    /// An input method shows `text` as what is being composed at the
+    /// cursor; an empty text ends the composition with nothing typed.
+    fn compose(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("an input method"))
+    }
+
+    /// An input method ends the composition and types `text`.
+    fn commit(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("an input method"))
+    }
+}
+
+/// What an assistive technology asks of the application, besides reading
+/// its tree.
+pub trait Assistive: Backend {
     /// What a screen reader's "move the focus here" does to the node with
     /// this role and name. A node that refuses is not an error.
     fn a11y_focus(&mut self, role: &str, name: &str) -> Result<()>;
-    fn log(&mut self) -> Result<Vec<LogEntry>>;
-    /// PNG bytes of the window.
-    fn grab(&mut self) -> Result<Vec<u8>>;
+
+    /// An assistive technology asks the node with this role and name to
+    /// do something. A node that refuses is not an error.
+    fn a11y_act(&mut self, _role: &str, _name: &str, _action: A11yAction) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "an assistive technology's requests",
+        ))
+    }
+
+    /// An assistive technology asks the node with this role and name to
+    /// select or change its text. A node that refuses is not an error.
+    fn a11y_text(&mut self, _role: &str, _name: &str, _action: A11yTextAction) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "an assistive technology's requests",
+        ))
+    }
+}
+
+/// Files that are not QML, beside the QML files or in the user's home.
+pub trait Files: Backend {
+    /// Put a file that is not QML (an image) beside the QML files, where a
+    /// relative URL in them finds it.
+    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()>;
+
+    /// A text file beside the QML files, where a relative URL finds it.
+    fn text_file(&mut self, name: &str, text: &str) -> Result<()> {
+        self.resource(name, text.as_bytes())
+    }
+
+    /// A text file in the user's home directory, at `path` below it.
+    fn user_file(&mut self, _path: &str, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("the user's home directory"))
+    }
+
+    /// What the text file beside the QML files holds, once everything the
+    /// application wrote has reached it; `None` when there is no file.
+    fn read_text_file(&mut self, _name: &str) -> Result<Option<String>> {
+        Err(BackendError::NotImplemented("reading back files"))
+    }
+}
+
+/// What the application starts with (a style, a locale, a clock, fonts)
+/// and what the system says while it runs (settings, the language).
+pub trait Environment: Backend {
     /// Make the translations of a Qt Linguist `.ts` file available for the
     /// language its `language` attribute names. Nothing is shown in that
     /// language until it is the UI language.
     fn translation(&mut self, name: &str, ts: &str) -> Result<()>;
+
     /// What assigning `Qt.uiLanguage` does.
     fn set_ui_language(&mut self, language: &str) -> Result<()>;
+
     /// The host makes another font the application font while the
     /// application runs: the default font with these attributes (`family`,
     /// `pointSize`, `pixelSize`, `weight`, `bold`, `italic`), or the
@@ -242,96 +515,19 @@ pub trait Backend: fmt::Debug {
             "changing the application font",
         ))
     }
-    /// Put a file that is not QML (an image) beside the QML files, where a
-    /// relative URL in them finds it.
-    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()>;
-    /// The application makes a root of the loaded file `name` with no
-    /// parent, as it makes each window it opens beside the first.
-    fn open_window(&mut self, _name: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("a window of its own"))
-    }
-    /// The application makes a root of the loaded file `name` and puts it
-    /// in the window of the root `old`, which goes.
-    fn put_in_window(&mut self, _name: &str, _old: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("another root in a window"))
-    }
-    /// The application, in development, watches the loaded files on disk
-    /// under each of `roots` (directories named by the files' paths,
-    /// earlier first) and makes its root of the first of `entries` that
-    /// compiles and can be made, at the start and at every reload.
-    fn watch_roots(&mut self, _roots: &[String], _entries: &[String]) -> Result<()> {
-        Err(BackendError::NotImplemented("a watch over files on disk"))
-    }
-    /// The file `name` of the watched files is written with `text` (None:
-    /// it is removed), and the application takes what the watcher brings.
-    fn save_on_disk(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {
-        Err(BackendError::NotImplemented("a watch over files on disk"))
-    }
-    /// As [`Backend::open_window`], for an application that made the
-    /// window's `Fixtures` `Document` itself, titled `title`, and gives it
-    /// to the window.
-    fn open_window_given(&mut self, _name: &str, _title: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("a window given its singleton"))
-    }
-    /// The title of the `Document` the application gave a window.
-    fn given_title(&mut self) -> Result<String> {
-        Err(BackendError::NotImplemented("a window given its singleton"))
-    }
-    /// Type `text` on the keyboard, one key press per character.
-    fn type_text(&mut self, _text: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("typing text"))
-    }
-    /// A click of `button` at one place: down and up, with nothing between.
-    fn click_button(&mut self, _button: OtherButton, _x: f64, _y: f64) -> Result<()> {
-        Err(BackendError::NotImplemented("a click of another button"))
-    }
-    /// A click of the left button with the modifiers of `"Ctrl+Shift"`
-    /// held.
-    fn click_holding(&mut self, _modifiers: &str, _x: f64, _y: f64) -> Result<()> {
-        Err(BackendError::NotImplemented("a click with modifiers held"))
-    }
-    /// Two clicks at one place in quick succession.
-    fn double_click(&mut self, _x: f64, _y: f64) -> Result<()> {
-        Err(BackendError::NotImplemented("a double click"))
-    }
-    /// Press at `from`, move to `to` with the button held, release there.
-    fn drag(&mut self, _from: (f64, f64), _to: (f64, f64)) -> Result<()> {
-        Err(BackendError::NotImplemented("a drag"))
-    }
-    /// Fingers on the screen, frame by frame: in each, every finger down
-    /// then, as `(id, x, y)`. A finger new in a frame comes down, one gone
-    /// from it is lifted, and after the last frame every finger is. Frames
-    /// are some milliseconds apart, as a touch screen reports them.
-    fn touch_frames(&mut self, _frames: &[TouchFrame]) -> Result<()> {
-        Err(BackendError::NotImplemented("fingers on a touch screen"))
-    }
-    /// The wheel turns, or a touchpad scrolls, with the pointer at `at`.
-    fn wheel(&mut self, _at: (f64, f64), _by: WheelBy) -> Result<()> {
-        Err(BackendError::NotImplemented("the wheel"))
-    }
-    /// What the window system is asked to draw behind the window at
-    /// `object`; `None` for nothing.
-    fn window_backdrop(&mut self, _object: &str) -> Result<Option<BackdropAsked>> {
-        Err(BackendError::NotImplemented("window backdrops"))
-    }
-    /// An assistive technology asks the node with this role and name to
-    /// do something. A node that refuses is not an error.
-    fn a11y_act(&mut self, _role: &str, _name: &str, _action: A11yAction) -> Result<()> {
-        Err(BackendError::NotImplemented(
-            "an assistive technology's requests",
-        ))
-    }
     /// The program starts with the Qt Quick Controls style `name`, as
     /// `QT_QUICK_CONTROLS_STYLE` chooses it: a built-in style or a module
     /// of the scenario's files.
     fn controls_style(&mut self, _name: &str) -> Result<()> {
         Err(BackendError::NotImplemented("choosing a style"))
     }
+
     /// The program starts with `-style name` on its command line, which
     /// comes before the variables and the file.
     fn command_line_style(&mut self, _name: &str) -> Result<()> {
         Err(BackendError::NotImplemented("a style on the command line"))
     }
+
     /// The program starts with this text in the file
     /// `QT_QUICK_CONTROLS_CONF` names.
     fn controls_configuration(&mut self, _text: &str) -> Result<()> {
@@ -339,22 +535,26 @@ pub trait Backend: fmt::Debug {
             "a controls configuration file",
         ))
     }
+
     /// The program starts with the variable `name` (one of
     /// `QT_QUICK_CONTROLS_`) set to `value`.
     fn controls_variable(&mut self, _name: &str, _value: &str) -> Result<()> {
         Err(BackendError::NotImplemented("a controls variable"))
     }
+
     /// The program starts with these locale variables (`LANG`, `LC_ALL`,
     /// `LC_NUMERIC`, …) in its environment and no others.
     fn locale_environment(&mut self, _vars: &[(String, String)]) -> Result<()> {
         Err(BackendError::NotImplemented("a locale environment"))
     }
+
     /// The system says what the user prefers: before anything is loaded
     /// it is what the application starts with, after that it is a setting
     /// the user changed.
     fn system_setting(&mut self, _setting: SystemSetting) -> Result<()> {
         Err(BackendError::NotImplemented("system settings"))
     }
+
     /// The application sets a setting of the system itself, over what the
     /// system says.
     fn app_setting(&mut self, _setting: SystemSetting) -> Result<()> {
@@ -362,6 +562,7 @@ pub trait Backend: fmt::Debug {
             "an application's own settings",
         ))
     }
+
     /// The desktop's settings portal says a key's value: before anything
     /// is loaded, what the desktop had at start.
     fn desktop_setting(
@@ -372,72 +573,26 @@ pub trait Backend: fmt::Debug {
     ) -> Result<()> {
         Err(BackendError::NotImplemented("a desktop's settings"))
     }
+
     /// The system says what it knows of its network: before anything is
     /// loaded, what it had at start.
     fn network(&mut self, _status: ljos_platform::NetworkStatus) -> Result<()> {
         Err(BackendError::NotImplemented("the system's network"))
     }
-    /// The window system brings no files dragged in from other
-    /// applications, as winit has none on Wayland.
-    fn no_external_drops(&mut self) -> Result<()> {
-        Err(BackendError::NotImplemented(
-            "a window system without drops from outside",
-        ))
-    }
-    /// An assistive technology asks the node with this role and name to
-    /// select or change its text. A node that refuses is not an error.
-    fn a11y_text(&mut self, _role: &str, _name: &str, _action: A11yTextAction) -> Result<()> {
-        Err(BackendError::NotImplemented(
-            "an assistive technology's requests",
-        ))
-    }
-    /// Put `text` on the clipboard, as copying it in another application
-    /// does.
-    fn set_clipboard(&mut self, _text: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("the clipboard"))
-    }
-    /// Put formatted text on the clipboard, as copying it in a rich text
-    /// editor of another application does: `html`, and its characters as
-    /// plain text beside it.
-    fn set_clipboard_html(&mut self, _html: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("HTML on the clipboard"))
-    }
-    /// The text on the clipboard.
-    fn clipboard(&mut self) -> Result<String> {
-        Err(BackendError::NotImplemented("the clipboard"))
-    }
-    /// A text file beside the QML files, where a relative URL finds it.
-    fn text_file(&mut self, name: &str, text: &str) -> Result<()> {
-        self.resource(name, text.as_bytes())
-    }
-    /// A text file in the user's home directory, at `path` below it.
-    fn user_file(&mut self, _path: &str, _text: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("the user's home directory"))
-    }
-    /// What the text file beside the QML files holds, once everything the
-    /// application wrote has reached it; `None` when there is no file.
-    fn read_text_file(&mut self, _name: &str) -> Result<Option<String>> {
-        Err(BackendError::NotImplemented("reading back files"))
-    }
-    /// The kind (`"open file"`) and title of each dialog the system shows.
-    fn system_dialogs(&mut self) -> Result<Vec<(String, String)>> {
-        Err(BackendError::NotImplemented("the system's dialogs"))
-    }
-    /// The user answers the dialog the system shows.
-    fn answer_system_dialog(&mut self, _answer: SystemDialogAnswer) -> Result<()> {
-        Err(BackendError::NotImplemented("the system's dialogs"))
-    }
+
     /// The wall clock a script's `Date` reads is `epoch_ms` (milliseconds
     /// since the UNIX epoch) when the application starts, and moves with
     /// application time.
     fn wall_clock(&mut self, _epoch_ms: f64) -> Result<()> {
         Err(BackendError::NotImplemented("a pinned wall clock"))
     }
+
     /// Every binding tier 1 runs is run in tier 2 as well and the two
     /// compared, a difference being a warning; or not (`on` false).
     fn tier1_check(&mut self, _on: bool) -> Result<()> {
         Err(BackendError::NotImplemented("the tier 1 cross-check"))
     }
+
     /// The limits on a run of JavaScript read a clock that moves ten
     /// milliseconds each time the interrupt polls it (about every 10k
     /// opcodes), and by `native` over
@@ -448,6 +603,7 @@ pub trait Backend: fmt::Debug {
             "a clock for JavaScript's time limits",
         ))
     }
+
     /// The application takes its standard keys (`StandardKey`, the keys
     /// of an entry) from `platform`'s key bindings, whatever the machine.
     fn key_bindings(&mut self, _platform: ljos_quick::keys::Platform) -> Result<()> {
@@ -455,12 +611,193 @@ pub trait Backend: fmt::Debug {
             "another platform's key bindings",
         ))
     }
+
     /// Text is set in the fonts installed on the machine, as a desktop
     /// application's is, instead of only the fonts the toolkit carries.
     /// Given before anything is loaded.
     fn system_fonts(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's fonts"))
     }
+}
+
+/// The system's services: the clipboard, dialogs, drags from other
+/// applications, permissions, sensors, a position, opening URLs, and what
+/// the window system draws behind a window.
+pub trait Platform: Backend {
+    /// What the window system is asked to draw behind the window at
+    /// `object`; `None` for nothing.
+    fn window_backdrop(&mut self, _object: &str) -> Result<Option<BackdropAsked>> {
+        Err(BackendError::NotImplemented("window backdrops"))
+    }
+
+    /// The window system brings no files dragged in from other
+    /// applications, as winit has none on Wayland.
+    fn no_external_drops(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a window system without drops from outside",
+        ))
+    }
+
+    /// Put `text` on the clipboard, as copying it in another application
+    /// does.
+    fn set_clipboard(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("the clipboard"))
+    }
+
+    /// Put formatted text on the clipboard, as copying it in a rich text
+    /// editor of another application does: `html`, and its characters as
+    /// plain text beside it.
+    fn set_clipboard_html(&mut self, _html: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("HTML on the clipboard"))
+    }
+
+    /// The text on the clipboard.
+    fn clipboard(&mut self) -> Result<String> {
+        Err(BackendError::NotImplemented("the clipboard"))
+    }
+
+    /// The kind (`"open file"`) and title of each dialog the system shows.
+    fn system_dialogs(&mut self) -> Result<Vec<(String, String)>> {
+        Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+
+    /// The user answers the dialog the system shows.
+    fn answer_system_dialog(&mut self, _answer: SystemDialogAnswer) -> Result<()> {
+        Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+
+    /// The system cannot take away a dialog it shows, from now on.
+    fn system_dialogs_stay(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+
+    /// A step of a drag from another application, as the window system
+    /// reports it.
+    fn drag_from_outside(&mut self, _step: &OutsideDrag) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "drags from other applications",
+        ))
+    }
+
+    /// What the application answered the last step: whether a drop target
+    /// under the drag takes it (after `Drop`, whether one took the drop).
+    fn outside_drag_taken(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented(
+            "drags from other applications",
+        ))
+    }
+
+    /// Another application copies `text` while this one runs, and nobody
+    /// tells it. Where the clipboard tells every application of a change,
+    /// that is putting it on the clipboard.
+    fn copy_elsewhere(&mut self, text: &str) -> Result<()> {
+        self.set_clipboard(text)
+    }
+
+    /// The system asks the user before it grants a permission. Said before
+    /// anything is loaded.
+    fn permissions_ask(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a system that asks for permissions",
+        ))
+    }
+
+    /// The device has a sensor (`"accelerometer"`, as
+    /// `ljos_platform::SensorKind::describe` names it). Said before
+    /// anything is loaded.
+    fn add_sensor(&mut self, _kind: &str) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a sensor a scenario reads for",
+        ))
+    }
+
+    /// The device's sensor measures `values`, timestamped with the
+    /// scenario's clock.
+    fn sensor_reads(&mut self, _kind: &str, _values: &[f64]) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a sensor a scenario reads for",
+        ))
+    }
+
+    /// The system's position service is at `latitude`, `longitude` and
+    /// `altitude` (NaN when it is not known). Said before anything is
+    /// loaded; without it there is no service, as on a desktop.
+    fn system_position(&mut self, _latitude: f64, _longitude: f64, _altitude: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a position the system is at"))
+    }
+
+    /// The system's position moves: every started position source is
+    /// given the new fix.
+    fn system_position_moves(
+        &mut self,
+        _latitude: f64,
+        _longitude: f64,
+        _altitude: f64,
+    ) -> Result<()> {
+        Err(BackendError::NotImplemented("a position the system is at"))
+    }
+
+    /// The URLs the application asked the system to open, in order.
+    fn opened_urls(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::NotImplemented("the system's opener of URLs"))
+    }
+
+    /// The permissions (`"camera"`) the system is asking the user for.
+    fn permission_requests(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::NotImplemented(
+            "a system that asks for permissions",
+        ))
+    }
+
+    /// The user grants or denies the permission the system asks for.
+    fn answer_permission(&mut self, _name: &str, _granted: bool) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a system that asks for permissions",
+        ))
+    }
+}
+
+/// What the application written around the QML does: windows of its
+/// own, models written in Rust, files it watches, faults in native code.
+pub trait Application: Backend {
+    /// The application makes a root of the loaded file `name` with no
+    /// parent, as it makes each window it opens beside the first.
+    fn open_window(&mut self, _name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a window of its own"))
+    }
+
+    /// The application makes a root of the loaded file `name` and puts it
+    /// in the window of the root `old`, which goes.
+    fn put_in_window(&mut self, _name: &str, _old: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("another root in a window"))
+    }
+
+    /// The application, in development, watches the loaded files on disk
+    /// under each of `roots` (directories named by the files' paths,
+    /// earlier first) and makes its root of the first of `entries` that
+    /// compiles and can be made, at the start and at every reload.
+    fn watch_roots(&mut self, _roots: &[String], _entries: &[String]) -> Result<()> {
+        Err(BackendError::NotImplemented("a watch over files on disk"))
+    }
+
+    /// The file `name` of the watched files is written with `text` (None:
+    /// it is removed), and the application takes what the watcher brings.
+    fn save_on_disk(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {
+        Err(BackendError::NotImplemented("a watch over files on disk"))
+    }
+
+    /// As [`Application::open_window`], for an application that made the
+    /// window's `Fixtures` `Document` itself, titled `title`, and gives it
+    /// to the window.
+    fn open_window_given(&mut self, _name: &str, _title: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a window given its singleton"))
+    }
+
+    /// The title of the `Document` the application gave a window.
+    fn given_title(&mut self) -> Result<String> {
+        Err(BackendError::NotImplemented("a window given its singleton"))
+    }
+
     /// The application gives the QML a tree model named `name` that reads
     /// a folder's rows only when a view asks for them, and has them
     /// `delay_ms` later. `rows` are (folder, name) pairs, the folder ""
@@ -468,6 +805,7 @@ pub trait Backend: fmt::Debug {
     fn lazy_tree(&mut self, _name: &str, _delay_ms: u64, _rows: &[(String, String)]) -> Result<()> {
         Err(BackendError::NotImplemented("tree models written in Rust"))
     }
+
     /// The application gives the QML a list model named `name` of
     /// `total` rows ("row 0" on) that it reads `page` at a time, each page
     /// `delay_ms` after a view asks for more. None is read at the start.
@@ -481,93 +819,48 @@ pub trait Backend: fmt::Debug {
     ) -> Result<()> {
         Err(BackendError::NotImplemented("list models written in Rust"))
     }
-    /// The system cannot take away a dialog it shows, from now on.
-    fn system_dialogs_stay(&mut self) -> Result<()> {
-        Err(BackendError::NotImplemented("the system's dialogs"))
+
+    /// The user opens the application again, as a click on its icon in
+    /// the Dock does. Qt's QML is not told.
+    fn reopen(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "opening the application again",
+        })
     }
-    /// A step of a drag from another application, as the window system
-    /// reports it.
-    fn drag_from_outside(&mut self, _step: &OutsideDrag) -> Result<()> {
-        Err(BackendError::NotImplemented(
-            "drags from other applications",
-        ))
+
+    /// Whether the application asked to end (`Qt.quit()`). The oracle is
+    /// itself the application that would end, so it cannot say.
+    fn quit_requested(&mut self) -> Result<bool> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "seeing a request to quit",
+        })
     }
-    /// What the application answered the last step: whether a drop target
-    /// under the drag takes it (after `Drop`, whether one took the drop).
-    fn outside_drag_taken(&mut self) -> Result<bool> {
-        Err(BackendError::NotImplemented(
-            "drags from other applications",
-        ))
+
+    /// Native code running for the object panics with `message`, as a
+    /// bug in a type written in Rust does.
+    fn panic_in(&mut self, _object: &str, _message: &str) -> Result<()> {
+        Err(self.no_faults())
     }
-    /// Another application copies `text` while this one runs, and nobody
-    /// tells it. Where the clipboard tells every application of a change,
-    /// that is putting it on the clipboard.
-    fn copy_elsewhere(&mut self, text: &str) -> Result<()> {
-        self.set_clipboard(text)
+
+    /// The last fault that no UI boundary took.
+    fn application_fault(&mut self) -> Result<Option<ApplicationFault>> {
+        Err(self.no_faults())
     }
-    /// The system asks the user before it grants a permission. Said before
-    /// anything is loaded.
-    fn permissions_ask(&mut self) -> Result<()> {
-        Err(BackendError::NotImplemented(
-            "a system that asks for permissions",
-        ))
+
+    /// Faults and their boundaries are Ljós's own.
+    fn no_faults(&self) -> BackendError {
+        BackendError::Unsupported {
+            backend: self.name(),
+            what: "faults and UI boundaries",
+        }
     }
-    /// The device has a sensor (`"accelerometer"`, as
-    /// `ljos_platform::SensorKind::describe` names it). Said before
-    /// anything is loaded.
-    fn add_sensor(&mut self, _kind: &str) -> Result<()> {
-        Err(BackendError::NotImplemented(
-            "a sensor a scenario reads for",
-        ))
-    }
-    /// The device's sensor measures `values`, timestamped with the
-    /// scenario's clock.
-    fn sensor_reads(&mut self, _kind: &str, _values: &[f64]) -> Result<()> {
-        Err(BackendError::NotImplemented(
-            "a sensor a scenario reads for",
-        ))
-    }
-    /// The system's position service is at `latitude`, `longitude` and
-    /// `altitude` (NaN when it is not known). Said before anything is
-    /// loaded; without it there is no service, as on a desktop.
-    fn system_position(&mut self, _latitude: f64, _longitude: f64, _altitude: f64) -> Result<()> {
-        Err(BackendError::NotImplemented("a position the system is at"))
-    }
-    /// The system's position moves: every started position source is
-    /// given the new fix.
-    fn system_position_moves(
-        &mut self,
-        _latitude: f64,
-        _longitude: f64,
-        _altitude: f64,
-    ) -> Result<()> {
-        Err(BackendError::NotImplemented("a position the system is at"))
-    }
-    /// The URLs the application asked the system to open, in order.
-    fn opened_urls(&mut self) -> Result<Vec<String>> {
-        Err(BackendError::NotImplemented("the system's opener of URLs"))
-    }
-    /// The permissions (`"camera"`) the system is asking the user for.
-    fn permission_requests(&mut self) -> Result<Vec<String>> {
-        Err(BackendError::NotImplemented(
-            "a system that asks for permissions",
-        ))
-    }
-    /// The user grants or denies the permission the system asks for.
-    fn answer_permission(&mut self, _name: &str, _granted: bool) -> Result<()> {
-        Err(BackendError::NotImplemented(
-            "a system that asks for permissions",
-        ))
-    }
-    /// An input method shows `text` as what is being composed at the
-    /// cursor; an empty text ends the composition with nothing typed.
-    fn compose(&mut self, _text: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("an input method"))
-    }
-    /// An input method ends the composition and types `text`.
-    fn commit(&mut self, _text: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("an input method"))
-    }
+}
+
+/// Files changed under the running application, as a development build
+/// reloads them.
+pub trait Reload: Backend {
     /// The scenario changes files while the application runs: what a
     /// reload needs is noted from the first load on, as a development
     /// build notes it. Called before anything is loaded.
@@ -577,35 +870,54 @@ pub trait Backend: fmt::Debug {
     fn change_file(&mut self, _name: &str, _source: Option<&str>) -> Result<()> {
         Err(self.no_reload())
     }
+
     /// The editor closed the file it saved last (`change_file`): the save
     /// is whole, and the quiet time is a short one.
     fn finish_save(&mut self, _name: &str) -> Result<()> {
         Err(self.no_reload())
     }
-    /// A file that is not QML ([`Backend::resource`]) is saved again
+
+    /// A file that is not QML ([`Files::resource`]) is saved again
     /// while the application runs. It is shown when the files have been
     /// quiet.
     fn change_resource(&mut self, _name: &str, _bytes: &[u8]) -> Result<()> {
         Err(self.no_reload())
     }
+
     /// A file of the running application is emptied by a save that has
     /// not finished: its text comes with a later `change_file`.
     fn empty_file(&mut self, _name: &str) -> Result<()> {
         Err(self.no_reload())
     }
+
     /// The quiet time ends now: what was saved is applied. A change that
     /// cannot be applied is not an error here; `reload_error` says why.
     fn reload(&mut self) -> Result<()> {
         Err(self.no_reload())
     }
+
     /// The last reload that failed, until one succeeds.
     fn reload_error(&mut self) -> Result<Option<ReloadFailure>> {
         Err(self.no_reload())
     }
+
     /// How many reloads were applied.
     fn reload_count(&mut self) -> Result<u64> {
         Err(self.no_reload())
     }
+
+    /// Hot reload is a Ljós extension; the oracle has nothing like it.
+    fn no_reload(&self) -> BackendError {
+        BackendError::Unsupported {
+            backend: self.name(),
+            what: "hot reload",
+        }
+    }
+}
+
+/// What the runtime can say of itself that a QML program cannot see:
+/// what it has scheduled, what it keeps, how much work it does.
+pub trait Probes: Backend {
     /// What the application would wake for if no one touched it: the
     /// next timer, the next frame of something moving, an answer it waits
     /// for. Empty when it is idle. The oracle's event loop cannot be read.
@@ -615,22 +927,7 @@ pub trait Backend: fmt::Debug {
             what: "seeing what the application has scheduled",
         })
     }
-    /// The user opens the application again, as a click on its icon in
-    /// the Dock does. Qt's QML is not told.
-    fn reopen(&mut self) -> Result<()> {
-        Err(BackendError::Unsupported {
-            backend: self.name(),
-            what: "opening the application again",
-        })
-    }
-    /// Whether the application asked to end (`Qt.quit()`). The oracle is
-    /// itself the application that would end, so it cannot say.
-    fn quit_requested(&mut self) -> Result<bool> {
-        Err(BackendError::Unsupported {
-            backend: self.name(),
-            what: "seeing a request to quit",
-        })
-    }
+
     /// Shows the first frame as a desktop window does, which waits a short
     /// while for the large pictures it started to decode. The oracle
     /// decodes them on the spot and has no such frame.
@@ -640,6 +937,7 @@ pub trait Backend: fmt::Debug {
             what: "showing a first frame that waits for its pictures",
         })
     }
+
     /// The size in pixels of the picture kept for the image `object`, None
     /// while none is. The oracle does not say what it keeps.
     fn kept_picture(&mut self, _object: &str) -> Result<Option<(u32, u32)>> {
@@ -648,6 +946,7 @@ pub trait Backend: fmt::Debug {
             what: "seeing the size a picture is kept at",
         })
     }
+
     /// Starts counting the passes the window runs (a run of its scene and
     /// a paint), less those the counting itself causes. Only a shell runs
     /// passes; the oracle's event loop cannot be read.
@@ -657,13 +956,15 @@ pub trait Backend: fmt::Debug {
             what: "counting the passes a window runs",
         })
     }
-    /// The passes run since [`Backend::count_passes`].
+
+    /// The passes run since [`Probes::count_passes`].
     fn passes_counted(&mut self) -> Result<u64> {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "counting the passes a window runs",
         })
     }
+
     /// Starts counting how many times Text items are laid out to say what
     /// they measure. The oracle does not say when it lays text out.
     fn count_text_measures(&mut self) -> Result<()> {
@@ -672,13 +973,15 @@ pub trait Backend: fmt::Debug {
             what: "counting the times text is measured",
         })
     }
-    /// The times text was measured since [`Backend::count_text_measures`].
+
+    /// The times text was measured since [`Probes::count_text_measures`].
     fn text_measures_counted(&mut self) -> Result<u64> {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "counting the times text is measured",
         })
     }
+
     /// Starts counting how often each of the application's threads is
     /// woken. Only a shell's process can be read: the oracle's threads
     /// are its own.
@@ -688,14 +991,16 @@ pub trait Backend: fmt::Debug {
             what: "counting the wakes of the application's threads",
         })
     }
+
     /// Each thread but the window's own that woke since
-    /// [`Backend::count_wakes`], by name, with how many times it did.
+    /// [`Probes::count_wakes`], by name, with how many times it did.
     fn wakes_counted(&mut self) -> Result<Vec<(String, u64)>> {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "counting the wakes of the application's threads",
         })
     }
+
     /// Starts `ljos observe` on the running application. Only a shell is
     /// observed: the observer is a window of its own.
     fn observe(&mut self) -> Result<()> {
@@ -704,6 +1009,7 @@ pub trait Backend: fmt::Debug {
             what: "an observer window",
         })
     }
+
     /// Starts counting the work the application and its observer do
     /// (passes, frames, jobs, messages), less what the counting causes.
     fn count_work(&mut self) -> Result<()> {
@@ -712,7 +1018,8 @@ pub trait Backend: fmt::Debug {
             what: "counting the work an observed application does",
         })
     }
-    /// The work done since [`Backend::count_work`], one line for each
+
+    /// The work done since [`Probes::count_work`], one line for each
     /// kind that was; empty when there was none.
     fn work_counted(&mut self) -> Result<Vec<String>> {
         Err(BackendError::Unsupported {
@@ -720,6 +1027,7 @@ pub trait Backend: fmt::Debug {
             what: "counting the work an observed application does",
         })
     }
+
     /// The `Qt.CursorShape` the pointer shows. The oracle runs off-screen,
     /// where there is no pointer to show one.
     fn pointer_cursor(&mut self) -> Result<i64> {
@@ -728,15 +1036,10 @@ pub trait Backend: fmt::Debug {
             what: "seeing the pointer's cursor",
         })
     }
-    /// Native code running for the object panics with `message`, as a
-    /// bug in a type written in Rust does.
-    fn panic_in(&mut self, _object: &str, _message: &str) -> Result<()> {
-        Err(self.no_faults())
-    }
-    /// The last fault that no UI boundary took.
-    fn application_fault(&mut self) -> Result<Option<ApplicationFault>> {
-        Err(self.no_faults())
-    }
+}
+
+/// Ljós's tools: the QML test runner, the inspector and the `top` overlay.
+pub trait Tooling: Backend {
     /// Runs the staged `tst_*.qml` files with this backend's test runner
     /// and gives what it printed. Nothing is loaded for this: the runner
     /// is a program of its own.
@@ -747,22 +1050,27 @@ pub trait Backend: fmt::Debug {
     ) -> Result<testrun::TestReport> {
         Err(BackendError::NotImplemented("running QML tests"))
     }
+
     /// An agent's inspector is asked something (ARCHITECTURE.md §19.4).
     fn inspector(&mut self, _ask: &inspector::Ask) -> Result<()> {
         Err(self.no_inspector())
     }
+
     /// What the agent has been offered and was last answered.
     fn inspector_seen(&mut self) -> Result<inspector::Seen> {
         Err(self.no_inspector())
     }
+
     /// The `top` overlay is shown or hidden (ARCHITECTURE.md §19.10).
     fn top(&mut self, _shown: bool) -> Result<()> {
         Err(self.no_top())
     }
+
     /// The overlay as it stands.
     fn top_seen(&mut self) -> Result<top::TopSeen> {
         Err(self.no_top())
     }
+
     /// The overlay is Ljós's own tooling; the oracle has none.
     fn no_top(&self) -> BackendError {
         BackendError::Unsupported {
@@ -770,25 +1078,12 @@ pub trait Backend: fmt::Debug {
             what: "the top overlay",
         }
     }
+
     /// The inspector is Ljós's own tooling; the oracle has none.
     fn no_inspector(&self) -> BackendError {
         BackendError::Unsupported {
             backend: self.name(),
             what: "the inspector",
-        }
-    }
-    /// Faults and their boundaries are Ljós's own.
-    fn no_faults(&self) -> BackendError {
-        BackendError::Unsupported {
-            backend: self.name(),
-            what: "faults and UI boundaries",
-        }
-    }
-    /// Hot reload is a Ljós extension; the oracle has nothing like it.
-    fn no_reload(&self) -> BackendError {
-        BackendError::Unsupported {
-            backend: self.name(),
-            what: "hot reload",
         }
     }
 }

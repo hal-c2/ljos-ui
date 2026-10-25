@@ -25,7 +25,8 @@ use std::{
 use serde_json::{Value, json};
 
 use super::{
-    A11yNode, Backend, BackendError, LogEntry, LogLevel, PointerStep, QmlFile, Result,
+    A11yNode, Assistive, Backend, BackendError, Environment, Files, Input, LogEntry, LogLevel,
+    Platform, PointerStep, QmlFile, Result, Tooling,
     rfb::{Chord, Endpoint, HeldStep, Rfb, SCREEN, char_keysym},
 };
 
@@ -626,61 +627,6 @@ impl Backend for QtBackend {
         "qt"
     }
 
-    fn controls_style(&mut self, name: &str) -> Result<()> {
-        self.controls_style = Some(name.to_owned());
-        self.cache = None;
-        Ok(())
-    }
-
-    fn command_line_style(&mut self, name: &str) -> Result<()> {
-        self.command_line_style = Some(name.to_owned());
-        self.cache = None;
-        Ok(())
-    }
-
-    fn controls_configuration(&mut self, text: &str) -> Result<()> {
-        self.controls_conf = Some(text.to_owned());
-        self.cache = None;
-        Ok(())
-    }
-
-    fn controls_variable(&mut self, name: &str, value: &str) -> Result<()> {
-        self.controls_vars.push((name.to_owned(), value.to_owned()));
-        self.cache = None;
-        Ok(())
-    }
-
-    fn locale_environment(&mut self, vars: &[(String, String)]) -> Result<()> {
-        self.locale_env = Some(vars.to_vec());
-        self.cache = None;
-        Ok(())
-    }
-
-    fn run_tests(
-        &mut self,
-        files: &[QmlFile],
-        run: &super::testrun::TestRun,
-    ) -> Result<super::testrun::TestReport> {
-        super::testrun::run_qt(files, run)
-    }
-
-    // Qt always reads the machine's fonts.
-    fn system_fonts(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    // qml6 takes its key bindings from the desktop, and its `offscreen` and
-    // `vnc` platforms ask none: they have the Windows column, whatever the
-    // machine (Ctrl+K deletes nothing there, as on Windows).
-    fn key_bindings(&mut self, platform: ljos_quick::keys::Platform) -> Result<()> {
-        match platform {
-            ljos_quick::keys::Platform::Windows => Ok(()),
-            _ => Err(BackendError::NotImplemented(
-                "another platform's key bindings",
-            )),
-        }
-    }
-
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
         for f in files {
             self.files.insert(f.name.clone(), f.source.clone());
@@ -738,32 +684,6 @@ impl Backend for QtBackend {
         Ok(())
     }
 
-    fn key_hold(&mut self, _: &str, _: u32) -> Result<()> {
-        Err(BackendError::Unsupported {
-            backend: "qt",
-            what: "auto-repeat: the input platform does not mark repeated presses",
-        })
-    }
-
-    fn window_active(&mut self, active: bool) -> Result<()> {
-        self.push(json!({"op": "active", "value": active}));
-        Ok(())
-    }
-
-    /// A click of the left mouse button: what the input platform can send,
-    /// and what a touch becomes for a `MouseArea` or a `TapHandler`.
-    fn touch(&mut self, x: f64, y: f64) -> Result<()> {
-        let inside = |v: f64| (0.0..f64::from(SCREEN)).contains(&v);
-        if !inside(x) || !inside(y) {
-            return Err(BackendError::Failed(format!(
-                "{x}, {y} is outside the {SCREEN} pixel window"
-            )));
-        }
-        self.not_held()?;
-        self.push(json!({"op": "pointer", "x": x as u16, "y": y as u16}));
-        Ok(())
-    }
-
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
         let (x, y) = on_screen(x, y)?;
         let held = self.pointer_held();
@@ -799,13 +719,6 @@ impl Backend for QtBackend {
         })
     }
 
-    fn a11y_focus(&mut self, _: &str, _: &str) -> Result<()> {
-        Err(BackendError::Unsupported {
-            backend: "qt",
-            what: "an assistive technology's requests need the accessibility bridge",
-        })
-    }
-
     fn log(&mut self) -> Result<Vec<LogEntry>> {
         // A `log` question is a no-op op so the replay ends exactly here.
         self.push(json!({"op": "nop"}));
@@ -818,20 +731,55 @@ impl Backend for QtBackend {
         Ok(fs::read(path)?)
     }
 
-    fn translation(&mut self, name: &str, ts: &str) -> Result<()> {
-        self.translations.insert(name.to_owned(), ts.to_owned());
-        self.cache = None;
+    fn as_input(&mut self) -> Option<&mut dyn Input> {
+        Some(self)
+    }
+
+    fn as_assistive(&mut self) -> Option<&mut dyn Assistive> {
+        Some(self)
+    }
+
+    fn as_files(&mut self) -> Option<&mut dyn Files> {
+        Some(self)
+    }
+
+    fn as_environment(&mut self) -> Option<&mut dyn Environment> {
+        Some(self)
+    }
+
+    fn as_platform(&mut self) -> Option<&mut dyn Platform> {
+        Some(self)
+    }
+
+    fn as_tooling(&mut self) -> Option<&mut dyn Tooling> {
+        Some(self)
+    }
+}
+
+impl Input for QtBackend {
+    fn key_hold(&mut self, _: &str, _: u32) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "auto-repeat: the input platform does not mark repeated presses",
+        })
+    }
+
+    fn window_active(&mut self, active: bool) -> Result<()> {
+        self.push(json!({"op": "active", "value": active}));
         Ok(())
     }
 
-    fn set_ui_language(&mut self, language: &str) -> Result<()> {
-        self.ask(json!({"op": "language", "value": language}))
-            .map(drop)
-    }
-
-    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
-        self.resources.insert(name.to_owned(), bytes.to_vec());
-        self.cache = None;
+    /// A click of the left mouse button: what the input platform can send,
+    /// and what a touch becomes for a `MouseArea` or a `TapHandler`.
+    fn touch(&mut self, x: f64, y: f64) -> Result<()> {
+        let inside = |v: f64| (0.0..f64::from(SCREEN)).contains(&v);
+        if !inside(x) || !inside(y) {
+            return Err(BackendError::Failed(format!(
+                "{x}, {y} is outside the {SCREEN} pixel window"
+            )));
+        }
+        self.not_held()?;
+        self.push(json!({"op": "pointer", "x": x as u16, "y": y as u16}));
         Ok(())
     }
 
@@ -922,6 +870,99 @@ impl Backend for QtBackend {
         })
     }
 
+    fn compose(&mut self, _: &str) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "an input method: the input platform has none",
+        })
+    }
+
+    fn commit(&mut self, _: &str) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "an input method: the input platform has none",
+        })
+    }
+}
+
+impl Assistive for QtBackend {
+    fn a11y_focus(&mut self, _: &str, _: &str) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "an assistive technology's requests need the accessibility bridge",
+        })
+    }
+}
+
+impl Files for QtBackend {
+    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.resources.insert(name.to_owned(), bytes.to_vec());
+        self.cache = None;
+        Ok(())
+    }
+}
+
+impl Environment for QtBackend {
+    fn controls_style(&mut self, name: &str) -> Result<()> {
+        self.controls_style = Some(name.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn command_line_style(&mut self, name: &str) -> Result<()> {
+        self.command_line_style = Some(name.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn controls_configuration(&mut self, text: &str) -> Result<()> {
+        self.controls_conf = Some(text.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn controls_variable(&mut self, name: &str, value: &str) -> Result<()> {
+        self.controls_vars.push((name.to_owned(), value.to_owned()));
+        self.cache = None;
+        Ok(())
+    }
+
+    fn locale_environment(&mut self, vars: &[(String, String)]) -> Result<()> {
+        self.locale_env = Some(vars.to_vec());
+        self.cache = None;
+        Ok(())
+    }
+
+    // Qt always reads the machine's fonts.
+    fn system_fonts(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    // qml6 takes its key bindings from the desktop, and its `offscreen` and
+    // `vnc` platforms ask none: they have the Windows column, whatever the
+    // machine (Ctrl+K deletes nothing there, as on Windows).
+    fn key_bindings(&mut self, platform: ljos_quick::keys::Platform) -> Result<()> {
+        match platform {
+            ljos_quick::keys::Platform::Windows => Ok(()),
+            _ => Err(BackendError::NotImplemented(
+                "another platform's key bindings",
+            )),
+        }
+    }
+
+    fn translation(&mut self, name: &str, ts: &str) -> Result<()> {
+        self.translations.insert(name.to_owned(), ts.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn set_ui_language(&mut self, language: &str) -> Result<()> {
+        self.ask(json!({"op": "language", "value": language}))
+            .map(drop)
+    }
+}
+
+impl Platform for QtBackend {
     fn set_clipboard(&mut self, text: &str) -> Result<()> {
         self.ask(json!({"op": "copy", "value": text})).map(drop)
     }
@@ -937,19 +978,15 @@ impl Backend for QtBackend {
             .unwrap_or_default()
             .to_owned())
     }
+}
 
-    fn compose(&mut self, _: &str) -> Result<()> {
-        Err(BackendError::Unsupported {
-            backend: "qt",
-            what: "an input method: the input platform has none",
-        })
-    }
-
-    fn commit(&mut self, _: &str) -> Result<()> {
-        Err(BackendError::Unsupported {
-            backend: "qt",
-            what: "an input method: the input platform has none",
-        })
+impl Tooling for QtBackend {
+    fn run_tests(
+        &mut self,
+        files: &[QmlFile],
+        run: &super::testrun::TestRun,
+    ) -> Result<super::testrun::TestReport> {
+        super::testrun::run_qt(files, run)
     }
 }
 

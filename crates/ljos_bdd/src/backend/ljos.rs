@@ -31,8 +31,8 @@ use qml_front::project::ControlsStyle;
 use serde_json::{Map, Number, Value, json};
 
 use super::{
-    A11yNode, ApplicationFault, Backend, BackendError, LogEntry, LogLevel, PointerStep, QmlFile,
-    Result,
+    A11yNode, Application, ApplicationFault, Assistive, Backend, BackendError, Environment, Files,
+    Input, LogEntry, LogLevel, Platform, PointerStep, Probes, QmlFile, Reload, Result, Tooling,
 };
 
 mod disk;
@@ -873,14 +873,6 @@ impl Backend for LjosBackend {
         "ljos"
     }
 
-    fn run_tests(
-        &mut self,
-        files: &[QmlFile],
-        run: &super::testrun::TestRun,
-    ) -> Result<super::testrun::TestReport> {
-        super::testrun::run_ljos(files, run)
-    }
-
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
         if self.live.is_none() {
             let mut live = Self::start()?;
@@ -1064,34 +1056,6 @@ impl Backend for LjosBackend {
         Ok(out)
     }
 
-    fn open_window(&mut self, name: &str) -> Result<()> {
-        self.live()?.open_window(name)
-    }
-
-    fn put_in_window(&mut self, name: &str, old: &str) -> Result<()> {
-        self.live()?.put_in_window(name, old)
-    }
-
-    fn watch_roots(&mut self, roots: &[String], entries: &[String]) -> Result<()> {
-        self.live()?.watch_roots(roots, entries)
-    }
-
-    fn save_on_disk(&mut self, name: &str, text: Option<&str>) -> Result<()> {
-        self.live()?.save_on_disk(name, text)
-    }
-
-    fn open_window_given(&mut self, name: &str, title: &str) -> Result<()> {
-        self.live()?.open_window_given(name, title)
-    }
-
-    fn given_title(&mut self) -> Result<String> {
-        let live = self.live()?;
-        let given = live
-            .given
-            .ok_or_else(|| failed("the application gave no window a Document"))?;
-        fixtures::title(&live.engine, given).map_err(failed)
-    }
-
     fn exists(&mut self, object: &str) -> Result<bool> {
         let live = self.live()?;
         Ok(live.find(object).is_ok())
@@ -1117,6 +1081,67 @@ impl Backend for LjosBackend {
         self.key_hold(chord, 0)
     }
 
+    fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
+        self.live()?.pointer(step, x, y)
+    }
+
+    fn a11y_tree(&mut self) -> Result<A11yNode> {
+        let live = self.live()?;
+        live.drive(|d| d.listen())?;
+        Ok(live.a11y())
+    }
+
+    fn log(&mut self) -> Result<Vec<LogEntry>> {
+        // A load that failed before anything was made has an empty log.
+        Ok(self
+            .live
+            .as_ref()
+            .map(|l| l.log.borrow().clone())
+            .unwrap_or_default())
+    }
+
+    fn grab(&mut self) -> Result<Vec<u8>> {
+        self.live()?.grab()
+    }
+
+    fn as_input(&mut self) -> Option<&mut dyn Input> {
+        Some(self)
+    }
+
+    fn as_assistive(&mut self) -> Option<&mut dyn Assistive> {
+        Some(self)
+    }
+
+    fn as_files(&mut self) -> Option<&mut dyn Files> {
+        Some(self)
+    }
+
+    fn as_environment(&mut self) -> Option<&mut dyn Environment> {
+        Some(self)
+    }
+
+    fn as_platform(&mut self) -> Option<&mut dyn Platform> {
+        Some(self)
+    }
+
+    fn as_application(&mut self) -> Option<&mut dyn Application> {
+        Some(self)
+    }
+
+    fn as_reload(&mut self) -> Option<&mut dyn Reload> {
+        Some(self)
+    }
+
+    fn as_probes(&mut self) -> Option<&mut dyn Probes> {
+        Some(self)
+    }
+
+    fn as_tooling(&mut self) -> Option<&mut dyn Tooling> {
+        Some(self)
+    }
+}
+
+impl Input for LjosBackend {
     fn key_hold(&mut self, chord: &str, repeats: u32) -> Result<()> {
         let chord = Chord::parse(chord).map_err(failed)?;
         self.live()?.drive(|d| d.chord(&chord, repeats))
@@ -1131,10 +1156,6 @@ impl Backend for LjosBackend {
     fn touch(&mut self, x: f64, y: f64) -> Result<()> {
         self.live()?
             .drive(|d| d.touch(Point::new(x, y), kurbo::Vec2::ZERO))
-    }
-
-    fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
-        self.live()?.pointer(step, x, y)
     }
 
     fn click_holding(&mut self, modifiers: &str, x: f64, y: f64) -> Result<()> {
@@ -1177,34 +1198,97 @@ impl Backend for LjosBackend {
         self.live()?.drive(|d| d.drag(from, to))
     }
 
-    fn set_clipboard(&mut self, text: &str) -> Result<()> {
+    fn compose(&mut self, text: &str) -> Result<()> {
         let live = self.live()?;
-        ljos_quick::Clipboard::of(&live.engine).set_text(&live.engine, text);
+        // With no editor in focus the input method has nowhere to compose;
+        // the scenario says what it expects of that.
+        live.drive(|d| d.preedit(text, None).map(|_| ()))
+    }
+
+    fn commit(&mut self, text: &str) -> Result<()> {
+        self.live()?.drive(|d| d.commit(text).map(|_| ()))
+    }
+}
+
+impl Assistive for LjosBackend {
+    fn a11y_focus(&mut self, role: &str, name: &str) -> Result<()> {
+        let live = self.live()?;
+        live.drive(|d| d.listen())?;
+        let key = live
+            .accessible_key(role, name)
+            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
+        // A node may refuse; the scenario says what it expects of that.
+        live.scene.accessible_focus(&live.engine, key);
         live.settle()
     }
 
-    fn set_clipboard_html(&mut self, html: &str) -> Result<()> {
-        use ljos_text::rich::{ParseOptions, RichText, TextFormat};
+    fn a11y_act(&mut self, role: &str, name: &str, action: super::A11yAction) -> Result<()> {
+        use ljos_quick::AccessibleAction as To;
         let live = self.live()?;
-        let doc = RichText::parse(TextFormat::Rich, html, &ParseOptions::default(), &|c| {
-            Some(c.into())
-        });
-        // The characters as a plain text editor takes them: paragraphs on
-        // lines, an image as nothing.
-        let text: String = doc.text().chars().filter(|c| *c != '\u{FFFC}').collect();
-        ljos_quick::Clipboard::of(&live.engine).set_text(&live.engine, &text);
-        ljos_platform::Platform::of(&live.engine)
-            .clipboard()
-            .set_html(html, &text)
-            .map_err(failed)?;
+        live.drive(|d| d.listen())?;
+        let key = live
+            .accessible_key(role, name)
+            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
+        let action = match action {
+            super::A11yAction::Press => {
+                let now = live.clock.now();
+                live.scene.accessible_press(&live.engine, key, now);
+                return live.settle();
+            }
+            super::A11yAction::ShowOnScreen => To::ShowOnScreen,
+            super::A11yAction::Expand => To::Expand,
+            super::A11yAction::Collapse => To::Collapse,
+            super::A11yAction::Increase => To::Increase,
+            super::A11yAction::Decrease => To::Decrease,
+            super::A11yAction::SetValue(to) => To::SetValue(to),
+            super::A11yAction::Scroll { dx, dy, page } => match (dx, dy) {
+                (0, 1..) => To::ScrollDown { page },
+                (0, _) => To::ScrollUp { page },
+                (1.., _) => To::ScrollRight { page },
+                _ => To::ScrollLeft { page },
+            },
+        };
+        // A node may refuse; the scenario says what it expects of that.
+        live.scene.accessible_action(&live.engine, key, action);
         live.settle()
     }
 
-    fn clipboard(&mut self) -> Result<String> {
+    fn a11y_text(&mut self, role: &str, name: &str, action: super::A11yTextAction) -> Result<()> {
+        use ljos_quick::AccessibleTextAction as To;
         let live = self.live()?;
-        Ok(ljos_quick::Clipboard::of(&live.engine).text())
+        live.drive(|d| d.listen())?;
+        let key = live
+            .accessible_key(role, name)
+            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
+        let value = live
+            .scene
+            .accessibility_tree()
+            .get(key)
+            .and_then(|d| d.text.as_ref())
+            .map(|t| t.value.clone())
+            .unwrap_or_default();
+        // The scenario counts characters; the tree counts bytes.
+        let byte = |n: usize| {
+            value
+                .char_indices()
+                .nth(n)
+                .map_or(value.len(), |(at, _)| at)
+        };
+        let action = match action {
+            super::A11yTextAction::Select(from, to) => To::Select {
+                anchor: byte(from),
+                cursor: byte(to),
+            },
+            super::A11yTextAction::ReplaceSelection(text) => To::ReplaceSelection(text),
+            super::A11yTextAction::SetValue(text) => To::SetValue(text),
+        };
+        // A node may refuse; the scenario says what it expects of that.
+        live.scene.accessible_text_action(&live.engine, key, action);
+        live.settle()
     }
+}
 
+impl Files for LjosBackend {
     fn text_file(&mut self, name: &str, text: &str) -> Result<()> {
         self.platform.write(name, text)?;
         // A text file may be a picture too (an SVG). Only the picture store
@@ -1231,39 +1315,22 @@ impl Backend for LjosBackend {
         self.platform.read(name)
     }
 
-    fn system_dialogs(&mut self) -> Result<Vec<(String, String)>> {
-        Ok(self.platform.shown())
-    }
-
-    fn answer_system_dialog(&mut self, answer: super::SystemDialogAnswer) -> Result<()> {
-        self.platform.answer(answer)?;
-        let live = self.live()?;
-        ljos_platform::Platform::of(&live.engine).finish(&live.engine);
-        live.settle()
-    }
-
-    fn lazy_tree(&mut self, name: &str, delay_ms: u64, rows: &[(String, String)]) -> Result<()> {
-        if self.live.is_some() {
-            return Err(failed(
-                "a tree model is given to the QML before it is loaded",
-            ));
+    // Scenario files live at `file:///<name>`, so a picture beside them
+    // does too; nothing is written to disk.
+    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
+        let url = format!("file:///{name}");
+        match self.live.as_ref() {
+            Some(live) => {
+                ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.to_vec());
+                ljos_quick::ImageStore::of(&live.engine).register_resource(url, bytes.to_vec());
+            }
+            None => self.resources.push((url, bytes.to_vec())),
         }
-        let tree = lazy::LazyTree::new(rows, Duration::from_millis(delay_ms));
-        self.lazy_trees.push((name.to_owned(), tree));
         Ok(())
     }
+}
 
-    fn paged_model(&mut self, name: &str, total: usize, page: usize, delay_ms: u64) -> Result<()> {
-        if self.live.is_some() {
-            return Err(failed(
-                "a list model is given to the QML before it is loaded",
-            ));
-        }
-        let model = paged::PagedModel::new(total, page, Duration::from_millis(delay_ms));
-        self.paged_models.push((name.to_owned(), model));
-        Ok(())
-    }
-
+impl Environment for LjosBackend {
     fn system_fonts(&mut self) -> Result<()> {
         if self.live.is_some() {
             return Err(failed("the system's fonts are given before the QML"));
@@ -1305,6 +1372,163 @@ impl Backend for LjosBackend {
             live.engine.set_wall_clock_origin(Some(epoch_ms));
         }
         Ok(())
+    }
+
+    fn locale_environment(&mut self, vars: &[(String, String)]) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "a program's environment is given before anything is loaded",
+            ));
+        }
+        self.locale_env = Some(vars.to_vec());
+        Ok(())
+    }
+
+    fn controls_style(&mut self, name: &str) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("a style is chosen before anything is loaded"));
+        }
+        self.controls_style = Some(ControlsStyle {
+            name: name.to_owned(),
+            fallback: None,
+        });
+        Ok(())
+    }
+
+    fn command_line_style(&mut self, name: &str) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("a style is chosen before anything is loaded"));
+        }
+        self.command_line_style = Some(name.to_owned());
+        Ok(())
+    }
+
+    fn controls_configuration(&mut self, text: &str) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("a configuration is given before anything is loaded"));
+        }
+        self.controls_conf = Some(text.to_owned());
+        Ok(())
+    }
+
+    fn controls_variable(&mut self, name: &str, value: &str) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("a variable is given before anything is loaded"));
+        }
+        self.controls_vars.push((name.to_owned(), value.to_owned()));
+        Ok(())
+    }
+
+    fn system_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
+        self.said(Said::System(setting))
+    }
+
+    fn app_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
+        self.said(Said::App(setting))
+    }
+
+    fn desktop_setting(
+        &mut self,
+        namespace: &str,
+        key: &str,
+        value: ljos_a11y::SettingValue,
+    ) -> Result<()> {
+        // The shell follows the key of the desktop it runs on; a test may
+        // say either.
+        if let Some(font) = ljos_a11y::DesktopSettings::font_of(namespace, key, &value) {
+            let font = match font {
+                ljos_a11y::DesktopFont::Pango(name) => {
+                    ljos_controls::desktop_font::from_pango(&name)
+                }
+                ljos_a11y::DesktopFont::Qt(s) => ljos_controls::desktop_font::from_qt_string(&s),
+            };
+            return match font {
+                Some(font) => self.said(Said::Font(font)),
+                None => Ok(()),
+            };
+        }
+        // A key the shell does not read is not reported, as on the bus.
+        if !self.desktop.set(namespace, key, &value) {
+            return Ok(());
+        }
+        let report = self.desktop.prefs();
+        self.said(Said::Desktop(report))
+    }
+
+    fn network(&mut self, status: ljos_platform::NetworkStatus) -> Result<()> {
+        self.said(Said::Network(status))
+    }
+
+    // The `.ts` file is read as it is, the way a development build reads
+    // one; a shipped application would have compiled it to `.ljl`.
+    fn translation(&mut self, name: &str, ts: &str) -> Result<()> {
+        let catalog = ljos_i18n::ts::TsFile::read(ts)
+            .map_err(|e| failed(format!("{name}: {e}")))?
+            .catalog();
+        match self.live.as_mut() {
+            Some(live) => {
+                live.engine.install_catalog(Box::new(catalog));
+                live.settle()
+            }
+            None => {
+                self.catalogs.push(catalog);
+                Ok(())
+            }
+        }
+    }
+
+    fn set_ui_language(&mut self, language: &str) -> Result<()> {
+        let live = self.live()?;
+        live.engine.set_ui_language(language);
+        live.settle()
+    }
+
+    fn set_application_font(&mut self, font: Option<&[(String, String)]>) -> Result<()> {
+        let font = font.map(application_font).transpose()?;
+        let live = self.live()?;
+        ljos_controls::set_application_font(&live.engine, font.as_ref());
+        live.settle()
+    }
+}
+
+impl Platform for LjosBackend {
+    fn set_clipboard(&mut self, text: &str) -> Result<()> {
+        let live = self.live()?;
+        ljos_quick::Clipboard::of(&live.engine).set_text(&live.engine, text);
+        live.settle()
+    }
+
+    fn set_clipboard_html(&mut self, html: &str) -> Result<()> {
+        use ljos_text::rich::{ParseOptions, RichText, TextFormat};
+        let live = self.live()?;
+        let doc = RichText::parse(TextFormat::Rich, html, &ParseOptions::default(), &|c| {
+            Some(c.into())
+        });
+        // The characters as a plain text editor takes them: paragraphs on
+        // lines, an image as nothing.
+        let text: String = doc.text().chars().filter(|c| *c != '\u{FFFC}').collect();
+        ljos_quick::Clipboard::of(&live.engine).set_text(&live.engine, &text);
+        ljos_platform::Platform::of(&live.engine)
+            .clipboard()
+            .set_html(html, &text)
+            .map_err(failed)?;
+        live.settle()
+    }
+
+    fn clipboard(&mut self) -> Result<String> {
+        let live = self.live()?;
+        Ok(ljos_quick::Clipboard::of(&live.engine).text())
+    }
+
+    fn system_dialogs(&mut self) -> Result<Vec<(String, String)>> {
+        Ok(self.platform.shown())
+    }
+
+    fn answer_system_dialog(&mut self, answer: super::SystemDialogAnswer) -> Result<()> {
+        self.platform.answer(answer)?;
+        let live = self.live()?;
+        ljos_platform::Platform::of(&live.engine).finish(&live.engine);
+        live.settle()
     }
 
     fn system_dialogs_stay(&mut self) -> Result<()> {
@@ -1408,87 +1632,6 @@ impl Backend for LjosBackend {
         live.settle()
     }
 
-    fn compose(&mut self, text: &str) -> Result<()> {
-        let live = self.live()?;
-        // With no editor in focus the input method has nowhere to compose;
-        // the scenario says what it expects of that.
-        live.drive(|d| d.preedit(text, None).map(|_| ()))
-    }
-
-    fn commit(&mut self, text: &str) -> Result<()> {
-        self.live()?.drive(|d| d.commit(text).map(|_| ()))
-    }
-
-    fn a11y_tree(&mut self) -> Result<A11yNode> {
-        let live = self.live()?;
-        live.drive(|d| d.listen())?;
-        Ok(live.a11y())
-    }
-
-    fn a11y_focus(&mut self, role: &str, name: &str) -> Result<()> {
-        let live = self.live()?;
-        live.drive(|d| d.listen())?;
-        let key = live
-            .accessible_key(role, name)
-            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
-        // A node may refuse; the scenario says what it expects of that.
-        live.scene.accessible_focus(&live.engine, key);
-        live.settle()
-    }
-
-    fn locale_environment(&mut self, vars: &[(String, String)]) -> Result<()> {
-        if self.live.is_some() {
-            return Err(failed(
-                "a program's environment is given before anything is loaded",
-            ));
-        }
-        self.locale_env = Some(vars.to_vec());
-        Ok(())
-    }
-
-    fn controls_style(&mut self, name: &str) -> Result<()> {
-        if self.live.is_some() {
-            return Err(failed("a style is chosen before anything is loaded"));
-        }
-        self.controls_style = Some(ControlsStyle {
-            name: name.to_owned(),
-            fallback: None,
-        });
-        Ok(())
-    }
-
-    fn command_line_style(&mut self, name: &str) -> Result<()> {
-        if self.live.is_some() {
-            return Err(failed("a style is chosen before anything is loaded"));
-        }
-        self.command_line_style = Some(name.to_owned());
-        Ok(())
-    }
-
-    fn controls_configuration(&mut self, text: &str) -> Result<()> {
-        if self.live.is_some() {
-            return Err(failed("a configuration is given before anything is loaded"));
-        }
-        self.controls_conf = Some(text.to_owned());
-        Ok(())
-    }
-
-    fn controls_variable(&mut self, name: &str, value: &str) -> Result<()> {
-        if self.live.is_some() {
-            return Err(failed("a variable is given before anything is loaded"));
-        }
-        self.controls_vars.push((name.to_owned(), value.to_owned()));
-        Ok(())
-    }
-
-    fn system_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
-        self.said(Said::System(setting))
-    }
-
-    fn app_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
-        self.said(Said::App(setting))
-    }
-
     fn window_backdrop(&mut self, object: &str) -> Result<Option<super::BackdropAsked>> {
         let live = self.live()?;
         let win = live.find(object)?;
@@ -1509,165 +1652,100 @@ impl Backend for LjosBackend {
         Ok(Some(super::BackdropAsked { kind, look }))
     }
 
-    fn desktop_setting(
-        &mut self,
-        namespace: &str,
-        key: &str,
-        value: ljos_a11y::SettingValue,
-    ) -> Result<()> {
-        // The shell follows the key of the desktop it runs on; a test may
-        // say either.
-        if let Some(font) = ljos_a11y::DesktopSettings::font_of(namespace, key, &value) {
-            let font = match font {
-                ljos_a11y::DesktopFont::Pango(name) => {
-                    ljos_controls::desktop_font::from_pango(&name)
-                }
-                ljos_a11y::DesktopFont::Qt(s) => ljos_controls::desktop_font::from_qt_string(&s),
-            };
-            return match font {
-                Some(font) => self.said(Said::Font(font)),
-                None => Ok(()),
-            };
-        }
-        // A key the shell does not read is not reported, as on the bus.
-        if !self.desktop.set(namespace, key, &value) {
-            return Ok(());
-        }
-        let report = self.desktop.prefs();
-        self.said(Said::Desktop(report))
-    }
-
-    fn network(&mut self, status: ljos_platform::NetworkStatus) -> Result<()> {
-        self.said(Said::Network(status))
-    }
-
     fn no_external_drops(&mut self) -> Result<()> {
         self.said(Said::NoExternalDrops)
     }
+}
 
-    fn a11y_act(&mut self, role: &str, name: &str, action: super::A11yAction) -> Result<()> {
-        use ljos_quick::AccessibleAction as To;
+impl Application for LjosBackend {
+    fn open_window(&mut self, name: &str) -> Result<()> {
+        self.live()?.open_window(name)
+    }
+
+    fn put_in_window(&mut self, name: &str, old: &str) -> Result<()> {
+        self.live()?.put_in_window(name, old)
+    }
+
+    fn watch_roots(&mut self, roots: &[String], entries: &[String]) -> Result<()> {
+        self.live()?.watch_roots(roots, entries)
+    }
+
+    fn save_on_disk(&mut self, name: &str, text: Option<&str>) -> Result<()> {
+        self.live()?.save_on_disk(name, text)
+    }
+
+    fn open_window_given(&mut self, name: &str, title: &str) -> Result<()> {
+        self.live()?.open_window_given(name, title)
+    }
+
+    fn given_title(&mut self) -> Result<String> {
         let live = self.live()?;
-        live.drive(|d| d.listen())?;
-        let key = live
-            .accessible_key(role, name)
-            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
-        let action = match action {
-            super::A11yAction::Press => {
-                let now = live.clock.now();
-                live.scene.accessible_press(&live.engine, key, now);
-                return live.settle();
-            }
-            super::A11yAction::ShowOnScreen => To::ShowOnScreen,
-            super::A11yAction::Expand => To::Expand,
-            super::A11yAction::Collapse => To::Collapse,
-            super::A11yAction::Increase => To::Increase,
-            super::A11yAction::Decrease => To::Decrease,
-            super::A11yAction::SetValue(to) => To::SetValue(to),
-            super::A11yAction::Scroll { dx, dy, page } => match (dx, dy) {
-                (0, 1..) => To::ScrollDown { page },
-                (0, _) => To::ScrollUp { page },
-                (1.., _) => To::ScrollRight { page },
-                _ => To::ScrollLeft { page },
-            },
-        };
-        // A node may refuse; the scenario says what it expects of that.
-        live.scene.accessible_action(&live.engine, key, action);
-        live.settle()
+        let given = live
+            .given
+            .ok_or_else(|| failed("the application gave no window a Document"))?;
+        fixtures::title(&live.engine, given).map_err(failed)
     }
 
-    fn a11y_text(&mut self, role: &str, name: &str, action: super::A11yTextAction) -> Result<()> {
-        use ljos_quick::AccessibleTextAction as To;
-        let live = self.live()?;
-        live.drive(|d| d.listen())?;
-        let key = live
-            .accessible_key(role, name)
-            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
-        let value = live
-            .scene
-            .accessibility_tree()
-            .get(key)
-            .and_then(|d| d.text.as_ref())
-            .map(|t| t.value.clone())
-            .unwrap_or_default();
-        // The scenario counts characters; the tree counts bytes.
-        let byte = |n: usize| {
-            value
-                .char_indices()
-                .nth(n)
-                .map_or(value.len(), |(at, _)| at)
-        };
-        let action = match action {
-            super::A11yTextAction::Select(from, to) => To::Select {
-                anchor: byte(from),
-                cursor: byte(to),
-            },
-            super::A11yTextAction::ReplaceSelection(text) => To::ReplaceSelection(text),
-            super::A11yTextAction::SetValue(text) => To::SetValue(text),
-        };
-        // A node may refuse; the scenario says what it expects of that.
-        live.scene.accessible_text_action(&live.engine, key, action);
-        live.settle()
-    }
-
-    fn log(&mut self) -> Result<Vec<LogEntry>> {
-        // A load that failed before anything was made has an empty log.
-        Ok(self
-            .live
-            .as_ref()
-            .map(|l| l.log.borrow().clone())
-            .unwrap_or_default())
-    }
-
-    fn grab(&mut self) -> Result<Vec<u8>> {
-        self.live()?.grab()
-    }
-
-    // The `.ts` file is read as it is, the way a development build reads
-    // one; a shipped application would have compiled it to `.ljl`.
-    fn translation(&mut self, name: &str, ts: &str) -> Result<()> {
-        let catalog = ljos_i18n::ts::TsFile::read(ts)
-            .map_err(|e| failed(format!("{name}: {e}")))?
-            .catalog();
-        match self.live.as_mut() {
-            Some(live) => {
-                live.engine.install_catalog(Box::new(catalog));
-                live.settle()
-            }
-            None => {
-                self.catalogs.push(catalog);
-                Ok(())
-            }
+    fn lazy_tree(&mut self, name: &str, delay_ms: u64, rows: &[(String, String)]) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "a tree model is given to the QML before it is loaded",
+            ));
         }
-    }
-
-    fn set_ui_language(&mut self, language: &str) -> Result<()> {
-        let live = self.live()?;
-        live.engine.set_ui_language(language);
-        live.settle()
-    }
-
-    fn set_application_font(&mut self, font: Option<&[(String, String)]>) -> Result<()> {
-        let font = font.map(application_font).transpose()?;
-        let live = self.live()?;
-        ljos_controls::set_application_font(&live.engine, font.as_ref());
-        live.settle()
-    }
-
-    // Scenario files live at `file:///<name>`, so a picture beside them
-    // does too; nothing is written to disk.
-    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
-        let url = format!("file:///{name}");
-        match self.live.as_ref() {
-            Some(live) => {
-                ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.to_vec());
-                ljos_quick::ImageStore::of(&live.engine).register_resource(url, bytes.to_vec());
-            }
-            None => self.resources.push((url, bytes.to_vec())),
-        }
+        let tree = lazy::LazyTree::new(rows, Duration::from_millis(delay_ms));
+        self.lazy_trees.push((name.to_owned(), tree));
         Ok(())
     }
 
+    fn paged_model(&mut self, name: &str, total: usize, page: usize, delay_ms: u64) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "a list model is given to the QML before it is loaded",
+            ));
+        }
+        let model = paged::PagedModel::new(total, page, Duration::from_millis(delay_ms));
+        self.paged_models.push((name.to_owned(), model));
+        Ok(())
+    }
+
+    fn reopen(&mut self) -> Result<()> {
+        let live = self.live()?;
+        let engine = &live.engine;
+        let sys = ljos_controls::WindowSystem::of(engine);
+        let shown = sys
+            .windows(engine)
+            .iter()
+            .any(|w| sys.spec(engine, *w).is_some_and(|s| s.visible));
+        ljos_controls::application_reopened(engine, shown);
+        live.settle()
+    }
+
+    fn quit_requested(&mut self) -> Result<bool> {
+        Ok(self.live()?.engine.quit_requested())
+    }
+
+    fn panic_in(&mut self, object: &str, message: &str) -> Result<()> {
+        let live = self.live()?;
+        let obj = live.find(object)?;
+        let message = message.to_owned();
+        // A turn of the object's own code, as a host runs one: the panic
+        // is caught where the turn ends.
+        let _: Option<()> = live
+            .engine
+            .turn(Some(obj), move || std::panic::panic_any(message));
+        live.settle()
+    }
+
+    fn application_fault(&mut self) -> Result<Option<ApplicationFault>> {
+        let live = self.live()?;
+        Ok(live.engine.application_fault().map(|f| ApplicationFault {
+            kind: f.kind().to_owned(),
+            message: f.message(),
+        }))
+    }
+}
+
+impl Reload for LjosBackend {
     fn watch_files(&mut self) {
         self.watching = true;
     }
@@ -1710,7 +1788,9 @@ impl Backend for LjosBackend {
     fn reload_count(&mut self) -> Result<u64> {
         self.live()?.reload_count()
     }
+}
 
+impl Probes for LjosBackend {
     fn scheduled(&mut self) -> Result<Vec<String>> {
         let live = self.live()?;
         let now = live.clock.now();
@@ -1732,22 +1812,6 @@ impl Backend for LjosBackend {
             what.push(format!("{pending} answers from the platform"));
         }
         Ok(what)
-    }
-
-    fn reopen(&mut self) -> Result<()> {
-        let live = self.live()?;
-        let engine = &live.engine;
-        let sys = ljos_controls::WindowSystem::of(engine);
-        let shown = sys
-            .windows(engine)
-            .iter()
-            .any(|w| sys.spec(engine, *w).is_some_and(|s| s.visible));
-        ljos_controls::application_reopened(engine, shown);
-        live.settle()
-    }
-
-    fn quit_requested(&mut self) -> Result<bool> {
-        Ok(self.live()?.engine.quit_requested())
     }
 
     fn first_frame(&mut self) -> Result<()> {
@@ -1782,25 +1846,15 @@ impl Backend for LjosBackend {
     fn pointer_cursor(&mut self) -> Result<i64> {
         Ok(i64::from(self.live()?.scene.cursor_shape()))
     }
+}
 
-    fn panic_in(&mut self, object: &str, message: &str) -> Result<()> {
-        let live = self.live()?;
-        let obj = live.find(object)?;
-        let message = message.to_owned();
-        // A turn of the object's own code, as a host runs one: the panic
-        // is caught where the turn ends.
-        let _: Option<()> = live
-            .engine
-            .turn(Some(obj), move || std::panic::panic_any(message));
-        live.settle()
-    }
-
-    fn application_fault(&mut self) -> Result<Option<ApplicationFault>> {
-        let live = self.live()?;
-        Ok(live.engine.application_fault().map(|f| ApplicationFault {
-            kind: f.kind().to_owned(),
-            message: f.message(),
-        }))
+impl Tooling for LjosBackend {
+    fn run_tests(
+        &mut self,
+        files: &[QmlFile],
+        run: &super::testrun::TestRun,
+    ) -> Result<super::testrun::TestReport> {
+        super::testrun::run_ljos(files, run)
     }
 
     fn inspector(&mut self, ask: &super::inspector::Ask) -> Result<()> {
