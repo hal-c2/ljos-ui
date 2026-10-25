@@ -4841,3 +4841,42 @@ The rest is each `Menu`'s colours. A popup copies the colours set on it to its i
 item's colours back to the popup (`popup/item.rs` `mirror_look`). Each copy runs the item's
 resolve again. This accounts for most of the 210 effects. `Engine::provenance` is 12 % of what
 is left in callgrind.
+
+### `vello_common` and `fearless_simd` at opt-level 3 in a debug build (2026-10-25)
+
+The question was whether to build `vello_common` and `fearless_simd` at opt-level 3 in the dev
+profile. `vello_cpu` is built that way already. The bar: change the profile only if a clean debug
+build gets no more than 10 % slower. The build has two `vello_common`s (0.1, through
+egui's `epaint`; 0.3, through `vello_cpu` and `glifo`) and three `fearless_simd`s. A profile entry
+by name covers each of them.
+
+**Build.**
+- **A clean debug build of `ljos`.** Measured with `SCCACHE_RECACHE=1`, so every crate compiles, in
+  a target dir of its own. It took about 71 minutes on a machine other builds shared: 50 minutes
+  until the timeout, and 21 to finish. Load was up to 60 on 32 threads.
+- **The five crates on their own,** cleaned and built again with everything else built:
+
+  | opt-level | time |
+  |---|---|
+  | 0 | 82 s (a first run of 590 s timed out under load) |
+  | 3 | 136 s, 136 s |
+
+  So 54 s more at most, about 1.3 % of the clean build even if all of it is on the critical path.
+- **Switching the profile on a built tree** compiled everything above them again in 547 s.
+
+**Handlers and frames.** These are debug builds of the same tree, run in the desktop:cua sandbox.
+Each was run twice, and the two builds took turns. The figures are mediaplayer's: the settings
+button, the theme tab, and four theme radios.
+
+| | settings button | theme radio | frames while playing, p50 |
+|---|---|---|---|
+| as now | 4.4–4.5 ms | 6.0–9.3 ms | 5.3–6.0 ms |
+| at opt-level 3 | 4.8–4.9 ms | 6.1–11.7 ms | 5.7–6.2 ms |
+
+No gain: the differences are within the noise of the runs. What a frame runs of these crates is
+mostly generic. It is made, and optimised, in `vello_cpu`, which is built at opt-level 3 already.
+
+DECISION: the dev profile is left as it is. The build would cost little (about 1 %), but nothing
+measured got faster.
+
+The theme radio in debug went from 31–40 ms to 6–9 ms with the palette fix above.
