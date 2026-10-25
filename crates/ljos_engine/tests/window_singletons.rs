@@ -288,3 +288,43 @@ fn the_issue_s_repro_reads_two_titles() {
     assert_eq!(text(&h, a, "title"), "first");
     assert_eq!(text(&h, b, "title"), "second");
 }
+
+const THEME: &str = r#"pragma Singleton
+import QtQuick
+import Repro
+QtObject { property string title: Document ? Document.title : "none" }
+"#;
+
+/// A QML singleton that reads a window's object is one for each window
+/// too (#126), and one read with no window around it has none.
+#[test]
+fn a_qml_singleton_that_reads_a_window_s_object_is_one_for_each_window() {
+    let h = with_types();
+    h.files(&[
+        ("Theme", THEME),
+        (
+            "Main",
+            "import QtQuick\nimport Repro\nItem {\n    property string title: Theme.title\n    function name(t) { Document.title = t }\n}\n",
+        ),
+    ]);
+    let a = h.engine.create_from_url("Main", None, Vec::new()).unwrap();
+    let b = h.engine.create_from_url("Main", None, Vec::new()).unwrap();
+    h.engine
+        .invoke_by_name(a, "name", &[Value::from("A")])
+        .unwrap();
+    h.engine
+        .invoke_by_name(b, "name", &[Value::from("B")])
+        .unwrap();
+    assert_eq!(text(&h, a, "title"), "A");
+    assert_eq!(text(&h, b, "title"), "B");
+    assert!(h.warnings().is_empty(), "{:?}", h.warnings());
+
+    assert_eq!(h.engine.singleton_by_name("", "Theme"), None);
+    let warnings = h.warnings();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("Theme is one for each window")),
+        "{warnings:?}"
+    );
+}

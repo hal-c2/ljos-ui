@@ -370,8 +370,9 @@ singleton, which every window shares; so are the compiled components and
 the module cache, which a second engine would have loaded again.
 `engine.singleton::<Document>()` is an error, since there is one for
 each window: ask for a window's with `singleton_in`, giving it any
-object of the window. A `pragma Singleton` QML file is one for the
-engine, and a window's singleton read from it is `null`, with a warning.
+object of the window. A `pragma Singleton` QML file that reads a
+window's singleton is one for each window as well, as it was with an
+engine for each; any other is one for the engine.
 
 Structured data crosses as Qt's `QVariantMap` and `QVariantList` do,
 without JSON text. A field, parameter or return of `Vec<T>`,

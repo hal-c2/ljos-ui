@@ -16,7 +16,9 @@
 //! parent (`createObject(null)`) is in the scope of the script that made
 //! it; everything inside a root reads through its contexts, which lead to
 //! the root's. The handle a script is given is the scope's own entry, so
-//! the compiled program is the same for both kinds. A reload makes the
+//! the compiled program is the same for both kinds. A QML singleton whose
+//! scripts read such a type is one for each window too, and its object's
+//! context is in the window's scope. A reload makes the
 //! root again in the scope the old one owned, so the window keeps its
 //! objects.
 //!
@@ -491,8 +493,7 @@ impl Engine {
         let base = match found {
             Some(i) => i,
             None => {
-                let window =
-                    self.singleton_native(ty).map(|n| n.scope) == Some(SingletonScope::Window);
+                let window = self.singleton_windowed(ty, &mut Vec::new());
                 let mut entries = all.entries.borrow_mut();
                 entries.push(Entry {
                     ty: ty.clone(),
@@ -513,6 +514,45 @@ impl Engine {
             return base;
         };
         self.scoped_handle(base, scope)
+    }
+
+    /// Whether `ty` is one for each window: a native type registered so,
+    /// or a QML singleton whose own scripts read one, directly or through
+    /// another QML singleton. Qt makes every QML singleton again for each
+    /// engine, and an application wanting one of each for every window
+    /// makes an engine for each; here only those that read a window's
+    /// object are, so the rest stay shared.
+    fn singleton_windowed(&self, ty: &TypeRef, seen: &mut Vec<String>) -> bool {
+        match self.singleton_kind(ty) {
+            Kind::Native(native) => native.scope == SingletonScope::Window,
+            Kind::File(key) => {
+                if seen.contains(&key) {
+                    return false;
+                }
+                seen.push(key.clone());
+                let Ok(file) = self.load_file(&key) else {
+                    return false;
+                };
+                file.ir
+                    .exprs
+                    .iter()
+                    .flat_map(|b| &b.params)
+                    .any(|p| match singleton_read(&p.arg) {
+                        Some(Read::Type(t)) => self.singleton_windowed(t, seen),
+                        // A name the compiler left to the run time
+                        // ([`Engine::singleton_named`]).
+                        Some(Read::Named(name)) => {
+                            let all = self.extension::<Singletons>();
+                            let natives = all.natives.borrow();
+                            natives.iter().any(|((_, n), native)| {
+                                n == name && native.scope == SingletonScope::Window
+                            })
+                        }
+                        None => false,
+                    })
+            }
+            Kind::Keys(_) => false,
+        }
     }
 
     /// The entry of the type whose entry without a scope is `base`, in
@@ -687,8 +727,16 @@ impl Engine {
                 let file = template.file.clone();
                 let allocated = |obj| {
                     all.entries.borrow_mut()[handle].state = State::Making(Some(obj));
+                    // A window's own: what its scripts read is the window's.
+                    if let Some(s) = scope
+                        && let Some(c) = self.context_of(obj)
+                    {
+                        let mut scopes = all.scopes.borrow_mut();
+                        scopes.by_context.insert(c, s);
+                        scopes.members.insert(obj, (c, s));
+                    }
                 };
-                // The engine's, whoever reads it first.
+                // Not a root of a window, whoever reads it first.
                 all.unscoped.set(all.unscoped.get() + 1);
                 let made = self.create_from_template_noting(&template, None, Vec::new(), allocated);
                 all.unscoped.set(all.unscoped.get() - 1);
@@ -1097,6 +1145,25 @@ impl Engine {
         let ty = self.singleton_type::<T>()?;
         let base = self.singleton_handle(&ty, None);
         Ok(self.scoped_handle(base, scope.0))
+    }
+}
+
+/// What may be a singleton in what a script is given.
+enum Read<'a> {
+    Type(&'a TypeRef),
+    Named(&'a str),
+}
+
+/// The singleton type `arg` gives a script, or the name it is looked up
+/// by when the program runs.
+fn singleton_read(arg: &ljos_ir::Arg) -> Option<Read<'_>> {
+    match arg {
+        ljos_ir::Arg::Singleton(t) => Some(Read::Type(t)),
+        ljos_ir::Arg::Dynamic(name) => Some(Read::Named(name)),
+        ljos_ir::Arg::Context {
+            fallback: Some(f), ..
+        } => singleton_read(f),
+        _ => None,
     }
 }
 
