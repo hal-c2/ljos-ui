@@ -11,7 +11,7 @@ use std::{
 };
 
 use gherkin::{Feature, GherkinEnv, Scenario, tagexpr::TagOperation};
-use ljos_mcp_core::{CallCtx, SurfaceError, ToolHandler, typed};
+use ljos_mcp_core::{CallCtx, ErrorCode, SurfaceError, ToolHandler, typed};
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -94,6 +94,8 @@ pub(crate) enum Chosen {
 /// Which scenarios are meant: what `features_list` lists and `features_run`
 /// runs.
 pub(crate) struct Choice {
+    /// `features/`, canonical and inside the project.
+    pub(crate) root: PathBuf,
     pub(crate) paths: Vec<Chosen>,
     /// The tag expression as it was given, and parsed.
     pub(crate) tags: Option<(String, TagOperation)>,
@@ -122,18 +124,22 @@ impl Choice {
         tags: Option<&str>,
         name: Option<&str>,
     ) -> Result<Self, SurfaceError> {
-        let dir = project.features_dir();
-        if !dir.is_dir() {
-            return Err(SurfaceError::not_found(
-                "the project has no `features/` directory, so it has no scenarios",
-            ));
-        }
+        // A `features/` that links out of the project is refused, not
+        // walked: with no `paths` the walk starts from it.
+        let dir = match project.features_root() {
+            Ok(dir) if dir.is_dir() => dir,
+            Err(error) if error.code != ErrorCode::NotFound => return Err(error),
+            _ => {
+                return Err(SurfaceError::not_found(
+                    "the project has no `features/` directory, so it has no scenarios",
+                ));
+            }
+        };
         let mut chosen = Vec::new();
         for requested in paths {
             let path = resolve(project, &dir, requested)?;
             if path.is_dir() {
-                let below = path.strip_prefix(dir.canonicalize().unwrap_or(dir.clone()));
-                let below = below.unwrap_or(Path::new(""));
+                let below = path.strip_prefix(&dir).unwrap_or(Path::new(""));
                 chosen.push(Chosen::Dir(
                     path.clone(),
                     below.to_string_lossy().replace('\\', "/"),
@@ -169,6 +175,7 @@ impl Choice {
             None => None,
         };
         Ok(Self {
+            root: dir,
             paths: chosen,
             tags,
             name,
@@ -181,10 +188,10 @@ impl Choice {
     }
 
     /// The feature files the paths cover, each once, in path order.
-    fn files(&self, project: &Project) -> Vec<PathBuf> {
+    fn files(&self) -> Vec<PathBuf> {
         let mut out = Vec::new();
         if self.paths.is_empty() {
-            tools::collect(&project.features_dir(), "feature", &mut out);
+            tools::collect(&self.root, "feature", &mut out);
         }
         for chosen in &self.paths {
             match chosen {
@@ -279,7 +286,7 @@ fn list(project: &Project, args: &ListArgs) -> Result<ListOut, SurfaceError> {
     let mut scenarios = Vec::new();
     let mut unreadable = Vec::new();
     let mut files = 0;
-    for path in choice.files(project) {
+    for path in choice.files() {
         let file = project.display(&path);
         let feature = match Feature::parse_path(&path, GherkinEnv::default()) {
             Ok(feature) => feature,
@@ -348,6 +355,25 @@ pub(crate) fn handler(project: &Arc<Project>) -> ToolHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_features_directory_that_links_out_is_not_walked() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("x.feature"), "Feature: x\n").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("features")).unwrap();
+        let p = Project::open(root.path()).unwrap();
+        let refused = Choice::of(&p, &[], None, None).err().unwrap();
+        assert_eq!(refused.code, ErrorCode::PathDenied);
+
+        let inside = tempfile::tempdir().unwrap();
+        std::fs::create_dir(inside.path().join("features")).unwrap();
+        std::fs::write(inside.path().join("features/x.feature"), "Feature: x\n").unwrap();
+        let p = Project::open(inside.path()).unwrap();
+        let choice = Choice::of(&p, &[], None, None).unwrap();
+        assert_eq!(choice.files(), [p.features_dir().join("x.feature")]);
+    }
 
     fn tags(list: &[&str]) -> Vec<String> {
         list.iter().map(|t| (*t).to_owned()).collect()

@@ -362,6 +362,7 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Given the file "X" outside the project:` + doc string | a file in a directory beside the project, which no path of the project names; give it before the link to it |
 | `Given the project's "docs" is a link to "X" outside the project` | a symbolic link in the project to a file or directory of the one beside it; give it before the agent connects |
 | `Given the agent has called the tool "name" with:` + doc string | a call whose answer a later step builds on |
+| `When the agent lists the resources` | MCP `resources/list`; the answer is the URIs, one a line |
 | `When the agent asks for the prompt "name"` / `When the agent asks for the prompt "name" with:` + doc string | an MCP prompt, with the arguments in the doc string (labelled `json`) |
 | `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` (or `ljos-fuzz`, the differential fuzzer) |
 | `Then the answer's "/pointer" is:` + doc string | a text of the last answer, whole (a diff, a formatted file) |

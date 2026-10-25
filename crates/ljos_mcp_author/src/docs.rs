@@ -569,17 +569,25 @@ fn snippet(body: &str, terms: &[String]) -> String {
 fn corpus(project: &Project) -> Vec<Section> {
     let mut out = Vec::new();
     let mut files = Vec::new();
-    tools::collect(&project.docs_dir(), "md", &mut files);
-    files.sort();
-    for path in files {
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let below = path.strip_prefix(project.docs_dir()).unwrap_or(&path);
-        let below = below.to_string_lossy().replace('\\', "/");
-        out.extend(sections(&format!("ljos://docs/{below}"), &below, &text));
+    // What `ljos://docs` and `ljos://features/README.md` would refuse to
+    // read is not searched either, or a snippet would quote it.
+    if let Ok(docs) = project.docs_root() {
+        tools::collect(&docs, "md", &mut files);
+        files.sort();
+        for path in files {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let below = path.strip_prefix(&docs).unwrap_or(&path);
+            let below = below.to_string_lossy().replace('\\', "/");
+            out.extend(sections(&format!("ljos://docs/{below}"), &below, &text));
+        }
     }
-    if let Ok(text) = std::fs::read_to_string(project.features_readme()) {
+    if let Some(text) = project
+        .features_readme()
+        .ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+    {
         out.extend(sections(
             "ljos://features/README.md",
             "features/README.md",
@@ -659,6 +667,38 @@ pub(crate) fn handler(project: &Arc<Project>) -> ToolHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn what_links_out_of_the_project_is_not_searched() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.md"), "# Secret\n\nelsewhere\n").unwrap();
+        std::fs::write(outside.path().join("README.md"), "# Secret\n\nelsewhere\n").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        for base in ["docs", "features"] {
+            std::os::unix::fs::symlink(outside.path(), root.path().join(base)).unwrap();
+        }
+        let file = tempfile::tempdir().unwrap();
+        std::fs::create_dir(file.path().join("features")).unwrap();
+        let readme = file.path().join("features/README.md");
+        std::os::unix::fs::symlink(outside.path().join("README.md"), readme).unwrap();
+        for dir in [&root, &file] {
+            let p = Project::open(dir.path()).unwrap();
+            assert!(corpus(&p).is_empty(), "{}", dir.path().display());
+        }
+
+        let inside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(inside.path().join("docs/notes")).unwrap();
+        std::fs::create_dir(inside.path().join("features")).unwrap();
+        std::fs::write(inside.path().join("docs/notes/a.md"), "# A\n\nhere\n").unwrap();
+        std::fs::write(inside.path().join("features/README.md"), "# B\n\nhere\n").unwrap();
+        let p = Project::open(inside.path()).unwrap();
+        let uris: Vec<String> = corpus(&p).into_iter().map(|s| s.uri).collect();
+        assert_eq!(
+            uris,
+            ["ljos://docs/notes/a.md", "ljos://features/README.md"]
+        );
+    }
 
     const DOC: &str = "intro\n\n# Top\n\ntext\n\n## One\n\n```sh\n# not a heading\n```\n\n### Deep\n\ndeep text\n\n## Two\n\ntwo text\n";
 

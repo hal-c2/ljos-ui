@@ -482,6 +482,16 @@ impl Rig {
         Ok(())
     }
 
+    fn resources(&mut self) -> Result<(), String> {
+        let listed = self.server()?.list("resources/list", "resources")?;
+        let uris: Vec<&str> = listed.iter().filter_map(|r| r["uri"].as_str()).collect();
+        self.seen.answer = Some(Answer {
+            text: uris.join("\n"),
+            ..Answer::default()
+        });
+        Ok(())
+    }
+
     fn prompts(&mut self) -> Result<Vec<String>, String> {
         let prompts = self.server()?.list("prompts/list", "prompts")?;
         Ok(prompts
@@ -586,6 +596,14 @@ impl Slot {
     /// No agent is connected or the server does not answer.
     pub fn prompt(&mut self, files: &Files, name: &str, args: &Value) -> Result<(), String> {
         self.rig(files)?.prompt(name, args)
+    }
+
+    /// Lists the resources. Their URIs, one a line, are the answer.
+    ///
+    /// # Errors
+    /// No agent is connected or the server does not answer.
+    pub fn resources(&mut self, files: &Files) -> Result<(), String> {
+        self.rig(files)?.resources()
     }
 
     /// The names of the prompts the agent is offered, in order.

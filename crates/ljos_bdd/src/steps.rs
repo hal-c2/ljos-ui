@@ -3000,6 +3000,12 @@ fn author_link_out(w: &mut LjosWorld, link: String, target: String) -> StepResul
     author.link_out(files, &link, &target)
 }
 
+#[when("the agent lists the resources")]
+fn agent_lists_resources(w: &mut LjosWorld) -> StepResult {
+    let (author, files) = w.author();
+    author.resources(files)
+}
+
 #[when(regex = r#"^the agent asks for the prompt "([^"]+)"$"#)]
 fn agent_asks_prompt(w: &mut LjosWorld, name: String) -> StepResult {
     let (author, files) = w.author();

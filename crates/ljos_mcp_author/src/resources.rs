@@ -73,7 +73,7 @@ pub(crate) fn list(project: &Project) -> Vec<ResourceDef> {
             mime_type: MD,
         },
     ];
-    if project.features_readme().is_file() {
+    if project.features_readme().is_ok_and(|path| path.is_file()) {
         out.push(ResourceDef {
             uri: "ljos://features/README.md".into(),
             name: "features/README.md".into(),
@@ -82,7 +82,12 @@ pub(crate) fn list(project: &Project) -> Vec<ResourceDef> {
         });
     }
     // Top level only: listing a whole tree would spend the agent's context.
-    if let Ok(read) = std::fs::read_dir(project.docs_dir()) {
+    // A `docs/` that links out is not listed, as it is not read.
+    if let Some(read) = project
+        .docs_root()
+        .ok()
+        .and_then(|docs| std::fs::read_dir(docs).ok())
+    {
         let mut docs: Vec<String> = read
             .flatten()
             .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
@@ -339,6 +344,37 @@ pub(crate) fn read(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn what_links_out_of_the_project_is_not_listed() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.md"), "").unwrap();
+        std::fs::write(outside.path().join("README.md"), "").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        for base in ["docs", "features"] {
+            std::os::unix::fs::symlink(outside.path(), root.path().join(base)).unwrap();
+        }
+        let p = Project::open(root.path()).unwrap();
+        let uris: Vec<String> = list(&p).into_iter().map(|r| r.uri).collect();
+        assert!(
+            !uris
+                .iter()
+                .any(|u| u.starts_with("ljos://docs/") || u.contains("README")),
+            "{uris:?}"
+        );
+
+        let inside = tempfile::tempdir().unwrap();
+        std::fs::create_dir(inside.path().join("docs")).unwrap();
+        std::fs::create_dir(inside.path().join("features")).unwrap();
+        std::fs::write(inside.path().join("docs/a.md"), "").unwrap();
+        std::fs::write(inside.path().join("features/README.md"), "").unwrap();
+        let p = Project::open(inside.path()).unwrap();
+        let uris: Vec<String> = list(&p).into_iter().map(|r| r.uri).collect();
+        for want in ["ljos://docs/a.md", "ljos://features/README.md"] {
+            assert!(uris.iter().any(|u| u == want), "{want}: {uris:?}");
+        }
+    }
 
     #[test]
     fn what_is_too_long_is_cut_and_says_how_to_read_the_rest() {

@@ -452,8 +452,7 @@ impl Runs {
 
     /// What the runner is asked to run: the glob its `--input` takes.
     fn input(&self, choice: &Choice) -> Option<String> {
-        let root = self.project.features_dir();
-        let root = root.canonicalize().unwrap_or(root);
+        let root = &choice.root;
         let globs: Vec<String> = choice
             .paths
             .iter()
@@ -461,7 +460,7 @@ impl Runs {
                 Chosen::Dir(_, below) if below.is_empty() => "**/*.feature".to_owned(),
                 Chosen::Dir(_, below) => format!("{below}/**/*.feature"),
                 Chosen::File(path) => path
-                    .strip_prefix(&root)
+                    .strip_prefix(root)
                     .unwrap_or(path)
                     .to_string_lossy()
                     .replace('\\', "/"),

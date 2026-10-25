@@ -50,8 +50,19 @@ impl Project {
         self.root.join("features")
     }
 
-    pub fn features_readme(&self) -> PathBuf {
-        self.features_dir().join("README.md")
+    /// `docs/`, `features/` and `features/README.md` as a walk or a listing
+    /// starts from them: resolved as a path an agent names is, so one that
+    /// links out of the project is not read.
+    pub fn docs_root(&self) -> Result<PathBuf, SurfaceError> {
+        self.confine_within(&self.docs_dir(), ".")
+    }
+
+    pub fn features_root(&self) -> Result<PathBuf, SurfaceError> {
+        self.confine_within(&self.features_dir(), ".")
+    }
+
+    pub fn features_readme(&self) -> Result<PathBuf, SurfaceError> {
+        self.confine_within(&self.features_dir(), "README.md")
     }
 
     /// Resolves `requested` (relative to the project, or absolute) to a
@@ -185,6 +196,40 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn roots_that_link_out_are_not_walked() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("README.md"), "").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        for base in ["docs", "features"] {
+            std::os::unix::fs::symlink(outside.path(), root.path().join(base)).unwrap();
+        }
+        let p = Project::open(root.path()).unwrap();
+        for found in [p.docs_root(), p.features_root(), p.features_readme()] {
+            assert_eq!(found.unwrap_err().code, ErrorCode::PathDenied);
+        }
+
+        let file = tempfile::tempdir().unwrap();
+        std::fs::create_dir(file.path().join("features")).unwrap();
+        let readme = file.path().join("features/README.md");
+        std::os::unix::fs::symlink(outside.path().join("README.md"), readme).unwrap();
+        let p = Project::open(file.path()).unwrap();
+        assert_eq!(p.features_readme().unwrap_err().code, ErrorCode::PathDenied);
+
+        let inside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(inside.path().join("docs")).unwrap();
+        std::fs::create_dir_all(inside.path().join("features")).unwrap();
+        std::fs::write(inside.path().join("features/README.md"), "").unwrap();
+        let p = Project::open(inside.path()).unwrap();
+        assert_eq!(p.docs_root().unwrap(), p.docs_dir());
+        assert_eq!(p.features_root().unwrap(), p.features_dir());
+        assert_eq!(
+            p.features_readme().unwrap(),
+            p.features_dir().join("README.md")
+        );
     }
 
     #[cfg(unix)]
