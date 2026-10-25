@@ -545,6 +545,19 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             self.check_path_member(owner, path, span);
             return;
         };
+        let owner = if self.special(owner) == Some(Special::PropertyChanges) {
+            // What a PropertyChanges changes is its target's; one whose
+            // target is no id says nothing of what that target has.
+            if matches!(self.tree.lookup(self.types, owner, name), Lookup::Found(_)) {
+                return;
+            }
+            let Some(target) = self.tree.target(owner) else {
+                return;
+            };
+            target
+        } else {
+            owner
+        };
         let object = &self.tree.objects[owner];
         let Some(kind) = &object.kind else { return };
         let Some(ty) = self.types.base(kind) else {

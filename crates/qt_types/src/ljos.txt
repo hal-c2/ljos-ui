@@ -2290,6 +2290,7 @@ module QtQuick
 		signal durationChanged
 	type QtQuick.PropertyChanges PropertyChanges
 		prototype QtQml.QtObject named
+		is parser
 		prop target QtQml.QtObject named pointer
 		prop explicit QtQml.bool named
 		prop restoreEntryValues QtQml.bool named

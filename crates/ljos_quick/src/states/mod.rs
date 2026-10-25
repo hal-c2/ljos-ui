@@ -61,7 +61,9 @@ pub(crate) fn register(engine: &Engine) {
     // as a state with one change, and nothing below this crate has the
     // frame its `delayed` waits for.
     engine.register_module(ljos_engine::module!("QtQml" 2.0 => [Binding]));
-    // What a PropertyChanges is given are properties of its target.
+    // What a PropertyChanges is given are properties of its target, so
+    // what reads its body does not hold them to its own.
+    engine.register_open_body(PropertyChanges::static_meta());
     // One handed again (a reload's edit) takes the place of the one it
     // was, and a state in force puts it on its target.
     engine.register_foreign_members(PropertyChanges::static_meta(), |e, obj, member| {

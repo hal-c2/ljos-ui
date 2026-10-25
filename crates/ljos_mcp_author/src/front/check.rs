@@ -9,7 +9,7 @@ use std::{
 use oxc_ast_visit::Visit;
 use oxc_syntax::scope::ScopeFlags;
 use qml_front::{
-    Code, QtType, QtTypeOracle, TypeOracle,
+    Code, QtType, QtTypeOracle, Special, TypeOracle,
     names::Names,
     project::{Project, summarize},
     scope::{Tree, handled, is_group},
@@ -552,6 +552,7 @@ impl<'a> Walker<'_, 'a> {
     }
 
     fn binding(&mut self, owner: usize, path: &[&'a str], binding: &QmlBinding<'a>) {
+        let owner = self.changed(owner, path[0]).unwrap_or(owner);
         if !matches!(self.shapes[owner], Shape::Complete(_)) || path == ["id"] {
             return;
         }
@@ -570,6 +571,18 @@ impl<'a> Walker<'_, 'a> {
         } else {
             self.property(owner, path, at);
         }
+    }
+
+    /// The object a PropertyChanges `owner` changes `name` of, when its
+    /// `target` is an id and `name` is none of the PropertyChanges' own:
+    /// what it is given is held to that object's members.
+    fn changed(&self, owner: usize, name: &str) -> Option<usize> {
+        let kind = self.tree.objects[owner].kind.as_ref()?;
+        let ty = self.types.base(kind)?;
+        (self.types.oracle.special(ty) == Some(Special::PropertyChanges)
+            && !matches!(self.tree.lookup(self.types, owner, name), Lookup::Found(_)))
+        .then(|| self.tree.target(owner))
+        .flatten()
     }
 
     /// Whether Ljós gives the type of `owner` a member `name` that Qt's

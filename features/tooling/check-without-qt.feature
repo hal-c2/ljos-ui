@@ -87,6 +87,47 @@ Feature: Checking files on a machine that has no Qt
         1 files, 0 errors, 0 warnings
         """
 
+    Scenario: What a state changes is looked up on the object it changes
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          property real sliderWidth: 1
+          Rectangle { id: box }
+          states: State {
+            name: "wide"
+            PropertyChanges { target: root; sliderWidth: 5; z: 3 }
+            PropertyChanges { target: box; color: "red"; restoreEntryValues: false }
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    @no-qt-table
+    Scenario: What a state changes that its object does not have is a warning of that object's
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          Rectangle { id: box }
+          states: State {
+            name: "wide"
+            PropertyChanges { target: box; colr: "red" }
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:6:44: warning: `colr` is not a property of `Rectangle`; did you mean `color`? [unknown-property]
+        1 files, 0 errors, 1 warnings
+        """
+
     @qt-table
     Scenario: A misspelt property of a button is an error where Qt's table lists its members
       Given the file "Main.qml":
