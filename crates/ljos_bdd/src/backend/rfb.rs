@@ -386,11 +386,12 @@ impl Rfb {
         self.stream.write_all(&buf)
     }
 
-    /// A click of the left button.
-    pub(super) fn click(&mut self, x: u16, y: u16) -> io::Result<()> {
+    /// A click of the buttons in `mask` (1 the left, 2 the middle, 4 the
+    /// right).
+    pub(super) fn click(&mut self, mask: u8, x: u16, y: u16) -> io::Result<()> {
         let mut buf = Vec::new();
         Self::pointer(&mut buf, 0, x, y);
-        Self::pointer(&mut buf, 1, x, y);
+        Self::pointer(&mut buf, mask, x, y);
         Self::pointer(&mut buf, 0, x, y);
         self.ack(&mut buf);
         self.stream.write_all(&buf)

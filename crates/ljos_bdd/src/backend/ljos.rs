@@ -969,6 +969,21 @@ impl Live {
         self.settle()
     }
 
+    fn click_button(&mut self, button: super::OtherButton, x: f64, y: f64) -> Result<()> {
+        let b = match button {
+            super::OtherButton::Right => MouseButtons::RIGHT,
+            super::OtherButton::Middle => MouseButtons::MIDDLE,
+        };
+        let now = self.clock.now();
+        self.scene
+            .pointer_event(&self.engine, &PointerEvent::press(x, y, now).with_button(b));
+        self.scene.pointer_event(
+            &self.engine,
+            &PointerEvent::release(x, y, now).with_button(b),
+        );
+        self.settle()
+    }
+
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
         let now = self.clock.now();
         let event = match step {
@@ -1332,6 +1347,10 @@ impl Backend for LjosBackend {
 
     fn type_text(&mut self, text: &str) -> Result<()> {
         self.live()?.type_text(text)
+    }
+
+    fn click_button(&mut self, button: super::OtherButton, x: f64, y: f64) -> Result<()> {
+        self.live()?.click_button(button, x, y)
     }
 
     fn double_click(&mut self, x: f64, y: f64) -> Result<()> {

@@ -349,7 +349,11 @@ impl QtBackend {
                 let (x, y) = at("x").zip(at("y")).ok_or_else(|| {
                     BackendError::Failed(format!("op {index} has no pointer position"))
                 })?;
-                rfb.click(x, y)?;
+                let mask = op["button"]
+                    .as_u64()
+                    .and_then(|b| u8::try_from(b).ok())
+                    .unwrap_or(1);
+                rfb.click(mask, x, y)?;
             }
             Some("double") => {
                 let at = |k: &str| op[k].as_u64().and_then(|v| u16::try_from(v).ok());
@@ -839,6 +843,18 @@ impl Backend for QtBackend {
         }
         self.not_held()?;
         self.push(json!({"op": "type", "text": text}));
+        Ok(())
+    }
+
+    fn click_button(&mut self, button: super::OtherButton, x: f64, y: f64) -> Result<()> {
+        let (x, y) = on_screen(x, y)?;
+        self.not_held()?;
+        // RFB's button mask: 2 is the middle button, 4 the right.
+        let mask = match button {
+            super::OtherButton::Right => 4,
+            super::OtherButton::Middle => 2,
+        };
+        self.push(json!({"op": "pointer", "x": x, "y": y, "button": mask}));
         Ok(())
     }
 

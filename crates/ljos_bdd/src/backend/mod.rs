@@ -104,6 +104,14 @@ pub enum PointerStep {
     Release,
 }
 
+/// A mouse button other than the left one, which `touch` and `pointer`
+/// use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OtherButton {
+    Right,
+    Middle,
+}
+
 /// How far a wheel event scrolls, with Qt's signs: positive is away from
 /// the user (content goes up or left to its beginning).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -269,6 +277,10 @@ pub trait Backend: fmt::Debug {
     /// Type `text` on the keyboard, one key press per character.
     fn type_text(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("typing text"))
+    }
+    /// A click of `button` at one place: down and up, with nothing between.
+    fn click_button(&mut self, _button: OtherButton, _x: f64, _y: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a click of another button"))
     }
     /// Two clicks at one place in quick succession.
     fn double_click(&mut self, _x: f64, _y: f64) -> Result<()> {

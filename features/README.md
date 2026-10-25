@@ -193,6 +193,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user moves the pointer to X, Y` | move the pointer, with the button held if it was pressed and not released (a drag), without it otherwise (hover) |
 | `When the user types "text"` | one key press per character, with Shift held for a capital letter; on Qt only Latin-1 characters |
 | `When the user double-clicks at X, Y` | two clicks at one place in quick succession |
+| `When the user clicks the right button at X, Y` | a click of the right (or `middle`) button, for a context menu |
 | `When the user drags from X, Y to X, Y` | press, move with the button held, release |
 | `When the user turns the wheel N notch(es) down at X, Y` | a mouse wheel turns with the pointer at a position; `down` (or `up`, `left`, `right`) is where the view goes over the content, so `down` is towards the content's end (`@ljos-only`: the oracle's input channel has no wheel) |
 | `When the user scrolls N pixels down at X, Y` | a touchpad, or another device that scrolls by the pixel, scrolls that far, in the same four directions (`@ljos-only`) |

@@ -11,7 +11,10 @@ use crate::backend::SystemDialogAnswer;
 use crate::backend::SystemSetting;
 use crate::backend::testrun::{TestRun, expected_lines};
 use crate::{
-    backend::{A11yAction, A11yNode, A11yTextAction, BackendError, LogLevel, PointerStep, WheelBy},
+    backend::{
+        A11yAction, A11yNode, A11yTextAction, BackendError, LogLevel, OtherButton, PointerStep,
+        WheelBy,
+    },
     fixture, value,
     world::{LjosWorld, MAIN_FILE},
 };
@@ -818,6 +821,20 @@ fn user_moves_pointer(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
 #[when(regex = r"^the user releases the pointer at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
 fn user_releases_pointer(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
     w.each(|b| b.pointer(PointerStep::Release, x, y))
+}
+
+// A context menu, a link opened in the background: what the other
+// buttons are for.
+#[when(
+    regex = r"^the user clicks the (right|middle) button at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$"
+)]
+fn user_clicks_button(w: &mut LjosWorld, button: String, x: f64, y: f64) -> StepResult {
+    let button = if button == "right" {
+        OtherButton::Right
+    } else {
+        OtherButton::Middle
+    };
+    w.each(|b| b.click_button(button, x, y))
 }
 
 #[when(regex = r#"^the user types "([^"]+)"$"#)]
