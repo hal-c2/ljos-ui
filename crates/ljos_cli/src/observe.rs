@@ -213,7 +213,7 @@ impl InspectorClient {
             "method": "tools/call",
             "params": params,
         });
-        let reply = Platform::of(e).expect();
+        let reply = Platform::of(e).expect_for("observer call", None);
         let job = async move {
             let got = match inspector::post(&target, body.to_string(), limit).await {
                 Ok(answer) => read_answer(&answer),

@@ -147,7 +147,7 @@ impl MediaStream {
         );
         // The first thing the stream tells, a picture, its end or what
         // went wrong, is promised.
-        shared.lock().promise = Some(Platform::of(engine).expect());
+        shared.lock().promise = Some(Platform::of(engine).expect_for("media stream", Some(player)));
         let post = Platform::of(engine).poster();
         let wake = Wake {
             shared: Arc::clone(&shared),
@@ -369,7 +369,7 @@ impl Played {
     pub(crate) fn expect(&self, e: &Engine) {
         let mut s = self.shared.lock();
         if !self.live && !s.ended && s.pictures.is_empty() && s.promise.is_none() {
-            s.promise = Some(Platform::of(e).expect());
+            s.promise = Some(Platform::of(e).expect_for("media stream", None));
         }
     }
 }

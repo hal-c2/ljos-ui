@@ -1022,7 +1022,7 @@ fn ask_frame(e: &Engine, me: ObjectId, index: i64, info: VideoInfo) {
         return;
     }
     let generation = run(e, me, |r| r.generation).unwrap_or(0);
-    let reply = ljos_platform::Platform::of(e).expect();
+    let reply = ljos_platform::Platform::of(e).expect_for("media frame", Some(me));
     let at = index as f64 * 1000.0 / info.fps;
     run(e, me, move |r| {
         if let Some(d) = r.media.as_ref().and_then(|m| m.decoder.as_ref()) {

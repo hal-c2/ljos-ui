@@ -6,12 +6,13 @@
 //! a bounded inbox. The host's frame drains it ([`Platform::deliver`]); the
 //! inbox wakes the host when something arrives, so nothing polls.
 
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::ThreadId;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ljos_engine::{Atom, Engine, LogLevel, ObjectId};
 use ljos_runtime::{DrainBudget, SendError, SystemClock, UiHandle, UiInbox};
@@ -90,6 +91,25 @@ impl Signal {
 pub struct Reply {
     post: Post,
     kept: bool,
+    /// Its entry in [`Platform::promises`].
+    id: u64,
+}
+
+/// An answer promised and not delivered yet, as [`Platform::promises`]
+/// lists it: something that will wake the Engine thread.
+#[derive(Clone, Debug)]
+pub struct Promise {
+    /// What is awaited (`fetch <url>`, `XmlListModel source`); `an answer`
+    /// when whoever promised it did not say.
+    pub what: Cow<'static, str>,
+    /// The object it is for, when whoever promised it said.
+    pub owner: Option<ObjectId>,
+    /// When it was promised.
+    pub since: Instant,
+    /// Kept open for news that may never come (a screen reader that may
+    /// ask), not for an answer under way: the application waits on it
+    /// without anything being scheduled.
+    pub standing: bool,
 }
 
 /// The way into the inbox, from any thread, as often as there is news.
@@ -116,8 +136,9 @@ impl Reply {
     /// Hands `job` to the Engine thread, which runs it at its next frame.
     pub fn send(mut self, job: impl FnOnce(&Engine) + Send + 'static) {
         self.kept = true;
+        let id = self.id;
         self.post.post(Box::new(move |e: &Engine| {
-            Platform::of(e).answered();
+            Platform::of(e).answered(id);
             job(e);
         }));
     }
@@ -183,8 +204,9 @@ impl Post {
 impl Drop for Reply {
     fn drop(&mut self) {
         if !self.kept {
+            let id = self.id;
             self.post
-                .post(Box::new(|e: &Engine| Platform::of(e).answered()));
+                .post(Box::new(move |e: &Engine| Platform::of(e).answered(id)));
         }
     }
 }
@@ -197,8 +219,9 @@ pub struct Platform {
     inbox: UiInbox<Job>,
     tx: UiHandle<Job>,
     signal: Arc<Signal>,
-    /// Answers promised and not delivered yet.
-    pending: Cell<usize>,
+    /// Answers promised and not delivered yet, by [`Reply::id`].
+    promises: RefCell<HashMap<u64, Promise>>,
+    next_promise: Cell<u64>,
     held: Cell<bool>,
     clipboard: RefCell<Rc<dyn ClipboardService>>,
     dialogs: RefCell<Rc<dyn DialogService>>,
@@ -231,7 +254,7 @@ type RequestDone = Box<dyn FnOnce(&Engine, Result<Response, FetchError>)>;
 impl std::fmt::Debug for Platform {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Platform")
-            .field("pending", &self.pending.get())
+            .field("pending", &self.pending())
             .field("held", &self.held.get())
             .field("plugin_name", &self.plugin_name.borrow())
             .finish_non_exhaustive()
@@ -249,7 +272,8 @@ impl Default for Platform {
             inbox,
             tx,
             signal,
-            pending: Cell::new(0),
+            promises: RefCell::new(HashMap::new()),
+            next_promise: Cell::new(0),
             held: Cell::new(false),
             clipboard: RefCell::new(Rc::new(MemoryClipboard::default())),
             dialogs: RefCell::new(Rc::new(NoSystemDialogs)),
@@ -281,13 +305,53 @@ impl Platform {
     }
 
     /// Promises an answer: what is sent through the [`Reply`] runs on the
-    /// Engine thread at the next frame.
+    /// Engine thread at the next frame. [`Platform::expect_for`] says what
+    /// it is and for whom.
     pub fn expect(&self) -> Reply {
-        self.pending.set(self.pending.get() + 1);
+        self.promise(Cow::Borrowed("an answer"), None, false)
+    }
+
+    /// [`Platform::expect`], saying what is awaited and the object it is
+    /// for, as [`Platform::promises`] lists it.
+    pub fn expect_for(&self, what: impl Into<Cow<'static, str>>, owner: Option<ObjectId>) -> Reply {
+        self.promise(what.into(), owner, false)
+    }
+
+    /// A promise kept open for news that may never come, as a screen
+    /// reader that may ask: [`Promise::standing`].
+    pub fn expect_standing(&self, what: impl Into<Cow<'static, str>>) -> Reply {
+        self.promise(what.into(), None, true)
+    }
+
+    fn promise(&self, what: Cow<'static, str>, owner: Option<ObjectId>, standing: bool) -> Reply {
+        let id = self.next_promise.get();
+        self.next_promise.set(id + 1);
+        self.promises.borrow_mut().insert(
+            id,
+            Promise {
+                what,
+                owner,
+                since: Instant::now(),
+                standing,
+            },
+        );
         Reply {
             post: self.poster(),
             kept: false,
+            id,
         }
+    }
+
+    /// The answers promised and not delivered yet, the oldest first.
+    pub fn promises(&self) -> Vec<Promise> {
+        let mut all: Vec<(u64, Promise)> = self
+            .promises
+            .borrow()
+            .iter()
+            .map(|(id, p)| (*id, p.clone()))
+            .collect();
+        all.sort_by_key(|(id, _)| *id);
+        all.into_iter().map(|(_, p)| p).collect()
     }
 
     /// A way into the inbox for news that keeps coming. Made on the Engine
@@ -300,13 +364,13 @@ impl Platform {
         }
     }
 
-    fn answered(&self) {
-        self.pending.set(self.pending.get().saturating_sub(1));
+    fn answered(&self, id: u64) {
+        self.promises.borrow_mut().remove(&id);
     }
 
     /// Answers promised that have not been delivered.
     pub fn pending(&self) -> usize {
-        self.pending.get()
+        self.promises.borrow().len()
     }
 
     /// Whether answers wait for a frame to deliver them.
@@ -407,7 +471,7 @@ impl Platform {
         loop {
             let seen = self.signal.count();
             self.deliver_now(engine);
-            if self.pending.get() == 0 {
+            if self.pending() == 0 {
                 return;
             }
             between();
@@ -430,10 +494,7 @@ impl Platform {
                 engine.log(
                     LogLevel::Warning,
                     CATEGORY,
-                    format!(
-                        "gave up waiting for {} platform answer(s)",
-                        self.pending.get()
-                    ),
+                    format!("gave up waiting for {} platform answer(s)", self.pending()),
                 );
                 return;
             }
@@ -668,10 +729,20 @@ impl Platform {
         url: &str,
         done: impl FnOnce(&Engine, Result<Vec<u8>, FetchError>) + 'static,
     ) {
+        self.fetch_for(None, url, done);
+    }
+
+    /// [`Platform::fetch`] for `owner`, as [`Platform::promises`] lists it.
+    pub fn fetch_for(
+        &self,
+        owner: Option<ObjectId>,
+        url: &str,
+        done: impl FnOnce(&Engine, Result<Vec<u8>, FetchError>) + 'static,
+    ) {
         let id = self.next_fetch.get();
         self.next_fetch.set(id + 1);
         self.fetches.borrow_mut().insert(id, Box::new(done));
-        let reply = self.expect();
+        let reply = self.expect_for(format!("fetch {url}"), owner);
         let fetcher = Arc::clone(&self.fetcher.borrow());
         let url = url.to_owned();
         let spawned = std::thread::Builder::new()
@@ -706,7 +777,7 @@ impl Platform {
         let id = self.next_fetch.get();
         self.next_fetch.set(id + 1);
         self.requests.borrow_mut().insert(id, Box::new(done));
-        let reply = self.expect();
+        let reply = self.expect_for(format!("{} {}", request.method, request.url), None);
         let fetcher = Arc::clone(&self.fetcher.borrow());
         let spawned = std::thread::Builder::new()
             .name("ljos-request".to_owned())
@@ -810,6 +881,29 @@ mod tests {
         assert!(response.ok());
         assert_eq!(response.header("X-Method"), Some("POST"));
         assert_eq!(response.text(), "{}");
+        assert_eq!(platform.pending(), 0);
+    }
+
+    #[test]
+    fn a_promise_is_listed_with_what_and_whom_until_it_is_answered() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        platform.set_fetcher(Arc::new(Echo));
+        platform.set_held(true);
+        // Any key will do: the platform only keeps it.
+        let owner = ObjectId::default();
+        platform.fetch_for(Some(owner), "http://127.0.0.1/a", |_, _| {});
+        let standing = platform.expect_standing("screen reader");
+        let listed = platform.promises();
+        assert_eq!(listed.len(), 2, "{listed:?}");
+        assert_eq!(listed[0].what, "fetch http://127.0.0.1/a");
+        assert_eq!(listed[0].owner, Some(owner));
+        assert!(!listed[0].standing);
+        assert_eq!(listed[1].what, "screen reader");
+        assert!(listed[1].standing);
+        drop(standing);
+        platform.finish(&engine);
+        assert!(platform.promises().is_empty());
         assert_eq!(platform.pending(), 0);
     }
 

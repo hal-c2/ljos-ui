@@ -631,7 +631,7 @@ fn show(engine: &Engine, obj: ObjectId) {
         service.show(
             req,
             DialogAnswer {
-                reply: Some(platform.expect()),
+                reply: Some(platform.expect_for("dialog", Some(obj))),
                 ticket,
             },
         );

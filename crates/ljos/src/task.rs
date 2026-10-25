@@ -211,7 +211,7 @@ where
             done(engine, outcome);
         }),
     );
-    let reply = Platform::of(engine).expect();
+    let reply = Platform::of(engine).expect_for("a task", None);
     let flag = Arc::clone(&cancelled);
     let queued = ComputePool::global().spawn(lane, move || {
         // First thing on the pool thread: a task cancelled while it

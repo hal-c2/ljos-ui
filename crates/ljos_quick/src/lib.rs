@@ -94,9 +94,9 @@ pub use handlers::{
     PointerHandler, grab_permission, grab_transition, snap_mode,
 };
 pub use image::{
-    AnimatedImage, BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint,
-    ImageReply, ImageStore, LoadError, Request as ImageRequest, fill_mode, image_status,
-    kept_pixels, requested_size, tile_mode,
+    AnimatedImage, BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImageLoad,
+    ImagePaint, ImageReply, ImageStore, LoadError, Request as ImageRequest, fill_mode,
+    image_status, kept_pixels, requested_size, tile_mode,
 };
 pub use image::{ImageTint, register_image_tint};
 pub use image::{VectorImage, vector_fill_mode};

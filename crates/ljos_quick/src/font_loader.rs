@@ -123,14 +123,18 @@ fn load(e: &Engine, me: ObjectId) {
     if is_remote(&url) {
         set(e, me, FontLoader::STATUS.index, Value::Int(status::LOADING));
         let asked = url.clone();
-        platform.fetch(&url, move |e, got: Result<Vec<u8>, FetchError>| {
-            let current = e
-                .with_mut(me, |f: &mut FontLoader| f.generation == generation)
-                .unwrap_or(false);
-            if current {
-                loaded(e, me, &asked, got.ok());
-            }
-        });
+        platform.fetch_for(
+            Some(me),
+            &url,
+            move |e, got: Result<Vec<u8>, FetchError>| {
+                let current = e
+                    .with_mut(me, |f: &mut FontLoader| f.generation == generation)
+                    .unwrap_or(false);
+                if current {
+                    loaded(e, me, &asked, got.ok());
+                }
+            },
+        );
         return;
     }
     // A sandboxed run (a test) keeps every file under its root.

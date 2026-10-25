@@ -102,7 +102,7 @@ pub(crate) fn start(
     if is_remote(&url) {
         let name = name_of(&url);
         let Some(streams) = streams else {
-            platform.fetch(&url, move |e, got| match got {
+            platform.fetch_for(Some(me), &url, move |e, got| match got {
                 Ok(bytes) => spawn(e, me, generation, done, move || {
                     from_bytes(&name, bytes, samples.and_then(|s| s.wait()))
                 }),
@@ -111,7 +111,7 @@ pub(crate) fn start(
             return;
         };
         let fetcher = platform.fetcher();
-        let reply = platform.expect();
+        let reply = platform.expect_for(format!("open {url}"), Some(me));
         let spawned = std::thread::Builder::new()
             .name("ljos-media-fetch".to_owned())
             .spawn(move || {
@@ -244,7 +244,7 @@ fn spawn(
     done: Done,
     work: impl FnOnce() -> Result<Opened, OpenError> + Send + 'static,
 ) {
-    let reply = Platform::of(e).expect();
+    let reply = Platform::of(e).expect_for("media decode", Some(me));
     let spawned = std::thread::Builder::new()
         .name("ljos-media-open".to_owned())
         .spawn(move || {

@@ -82,7 +82,7 @@ pub use permissions::{
     LocationPermission, MicrophonePermission, Permission, PermissionAnswer, PermissionService,
     PermissionStatus, UngatedPermissions,
 };
-pub use platform::{CATEGORY, Job, Platform, Post, Reply};
+pub use platform::{CATEGORY, Job, Platform, Post, Promise, Reply};
 pub use raw_window_handle;
 pub use sensors::{
     Accelerometer, AccelerometerReading, AmbientLightReading, AmbientLightSensor, Compass,

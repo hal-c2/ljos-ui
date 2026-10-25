@@ -553,7 +553,7 @@ fn request(engine: &Engine, obj: ObjectId) {
     platform.permissions().request(
         permission,
         PermissionAnswer {
-            reply: Some(platform.expect()),
+            reply: Some(platform.expect_for("permission request", Some(obj))),
             obj,
         },
     );

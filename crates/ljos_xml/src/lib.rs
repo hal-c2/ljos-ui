@@ -306,11 +306,13 @@ fn load(e: &Engine, me: ObjectId) {
         // Nothing to read: Loading now, Null and empty when the
         // answer lands, as every other load answers off this call.
         set_status(e, me, status::LOADING);
-        platform.expect().send(move |e| {
-            if current(e, me, generation) {
-                apply(e, me, &roles, Parsed::default(), status::NULL, 1.0);
-            }
-        });
+        platform
+            .expect_for("XmlListModel source", Some(me))
+            .send(move |e| {
+                if current(e, me, generation) {
+                    apply(e, me, &roles, Parsed::default(), status::NULL, 1.0);
+                }
+            });
         return;
     }
     if query.is_empty() {
@@ -336,13 +338,15 @@ fn load(e: &Engine, me: ObjectId) {
 
     if let Some(bytes) = platform.resource(&url) {
         let bytes = bytes.to_vec();
-        platform.expect().send(move |e| {
-            loaded(e, me, generation, &path, &roles, Outcome::Bytes(bytes));
-        });
+        platform
+            .expect_for("XmlListModel source", Some(me))
+            .send(move |e| {
+                loaded(e, me, generation, &path, &roles, Outcome::Bytes(bytes));
+            });
         return;
     }
     if remote {
-        platform.fetch(&url, move |e, got| {
+        platform.fetch_for(Some(me), &url, move |e, got| {
             let outcome = match got {
                 Ok(bytes) => Outcome::Bytes(bytes),
                 Err(err) => Outcome::Failed(err.to_string()),
@@ -353,7 +357,7 @@ fn load(e: &Engine, me: ObjectId) {
     }
     // A local file, read off the Engine thread like a fetch, so a
     // load never blocks it and `Loading` is what a reader sees first.
-    let reply = platform.expect();
+    let reply = platform.expect_for(format!("read {url}"), Some(me));
     let real = url_path(&url).map(|p| platform.env().real(&p));
     let spawned = std::thread::Builder::new()
         .name("ljos-xml".to_owned())

@@ -344,7 +344,7 @@ fn prepare(e: &Engine, me: ObjectId) {
     }
     set_program(e, me, None);
     set_status(e, me, status::UNCOMPILED, "");
-    let reply: Reply = Platform::of(e).expect();
+    let reply: Reply = Platform::of(e).expect_for("ShaderEffect shaders", Some(me));
     off_thread(move || {
         let stages = [Stage::Vertex, Stage::Fragment];
         let done: Vec<Result<Arc<Compiled>, ljos_shader::Error>> = wants

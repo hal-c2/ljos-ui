@@ -484,7 +484,7 @@ fn write_now(engine: &Engine, file: &SettingsFile) {
     }
     let rendered = file.pending_text.borrow_mut().take();
     let text = rendered.unwrap_or_else(|| file.render(engine));
-    let reply = Platform::of(engine).expect();
+    let reply = Platform::of(engine).expect_for("Settings write", None);
     writer().post(file.path.clone(), text, Some(reply));
 }
 

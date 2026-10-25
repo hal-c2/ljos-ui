@@ -49,7 +49,7 @@ mod atspi {
         // Until the bus answers there is none, and a system without an
         // AT-SPI bus has none.
         ljos_quick::set_screen_reader_from_platform(engine, false);
-        let first = Platform::of(engine).expect();
+        let first = Platform::of(engine).expect_standing("screen reader setting");
         // Each answer, when the Engine runs it, hands the thread the reply
         // for the next: one at a time, so nothing queues behind a frame.
         let (next_tx, next_rx) = sync_channel(1);
@@ -80,7 +80,7 @@ mod atspi {
             let next = next_tx.clone();
             reply.send(move |e| {
                 ljos_quick::set_screen_reader_from_platform(e, active);
-                let _ = next.try_send(Platform::of(e).expect());
+                let _ = next.try_send(Platform::of(e).expect_standing("screen reader setting"));
             });
             match next_rx.recv() {
                 Ok(r) => reply = r,

@@ -73,6 +73,17 @@ pub struct ImageKey {
     pub request: Request,
 }
 
+/// A picture [`ImageStore::loading`] lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageLoad {
+    /// The absolute URL.
+    pub url: String,
+    /// The items waiting for it; none when Rust code asked.
+    pub items: Vec<ObjectId>,
+    /// Waiting for a decode to finish before its own starts.
+    pub queued: bool,
+}
+
 /// Who is waiting for a background decode.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Waiter {
@@ -655,6 +666,24 @@ impl ImageStore {
     /// Background decodes asked for whose result has not been delivered.
     pub fn pending(&self) -> usize {
         self.state.borrow().jobs.len()
+    }
+
+    /// The pictures being decoded or waiting their turn, each with the
+    /// items waiting for it, by URL: what wakes the UI thread when its
+    /// result comes.
+    pub fn loading(&self) -> Vec<ImageLoad> {
+        let s = self.state.borrow();
+        let mut all: Vec<ImageLoad> = s
+            .jobs
+            .iter()
+            .map(|(key, waiters)| ImageLoad {
+                url: key.url.clone(),
+                items: waiters.iter().filter_map(Waiter::item).collect(),
+                queued: s.queue.contains(key),
+            })
+            .collect();
+        all.sort_by(|a, b| a.url.cmp(&b.url));
+        all
     }
 
     /// Whether results wait for [`ImageStore::deliver`].

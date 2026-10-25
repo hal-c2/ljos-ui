@@ -29,7 +29,7 @@ pub use animated::AnimatedImage;
 pub use border::{BorderImage, BorderImageBorder};
 pub use decode::{LoadError, Request, requested_size};
 use store::Picture;
-pub use store::{ImageKey, ImageReply, ImageStore};
+pub use store::{ImageKey, ImageLoad, ImageReply, ImageStore};
 pub use tint::{ImageTint, register_image_tint};
 pub use vector::{VectorImage, vector_fill_mode};
 

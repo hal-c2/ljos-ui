@@ -208,7 +208,7 @@ pub(crate) fn load(engine: &Engine, doc: ObjectId, edit: ObjectId, st: &SharedSt
         return;
     };
     set_status(engine, doc, status::LOADING, "");
-    let reply: Reply = Platform::of(engine).expect();
+    let reply: Reply = Platform::of(engine).expect_for("TextDocument load", Some(doc));
     off_thread(move || {
         let read = std::fs::read(&real).map(|b| String::from_utf8_lossy(&b).into_owned());
         reply.send(move |e| loaded(e, doc, edit, generation, &named, read));
@@ -318,7 +318,7 @@ pub(crate) fn save(engine: &Engine, doc: ObjectId, to: Option<&str>) {
     };
     set_status(engine, doc, status::SAVING, "");
     let renamed = to.map(str::to_owned);
-    let reply: Reply = Platform::of(engine).expect();
+    let reply: Reply = Platform::of(engine).expect_for("TextDocument save", Some(doc));
     off_thread(move || {
         let written = std::fs::write(&real, contents.as_bytes());
         reply.send(move |e| {

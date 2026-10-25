@@ -463,7 +463,7 @@ fn load(e: &Engine, me: ObjectId) {
     let _ = cx.set(FolderListModel::STATUS, status::LOADING);
 
     let real = env.real(&named);
-    let reply = platform.expect();
+    let reply = platform.expect_for("FolderListModel folder", Some(me));
     let spawned = std::thread::Builder::new()
         .name("ljos-folder".to_owned())
         .spawn(move || {
