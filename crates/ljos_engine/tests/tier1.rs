@@ -382,6 +382,14 @@ fn numbers_print_as_javascript_prints_them() {
         "`${i} and ${r}/${s}/${yes}/${nothing}/${undef}`",
         "`${big}${-zero}${zero / zero}`",
         "`${s}`",
+        // Powers of two, whose lower neighbour is twice as close as the
+        // upper: QuickJS wrote 2^378 as …6374e+113 before the fork's fix
+        // (vendor/QUICKJS.md), and tier 1 wrote 2^-24 as …062e-8.
+        "(2 ** 378) + \"\"",
+        "`${Math.max(2 ** 378, i)}`",
+        "String(2 ** -24)",
+        "String(2 ** 89)",
+        "String(-(2 ** -1017))",
     ]);
     agree(&["`plain`", "`a\\${b}`"]);
 }

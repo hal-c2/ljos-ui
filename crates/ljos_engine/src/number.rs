@@ -1,7 +1,8 @@
 //! ECMAScript number conversions (ECMA-262 §7.1.4, §7.1.6, §7.1.4.1.1 and
-//! Number::toString, §6.1.6.1.20). Tier-1 bindings and the JS host must
-//! format and parse numbers exactly as QuickJS does, or the debug
-//! cross-check between tiers fails.
+//! Number::toString, §6.1.6.1.20). Tier-1 bindings and the JS host both
+//! follow the spec, so they format and parse numbers alike, or the debug
+//! cross-check between tiers fails: QuickJS's own dtoa wrote one digit too
+//! many for some powers of two, fixed in Ljós's fork (vendor/QUICKJS.md).
 
 /// `Number::toString(x)` in radix 10.
 ///
@@ -76,25 +77,31 @@ fn even_on_a_tie(x: f64, digits: String) -> String {
     if e_at == 0 || buf[e_at - 1] != b'5' {
         return digits;
     }
-    let longer = format!("{x:.k$e}");
-    let longer: String = longer
-        .split_once('e')
-        .map_or(longer.as_str(), |(m, _)| m)
-        .chars()
-        .filter(|c| *c != '.')
-        .collect();
+    let sci = format!("{x:.k$e}");
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let longer: String = mantissa.chars().filter(|c| *c != '.').collect();
     let (base, last) = longer.split_at(k);
     if last != "5" || base.ends_with('9') || exact_digits(x) != longer {
         return digits;
     }
     let lower = base.as_bytes()[k - 1] - b'0';
-    if lower.is_multiple_of(2) {
-        return base.to_owned();
+    let even = if lower.is_multiple_of(2) {
+        base.to_owned()
+    } else {
+        let mut upper = base.to_owned();
+        upper.pop();
+        upper.push(char::from(b'0' + lower + 1));
+        upper
+    };
+    // Halfway is not always inside `x`'s interval: below a power of two
+    // the doubles are twice as close, so the lower of the two can be
+    // another double (2^-24 is 5.960464477539063e-8; …062e-8 is not it).
+    let (lead, rest) = even.split_at(1);
+    if format!("{lead}.{rest}e{exp}").parse::<f64>() == Ok(x) {
+        even
+    } else {
+        digits
     }
-    let mut upper = base.to_owned();
-    upper.pop();
-    upper.push(char::from(b'0' + lower + 1));
-    upper
 }
 
 /// Every significant digit of `x`'s exact value, which has as many places
@@ -289,6 +296,10 @@ mod tests {
             (0.5 + 2f64.powi(-17), "0.5000076293945312"),
             (-0.5 - 2f64.powi(-17), "-0.5000076293945312"),
             (9007199254740993.0, "9007199254740992"),
+            // 5.9604644775390625e-8 exactly, but …062 is another double:
+            // below a power of two the doubles are twice as close.
+            (2f64.powi(-24), "5.960464477539063e-8"),
+            (2f64.powi(378), "6.156563468186638e+113"),
         ];
         for (x, want) in cases {
             assert_eq!(number_to_string(*x), *want, "{x:?}");
