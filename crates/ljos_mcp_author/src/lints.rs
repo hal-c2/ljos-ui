@@ -85,6 +85,8 @@ pub const IMPLEMENTED: &[&str] = &[
     "motion-frequent",
     "motion-timer-driven",
     "content-duplicate-control",
+    "lint-allow-without-reason",
+    "lint-allow-unused",
 ];
 
 pub(crate) fn severity(severity: ljos_design::Severity) -> Severity {
@@ -144,7 +146,9 @@ pub(crate) fn markdown() -> String {
          tagged with its code wherever it is reported. A design rule links to its guideline \
          (`docs/design/<page>#<code>`).\n\n\
          An `error` is certain and fails `ljos check` (`--lint=warn` makes it a warning, for \
-         code that is not yours). A `hint` is advice, from `qml_lint` alone.\n\n\
+         code that is not yours). A `warning` is kept with a reason: \
+         `// ljos-allow(<code>): <why>` on the finding's line, the line above, or the first \
+         line of the object it is in. A `hint` is advice, from `qml_lint` alone.\n\n\
          | Code | Severity | Reported by | Rule | Fix | Guide |\n|---|---|---|---|---|---|\n",
     );
     for lint in lints() {
@@ -219,5 +223,6 @@ mod tests {
             assert!(page.contains(&rule.guide()), "{}", rule.code);
         }
         assert!(page.contains("ljos check"));
+        assert!(page.contains("ljos-allow"));
     }
 }

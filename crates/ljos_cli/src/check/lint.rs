@@ -5,8 +5,8 @@
 //!
 //! A finding keeps the rule's severity: an error is certain and fails the
 //! check, unless `--lint=warn` makes it a warning (for code that is not
-//! yours); a warning is reported; a hint is advice and left to
-//! `qml_lint`.
+//! yours); a warning is kept with `// ljos-allow(<code>): <reason>`; a
+//! hint is advice and left to `qml_lint`.
 //!
 //! The rules are the authoring server's (`qml_lint`), so a finding has the
 //! same code here, there and in an editor. Of what that reports, this keeps

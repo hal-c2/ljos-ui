@@ -1,6 +1,7 @@
 //! `ljos check`: the static lints (ARCHITECTURE.md §14). What has no name
 //! for an assistive technology, what a translator will never be given, and
-//! the design rules the source can tell, and how severe each is.
+//! the design rules the source can tell; how severe each is, and the
+//! `ljos-allow` comments that keep a warning with a reason.
 //!
 //! The rules tell a `Button` from an `Item` by the table of types the build
 //! has, which is Qt's where one was generated and Ljós's own where not:
@@ -121,6 +122,53 @@ fn lint_warn_makes_the_errors_warnings_for_code_that_is_not_yours() {
         "{lines:#?}"
     );
     assert_eq!(count, "1 files, 0 errors, 6 warnings");
+}
+
+const ALLOWED: &str = r#"import QtQuick
+import QtQuick.Controls
+Item {
+    // ljos-allow(focus-pointer-only): the same action is on the toolbar
+    Rectangle {
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Open")
+        MouseArea { anchors.fill: parent; onClicked: console.log("pressed") }
+    }
+}
+"#;
+
+#[test]
+fn an_allow_with_a_reason_keeps_a_warning_in_the_object_it_opens() {
+    let (lines, count) = check(ALLOWED, &[]);
+    assert_eq!(lines, Vec::<String>::new());
+    assert_eq!(count, "1 files, 0 errors, 0 warnings");
+}
+
+#[test]
+fn an_allow_without_a_reason_is_an_error() {
+    let source = ALLOWED.replace(": the same action is on the toolbar", "");
+    let (passed, lines, count) = run(&source, &[]);
+    assert!(!passed);
+    assert_eq!(
+        at(&lines, "error", "lint-allow-without-reason"),
+        ["Main.qml:4:5"],
+        "{lines:#?}"
+    );
+    assert_eq!(count, "1 files, 1 errors, 0 warnings");
+}
+
+#[test]
+fn an_allow_never_keeps_an_error() {
+    let source = UNNAMED.replace(
+        "    Button {",
+        "    // ljos-allow(a11y-unnamed-icon-button): the toolbar says what it does\n    Button {",
+    );
+    let (passed, lines, _) = run(&source, &[]);
+    assert!(!passed);
+    assert_eq!(
+        at(&lines, "error", "a11y-unnamed-icon-button"),
+        ["Main.qml:9:5"],
+        "{lines:#?}"
+    );
 }
 
 const NAMED: &str = r#"import QtQuick

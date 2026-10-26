@@ -322,6 +322,7 @@ fn file(
             &doc.root,
             out,
         );
+        super::allow::apply(path, source, &doc.root, out);
     }
 }
 

@@ -51,6 +51,8 @@ pub enum Area {
     Focus,
     Motion,
     Content,
+    /// The rules about the checks themselves (an allow comment).
+    Meta,
 }
 
 impl Area {
@@ -64,6 +66,7 @@ impl Area {
             Area::Focus => "interaction.md",
             Area::Motion => "motion.md",
             Area::Content => "content.md",
+            Area::Meta => "README.md",
         }
     }
 }
@@ -677,6 +680,22 @@ pub const RULES: &[Rule] = &[
         Runtime,
         "A disabled control or menu item gives no reason.",
         "Say why in a tooltip or beside it, or leave out what cannot apply here.",
+    ), // The checks themselves.
+    r(
+        "lint-allow-without-reason",
+        Meta,
+        Error,
+        Static,
+        "An `ljos-allow` comment keeps a finding and does not say why.",
+        "Write the reason after the code: `// ljos-allow(code): why this is right here`.",
+    ),
+    r(
+        "lint-allow-unused",
+        Meta,
+        Hint,
+        Static,
+        "An `ljos-allow` comment keeps nothing: no finding of its code is where it applies.",
+        "Remove it, or move it to the line of the finding, the line above, or the first line of the object.",
     ),
 ];
 
@@ -704,6 +723,7 @@ mod tests {
                 Focus => "focus-",
                 Motion => "motion-",
                 Content => "content-",
+                Meta => "lint-",
             };
             assert!(
                 rule.code.starts_with(prefix),

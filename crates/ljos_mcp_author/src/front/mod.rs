@@ -58,6 +58,7 @@
 //! to a delegate (`display`, roles) are seen as unresolved when the delegate
 //! is its own file. Both are why those cases are warnings or held back.
 
+mod allow;
 mod check;
 mod compiled;
 mod design;
