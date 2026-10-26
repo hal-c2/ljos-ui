@@ -14,12 +14,35 @@ mod common;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::rc::Rc;
 
 use common::*;
 use ljos_engine::{Engine, Lookups, ObjectId, Value, lookups};
 use ljos_quick::{Item, QuickScene, child_items, reduced_motion};
 use ljos_reactive::Census;
-use ljos_runtime::Time;
+use ljos_runtime::{Time, VirtualClock};
+
+thread_local! {
+    // The clock of the engine made last, which the frames are for.
+    static CLOCK: std::cell::RefCell<Rc<VirtualClock>> = Default::default();
+}
+
+/// An engine on a clock only the frames move. On the machine's clock each
+/// frame's incubation budget is spent in its time, so how many rows a
+/// frame makes, and what they cost, would follow how busy the machine is.
+fn engine() -> Engine {
+    let e = common::engine();
+    let clock = Rc::new(VirtualClock::new());
+    CLOCK.with(|c| *c.borrow_mut() = Rc::clone(&clock));
+    e.set_clock(clock);
+    e
+}
+
+fn frame_at(s: &mut QuickScene, e: &Engine, ms: u64) {
+    let t = Time::from_millis(ms);
+    CLOCK.with(|c| c.borrow().set(t));
+    s.frame(e, t);
+}
 
 struct Counting;
 
@@ -107,7 +130,7 @@ fn spent(e: &Engine, s: &mut QuickScene, from: u64, step: impl FnOnce()) -> Budg
     let a = now(e);
     step();
     for i in 0..FRAMES {
-        s.frame(e, Time::from_millis(from + i * 16));
+        frame_at(s, e, from + i * 16);
     }
     let b = now(e);
     Budget {
@@ -133,7 +156,7 @@ fn settle(s: &mut QuickScene, e: &Engine, from: u64) {
     // counts would be lower than an application pays.
     assert!(!reduced_motion(e), "counted with reduced motion");
     for i in 0..40 {
-        s.frame(e, Time::from_millis(from + i * 16));
+        frame_at(s, e, from + i * 16);
     }
 }
 
@@ -291,7 +314,7 @@ fn plain_teardown() -> Teardown {
         e.destroy_now(*c);
     }
     for i in 0..FRAMES {
-        s.frame(&e, Time::from_millis(4000 + i * 16));
+        frame_at(&mut s, &e, 4000 + i * 16);
     }
     let b = now(&e);
     let nodes = |c: Census| c.values + c.bindings + c.effects;
@@ -310,8 +333,8 @@ fn ten_listview_delegates() {
     let (b, made) = listview_delegates(ONE_LINE);
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
-    // attached or grouped), 9 values, 6 bindings, 11 effects, 2 scopes,
-    // no member or type lookups, 130.5 allocations. What the component
+    // attached or grouped), 8 values, 6 bindings, 9 effects, 2 scopes,
+    // no member or type lookups, 131.6 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -343,7 +366,7 @@ fn ten_listview_delegates() {
     // its parent's: an effect, a value and two allocations fewer a
     // delegate (B29). A text's inputs are shared between its marks and its
     // paint, one box where both held a copy (one more a delegate), and the
-    // side maps of what marks carry grew (four more). 26.5 kB kept a
+    // side maps of what marks carry grew (four more). 26.6 kB kept a
     // delegate: the step that grew those maps pays for their room
     // ([`bytes_a_thousand_instances_keep`]).
     assert_eq!(
@@ -362,8 +385,8 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1319,
-            bytes: 265255,
+            allocations: 1316,
+            bytes: 265864,
         }
     );
 }
@@ -391,7 +414,7 @@ fn ten_wrapped_listview_delegates() {
     // What it inherits passed down by its parent's change hooks, where it
     // had an effect, makes 30 fewer, 20 fewer values and 20 fewer effects
     // (B29), and a text's inputs in one box its marks and paint share, 14
-    // more. 30.8 kB kept a delegate.
+    // more. 31.8 kB kept a delegate.
     assert_eq!(
         b,
         Budget {
@@ -409,7 +432,7 @@ fn ten_wrapped_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1338,
-            bytes: 308057,
+            bytes: 317937,
         }
     );
 }
@@ -512,8 +535,8 @@ fn bytes_a_thousand_instances_keep() {
     assert_eq!(
         kept,
         Kept {
-            one_line: 25801,
-            wrapped: 27842,
+            one_line: 25946,
+            wrapped: 28865,
             plain: 15893,
         }
     );

@@ -7020,10 +7020,10 @@ grew, so they jump.
 
 | | B28 | B29 inherit | B29 |
 |---|---:|---:|---:|
-| ListView delegate, heap allocations | 1305 (130.5) | 1285 (128.5) | 1299 (129.9) |
+| ListView delegate, heap allocations | 1305 (130.5) | 1285 (128.5) | 1299 (129.9); 1316 (131.6) with TEXT5 |
 | ListView delegate, effects | 110 (11) | 90 (9) | 90 (9) |
 | ListView delegate, values | 90 (9) | 80 (8) | 80 (8) |
-| Wrapped delegate, heap allocations | 1298 (129.8) | 1268 (126.8) | 1282 (128.2) |
+| Wrapped delegate, heap allocations | 1298 (129.8) | 1268 (126.8) | 1282 (128.2); 1338 (133.8) with TEXT5 |
 | Wrapped delegate, effects | 100 (10) | 80 (8) | 80 (8) |
 | `createObject` item, heap allocations | 833 (83.3) | 786 (78.6) | 799 (79.9) |
 | `createObject` item, effects | 90 (9) | 70 (7) | 70 (7) |
@@ -7031,9 +7031,15 @@ grew, so they jump.
 
 | Heap bytes kept per instance, over a thousand | B28 | B29 inherit | B29 |
 |---|---:|---:|---:|
-| ListView delegate, one-line text | 27 485 | 27 252 | 25 801 |
-| ListView delegate, wrapped text | 29 527 | 29 293 | 27 842 |
+| ListView delegate, one-line text | 27 485 | 27 252 | 25 801; 25 946 with TEXT5 |
+| ListView delegate, wrapped text | 29 527 | 29 293 | 27 842; 28 865 with TEXT5 |
 | `createObject` item | 20 845 | 17 142 | 15 893 |
+
+The columns were measured before TEXT5 landed. "With TEXT5" is the series rebased onto it,
+counted on a clock only the frames move. On the machine's clock, a frame's incubation
+budget was spent in wall time: under load a frame made fewer rows and the counts drifted
+from run to run (bindings 50 to 54). The budget test now gives the same counts at a load
+of 79 on 32 cores as on an idle machine.
 
 The split adds one allocation per Text, for the shared box, and takes 1.45 kB off every
 delegate. A DHAT run of the thousand one-line delegates shows where the rest goes:
