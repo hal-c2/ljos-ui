@@ -191,9 +191,10 @@ fn the_meta_object_converts_for_its_enums() {
     let m = Tile::static_meta();
     assert_eq!(m.coerce_enum("Mode", &text("Striped")), Ok(Value::Int(4)));
     assert_eq!(m.coerce_enum("Corner", &text("TopLeft")), Ok(Value::Int(0)));
+    // -1, which an enum reads unsigned.
     assert_eq!(
         m.coerce_enum("Mode", &Value::Real(-0.5)),
-        Ok(Value::Int(-1))
+        Ok(Value::Real(4_294_967_295.0))
     );
     let e = m.coerce_enum("Mode", &text("TopLeft")).unwrap_err();
     assert_eq!(e.to_string(), "Unable to assign QString to Tile::Mode");

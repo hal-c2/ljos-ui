@@ -669,6 +669,26 @@ pub struct EnumValue {
     pub value: i32,
 }
 
+impl Value {
+    /// What a native enum field holds, as a script reads it: an unsigned
+    /// number, as [`EnumValue::number`] is.
+    pub fn of_enum_field(n: i32) -> Value {
+        match u32::try_from(n) {
+            Ok(_) => Value::Int(n),
+            Err(_) => Value::Real(f64::from(n.cast_unsigned())),
+        }
+    }
+}
+
+impl EnumValue {
+    /// The number a script reads. Qt's own enums have no negative keys, so
+    /// their values are unsigned: a -1 given to one reads 4294967295
+    /// (Qt 6.11.2).
+    pub fn number(self) -> u32 {
+        self.value.cast_unsigned()
+    }
+}
+
 /// A JS value owned by the engine's JS host, used by `var` properties
 /// holding JS objects and functions. Equality is by reference: two handles
 /// taken from one JS object at different times differ, which only costs a
@@ -1005,7 +1025,7 @@ impl Value {
         match self {
             Value::Int(i) => Some(f64::from(*i)),
             Value::Real(r) => Some(*r),
-            Value::Enum(e) => Some(f64::from(e.value)),
+            Value::Enum(e) => Some(f64::from(e.number())),
             _ => None,
         }
     }
@@ -1094,7 +1114,7 @@ impl Value {
             Value::Bool(b) => f64::from(u8::from(*b)),
             Value::Int(i) => f64::from(*i),
             Value::Real(r) => *r,
-            Value::Enum(e) => f64::from(e.value),
+            Value::Enum(e) => f64::from(e.number()),
             Value::String(s) | Value::Url(s) => string_to_number(s),
             Value::List(_) => string_to_number(&self.to_js_string()),
             Value::Color(_)
@@ -1130,7 +1150,7 @@ impl Value {
             Value::Bool(false) => Atom::intern("false"),
             Value::Int(i) => Atom::from(i.to_string()),
             Value::Real(r) => Atom::from(number_to_string(*r)),
-            Value::Enum(e) => Atom::from(e.value.to_string()),
+            Value::Enum(e) => Atom::from(e.number().to_string()),
             Value::String(s) | Value::Url(s) => s.clone(),
             Value::Color(c) => Atom::from(c.to_string()),
             Value::Point(p) => Atom::from(named("QPointF", &[p.x, p.y])),

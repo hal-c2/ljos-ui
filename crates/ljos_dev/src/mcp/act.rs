@@ -205,7 +205,7 @@ pub(crate) fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
         QmlValue::Real(r) => number(engine, *r),
         QmlValue::String(s) | QmlValue::Url(s) => json!(s.to_string()),
         QmlValue::Color(c) => json!(c.to_string()),
-        QmlValue::Enum(e) => json!(e.value),
+        QmlValue::Enum(e) => json!(e.number()),
         QmlValue::Point(p) => json!({ "x": number(engine, p.x), "y": number(engine, p.y) }),
         QmlValue::Size(s) => {
             json!({ "width": number(engine, s.width), "height": number(engine, s.height) })

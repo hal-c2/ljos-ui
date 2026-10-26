@@ -246,7 +246,6 @@ Feature: Properties that hold an enumeration
         """
 
     # Found by ljos-fuzz (bindings), bucket value:step:int-range.
-    @backlog
     Scenario Outline: A binding that gives <given> reads <read>
       When the property "given" of "root" is set to <given>
       Then the property "wrapMode" of "text" is <read>

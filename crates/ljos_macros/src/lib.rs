@@ -636,9 +636,15 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         let get = format_ident!("__qml_get_{}", ident);
         let set = format_ident!("__qml_set_{}", ident);
         let notify = a.notify;
+        // An enum's number reads as Qt's does: unsigned.
+        let read = if a.enumeration.is_some() && !a.flags {
+            quote!(#e::Value::of_enum_field(#p::downcast::<#ty>(o).#ident))
+        } else {
+            quote!(#e::QmlValue::to_value(&#p::downcast::<#ty>(o).#ident))
+        };
         accessors.push(quote! {
             fn #get(o: &dyn #e::QmlObject) -> #e::Value {
-                #e::QmlValue::to_value(&#p::downcast::<#ty>(o).#ident)
+                #read
             }
             fn #set(
                 o: &mut dyn #e::QmlObject,

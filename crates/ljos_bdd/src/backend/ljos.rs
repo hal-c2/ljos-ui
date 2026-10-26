@@ -707,7 +707,7 @@ impl Live {
             QmlValue::Real(r) => num(*r),
             QmlValue::String(s) | QmlValue::Url(s) => Value::String(s.to_string()),
             QmlValue::Color(c) => Value::String(c.to_string()),
-            QmlValue::Enum(e) => json!(e.value),
+            QmlValue::Enum(e) => json!(e.number()),
             QmlValue::Point(p) => json!({"x": num(p.x), "y": num(p.y)}),
             QmlValue::IntPoint(p) => json!({"x": p.x, "y": p.y}),
             QmlValue::Size(s) => json!({"width": num(s.width), "height": num(s.height)}),

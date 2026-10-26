@@ -909,7 +909,7 @@ impl QmlValue for serde_json::Value {
             Value::Bool(b) => J::Bool(*b),
             Value::Int(i) => J::from(*i),
             Value::Real(r) => number(*r),
-            Value::Enum(e) => J::from(e.value),
+            Value::Enum(e) => J::from(e.number()),
             Value::String(s) | Value::Url(s) => J::String(s.to_string()),
             Value::Color(_) => J::String(v.to_js_string().to_string()),
             Value::List(items) => J::Array(

@@ -629,8 +629,14 @@ impl MetaObject {
             }
             _ => None,
         };
+        // A mask of flags may set the sign bit; it stays the number Rust
+        // code combines.
         whole
-            .map(Value::Int)
+            .map(if flags {
+                Value::Int
+            } else {
+                Value::of_enum_field
+            })
             .ok_or_else(|| ConvertError::new(crate::types::describe(v), self.enum_name(name)))
     }
 

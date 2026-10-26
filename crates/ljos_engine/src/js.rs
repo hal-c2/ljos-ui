@@ -1490,7 +1490,7 @@ impl Engine {
                     ),
                 }
             }
-            Value::Enum(e) => JsValue::Number(f64::from(e.value)),
+            Value::Enum(e) => JsValue::Number(f64::from(e.number())),
             Value::Js(h) => JsValue::Handle(h.0.clone()),
         }
     }
