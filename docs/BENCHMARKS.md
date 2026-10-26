@@ -6373,3 +6373,87 @@ would draw and send only its damage.
 
 **When.** It is chosen where EGL offers only llvmpipe or softpipe, or when asked for. A
 machine with a GPU keeps GL.
+
+### Analysis by class and kept runs for one-line plain text (2026-10-26)
+
+This follows "One-line plain text without Parley's builder", measured the same way. The dump
+also has ten more texts with runs of spaces, punctuation and quotes. It is the same byte
+for byte as before this work.
+
+**Analysis by class.** Parley's analyser records a script and a set of boundary flags for
+each character, and nothing else. In printable ASCII every letter gets the same entry
+(Latin; ALetter for words; AL for lines), and so does every digit (Common, Numeric, NU). A
+text therefore analyses exactly as its *fold* does: the text with letters made `a` and
+digits `0`, the other characters kept, plus the line-breaking setting. The direct path keeps
+analyses by fold, and a list's rows share a few of them ("Row 7" and "Row 9" are both
+`aaa 0`). A unit test holds the fold to Parley's analyser. It analyses both the text and
+its fold under both line-breaking settings: every printable pair, every class triple, and
+2000 longer texts. The `char_info`, bidi levels and paragraph level must be equal for each.
+At most 64 folds are kept across frames, and a frame can leave at most 128.
+
+**Kept runs.** A run shaped and snapped by the direct path is kept, keyed on the text, the
+font blob and index, the size and the synthesis. The size covers the optical-size
+variations, and no features are asked for. When the same text in the same font comes back,
+it skips analysis, shaping and snapping. That happens for a delegate made anew, or a row
+scrolled back after its layout was dropped. Up to 2048 runs of up to 64 bytes are kept
+across frames: about 0.5 MB for short rows, at most 4 MB. A frame can leave 3072. Over
+2048, `end_frame` drops the oldest one by one, and a run unused for 600 frames goes.
+Nothing is added unless something is laid out, so an idle application does not add to it.
+Registering a font or changing the default family drops the runs. A hit still prunes and
+loads through Parley's source cache, so the run carries the blob Parley's own path would
+give it. `TextMemory` counts the runs and their bytes, and `CacheStats::runs_reused` counts
+the hits.
+
+| Microbench, per row | Before | After |
+|---|---:|---:|
+| New row (every text distinct, as before) | 29,186 | 25,221 (−13.6 %) |
+| `shape_text` | 13.4 k | 13.4 k |
+| `analyze_text` | 5.1 k | 0 |
+| A row again, after its layout was dropped | ≈ 29 k | 8,878 |
+
+On the microbench every text is new, so kept runs only cost there. The cost is about 1.1 k
+per row: keeping the run, and dropping it once over capacity. Without them a new row would
+be about 24 k.
+
+| listview under callgrind (main thread, per delegate) | Before | After |
+|---|---:|---:|
+| Delegates (`build_layout` calls) | 9843 | 9872 |
+| Frames | 880 | 1161 |
+| `shape_text` calls | 9838 | 7955 (19.4 % of rows reused a kept run) |
+| `analyze_text` calls | 9838 | 8 |
+| text: layout and shaping (`ljos_text`) | 30.2 k | 23.4 k (−22.5 %) |
+| text: completion, measure, follow (`ljos_quick::text`) | 31.1 k | 31.3 k |
+| Total | 359.6 k | 377.6 k |
+
+The total is per delegate, but the "after" run drew 32 % more frames in the same 20 s window
+with the same number of delegates. The per-frame phases (paint, view refresh) are divided
+over the same delegates, so the total cannot be compared between the two runs. The
+`ljos_text` row can. `bench/listview.qml` has 10,000 distinct rows, and about 500 are made
+per second, so a row comes back long after its layout was dropped. The rows made in the
+last ~4 s before the turn are still kept, and the rest are shaped again.
+
+| Scroll, M instructions/s (`scr.sh listview`) | Before | After |
+|---|---:|---:|
+| Ljós | 191.55, 191.00 | 189.36, 188.92 |
+| qml6 | 102.59 | 102.88 |
+
+A wheel scroll of ten notches revisits rows whose layouts are still kept, so text barely
+shows in it.
+
+Ten ListView delegates make 1521 allocations, up from 1507. Each new row's kept run adds
+its text and its glyphs (+21), and the analysis no longer made saves 7. Ten plain items
+still make 1013.
+
+DECISIONs:
+
+- The analysis is shared through a fold, not computed by hand. `Analysis` can only be
+  filled by `Analyzer::analyze`, so the ICU result is reused rather than reimplemented. The
+  unit test checks that reuse against Parley's analyser.
+- Kept runs are bounded by count (2048 across frames, 3072 in a frame) and by text length
+  (64 bytes). Their age limit is 600 frames, longer than a layout's 30, because a row
+  scrolled away comes back seconds later. `FrameCache` gains a mode that drops the oldest
+  entries of a frame one by one. Otherwise a frame that kept 3072 would hold them all
+  until they aged out.
+- No Gherkin scenario: nothing a QML application can observe changes. The Rust tests in
+  `crates/ljos_text/tests/cache.rs` cover reuse, identical layouts, bounds, ageing and
+  font changes.
