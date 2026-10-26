@@ -274,10 +274,10 @@ pub(crate) struct JsState {
     pub(crate) calling: Cell<Option<crate::incubator::dynamic::Calling>>,
     /// The faces of `list<T>` properties scripts hold (list_faces.rs).
     pub(crate) lists: crate::list_faces::ListFaces,
-    /// Whether the names devtools scripts use are defined: only once a
-    /// tool runs one (devtools.rs), so an application no tool looks at
-    /// does not pay for them.
-    pub(crate) devtools: Cell<bool>,
+    /// The functions devtools scripts run in, made with the names they use
+    /// once a tool runs one (devtools.rs), so an application no tool looks
+    /// at does not pay for them.
+    pub(crate) devtools: std::cell::OnceCell<crate::devtools::Runners>,
     /// The kind each value type a module brings crosses as, in the order
     /// they were defined (value_custom.rs).
     pub(crate) customs: RefCell<
@@ -1273,7 +1273,7 @@ impl Engine {
             budget: Cell::new(None),
             calling: Cell::new(None),
             lists: crate::list_faces::ListFaces::default(),
-            devtools: Cell::new(false),
+            devtools: std::cell::OnceCell::new(),
             customs: RefCell::new(Vec::new()),
             plain_writes: Cell::new(0),
             quick_reads: Cell::new(0),

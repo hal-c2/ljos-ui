@@ -147,23 +147,32 @@ pub struct BindingGraph {
     pub truncated: bool,
 }
 
+/// [`RUNNER`] and [`MAKER`] compiled. Compiling the runner again for each
+/// evaluation cost more than most of the scripts a tool sends.
+pub(crate) struct Runners {
+    run: JsRef,
+    make: JsRef,
+}
+
 impl Engine {
     /// The script state with what devtools scripts use defined, which is
     /// done the first time one runs rather than when the state is made:
     /// a shipped application that no tool evaluates in never pays for it.
-    fn devtools_js(&self) -> Result<Rc<JsState>, EngineError> {
+    fn devtools_js(&self) -> Result<(Rc<JsState>, JsRef, JsRef), EngineError> {
         let js = self.js()?;
-        if !js.devtools.get() {
-            self.install_devtools_globals(&js)?;
-            js.devtools.set(true);
+        if js.devtools.get().is_none() {
+            let runners = self.install_devtools_globals(&js)?;
+            let _ = js.devtools.set(runners);
         }
-        Ok(js)
+        let r = js.devtools.get().expect("set above");
+        let (run, make) = (r.run.clone(), r.make.clone());
+        Ok((js, run, make))
     }
 
     /// What devtools scripts use to name what a binding written in an
     /// object names: `__ljos_name(object, name, ids)` is `[value]` when the
     /// object's context finds it (an id only, with `ids`), else `null`.
-    fn install_devtools_globals(&self, js: &JsState) -> Result<(), EngineError> {
+    fn install_devtools_globals(&self, js: &JsState) -> Result<Runners, EngineError> {
         let err = |e: ljos_js::JsFault| EngineError::Js(e.to_string());
         let w = Rc::downgrade(&self.inner);
         let name: HostFn = Rc::new(move |_scope, args| {
@@ -209,7 +218,25 @@ impl Engine {
         js.host
             .eval_script("devtools-scope", SCOPE_OF)
             .map_err(err)?;
-        Ok(())
+        let slice = Slice {
+            soft: MAX_EVAL_TIME,
+            hard: MAX_EVAL_TIME,
+        };
+        js.host
+            .enter("devtools runners", slice, |s| {
+                // `with` is a syntax error in the strict mode rquickjs defaults to.
+                let mut opts = rquickjs::context::EvalOptions::default();
+                opts.strict = false;
+                let run: rquickjs::Value = s.ctx().eval_with_options(RUNNER, opts)?;
+                let mut opts = rquickjs::context::EvalOptions::default();
+                opts.strict = false;
+                let make: rquickjs::Value = s.ctx().eval_with_options(MAKER, opts)?;
+                Ok(Runners {
+                    run: s.keep(run),
+                    make: s.keep(make),
+                })
+            })
+            .map_err(err)
     }
 
     /// Runs `source` as a script. With `this` it runs in that object: `this`
@@ -227,7 +254,7 @@ impl Engine {
         limit: Duration,
         bounds: [u32; 5],
     ) -> Result<EvalJson, EngineError> {
-        let js = self.devtools_js()?;
+        let (js, run, _) = self.devtools_js()?;
         let limit = limit.min(MAX_EVAL_TIME);
         let slice = Slice {
             soft: limit,
@@ -236,14 +263,10 @@ impl Engine {
         self.untrack(|| {
             js.host
                 .enter("devtools eval", slice, |s| {
-                    let ctx = s.ctx();
-                    // `with` is a syntax error in the strict mode rquickjs defaults to.
-                    let mut opts = rquickjs::context::EvalOptions::default();
-                    opts.strict = false;
-                    let runner: rquickjs::Function = ctx.eval_with_options(RUNNER, opts)?;
+                    let runner: rquickjs::Function = s.restore(&run)?.get()?;
                     let me: rquickjs::Value = match this {
                         Some(o) => s.wrapper(obj_to_u64(o))?.into_value(),
-                        None => rquickjs::Value::new_undefined(ctx.clone()),
+                        None => rquickjs::Value::new_undefined(s.ctx().clone()),
                     };
                     let [depth, items, chars, nodes, budget] = bounds;
                     let out: String =
@@ -289,17 +312,14 @@ impl Engine {
     }
 
     fn compile_expression(&self, source: &str) -> Result<JsRef, EngineError> {
-        let js = self.devtools_js()?;
+        let (js, _, make) = self.devtools_js()?;
         let slice = Slice {
             soft: MAX_EVAL_TIME,
             hard: MAX_EVAL_TIME,
         };
         let made = self.untrack(|| {
             js.host.enter("devtools binding", slice, |s| {
-                let ctx = s.ctx();
-                let mut opts = rquickjs::context::EvalOptions::default();
-                opts.strict = false;
-                let maker: rquickjs::Function = ctx.eval_with_options(MAKER, opts)?;
+                let maker: rquickjs::Function = s.restore(&make)?.get()?;
                 let made: rquickjs::Value = maker.call((source,))?;
                 Ok(match made.as_string() {
                     Some(why) => Err(why.to_string()?),
