@@ -11,7 +11,9 @@ Feature: A frame is drawn in the wake its time comes in
   the UI thread wakes, asks the platform to let the window draw, and the
   platform lets it later in the same wake, after the input that came with
   it. Asked only as the wake ended, the yes came in a wake of its own,
-  one more each frame, and the frame a little later.
+  one more each frame, and the frame a little later. A message that
+  wakes the thread once the time has come, such as an agent's request,
+  asks the same way.
 
   Background:
     Given the QML:

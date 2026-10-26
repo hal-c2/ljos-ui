@@ -2708,6 +2708,12 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
                 #[cfg(feature = "mcp")]
                 self.note_wake(|w| w.posted += 1);
                 self.repaint_asked(slot, when, pass, at_once);
+                // A message that finds the window's frame due asks for it
+                // now, as a deadline's wake does: the platform's yes comes
+                // later in this turn, not in a turn of its own.
+                if !self.exiting && !self.unsettled() {
+                    self.schedule(host, Instant::now(), true);
+                }
             }
             Event::User(ShellEvent::AccessKit(event)) => {
                 #[cfg(feature = "mcp")]
