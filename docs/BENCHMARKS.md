@@ -6524,3 +6524,56 @@ DECISIONs:
   line or fill a script writes, a line a script binds, a line whose expression first
   gives `undefined`, and a state's AnchorChanges on an item with no anchors. They pass on
   Qt and on Ljós before and after the change.
+
+### B11 (ilang): a view lays out its model's changes once, at polish (2026-10-26)
+
+A ListView laid its rows out at every change of its model, so a loop of appends laid them
+out once per row. Now a change marks the view and asks for a frame, and the polish before
+that frame lays the rows out once for every change until then, as qml6 does. `count` reads
+the model's count at once and is told with the layout. `forceLayout()` and
+`positionViewAt*()` lay the rows out first. `features/views/list-layout-at-polish.feature` and
+`list-layout-hidden.feature` pin what a script sees and the order of the signals, against
+qml6 6.11.2.
+
+**Method.** Instructions are user-space instructions of the whole process, all threads,
+from start to exit (`perf_event_open` with `inherit`). calqlatr's presses are 3000
+`digitPressed`/`operatorPressed` calls in 30 timer ticks, and that run minus the same app
+with no presses. Milliseconds are the same scripts' own `Date.now()` around the loop, on a
+loaded machine (load ~80), so the instruction counts are the ones to compare. The scroll
+benches are `scr.sh` from "Paint while scrolling" (GPU sandbox, 220 notches). "Before" is
+origin/main (00b50b7e), built the same way.
+
+| | Before | After | qml6 |
+|---|---:|---:|---:|
+| calqlatr, 3000 presses (M instructions) | 1167 | 955 | ~530 |
+| calqlatr, 3000 presses (ms) | 84–94 | 74–111 | 41–57 |
+| 2,000 appends in one handler (ms) | 28–31 | 3–4 | 1–2 |
+| 2,000 appends, until laid out (ms) | 28–31 | 4–5 | 27–54 |
+| 10,000 appends in one handler (ms) | stopped at its 100 ms slice | 22–26 | 5 |
+| 10,000 appends, until laid out (ms) | — | 26–29 | 28–42 |
+| listview, scrolled (M instructions/s) | 187.3, 187.3 | 187.1, 187.2 | 102.7, 103.1 |
+| listview with `reuseItems: true` (M/s) | 71.1, 71.0 | 70.8, 70.3 | 60.5, 60.6 |
+
+"Until laid out" is when `contentHeight` first changes with every row there. qml6 waits for
+its next frame for that, and Ljós's polish comes sooner after the handler.
+
+**calqlatr.** Deferral alone took 1167 M to 1161 M. Each press appends at most one row and
+then calls `positionViewAtEnd()`, which needs the layout at once, so a press still laid the
+rows out. Most presses only edit the last row, and then going to the end ran a pass where the
+view already was. That pass laid out the same rows the layout effect had just laid out. With
+nothing waiting and the view at the place asked for, it is now skipped (955 M).
+
+**Left** (DECISIONs):
+
+- **calqlatr is still ~1.8× qml6's instructions.** What is left is a press's own work: the
+  model's change, its roles reaching the delegate's bindings, and the pass for a press that
+  appends. The next step is a profile of that per press, not more deferral.
+- **The 10,000-append loop** costs ~2.2 µs an append against qml6's ~0.5 µs. That cost is
+  `ListModel.append` and its change notice, not the view: the view now does nothing until
+  the polish.
+- **`currentIndex`** still moves at once when rows are inserted before the current one. qml6
+  moves it at layout too. The scenarios pin what qml6 shows for appends and removals at the
+  end; inserts before the current row are not pinned yet.
+- **Start-up** read ~9.5 M higher for every build from the working tree than for the
+  origin/main build from an exported copy. It was the same before and after these commits,
+  so it comes from the build directory, and presses are compared as differences.
