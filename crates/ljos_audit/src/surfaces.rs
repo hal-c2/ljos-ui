@@ -80,7 +80,9 @@ pub(crate) fn own_rect(cx: &Cx, snapshot: &FrameSnapshot, item: ObjectId) -> Opt
     None
 }
 
-/// The colour that covers most of a picture, and the share of it.
+/// The colour that covers most of a picture, and the share of it. Of two
+/// that cover as much, the one with the greater value, so that the same
+/// picture gives the same answer on every run.
 pub(crate) fn dominant(colours: impl Iterator<Item = Srgb>) -> Option<(Srgb, f32)> {
     let mut counts: std::collections::HashMap<[u8; 3], usize> = Default::default();
     let mut total = 0usize;
@@ -88,9 +90,26 @@ pub(crate) fn dominant(colours: impl Iterator<Item = Srgb>) -> Option<(Srgb, f32
         total += 1;
         *counts.entry(c.to_u8()).or_default() += 1;
     }
-    let (k, n) = counts.into_iter().max_by_key(|(_, n)| *n)?;
+    let (k, n) = counts.into_iter().max_by_key(|(k, n)| (*n, *k))?;
     Some((
         Srgb::from_u8(k[0], k[1], k[2]),
         n as f32 / total.max(1) as f32,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn of_colours_that_cover_as_much_the_same_one_wins_every_time() {
+        let colours: Vec<Srgb> = (0..16u8).map(|i| Srgb::from_u8(i * 16, 0, 0)).collect();
+        for _ in 0..8 {
+            let (c, share) = dominant(colours.iter().copied()).unwrap();
+            assert_eq!(c.to_u8(), [240, 0, 0]);
+            assert_eq!(share, 1.0 / 16.0);
+            let (c, _) = dominant(colours.iter().rev().copied()).unwrap();
+            assert_eq!(c.to_u8(), [240, 0, 0]);
+        }
+    }
 }
