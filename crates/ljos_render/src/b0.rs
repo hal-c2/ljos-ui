@@ -59,6 +59,7 @@ use vello_cpu::kurbo::{Affine, PathEl, Point, Rect, Vec2};
 
 use crate::b0_shape::{ShapeCache, ShapeCmd, ShapeSeg};
 use crate::backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RgbaImage};
+use crate::compose::bbox_of;
 use crate::display_list::{
     Decorations, DisplayList, DisplayListId, DrawOp, GlyphRun, LinearGradient, Paint, PathStyle,
     TextAlign, fill_area,
@@ -459,9 +460,47 @@ struct GlyphSeg {
 struct GlyphMesh {
     generation: u64,
     clip: ERect,
-    /// No glyph was left out for being far from the clip rectangle.
-    whole: bool,
+    /// Where the glyph origins are, when none was left out for being far
+    /// from the clip rectangle.
+    span: Option<GlyphSpan>,
     mesh: Arc<Mesh>,
+}
+
+/// The device pixels the glyph origins of upright text span, the snapped
+/// rows of them: what [`place_glyphs`] tests each against the clip. A move
+/// by whole pixels moves each by as much ([`glyph_shift`]), so the outermost
+/// tell a moved run's test without its glyphs.
+#[derive(Clone, Copy, Debug)]
+struct GlyphSpan {
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+}
+
+impl GlyphSpan {
+    const EMPTY: Self = Self {
+        x0: f64::INFINITY,
+        x1: f64::NEG_INFINITY,
+        y0: f64::INFINITY,
+        y1: f64::NEG_INFINITY,
+    };
+
+    fn add(&mut self, x: f64, y: f64) {
+        self.x0 = self.x0.min(x);
+        self.x1 = self.x1.max(x);
+        self.y0 = self.y0.min(y);
+        self.y1 = self.y1.max(y);
+    }
+
+    fn moved(self, [dx, dy]: [f64; 2]) -> Self {
+        Self {
+            x0: self.x0 + dx,
+            x1: self.x1 + dx,
+            y0: self.y0 + dy,
+            y1: self.y1 + dy,
+        }
+    }
 }
 
 impl GlyphSeg {
@@ -484,19 +523,20 @@ enum Placement {
 
 /// Visit every glyph of `seg` that can touch `clip`, with its atlas key, the
 /// device size it is filled at and its place. Both the atlas pass and the mesh
-/// pass go through here, so they always agree on the keys. Whether it was
-/// [`places_all`]: upright text none of which was left out.
+/// pass go through here, so they always agree on the keys. The span of the
+/// glyphs of upright text none of which was left out, which is what a moved
+/// run is tested by ([`places_all`]).
 fn place_glyphs(
     seg: &GlyphSeg,
     ppp: f32,
     clip: ERect,
     mut f: impl FnMut(GlyphKey, f64, Placement),
-) -> bool {
+) -> Option<GlyphSpan> {
     let run = &*seg.cmd.run;
     let origin = seg.cmd.origin;
-    let screen_bounds = erect(seg.to_screen.transform_rect_bbox(run.bounds + origin));
+    let screen_bounds = erect(bbox_of(seg.to_screen, run.bounds + origin));
     if !screen_bounds.intersects(clip) {
-        return false;
+        return None;
     }
     let ppp = f64::from(ppp);
     let to_device = Affine::scale(ppp) * seg.to_screen;
@@ -510,6 +550,7 @@ fn place_glyphs(
         let (cx0, cx1) = (f64::from(clip.min.x) * ppp, f64::from(clip.max.x) * ppp);
         let (cy0, cy1) = (f64::from(clip.min.y) * ppp, f64::from(clip.max.y) * ppp);
         let mut all = true;
+        let mut span = GlyphSpan::EMPTY;
         for g in &run.glyphs {
             let x = a * (f64::from(g.x) + origin.x) + e;
             let y = (d * (f64::from(g.y) + origin.y) + ty + dy).round();
@@ -517,6 +558,7 @@ fn place_glyphs(
                 all = false;
                 continue;
             }
+            span.add(x, y);
             let q = (x * BINS as f64).round() as i64;
             let (key, filled) = GlyphKey::new(run, g.id, size, q.rem_euclid(BINS));
             f(
@@ -528,11 +570,11 @@ fn place_glyphs(
                 },
             );
         }
-        all
+        all.then_some(span)
     } else {
         let scale = to_device.determinant().abs().sqrt();
         if scale <= 0.0 {
-            return false;
+            return None;
         }
         let size = f64::from(run.font_size) * scale;
         for g in &run.glyphs {
@@ -545,42 +587,41 @@ fn place_glyphs(
                 Placement::Free(seg.to_screen * Affine::translate(at) * Affine::scale(px_to_local)),
             );
         }
-        false
+        None
     }
 }
 
-/// Whether [`place_glyphs`] visits every glyph of `seg` in `clip`: upright
-/// text that is all near the clip rectangle. The same arithmetic, without
-/// the keys.
-fn places_all(seg: &GlyphSeg, ppp: f32, clip: ERect) -> bool {
+/// Whether [`place_glyphs`] visits every glyph of `seg` in `clip`, when
+/// they span `span` on the device: the test it makes of each glyph, made of
+/// the outermost. `seg` is upright, as it was when `span` was taken.
+fn places_all(seg: &GlyphSeg, span: GlyphSpan, ppp: f32, clip: ERect) -> bool {
     let run = &*seg.cmd.run;
     let origin = seg.cmd.origin;
-    let screen_bounds = erect(seg.to_screen.transform_rect_bbox(run.bounds + origin));
+    let screen_bounds = erect(bbox_of(seg.to_screen, run.bounds + origin));
     if !screen_bounds.intersects(clip) {
         return false;
     }
     let ppp = f64::from(ppp);
-    let to_device = Affine::scale(ppp) * seg.to_screen;
-    let [a, _, _, d, e, ty] = to_device.as_coeffs();
-    if !(is_upright(to_device) && (a - d).abs() < 1e-6 * a.abs().max(1.0)) {
-        return false;
-    }
-    let size = f64::from(run.font_size) * a;
-    let dy = baseline_snap(to_device, f64::from(run.baseline) + origin.y);
-    let reach = size * 2.0 + 2.0;
+    let a = (Affine::scale(ppp) * seg.to_screen).as_coeffs()[0];
+    let reach = f64::from(run.font_size) * a * 2.0 + 2.0;
     let (cx0, cx1) = (f64::from(clip.min.x) * ppp, f64::from(clip.max.x) * ppp);
     let (cy0, cy1) = (f64::from(clip.min.y) * ppp, f64::from(clip.max.y) * ppp);
-    run.glyphs.iter().all(|g| {
-        let x = a * (f64::from(g.x) + origin.x) + e;
-        let y = (d * (f64::from(g.y) + origin.y) + ty + dy).round();
-        !(x + reach < cx0 || x - reach > cx1 || y + reach < cy0 || y - reach > cy1)
-    })
+    !(span.x0 + reach < cx0
+        || span.x1 - reach > cx1
+        || span.y0 + reach < cy0
+        || span.y1 - reach > cy1)
 }
 
-/// How far, in points, every glyph of `new` is placed from where it is in
-/// `old`, the same run under another transform: `None` unless that is whole
-/// device pixels for each glyph, so each keeps its atlas key and bin.
-fn glyph_shift(cmd: &GlyphsCmd, from: Affine, to: Affine, ppp: f32) -> Option<egui::Vec2> {
+/// How far, in points and in device pixels, every glyph of `new` is placed
+/// from where it is in `old`, the same run under another transform: `None`
+/// unless that is whole device pixels for each glyph, so each keeps its
+/// atlas key and bin.
+fn glyph_shift(
+    cmd: &GlyphsCmd,
+    from: Affine,
+    to: Affine,
+    ppp: f32,
+) -> Option<(egui::Vec2, [f64; 2])> {
     if cmd.decorations.bars().next().is_some() {
         return None;
     }
@@ -603,7 +644,7 @@ fn glyph_shift(cmd: &GlyphsCmd, from: Affine, to: Affine, ppp: f32) -> Option<eg
     // move of every glyph.
     let baseline = d * (f64::from(cmd.run.baseline) + cmd.origin.y);
     let dy = (baseline + f1).round() - (baseline + f0).round();
-    Some(egui::vec2((dx / ppp) as f32, (dy / ppp) as f32))
+    Some((egui::vec2((dx / ppp) as f32, (dy / ppp) as f32), [dx, dy]))
 }
 
 /// A node drawn again under a transform that only moved it: a run whose
@@ -614,13 +655,14 @@ fn carry_glyphs(old: &[WorldSeg], new: &mut [WorldSeg], clip: ERect, ppp: f32) {
         let (WorldSeg::Glyphs(o), WorldSeg::Glyphs(n)) = (o, n) else {
             continue;
         };
-        let Some(m) = o.mesh.as_ref().filter(|m| m.whole) else {
+        let Some((m, span)) = o.mesh.as_ref().and_then(|m| Some((m, m.span?))) else {
             continue;
         };
-        let Some(by) = glyph_shift(&n.cmd, o.to_screen, n.to_screen, ppp) else {
+        let Some((by, px)) = glyph_shift(&n.cmd, o.to_screen, n.to_screen, ppp) else {
             continue;
         };
-        if !places_all(n, ppp, clip) {
+        let span = span.moved(px);
+        if !places_all(n, span, ppp, clip) {
             continue;
         }
         let mut mesh = Mesh::clone(&m.mesh);
@@ -628,7 +670,7 @@ fn carry_glyphs(old: &[WorldSeg], new: &mut [WorldSeg], clip: ERect, ppp: f32) {
         n.mesh = Some(GlyphMesh {
             generation: m.generation,
             clip,
-            whole: true,
+            span: Some(span),
             mesh: Arc::new(mesh),
         });
     }
@@ -654,15 +696,17 @@ fn move_segs(segs: &mut [WorldSeg], by: Vec2, to_screen: Affine, clip: ERect, pp
             WorldSeg::Text { rect, .. } => *rect = *rect + by,
             WorldSeg::Glyphs(g) => {
                 let from = std::mem::replace(&mut g.to_screen, to_screen);
-                let mesh = g.mesh.take().filter(|m| m.whole);
+                let mesh = g.mesh.take();
                 // Only a whole-pixel move keeps each glyph's atlas key; any
                 // other is built from the atlas when it is drawn.
                 if let Some(mut m) = mesh
-                    && let Some(by) = glyph_shift(&g.cmd, from, to_screen, ppp)
-                    && places_all(g, ppp, clip)
+                    && let Some(span) = m.span
+                    && let Some((by, px)) = glyph_shift(&g.cmd, from, to_screen, ppp)
+                    && places_all(g, span.moved(px), ppp, clip)
                 {
                     Arc::make_mut(&mut m.mesh).translate(by);
                     m.clip = clip;
+                    m.span = Some(span.moved(px));
                     g.mesh = Some(m);
                 }
             }
@@ -710,7 +754,7 @@ impl AtlasView {
 }
 
 /// Quads for the glyphs of `seg` that `slot` finds in the atlas, and its
-/// bars, with whether it [`places_all`]. `slot` is given each glyph's key
+/// bars, with the span [`place_glyphs`] gives. `slot` is given each glyph's key
 /// and the device size it is filled at, so the pass that fills the atlas
 /// builds the mesh too and makes and looks up each key once.
 fn glyph_mesh(
@@ -719,7 +763,7 @@ fn glyph_mesh(
     ppp: f32,
     clip: ERect,
     mut slot: impl FnMut(&GlyphKey, f64) -> Option<Slot>,
-) -> (Mesh, bool) {
+) -> (Mesh, Option<GlyphSpan>) {
     let mut mesh = Mesh::with_texture(atlas.texture);
     let quads = seg.cmd.run.glyphs.len() + 2;
     mesh.vertices.reserve(quads * 4);
@@ -727,7 +771,7 @@ fn glyph_mesh(
     let color = color32(seg.cmd.color.with_opacity(seg.opacity));
     let side = atlas.side;
     let inv_ppp = 1.0 / f64::from(ppp);
-    let whole = place_glyphs(seg, ppp, clip, |key, size, placement| {
+    let span = place_glyphs(seg, ppp, clip, |key, size, placement| {
         let Some(Slot {
             x,
             y,
@@ -779,7 +823,7 @@ fn glyph_mesh(
         };
         push_quad(&mut mesh, corners, [atlas.white_uv; 4], color);
     }
-    (mesh, whole)
+    (mesh, span)
 }
 
 #[derive(Clone)]
@@ -1721,13 +1765,13 @@ impl EpaintBackend {
                         });
                         continue;
                     };
-                    let (mesh, whole) = glyph_mesh(g, view, ppp, *clip, ensure);
+                    let (mesh, span) = glyph_mesh(g, view, ppp, *clip, ensure);
                     if self.atlas.generation() == generation {
                         self.glyph_meshes_built += 1;
                         g.mesh = Some(GlyphMesh {
                             generation,
                             clip: *clip,
-                            whole,
+                            span,
                             mesh: Arc::new(mesh),
                         });
                     }
@@ -2220,16 +2264,18 @@ impl RenderBackend for EpaintBackend {
                         let generation = self.atlas.generation();
                         if g.mesh_for(generation, clip).is_none() {
                             self.glyph_meshes_built += 1;
-                            let (mesh, whole) = match AtlasView::of(&self.atlas) {
+                            // The atlas was uploaded before this, so it has
+                            // its texture.
+                            let (mesh, span) = match AtlasView::of(&self.atlas) {
                                 Some(view) => glyph_mesh(g, view, self.ppp, clip, |key, _| {
                                     self.atlas.slot(key)
                                 }),
-                                None => (Mesh::default(), places_all(g, self.ppp, clip)),
+                                None => (Mesh::default(), None),
                             };
                             g.mesh = Some(GlyphMesh {
                                 generation,
                                 clip,
-                                whole,
+                                span,
                                 mesh: Arc::new(mesh),
                             });
                         }
@@ -2347,7 +2393,69 @@ impl RenderBackend for EpaintBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{all_near_whole, ceil, near_whole};
+    use std::sync::Arc;
+
+    use egui::{Rect as ERect, pos2};
+    use vello_cpu::kurbo::{Affine, Rect, Vec2};
+    use vello_cpu::peniko::{Blob, FontData};
+
+    use super::{
+        GlyphSeg, GlyphsCmd, all_near_whole, ceil, glyph_shift, near_whole, place_glyphs,
+        places_all,
+    };
+    use crate::display_list::{Decorations, GlyphRun, PositionedGlyph};
+    use crate::rgba::Rgba;
+
+    /// A run moved by whole pixels is told near its clip from its span, as
+    /// placing each of its glyphs again tells it.
+    #[test]
+    fn a_moved_run_is_near_its_clip_as_its_glyphs_are() {
+        let font = FontData::new(Blob::new(Arc::new([0u8; 16])), 0);
+        let glyphs = (0..12)
+            .map(|i| PositionedGlyph {
+                id: i,
+                x: i as f32 * 7.5,
+                y: 12.0 + (i % 3) as f32 * 0.4,
+            })
+            .collect();
+        let bounds = Rect::new(-13.0, -8.0, 103.0, 26.0);
+        let run = Arc::new(GlyphRun::new(font, 13.0, glyphs, 12.0, bounds));
+        let seg = |to_screen| GlyphSeg {
+            cmd: GlyphsCmd {
+                run: Arc::clone(&run),
+                origin: Vec2::new(3.0, 1.25),
+                color: Rgba::BLACK,
+                decorations: Decorations::default(),
+            },
+            to_screen,
+            opacity: 1.0,
+            mesh: None,
+        };
+        let clip = ERect::from_min_max(pos2(40.0, 30.0), pos2(160.0, 90.0));
+        let (mut near, mut far) = (0, 0);
+        for ppp in [1.0, 1.5, 2.0] {
+            let from = Affine::translate((0.0, 0.6));
+            let span = place_glyphs(&seg(from), ppp, ERect::EVERYTHING, |_, _, _| {})
+                .expect("upright, and nothing is far from everything");
+            for k in (-90..150).step_by(7) {
+                for j in (-200..300).step_by(9) {
+                    let by = (f64::from(k) / f64::from(ppp), f64::from(j) * 0.37);
+                    let to = Affine::translate(by) * from;
+                    let Some((_, px)) = glyph_shift(&seg(to).cmd, from, to, ppp) else {
+                        continue;
+                    };
+                    let placed = place_glyphs(&seg(to), ppp, clip, |_, _, _| {}).is_some();
+                    assert_eq!(
+                        places_all(&seg(to), span.moved(px), ppp, clip),
+                        placed,
+                        "ppp {ppp}, moved by {by:?}"
+                    );
+                    if placed { near += 1 } else { far += 1 }
+                }
+            }
+        }
+        assert!(near > 100 && far > 100, "{near} near, {far} far");
+    }
 
     #[test]
     fn the_rounding_without_libm_says_what_libm_does() {
