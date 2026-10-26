@@ -559,6 +559,20 @@ pub fn tokens() -> Vec<Token> {
 /// The scale an entrance starts from (and an exit ends at), with a fade.
 pub const ENTER_SCALE: f32 = lim::ENTER_SCALE_RECOMMENDED;
 
+/// The scale a control is pressed down to: enough to be felt under a
+/// pointer, too little to move its neighbours' edges by more than a pixel
+/// or two at control sizes.
+pub const PRESS_SCALE: f32 = 0.97;
+
+/// The token a press follows: met all the time, on a small thing, and an
+/// answer to the user, so it eases out.
+pub fn press() -> Token {
+    Token {
+        easing: EASE_OUT,
+        ..token(Kind::Move, Size::Small, Frequency::Frequent)
+    }
+}
+
 impl Token {
     /// A QML animation that does this, with literal numbers, for a file
     /// that does not use the module: `NumberAnimation { … }`, or a

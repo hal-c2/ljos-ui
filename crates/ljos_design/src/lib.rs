@@ -14,6 +14,7 @@ use serde::Serialize;
 
 pub mod color;
 pub mod limits;
+pub mod module;
 pub mod motion;
 pub mod palette;
 pub mod scale;
