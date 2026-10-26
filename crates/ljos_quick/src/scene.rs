@@ -46,7 +46,7 @@ use ljos_engine::{
 };
 use ljos_render::{ClipSpec, FrameSnapshot, ImageHandle, NodeId, RenderTree, hit_test, kurbo};
 use ljos_runtime::{FrameBudget, Scheduler, Time};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use slotmap::SecondaryMap;
 use smallvec::SmallVec;
 
@@ -318,12 +318,16 @@ impl Geom {
     }
 }
 
+/// What an item is drawn from. Every item it paints keeps one in its
+/// record, so the rare large kinds are held behind a pointer and the
+/// common ones (a rectangle) set its size. A text's inputs are shared
+/// with its marks ([`Marks::text`]), not copied into each.
 #[derive(Clone, Debug)]
 enum Paint {
     Rect(RectanglePaint),
-    Text(TextInputs),
+    Text(Rc<TextInputs>),
     Image(crate::image::ImagePaint),
-    Editor(crate::text_input::EditorPaint),
+    Editor(Box<crate::text_input::EditorPaint>),
     Shape(crate::shapes::ShapePaint),
     Canvas(crate::canvas::CanvasPicture),
     Effect(crate::effects::EffectPaint),
@@ -361,12 +365,11 @@ impl Dirty {
 /// the frame takes it. A value is read only while its mark is set.
 struct Marks {
     dirty: Dirty,
-    list: crate::transform::Projective,
-    content: Option<Paint>,
     /// What a Text's polish effect last read of it: its paint and its
     /// polish take it from here, so a text's inputs are read once a change
-    /// and not by each.
-    text: Option<TextInputs>,
+    /// and not by each. Shared with its paint, and only a Text has one, so
+    /// the marks of every other item do not hold room for it.
+    text: Option<Rc<TextInputs>>,
     /// A Text with a content effect: its polish effect gives it its paint.
     text_shown: bool,
     inherit: Inherit,
@@ -376,8 +379,6 @@ impl Marks {
     fn new() -> Marks {
         Marks {
             dirty: Dirty::empty(),
-            list: crate::transform::Projective::IDENTITY,
-            content: None,
             text: None,
             text_shown: false,
             inherit: Inherit::default(),
@@ -391,6 +392,11 @@ struct Shared {
     /// One for each item the scene shows, made before its effects are, so
     /// a mark for anything else is nothing.
     marks: Records<Marks>,
+    /// What the marks `LIST` and `CONTENT` carry, beside the marks: few
+    /// items have either at once, and each is large. Kept only for an item
+    /// with marks, and taken with the mark.
+    lists: FxHashMap<ObjectId, crate::transform::Projective>,
+    contents: FxHashMap<ObjectId, Paint>,
     /// The items with each mark set, in the order marked. An item joins on
     /// the edge from clear to set, so it is in each queue once: a set per
     /// mark cost each item marked a hash insert.
@@ -453,6 +459,22 @@ impl Shared {
         Some(f(m))
     }
 
+    /// Marks `obj` to be drawn again from `p`.
+    fn paint(&mut self, obj: ObjectId, p: Paint) {
+        if self.marks.contains(obj) {
+            self.contents.insert(obj, p);
+            self.set(obj, Dirty::CONTENT, |_| ());
+        }
+    }
+
+    /// Marks `obj`'s `transform` list as making `list`.
+    fn list(&mut self, obj: ObjectId, list: crate::transform::Projective) {
+        if self.marks.contains(obj) {
+            self.lists.insert(obj, list);
+            self.set(obj, Dirty::LIST, |_| ());
+        }
+    }
+
     fn any(&self, what: Dirty) -> bool {
         !self.queued[what.slot()].is_empty()
     }
@@ -476,6 +498,12 @@ impl Shared {
         // Most items that go were drawn and have no mark left.
         for what in m.dirty.iter() {
             self.queued[what.slot()].retain(|o| *o != obj);
+        }
+        if m.dirty.contains(Dirty::LIST) {
+            self.lists.remove(&obj);
+        }
+        if m.dirty.contains(Dirty::CONTENT) {
+            self.contents.remove(&obj);
         }
         Some(m)
     }
@@ -680,8 +708,9 @@ struct Record {
     geom: Option<Geom>,
     place: Place,
     /// The map of the item's `transform` list, and the effect that follows
-    /// it: made only for an item whose list has entries.
-    list: crate::transform::Projective,
+    /// it: made only for an item whose list has entries. Boxed, as few
+    /// items have one: the identity where it is `None`.
+    list: Option<Box<crate::transform::Projective>>,
     list_effect: Option<GraphNode>,
     /// The [`QuickScene::places_read`] that last read its place.
     place_read: u64,
@@ -689,6 +718,24 @@ struct Record {
     /// is the Flickable's child from when it is made. No other item asks
     /// whether its Flickable moves.
     may_scroll: bool,
+}
+
+impl Record {
+    fn list(&self) -> &crate::transform::Projective {
+        self.list
+            .as_deref()
+            .unwrap_or(&crate::transform::Projective::IDENTITY)
+    }
+
+    /// Keeps the box an item's list was given, as a list that moves (a
+    /// `Rotation`'s angle) is set every frame.
+    fn set_list(&mut self, list: crate::transform::Projective) {
+        match &mut self.list {
+            Some(had) => **had = list,
+            None if list == crate::transform::Projective::IDENTITY => {}
+            None => self.list = Some(Box::new(list)),
+        }
+    }
 }
 
 /// Where an item is in its parent: `x` and `y`, and whether it is drawn
@@ -1487,8 +1534,8 @@ impl QuickScene {
                     Kind::Column => positioners::layout(engine, obj, Axis::Vertical),
                     Kind::Managed => crate::layouts::polish(engine, obj),
                     Kind::Text => {
-                        let read =
-                            (self.shared.borrow().marks.get(obj)).and_then(|m| m.text.clone());
+                        let read = (self.shared.borrow().marks.get(obj))
+                            .and_then(|m| m.text.as_deref().cloned());
                         text::polish(engine, obj, &self.text, read)
                     }
                     // Only after the fonts changed (`refresh_text`).
@@ -1573,7 +1620,7 @@ impl QuickScene {
                 size: kurbo::Size::ZERO,
                 geom: None,
                 place: (0.0, 0.0, false),
-                list: crate::transform::Projective::IDENTITY,
+                list: None,
                 list_effect: None,
                 place_read: 0,
                 may_scroll,
@@ -1802,7 +1849,7 @@ impl QuickScene {
                 if let Some(g) = &e.geom {
                     self.tree.set_local(
                         e.node,
-                        local_transform(e.place, g, &e.list, self.scale_factor),
+                        local_transform(e.place, g, e.list(), self.scale_factor),
                     );
                 }
                 self.told_moved.push(obj);
@@ -1818,9 +1865,10 @@ impl QuickScene {
             let mut s = self.shared.borrow_mut();
             let mut moved = Vec::with_capacity(self.told_moved.len());
             // Before the places, so an item that also moved is told once.
-            for (obj, list) in s.take(Dirty::LIST, |m| m.list) {
-                if let Some(e) = self.items.get_mut(obj) {
-                    e.list = list;
+            for (obj, ()) in s.take(Dirty::LIST, |_| ()) {
+                let list = s.lists.remove(&obj);
+                if let (Some(e), Some(list)) = (self.items.get_mut(obj), list) {
+                    e.set_list(list);
                     if !s.is_set(obj, Dirty::GEOM) {
                         moved.push(obj);
                     }
@@ -1868,7 +1916,7 @@ impl QuickScene {
             let size = kurbo::Size::new(g.w.max(0.0), g.h.max(0.0));
             self.tree.set_local(
                 node,
-                local_transform(e.place, &g, &e.list, self.scale_factor),
+                local_transform(e.place, &g, e.list(), self.scale_factor),
             );
             if size != e.size {
                 e.size = size;
@@ -1901,7 +1949,7 @@ impl QuickScene {
             {
                 self.tree.set_local(
                     e.node,
-                    local_transform(e.place, g, &e.list, self.scale_factor),
+                    local_transform(e.place, g, e.list(), self.scale_factor),
                 );
             }
         }
@@ -1928,13 +1976,20 @@ impl QuickScene {
             }
             // The effect ran as it was made, unless a batch holds it back:
             // this frame shows the list either way.
-            let ran = self.shared.borrow_mut().clear(obj, Dirty::LIST, |m| m.list);
+            let ran = {
+                let mut s = self.shared.borrow_mut();
+                s.clear(obj, Dirty::LIST, |_| ())
+                    .and_then(|()| s.lists.remove(&obj))
+            };
             ran.unwrap_or_else(|| engine.untrack(|| crate::transform::list_map(engine, obj)))
         } else {
-            self.shared.borrow_mut().clear(obj, Dirty::LIST, |_| ());
+            let mut s = self.shared.borrow_mut();
+            if s.clear(obj, Dirty::LIST, |_| ()).is_some() {
+                s.lists.remove(&obj);
+            }
             crate::transform::Projective::IDENTITY
         };
-        e.list = list;
+        e.set_list(list);
     }
 
     /// Tells a journaling engine which items step 8c redraws.
@@ -1952,11 +2007,13 @@ impl QuickScene {
     /// Step 8c: rebuild the display lists of items whose paint inputs or
     /// size changed.
     fn apply_content(&mut self) {
-        let mut content: Vec<(ObjectId, Paint)> = (self.shared.borrow_mut())
-            .take(Dirty::CONTENT, |m| m.content.take())
-            .into_iter()
-            .filter_map(|(o, p)| Some((o, p?)))
-            .collect();
+        let mut content: Vec<(ObjectId, Paint)> = {
+            let mut s = self.shared.borrow_mut();
+            let taken = s.take(Dirty::CONTENT, |_| ());
+            (taken.into_iter())
+                .filter_map(|(o, ())| Some((o, s.contents.remove(&o)?)))
+                .collect()
+        };
         content.sort_unstable_by_key(|c| c.0);
         let mut sources: FxHashSet<ObjectId> = FxHashSet::default();
         let mut shaders = false;
@@ -3205,7 +3262,7 @@ fn list_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
         return;
     }
     let list = crate::transform::list_map(e, obj);
-    mark(shared, |s| s.set(obj, Dirty::LIST, |m| m.list = list));
+    mark(shared, |s| s.list(obj, list));
 }
 
 fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
@@ -3245,7 +3302,7 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
     let measured = text::completion_measured(e, obj, &t);
     let (same, same_layout, shown) = match shared.borrow().marks.get(obj) {
         Some(m) => match &m.text {
-            Some(was) => (*was == t, was.lays_out_as(&t), m.text_shown),
+            Some(was) => (**was == t, was.lays_out_as(&t), m.text_shown),
             None => (false, false, m.text_shown),
         },
         // Not shown by the scene.
@@ -3269,7 +3326,8 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
     if polish && (blank || (!shown && !e.untrack(|| e.read(obj, Item::VISIBLE.index)).to_boolean()))
     {
         let lazy = t.clone();
-        let keep = |s: &mut Shared, t: TextInputs| {
+        let t = Rc::new(t);
+        let keep = |s: &mut Shared, t: Rc<TextInputs>| {
             if let Some(m) = s.marks.get_mut(obj) {
                 m.text = Some(t);
             }
@@ -3277,8 +3335,7 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
         };
         if shown {
             mark(shared, |s| {
-                let paint = Paint::Text(t.clone());
-                s.set(obj, Dirty::CONTENT, |m| m.content = Some(paint));
+                s.paint(obj, Paint::Text(Rc::clone(&t)));
                 keep(s, t);
             });
         } else {
@@ -3290,6 +3347,7 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
         }
         return;
     }
+    let t = Rc::new(t);
     if !polish && !shown {
         // Nothing for a frame to do.
         if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {
@@ -3299,8 +3357,7 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
     }
     mark(shared, |s| {
         if shown {
-            let paint = Paint::Text(t.clone());
-            s.set(obj, Dirty::CONTENT, |m| m.content = Some(paint));
+            s.paint(obj, Paint::Text(Rc::clone(&t)));
         }
         if let Some(m) = s.marks.get_mut(obj) {
             m.text = Some(t);
@@ -3344,10 +3401,10 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
                 m.text_shown = true;
                 m.text.clone()
             });
-            Paint::Text(read.unwrap_or_else(|| TextInputs::read(e, obj)))
+            Paint::Text(read.unwrap_or_else(|| Rc::new(TextInputs::read(e, obj))))
         }
         Kind::Image => Paint::Image(crate::image::ImagePaint::read_on_screen(e, obj)),
-        Kind::Editor => Paint::Editor(crate::text_input::EditorPaint::read(e, obj)),
+        Kind::Editor => Paint::Editor(Box::new(crate::text_input::EditorPaint::read(e, obj))),
         Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),
         Kind::Canvas => Paint::Canvas(crate::canvas::CanvasPicture::read(e, obj)),
         Kind::Effect => Paint::Effect(crate::effects::EffectPaint::read(e, obj)),
@@ -3362,9 +3419,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         },
         _ => return,
     };
-    mark(shared, |s| {
-        s.set(obj, Dirty::CONTENT, |m| m.content = Some(p))
-    });
+    mark(shared, |s| s.paint(obj, p));
 }
 
 /// `visible` and `enabled` read false under a hidden or disabled parent
@@ -3755,4 +3810,20 @@ fn owned_by(engine: &Engine, obj: ObjectId, root: ObjectId) -> bool {
         at = engine.owner(o);
     }
     false
+}
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod sizes {
+    /// Every item the scene shows has marks and a record, each in a list
+    /// of its own, so what they hold inline every item pays for. What is
+    /// large and that few items have is held apart: a text's inputs, the
+    /// content and list a mark carries, the map of a `transform` list and
+    /// a text field's paint. Each was in the marks or the record, which
+    /// were 688 and 576 bytes (B29).
+    #[test]
+    fn an_items_marks_and_record_stay_small() {
+        assert_eq!(size_of::<super::Marks>(), 56);
+        assert_eq!(size_of::<super::Record>(), 328);
+        assert_eq!(size_of::<super::Paint>(), 104);
+    }
 }

@@ -162,6 +162,11 @@ const WRAPPED: &str = r##"Text {
       }"##;
 
 fn listview_delegates(text: &str) -> (Budget, usize) {
+    listview_delegates_to(text, 1000.0)
+}
+
+/// What growing the window to `height` made: the view's new rows.
+fn listview_delegates_to(text: &str, height: f64) -> (Budget, usize) {
     let e = engine();
     let root = load(
         &e,
@@ -197,18 +202,24 @@ Rectangle {{
     // By index: the step looks nothing up itself, so what is counted is
     // what the new delegates cost.
     let b = spent(&e, &mut s, 2000, || {
-        e.set(root, Item::HEIGHT, 1000.0).unwrap();
+        e.set(root, Item::HEIGHT, height).unwrap();
     });
     (b, shown(&e, view) - before)
 }
 
 /// An Item holding a Text, made by `Component.createObject` ten at a time.
 fn plain_items() -> (Budget, usize) {
+    plain_items_times(1)
+}
+
+fn plain_items_times(times: usize) -> (Budget, usize) {
     let (e, mut s, root, _) = plain_scene();
     let before = e.children(root).len();
     let make = e.method_index(root, "make").unwrap();
     let b = spent(&e, &mut s, 2000, || {
-        e.invoke(root, make, &[]).unwrap();
+        for _ in 0..times {
+            e.invoke(root, make, &[]).unwrap();
+        }
     });
     (b, e.children(root).len() - before)
 }
@@ -330,7 +341,11 @@ fn ten_listview_delegates() {
     // What an item inherits, `visible` and `enabled`, is passed down by
     // its parent's change hooks, where each item had an effect that read
     // its parent's: an effect, a value and two allocations fewer a
-    // delegate (B29). 26.2 kB kept a delegate.
+    // delegate (B29). A text's inputs are shared between its marks and its
+    // paint, one box where both held a copy (one more a delegate), and the
+    // side maps of what marks carry grew (four more). 26.5 kB kept a
+    // delegate: the step that grew those maps pays for their room
+    // ([`bytes_a_thousand_instances_keep`]).
     assert_eq!(
         b,
         Budget {
@@ -347,8 +362,8 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1302,
-            bytes: 262295,
+            allocations: 1319,
+            bytes: 265255,
         }
     );
 }
@@ -375,7 +390,8 @@ fn ten_wrapped_listview_delegates() {
     // scroll has warmed the font, TEXT5).
     // What it inherits passed down by its parent's change hooks, where it
     // had an effect, makes 30 fewer, 20 fewer values and 20 fewer effects
-    // (B29). 30.5 kB kept a delegate.
+    // (B29), and a text's inputs in one box its marks and paint share, 14
+    // more. 30.8 kB kept a delegate.
     assert_eq!(
         b,
         Budget {
@@ -392,8 +408,8 @@ fn ten_wrapped_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1324,
-            bytes: 305097,
+            allocations: 1338,
+            bytes: 308057,
         }
     );
 }
@@ -415,8 +431,9 @@ fn ten_plain_items() {
     // an item's place and geometry, where it had an effect each, took
     // seventy-three more. B29 passes down what an item inherits from its
     // parent's change hooks, where each item had an effect reading it:
-    // twenty effects, twenty values and forty-seven allocations fewer.
-    // 22.0 kB kept an instance.
+    // twenty effects, twenty values and forty-seven allocations fewer,
+    // and shares a text's inputs between its marks and its paint in one
+    // box, thirteen more. 19.5 kB kept an instance.
     assert_eq!(
         b,
         Budget {
@@ -433,8 +450,8 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 786,
-            bytes: 219800,
+            allocations: 799,
+            bytes: 194600,
         }
     );
 }
@@ -450,7 +467,7 @@ fn ten_plain_items_torn_down() {
     // fewer an instance since B27: neither item is anchored, and has no
     // anchors effect to let go of; four fewer since B28, which keeps an
     // item's place and geometry as marks and not as two effects an item,
-    // and four fewer since B29, which has no inherit effect an item. 8.0 kB
+    // and four fewer since B29, which has no inherit effect an item. 8.3 kB
     // given back an instance; the rest of what one kept is room the next
     // ones use.
     assert_eq!(
@@ -460,7 +477,44 @@ fn ten_plain_items_torn_down() {
             scopes: 20,
             nodes: 130,
             allocations: 57,
-            freed: 80414,
+            freed: 83374,
+        }
+    );
+}
+
+/// Heap bytes an instance keeps, over a thousand: the pins of ten see
+/// the step in which a list or a map grew, where a thousand spread it as
+/// an application that makes many pays it.
+#[derive(Debug, PartialEq, Eq)]
+struct Kept {
+    one_line: i64,
+    wrapped: i64,
+    plain: i64,
+}
+
+#[test]
+fn bytes_a_thousand_instances_keep() {
+    let _alone = alone();
+    let each = |(b, made): (Budget, usize)| {
+        assert_eq!(made, 1000);
+        b.bytes / made as i64
+    };
+    // A row is 40 high, and the window was 600.
+    let kept = Kept {
+        one_line: each(listview_delegates_to(ONE_LINE, 40600.0)),
+        wrapped: each(listview_delegates_to(WRAPPED, 40600.0)),
+        plain: each(plain_items_times(100)),
+    };
+    // B29 holds what is large and rare apart from the marks and record
+    // every item has (688 and 576 bytes, now 56 and 328): 27.3, 29.3
+    // and 17.1 kB before. The rest is mostly the graph's nodes, the
+    // objects and the text's runs.
+    assert_eq!(
+        kept,
+        Kept {
+            one_line: 25801,
+            wrapped: 27842,
+            plain: 15893,
         }
     );
 }
