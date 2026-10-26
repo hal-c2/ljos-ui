@@ -220,7 +220,16 @@ impl ViewHost for Host {
                 if !st.grid.get() && first < line {
                     st.anchor.set((line + count, top));
                 }
-                if laid_out && current >= first as i64 {
+                // Rows that arrive in a model with none move no current
+                // row: there was none, whatever number it was given. One
+                // the view would choose itself is the first of them, and
+                // rows that come before it later move it (qml6).
+                if laid_out && rows == count as i64 {
+                    if current < 0 && !st.cleared.get() {
+                        st.auto_index.set(true);
+                        move_current_later(&st, 0);
+                    }
+                } else if laid_out && current >= first as i64 {
                     move_current_later(&st, current + count as i64);
                 }
                 let mut keys = Vec::new();
