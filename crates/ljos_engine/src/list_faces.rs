@@ -558,12 +558,17 @@ impl Engine {
         // (`Engine::face_copy`): entries of the list's type.
         let w = Rc::downgrade(&self.inner);
         let convert: HostFn = Rc::new(move |scope, args| {
-            let (Some(inner), [JsValue::String(elem), given, ..]) = (w.upgrade(), args) else {
+            let (Some(inner), [JsValue::String(elem), given, rest @ ..]) = (w.upgrade(), args)
+            else {
                 return Ok(JsValue::Undefined);
             };
             let engine = Engine::from_inner(inner);
             let elem = Atom::intern(elem);
             let (kind, of) = entry_kind(&elem);
+            // Asked for the type's zero, which fills what was never written.
+            if matches!(rest, [JsValue::Bool(true), ..]) {
+                return Ok(engine.to_js(&of.default_value()));
+            }
             let ty = TypeTag::List(Some(elem));
             Ok(match engine.js_to_value(scope, given.clone(), &ty) {
                 Value::List(items) => JsValue::Array(
@@ -603,26 +608,64 @@ pub(crate) const LISTS: &str = r##"
     "push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin",
   ]);
   const isIndex = (key) => typeof key === "string" && /^(0|[1-9]\d*)$/.test(key);
-  // A copy of a typed list in a var: an array whose additions are made
-  // entries of the list's type. A write to an index is not seen.
+  // A copy of a typed list in a var: an array whose every entry is one of
+  // the list's type, as one put into the list would be. It has no holes:
+  // an index past the end, a longer length or a delete make the type's zero.
   const convert = g.__ljos_listConvert;
-  const kinds = new Map();
-  g.__ljos_arrayMade = function (array, elem) {
-    let p = kinds.get(elem);
-    if (p === undefined) {
-      p = Object.create(proto);
-      const of = (items) => convert(elem, items);
-      const own = (name, f) => Object.defineProperty(p, name, { value: f, writable: true, configurable: true });
-      own("push", function (...items) { return proto.push.apply(this, of(items)); });
-      own("unshift", function (...items) { return proto.unshift.apply(this, of(items)); });
-      own("splice", function (start, count, ...items) {
-        return arguments.length < 3 ? proto.splice.apply(this, arguments)
-          : proto.splice.call(this, start, count, ...of(items));
-      });
-      own("fill", function (value, ...range) { return proto.fill.call(this, of([value])[0], ...range); });
-      kinds.set(elem, p);
-    }
-    Object.setPrototypeOf(array, p);
+  const zeros = new Map();
+  const zero = (elem) => {
+    if (!zeros.has(elem)) zeros.set(elem, convert(elem, [], true));
+    return zeros.get(elem);
+  };
+  g.__ljos_arrayMade = function (t, elem) {
+    const of = (items) => convert(elem, items);
+    const fillHoles = () => {
+      for (let i = 0; i < t.length; i++) if (!(i in t)) t[i] = zero(elem);
+    };
+    const methods = new Map();
+    let face;
+    const method = (name, f) => {
+      let m = methods.get(name);
+      if (m === undefined) {
+        // Run on the array itself, so that what is moved is not made again.
+        m = name === "push" || name === "unshift"
+          ? function (...items) { return f.apply(t, of(items)); }
+          : name === "splice"
+          ? function (start, count, ...items) {
+              const out = arguments.length < 3 ? f.apply(t, arguments) : f.call(t, start, count, ...of(items));
+              fillHoles();
+              return out;
+            }
+          : name === "fill"
+          ? function (value, ...range) { f.call(t, of([value])[0], ...range); fillHoles(); return face; }
+          : function (...args) {
+              const out = f.apply(t, args);
+              if (changing.has(name)) fillHoles();
+              return out === t ? face : out;
+            };
+        methods.set(name, m);
+      }
+      return m;
+    };
+    face = new Proxy(t, {
+      get(_, key) {
+        const v = t[key];
+        return typeof v === "function" && typeof key === "string" && key !== "constructor"
+          && proto[key] === v ? method(key, v) : v;
+      },
+      set(_, key, value) {
+        if (isIndex(key)) t[key] = of([value])[0];
+        else t[key] = value;
+        if (key === "length" || isIndex(key)) fillHoles();
+        return true;
+      },
+      deleteProperty(_, key) {
+        if (isIndex(key) && key in t) t[key] = zero(elem);
+        else delete t[key];
+        return true;
+      },
+    });
+    return face;
   };
   g.__ljos_list = function (object, prop) {
     const t = [];

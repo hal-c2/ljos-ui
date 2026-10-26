@@ -591,7 +591,7 @@ impl<'js> Scope<'js> {
                         .globals()
                         .get::<_, rquickjs::Function<'js>>("__ljos_arrayMade")
                 {
-                    made.call::<_, ()>((arr.clone(), kind))?;
+                    return made.call::<_, Value<'js>>((arr, kind));
                 }
                 Ok(arr.into_value())
             }
@@ -677,12 +677,12 @@ impl<'js> Scope<'js> {
             return Ok(items);
         }
         let v = self.restore(r)?;
-        let Some(arr) = v.as_array() else {
+        let Some((o, len)) = array_like(&v)? else {
             return Ok(Vec::new());
         };
-        let mut out = Vec::with_capacity(arr.len());
-        for item in arr.iter::<Value>() {
-            out.push(self.read_value_at(&item?, 1)?);
+        let mut out = Vec::with_capacity(len);
+        for i in 0..len {
+            out.push(self.read_value_at(&o.get::<_, Value>(i as u32)?, 1)?);
         }
         Ok(out)
     }
@@ -693,7 +693,7 @@ impl<'js> Scope<'js> {
             return Ok(len);
         }
         let v = self.restore(r)?;
-        Ok(v.as_array().map_or(0, Array::len))
+        Ok(array_like(&v)?.map_or(0, |(_, len)| len))
     }
 
     /// One entry of the array behind `r`, as [`Scope::array_items`] gives
@@ -703,13 +703,13 @@ impl<'js> Scope<'js> {
             return Ok(entry.unwrap_or(JsValue::Undefined));
         }
         let v = self.restore(r)?;
-        let Some(arr) = v.as_array() else {
+        let Some((o, len)) = array_like(&v)? else {
             return Ok(JsValue::Undefined);
         };
-        if index >= arr.len() {
+        if index >= len {
             return Ok(JsValue::Undefined);
         }
-        let item: Value = arr.get(index)?;
+        let item: Value = o.get(index as u32)?;
         self.read_value_at(&item, 1)
     }
 
@@ -1347,6 +1347,24 @@ impl<'js> Scope<'js> {
                 ));
             }
         })
+    }
+}
+
+/// The array behind `v`, an array's reference, and its length. A proxy
+/// standing for one (a host's kind of array: see [`JsRef::array_of_kind`])
+/// is read through its traps, as a script reads it: QuickJS does not say a
+/// proxy is an array here.
+fn array_like<'js>(v: &Value<'js>) -> rquickjs::Result<Option<(Object<'js>, usize)>> {
+    if let Some(arr) = v.as_array() {
+        let len = arr.len();
+        return Ok(Some((arr.clone().into_object(), len)));
+    }
+    match v.as_object() {
+        Some(o) if v.is_proxy() => {
+            let len: Value = o.get("length")?;
+            Ok(len.as_number().map(|len| (o.clone(), len as usize)))
+        }
+        _ => Ok(None),
     }
 }
 

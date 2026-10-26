@@ -356,6 +356,34 @@ Feature: A value a binding gives a property of another type
     When the method "add" of "root" is called
     Then the property "seen" of "root" is "string:a,string:2,string:0,string:,string:,string:true 6 3 string 1 1,2,NaN 1,2,0 1"
 
+  Scenario: A typed copy in a var makes what is written to an index an entry of its type
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<string> names: ["a", "b"]
+        property list<real> reals: [1, 2]
+        property list<int> ints: [1, 2]
+        property var held
+        property var hr
+        property var hi
+        property string seen
+        function show(a) { return Array.from(a, x => typeof x + ":" + x).join(",") }
+        function write() {
+          held = names; hr = reals; hi = ints
+          held[1] = 5; held[3] = true
+          hr[0] = "2"; hr[1] = undefined; hr[3] = "x"
+          hi[0] = 1.7; hi[1] = "9"
+          const one = show(held) + " " + show(hr) + " " + show(hi)
+          held.length = 5; delete held[0]
+          seen = [one, show(held), JSON.stringify(held).replace(/"/g, "'"), names.join(",")].join(";")
+        }
+      }
+      """
+    When the method "write" of "root" is called
+    Then the property "seen" of "root" is "string:a,string:5,string:,string:true number:2,number:NaN,number:0,number:NaN number:2,number:9;string:,string:5,string:,string:true,string:;['','5','','true',''];a,b"
+
   # Bucket result:none/none:call(number-plus-string).
   Scenario: An int parameter of a function drops what is after the point
     Given the QML:

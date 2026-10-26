@@ -153,9 +153,8 @@ impl JsRef {
 
     /// [`JsRef::array`], which once it is made in JS is handed with `kind`
     /// to the global function `__ljos_arrayMade(array, kind)`, if a host
-    /// defined one: an array that is the host's kind of array, still an
-    /// array, as a copy of a typed list is one that makes entries of its
-    /// type.
+    /// defined one, and is what that returns: the host's kind of array, as
+    /// a copy of a typed list is one that makes entries of its type.
     pub fn array_of_kind(items: Vec<JsValue>, kind: &str) -> Self {
         Self(Arc::new(RefSlot {
             live: OnceLock::new(),
