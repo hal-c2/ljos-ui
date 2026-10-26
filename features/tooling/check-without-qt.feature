@@ -28,7 +28,6 @@ Feature: Checking files on a machine that has no Qt
         import QtQuick
         Rectangle {
           width: 200; height: 100
-          color: "steelblue"
           border.width: 2
           Text {
             anchors.centerIn: parent
@@ -205,8 +204,10 @@ Feature: Checking files on a machine that has no Qt
       When the files are checked
       Then the check reports:
         """
-        Main.qml:3:11: warning: `MouseArea` reacts to clicks but neither it nor its parent has `Accessible.name`, so assistive technology cannot tell what it does; set `Accessible.role` and `Accessible.name`, or `Accessible.ignored: true` if it is only decoration [a11y-unnamed-interactive]
-        1 files, 0 errors, 1 warnings
+        Main.qml:3:11: error: `MouseArea` reacts to clicks but neither it nor its parent has `Accessible.name`, so assistive technology cannot tell what it does; set `Accessible.role` and `Accessible.name`, or `Accessible.ignored: true` if it is only decoration (docs/design/accessibility.md#a11y-unnamed-interactive) [a11y-unnamed-interactive]
+        Main.qml:3:45: warning: `onClicked` on a `MouseArea` in a plain `Rectangle` is the only way to do this, and a keyboard cannot reach it; use a control (`Button`, `ItemDelegate`), or give the item `activeFocusOnTab`, a `Keys` handler and `Accessible.onPressAction` (docs/design/interaction.md#focus-pointer-only) [focus-pointer-only]
+        1 files, 1 errors, 1 warnings
+        ljos: 1 errors
         """
 
     Scenario: A type of a module the file does not import is no type of the file
