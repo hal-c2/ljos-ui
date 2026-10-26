@@ -1,11 +1,11 @@
-// expect: a11y-hidden-exposed at 15
+// expect: a11y-hidden-exposed at 13
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
 Item {
     width: 300; height: 220
-    property string filter: "a"
+    property string filter: "be"
     Column {
         spacing: 4
         Repeater {

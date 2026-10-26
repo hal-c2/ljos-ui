@@ -967,3 +967,38 @@ fn a_page_is_a_pane_and_a_tab_button_a_tab() {
     );
     assert!(f.message.contains("tab"), "{}", f.message);
 }
+
+#[test]
+fn what_cannot_be_seen_is_not_in_the_accessibility_tree() {
+    let f = one(
+        "    Button { x: 20; y: 20; text: \"Delete\"; opacity: 0 }",
+        "a11y-hidden-exposed",
+    );
+    assert!(f.message.contains("opacity of 0"), "{}", f.message);
+    // Squeezed to nothing: hidden, not a small target.
+    let f = one(
+        "    Button { x: 20; y: 20; text: \"Settings\"; width: 0; height: 0 }",
+        "a11y-hidden-exposed",
+    );
+    assert!(
+        f.message.contains("no area") || f.message.contains("an area"),
+        "{}",
+        f.message
+    );
+    // Under a transparent parent, once, for the outer node.
+    one(
+        "    Rectangle { x: 20; y: 20; width: 200; height: 60; opacity: 0\n        \
+         Accessible.role: Accessible.Grouping; Accessible.name: \"Tools\"\n        \
+         Button { text: \"Cut\" }\n    }",
+        "a11y-hidden-exposed",
+    );
+    clean("    Button { x: 20; y: 20; text: \"Delete\"; visible: false }");
+    // Left out of the tree, it is still a stop of the Tab round, which
+    // the Tab walk says.
+    let report = run(&page(
+        "    Button { x: 20; y: 20; text: \"Delete\"; opacity: 0; Accessible.ignored: true }",
+    ));
+    assert_eq!(report.codes(), ["a11y-unnamed-interactive"], "\n{report}");
+    // A box of no size whose content hangs out of it is seen.
+    clean("    Item { x: 20; y: 20\n        Button { text: \"Open\" }\n    }");
+}

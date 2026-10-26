@@ -18,6 +18,10 @@ pub(crate) fn check(cx: &mut Cx) {
             data.bounds.x1 - data.bounds.x0,
             data.bounds.y1 - data.bounds.y0,
         );
+        // A box of no area is not small but unseen: `a11y-hidden-exposed`.
+        if w <= 0.0 || h <= 0.0 {
+            continue;
+        }
         // A hair under is a rounding, not a finding.
         if w + 0.01 >= least && h + 0.01 >= least {
             continue;

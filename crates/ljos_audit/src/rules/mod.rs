@@ -3,6 +3,7 @@
 
 mod color_text_contrast;
 mod duplicates;
+mod hidden;
 mod images;
 mod layout_occluded;
 mod layout_offscreen;
@@ -41,6 +42,10 @@ pub(crate) const CHECKS: &[Check] = &[
     Check {
         codes: &["a11y-target-size"],
         run: target_size::check,
+    },
+    Check {
+        codes: &["a11y-hidden-exposed"],
+        run: hidden::check,
     },
     // The Tab walk also finds a stop that says nothing of itself.
     Check {
