@@ -9,6 +9,7 @@
 //! audit. Each has good fixtures close to its bad ones
 //! (`crates/ljos_design/fixtures/<code>/`).
 
+mod color;
 mod content;
 mod focus;
 mod layout;
@@ -68,10 +69,12 @@ fn object_rules<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) 
     motion::object(found, chain);
     layout::object(found, chain);
     focus::object(found, chain);
+    color::object(found, chain);
 }
 
 /// The rules about a file as a whole.
 fn file_rules<'a>(found: &mut Found<'_, '_, '_, 'a>, root: &QmlObject<'a>) {
+    color::file(found, root);
     layout::file(found, root);
     content::file(found, root);
 }
@@ -153,6 +156,7 @@ pub(super) mod class {
         "QtQuick.TextInput",
         "QtQuick.TextEdit",
     ];
+    pub const RECTANGLE: &[&str] = &["QQuickRectangle", "QtQuick.Rectangle"];
     pub const ITEM: &[&str] = &["QQuickItem", "QtQuick.Item"];
     pub const ABSTRACT_BUTTON: &[&str] =
         &["QQuickAbstractButton", "QtQuick.Templates.AbstractButton"];

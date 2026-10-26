@@ -1,4 +1,4 @@
-// expect: color-scheme-ignored at 11
+// expect: color-scheme-ignored at 14
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
