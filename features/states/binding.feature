@@ -223,3 +223,43 @@ Feature: The Binding element
       Then the property "width" of "box" is 1
       And the property "visible" of "inner" is true
       And the log has no warnings
+
+  Rule: A Binding takes no property until it is given a value
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var a: 1
+          property var b: 1
+          property int n: 4
+          property int w: width
+          property string seen
+          Binding { id: b1; target: root; property: "a" }
+          Binding { id: b2; target: root; property: "b"; value: undefined }
+          Binding { id: b3; target: root; property: "n" }
+          Binding { id: b4; target: root; property: "w" }
+          function look() { seen += [String(a), String(b), n, w].join("/") + ";" }
+          function run() {
+            look(); b1.value = 7; b3.value = 8
+            look(); width = 50
+            look(); b1.when = false; b2.when = false; b3.when = false; b4.when = false
+            look()
+          }
+          function write() {
+            a = 2; n = 3; b4.when = false; b1.when = false; b3.when = false
+            look()
+          }
+        }
+        """
+
+    Scenario: A value given later takes the property, and an undefined one is a value
+      When the method "run" of "root" is called
+      Then the property "seen" of "root" is "1/undefined/4/0;7/undefined/8/0;7/undefined/8/50;1/1/4/50;"
+      And the log has no warnings
+
+    Scenario: A Binding without a value leaves what is written to the property when it is turned off
+      When the method "write" of "root" is called
+      Then the property "seen" of "root" is "2/undefined/3/0;"

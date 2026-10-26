@@ -48,7 +48,7 @@ pub struct Binding {
     /// The property's name, dotted for one of a group (`border.width`).
     #[qml(notify)]
     pub property: Atom,
-    #[qml(notify)]
+    #[qml(notify, write = value_written)]
     pub value: Value,
     #[qml(notify)]
     pub when: bool,
@@ -76,6 +76,10 @@ pub struct Binding {
     holds: Option<Vec<(ObjectId, PropIndex, OverrideId)>>,
     #[qml(skip)]
     complete: bool,
+    /// `value` was given, even as undefined: until it is, the Binding
+    /// takes no property (qml6).
+    #[qml(skip)]
+    given: bool,
 }
 
 impl Default for Binding {
@@ -94,8 +98,14 @@ impl Default for Binding {
             members: Vec::new(),
             holds: None,
             complete: false,
+            given: false,
         }
     }
+}
+
+fn value_written(cx: &Cx, v: Value) -> Option<Value> {
+    let _ = cx.with_mut(|b: &mut Binding| b.given = true);
+    Some(v)
 }
 
 #[qml_impl]
@@ -157,7 +167,10 @@ fn sync(engine: &Engine, me: ObjectId) {
         },
         _ => None,
     };
-    let want = aim.filter(|_| read(Binding::WHEN.index).to_boolean());
+    let given = engine
+        .with::<Binding, _>(me, |b| b.given)
+        .unwrap_or(false);
+    let want = aim.filter(|_| given && read(Binding::WHEN.index).to_boolean());
     let has = held(engine, me);
     if has.map(|(t, p, _)| (t, p)) == want {
         return;
@@ -318,9 +331,11 @@ fn warn_once(engine: &Engine, me: ObjectId, target: ObjectId, name: &str) {
     );
 }
 
-/// `value` changed while the property is held.
+/// `value` changed: passed on to the property held, or the first given
+/// takes it.
 fn pass_on(engine: &Engine, me: ObjectId) {
     if held(engine, me).is_none() {
+        sync(engine, me);
         return;
     }
     let delayed = engine
