@@ -526,6 +526,21 @@ fn a_window_that_died_is_no_longer_listed() {
     assert_eq!(sys.windows(&e), vec![main]);
 }
 
+/// A root an application replaced (`ljos_quick::roots::replace_root`) is
+/// destroyed when its window shows the new one, and deleted a turn later:
+/// listed in between, it got a platform window of its own, empty, over
+/// the one that showed the new root.
+#[test]
+fn a_window_that_is_going_is_no_longer_listed() {
+    let (e, _) = hosted();
+    let main = load(&e, TWO);
+    let tool = find(&e, main, "tool");
+    let sys = WindowSystem::of(&e);
+    e.destroy(tool);
+    assert!(e.is_alive(tool), "deleted with the deferred deletes");
+    assert_eq!(sys.windows(&e), vec![main]);
+}
+
 #[test]
 fn what_is_in_a_window_nothing_shows_is_not_hidden_itself() {
     // doc.qt.io/qt-6/qml-qtquick-item.html#visible-prop: an item is hidden

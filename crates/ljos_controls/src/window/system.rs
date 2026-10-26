@@ -10,7 +10,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ljos_engine::{Engine, ObjectId, Value, WriteKind};
+use ljos_engine::{Engine, ObjectFlags, ObjectId, Value, WriteKind};
 use ljos_quick::{ColorScheme, Item, Rectangle};
 
 use super::app::{self, Application, ApplicationState, ScreenSpec};
@@ -226,13 +226,21 @@ impl WindowSystem {
     }
 
     /// The windows there are, in the order they were made, but for those
-    /// a `WindowContainer` shows as part of another.
+    /// a `WindowContainer` shows as part of another and those destroyed
+    /// and not yet deleted. A root the application replaced is such a
+    /// one until the deferred deletes: listed, a host would show it in a
+    /// window of its own.
     pub fn windows(&self, engine: &Engine) -> Vec<ObjectId> {
         let mut all = self.windows.borrow_mut();
         all.retain(|w| engine.is_alive(*w));
         all.iter()
             .copied()
-            .filter(|w| state_of(engine, *w).is_some_and(|s| s.container.get().is_none()))
+            .filter(|w| {
+                engine
+                    .flags(*w)
+                    .is_some_and(|f| !f.contains(ObjectFlags::PENDING_DELETE))
+                    && state_of(engine, *w).is_some_and(|s| s.container.get().is_none())
+            })
             .collect()
     }
 
