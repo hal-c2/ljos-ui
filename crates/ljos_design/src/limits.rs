@@ -85,6 +85,13 @@ pub mod motion {
     pub const SPRING_MIN_DAMPING_RATIO: f32 = 0.7;
     /// One frame at 60 Hz.
     pub const FRAME_BUDGET_MS: f32 = 16.7;
+    /// With reduced motion a fade or a change of colour is kept, as WCAG
+    /// 2.2 SC 2.3.3's Understanding page, Apple's Reduce Motion and web.dev
+    /// replace movement with a dissolve, and is at most this long: Material
+    /// 3's `short3` duration token, the short end of animations.dev's menus,
+    /// long enough to be seen (`MIN_VISIBLE_MS`) and quicker than any
+    /// feedback (`MICRO_MAX_MS`).
+    pub const REDUCED_FADE_MAX_MS: u32 = 150;
 }
 
 /// What the runtime audit looks at besides the window as it is.

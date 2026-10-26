@@ -14,7 +14,7 @@
 # milliseconds long, and what runs for ever goes on running, since it says
 # that something is still busy. Runs on Ljós only.
 
-@ljos-only @a11y @backlog
+@ljos-only @a11y
 Feature: Reduced motion
   When the system asks for reduced motion nothing slides, grows or turns on
   its way to a value: it is there at once. A fade or a change of colour is

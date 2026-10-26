@@ -21,6 +21,8 @@ pdf = ["dep:hayro"]
 
 [dependencies]
 ljos_a11y = { path = "../ljos_a11y" }
+# The limits of docs/design: how long a fade lasts with reduced motion.
+ljos_design = { path = "../ljos_design" }
 ljos_engine = { path = "../ljos_engine" }
 # The clipboard, remote fonts and the modules of the platform (QtCore,
 # QtQuick.Dialogs).

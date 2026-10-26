@@ -4137,6 +4137,7 @@ dependencies = [
  "jpeg-encoder",
  "ljos_a11y",
  "ljos_compiler",
+ "ljos_design",
  "ljos_engine",
  "ljos_platform",
  "ljos_reactive",

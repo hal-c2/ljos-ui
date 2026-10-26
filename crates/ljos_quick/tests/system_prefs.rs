@@ -129,7 +129,7 @@ Item {
 "#;
 
 #[test]
-fn with_reduced_motion_an_animation_is_at_its_end_at_once() {
+fn with_reduced_motion_a_slide_is_at_its_end_at_once() {
     let e = engine();
     update_system_prefs(&e, |p| p.reduced_motion = true);
     let root = load(&e, SLIDE);
@@ -142,6 +142,51 @@ fn with_reduced_motion_an_animation_is_at_its_end_at_once() {
     let out = s.frame(&e, Time::from_millis(32));
     assert_eq!(out.next_wake, None);
     assert!(!s.needs_frame());
+}
+
+const FADE_AND_SPIN: &str = r#"
+import QtQuick
+Item {
+    width: 400; height: 200
+    Rectangle {
+        objectName: "box"
+        width: 20; height: 20
+        NumberAnimation on opacity { from: 1; to: 0; duration: 1000 }
+    }
+    Rectangle {
+        objectName: "ring"
+        width: 20; height: 20
+        RotationAnimation on rotation { from: 0; to: 360; duration: 1200; loops: Animation.Infinite }
+    }
+}
+"#;
+
+#[test]
+fn with_reduced_motion_a_fade_is_short_and_then_nothing_waits() {
+    let e = engine();
+    update_system_prefs(&e, |p| p.reduced_motion = true);
+    let root = load(&e, FADE_AND_SPIN);
+    let mut s = scene(&e, root, 400.0, 200.0);
+    s.frame(&e, Time::ZERO);
+    s.frame(&e, Time::from_millis(75));
+    let b = find(&e, root, "box");
+    let o = num(&e, b, "opacity");
+    assert!((o - 0.5).abs() < 0.05, "{o} is not halfway");
+    s.frame(&e, Time::from_millis(150));
+    assert_eq!(num(&e, b, "opacity"), 0.0);
+}
+
+#[test]
+fn with_reduced_motion_an_endless_turn_keeps_its_pace() {
+    let e = engine();
+    update_system_prefs(&e, |p| p.reduced_motion = true);
+    let root = load(&e, FADE_AND_SPIN);
+    let mut s = scene(&e, root, 400.0, 200.0);
+    s.frame(&e, Time::ZERO);
+    let out = s.frame(&e, Time::from_millis(300));
+    let r = num(&e, find(&e, root, "ring"), "rotation");
+    assert!((r - 90.0).abs() < 1.0, "{r} is not a quarter turn");
+    assert!(out.next_wake.is_some(), "it still asks for frames");
 }
 
 #[test]

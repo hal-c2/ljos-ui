@@ -22,6 +22,7 @@ use ljos_engine::{
 use ljos_reactive::WriteKind;
 
 use super::easing::Curve;
+use super::motion;
 use super::shown;
 use super::smooth::{Params, Reversing, Track};
 use super::spring;
@@ -134,8 +135,12 @@ pub(crate) struct Timed {
     node: Node,
     /// Where it begins in its parent's pass, in microseconds.
     start: i64,
-    /// One pass.
+    /// One pass, as it is timed now.
     pass: i64,
+    /// One pass as it was built: what [`Timed::retime`] times from.
+    base: i64,
+    /// Timed for reduced motion.
+    calm: bool,
     /// [`FOREVER`] for `Animation.Infinite`.
     loops: i64,
     /// The pass it is in.
@@ -252,6 +257,13 @@ struct PropNode {
     /// An Animator's: per slot, the value shown and not yet written. The
     /// property is written once, when the node ends or the run does.
     held: Option<Vec<Option<f64>>>,
+    /// Per slot, whether it shows its end value from the first moment:
+    /// what reduced motion does to a property that moves. `None` while
+    /// motion is not reduced.
+    jumps: Option<Vec<bool>>,
+    /// Motion is no longer reduced, but this pass keeps `jumps`: what is
+    /// at its end does not go back.
+    pinned: bool,
 }
 
 /// A `SmoothedAnimation`: each property on a way of its own.
@@ -444,6 +456,17 @@ impl Slot {
             item: is_item(engine, obj),
             numbers: Cell::new(None),
         }
+    }
+
+    /// Whether reduced motion takes it to its end at once.
+    fn jumps(&self, engine: &Engine) -> bool {
+        engine
+            .meta_of(self.obj)
+            .and_then(|m| {
+                m.property(self.prop)
+                    .map(|p| motion::jumps(&p.name, &self.ty))
+            })
+            .unwrap_or(true)
     }
 
     fn shown(&self, engine: &Engine) -> bool {
@@ -908,6 +931,8 @@ impl Timed {
             node: Node::Par(list),
             start: 0,
             pass: longest,
+            base: longest,
+            calm: false,
             loops: 1,
             iter: 0,
             state: State::Idle,
@@ -1001,6 +1026,8 @@ impl Timed {
                 curve: curve_of(engine, anim),
                 lerps: None,
                 held,
+                jumps: None,
+                pinned: false,
             };
             (Node::Prop(node), duration_of(engine, anim))
         } else if is_a::<PropertyAnimation>(engine, anim) {
@@ -1019,6 +1046,8 @@ impl Timed {
                 curve: curve_of(engine, anim),
                 lerps: None,
                 held: None,
+                jumps: None,
+                pinned: false,
             };
             (Node::Prop(node), duration_of(engine, anim))
         } else if is_a::<AnchorAnimation>(engine, anim) {
@@ -1036,6 +1065,8 @@ impl Timed {
                 curve: curve_of(engine, anim),
                 lerps: None,
                 held: None,
+                jumps: None,
+                pinned: false,
             };
             (Node::Prop(node), duration_of(engine, anim))
         } else if is_a::<PauseAnimation>(engine, anim) {
@@ -1105,6 +1136,8 @@ impl Timed {
             node,
             start: 0,
             pass,
+            base: pass,
+            calm: false,
             iter: 0,
             state: State::Idle,
         }
@@ -1146,7 +1179,7 @@ impl Timed {
         let pass = duration_of(engine, anim);
         let loops = loops_of(engine, anim);
         let loops = if pass == 0 { loops.min(1) } else { loops };
-        if from != p.from || pass != self.pass || loops != self.loops {
+        if from != p.from || pass != self.base || loops != self.loops {
             return false;
         }
         if curve_of(engine, anim) != p.curve {
@@ -1165,6 +1198,8 @@ impl Timed {
             node: Node::Pause,
             start: 0,
             pass: 0,
+            base: 0,
+            calm: false,
             loops: FOREVER,
             iter: 0,
             state: State::Idle,
@@ -1292,6 +1327,9 @@ impl Timed {
                 if forget {
                     p.lerps = None;
                 }
+                if std::mem::take(&mut p.pinned) {
+                    p.jumps = None;
+                }
             }
             Node::Script { fired, .. } | Node::Action { fired, .. } => *fired = false,
             Node::Seq(c) | Node::Par(c) => c.iter_mut().for_each(|c| c.reset(forget)),
@@ -1360,8 +1398,10 @@ impl Timed {
                 } else {
                     local as f64 / pass as f64
                 };
-                let eased = p.curve.value(progress);
+                let curved = p.curve.value(progress);
                 for (i, (slot, lerp)) in p.slots.iter().zip(p.lerps.iter().flatten()).enumerate() {
+                    let jumps = p.jumps.as_ref().is_some_and(|j| j.get(i) == Some(&true));
+                    let eased = if jumps { 1.0 } else { curved };
                     // A Behavior's start shows the property where it is: a
                     // write of the value it was given changes nothing.
                     if eased == 0.0 && p.held.is_none() && resting.get(i) == Some(&true) {
@@ -1437,7 +1477,12 @@ impl Timed {
             }
             Node::Par(children) => {
                 for c in children {
-                    c.advance(local, cx);
+                    // Reduced motion, turned on or off on the way, may
+                    // have one begin later (see `retime`).
+                    if local < c.start {
+                        continue;
+                    }
+                    c.advance(local - c.start, cx);
                     if cx.cancelled.get() {
                         break;
                     }
@@ -1530,9 +1575,150 @@ impl Timed {
         };
         Some(k * d + inner.map_or(d, |i| i.min(d)))
     }
+
+    /// Whether it is timed for reduced motion.
+    pub(crate) fn calm(&self) -> bool {
+        self.calm
+    }
+
+    /// Times it for reduced motion (`on`), or by its own durations again,
+    /// and gives the moment that `t` (as it was timed) is now. What
+    /// [`motion::jumps`] says moves is at its end at once, a fade lasts at
+    /// most [`motion::REDUCED_FADE_MAX_MS`], a pause keeps its length.
+    /// Each part keeps how far along it is, so a value under way goes on
+    /// from where it is instead of jumping back or ahead. Only for a
+    /// timeline with an end: one without stays as it is.
+    pub(crate) fn retime(&mut self, engine: &Engine, on: bool, t: i64) -> i64 {
+        self.calm = on;
+        let under_way = self.state == State::Active && t >= 0;
+        let (d, n) = (self.pass, self.loops);
+        let k = if d == 0 { 0 } else { (t.max(0) / d).min(n - 1) };
+        let local = if d == 0 { 0 } else { (t.max(0) - k * d).min(d) };
+        let local = self.retime_pass(engine, on, under_way.then_some(local));
+        if !under_way {
+            return t;
+        }
+        k.saturating_mul(self.pass)
+            .saturating_add(local)
+            .min(FOREVER)
+    }
+
+    /// [`Timed::retime`] of one pass: sets `pass`, and gives where `local`
+    /// is in it now (`None`: it is not under way).
+    fn retime_pass(&mut self, engine: &Engine, on: bool, local: Option<i64>) -> i64 {
+        let old = self.pass;
+        let state = self.state;
+        let base = self.base;
+        let pass = match &mut self.node {
+            Node::Prop(p) => p.retime(engine, on, state == State::Active, base),
+            Node::Smooth(s) => calm_pass(on, base, s.slots.iter().all(|s| s.jumps(engine))),
+            Node::Spring(s) => calm_pass(on, base, s.slots.iter().all(|s| s.jumps(engine))),
+            Node::Pause | Node::Script { .. } | Node::Action { .. } => base,
+            Node::Seq(children) => {
+                // Only the first part not over is under way.
+                let active = local.and_then(|l| {
+                    children
+                        .iter()
+                        .position(|c| c.state != State::Done)
+                        .filter(|i| l >= children[*i].start)
+                });
+                let mut at = 0i64;
+                let mut mapped = None;
+                for (i, c) in children.iter_mut().enumerate() {
+                    let l = match (active == Some(i), local) {
+                        (true, Some(l)) => l - c.start,
+                        _ => -1,
+                    };
+                    let l = c.retime(engine, on, l);
+                    c.start = at;
+                    if active == Some(i) {
+                        mapped = Some(at.saturating_add(l));
+                    }
+                    at = at.saturating_add(c.total()).min(FOREVER);
+                }
+                self.pass = at;
+                return match local {
+                    Some(_) => mapped.unwrap_or(at),
+                    None => 0,
+                };
+            }
+            Node::Par(children) => {
+                let mapped: Vec<Option<i64>> = children
+                    .iter_mut()
+                    .map(|c| match local {
+                        Some(l) if c.state != State::Done => {
+                            Some(c.retime(engine, on, l - c.start))
+                        }
+                        _ => {
+                            c.retime(engine, on, -1);
+                            None
+                        }
+                    })
+                    .collect();
+                // Each part that is under way begins where it is as far
+                // along as before: the parts no longer keep step, so some
+                // begin later. The parts that are over end where they did.
+                let at = mapped.iter().flatten().copied().max().unwrap_or(0);
+                for (c, m) in children.iter_mut().zip(&mapped) {
+                    c.start = m.map_or(0, |l| at - l);
+                }
+                self.pass = children
+                    .iter()
+                    .map(|c| c.start.saturating_add(c.total()).min(FOREVER))
+                    .max()
+                    .unwrap_or(0);
+                return if local.is_some() { at } else { 0 };
+            }
+        };
+        self.pass = pass;
+        match local {
+            Some(l) if old > 0 => {
+                i64::try_from(i128::from(l) * i128::from(pass) / i128::from(old)).unwrap_or(pass)
+            }
+            _ => 0,
+        }
+    }
+}
+
+/// The pass of a SmoothedAnimation or a SpringAnimation. One that moves
+/// is at its end at once; one that fades keeps its length, since cutting
+/// its way short would only end it with a jump.
+fn calm_pass(on: bool, base: i64, moves: bool) -> i64 {
+    if on && moves { 0 } else { base }
 }
 
 impl PropNode {
+    /// The pass for reduced motion (`on`) or without it, from the one it
+    /// was built with. With reduced motion what moves shows its end from
+    /// the first moment, and the pass is only as long as a fade may be;
+    /// without, what is at its end already stays there for the rest of a
+    /// pass that is `under_way`.
+    fn retime(&mut self, engine: &Engine, on: bool, under_way: bool, base: i64) -> i64 {
+        if !on {
+            self.pinned = self.jumps.is_some() && under_way && self.lerps.is_some();
+            if !self.pinned {
+                self.jumps = None;
+            }
+            return base;
+        }
+        let jumps: Vec<bool> = self
+            .slots
+            .iter()
+            .map(|s| !matches!(self.kind, Kind::Color) && s.jumps(engine))
+            .collect();
+        let pass = if jumps.is_empty() {
+            // Moves nothing: a pause by another name.
+            base
+        } else if jumps.iter().all(|j| *j) {
+            0
+        } else {
+            motion::capped_fade(base)
+        };
+        self.jumps = Some(jumps);
+        self.pinned = false;
+        pass
+    }
+
     /// Takes the start values: the property's own where `from` is not set.
     /// Per slot, whether the start value is the one the property holds.
     fn begin(&mut self, engine: &Engine) -> Vec<bool> {
@@ -1663,7 +1849,7 @@ impl SmoothNode {
             speeds.push(((slot.obj, slot.prop), speed));
             // At the very start the property stays as it is: the way
             // begins with the first step.
-            if local == 0 && !track.is_over(t) {
+            if local == 0 && !over && !track.is_over(t) {
                 continue;
             }
             let v = if matches!(slot.ty, TypeTag::Int) {

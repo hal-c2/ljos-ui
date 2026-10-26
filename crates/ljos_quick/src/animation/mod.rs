@@ -28,6 +28,7 @@ pub(crate) mod controller;
 pub(crate) mod driver;
 pub mod easing;
 pub(crate) mod frame;
+pub(crate) mod motion;
 pub(crate) mod shown;
 pub(crate) mod smooth;
 pub(crate) mod spring;
