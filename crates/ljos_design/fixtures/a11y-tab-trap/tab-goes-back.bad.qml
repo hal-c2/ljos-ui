@@ -1,6 +1,6 @@
 // expect: a11y-tab-trap at 11
 import QtQuick
-import QtQuick.Controls.Basic
+import QtQuick.Controls
 Rectangle {
     width: 640; height: 480
     color: "white"

@@ -1,6 +1,6 @@
 // audit: scheme=dark
 import QtQuick
-import QtQuick.Controls.Basic
+import QtQuick.Controls
 Rectangle {
     readonly property bool dark: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
     width: 640; height: 480

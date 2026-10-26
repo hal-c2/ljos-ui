@@ -86,8 +86,8 @@ item a reader would fix.
 | `layout-window-controls` | `ux-controls-pushed-to-middle` | window controls end up mid-window beside a panel |
 | `layout-window-controls` | `ux-frameless-without-controls` | a frameless window with no close control |
 | `layout-wrap-separator` | `ux-separator-before-each-item` | every wrapped line starts with a separator |
-| `text-clipped` | `ux-menu-item-long-reason` | a long menu label in a 200 px menu |
 | `text-elided-hidden` | `ux-header-no-tooltip` | elided text with no way to read it in full |
+| `text-elided-hidden` | `ux-menu-item-long-reason` | a long menu label in a 200 px menu, elided with no way to read it |
 | `text-font-literal` | `ux-label-font-family` | controls that set `font.family` themselves |
 | `text-raw-markup` | `ux-angle-bracket-placeholder-row` | a `<default>` placeholder shown as a row |
 | `text-raw-markup` | `ux-backticks-in-plain-text` | backticks and `**` in plain text |

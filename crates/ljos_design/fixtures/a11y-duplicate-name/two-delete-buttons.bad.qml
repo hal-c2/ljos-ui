@@ -1,6 +1,6 @@
 // expect: a11y-duplicate-name at 10
 import QtQuick
-import QtQuick.Controls.Basic
+import QtQuick.Controls
 Rectangle {
     width: 640; height: 480
     color: "white"

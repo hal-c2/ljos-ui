@@ -1,7 +1,7 @@
 // expect: color-text-contrast at 9
 // audit: scheme=dark
 import QtQuick
-import QtQuick.Controls.Basic
+import QtQuick.Controls
 Rectangle {
     width: 640; height: 480
     // The page follows the scheme, the text does not.

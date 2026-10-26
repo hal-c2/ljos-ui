@@ -1,6 +1,6 @@
-// expect: color-text-contrast at 7
+// expect: color-text-contrast at 10
 import QtQuick
-import QtQuick.Controls.Basic
+import QtQuick.Controls
 Rectangle {
     width: 640; height: 480
     color: "white"
