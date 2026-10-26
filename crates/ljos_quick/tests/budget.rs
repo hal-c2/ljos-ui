@@ -541,3 +541,59 @@ fn bytes_a_thousand_instances_keep() {
         }
     );
 }
+
+/// A hundred rows a script gives a ListModel no view shows, each an object
+/// literal of one number: what `append` costs beyond the script's own loop.
+fn hundred_appends() -> Budget {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+Item {
+  width: 100; height: 100
+  ListModel { id: m }
+  function fill() { for (var i = 0; i < 100; i++) m.append({ n: i }) }
+}
+"##,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    settle(&mut s, &e, 0);
+    // Warm: the first rows make the role and what every later row shares.
+    let fill = e.method_index(root, "fill").unwrap();
+    e.invoke(root, fill, &[]).unwrap();
+    settle(&mut s, &e, 1000);
+    spent(&e, &mut s, 2000, || {
+        e.invoke(root, fill, &[]).unwrap();
+    })
+}
+
+#[test]
+fn hundred_list_model_appends() {
+    let _alone = alone();
+    // Per row: no lookup, and 7.14 allocations. A model nobody connected
+    // to sends no row signals without finding them by name (two member
+    // lookups fewer, B12), and one row is held without a list of its own
+    // on its way in (two fewer). Of the seven, the row's own are its
+    // entries, its role's name and its values; the rest is the call's
+    // (the script's object kept for it, its arguments) and the rows' list
+    // growing.
+    assert_eq!(
+        hundred_appends(),
+        Budget {
+            objects: 0,
+            graph: Census {
+                values: 0,
+                bindings: 0,
+                effects: 0,
+                scopes: 0,
+            },
+            lookups: Lookups {
+                members: 0,
+                types: 0,
+                names: 0,
+                atoms: 0,
+            },
+            allocations: 714,
+        }
+    );
+}

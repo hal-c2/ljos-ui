@@ -226,7 +226,9 @@ impl ModelListeners {
 
     /// Tells every listener. A listener may subscribe or unsubscribe.
     pub fn emit(&self, engine: &Engine, change: &ModelChange) {
-        let all: Vec<ModelListener> = self.all.borrow().iter().map(|(_, l)| l.clone()).collect();
+        // Most models have one view, or none.
+        let all: smallvec::SmallVec<[ModelListener; 2]> =
+            self.all.borrow().iter().map(|(_, l)| l.clone()).collect();
         for l in all {
             l(engine, change);
         }

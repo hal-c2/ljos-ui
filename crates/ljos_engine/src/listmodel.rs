@@ -143,6 +143,10 @@ struct Role {
     kind: RoleKind,
 }
 
+/// Rows given together: one, as `append` and `insert` are mostly given
+/// them, is held without a list of its own.
+type NewRows<T> = smallvec::SmallVec<[T; 1]>;
+
 struct ListRow {
     key: RowKey,
     /// By role; may be shorter than the role list, the rest being
@@ -381,7 +385,9 @@ impl ListState {
     /// listens: model indexes are made by script and most models are
     /// heard only by their views.
     fn tell(&self, engine: &Engine, name: &str, args: impl FnOnce(ObjectId) -> Vec<Value>) {
-        let Some(me) = self.me.get() else { return };
+        let Some(me) = self.me.get().filter(|me| engine.any_connection(*me)) else {
+            return;
+        };
         let Some(s) = <ListModel as QmlType>::static_meta().signal_index(name) else {
             return;
         };
@@ -425,11 +431,15 @@ impl ListState {
         });
     }
 
-    fn make_rows(&self, engine: &Engine, items: Vec<Vec<(String, Value)>>) -> Vec<ListRow> {
+    fn make_rows(
+        &self,
+        engine: &Engine,
+        items: impl IntoIterator<Item = Vec<(String, Value)>>,
+    ) -> NewRows<ListRow> {
         items
             .into_iter()
             .map(|entries| {
-                let mut values = Vec::new();
+                let mut values = Vec::with_capacity(self.roles.borrow().len().max(entries.len()));
                 for (name, v) in entries {
                     if let Some((i, v)) = self.resolve(engine, &name, v, Source::Object) {
                         self.put(&mut values, i, v);
@@ -447,13 +457,18 @@ impl ListState {
             .collect()
     }
 
-    fn insert(&self, engine: &Engine, at: usize, items: Vec<Vec<(String, Value)>>) {
-        if items.is_empty() {
-            return;
-        }
+    fn insert(
+        &self,
+        engine: &Engine,
+        at: usize,
+        items: impl IntoIterator<Item = Vec<(String, Value)>>,
+    ) {
         let had = self.roles.borrow().len();
         let rows = self.make_rows(engine, items);
         let count = rows.len();
+        if count == 0 {
+            return;
+        }
         self.listeners.emit(
             engine,
             &ModelChange::RowsAboutToBeInserted { first: at, count },
@@ -1040,10 +1055,10 @@ impl ListModel {
 }
 
 /// The rows an argument of `append` or `insert` stands for.
-fn rows_of(engine: &Engine, item: &Value) -> Option<Vec<Vec<(String, Value)>>> {
+fn rows_of(engine: &Engine, item: &Value) -> Option<NewRows<Vec<(String, Value)>>> {
     match item {
         Value::List(items) => items.iter().map(|v| entries_of(engine, v)).collect(),
-        v => entries_of(engine, v).map(|e| vec![e]),
+        v => entries_of(engine, v).map(|e| smallvec::smallvec![e]),
     }
 }
 
