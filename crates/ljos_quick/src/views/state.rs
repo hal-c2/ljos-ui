@@ -258,6 +258,10 @@ pub(crate) struct ViewState {
     /// `count` was given the model's count without telling anyone: the
     /// pass that lays those rows out tells.
     pub count_untold: Cell<bool>,
+    /// Where `currentIndex` goes when the rows are next laid out: rows
+    /// came or went before the current one, and qml6 tells its new
+    /// number with the layout, not at the change.
+    pub current_due: Cell<Option<i32>>,
     /// The first row in sight after the last pass and where it starts:
     /// what stays put when rows come and go before it.
     pub anchor: Cell<(usize, f64)>,
@@ -437,6 +441,7 @@ impl Default for ViewState {
             due: Cell::new(false),
             slots_stale: Cell::new(false),
             count_untold: Cell::new(false),
+            current_due: Cell::new(None),
             last_places: RefCell::default(),
             moves_rows: Cell::default(),
             vt_places: RefCell::default(),

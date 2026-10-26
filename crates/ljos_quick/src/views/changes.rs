@@ -199,7 +199,7 @@ impl ViewHost for Host {
         };
         // Before the first layout there is nothing to keep in place.
         let laid_out = st.seen_index.get().is_some();
-        let current = e.untrack(|| pass::rd(e, view, ItemView::CURRENT_INDEX.index)) as i64;
+        let current = pass::current_row(e, view, &st);
         let rows = d.count() as i64;
         let (line, top) = st.anchor.get();
         match *change {
@@ -221,7 +221,7 @@ impl ViewHost for Host {
                     st.anchor.set((line + count, top));
                 }
                 if laid_out && current >= first as i64 {
-                    set_current(e, view, &st, current + count as i64);
+                    move_current_later(&st, current + count as i64);
                 }
                 let mut keys = Vec::new();
                 let mut added = st.added.borrow_mut();
@@ -277,9 +277,9 @@ impl ViewHost for Host {
                     }
                 }
                 if laid_out && current >= end as i64 {
-                    set_current(e, view, &st, current - count as i64);
+                    move_current_later(&st, current - count as i64);
                 } else if laid_out && current >= first as i64 {
-                    set_current(e, view, &st, (first as i64).min(rows - 1));
+                    move_current_later(&st, (first as i64).min(rows - 1));
                 }
                 let mut pending = st.pending.borrow_mut();
                 if !pending.as_ref().is_some_and(|op| op.kind == OpKind::Remove) {
@@ -467,10 +467,18 @@ fn untold_count(e: &Engine, view: ObjectId, st: &ViewState, rows: i64) {
     }
 }
 
+/// The current row is `index` now, and `currentIndex` says so when the
+/// rows are next laid out.
+fn move_current_later(st: &ViewState, index: i64) {
+    st.current_due
+        .set(Some(index.clamp(-1, i64::from(i32::MAX)) as i32));
+}
+
 /// Writes `currentIndex` as the view's own doing: the row is the same,
 /// its number is another, and the view does not go anywhere for it.
 fn set_current(e: &Engine, view: ObjectId, st: &ViewState, index: i64) {
     let index = index.clamp(-1, i64::from(i32::MAX)) as i32;
+    st.current_due.set(None);
     st.seen_index.set(Some(index));
     put(e, view, ItemView::CURRENT_INDEX.index, Value::Int(index));
 }
