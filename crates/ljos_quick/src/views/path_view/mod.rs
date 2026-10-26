@@ -296,7 +296,8 @@ pub(crate) struct State {
     pub writing_current: Cell<bool>,
     /// The view writes `offset` itself.
     pub writing_offset: Cell<bool>,
-    /// A model with rows was seen: a later one starts from the first row.
+    /// The view's first model was given: a later one starts from the first
+    /// row.
     pub sourced: Cell<bool>,
     pub press: RefCell<Option<drag::Press>>,
     /// The press ([`crate::flickable::drag::press_serial`]) the view last

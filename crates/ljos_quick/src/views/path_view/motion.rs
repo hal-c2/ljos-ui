@@ -122,13 +122,11 @@ pub(crate) fn write_offset(e: &Engine, view: ObjectId, st: &State, v: f64) {
     st.writing_offset.set(false);
 }
 
+/// The view's own write: a binding on `currentIndex` stays, as it does
+/// when a list view moves its current row (qml6).
 fn write_current(e: &Engine, view: ObjectId, st: &State, i: i64) {
     st.writing_current.set(true);
-    warn(
-        e,
-        "currentIndex",
-        e.set_internal(view, PathView::CURRENT_INDEX, i as i32),
-    );
+    put(e, view, PathView::CURRENT_INDEX.index, Value::Int(i as i32));
     st.writing_current.set(false);
 }
 
@@ -202,14 +200,16 @@ pub(crate) fn interrupt(e: &Engine, view: ObjectId, st: &State) {
     }
 }
 
-/// A model was given: one that replaces a model with rows starts from
-/// its first row; the first one takes what was given before it.
+/// A model was given: one given once the view is made starts from its
+/// first row, even after one without rows; the view's first takes what
+/// was given before it.
 pub(crate) fn sourced(e: &Engine, view: ObjectId, st: &State) {
+    let later = st.sourced.replace(true);
     let n = rows(st);
     if n == 0 {
         return;
     }
-    if st.sourced.replace(true) {
+    if later {
         interrupt(e, view, st);
         write_offset(e, view, st, 0.0);
         write_current(e, view, st, 0);
@@ -221,10 +221,6 @@ pub(crate) fn sourced(e: &Engine, view: ObjectId, st: &State) {
 /// Rows came or went.
 pub(crate) fn rows_changed(e: &Engine, view: ObjectId, st: &State, n: usize) {
     if n == 0 {
-        return;
-    }
-    if !st.sourced.replace(true) {
-        settle_now(e, view, st, n);
         return;
     }
     let c = current(e, view);
@@ -275,11 +271,8 @@ pub(crate) fn current_changed(e: &Engine, view: ObjectId) {
     let c = current(e, view);
     if !(0..n as i64).contains(&c) {
         // Comes round: 7 of 3 rows is row 1, and -1 the last (qml6).
-        warn(
-            e,
-            "currentIndex",
-            e.set_internal(view, PathView::CURRENT_INDEX, c.rem_euclid(n as i64) as i32),
-        );
+        write_current(e, view, &st, c.rem_euclid(n as i64));
+        current_changed(e, view);
         return;
     }
     match range_mode(e, view) {
