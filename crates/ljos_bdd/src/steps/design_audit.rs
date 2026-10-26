@@ -54,20 +54,6 @@ fn design_audit_reports_at(w: &mut LjosWorld, code: String, line: u32) -> StepRe
     })
 }
 
-#[then(regex = r#"^the design audit does not report "([a-z0-9-]+)"$"#)]
-fn design_audit_does_not_report(w: &mut LjosWorld, code: String) -> StepResult {
-    w.each(|b| {
-        let report = b.probes()?.design_audit(None)?;
-        if findings(&report).any(|f| f["code"] == code.as_str()) {
-            return Err(BackendError::Failed(format!(
-                "the design audit reports {code:?}:\n  {}",
-                listed(&report)
-            )));
-        }
-        Ok(())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
