@@ -844,14 +844,24 @@ impl<'js> Scope<'js> {
 
     /// `String(value)` for a Date, None for any other value.
     pub fn date_text(&self, r: &JsRef) -> Option<String> {
-        let v = self.restore(r).ok()?;
-        let date: Value<'js> = self.ctx.globals().get("Date").ok()?;
-        if !v.as_object()?.is_instance_of(&date) {
+        if !self.is_date(r) {
             return None;
         }
+        let v = self.restore(r).ok()?;
         v.get::<rquickjs::convert::Coerced<String>>()
             .ok()
             .map(|c| c.0)
+    }
+
+    /// Whether `r` is a Date.
+    pub fn is_date(&self, r: &JsRef) -> bool {
+        let (Ok(v), Ok(date)) = (
+            self.restore(r),
+            self.ctx.globals().get::<_, Value<'js>>("Date"),
+        ) else {
+            return false;
+        };
+        v.as_object().is_some_and(|o| o.is_instance_of(&date))
     }
 
     /// `String(value)` for a value from JS, as `console.log` prints it.

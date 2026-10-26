@@ -1343,6 +1343,28 @@ impl Engine {
             .unwrap_or(false)
     }
 
+    /// What a binding is warned when its value `v` is refused, as qml6
+    /// words it: a function is what only a var takes, and a Date is named
+    /// by its C++ type.
+    pub(crate) fn refusal(&self, v: &Value, e: &crate::EngineError) -> String {
+        if let (Value::Js(h), crate::EngineError::Convert(c)) = (v, e)
+            && c.at.is_none()
+        {
+            let r = h.0.clone();
+            match self.try_run_js("refusal", |s| Ok((s.is_function(&r), s.is_date(&r)))) {
+                Ok((true, _)) => {
+                    return "Unable to assign a function to a property of any type other than var."
+                        .into();
+                }
+                Ok((_, true)) => {
+                    return crate::types::ConvertError::new("QDateTime", c.to.clone()).to_string();
+                }
+                _ => {}
+            }
+        }
+        e.to_string()
+    }
+
     /// Calls a JS function a property holds (`SpinBox.textFromValue`).
     /// `None` when `f` is not a function or it threw; the exception is
     /// logged as Qt logs it. [`Engine::try_call_js`] gives the error back

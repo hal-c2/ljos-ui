@@ -291,6 +291,8 @@ impl TypeTag {
                 // an invalid colour without a word, as in qml6. A literal one
                 // is refused when the file is compiled, before this.
                 Value::String(s) => Value::Color(Color::parse(s).unwrap_or(Color::INVALID)),
+                // A script's function: its object is read before it comes here.
+                Value::Js(_) => return fail(),
                 _ => Value::Color(Color::INVALID),
             },
             TypeTag::Url => match v {
@@ -415,9 +417,10 @@ impl TypeTag {
 }
 
 /// What qml6 refuses to make a point, size, rect, vector or font of, with a
-/// warning: what is a number or a bool, and a url. Anything else it cannot
-/// make one of (a list, an object, a colour) is the type's empty value,
-/// without a word.
+/// warning: what is a number or a bool, a url, and a script's function or
+/// Date (a plain object of the script's is read for its fields before it
+/// comes here). Anything else it cannot make one of (a list, an object, a
+/// colour) is the type's empty value, without a word.
 fn refused_as_value(v: &Value) -> bool {
     matches!(
         v,
@@ -428,6 +431,7 @@ fn refused_as_value(v: &Value) -> bool {
             | Value::Url(_)
             | Value::Object(_)
             | Value::Custom(_)
+            | Value::Js(_)
     )
 }
 

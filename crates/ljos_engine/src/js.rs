@@ -888,6 +888,11 @@ impl HostObjects for EngineHost {
             }
             _ => None,
         };
+        // Looked at only when the write is refused.
+        let held = match &value {
+            JsValue::Handle(r) => Some(r.clone()),
+            _ => None,
+        };
         let v = engine.js_to_value_kept(scope, value, &ty);
         if engine.tier1_spying() {
             // Tier 1 would write a list where the script wrote its array.
@@ -904,7 +909,10 @@ impl HostObjects for EngineHost {
                 // std::nullptr_t (Qt 6.11.2).
                 EngineError::Convert(c) => HostError::msg(format!(
                     "Cannot assign {} to {}",
-                    from.unwrap_or(&c.from),
+                    from.unwrap_or_else(|| match &held {
+                        Some(r) if scope.is_date(r) => "QDateTime",
+                        _ => &c.from,
+                    }),
                     // An enum is named as its type declares it.
                     match ty {
                         TypeTag::Enum(_) | TypeTag::Flags(_) => c.to,
@@ -1521,6 +1529,28 @@ impl Engine {
                 // The face of a list property: the list it stands for.
                 if let Some(list) = self.face_list(&r) {
                     return list;
+                }
+                // A value type refuses a function and a Date by their names
+                // rather than reading them as an object without the fields.
+                let value_type = matches!(
+                    ty,
+                    TypeTag::Point
+                        | TypeTag::Size
+                        | TypeTag::Rect
+                        | TypeTag::Vector2d
+                        | TypeTag::Vector3d
+                        | TypeTag::Vector4d
+                        | TypeTag::Quaternion
+                        | TypeTag::Font
+                        | TypeTag::Color
+                );
+                if value_type && (scope.is_function(&r) || scope.is_date(&r)) {
+                    return if matches!(ty, TypeTag::Color) && scope.is_date(&r) {
+                        // A colour makes no word of it.
+                        Value::Color(Color::INVALID)
+                    } else {
+                        Value::Js(JsHandle(r))
+                    };
                 }
                 let field = |k: &str| match scope.get_field(&r, k) {
                     Ok(JsValue::Number(n)) => Some(n),

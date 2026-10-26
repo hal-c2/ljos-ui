@@ -2584,6 +2584,7 @@ impl Engine {
                     Ok(None) => {}
                     Ok(Some(v)) => last = v,
                     Err(e) => {
+                        let e = engine.refusal(&v, &e);
                         // Qt's message is the binding's place and the error; a
                         // binding made at run time has no place to give.
                         match engine.binding_place(obj, prop) {
