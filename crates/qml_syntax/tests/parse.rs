@@ -200,12 +200,11 @@ fn binding_values() {
     states: [ State { name: "a" }, State { name: "b" } ]
     model: [1, 2, 3]
     range: ({ from: 0, to: 9 })
-    limits: { "from": 0, to: 9 }
+    limits: { "from": 0, "to": 9 }
     onMoved: { count = 0 }
     height: { width }
     onChosen: { if (active) { move() } }
     onLeft: { while (busy) { step() } }
-    tools: { pick(item) { return item } }
 }"#;
     let document = parse(&allocator, source);
     let value = |index: usize| {
@@ -266,7 +265,7 @@ fn binding_values() {
         value(10),
         QmlBindingValue::Expression(Expression::ParenthesizedExpression(_))
     ));
-    // Braces are an object when what is in them could be nothing else.
+    // Braces are an object when they start as JSON does, with a string key.
     assert!(matches!(
         value(11),
         QmlBindingValue::Expression(Expression::ObjectExpression(_))
@@ -287,10 +286,6 @@ fn binding_values() {
     assert!(matches!(
         value(15),
         QmlBindingValue::Statement(Statement::BlockStatement(_))
-    ));
-    assert!(matches!(
-        value(16),
-        QmlBindingValue::Expression(Expression::ObjectExpression(_))
     ));
 }
 
@@ -314,6 +309,10 @@ fn syntax_errors() {
     assert!(!diagnostics("import\nItem {}").is_empty());
     assert!(!diagnostics("Item {} Item {}").is_empty());
     assert!(!diagnostics("").is_empty());
+    // Braces that start as JSON does take strings and numbers as keys only;
+    // any other braces are a block, where a call and a block need a `;`.
+    assert!(!diagnostics("Item { limits: { \"from\": 0, to: 9 } }").is_empty());
+    assert!(!diagnostics("Item { tools: { pick(item) { return item } } }").is_empty());
 }
 
 #[test]
