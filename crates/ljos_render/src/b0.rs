@@ -1887,9 +1887,10 @@ fn image_segs(
     let size = (image.width(), image.height());
     // egui multiplies the texture by the vertex colour, so a tint costs no
     // texture of its own and the quads still join the batch of the picture.
+    // egui blends premultiplied, so channels above the alpha add light.
     let tint = tint.map_or(Color32::WHITE, |t| {
-        let [r, g, b, _] = t.to_straight_u8();
-        Color32::from_rgb(r, g, b)
+        let [r, g, b, a] = t.to_premul_u8();
+        Color32::from_rgba_premultiplied(r, g, b, a)
     });
     // One colour for all the quads, worked out once and not for each corner
     // of each of a particle system's pictures.

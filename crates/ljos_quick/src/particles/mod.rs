@@ -1462,8 +1462,12 @@ impl ItemPaint for Pictures {
             let p = &run.particles[i];
             let fade = sim::entry_factor(p.age, p.life);
             let size = p.current_size() * if self.entry_effect == 2 { fade } else { 1.0 };
-            let a = ((ca * self.alpha + p.dice[3] * self.alpha_variation).clamp(0.0, 1.0))
-                * if self.entry_effect == 1 { fade } else { 1.0 };
+            // Qt's alpha (and the colour's) is how much of what lies behind a
+            // particle it hides, not how bright it is: a faint particle still
+            // adds its colour, so overlapping ones glow. Fading in and out
+            // dims the colour too, or a dying particle would linger.
+            let cover = (ca * self.alpha + p.dice[3] * self.alpha_variation).clamp(0.0, 1.0);
+            let a = if self.entry_effect == 1 { fade } else { 1.0 };
             if a <= 0.0 || size <= 0.0 {
                 continue;
             }
@@ -1473,7 +1477,7 @@ impl ItemPaint for Pictures {
                 (cg + shift).clamp(0.0, 1.0),
                 (cb + shift).clamp(0.0, 1.0),
             );
-            let white = r >= 0.999 && g >= 0.999 && b >= 0.999;
+            let plain = r >= 0.999 && g >= 0.999 && b >= 0.999 && cover >= 0.999;
             let (x, y) = (p.x - self.off.0 - size / 2.0, p.y - self.off.1 - size / 2.0);
             out.push(DrawOp::Image {
                 image: self.image.clone(),
@@ -1483,7 +1487,8 @@ impl ItemPaint for Pictures {
                 mirror: [false; 2],
                 smooth: true,
                 opacity: a as f32,
-                tint: (!white).then(|| Rgba::from_straight(r as f32, g as f32, b as f32, 1.0)),
+                tint: (!plain)
+                    .then(|| Rgba::from_premul(r as f32, g as f32, b as f32, cover as f32)),
             });
         }
         self.reg.painted.set(self.reg.painted.get() + looked);

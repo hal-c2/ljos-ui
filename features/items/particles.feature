@@ -246,6 +246,38 @@ Feature: Particles
     When 200 milliseconds pass
     Then the pixel at 150, 150 of the window is "#804000"
 
+  # Measured on qml6 in a windowed session, as its offscreen renderer draws
+  # no particles: one red particle with alpha 0.25 over #808080 is #ff6060.
+  @ljos-only
+  Scenario Outline: A painter's alpha lets what lies behind show through without dimming
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Particles
+      Rectangle {
+        width: 300; height: 300; color: "#808080"
+        ParticleSystem {
+          anchors.fill: parent
+          Emitter {
+            x: 140; y: 140; width: 20; height: 20
+            emitRate: 200; lifeSpan: 5000; size: 100; maximumEmitted: 1
+          }
+          ImageParticle {
+            source: "dot.png"; alpha: <alpha>
+            entryEffect: ImageParticle.None
+          }
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the pixel at 150, 150 of the window is "<pixel>"
+
+    Examples:
+      | alpha | pixel   |
+      | 1     | #ff0000 |
+      | 0.25  | #ff6060 |
+      | 0     | #ff8080 |
+
   # Qt's software renderer, which qml6 uses offscreen, draws no particles at
   # all, so what is painted is Ljós's own behaviour here.
   @ljos-only

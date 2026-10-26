@@ -209,6 +209,27 @@ fn pictures_of_one_image_in_many_tints_are_one_mesh_on_one_texture() {
 }
 
 #[test]
+fn a_tint_brighter_than_its_alpha_is_a_vertex_colour_that_adds_light() {
+    let ctx = Context::default();
+    let image = picture(8, 8);
+    let mut s = Scene::new(100.0, 100.0);
+    let n = s.node(0.0, 0.0, 100.0, 100.0);
+    let mut op = whole(&image, Rect::new(0.0, 0.0, 8.0, 8.0), true);
+    let DrawOp::Image { tint, .. } = &mut op else {
+        unreachable!()
+    };
+    *tint = Some(Rgba::from_premul(1.0, 0.0, 0.0, 0.25));
+    s.op(n, op);
+    let mut be = EpaintBackend::new();
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    // egui blends premultiplied, so red above the alpha is added in full.
+    assert_eq!(
+        meshes[0].vertices[0].color,
+        egui::Color32::from_rgba_premultiplied(255, 0, 0, 64)
+    );
+}
+
+#[test]
 fn a_part_of_the_picture_and_a_flip_are_texture_coordinates() {
     let ctx = Context::default();
     let image = picture(40, 20);

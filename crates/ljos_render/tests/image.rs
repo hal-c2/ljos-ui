@@ -632,3 +632,26 @@ fn the_backend_keeps_no_pixels_of_a_dropped_image() {
     s.render(1.0);
     assert_eq!(s.r.cached_images(), 0);
 }
+
+#[test]
+fn a_tint_brighter_than_its_alpha_adds_light_to_what_lies_behind() {
+    let red = ImageHandle::from_straight(4, 4, RED.repeat(16)).unwrap();
+    let mut s = Scene::new(20.0, 20.0);
+    s.r = VelloCpuReference::new(RasterConfig {
+        background: Rgba::rgb(128, 128, 128),
+        text: TextMode::Skip,
+    });
+    let n = s.node(0.0, 0.0, 20.0, 20.0);
+    let mut op = placed(&red, (20.0, 20.0), ImageFit::Stretch, CENTRE, [false; 2]);
+    let DrawOp::Image { tint, .. } = &mut op else {
+        unreachable!()
+    };
+    // Red that hides a quarter of what lies behind it, at full strength.
+    *tint = Some(Rgba::from_premul(1.0, 0.0, 0.0, 0.25));
+    s.op(n, op);
+    let px = s.render(1.0).pixel(10, 10);
+    assert!(
+        px[0] == 255 && px[1].abs_diff(96) <= 1 && px[2].abs_diff(96) <= 1,
+        "{px:?}"
+    );
+}

@@ -13,8 +13,8 @@ use std::sync::Arc;
 use vello_cpu::color::{AlphaColor, Srgb};
 use vello_cpu::kurbo::{Affine, Rect, RoundedRect, RoundedRectRadii, Shape, Stroke, Vec2};
 use vello_cpu::peniko::{
-    ColorStop, ColorStops, Extend, Fill, Gradient, ImageAlphaType, ImageQuality, ImageSampler,
-    LinearGradientPosition,
+    BlendMode, ColorStop, ColorStops, Compose, Extend, Fill, Gradient, ImageAlphaType,
+    ImageQuality, ImageSampler, LinearGradientPosition, Mix,
 };
 use vello_cpu::{
     Image, ImageSource, Level, PaintType, PixelMetadata, Pixmap, RasterizerSettings, RenderContext,
@@ -71,7 +71,7 @@ pub struct VelloCpuReference {
 }
 
 /// An image's identity, the part of it cut out, and the tint laid on it.
-type PixmapKey = (u64, Option<[u32; 4]>, Option<[u8; 3]>);
+type PixmapKey = (u64, Option<[u32; 4]>, Option<[u8; 4]>);
 
 /// How one blit samples and colours its picture.
 #[derive(Clone, Copy)]
@@ -344,7 +344,7 @@ impl VelloCpuReference {
         &mut self,
         image: &ImageHandle,
         crop: Option<[u32; 4]>,
-        tint: Option<[u8; 3]>,
+        tint: Option<[u8; 4]>,
     ) -> Option<Arc<Pixmap>> {
         if let Some(e) = self.pixmaps.get(&(image.id(), crop, tint)) {
             return Some(Arc::clone(&e.pixmap));
@@ -357,10 +357,15 @@ impl VelloCpuReference {
             u16::try_from(part.width()).ok()?,
             u16::try_from(part.height()).ok()?,
         );
-        let meta = PixelMetadata::new(ImageAlphaType::AlphaPremultiplied, !part.is_opaque());
+        // A tint below full alpha lets what lies behind show through even
+        // an opaque picture.
+        let opaque = part.is_opaque() && tint.is_none_or(|t| t[3] == 255);
+        let meta = PixelMetadata::new(ImageAlphaType::AlphaPremultiplied, !opaque);
         let mut data = part.data().to_vec();
         if let Some(t) = tint {
-            // Premultiplied channels times an opaque colour stay premultiplied.
+            // Premultiplied channels times a premultiplied colour. A colour
+            // above its alpha leaves channels above theirs, which source-over
+            // blending turns into added light.
             for px in data.as_chunks_mut::<4>().0 {
                 for (c, t) in px.iter_mut().zip(t) {
                     *c = ((u16::from(*c) * u16::from(t) + 127) / 255) as u8;
@@ -410,16 +415,40 @@ impl VelloCpuReference {
         } else {
             (None, blit.src)
         };
-        let tint = tint.map(|t| {
-            let [r, g, b, _] = t.to_straight_u8();
-            [r, g, b]
-        });
-        let Some(pixmap) = self.pixmap(image, crop, tint) else {
-            if warned.insert("image-size") {
-                tracing::debug!("R: an image larger than 65535 pixels is not drawn");
-            }
-            return;
+        let tint = tint.map(Rgba::to_premul_u8);
+        // Source-over in u8 wraps where a channel is above its alpha, so a
+        // tint that adds light is drawn as two pictures: one that hides what
+        // lies behind, and one that adds its colour.
+        let passes = match tint {
+            Some([r, g, b, a]) if r.max(g).max(b) > a => [
+                (Some([0, 0, 0, a]), Compose::SrcOver),
+                (Some([r, g, b, 0]), Compose::Plus),
+            ]
+            .to_vec(),
+            _ => vec![(tint, Compose::SrcOver)],
         };
+        for (tint, compose) in passes {
+            let Some(pixmap) = self.pixmap(image, crop, tint) else {
+                if warned.insert("image-size") {
+                    tracing::debug!("R: an image larger than 65535 pixels is not drawn");
+                }
+                return;
+            };
+            ctx.set_blend_mode(BlendMode::new(Mix::Normal, compose));
+            Self::fill_blit(ctx, pixmap, blit, src, smooth, opacity);
+        }
+        ctx.set_blend_mode(BlendMode::default());
+    }
+
+    /// Fills `blit`'s area with `pixmap`, the part `src` of its picture.
+    fn fill_blit(
+        ctx: &mut RenderContext,
+        pixmap: Arc<Pixmap>,
+        blit: &ImageBlit,
+        src: Rect,
+        smooth: bool,
+        opacity: f32,
+    ) {
         let dst = blit.dst;
         // Image pixels to node coordinates.
         let mut place = Affine::translate((dst.x0, dst.y0))

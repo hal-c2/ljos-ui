@@ -572,10 +572,13 @@ pub enum DrawOp {
         /// 1 shows it as it is. One node can draw many pictures, each as
         /// faded as it should be (a particle system's).
         opacity: f32,
-        /// A colour every pixel is multiplied by, as a particle is
-        /// coloured; its alpha is not used. None shows the picture as it
-        /// is. Pictures that differ only in this share one texture, so
-        /// many of them still draw as one batch.
+        /// A premultiplied colour every premultiplied pixel is multiplied
+        /// by, channel by channel, as a particle is coloured. Its channels
+        /// may exceed its alpha: the picture then hides less of what lies
+        /// behind it without growing darker, and so glows, as a particle
+        /// with a low alpha does. None shows the picture as it is. Pictures
+        /// that differ only in this share one texture, so many of them
+        /// still draw as one batch.
         tint: Option<Rgba>,
     },
     /// An image cut into nine parts: the corners keep their size, the edges
