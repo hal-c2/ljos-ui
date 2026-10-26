@@ -16,7 +16,7 @@ Feature: Tumbler
       import QtQuick
       import QtQuick.Controls.Basic
       Item {
-        id: root; objectName: "root"; width: 400; height: 300; property string seen: ""
+        id: root; objectName: "root"; width: 400; height: 300; property string seen: ""; property int lost: 0
         ListModel { id: names; ListElement { name: "a" } ListElement { name: "b" } ListElement { name: "c" } }
         Tumbler {
           id: t; objectName: "t"; model: 10; focus: true
@@ -29,10 +29,11 @@ Feature: Tumbler
         Tumbler { id: l; objectName: "l"; x: 200; model: names }
         Tumbler { id: a; objectName: "a"; x: 300; model: ["x", "y"] }
         Tumbler { id: e; objectName: "e"; y: 220 }
-        Tumbler {
-          objectName: "f"; x: 340; model: 5
-          delegate: Text { required property int index; required property var modelData; objectName: "f" + index; text: modelData; property real disp: Tumbler.displacement }
-        }
+        Tumbler { objectName: "f"; x: 340; model: 5
+          delegate: Text {
+            required property int index; required property var modelData; objectName: "f" + index; text: modelData; property real disp: Tumbler.displacement
+            property Item tumbler: Tumbler.tumbler; onTumblerChanged: if (!tumbler) root.lost++
+          } }
         Item { id: plain; objectName: "plain" }
         function outside() { seen = [plain.Tumbler.tumbler, plain.Tumbler.displacement].join("|") }
         function modes() { seen = [Tumbler.Beginning, Tumbler.Center, Tumbler.End, Tumbler.Visible, Tumbler.Contain, Tumbler.SnapPosition].join(" ") }
@@ -110,6 +111,18 @@ Feature: Tumbler
       When the property "wrap" of "t" is set to false
       And the property "model" of "t" is set to 20
       Then the property "wrap" of "t" is false
+
+    Scenario: A tumbler without rows wraps
+      Then the property "wrap" of "e" is true
+
+    Scenario Outline: Emptying a tumbler leaves it wrapping or not as it was
+      When the property "model" of "<tumbler>" is set to 0
+      Then the property "wrap" of "<tumbler>" is <wraps>
+
+      Examples:
+        | tumbler | wraps |
+        | t       | true  |
+        | a       | false |
 
   @qt-parity
   Rule: The current index
@@ -197,6 +210,12 @@ Feature: Tumbler
     Scenario: A delegate reads the tumbler it is in
       When 1 second passes
       Then the property "mine" of "d0" is true
+
+    Scenario: A delegate keeps its tumbler while the tumbler stops and starts wrapping
+      When the property "model" of "f" is set to 3
+      And the property "model" of "f" is set to 7
+      And 1 second passes
+      Then the property "lost" of "root" is 0
 
     Scenario Outline: A row is as many rows from the middle as its displacement, below being negative
       When 1 second passes

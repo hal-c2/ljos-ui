@@ -7,6 +7,7 @@
 //!
 //! - A tumbler wraps when it has at least as many rows as it shows
 //!   (`visibleItemCount`, five unless set); asking for `wrap` is kept.
+//!   Without rows it wraps at first, and an emptied one stays as it was.
 //! - Its content item is a `PathView` when it wraps and a `ListView` when
 //!   it does not; `flickDeceleration` reads what that view has (100 and
 //!   1500) until it is set.
@@ -181,10 +182,16 @@ pub struct TumblerAttached {
     pub displacement: f64,
 }
 
-/// A tumbler wraps when it has at least as many rows as it shows. Tracked.
+/// A tumbler wraps when it has at least as many rows as it shows. One
+/// without rows stays as it was, wrapping at the start (qml6), so an empty
+/// tumbler given rows does not make the view it does not wrap with first.
+/// Tracked.
 fn wraps_by_default(e: &Engine, me: ObjectId, _: PropIndex) -> Value {
     let rows = e.read(me, Tumbler::COUNT.index).to_number();
     let shown = e.read(me, Tumbler::VISIBLE_ITEM_COUNT.index).to_number();
+    if rows <= 0.0 {
+        return e.untrack(|| e.read(me, Tumbler::WRAP.index));
+    }
     Value::Bool(rows >= shown)
 }
 
@@ -329,6 +336,15 @@ fn rows_changed(e: &Engine, me: ObjectId) {
             st.own.set(true);
             put(e, me, Tumbler::CURRENT_INDEX.index, Value::Int(kept));
             st.own.set(false);
+            // A path view made before there were rows took the last one as
+            // current; the first is shown in the middle at once, not
+            // brought there (qml6).
+            if at < 0
+                && let Some(view) = e.untrack(|| view_of(e, me))
+                && is_a::<PathView>(e, view)
+            {
+                go_to(e, view, kept);
+            }
         }
         st.last.set(kept);
     });
