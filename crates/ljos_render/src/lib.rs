@@ -10,6 +10,7 @@
 mod backend;
 mod canvas;
 mod compose;
+mod damage;
 mod display_list;
 mod glyph;
 mod image;
@@ -35,6 +36,7 @@ pub use canvas::{CanvasPaint, CanvasPainter, CanvasShadow, DrawState};
 pub use compose::{
     ClipEntry, ClipId, ComposeStats, FrameSnapshot, PaintItem, hit_test, is_axis_aligned,
 };
+pub use damage::{PixelRect, frame_damage, merge as merge_damage};
 pub use display_list::{
     Border, Brush, BrushGradient, Decorations, DisplayList, DisplayListBuilder, DisplayListId,
     DrawOp, EmbedId, FillRule, GlyphRun, GradientGeometry, GradientStop, Insets, LinearGradient,
