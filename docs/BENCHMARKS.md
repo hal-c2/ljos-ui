@@ -6143,3 +6143,96 @@ DECISIONs:
   per thread. Under load, though, one case filling a process-wide cache while another was
   counting now and then gave the second case a binding or a value more. Run alone, the
   case passed 40 of 40 under the same load.
+
+### FRAME2: a frame's fixed cost, and a reused delegate against qml6 (2026-10-26)
+
+What a frame costs besides making delegates: the event loop's turns, the egui pass, the
+accesskit compare, and lvreuse split against qml6. The method is the one in "Paint while
+scrolling" above.
+
+**The turns of a frame.** `app_frames` with `wakes` on lvstill, per frame, before:
+
+| Wake | Caused by | Led to |
+|---|---|---|
+| 1 | deadline (the frame's time, `frame_hold`) | redraw asked |
+| 2 | the eventfd ping of `request_redraw`, then `RedrawRequested` | drawn |
+| 3 | nothing Ljós knows: the compositor's frame callback | nothing |
+
+The first wake asked only at its end (`settle`), so winit answered in a wake of its own.
+Now the wake at the deadline asks as it starts (`NewEvents`), and winit's redraw loop, later
+in the same turn, lets the window draw:
+
+| Wake | Caused by | Led to |
+|---|---|---|
+| 1 | deadline, `RedrawRequested` | drawn |
+| 2 | the ping of that request, already answered | nothing |
+| 3 | the compositor's frame callback | nothing |
+
+The frame is drawn ~0.6 ms sooner after its time (two wakes ~0.6 ms apart became one), and
+the loop's share fell (callgrind, per frame shown, thousands of instructions):
+
+| Phase | lvstill before | after | listview before | after |
+|---|---:|---:|---:|---:|
+| winit, Wayland, calloop | 23.9 | 21.6 | 20.0 | 19.5 |
+| Event loop, the rest | 19.9 | 17.7 | 15.5 | 15.1 |
+
+listview's frames are asked for by input, not by a deadline, so they are as before. Under
+callgrind, lvstill drew 14 % more frames in the same 20 s (3741 against 3281): each frame
+comes sooner after the last one's hold ends. A window
+the platform answers at once, or one out of sight, is still run at the end of the turn,
+after its input. `features/window/frame-on-time.feature` pins it.
+
+**Real time, back to back with qml6** (M instructions/s, all threads, 220 notches):
+
+| | Ljós before | Ljós after | qml6 |
+|---|---:|---:|---:|
+| `lvstill.qml` | 19.06, 19.07 | 18.99 | 15.21 |
+| listview | 199.72, 199.85 | 200.25 | 103.06 |
+| listview with `reuseItems: true` | 81.05, 81.37 | 81.22 | 60.58 |
+
+"Before" is the commit before this change, run on either side of "after". In real time the
+change is within noise: a turn that only asked costs ~1.5 k, under 0.1 M/s at 60 Hz. The
+gap from "Paint while scrolling" (208.83 and 86.60) is "Text per delegate", which landed
+in between.
+
+**lvreuse against qml6.** Under callgrind the two ran at different rates (Ljós 13.5 rows a
+frame, qml6 8.3, the rows a 60 Hz frame scrolls past), so this is per row. A logged run
+showed each row's text laid out once, and no layout repeated:
+
+| Per row (thousands) | Ljós | qml6 |
+|---|---:|---:|
+| Text layout (`TextEngine::layout`; qml6 `QQuickTextPrivate::updateSize`) | 45.6 | 55.6 |
+| Scene and engine, text left out | 69 | 45.5 (main thread, text left out) |
+
+Ljós's render side (compose, B0, GL, present, egui, loop) runs ~20 M/s in real time, below
+qml6's render thread (26.6 M/s, plus ~4 M/s on its GL threads). At 500 rows/s, the
+~23.5 k/row more in making and binding a delegate (~+12 M/s), less ~10 k/row in text
+(~−5 M/s), is most of the gap. That is B26–B30's create and destroy area.
+
+Of the 45.6 k a text costs, Ljós's own code is ~8 k: the line widths with Qt's advances
+(5.3 k, already read once a layout, its advances cached per glyph), `extract` (1.7 k),
+lines and metrics (1.4 k). The rest is Parley, harfrust and ICU: shaping 21 k (harfrust
+5.5 k, a font query per cluster 3.3 k, runs 3.7 k), `analyze_text` 5.2 k, line breaking
+3.5 k, styles 2.2 k.
+
+**Left, and why** (DECISIONs):
+
+- **The ping wake** is winit's: every `request_redraw` writes its eventfd, and it is read in
+  the next turn even when the request was answered in this one. Drawing without
+  `request_redraw` would bypass winit's frame-callback gate, which keeps a hidden window
+  from drawing.
+- **The frame callback wake** is the compositor's. Drawing in it instead (ask after each
+  frame, let the callback answer) would make two wakes a frame on a compositor whose
+  callbacks follow the display. But the sandbox's callbacks come ~50 µs after the commit,
+  so that cannot be proved there, and on X11 it costs a turn. Left.
+- **The egui pass**, ~31 k a frame, is egui's own begin and end. Each frame Ljós adds one
+  widget: the view's `interact`, which keyboard focus needs. It sets no style, viewport or
+  options, and the output it reads is the platform output. egui stays the host.
+- **The accesskit compare** (~5.5 k a frame, only while an AT client is connected) is
+  `accesskit_consumer` comparing node properties. accesskit 0.25 takes whole trees from
+  egui, with no dirty marks to compare by. The scene's own graft into it is already
+  incremental.
+- **Text layout** costs less per row than qml6's. What is left is Parley's and harfrust's.
+- **Idle**: `idle.qml` (a still rectangle and text) recorded for 2 s: one wake, the
+  inspector's own request, which led to nothing, before and after. Pixels: no paint code
+  changed, and a frame draws what it drew before, only sooner.
