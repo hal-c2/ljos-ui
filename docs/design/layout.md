@@ -165,7 +165,7 @@ ColumnLayout { Label { visible: error !== ""; text: error } TextField {} }
 ColumnLayout { TextField {} Label { text: error; opacity: error !== "" ? 1 : 0 } }
 ```
 
-Checked by: the runtime audit, which looks twice: when the scene first comes to rest, and after half a second more of application time. A control or a text that came, went, moved or changed size by `limits::LAYOUT_SHIFT_MIN_PX` or more is reported at what moved it (an earlier sibling in a row, column, flow, grid or layout that changed) or else at the outermost thing that moved with it. Popups, and what a view scrolled, are left out; so is every point of the matrix but the scene as it is, where the first look was taken.
+Checked by: the runtime audit, which looks twice: when the scene first comes to rest, and after half a second more of application time. A control or a text that came, went, moved or changed size by `limits::LAYOUT_SHIFT_MIN_PX` or more is reported at what moved it (an earlier sibling in a row, column, flow, grid or layout that changed) or else at the outermost thing that moved with it. Popups, and what a view scrolled, are left out; so is every point of the matrix but the scene as it is, where the first look was taken. What starts to move within `limits::LAYOUT_SHIFT_INPUT_GRACE_MS` of the user's input is that input's doing, as in CLS: a test host takes the first look again once that much time has passed since the input.
 
 Sources: https://web.dev/articles/cls , https://vercel.com/design/guidelines
 
