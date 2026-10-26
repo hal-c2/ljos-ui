@@ -6695,3 +6695,77 @@ DECISIONs:
 - The wrapped path compares against the builder in unit tests and against qml6 through the
   existing wrap and elide scenarios. Nothing a QML program observes changed, so there is no
   new scenario for it.
+
+### B28 (H2): an item's place and geometry as marks, not effects (2026-10-26)
+
+B28 is phase a of the delegate track's dirty-bit seam (step 4). It made two changes:
+
+- A native property can carry a `change` hook (`#[qml(change = path)]`). The hook is told
+  after every change to the property: a value written by code, the host, an animation or a
+  layout, and a change that reaches the property's binding. The graph notes the property's
+  node (`Graph::set_noted`) and tells the engine once the change has spread. A dirty
+  binding is told before it runs, and is not told again until it is read. A store to a
+  property with no node calls the hook directly. Nothing is told on a store that leaves
+  the value as it was.
+- Item's x and y carry `scene::moved`, and z, width, height, visible, opacity, clip,
+  rotation, scale, transformOrigin and transform carry `scene::reshaped`. The hooks mark the
+  item in each scene that shows it. The scene reads the marked items when it places and
+  lays out, where before each item had a place effect and a geometry effect. Flipable's
+  sides and Flickable's `moving` mark the items they affect in the same way. Only user
+  QML bindings, and the effects of later phases, stay in the graph.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets):
+
+| | B27 (main) | B28 |
+|---|---:|---:|
+| ListView delegate, heap allocations | 1407 (140.7) | 1305 (130.5) |
+| ListView delegate, effects | 150 (15) | 110 (11) |
+| `createObject` item, heap allocations | 906 (90.6) | 833 (83.3) |
+| `createObject` item, effects | 130 (13) | 90 (9) |
+| Ten `createObject` items destroyed, graph nodes | 210 | 170 |
+
+| listview under callgrind (main thread, 20 s after 40 s), per delegate | main (B27 + TEXT3) | B28 |
+|---|---:|---:|
+| Total ÷ text layouts, three runs | 338.3 k, 351.8 k, 331.3 k | 333.3 k, 340.3 k, 331.8 k |
+| Median | 338.3 k | 333.3 k |
+| `QuickScene::adopt`, inclusive | 70.3 k | 43.4 k |
+| `QuickScene::unadopt`, inclusive | 16.5 k | 13.6 k |
+| `Geom::read`, inclusive | 17.3 k (in the effect) | 15.2 k (at the frame) |
+| `Engine::tell_change`, inclusive | | 1.5 k (12.2 calls) |
+| `anchors::run`, inclusive | 16.5 k | 16.1 k |
+
+Making and dropping an item no longer creates two effects and their first runs, so
+`adopt` is 27 k cheaper. Most of that work moves to the frame. The geometry is still
+read there, through eleven engine reads per item, so the median falls by only 5 k. qml6
+does a whole delegate in ~200 k. Reading the fields directly from the item's record, and
+not through the engine, is the next lever.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós B28 | qml6 (same run) | Ljós B27 |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.00 | 15.19 | 18.99 |
+| listview | 180.32 | 103.00 | 186.82 |
+| listview with `reuseItems: true` | 70.33 | 60.57 | 71.35 |
+
+Other lanes' builds were running on the machine during these runs. qml6 moved by under
+0.3 % from B27's runs.
+
+DECISIONs:
+
+- The seam is general: an engine hook on the property's meta, filled by a macro attribute,
+  and fed by a noted flag in the graph. It is not a write filter, which would miss changes
+  that come from a binding, and it is not a scene-specific path in the engine. Values made
+  on first read, alias objects and `store_value` (a value set before anything can observe
+  it) are not told.
+- Anchors keep B27's lazy effect and do not become a frame pass. Qt applies anchors as the
+  line moves, so a script that reads an anchored item's geometry between a change and the
+  next frame would see a stale value. The `given` hook still installs the effect.
+- Implicit size has no mark. Only positioners, layouts and text polish read it, and those
+  belong to phase c.
+- Left for phase b: inherited visible and enabled (`inherit_effect`). Its covered case
+  now only marks.
+- Left for phase c: the polish and text effects, and the content effects.
+- `may_scroll` is still fixed when the item is adopted, as before.
+- The gate run on the merged tree has one failure that is not from B28:
+  `positioning/position-source.feature` expects `supportedPositioningMethods` to be -1 and
+  reads 4294967295. That comes from main's `d4335a0f` (an enum's number reads unsigned),
+  which landed after the QtPositioning feature.
