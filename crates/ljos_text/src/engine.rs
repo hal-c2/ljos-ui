@@ -1233,8 +1233,14 @@ impl Snapped {
 
     fn push(&mut self, gr: &parley::GlyphRun<'_, u32>) {
         let start = self.glyphs.len();
-        self.glyphs.extend(gr.glyphs());
         let run = gr.run();
+        // The glyphs come cluster by cluster with no length known ahead.
+        // A glyph per byte is seldom short and is known without counting
+        // the clusters, so this is usually the one growth.
+        let bytes = run.text_range().len();
+        self.glyphs.reserve(bytes);
+        self.qt.reserve(bytes);
+        self.glyphs.extend(gr.glyphs());
         let coords = coords(run);
         snap::advances(
             run.font(),
