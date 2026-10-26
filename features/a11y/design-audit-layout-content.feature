@@ -110,6 +110,49 @@ Feature: The design audit checks layout and content in the live tree
       When 500 milliseconds pass
       Then the design audit does not report "layout-shift"
 
+    Scenario: What the user's own click opens is not a shift
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          id: page
+          width: 300; height: 300
+          color: "white"
+          property bool open: false
+          Column {
+            Button { text: "More"; onClicked: page.open = !page.open }
+            Label { text: "The details"; visible: page.open }
+            Button { text: "Row two" }
+          }
+        }
+        """
+      When the user clicks the "button" "More"
+      And 500 milliseconds pass
+      Then the design audit does not report "layout-shift"
+
+    Scenario: What moves by itself after a click is still a shift
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          id: page
+          width: 300; height: 300
+          color: "white"
+          property bool busy: false
+          Column {
+            Button { text: "Save"; onClicked: later.start() }
+            Label { text: "Saving…"; visible: page.busy }
+            Button { text: "Row two" }
+          }
+          Timer { id: later; interval: 200; onTriggered: page.busy = true }
+        }
+        """
+      When the user clicks the "button" "Save"
+      And 500 milliseconds pass
+      Then the design audit reports "layout-shift" at line 10
+
     Scenario: Two popups that both dim the window
       Given the QML:
         """qml
