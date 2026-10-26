@@ -124,6 +124,51 @@ fn a_scroll_looks_only_at_the_rows_that_came_or_went() {
     assert!(s.content_effects_looked_at() > first, "rows came and went");
 }
 
+/// The reads that showing a hidden Column of `rows` rows records, and
+/// hiding it again, each with its frame.
+fn reads_to_show_and_hide(rows: usize) -> u64 {
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            r#"import QtQuick
+Item {{
+    width: 200; height: 400
+    Item {{
+        objectName: "panel"; visible: false
+        Column {{
+            Repeater {{ model: {rows}; Item {{ width: 100; height: 20 }} }}
+        }}
+    }}
+}}
+"#
+        ),
+    );
+    let panel = find(&e, root, "panel");
+    let mut s = scene(&e, root, 200.0, 400.0);
+    frame(&mut s, &e);
+    let before = e.graph().stats().reads;
+    for (i, shown) in [true, false].into_iter().enumerate() {
+        set(&e, panel, "visible", Value::Bool(shown));
+        s.frame(&e, Time::from_millis(16 * (i as u64 + 1)));
+    }
+    e.graph().stats().reads - before
+}
+
+/// A hidden parent that shows its children changes each one's `visible`
+/// in turn. A Column reads every child, and reads them all again once it
+/// is laid out, not once for each child that changed: four times the
+/// rows cost four times the reads, not sixteen.
+#[test]
+fn showing_a_column_reads_its_rows_once_not_once_per_row() {
+    let small = reads_to_show_and_hide(100);
+    let large = reads_to_show_and_hide(400);
+    assert!(
+        large < small * 6,
+        "100 rows recorded {small} reads and 400 rows {large}"
+    );
+}
+
 #[test]
 fn an_item_that_only_moves_reads_only_where_it_is() {
     let e = engine();

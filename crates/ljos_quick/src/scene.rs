@@ -373,6 +373,9 @@ struct Marks {
     /// A Text with a content effect: its polish effect gives it its paint.
     text_shown: bool,
     inherit: Inherit,
+    /// The polish effect runs again only to read the inputs once more
+    /// after a polish, and marks nothing (`QuickScene::polish`).
+    retrack: bool,
 }
 
 impl Marks {
@@ -382,6 +385,7 @@ impl Marks {
             text: None,
             text_shown: false,
             inherit: Inherit::default(),
+            retrack: false,
         }
     }
 }
@@ -728,6 +732,9 @@ struct Record {
     /// for a Text by its polish effect, which reads all its paint does.
     painting: bool,
     content_effect: Option<GraphNode>,
+    /// A Row's or Column's polish effect, which is told of a change and
+    /// run again after each polish.
+    polish_effect: Option<GraphNode>,
     paint: Option<Paint>,
     size: kurbo::Size,
     /// The last geometry and place applied; the node's transform takes
@@ -1564,7 +1571,9 @@ impl QuickScene {
                 if !engine.is_alive(obj) {
                     continue;
                 }
-                let Some(kind) = self.items.get(obj).map(|e| e.class.kind) else {
+                let Some((kind, told)) =
+                    self.items.get(obj).map(|e| (e.class.kind, e.polish_effect))
+                else {
                     continue;
                 };
                 let journaled = engine.is_journaled().then(std::time::Instant::now);
@@ -1600,6 +1609,19 @@ impl QuickScene {
                         POLISH_CATEGORY,
                         format!("polish failed: {e}"),
                     );
+                }
+                // Its effect was told of a change and read nothing since:
+                // it reads the inputs again, which brings their bindings up
+                // to date, and follows the children it has now.
+                if let Some(n) = told {
+                    // In a batch it runs at the batch's end, and a change
+                    // until then is not told: that run marks it again.
+                    if !engine.graph().batching()
+                        && let Some(m) = self.shared.borrow_mut().marks.get_mut(obj)
+                    {
+                        m.retrack = true;
+                    }
+                    let _ = engine.graph().refresh(n);
                 }
             }
         }
@@ -1655,6 +1677,7 @@ impl QuickScene {
                 effects: SmallVec::new(),
                 painting: false,
                 content_effect: None,
+                polish_effect: None,
                 paint: None,
                 size: kurbo::Size::ZERO,
                 geom: None,
@@ -1679,6 +1702,7 @@ impl QuickScene {
         self.by_node.insert(node, obj);
 
         let mut effects = SmallVec::<[GraphNode; 8]>::new();
+        let mut polish = None;
         let shared = Rc::clone(&self.shared);
         let loader = class.loader;
         // Root-scoped: an effect scoped to `obj` dies with it silently, and
@@ -1695,12 +1719,33 @@ impl QuickScene {
             let shared = Rc::clone(&self.shared);
             let sink: text::Sink = Rc::new(move |e, obj, t| text_polish(e, obj, t, &shared));
             effects.push(text::follow_into(engine, obj, sink)?);
+        } else if matches!(kind, Kind::Row | Kind::Column) {
+            // Told, not run: a positioner reads every child, and the
+            // children of one change one at a time (all of them as a
+            // hidden parent shows them), so a run per change would read
+            // them all once per child. It reads them once more after it
+            // is polished instead.
+            let shared = Rc::clone(&self.shared);
+            let told = Rc::downgrade(&self.shared);
+            let n = engine.effect_told_in(
+                obj,
+                move |e| polish_effect(e, obj, kind, &shared),
+                move || {
+                    if let Some(shared) = told.upgrade() {
+                        mark(&shared, |s| s.set(obj, Dirty::POLISH, |_| ()));
+                    }
+                },
+            )?;
+            effects.push(n);
+            polish = Some(n);
         } else if kind.polishes() {
+            // A layout's own inputs say what changed (`layouts::read_inputs`).
             let shared = Rc::clone(&self.shared);
             effects.push(engine.effect_in(obj, move |e| polish_effect(e, obj, kind, &shared))?);
         }
         if let Some(e) = self.items.get_mut(obj) {
             e.effects = effects;
+            e.polish_effect = polish;
         }
         self.a11y.adopt(engine, obj, kind == Kind::Text);
 
@@ -3365,7 +3410,11 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             return;
         }
     }
-    mark(shared, |s| s.set(obj, Dirty::POLISH, |_| ()));
+    let retrack =
+        (shared.borrow_mut().marks.get_mut(obj)).is_some_and(|m| std::mem::take(&mut m.retrack));
+    if !retrack {
+        mark(shared, |s| s.set(obj, Dirty::POLISH, |_| ()));
+    }
 }
 
 /// What the inputs `t` a Text read make the scene do: lay it out again,
