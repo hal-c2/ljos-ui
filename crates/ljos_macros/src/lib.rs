@@ -83,7 +83,10 @@
 //! an author gives the property a value, a binding or an override, once it
 //! is in place; what bindings, animations and layouts write as they run is
 //! not told. A type that follows what few of its objects set follows just
-//! those). Field names are exposed in camelCase unless renamed.
+//! those) and `change = path` (the same kind of `fn`, told each time the
+//! property changes however it does, a binding's change before the binding
+//! has run again: what follows the property on many objects keeps a mark
+//! for each instead of an effect). Field names are exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -306,6 +309,8 @@ struct FieldAttrs {
     /// `given = path`: told when the property is given a value, a binding
     /// or an override.
     given: Option<syn::Path>,
+    /// `change = path`: told when the property changes, however it does.
+    change: Option<syn::Path>,
 }
 
 fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
@@ -407,6 +412,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.write = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("given") {
                 f.given = Some(m.value()?.parse::<syn::Path>()?);
+            } else if p.is_ident("change") {
+                f.change = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("reset") {
                 f.reset = Some(if m.input.peek(syn::Token![=]) {
                     Some(m.value()?.parse::<syn::Expr>()?)
@@ -415,7 +422,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, given",
+                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, given, change",
                 ));
             }
             Ok(())
@@ -587,6 +594,12 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                 return Err(Error::new(
                     ident.span(),
                     "a group is not given whole; put `given` on the group type's fields",
+                ));
+            }
+            if a.change.is_some() {
+                return Err(Error::new(
+                    ident.span(),
+                    "a group does not change whole; put `change` on the group type's fields",
                 ));
             }
             let get = format_ident!("__qml_group_{}", ident);
@@ -770,6 +783,10 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         if let Some(path) = &a.given {
             let path = self_to(path, ty);
             builder.push(quote!(.given(#path)));
+        }
+        if let Some(path) = &a.change {
+            let path = self_to(path, ty);
+            builder.push(quote!(.change(#path)));
         }
         match &a.reset {
             Some(Some(reset)) => builder.push(quote!(.reset(#reset))),

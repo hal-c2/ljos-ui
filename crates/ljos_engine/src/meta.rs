@@ -140,6 +140,10 @@ pub type CxWrite = fn(&Cx<'_>, &Value) -> Result<Option<Value>, ConvertError>;
 /// a binding or an override ([`MetaBuilder::given`]). It runs with nothing
 /// borrowed and its reads are not tracked.
 pub type GivenHook = fn(&Cx<'_>, PropIndex);
+/// Told that the property (its index on `cx.this`) changed, or may have:
+/// its binding may come out otherwise ([`MetaBuilder::change`]). It runs
+/// with nothing borrowed and its reads are not tracked.
+pub type ChangeHook = fn(&Cx<'_>, PropIndex);
 /// Gets the group struct (`Border`) from the struct that holds it.
 pub type GroupGet = fn(&dyn QmlObject) -> &dyn QmlObject;
 /// Mutable [`GroupGet`].
@@ -290,6 +294,8 @@ pub struct PropertyInfo {
     /// What is told when the property is given a value, a binding or an
     /// override.
     pub given: Option<GivenHook>,
+    /// What is told when the property changes, however it does.
+    pub change: Option<ChangeHook>,
 }
 
 impl PropertyInfo {
@@ -1020,6 +1026,7 @@ impl MetaBuilder {
             reset: None,
             holds: None,
             given: None,
+            change: None,
         }));
     }
 
@@ -1110,6 +1117,7 @@ impl MetaBuilder {
             if let Some(p) = self.last_property() {
                 p.reset = leaf.reset;
                 p.given = leaf.given;
+                p.change = leaf.change;
             }
         }
         self
@@ -1226,6 +1234,21 @@ impl MetaBuilder {
     pub fn given(mut self, f: GivenHook) -> Self {
         if let Some(p) = self.last_property() {
             p.given = Some(f);
+        }
+        self
+    }
+
+    /// Tells `f` each time the property just added changes: a value written
+    /// to it by anyone, a binding put on it, or a change that reaches its
+    /// binding, which is then told before it has run again. Told once the
+    /// change has spread, and at most once until it is told. What follows
+    /// the property on many objects (a scene, the geometry of each item)
+    /// keeps a mark per object this way, where an effect on each object
+    /// would cost a graph node per object and a run per change.
+    #[inline(never)]
+    pub fn change(mut self, f: ChangeHook) -> Self {
+        if let Some(p) = self.last_property() {
+            p.change = Some(f);
         }
         self
     }

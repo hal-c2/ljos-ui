@@ -314,6 +314,12 @@ impl Engine {
             frozen: Cell::new(0),
         });
         let weak = Rc::downgrade(&inner);
+        let noted = Rc::downgrade(&inner);
+        inner.graph.set_note_handler(move |n| {
+            if let Some(inner) = noted.upgrade() {
+                Engine { inner }.noted(n);
+            }
+        });
         inner.graph.set_diagnostic_handler(move |d| {
             if let Some(inner) = weak.upgrade() {
                 Engine { inner }.report(d);
@@ -1846,7 +1852,12 @@ impl Engine {
                 // Nobody observes it: the field is the only copy, and it
                 // is not marked assigned.
                 match filter_in(h, prop, v)? {
-                    Filtered::Done(Some(v)) => store_in(h, prop, &v)?,
+                    Filtered::Done(Some(v)) => {
+                        store_in(h, prop, &v)?;
+                        let change = change_hook(h, prop);
+                        drop(store);
+                        self.tell_change(obj, prop, change);
+                    }
                     Filtered::Done(None) => {}
                     // The setter may write other properties, so it runs
                     // where a write can: unfiltered, through the full path.
@@ -2028,6 +2039,9 @@ impl Engine {
                     .ok_or_else(|| EngineError::dead(obj))?;
                 store_in(h, prop, &v)?;
                 h.mark_assigned(prop);
+                let change = change_hook(h, prop);
+                drop(store);
+                self.tell_change(obj, prop, change);
                 return Ok(());
             }
         };
@@ -2126,6 +2140,9 @@ impl Engine {
                     .ok_or_else(|| EngineError::dead(obj))?;
                 store_in(h, prop, &v)?;
                 h.mark_assigned(prop);
+                let change = change_hook(h, prop);
+                drop(store);
+                self.tell_change(obj, prop, change);
             }
         }
         Ok(true)
@@ -2204,6 +2221,38 @@ impl Engine {
         }
     }
 
+    /// Tells `change` (the property's hook) that the property changed.
+    /// A node's changes the graph tells ([`Engine::noted`]); a field
+    /// without one, whoever wrote it.
+    pub(crate) fn tell_change(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        change: Option<crate::ChangeHook>,
+    ) {
+        if let Some(f) = change {
+            self.untrack(|| f(&Cx::new(self, obj), prop));
+        }
+    }
+
+    /// The graph told of a change to the noted node `n`: the property it
+    /// is has a change hook, which is told.
+    fn noted(&self, n: NodeId) {
+        let change = {
+            let store = self.inner.store.borrow();
+            let Some(k) = store.node_keys.get(n) else {
+                return;
+            };
+            let Some(h) = store.objects.get(k.object) else {
+                return;
+            };
+            change_hook(h, k.prop).map(|f| (f, k.object, k.prop))
+        };
+        if let Some((f, obj, prop)) = change {
+            self.tell_change(obj, prop, Some(f));
+        }
+    }
+
     /// Updates the field cache; a no-op for a dead object.
     pub(crate) fn store_value(&self, obj: ObjectId, prop: PropIndex, v: &Value) {
         let mut store = self.inner.store.borrow_mut();
@@ -2259,7 +2308,7 @@ impl Engine {
         prop: PropIndex,
     ) -> Result<NodeId, EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
-        let (scope, value, assigned) = {
+        let (scope, value, (assigned, noted)) = {
             let store = self.inner.store.borrow();
             let h = store
                 .objects
@@ -2282,7 +2331,7 @@ impl Engine {
             (
                 h.scope,
                 read_access(&*h.native, &h.dynamic, &p.access),
-                h.is_assigned(prop),
+                (h.is_assigned(prop), p.change.is_some()),
             )
         };
         let g = &self.inner.graph;
@@ -2300,6 +2349,9 @@ impl Engine {
             Provenance::Default
         };
         let n = g.property_with(scope, value, provenance)?;
+        if noted {
+            g.set_noted(n)?;
+        }
         let readers = {
             let mut store = self.inner.store.borrow_mut();
             store.node_keys.insert(n, PropKey { object: obj, prop });
@@ -2652,7 +2704,12 @@ impl Engine {
             match h.node(prop) {
                 Some(n) => (n, read_access(&*h.native, &h.dynamic, &p.access)),
                 // Nothing observes it.
-                None if !h.read_without_node(prop) => return Ok(()),
+                None if !h.read_without_node(prop) => {
+                    let change = p.change;
+                    drop(store);
+                    self.tell_change(obj, prop, change);
+                    return Ok(());
+                }
                 None => {
                     // A reader of the field: the node, made with the value
                     // the field has now, re-runs it.
@@ -3760,6 +3817,12 @@ enum WriteLook {
     Plain,
     Alias,
     Maker,
+}
+
+/// The property's [`ChangeHook`](crate::ChangeHook), told by
+/// [`Engine::tell_change`] of a change to a field without a node.
+pub(crate) fn change_hook(h: &ObjectHeader, prop: PropIndex) -> Option<crate::ChangeHook> {
+    h.meta.property(prop).and_then(|p| p.change)
 }
 
 pub(crate) fn store_in(

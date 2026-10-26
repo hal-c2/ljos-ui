@@ -177,6 +177,9 @@ impl Engine {
                     // Nobody observes it: the field is the only copy.
                     store_in(h, prop, &v)?;
                     h.clear_assigned(prop);
+                    let change = crate::engine::change_hook(h, prop);
+                    drop(store);
+                    self.tell_change(obj, prop, change);
                     return Ok(());
                 }
             }
