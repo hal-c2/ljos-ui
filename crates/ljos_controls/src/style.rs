@@ -40,7 +40,7 @@ pub(crate) const UNIVERSAL: &str = "QtQuick/Controls/Universal";
 /// Whether an object declared at `location` (as
 /// [`ljos_engine::Engine::declared_at`] gives it) was declared by a style
 /// file, not by an application.
-pub(crate) fn is_style_url(location: &str) -> bool {
+pub fn is_style_url(location: &str) -> bool {
     location.starts_with(URL_PREFIX)
 }
 

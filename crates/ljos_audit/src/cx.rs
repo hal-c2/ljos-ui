@@ -50,7 +50,7 @@ impl<'a> Cx<'a> {
         message: String,
     ) -> &mut Finding {
         let rule = ljos_design::rule(code).unwrap_or_else(|| panic!("{code} is no rule"));
-        let place = item.and_then(|i| place_of(self.engine, i));
+        let place = item.and_then(|i| app_place(self.engine, i));
         let data = item
             .and_then(|i| self.scene.accessible_node(i))
             .and_then(|k| self.scene.accessibility_tree().get(k).cloned());
@@ -160,6 +160,17 @@ pub(crate) fn place_of(engine: &Engine, item: ObjectId) -> Option<String> {
     let at = engine.declared_at(item)?;
     let at = at.trim_end().trim_end_matches(':');
     (!at.is_empty()).then(|| at.to_string())
+}
+
+/// Where the application's own QML has the item: its place, or for what
+/// a control's style makes (a button's label) or what has no place, the
+/// nearest item above it the application declared. A finding is fixed
+/// there, not in the style.
+pub(crate) fn app_place(engine: &Engine, item: ObjectId) -> Option<String> {
+    std::iter::once(item)
+        .chain(ancestors(engine, item))
+        .filter_map(|i| place_of(engine, i))
+        .find(|p| !ljos_controls::is_style_url(p))
 }
 
 /// A node as a message names it: `button "Save"`.

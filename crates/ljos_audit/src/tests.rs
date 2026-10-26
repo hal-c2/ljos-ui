@@ -622,16 +622,22 @@ fn the_basic_style_is_clean() {
 /// otherwise; this test is where that is written down.
 #[test]
 fn the_placeholder_of_the_basic_style_is_fainter_than_the_audit_allows() {
-    let report = run(&page(
-        r##"
+    let e = engine();
+    let mut s = mount(
+        &e,
+        &page(
+            r##"
     TextField { Accessible.name: "Name"; placeholderText: "Given name" }"##,
-    ));
+        ),
+    );
+    let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
     assert_eq!(report.codes(), ["color-text-contrast"], "\n{report}");
     let f = &report.findings[0];
-    assert!(
-        f.place.as_deref().unwrap().contains("Basic/TextField.qml:"),
-        "{f}"
-    );
+    // The style's text, found where the application can fix it: its
+    // field, with `placeholderTextColor`.
+    let own = f.item.and_then(|i| crate::cx::place_of(&e, i)).unwrap();
+    assert!(own.contains("Basic/TextField.qml:"), "{own}");
+    assert!(f.place.as_deref().unwrap().contains("Main.qml:8:"), "{f}");
     assert!(f.message.contains("#939494 on #ffffff"), "{f}");
 }
 
@@ -743,14 +749,18 @@ fn the_demo_of_the_shell_has_nothing_of_the_styles() {
     let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
     for f in &report.findings {
         let place = f.place.as_deref().unwrap_or_default();
+        let own = f.item.and_then(|i| crate::cx::place_of(&e, i));
         // Known (ARCHITECTURE.md section 14): the Basic style's placeholder
         // grey is Qt's palette value, 3.04:1 on white.
-        if f.code == "color-text-contrast" && place.contains("Basic/TextField.qml") {
+        let style = own.as_deref().unwrap_or_default();
+        if f.code == "color-text-contrast"
+            && (style.contains("Basic/TextField.qml") || style.contains("Basic/TextArea.qml"))
+        {
             assert!(f.message.contains("3.04:1"), "{f}");
             continue;
         }
         assert!(
-            place.contains("Main.qml:"),
+            place.contains("Main.qml:") && own.as_deref() == Some(place),
             "a finding of the style's:\n{report}"
         );
         assert!(
