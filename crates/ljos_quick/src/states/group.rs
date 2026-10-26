@@ -835,6 +835,33 @@ impl Group {
                 }
             }
         }
+        // Every property the state changed is held at what it shows while
+        // the state's layers come off, so that none of the state's bindings
+        // follows a value given back. Then the values go back before the
+        // bindings, so that a binding given back sees what the others give
+        // back. No property tells a change it does not keep (qml6).
+        let mut holds: Vec<(ObjectId, PropIndex, OverrideId, RestoreMode)> = Vec::new();
+        for a in &applied {
+            if let Applied::Layer {
+                obj,
+                prop,
+                what: Layer::Property,
+                restore,
+                ..
+            } = *a
+                && !holds.iter().any(|h| (h.0, h.1) == (obj, prop))
+            {
+                let now = engine.untrack(|| engine.peek(obj, prop));
+                if let Ok(id) = engine.push_override(obj, prop, OverrideContent::Value(now)) {
+                    holds.push((obj, prop, id, restore));
+                }
+            }
+        }
+        if holds.len() < 2 {
+            for (obj, prop, id, _) in holds.drain(..) {
+                let _ = engine.remove_override(obj, prop, id, RestoreMode::None);
+            }
+        }
         for a in applied.into_iter().rev() {
             match a {
                 Applied::Layer {
@@ -859,6 +886,12 @@ impl Group {
                     engine.disconnect(id);
                 }
             }
+        }
+        let (bindings, values): (Vec<_>, Vec<_>) = holds
+            .into_iter()
+            .partition(|&(o, p, _, r)| r != RestoreMode::None && engine.base_is_bound(o, p));
+        for (obj, prop, id, restore) in values.into_iter().chain(bindings) {
+            let _ = engine.remove_override(obj, prop, id, restore);
         }
     }
 
@@ -988,20 +1021,13 @@ impl Group {
             !values.iter().any(|p| (p.target, p.prop) == *at)
                 || exprs.iter().any(|p| (p.target, p.prop) == *at)
         });
-        for p in values {
-            let at = (p.target, p.prop);
-            self.push(engine, at, p.content, p.restore, Layer::Property, p.held);
-        }
-        if !bind {
-            round.pending = exprs;
-            return;
-        }
-        round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
         // Every property the state binds is off its own binding before any
-        // of the state's bindings runs, so that one which reads another the
-        // state binds sees what it shows, and is no loop through its own
-        // binding (qml6).
-        let holds: Vec<_> = if exprs.len() > 1 {
+        // value goes in or any of the state's bindings runs, so that one
+        // which reads another the state changes sees what it shows, is no
+        // loop through its own binding, and tells no change it does not
+        // keep (qml6).
+        let holds: Vec<_> = if bind && (exprs.len() > 1 || !values.is_empty() && !exprs.is_empty())
+        {
             exprs
                 .iter()
                 .filter_map(|p| {
@@ -1015,6 +1041,15 @@ impl Group {
         } else {
             Vec::new()
         };
+        for p in values {
+            let at = (p.target, p.prop);
+            self.push(engine, at, p.content, p.restore, Layer::Property, p.held);
+        }
+        if !bind {
+            round.pending = exprs;
+            return;
+        }
+        round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
         for p in exprs {
             let at = (p.target, p.prop);
             self.push(engine, at, p.content, p.restore, Layer::Property, p.held);

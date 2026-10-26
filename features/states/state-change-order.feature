@@ -11,6 +11,8 @@
 # Backlog: a state's changes are made in one batch and the handlers they set off run after it,
 # where qml6 runs each as its change is made; that is the graph's batching (bindings
 # infrastructure). Seed 303, connections bucket value:step:bool-vs-record.
+# Seed 101, connections bucket value:onChanged+onCompleted:text: a state's binding of a property
+# whose own binding reads another the state gives a value, entered and left.
 
 @qt-parity
 Feature: The order of a state change
@@ -376,6 +378,36 @@ Feature: The order of a state change
       """
     When the method "run" of "root" is called
     Then the log has a warning matching "Binding loop detected for property .a."
+
+  Scenario Outline: A state's binding of a property whose own binding reads what it changes tells no change it does not keep
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property bool p0
+        property bool p1: root.p0
+        property bool p2: !root.p0
+        states: [State { name: "s1"; <changes> }]
+        <made>
+        onP1Changed: log += "p1:" + p1 + ";"
+        Component.onCompleted: log += "made;"
+        function run() { state = "s1"; log += "in;"; state = ""; log += "out;" }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "log" of "root" is "<log>"
+
+    Examples:
+      | made        | changes                                                                                | log                               |
+      | state: "s1" | PropertyChanges { target: root; p1: isNaN(255) } PropertyChanges { root.p0: true }     | made;in;out;                      |
+      |             | PropertyChanges { target: root; p1: isNaN(255) } PropertyChanges { root.p0: true }     | made;in;out;                      |
+      |             | PropertyChanges { root.p0: true } PropertyChanges { target: root; p1: root.p2 }       | made;in;out;                      |
+      |             | PropertyChanges { target: root; p0: true; p1: false; p2: root.p1 }                     | made;in;out;                      |
+      |             | PropertyChanges { target: root; p1: isNaN(255); restoreEntryValues: false } PropertyChanges { root.p0: true } | made;in;out;    |
+      |             | PropertyChanges { target: root; p1: isNaN(255) } PropertyChanges { root.p0: true; restoreEntryValues: false } | made;in;p1:true;out; |
+      |             | PropertyChanges { target: root; p1: false; p0: true }                                  | made;in;out;                      |
 
   @backlog
   Scenario Outline: A handler a state's change sets off runs as the change is made

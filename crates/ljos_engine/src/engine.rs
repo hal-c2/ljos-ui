@@ -2848,6 +2848,20 @@ impl Engine {
         node.is_some_and(|n| self.inner.graph.is_bound(n))
     }
 
+    /// Whether the property's own layer, under every override, is a
+    /// binding: what taking the overrides off gives back.
+    pub fn base_is_bound(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let node = self
+            .inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .and_then(|h| h.node(prop));
+        node.is_some_and(|n| self.inner.graph.base_provenance(n) == Some(Provenance::Bound))
+    }
+
     /// Whether the property's binding ran again for the change that is
     /// still spreading. Qt evaluates such a binding after what the change
     /// did natively, so its value has the last word over a native reset.
