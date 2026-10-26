@@ -251,3 +251,270 @@ Feature: The design audit acts on the window to check colour, focus and motion
         """
       Then the design audit reports "color-accent-weight"
 
+  Rule: Focus
+
+    Scenario: A custom row that looks the same with keyboard focus
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Rectangle {
+            width: 240; height: 40; color: "#e0e0e0"
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: "Inbox"
+            Label { anchors.centerIn: parent; text: "Inbox" }
+          }
+        }
+        """
+      Then the design audit reports "focus-indicator-missing" on the "button" named "Inbox"
+
+    Scenario: A custom row that draws a ring with keyboard focus
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Rectangle {
+            width: 240; height: 40; color: "#e0e0e0"
+            activeFocusOnTab: true
+            border.width: activeFocus ? 2 : 0
+            border.color: "#1c71d8"
+            Accessible.role: Accessible.Button
+            Accessible.name: "Inbox"
+            Label { anchors.centerIn: parent; text: "Inbox" }
+          }
+        }
+        """
+      Then the design audit does not report "focus-indicator-missing"
+
+    Scenario: Focus is where it was after the audit
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 200
+          color: "white"
+          Column {
+            TextField { objectName: "first"; placeholderText: "Name" }
+            TextField { objectName: "second"; placeholderText: "City"; focus: true }
+          }
+        }
+        """
+      Then the design audit does not report "focus-indicator-missing"
+      And the property "activeFocus" of "second" is true
+      And the property "activeFocus" of "first" is false
+
+    Scenario: Tab that goes back up the column
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Column {
+            x: 20; y: 20; spacing: 8
+            TextField { id: name; placeholderText: "Name"; KeyNavigation.tab: city }
+            TextField { id: street; placeholderText: "Street"; KeyNavigation.tab: done }
+            TextField { id: city; placeholderText: "City"; KeyNavigation.tab: street }
+            Button { id: done; text: "Done"; KeyNavigation.tab: name }
+          }
+        }
+        """
+      Then the design audit reports "focus-order"
+
+    Scenario: Tab down a column, then to the next column
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Row {
+            x: 20; y: 20; spacing: 20
+            Column {
+              spacing: 8
+              Button { text: "Inbox" }
+              Button { text: "Sent" }
+            }
+            Column {
+              spacing: 8
+              TextField { placeholderText: "To" }
+              TextField { placeholderText: "Subject" }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "focus-order"
+
+    Scenario: A dialog that Escape does not close
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Dialog {
+            title: "Settings"; standardButtons: Dialog.Close
+            closePolicy: Popup.NoAutoClose
+            Component.onCompleted: open()
+            TextField { placeholderText: "Search" }
+          }
+        }
+        """
+      Then the design audit reports "focus-escape-dismiss"
+
+    Scenario: A dialog that closes on Escape is open after the audit
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Dialog {
+            objectName: "settings"
+            title: "Settings"; standardButtons: Dialog.Close
+            Component.onCompleted: open()
+            TextField { placeholderText: "Search" }
+          }
+        }
+        """
+      Then the design audit does not report "focus-escape-dismiss"
+      And the property "opened" of "settings" is true
+
+    Scenario: A dialog that handles Escape itself
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Dialog {
+            id: dialog
+            objectName: "settings"
+            title: "Settings"; standardButtons: Dialog.Close
+            closePolicy: Popup.NoAutoClose
+            Component.onCompleted: open()
+            TextField { placeholderText: "Search"; Keys.onEscapePressed: dialog.close() }
+          }
+        }
+        """
+      Then the design audit does not report "focus-escape-dismiss"
+      And the property "opened" of "settings" is true
+
+    Scenario: A modal popup that leaves focus behind it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Popup {
+            modal: true; focus: false
+            closePolicy: Popup.NoAutoClose
+            Component.onCompleted: open()
+            Label { text: "Choose a colour" }
+          }
+        }
+        """
+      Then the design audit reports "focus-popup-stranded"
+
+    Scenario: A modal popup that takes focus
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Popup {
+            modal: true; focus: true
+            Component.onCompleted: open()
+            Label { text: "Choose a colour" }
+          }
+        }
+        """
+      Then the design audit does not report "focus-popup-stranded"
+
+    Scenario: A window shortcut that still acts behind a modal dialog
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Shortcut { sequence: "Ctrl+W"; onActivated: console.log("close tab") }
+          Dialog {
+            modal: true; focus: true; title: "Rename"; standardButtons: Dialog.Ok
+            Component.onCompleted: open()
+            TextField {}
+          }
+        }
+        """
+      Then the design audit reports "focus-shortcut-under-modal"
+
+    Scenario: A window shortcut switched off while the dialog is open
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Shortcut { sequence: "Ctrl+W"; enabled: !dlg.opened; onActivated: console.log("close tab") }
+          Dialog {
+            id: dlg
+            modal: true; focus: true; title: "Rename"; standardButtons: Dialog.Ok
+            Component.onCompleted: open()
+            TextField {}
+          }
+        }
+        """
+      Then the design audit does not report "focus-shortcut-under-modal"
+
+    Scenario: A list whose every row is a Tab stop
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 300
+          color: "white"
+          ListView {
+            anchors.fill: parent
+            model: ["Inbox", "Drafts", "Sent", "Archive", "Trash"]
+            delegate: CheckBox { text: modelData }
+          }
+        }
+        """
+      Then the design audit reports "focus-arrow-keys"
+
+    Scenario: Three radio buttons are few enough to Tab through
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 300
+          color: "white"
+          Column {
+            RadioButton { text: "Small"; checked: true }
+            RadioButton { text: "Medium" }
+            RadioButton { text: "Large" }
+          }
+        }
+        """
+      Then the design audit does not report "focus-arrow-keys"

@@ -188,3 +188,18 @@ pub mod hue {
     /// window one default button.
     pub const PRIMARY_BUTTONS_MAX: usize = 1;
 }
+
+/// How keyboard focus moves (`focus-order`, `focus-arrow-keys`).
+pub mod keyboard {
+    /// Two Tab stops are on one row when they overlap vertically by at
+    /// least this share of the shorter one: a label and a field beside it
+    /// with their baselines a little apart are one row.
+    pub const ROW_OVERLAP: f32 = 0.5;
+    /// At most this many Tab stops inside one list, grid, tab bar or radio
+    /// group. The WAI-ARIA Authoring Practices make a composite widget one
+    /// Tab stop with the arrows inside it; Qt Quick Controls give each
+    /// radio button and tab button a stop of its own, so a short group is
+    /// everywhere and quick to Tab past. Past three, the arrows save the
+    /// user keys.
+    pub const COMPOSITE_TAB_STOPS_MAX: usize = 3;
+}

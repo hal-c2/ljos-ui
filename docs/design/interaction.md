@@ -35,6 +35,8 @@ Button {
 }
 ```
 
+Checked by: the runtime audit. It gives each Tab stop keyboard focus (reason Tab, so `visualFocus` is set), draws the stop and a margin of `limits::audit::FOCUS_MARGIN_PX` around it before and after, lets any animation the change started end, and reports a stop where fewer than a handful of pixels changed. Focus is put back where it was.
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/focus-visible.html , https://www.w3.org/WAI/WCAG22/Understanding/focus-appearance.html
 
 <a id="focus-order"></a>
@@ -49,6 +51,8 @@ ColumnLayout { Button { text: qsTr("Save"); Layout.row: 2 } TextField { placehol
 ColumnLayout { TextField { placeholderText: qsTr("Title") } Button { text: qsTr("Save") } }
 ```
 
+Checked by: the runtime audit, for the gross jumps only: the next stop is back along the same row (in the reading direction, so a mirrored layout reads right to left) or straight back up the same column. A move to the top of the next column is how columns are read and is not reported.
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/focus-order.html
 
 <a id="focus-popup-stranded"></a>
@@ -62,6 +66,8 @@ Popup { modal: true; closePolicy: Popup.NoAutoClose; TextField {} }
 // Good
 Popup { modal: true; focus: true; closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside; TextField { focus: true } }
 ```
+
+Checked by: the runtime audit, for the first half: the top open modal popup does not hold active focus. Whether focus comes back to the opener after it closes is not checked, since the audit cannot tell which control opened it. Escape is `focus-escape-dismiss`.
 
 Sources: https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/
 
@@ -107,6 +113,8 @@ FocusScope { anchors.fill: parent; focus: true
     Button { text: qsTr("Close"); onClicked: overlay.visible = false } }
 ```
 
+Checked by: the runtime audit, for popups that can be closed some other way (pressing outside, a standard button, a button that says close, cancel or done) and whose `closePolicy` leaves Escape out: it gives the popup focus, presses Escape, and reports it when the popup is still open. A popup that closed is opened again.
+
 Sources: https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/ , https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus.html
 
 <a id="focus-shortcut-under-modal"></a>
@@ -121,7 +129,25 @@ Shortcut { sequence: StandardKey.Close; onActivated: closeTab() }
 Shortcut { sequence: StandardKey.Close; enabled: !confirmDialog.visible; onActivated: closeTab() }
 ```
 
+Checked by: the runtime audit, which presses nothing: with a modal popup open, it reports each enabled window or application `Shortcut` with a sequence that is declared outside the popup.
+
 Sources: https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/
+
+<a id="focus-arrow-keys"></a>
+### `focus-arrow-keys`
+
+**Hint, runtime.** A composite widget (a tab bar, a radio group, a list) puts every item in the Tab order, so getting past it takes a Tab per item. It should be one stop, with arrows inside, as in the table above. Qt gives each radio button and each tab button a Tab stop of its own, so a small group of them (up to `limits::keyboard::COMPOSITE_TAB_STOPS_MAX`) is not reported.
+
+```qml
+// Bad: every row of the list is a Tab stop
+ListView { model: folders; delegate: CheckBox { text: modelData } }
+// Good: the list is one stop, and arrows move inside it
+ListView { model: folders; activeFocusOnTab: true; delegate: CheckBox { text: modelData; focusPolicy: Qt.NoFocus } }
+```
+
+Checked by: the runtime audit. It walks the Tab order, groups the stops by the tab bar, list, grid or path view they are in (or the item that holds a run of radio buttons), and reports a group with more stops than the limit. Menus and what the style makes are left out.
+
+Sources: https://www.w3.org/WAI/ARIA/apg/practices/keyboard-interface/#kbd_general_within
 
 ## Where feedback goes
 
@@ -151,8 +177,7 @@ Sources: https://www.nngroup.com/articles/ten-usability-heuristics/ (error preve
 
 ## Not checked yet
 
-- **Arrows inside a composite** (proposed `focus-arrow-keys`): tabs, radio groups and lists take one Tab stop and arrows inside, as in the table above.
-- **Busy feedback** (proposed `focus-busy-feedback`): 0.1 s feels instant; up to 1 s keeps the flow but needs no indicator; beyond 1 s show that work is going on, and beyond 10 s show progress and a way to cancel (Nielsen). Do not flash a spinner for quick work: show it after 150–300 ms and keep it for at least 300–500 ms (Vercel).
+- **Busy feedback** (proposed `focus-busy-feedback`): 0.1 s feels instant; up to 1 s keeps the flow but needs no indicator; beyond 1 s show that work is going on, and beyond 10 s show progress and a way to cancel (Nielsen). Do not flash a spinner for quick work: show it after 150–300 ms and keep it for at least 300–500 ms (Vercel). Not checked by the audit: it cannot tell which action is slow, or what the user is waiting for, without the application saying so.
 - **Press feedback within 100 ms**, and the target is at least `limits::TARGET_MIN_DESKTOP` (`a11y-target-size`).
 
 ## Sources
