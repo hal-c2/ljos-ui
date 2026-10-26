@@ -333,8 +333,8 @@ fn ten_listview_delegates() {
     let (b, made) = listview_delegates(ONE_LINE);
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
-    // attached or grouped), 8 values, 6 bindings, 7 effects, 2 scopes,
-    // no member or type lookups, 126.0 allocations. What the component
+    // attached or grouped), 4 values, 6 bindings, 3 effects, 2 scopes,
+    // no member or type lookups, 120.9 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -372,15 +372,18 @@ fn ten_listview_delegates() {
     // What an item shows of its children is matched to them when their
     // list's change hook, a Loader's, the end of an incubation or a
     // destruction marks it, where each item had an effect reading them:
-    // two effects and 5.6 allocations fewer a delegate (B30).
+    // two effects and 5.6 allocations fewer a delegate (B30). An item's
+    // `parent` and `focus` are acted on by their change hooks, where each
+    // item had an effect watching each, which made it a value too: four
+    // effects, four values and 5.1 allocations fewer a delegate (B30).
     assert_eq!(
         b,
         Budget {
             objects: 30,
             graph: Census {
-                values: 80,
+                values: 40,
                 bindings: 60,
-                effects: 70,
+                effects: 30,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -389,8 +392,8 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1260,
-            bytes: 264712,
+            allocations: 1209,
+            bytes: 151880,
         }
     );
 }
@@ -400,8 +403,8 @@ fn ten_wrapped_listview_delegates() {
     let _alone = alone();
     let (b, made) = listview_delegates(WRAPPED);
     assert_eq!(made, 10);
-    // Per delegate: 3 objects, 6 values, 5 bindings, 6 effects, 2
-    // scopes; 128.1 allocations. The two enumerations its text names,
+    // Per delegate: 3 objects, 2 values, 5 bindings, 2 effects, 2
+    // scopes; 123.2 allocations. The two enumerations its text names,
     // `Text.WordWrap` and `Text.ElideRight`, are looked up as a type once
     // for the file, not once a delegate (twenty fewer lookups, TEXT5).
     // The text is broken into lines and its last line elided without
@@ -419,16 +422,18 @@ fn ten_wrapped_listview_delegates() {
     // had an effect, makes 30 fewer, 20 fewer values and 20 fewer effects
     // (B29), and a text's inputs in one box its marks and paint share, 14
     // more. Its structure marked by change hooks, where each item had an
-    // effect, makes 20 fewer effects and 57 fewer allocations (B30). 30.9
-    // kB kept a delegate.
+    // effect, makes 20 fewer effects and 57 fewer allocations (B30), and
+    // `parent` and `focus` acted on by change hooks, not watched, 40 fewer
+    // effects, 40 fewer values and 49 fewer allocations. 25.0 kB kept a
+    // delegate.
     assert_eq!(
         b,
         Budget {
             objects: 30,
             graph: Census {
-                values: 60,
+                values: 20,
                 bindings: 50,
-                effects: 60,
+                effects: 20,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -437,8 +442,8 @@ fn ten_wrapped_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1281,
-            bytes: 308593,
+            allocations: 1232,
+            bytes: 257521,
         }
     );
 }
@@ -448,9 +453,9 @@ fn ten_plain_items() {
     let _alone = alone();
     let (b, made) = plain_items();
     assert_eq!(made, 10);
-    // Per instance: 2 objects, 6 values, 2 bindings, 5 effects, 2 scopes,
+    // Per instance: 2 objects, no values, 2 bindings, 1 effect, 2 scopes,
     // 1 member lookup (the property `createObject` is given, by its name)
-    // and no type lookups, 74.4 allocations; the id (`item`) is found
+    // and no type lookups, 67.4 allocations; the id (`item`) is found
     // by slot. One of the ten grows what keeps a text's lines' items
     // between measuring and painting. A one-line plain text is laid out
     // without Parley's builder (fifteen fewer over the ten), and B26 put
@@ -466,15 +471,17 @@ fn ten_plain_items() {
     // bits, not a list (ten fewer, B12b). B30 marks an item's structure
     // from change hooks and the end of an incubation or a destruction,
     // where each item had an effect: twenty effects and fifty-five
-    // allocations fewer. 16.7 kB kept an instance.
+    // allocations fewer, and acts on `parent` and `focus` from their
+    // change hooks, where each item watched both: forty effects, forty
+    // values and sixty allocations fewer. 11.7 kB kept an instance.
     assert_eq!(
         b,
         Budget {
             objects: 20,
             graph: Census {
-                values: 40,
+                values: 0,
                 bindings: 20,
-                effects: 50,
+                effects: 10,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -483,8 +490,8 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 734,
-            bytes: 167208,
+            allocations: 674,
+            bytes: 136616,
         }
     );
 }
@@ -501,7 +508,8 @@ fn ten_plain_items_torn_down() {
     // anchors effect to let go of; four fewer since B28, which keeps an
     // item's place and geometry as marks and not as two effects an item,
     // four fewer since B29, which has no inherit effect an item, and four
-    // fewer since B30, which has no structure effect an item. 8.3 kB
+    // fewer since B30, which has no structure effect an item, and eight
+    // fewer for the `parent` and `focus` it no longer watches. 6.9 kB
     // given back an instance; the rest of what one kept is room the next
     // ones use.
     assert_eq!(
@@ -509,9 +517,9 @@ fn ten_plain_items_torn_down() {
         Teardown {
             objects: 20,
             scopes: 20,
-            nodes: 110,
+            nodes: 30,
             allocations: 56,
-            freed: 82734,
+            freed: 69214,
         }
     );
 }
@@ -543,14 +551,15 @@ fn bytes_a_thousand_instances_keep() {
     // every item has (688 and 576 bytes, now 56 and 328): 27.3, 29.3
     // and 17.1 kB before; B12b's call path keeps eight or nine more.
     // B30 drops the structure effect of each item (26.0, 28.9 and 15.9 kB
-    // before). The rest is mostly the graph's nodes, the objects and the
-    // text's runs.
+    // before), and the watches of `parent` and `focus` with the values
+    // they made (25.9, 25.1 and 15.8 kB before). The rest is mostly the
+    // graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 25874,
-            wrapped: 25123,
-            plain: 15832,
+            one_line: 22000,
+            wrapped: 24972,
+            plain: 11721,
         }
     );
 }

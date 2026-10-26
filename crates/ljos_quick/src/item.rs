@@ -64,7 +64,7 @@ pub struct Item {
     /// The visual parent. Assigning it reparents the item (see
     /// [`crate::set_parent_item`]); it follows
     /// [`Engine::set_visual_parent`] whoever calls that.
-    #[qml(notify)]
+    #[qml(notify, change = parent_written)]
     pub parent: Option<ObjectId>,
     /// Children and resources together, in the order they were added.
     /// Appending sorts: an `Item` becomes a visual child, anything else a
@@ -121,7 +121,7 @@ pub struct Item {
     pub baseline_line: LineOf,
     /// Whether the item is its focus scope's focus item (see
     /// [`crate::focus`]).
-    #[qml(notify)]
+    #[qml(notify, change = crate::focus::focus_written)]
     pub focus: bool,
     /// Whether the item, or an item it is the focus scope of, gets the
     /// keys. Written by the focus tree only.
@@ -863,21 +863,6 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
                 Value::Rect(std::sync::Arc::new(children_rect(e, obj)))
             })
         })?;
-        // Assigning `parent` reparents the item. A layer's `parent` names
-        // the item it lies above, which it is drawn over and not in.
-        engine.watch(obj, Item::PARENT.index, move |e, v| {
-            let p = v.as_object();
-            if e.visual_parent(obj) != p
-                && crate::layer::layer_host(e, obj).is_none()
-                && let Err(err) = crate::tree::set_parent_item(e, obj, p)
-            {
-                e.log(
-                    LogLevel::Warning,
-                    "qml",
-                    format!("Cannot set parent: {err}"),
-                );
-            }
-        })?;
         let declared = engine.untrack(|| engine.read(obj, Item::PARENT.index).as_object());
         let actual = engine.untrack(|| engine.visual_parent(obj));
         if declared != actual {
@@ -891,6 +876,34 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
         crate::focus::init(engine, obj)?;
         Ok(())
     })
+}
+
+/// Whether `init_item` has run on `obj`. Until then what its `parent` and
+/// `focus` say is taken as it completes, not as each is written.
+pub(crate) fn initialised(engine: &Engine, obj: ObjectId) -> bool {
+    (engine.with(obj, |i: &Item| i.left.0.is_some())).unwrap_or(false)
+}
+
+/// Assigning `parent` reparents the item. A layer's `parent` names the
+/// item it lies above, which it is drawn over and not in.
+fn parent_written(cx: &Cx<'_>, _: PropIndex) {
+    let (e, obj) = (cx.engine, cx.this);
+    if !initialised(e, obj) {
+        return;
+    }
+    // Read, so a bound `parent` is brought up to date and its next change
+    // is told too.
+    let p = e.read(obj, Item::PARENT.index).as_object();
+    if e.visual_parent(obj) != p
+        && crate::layer::layer_host(e, obj).is_none()
+        && let Err(err) = crate::tree::set_parent_item(e, obj, p)
+    {
+        e.log(
+            LogLevel::Warning,
+            "qml",
+            format!("Cannot set parent: {err}"),
+        );
+    }
 }
 
 /// The union of the children's geometry, in this item's coordinates.

@@ -72,6 +72,8 @@ impl FocusReason {
     }
 }
 
+pub(crate) use tree::focus_written;
+
 /// What an item does for focus when it completes.
 pub(crate) fn init(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     tree::init(engine, obj)

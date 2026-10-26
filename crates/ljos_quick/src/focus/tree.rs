@@ -248,9 +248,6 @@ fn release(t: &FocusTree, item: ObjectId) {
 /// What every completed item does: hears of writes to `focus`, and, if it
 /// was made with `focus: true`, asks for its scope.
 pub(crate) fn init(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
-    engine.watch(obj, Item::FOCUS.index, move |e, v| {
-        focus_written(e, obj, v.to_boolean());
-    })?;
     if engine
         .untrack(|| engine.read(obj, Item::FOCUS.index))
         .to_boolean()
@@ -260,9 +257,15 @@ pub(crate) fn init(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     Ok(())
 }
 
-/// `focus` was written. The tree's own writes arrive here too, after the
-/// state already says what they say, and do nothing.
-fn focus_written(engine: &Engine, obj: ObjectId, want: bool) {
+/// `focus` was written (its change hook). The tree's own writes arrive
+/// here too, after the state already says what they say, and do nothing.
+/// Before the item is complete [`init`] reads it instead.
+pub(crate) fn focus_written(cx: &ljos_engine::Cx<'_>, _: ljos_engine::PropIndex) {
+    let (engine, obj) = (cx.engine, cx.this);
+    if !crate::item::initialised(engine, obj) {
+        return;
+    }
+    let want = engine.read(obj, Item::FOCUS.index).to_boolean();
     let t = tree(engine);
     let has = t.state.borrow().home.contains_key(&obj);
     if has == want {
