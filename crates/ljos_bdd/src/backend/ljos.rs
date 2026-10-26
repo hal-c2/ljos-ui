@@ -119,6 +119,9 @@ struct Live {
     outside_taken: Option<ljos_platform::DropAction>,
     /// Where that drag was last.
     outside_at: (f64, f64),
+    /// Where the scene had its items when the last load came to rest: a
+    /// design audit after time passed finds what moved since.
+    rest: Option<Arc<ljos_audit::Placement>>,
 }
 
 #[derive(Default)]
@@ -397,6 +400,7 @@ impl LjosBackend {
             top: ljos_dev::Top::new(),
             outside_taken: None,
             outside_at: (0.0, 0.0),
+            rest: None,
         };
         // A decode takes as long as it takes; scenarios see its result when
         // time is advanced and not before, whatever the machine's speed.
@@ -525,7 +529,12 @@ impl Live {
         // `createObject(driver)`: an item becomes a visual child.
         ljos_quick::add_data(&self.engine, self.driver, obj).map_err(failed)?;
         self.roots.push(obj);
-        self.settle()
+        self.settle()?;
+        self.rest = Some(Arc::new(ljos_audit::Placement::of(
+            &self.engine,
+            &self.scene,
+        )));
+        Ok(())
     }
 
     fn open_window(&mut self, name: &str) -> Result<()> {
@@ -1980,14 +1989,15 @@ impl Probes for LjosBackend {
         {
             return Ok(kept.clone());
         }
+        let live = self.live()?;
         let options = ljos_audit::Options {
             matrix: matrix
                 .unwrap_or("current")
                 .parse()
                 .map_err(|e| failed(format!("{e}")))?,
+            before: live.rest.clone(),
             ..ljos_audit::Options::desktop()
         };
-        let live = self.live()?;
         live.settle()?;
         let now = live.clock.now();
         let report = ljos_audit::audit(&live.engine, &mut live.scene, now, &options);

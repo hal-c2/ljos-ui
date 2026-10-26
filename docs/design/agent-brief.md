@@ -58,6 +58,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Draw resize handles at 3:1 with a hover state. [layout-resize-handle]
 - Give frameless windows a close control at the top corner. [layout-window-controls]
 - Make a rectangle filling another have a radius no larger than the outer one's. [layout-nested-radius]
+- Let reading text wrap at 320 px wide; never make it scroll both ways. [layout-reflow]
 
 ## Focus and input
 - Draw `visualFocus` on every focusable control. [focus-indicator-missing]

@@ -189,6 +189,18 @@ impl Picture {
     /// reads a scene rather than its pixels (the design audit). The
     /// clock stands at [`now`](Self::now) afterwards.
     pub fn scene(&self, engine: &Engine, root: ObjectId) -> Result<QuickScene, String> {
+        self.scene_seen(engine, root, |_, _| {})
+    }
+
+    /// As [`scene`](Self::scene), showing `at_rest` the scene once it
+    /// first comes to rest, before the settle time passes: what moved
+    /// in between is what a user saw jump (the audit's layout shift).
+    pub fn scene_seen(
+        &self,
+        engine: &Engine,
+        root: ObjectId,
+        at_rest: impl FnOnce(&Engine, &QuickScene),
+    ) -> Result<QuickScene, String> {
         let (mut width, mut height) = self.size;
         let mut scene = QuickScene::new(kurbo::Size::new(f64::from(width), f64::from(height)));
         if let Some(f) = &self.scene_messages {
@@ -225,8 +237,11 @@ impl Picture {
         }
         {
             let mut state = DriveState::default();
+            Driver::new(engine, &mut scene, &*self.clock, &mut state)
+                .settle()
+                .map_err(|e| e.to_string())?;
+            at_rest(engine, &scene);
             let mut run = Driver::new(engine, &mut scene, &*self.clock, &mut state);
-            run.settle().map_err(|e| e.to_string())?;
             run.advance(self.settle_ms).map_err(|e| e.to_string())?;
             run.settle().map_err(|e| e.to_string())?;
         }

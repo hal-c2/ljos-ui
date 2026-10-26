@@ -502,6 +502,14 @@ pub const RULES: &[Rule] = &[
         "A rectangle that fills another has a larger corner radius than the one it sits in, so the corners do not follow each other.",
         "Make the inner radius the outer one less the gap between them (never below 0).",
     ),
+    r(
+        "layout-reflow",
+        Layout,
+        Warning,
+        Runtime,
+        "At 320 px wide, a view of text is wider and taller than itself, so reading it needs scrolling in two directions.",
+        "Let the content take the view's width and wrap; scroll one way only.",
+    ),
     // Focus and interaction.
     r(
         "focus-indicator-missing",
