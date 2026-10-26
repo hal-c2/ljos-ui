@@ -4,6 +4,8 @@
 # Verified on Qt 6.11.2 (qml6, offscreen).
 # Found by ljos-fuzz (states), seeds 101 and 202: buckets value:step:invalid-qt,
 # warning:QPointF_to_int and warning:QML_Case (see crates/ljos_fuzz/known/states.txt).
+# warning:[undefined]_to_double (seed 101) is the item's own binding a state that does not
+# restore takes the place of.
 # Backlog: Ljós takes the state left off a property before the next state's change is on it,
 # and the graph works the item's own binding out again in between; going from one change to the
 # next waits on the graph (bindings infrastructure). Bucket warning:QString_to_int.
@@ -120,6 +122,43 @@ Feature: Which change of a property a state keeps
       | int  | Qt.point(1, 2) |             | Component.onCompleted: state = "s2"   |
       | real | "#336699".a    | when: true; |                                       |
       | real | "#336699".a    |             | Component.onCompleted: state = "s2"   |
+
+  Scenario Outline: The item's binding a state does not give back says nothing while the item is made
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property real p4: "#000000".a
+        states: [State { name: "s2"; when: true; PropertyChanges { target: root; p4: 3; restoreEntryValues: <restore> } }]
+      }
+      """
+    Then the property "p4" of "root" is 3
+    And the log has <n> warnings matching "Unable to assign .undefined. to double"
+
+    Examples:
+      | restore | n |
+      | true    | 1 |
+      | false   | 0 |
+
+  Scenario Outline: What a state's binding and the item's say while the item is made are each their own
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property real p4: <own>
+        states: [State { name: "s2"; when: true; PropertyChanges { target: root; p4: <state>; restoreEntryValues: <restore> } }]
+      }
+      """
+    Then the property "p4" of "root" is <p4>
+    And the log has 1 warning matching "Scenario.qml:<line>:[0-9]+: Unable to assign .undefined. to double"
+
+    Examples:
+      | own         | state              | restore | p4 | line |
+      | "#000000".a | Math.abs(-3)       | true    | 3  | 4    |
+      | 2           | "#000000".a        | false   | 2  | 5    |
+      | 2           | "#000000".a        | true    | 2  | 5    |
 
   Scenario Outline: A state that does not restore gives back what the state before it would have
     Given the QML:

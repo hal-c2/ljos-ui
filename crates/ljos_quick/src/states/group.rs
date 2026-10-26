@@ -23,8 +23,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Color, ConnectionId, Engine, ForeignMember, ForeignValue, Interception, LogLevel,
-    ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode, TypeTag, Value, handler_name,
+    Atom, BindingLayer, Color, ConnectionId, Engine, ForeignMember, ForeignValue, Interception,
+    LogLevel, ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode, TypeTag, Value,
+    handler_name,
 };
 use ljos_reactive::WriteKind;
 use ljos_render::kurbo::{Affine, Point};
@@ -112,6 +113,8 @@ enum Applied {
         id: OverrideId,
         restore: RestoreMode,
         what: Layer,
+        /// Where a binding of the change holds what it says.
+        held: BindingLayer,
     },
     /// The parent `target` had before a `ParentChange`.
     Parent {
@@ -466,6 +469,7 @@ struct Pending {
     prop: PropIndex,
     content: OverrideContent,
     restore: RestoreMode,
+    held: BindingLayer,
 }
 
 impl Round {
@@ -671,6 +675,7 @@ impl Group {
             id,
             restore,
             what: Layer::Property,
+            held: BindingLayer::OWN,
         });
     }
 
@@ -813,9 +818,13 @@ impl Group {
                     prop,
                     id,
                     restore,
+                    held,
                     ..
                 } => {
                     let _ = engine.remove_override(obj, prop, id, restore);
+                    if held != BindingLayer::OWN {
+                        engine.forget_held_warnings(obj, prop, held);
+                    }
                 }
                 Applied::Parent { target, old } => {
                     if engine.is_alive(target) && old.is_none_or(|p| engine.is_alive(p)) {
@@ -836,8 +845,14 @@ impl Group {
         content: OverrideContent,
         restore: RestoreMode,
         what: Layer,
+        held: BindingLayer,
     ) {
         if let Ok(id) = engine.push_override(obj, prop, content) {
+            // The property's own binding is not given back, so it says no
+            // more of what it held while the item was made (qml6).
+            if what == Layer::Property && restore == RestoreMode::None {
+                engine.forget_held_warnings(obj, prop, BindingLayer::OWN);
+            }
             // A later change of the same property (of a state that extends
             // another) takes the place of the earlier one, whose
             // `restoreEntryValues` then counts for nothing (qml6).
@@ -847,9 +862,14 @@ impl Group {
                         if *o == obj && *p == prop)
                 });
                 if let Some(i) = earlier
-                    && let Applied::Layer { id: under, .. } = self.applied.borrow_mut().remove(i)
+                    && let Applied::Layer {
+                        id: under,
+                        held: said,
+                        ..
+                    } = self.applied.borrow_mut().remove(i)
                 {
                     let _ = engine.remove_override(obj, prop, under, RestoreMode::BindingOrValue);
+                    engine.forget_held_warnings(obj, prop, said);
                 }
             }
             self.applied.borrow_mut().push(Applied::Layer {
@@ -858,6 +878,7 @@ impl Group {
                 id,
                 restore,
                 what,
+                held,
             });
         }
     }
@@ -942,7 +963,7 @@ impl Group {
         round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
         for p in values.into_iter().chain(exprs) {
             let at = (p.target, p.prop);
-            self.push(engine, at, p.content, p.restore, Layer::Property);
+            self.push(engine, at, p.content, p.restore, Layer::Property, p.held);
         }
     }
 
@@ -1056,6 +1077,7 @@ impl Group {
             }
             let ty = type_of(engine, target, prop);
             let at = at.to_string();
+            let mut held = BindingLayer::OWN;
             let content = match value {
                 // `undefined` takes the property back to what it is
                 // without a value, which only a binding's value does.
@@ -1078,11 +1100,15 @@ impl Group {
                     // did not, or what the property shows.
                     let mut last: Option<Value> = None;
                     let ask = asked(&ty);
+                    // Held while the item is made, as a declared binding's
+                    // are, so that one taken off before then says nothing
+                    // (qml6).
+                    let layer = engine.new_binding_layer();
+                    held = layer;
                     OverrideContent::Binding(Box::new(move |e| {
-                        // Held while the item is made, as a declared
-                        // binding's are, so that one a later binding of
-                        // the property replaces says nothing (qml6).
-                        let v = e.run_binding(target, prop, || given_as(e, &at, &ty, f(e, &ask)));
+                        let v = e.run_layer_binding(target, prop, layer, || {
+                            given_as(e, &at, &ty, f(e, &ask))
+                        });
                         if let Some(v) = v {
                             last = Some(v);
                         }
@@ -1097,6 +1123,7 @@ impl Group {
                 prop,
                 content,
                 restore,
+                held,
             });
         }
         for Part {
@@ -1148,6 +1175,7 @@ impl Group {
                 prop,
                 content,
                 restore,
+                held: BindingLayer::OWN,
             });
         }
     }
@@ -1215,6 +1243,7 @@ impl Group {
                 content,
                 RestoreMode::BindingOrValue,
                 Layer::Anchor,
+                BindingLayer::OWN,
             );
         }
     }
@@ -1274,6 +1303,7 @@ impl Group {
                 content,
                 RestoreMode::BindingOrValue,
                 Layer::Parent,
+                BindingLayer::OWN,
             );
         }
     }

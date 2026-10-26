@@ -25,6 +25,8 @@ pub(crate) struct DelayedErrors {
     /// Where warnings go instead of the log while a held binding runs.
     capture: RefCell<Option<Vec<String>>>,
     held: RefCell<Vec<Held>>,
+    /// The last [`BindingLayer`] handed out.
+    layers: Cell<u64>,
     /// What runs once no creation is running.
     after: RefCell<Vec<AfterCreation>>,
 }
@@ -35,7 +37,18 @@ struct Held {
     creation: u64,
     obj: ObjectId,
     prop: PropIndex,
+    layer: BindingLayer,
     said: Vec<String>,
+}
+
+/// Which binding of a property holds what it says: the property's own,
+/// or one a native type lays over it (a state's), each its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BindingLayer(u64);
+
+impl BindingLayer {
+    /// The property's own binding.
+    pub const OWN: BindingLayer = BindingLayer(0);
 }
 
 /// Puts the outer capture back, also when the binding unwinds.
@@ -145,16 +158,38 @@ impl Engine {
     }
 
     /// Runs the binding on `prop` of `obj`, holding what it says while a
-    /// creation is running or an earlier run of it is still held. Also for
-    /// a binding a native type keeps itself (a state's), which warns with
-    /// [`Engine::warn`].
-    pub fn run_binding<R>(&self, obj: ObjectId, prop: PropIndex, f: impl FnOnce() -> R) -> R {
+    /// creation is running or an earlier run of it is still held.
+    pub(crate) fn run_binding<R>(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        f: impl FnOnce() -> R,
+    ) -> R {
+        self.run_layer_binding(obj, prop, BindingLayer::OWN, f)
+    }
+
+    /// A layer of its own for a binding a native type lays over a property.
+    pub fn new_binding_layer(&self) -> BindingLayer {
+        let d = &self.inner.delayed;
+        d.layers.set(d.layers.get() + 1);
+        BindingLayer(d.layers.get())
+    }
+
+    /// [`Engine::run_binding`] for a binding a native type keeps itself,
+    /// which warns with [`Engine::warn`].
+    pub fn run_layer_binding<R>(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        layer: BindingLayer,
+        f: impl FnOnce() -> R,
+    ) -> R {
         let d = &self.inner.delayed;
         let earlier = d
             .held
             .borrow()
             .iter()
-            .find(|h| h.obj == obj && h.prop == prop)
+            .find(|h| h.obj == obj && h.prop == prop && h.layer == layer)
             .map(|h| h.creation);
         let Some(creation) = earlier.or_else(|| d.open.borrow().last().copied()) else {
             return f();
@@ -166,16 +201,52 @@ impl Engine {
         let out = f();
         let said = guard.end();
         let mut held = d.held.borrow_mut();
-        held.retain(|h| h.obj != obj || h.prop != prop);
+        held.retain(|h| h.obj != obj || h.prop != prop || h.layer != layer);
         if !said.is_empty() {
             held.push(Held {
                 creation,
                 obj,
                 prop,
+                layer,
                 said,
             });
         }
         out
+    }
+
+    /// The binding `layer` of `prop` of `obj` is gone for good (a state
+    /// that does not give the own one back took its place, or was left):
+    /// what it holds is not logged.
+    pub fn forget_held_warnings(&self, obj: ObjectId, prop: PropIndex, layer: BindingLayer) {
+        self.inner
+            .delayed
+            .held
+            .borrow_mut()
+            .retain(|h| h.obj != obj || h.prop != prop || h.layer != layer);
+    }
+
+    /// What the property says of the value its binding on `obj`'s `prop`
+    /// gave, after the run: held with what the run said while that is.
+    pub(crate) fn warn_of_binding(&self, obj: ObjectId, prop: PropIndex, msg: String) {
+        let d = &self.inner.delayed;
+        let mut held = d.held.borrow_mut();
+        let own = |h: &&mut Held| h.obj == obj && h.prop == prop && h.layer == BindingLayer::OWN;
+        if let Some(h) = held.iter_mut().find(own) {
+            h.said.push(msg);
+            return;
+        }
+        if let Some(&creation) = d.open.borrow().last() {
+            held.push(Held {
+                creation,
+                obj,
+                prop,
+                layer: BindingLayer::OWN,
+                said: vec![msg],
+            });
+            return;
+        }
+        drop(held);
+        self.warn(msg);
     }
 
     /// Takes a warning that a held binding run says; false otherwise.

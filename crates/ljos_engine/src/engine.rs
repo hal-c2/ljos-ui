@@ -3943,13 +3943,14 @@ impl Wrapped {
                     let e = engine.refusal(&v, &e);
                     // Qt's message is the binding's place and the error; a
                     // binding made at run time has no place to give.
-                    match engine.binding_place(obj, prop) {
-                        Some(at) => engine.warn(format!("{at}: {e}")),
+                    let msg = match engine.binding_place(obj, prop) {
+                        Some(at) => format!("{at}: {e}"),
                         None => {
                             let (t, p) = engine.describe(obj, prop);
-                            engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
+                            format!("QML {t}: {e} (property \"{p}\")")
                         }
-                    }
+                    };
+                    engine.warn_of_binding(obj, prop, msg);
                 }
             }
             if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, last) {

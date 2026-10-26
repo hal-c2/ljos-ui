@@ -122,6 +122,7 @@ pub use chooser::{DelegateChoice, DelegateChooser};
 pub use components::{ComponentKind, LoadedComponent};
 pub use context::Context;
 pub use cx::Cx;
+pub use delayed_errors::BindingLayer;
 pub use delegates::{DelegateHost, Delegates, RemovalOrder};
 pub use delegates::{Made, Urgency, ViewDelegates, ViewHost};
 pub use describe::{QtNamespaceEnum, VALUE_TYPES, ValueType, qt_namespace};
