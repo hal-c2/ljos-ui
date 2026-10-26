@@ -30,6 +30,19 @@ pub(crate) enum At {
 
 /// One step of a drag, for the window `target` names ([`target_of`]).
 pub(crate) enum DragStep {
+    /// A drag came over the window, offering `formats`, whose data is not
+    /// read yet: the window system needs an answer at once, and some
+    /// sources give their data only to a target that answered. The loop
+    /// answers from the formats alone and then calls `answered`, after
+    /// which the data is read and the drag is [`DragStep::Entered`].
+    Offered {
+        target: usize,
+        at: At,
+        formats: Vec<String>,
+        actions: DragActions,
+        answer: Answer,
+        answered: Box<dyn FnOnce() + Send>,
+    },
     Entered {
         target: usize,
         at: At,

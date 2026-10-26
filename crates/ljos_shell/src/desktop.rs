@@ -2026,7 +2026,7 @@ impl<M: Send + 'static> Desktop<M> {
             })
         };
         let i = match &step {
-            DragStep::Entered { target, .. } => {
+            DragStep::Offered { target, .. } | DragStep::Entered { target, .. } => {
                 let i = by_target(&self.slots, *target);
                 self.drag_over = i.map(|i| self.slots[i].key);
                 i
@@ -2038,6 +2038,12 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(i) = i else {
             // Over no window the shell shows, or one closed since.
             match step {
+                DragStep::Offered {
+                    answer, answered, ..
+                } => {
+                    answer.taken(None);
+                    answered();
+                }
                 DragStep::Entered { answer, .. } | DragStep::Moved { answer, .. } => {
                     answer.taken(None);
                 }
@@ -2067,6 +2073,19 @@ impl<M: Send + 'static> Desktop<M> {
             None => self.app.view_mut(),
         };
         match step {
+            DragStep::Offered {
+                at,
+                formats,
+                actions,
+                answer,
+                answered,
+                ..
+            } => {
+                answer.taken(view.window_drag_offered(&formats, point(at), actions));
+                answered();
+                // The scene is not told until the data is read.
+                return;
+            }
             DragStep::Entered {
                 at,
                 data,

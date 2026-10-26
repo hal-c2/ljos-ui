@@ -79,7 +79,7 @@ mod imp {
     use std::ffi::{c_int, c_ulong, c_void};
     use std::os::fd::AsRawFd;
     use std::ptr::NonNull;
-    use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+    use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
 
@@ -931,19 +931,46 @@ mod imp {
                         });
                     } else {
                         let types = current.types.clone();
+                        let target = target as usize;
                         // The application's own drag out, back over its
                         // window: this thread is the source, and gives
                         // what it would give.
-                        let data = match self.going.as_ref().filter(|_| source == self.proxy) {
-                            Some(going) => self.own(&going.formats, &types),
-                            None => self.read_all(&types, time),
-                        };
+                        if let Some(going) = self.going.as_ref().filter(|_| source == self.proxy) {
+                            let data = self.own(&going.formats, &types);
+                            (self.post)(DragStep::Entered {
+                                target,
+                                at,
+                                data,
+                                actions,
+                                answer,
+                            });
+                            return;
+                        }
+                        // The source hears an answer before its data is
+                        // asked for: some (Qt's) give a target that has
+                        // not answered in time no data and leave it.
+                        let named = self.readable_types(&types);
+                        let (answered, heard) = mpsc::sync_channel(1);
+                        (self.post)(DragStep::Offered {
+                            target,
+                            at,
+                            formats: DragData::formats_of(named.iter().map(|(name, _)| name)),
+                            actions,
+                            answer,
+                            answered: Box::new(move || {
+                                let _ = answered.send(());
+                            }),
+                        });
+                        // A loop that never answers is gone or stuck; the
+                        // data is read all the same.
+                        let _ = heard.recv_timeout(WRITE_WAIT);
+                        let data = self.read_all(named, time);
                         (self.post)(DragStep::Entered {
-                            target: target as usize,
+                            target,
                             at,
                             data,
                             actions,
-                            answer,
+                            answer: self.answer(),
                         });
                     }
                 }
@@ -1521,15 +1548,19 @@ mod imp {
                 .unwrap_or_default()
         }
 
-        fn read_all(&mut self, types: &[Atom], time: u32) -> DragData {
-            let named: Vec<(String, Atom)> = types
+        /// The types a drag offers that are read, by name.
+        fn readable_types(&self, types: &[Atom]) -> Vec<(String, Atom)> {
+            types
                 .iter()
                 .filter_map(|&t| {
                     let name = self.conn.get_atom_name(t).ok()?.reply().ok()?.name;
                     let name = String::from_utf8(name).ok()?;
                     readable_format(&name).then_some((name, t))
                 })
-                .collect();
+                .collect()
+        }
+
+        fn read_all(&mut self, named: Vec<(String, Atom)>, time: u32) -> DragData {
             let mut formats = Vec::new();
             for (name, t) in named {
                 if let Some(bytes) = self.read(t, time) {
