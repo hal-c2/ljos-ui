@@ -5823,3 +5823,174 @@ gain.
 - **A fused copy-and-move for a moved mesh** measured within noise.
 - These numbers predate "Text per delegate" above. That work changes how text is shaped,
   not how B0 draws it.
+
+### Memory against qml6 (2026-10-26)
+
+Five apps, off-screen in the cua sandbox, Ljós release builds against `qml6` 6.11.2 with the
+Basic style, both as Wayland clients of the sandbox's sway:
+
+- `bench/minimal.qml`: a Window with one Text.
+- `bench/list1000.qml`: a ListView of 1000 ItemDelegates with a ScrollBar.
+- Three corpus demos of different kinds: thermostat (controls-heavy), todolist (a list
+  model and LocalStorage), and photosurface (images).
+
+The sandbox has no GPU device, so both runtimes draw through Mesa's llvmpipe. MEM1 above
+covers fifteen apps with the private column alone. This section adds a view by mapping, the
+heap, and what Ljós's share is spent on.
+
+**Settled**, 8 s after start, in MiB. Each runtime ran alone. Sizes come from
+`/proc/PID/smaps`. The malloc figures come from an `LD_PRELOAD` counter of the bytes asked
+for, live and at the peak, so they include pages a driver reserved and never touched.
+
+| App | RSS, Ljós | qml6 | PSS, Ljós | qml6 | anonymous PSS, Ljós | qml6 | malloc live, Ljós | qml6 | malloc peak, Ljós | qml6 | threads, Ljós | qml6 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| minimal | 153.0 | 219.7 | 112.4 | 163.0 | 30.4 | 72.4 | 45.4 | 128.9 | 46.7 | 130.3 | 15 | 71 |
+| list1000 | 160.6 | 228.7 | 125.7 | 172.0 | 34.8 | 76.2 | 49.7 | 132.1 | 50.9 | 133.3 | 15 | 71 |
+| thermostat | 209.2 | 312.5 | 174.4 | 245.2 | 72.0 | 131.7 | 91.3 | 184.6 | 110.4 | 196.0 | 15 | 71 |
+| todolist | 172.4 | 259.6 | 157.5 | 190.2 | 49.9 | 94.4 | 67.8 | 144.3 | 68.1 | 145.9 | 16 | 71 |
+| photosurface | 188.3 | 257.1 | 153.3 | 200.7 | 49.6 | 86.6 | 61.1 | 142.5 | 64.2 | 143.0 | 16 | 80 |
+
+Ljós holds 42–60 % of qml6's anonymous memory and 35–56 % of its malloc'd bytes. PSS moves
+by up to 15 MiB from run to run with whatever else maps the same libraries, so it is the
+weakest column.
+
+**What is mapped**, settled minimal app, RSS (PSS) in MiB:
+
+| Mapping | Ljós | qml6 |
+|---|---:|---:|
+| LLVM (llvmpipe's JIT) | 46.0 (25.9) | 46.3 (28.3) |
+| the program / Qt's libraries | 44.7 (44.7) | 26.2 (26.2) |
+| other libraries | 8.1 (1.6) | 53.6 (22.6) |
+| GPU driver (Mesa, libgallium) | 13.7 (7.0) | 15.1 (8.5) |
+| fonts and fontconfig caches | 9.8 (2.7) | 5.2 (4.8) |
+| `[heap]` | 20.7 | 18.0 |
+| other anonymous | 9.6 | 53.7 |
+
+File-backed mappings are 82 of Ljós's 112 MiB of PSS and 91 of qml6's 163. The private
+dirty part of Ljós's file mappings is 8.3 MiB. 2.9 MiB of that is the program's own relocated
+`.data.rel.ro`; the rest is the libraries' relocations. Ljós maps the fontconfig cache twice,
+once for fontique and once for `ljos_text`'s substitution rules, which load beside it so the
+first unknown family does not wait. The pages are shared, so the second mapping costs RSS
+but no PSS.
+
+**Where Ljós's heap goes.** On the minimal app, massif's peak is 46 MB:
+
+- 18.7 MB is made by `glutin` creating the GL context, inside Mesa.
+- 15.9 MB is allocated by llvmpipe's own threads.
+- 1.7 MB is in `GlPainter::paint`.
+- 1.25 MB is the GL copy of the glyph atlas.
+- 1.0 MB is in `set_window`.
+
+Ljós's own Rust heap is about 4.8 MB. An llvmpipe context costs about 31.6 MB of malloc
+whatever API is asked for: GL compat, GL core, GLES 2 and GLES 3 were each made alone, and
+`LP_NUM_THREADS` moves it by 0.3 MB. qml6 pays the same.
+
+Driven thermostat after its Schedule page opened, from the engine's memory report (`ljos
+observe`, `memory`), in MB:
+
+| Owner | MB |
+|---|---:|
+| reactive graph (112 863 nodes) | 30.3 |
+| objects (6715) | 14.3 |
+| scene | 2.9 |
+| script (JS heap) | 1.8 |
+| glyph atlas, then 512² | 1.3 |
+| textures | 1.0 |
+| meshes | 0.4 |
+| compiled IR | 0.4 |
+| images | 0.2 |
+| text caches | 0.06 |
+| free in the allocator | 3.9 |
+| not attributed: driver and the rest | 75.0 |
+
+dhat on the same run counts 75.2 MiB of Rust heap. By crate:
+
+- `ljos_reactive` 35.1
+- `ljos_engine` 22.8
+- `ljos_quick` 4.25
+- `ljos_render` 3.0
+
+The largest site is the graph's node table, at 27 MB. The graph and per-object costs belong
+to the delegate track (B23–B27), so this work left them alone. Text caches, the JS heap,
+egui's font atlas (0.25 MiB at 2048 wide) and meshes are each too small to be worth a cut.
+
+**After driving.** These come from `ljos bench --gesture click --load 20`, before the cut
+below. Private is `Pss_Anon + SwapPss` in MiB; first frame is in ms.
+
+| App | first frame, Ljós | qml6 | private settled, Ljós | qml6 | private after driving, Ljós | qml6 | start peak (cgroup), Ljós | qml6 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| minimal | 62 | 447 | 38.4 | 85.2 | 38.4 | 85.2 | 49.6 | 207 |
+| list1000 | 54.4 | 332 | 42.7 | 90.1 | 44.0 | 90.2 | 53.5 | 124 |
+| thermostat | 131 | 420 | 59.6 | 141 | 227 | 178 | 140 | 191 |
+| todolist | 82 | 527 | 60.9 | 110 | 61.0 | 110 | 71.4 | 141 |
+| photosurface | 235 | 336 | 54.8 | 113 | 63.5 | 131 | 120 | 143 |
+
+Scrolling, after the cut, with `--gesture scroll --load 20`, median of 3, MiB:
+
+| App | private settled, Ljós | qml6 | private after scrolling, with swap, Ljós | qml6 |
+|---|---:|---:|---:|---:|
+| list1000 | 40.2 | 90.1 | 43.0 | 90.6 |
+| minimal | 37.9 | 85.2 | 37.9 | 85.2 |
+
+Scrolling 1000 rows adds 1–3 MiB on Ljós and none on qml6. The cgroup peaks of this run
+(up to 255 MiB for Ljós's list1000) are page cache, not the app's own memory: the cgroup's
+`file` was up to 200 MiB while its `anon` held at 40–42. The newly built 133 MB binary was
+being read on a machine whose load average was 40–54, and which swapped.
+
+Thermostat is the one loss, as in MEM1. Driven three rounds, Ljós's anonymous memory goes
+242, 200 (+38 swapped), 200 while qml6's holds at 187, so it is a one-time step and not a
+leak. A click-by-click drive puts the step at the page "Adjust your thermostat settings":
+
+- objects 4.9 → 13.6 MB
+- graph 13.7 → 28.8 MB
+- Rust heap 36 → 75 MB
+
+That is page size, on the delegate track.
+
+**The cut.** The glyph atlas started at 512². That held 512² of coverage and the same again
+as RGBA texels, 1 310 720 bytes, plus the driver's copy of the texture. The apps fill few
+glyphs:
+
+| App | glyphs |
+|---|---:|
+| minimal | 5 |
+| list1000 | 24–34 |
+| todolist | 35–223 |
+| thermostat | 157–319 |
+| photosurface | 10–188 |
+
+It now starts at 256², 327 680 bytes, and doubles when a glyph does not fit. Both builds
+were made from the same tree and differ only in the start side. Malloc live, settled, is
+three runs each for minimal and one each for todolist:
+
+| | 512² | 256² |
+|---|---:|---:|
+| minimal | 48.542 MB | 47.555 MB |
+| todolist | 72.094 MB | 71.099 MB |
+
+That is −0.99 MB, steady to 0.4 KB across runs. `b0_starts_with_a_small_atlas` pins the
+bytes exactly. `b0_grows_the_atlas_and_keeps_the_ink` draws 62 glyphs at 48 px, grows the
+atlas to 512² and compares the ink with the reference rasteriser.
+
+**Left**, none of it this track's to cut:
+
+- Software rendering pays llvmpipe's context: about 30 MB of malloc and 46 MiB of LLVM
+  mappings. A CPU path that draws into shared memory instead of through EGL would not.
+- Graph nodes and objects per page, on thermostat (delegate track).
+- Photosurface takes 661 ms of CPU to its first frame against qml6's 271, and answers input
+  at 515 ms against 354.
+- Once, todolist's `Component.onCompleted` took 8.3 s (a JS soft-budget warning) on the
+  first run of a binary with a fresh data directory. It did not happen again in three more
+  runs, one of them also with a fresh directory.
+
+DECISIONs:
+
+- Thermostat stands in for a controls gallery, because stocqt does not run.
+- `bench/list1000.qml` is the 1000-row list, since no corpus example has one.
+- Only the desktop profile was run.
+- Swapped pages count as the process's own memory.
+- llvmpipe's context is the driver's cost and was left alone.
+- The fontconfig cache's second mapping costs no PSS and keeps the first unknown family
+  quick, so it stays.
+- The cut is pinned in a Rust test, because the headless feature runner has no renderer
+  whose atlas a scenario could read.
