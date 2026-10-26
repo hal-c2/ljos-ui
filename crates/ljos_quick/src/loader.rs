@@ -111,6 +111,9 @@ struct Run {
     /// The `active` the Loader last followed, which a written one is
     /// followed before it is stored.
     active: Option<bool>,
+    /// An item was emptied without telling while the next one is made: a
+    /// failure tells the empty item, as no item replaces it.
+    emptied_quietly: bool,
 }
 
 #[qml_impl]
@@ -404,7 +407,7 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
     // made; a synchronous one goes from the old item straight to the new.
     if asynchronous {
         set(e, me, Loader::ITEM.index, Value::Null);
-    } else {
+    } else if old.is_some() {
         clear_item_quietly(e, me);
     }
     drop_old(e, me, old);
@@ -432,7 +435,13 @@ fn clear_item_quietly(e: &Engine, me: ObjectId) {
     let quiet = e
         .property_node(me, Loader::ITEM.index)
         .is_ok_and(|n| e.graph().replace_quietly(n, Value::Null).unwrap_or(false));
-    if !quiet {
+    if quiet {
+        // The field too, so what reads it or tells it later agrees.
+        let _ = e.with_mut(me, |l: &mut Loader| {
+            l.item = None;
+            l.run.emptied_quietly = true;
+        });
+    } else {
         set(e, me, Loader::ITEM.index, Value::Null);
     }
 }
@@ -478,10 +487,12 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
         }
         return;
     }
-    with_run(e, me, |r| {
+    let emptied_quietly = with_run(e, me, |r| {
         r.job = None;
         r.incubating = None;
-    });
+        std::mem::take(&mut r.emptied_quietly)
+    })
+    .unwrap_or(false);
     match made {
         Ok(obj) => {
             if !is_item(e, obj) {
@@ -499,6 +510,9 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
             warn(e, err.to_string());
             set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
             set(e, me, Loader::ITEM.index, Value::Null);
+            if emptied_quietly {
+                let _ = e.notify(me, Loader::ITEM.index);
+            }
             set(e, me, Loader::PROGRESS.index, 1.0.into());
         }
     }
