@@ -2023,11 +2023,14 @@ impl Engine {
         }
         let n = match (node, how) {
             (Some(n), _) => n,
-            // An override entry only exists on a node, and so does the
-            // host's mark: without one the value would read as assigned,
-            // and what follows a property until its author sets it
-            // (a control's font) would stop following.
-            (None, WriteKind::Override(_) | WriteKind::Host) => self.ensure_node(obj, prop)?,
+            // An override entry only exists on a node, and so do the
+            // host's and an animation's marks: without one the value would
+            // read as assigned, and what follows a property until its
+            // author sets it (a control's font, a style's opacity) would
+            // stop following.
+            (None, WriteKind::Override(_) | WriteKind::Host | WriteKind::Animation) => {
+                self.ensure_node(obj, prop)?
+            }
             // Journaled, a change is the graph's to keep: it gets a node.
             (None, _) if self.is_journaled() => self.ensure_node(obj, prop)?,
             (None, _) => {
