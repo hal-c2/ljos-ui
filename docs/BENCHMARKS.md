@@ -6989,3 +6989,101 @@ Left:
 - Attached members are applied from a copy (`value_fields_of` clones every assignment).
   So an attached enum literal's address is not the IR's, and the per-file number is
   checked against type and key rather than trusted by address.
+
+### B29 (H2): inherited visible and enabled at the hook, and an item's marks and record split hot from cold (2026-10-26)
+
+B29 is phase b of the delegate track's dirty-bit seam. It made two changes:
+
+- **Inherited `visible` and `enabled`.** These used to be one effect per item, which read
+  the parent's value. Now the change hooks of `visible` and `enabled`, and the visual
+  parent listener, pass the value down when the change is told. A child whose value
+  changes tells its own children through its own hook. A `MouseArea` keeps its own
+  `enabled` and passes its parent's on to its children. A script that hides a parent
+  and then reads a child's `visible` reads false straight away, as on Qt. A pass at the
+  frame could not give that order (`features/items/inherited-at-once.feature`, checked
+  on qml6).
+- **Hot and cold fields.** Every item has marks and a record, each kept in a dense list,
+  so every item pays for whatever they hold inline. The large fields that few items
+  set are now held apart:
+  - A Text's inputs sit in one box that its marks and its paint share.
+  - The content and list map that a mark carries until the frame live in side maps.
+  - The map of a `transform` list and a text field's paint are boxed.
+
+  Marks shrink from 688 bytes to 56, the record from 576 to 328, and a paint from 288
+  to 104. `sizes::an_items_marks_and_record_stay_small` pins these.
+
+The budget's allocator now counts bytes as well as calls. `bytes_a_thousand_instances_keep`
+pins what a thousand instances keep. The pins of ten land on the step where a list or map
+grew, so they jump.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets):
+
+| | B28 | B29 inherit | B29 |
+|---|---:|---:|---:|
+| ListView delegate, heap allocations | 1305 (130.5) | 1285 (128.5) | 1299 (129.9) |
+| ListView delegate, effects | 110 (11) | 90 (9) | 90 (9) |
+| ListView delegate, values | 90 (9) | 80 (8) | 80 (8) |
+| Wrapped delegate, heap allocations | 1298 (129.8) | 1268 (126.8) | 1282 (128.2) |
+| Wrapped delegate, effects | 100 (10) | 80 (8) | 80 (8) |
+| `createObject` item, heap allocations | 833 (83.3) | 786 (78.6) | 799 (79.9) |
+| `createObject` item, effects | 90 (9) | 70 (7) | 70 (7) |
+| Ten `createObject` items destroyed, graph nodes | 170 | 130 | 130 |
+
+| Heap bytes kept per instance, over a thousand | B28 | B29 inherit | B29 |
+|---|---:|---:|---:|
+| ListView delegate, one-line text | 27 485 | 27 252 | 25 801 |
+| ListView delegate, wrapped text | 29 527 | 29 293 | 27 842 |
+| `createObject` item | 20 845 | 17 142 | 15 893 |
+
+The split adds one allocation per Text, for the shared box, and takes 1.45 kB off every
+delegate. A DHAT run of the thousand one-line delegates shows where the rest goes:
+- the reactive graph's node slot map: 6.8 kB per delegate;
+- the per-object node lists (`ObjectHeader::set_node`): 2.9 kB;
+- the marks and record lists: 1.4 kB and 1.2 kB, before the split;
+- the object slot map and the render tree's slot map: about 1.0 kB each.
+
+The graph's nodes are the next lever for memory.
+
+| listview under callgrind (main thread, 20 s after 40 s), per delegate | B28 | B29 inherit | B29 |
+|---|---:|---:|---:|
+| Total ÷ text layouts, three runs | 346.8 k, 358.7 k, 352.8 k | 291.7 k, 348.3 k, 345.2 k | 324.9 k, 351.0 k, 329.4 k |
+| Median | 352.8 k | 345.2 k | 329.4 k |
+| `QuickScene::adopt`, inclusive | 43.2 k | 38.2 k | 38.1 k |
+| `QuickScene::unadopt`, inclusive | 13.4 k | 12.5 k | 11.0 k |
+| `inherit_effect`, inclusive | 5.7 k | | |
+| `inherit` (adoption and hooks), inclusive | | | 4.0 k |
+| `text_polish`, inclusive | 0.68 k | 0.68 k | 0.77 k |
+| `Geom::read`, inclusive | 15.2 k | | 15.3 k |
+
+Totals are noisy between runs: other lanes' builds were running, and how many idle
+frames fall in the window varies. The inclusive costs are steady to within 1 %. qml6
+does a whole delegate in ~200 k.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós B28 | Ljós B29 | qml6 (same run) |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.05 | 18.73 | 15.22 |
+| listview | 180.86 | 176.10 | 102.87 |
+| listview with `reuseItems: true` | 70.85 | 70.17 | 60.51 |
+
+DECISIONs:
+
+- Inheritance is passed at the hook and the reparent, not at the frame, so that a script
+  sees it in Qt's order. An item takes what it inherits once, when it is adopted. Items
+  that no scene shows inherit nothing, as before.
+- The frame's geometry read stays as it is. `Geom::read` already batches seven numbers
+  and three values into two engine calls. Of its ~7.4 k per call, about 5.2 k is the
+  delegate's own `width: ListView.view.width` binding running on its first read, which
+  any read would run. The read itself (access checks, the values, `faces_away`) is about
+  1.5–2 k per item. A one-record read would save under 0.5 % of a delegate, so B28's
+  `adopt` savings went to that binding and not to the read.
+- The split is kept: bytes fall (1.45 kB per delegate, 1.25 kB per plain item) and
+  callgrind does not rise (`unadopt` −1.5 k, `text_polish` +0.09 k).
+- A Text's inputs are shared through one box between the marks and the paint. A pool
+  for them could save the one allocation per Text, but it would need the paint to read
+  the marks at the frame. That is for phase c.
+- The content and list a mark carries are held in side maps keyed by item. A box per
+  mark would allocate on every change, and a moving `Rotation` changes on every frame.
+- A rectangle's paint (104 bytes) stays inline in the record. It is the common paint,
+  and boxing it would allocate on every colour change.
+- Phase c (B30, structure and text polish) is next. TEXT4's measure-on-read branch in
+  `text_polish` is kept; B29 only changed how it stores the inputs.
