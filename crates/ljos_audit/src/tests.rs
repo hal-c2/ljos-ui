@@ -955,11 +955,9 @@ fn a_page_of_a_swipe_view_that_is_not_shown_is_not_judged() {
 #[test]
 fn a_page_is_a_pane_and_a_tab_button_a_tab() {
     // Both have the role of a tab; only the button is pressed.
-    let report = run(
-        "import QtQuick\nimport QtQuick.Controls.Basic\n\
+    let report = run("import QtQuick\nimport QtQuick.Controls.Basic\n\
          Page {\n    width: 400; height: 300\n    \
-         Button { x: 20; y: 20; text: \"Save\" }\n}\n",
-    );
+         Button { x: 20; y: 20; text: \"Save\" }\n}\n");
     assert!(report.is_clean(), "{report}");
     let f = one(
         "    TabBar { x: 20; y: 20; width: 200\n        TabButton { icon.source: \"\" }\n    }",
@@ -1001,4 +999,20 @@ fn what_cannot_be_seen_is_not_in_the_accessibility_tree() {
     assert_eq!(report.codes(), ["a11y-unnamed-interactive"], "\n{report}");
     // A box of no size whose content hangs out of it is seen.
     clean("    Item { x: 20; y: 20\n        Button { text: \"Open\" }\n    }");
+}
+
+#[test]
+fn a_tap_handler_is_a_click_an_assistive_technology_must_find() {
+    let f = one(
+        "    Rectangle { x: 20; y: 20; width: 160; height: 40; color: \"#eeeeee\"\n        \
+         TapHandler { onTapped: console.log(\"open\") }\n    }",
+        "a11y-unnamed-interactive",
+    );
+    assert!(f.message.contains("TapHandler"), "{}", f.message);
+    assert!(f.bounds.is_some_and(|b| b.width == 160.0));
+    // Only the secondary button: a second way to what is offered.
+    clean(
+        "    Rectangle { x: 20; y: 20; width: 160; height: 40; color: \"#eeeeee\"\n        \
+         TapHandler { acceptedButtons: Qt.RightButton; onTapped: console.log(\"menu\") }\n    }",
+    );
 }

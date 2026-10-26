@@ -2,7 +2,8 @@
 //! at run time, through the audit.
 //!
 //! A `.bad.qml` must give each finding its `// expect:` line names, at
-//! the line it names, and no other of its directory's code; a `.good.qml`
+//! the line it names or the object that holds that line ([`same_place`]),
+//! and no other of its directory's code; a `.good.qml`
 //! none of its directory's code. A fixture is audited at the point its
 //! `// audit:` line names, else as it is. Fixtures of a rule the audit
 //! does not implement yet are listed as pending, not failed, and so are
@@ -10,10 +11,10 @@
 //! built; one of them passing fails the run, so that it is taken off.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use ljos_audit::{Matrix, MatrixPoint, Options, Report, audit, rules};
-use ljos_design::Check;
+use ljos_design::{Check, fixture};
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::{Item, QuickScene};
 use ljos_render::kurbo;
@@ -41,10 +42,6 @@ const KNOWN_MISSES: &[(&str, &str)] = &[
 /// The window a fixture is shown in when its root has no size.
 const WINDOW: (f64, f64) = (640.0, 480.0);
 
-fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../ljos_design/fixtures")
-}
-
 fn engine() -> Engine {
     let e = Engine::new();
     ljos_quick::register(&e);
@@ -67,36 +64,30 @@ fn load(e: &Engine, source: &str) -> Result<ObjectId, String> {
         .map_err(|err| err.to_string())
 }
 
-/// What a fixture's header comments say.
+/// What a fixture's header comments say, read by the reader the static
+/// lint tests share (`ljos_design::fixture`).
 struct Header {
     expect: Vec<(String, u32)>,
     point: Option<MatrixPoint>,
 }
 
-fn header(source: &str) -> Result<Header, String> {
-    let mut h = Header {
-        expect: Vec::new(),
-        point: None,
+fn header(source: &str, bad: bool) -> Result<Header, String> {
+    let expect = if bad {
+        fixture::expected(source)?
+            .into_iter()
+            .map(|e| (e.code, e.line))
+            .collect()
+    } else {
+        Vec::new()
     };
-    for line in source
-        .lines()
-        .take_while(|l| l.trim_start().starts_with("//"))
-    {
-        let line = line.trim_start().trim_start_matches('/').trim();
-        if let Some(rest) = line.strip_prefix("expect:") {
-            for one in rest.split(',') {
-                let (code, at) = one
-                    .trim()
-                    .split_once(" at ")
-                    .ok_or_else(|| format!("expect `{one}`: no `at <line>`"))?;
-                let at = at.trim().parse().map_err(|_| format!("expect `{one}`"))?;
-                h.expect.push((code.trim().to_string(), at));
-            }
-        } else if let Some(rest) = line.strip_prefix("audit:") {
-            h.point = Some(rest.trim().parse().map_err(|e| format!("{e}"))?);
-        }
-    }
-    Ok(h)
+    let pairs = fixture::audit(source)?;
+    let point = if pairs.is_empty() {
+        None
+    } else {
+        let text: Vec<String> = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        Some(text.join(" ").parse().map_err(|e| format!("{e}"))?)
+    };
+    Ok(Header { expect, point })
 }
 
 /// The line of a place like `file:///Main.qml:8:5`.
@@ -104,6 +95,34 @@ fn line_of(place: &str) -> Option<u32> {
     let mut parts = place.rsplitn(3, ':');
     let _column = parts.next()?;
     parts.next()?.parse().ok()
+}
+
+/// Whether a finding at `found` is the one expected at `line`. The static
+/// lint of a rule checked both ways anchors where the author writes (the
+/// `color:` of a Text, a MouseArea), the audit on the item that shows the
+/// defect (the Text, the item the MouseArea makes a stop of): the object
+/// whose braces hold the expected line is the same place.
+fn same_place(source: &str, line: u32, found: Option<u32>) -> bool {
+    found == Some(line) || (found.is_some() && found == holder(source, line))
+}
+
+/// The line of the object declaration whose braces hold `line`.
+fn holder(source: &str, line: u32) -> Option<u32> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut depth = 0i32;
+    for at in (1..line).rev() {
+        let text = lines.get(at as usize - 1)?;
+        let code = text.split("//").next().unwrap_or_default();
+        for ch in code.chars().rev() {
+            match ch {
+                '}' => depth += 1,
+                '{' if depth == 0 => return Some(at),
+                '{' => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 /// Mounts the fixture as a viewer does, the root filling the window, and
@@ -135,7 +154,8 @@ fn check(path: &Path, code: &str) -> Option<String> {
         Ok(s) => s,
         Err(err) => return Some(err.to_string()),
     };
-    let head = match header(&source) {
+    let bad = path.to_string_lossy().ends_with(".bad.qml");
+    let head = match header(&source, bad) {
         Ok(h) => h,
         Err(err) => return Some(err),
     };
@@ -152,22 +172,22 @@ fn check(path: &Path, code: &str) -> Option<String> {
             )
         })
         .collect();
-    let bad = path.to_string_lossy().ends_with(".bad.qml");
     let mut wrong = String::new();
     if bad {
-        if head.expect.is_empty() {
-            return Some("no `// expect:` line".into());
-        }
         for (c, at) in &head.expect {
             let hit = report
                 .of(c)
-                .any(|f| f.place.as_deref().and_then(line_of) == Some(*at));
+                .any(|f| same_place(&source, *at, f.place.as_deref().and_then(line_of)));
             if !hit {
                 let _ = writeln!(wrong, "  expected {c} at {at}");
             }
         }
         for (at, f) in &found {
-            if !head.expect.iter().any(|(c, l)| c == code && l == at) {
+            if !head
+                .expect
+                .iter()
+                .any(|(c, l)| c == code && same_place(&source, *l, Some(*at)))
+            {
                 let _ = writeln!(wrong, "  not expected: {f}");
             }
         }
@@ -182,44 +202,26 @@ fn check(path: &Path, code: &str) -> Option<String> {
 #[test]
 fn every_runtime_fixture_gives_what_it_expects() {
     let implemented = rules::implemented();
-    let Ok(dirs) = std::fs::read_dir(fixtures()) else {
-        eprintln!("no fixtures at {}", fixtures().display());
-        return;
-    };
-    let mut dirs: Vec<PathBuf> = dirs.flatten().map(|d| d.path()).collect();
-    dirs.sort();
     let (mut ran, mut pending, mut failed) = (0, Vec::new(), Vec::new());
     let mut missed = Vec::new();
-    for dir in dirs.iter().filter(|d| d.is_dir()) {
-        let code = dir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let Some(rule) = ljos_design::rule(&code) else {
+    for case in fixture::cases() {
+        let code = case.code.as_str();
+        let Some(rule) = ljos_design::rule(code) else {
             failed.push(format!("{code}: no such rule"));
             continue;
         };
         if rule.check == Check::Static {
             continue;
         }
-        let mut cases: Vec<PathBuf> = std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "qml"))
-            .collect();
-        cases.sort();
-        if !implemented.contains(&code.as_str()) {
-            pending.extend(cases.iter().map(|p| format!("{code}/{}", name(p))));
-            continue;
-        }
-        for case in &cases {
+        for file in [&case.bad, &case.good] {
+            let id = format!("{code}/{}", name(file));
+            if !implemented.contains(&code) {
+                pending.push(id);
+                continue;
+            }
             ran += 1;
-            let id = format!("{code}/{}", name(case));
             let known = KNOWN_MISSES.iter().find(|(c, _)| *c == id);
-            match (check(case, &code), known) {
+            match (check(file, code), known) {
                 (Some(_), Some((_, why))) => missed.push(format!("{id}: {why}")),
                 (Some(why), None) => failed.push(format!("{id}:\n{why}")),
                 (None, Some(_)) => {
@@ -245,7 +247,7 @@ fn every_runtime_fixture_gives_what_it_expects() {
         );
     }
     for (id, _) in KNOWN_MISSES {
-        if !fixtures().join(id).exists() {
+        if !fixture::dir().join(id).exists() {
             failed.push(format!("{id}: in KNOWN_MISSES and no such case"));
         }
     }
