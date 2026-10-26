@@ -109,7 +109,6 @@ Feature: A value a binding gives a property of another type
     Then the property "seen" of "root" is "-Infinity -Infinity -Infinity -Infinity"
 
   # Bucket value:var(number):step-emit(color.hslLightness).
-  @backlog
   Scenario: A real parameter of a signal given undefined is NaN
     Given the QML:
       """qml

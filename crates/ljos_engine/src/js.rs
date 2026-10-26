@@ -21,6 +21,7 @@ use ljos_js::{
 };
 use slotmap::{Key, KeyData};
 
+use crate::atom::Atom;
 use crate::engine::{Engine, Inner};
 use crate::error::EngineError;
 use crate::ids::{ConnectionId, MethodIndex, ObjectId, PropIndex, SignalIndex};
@@ -1050,13 +1051,27 @@ impl HostObjects for EngineHost {
         let id = u64_to_obj(obj);
         // A signal declared in QML carries the script's array to its
         // handlers; a native one tells native code, which reads lists.
-        let script = engine
-            .meta_of(id)
+        let meta = engine.meta_of(id);
+        let script = meta
+            .as_ref()
             .is_some_and(|m| m.signal_is_script(SignalIndex(signal)));
+        let params: &[(Atom, TypeTag)] = match &meta {
+            Some(m) if script => m.signal(SignalIndex(signal)).map_or(&[], |s| &s.params[..]),
+            _ => &[],
+        };
+        if args.len() < params.len() {
+            return Err(HostError::msg("Insufficient arguments"));
+        }
         let vals: Vec<Value> = args
             .iter()
-            .map(|a| {
-                if script {
+            .enumerate()
+            .map(|(i, a)| {
+                if let Some(v) = params
+                    .get(i)
+                    .and_then(|(_, ty)| engine.signal_argument(scope, i, a, ty))
+                {
+                    v
+                } else if script {
                     // A list property sent with a signal is the entries
                     // it had (list_faces.rs).
                     match a {
@@ -1472,6 +1487,68 @@ impl Engine {
             Value::Enum(e) => JsValue::Number(f64::from(e.value)),
             Value::Js(h) => JsValue::Handle(h.0.clone()),
         }
+    }
+
+    /// What a script's argument `i` is to a signal's parameter of type
+    /// `ty`, as qml6 makes it; None where the parameter takes it as it is.
+    /// What a value type can't be made of is its empty value, and warned.
+    fn signal_argument(
+        &self,
+        scope: &Scope<'_>,
+        i: usize,
+        a: &JsValue,
+        ty: &TypeTag,
+    ) -> Option<Value> {
+        Some(match ty {
+            TypeTag::Real => Value::Real(scope.number(a)),
+            TypeTag::Int => Value::Int(crate::number::to_int32(scope.number(a))),
+            TypeTag::String => Value::String(match a {
+                JsValue::Undefined | JsValue::Null => Atom::EMPTY,
+                _ => Atom::from(scope.display(a)),
+            }),
+            TypeTag::Bool => Value::Bool(match a {
+                JsValue::Undefined | JsValue::Null => false,
+                JsValue::Bool(b) => *b,
+                JsValue::Number(n) => !(*n == 0.0 || n.is_nan()),
+                JsValue::String(s) => !s.is_empty(),
+                _ => true,
+            }),
+            TypeTag::Color
+            | TypeTag::Point
+            | TypeTag::Size
+            | TypeTag::Rect
+            | TypeTag::Font
+            | TypeTag::Vector2d
+            | TypeTag::Vector3d
+            | TypeTag::Vector4d
+            | TypeTag::Quaternion
+            | TypeTag::Url => {
+                let taken = match a {
+                    JsValue::Undefined => None,
+                    // A colour is black of anything else, without a word.
+                    _ if matches!(ty, TypeTag::Color) => Some(
+                        ty.coerce(&self.js_to_value(scope, a.clone(), ty))
+                            .unwrap_or(Value::Color(Color::INVALID)),
+                    ),
+                    JsValue::Null => None,
+                    JsValue::String(_) if matches!(ty, TypeTag::Url) => {
+                        ty.coerce(&self.js_to_value(scope, a.clone(), ty)).ok()
+                    }
+                    _ if matches!(ty, TypeTag::Url) => None,
+                    _ => ty.coerce(&self.js_to_value(scope, a.clone(), ty)).ok(),
+                };
+                taken.unwrap_or_else(|| {
+                    self.warn(format!(
+                        "\"Could not convert argument {i} from {} to {}\"",
+                        scope.display(a),
+                        ty.qt_name()
+                    ));
+                    self.warn("Passing incompatible arguments to signals is not supported.".into());
+                    ty.default_value()
+                })
+            }
+            _ => return None,
+        })
     }
 
     /// A JS value as an engine value. `ty` is the type it is going to, so a
