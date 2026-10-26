@@ -685,6 +685,9 @@ struct Inherit {
     enabled: Option<OverrideId>,
     /// A `MouseArea`, whose `enabled` is its own ([`inherit`]).
     mouse_area: bool,
+    /// [`inherit`] is changing the item's stack, whose change hook asks
+    /// for it again.
+    busy: bool,
 }
 
 /// What the scene keeps of one item it shows ([`Records`]): one record in
@@ -3431,17 +3434,16 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     if !e.is_alive(obj) {
         return;
     }
-    // Copied out and back: what the overrides set off may mark the scene.
-    let Some(mut st) = shared.borrow().marks.get(obj).map(|m| m.inherit) else {
+    // Each change to the stack tells the item's own hook, which asks for
+    // this again: what it would do is what is being done.
+    let Some((covered, mouse_area)) = shared.borrow_mut().marks.get_mut(obj).and_then(|m| {
+        let i = &mut m.inherit;
+        (!std::mem::replace(&mut i.busy, true)).then_some((i.visible.is_some(), i.mouse_area))
+    }) else {
         return;
     };
-    let covered = st.visible.is_some();
-    let mouse_area = st.mouse_area;
     let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
-    for (p, slot) in [
-        (Item::VISIBLE.index, &mut st.visible),
-        (Item::ENABLED.index, &mut st.enabled),
-    ] {
+    for p in [Item::VISIBLE.index, Item::ENABLED.index] {
         let parent_on = if p == Item::ENABLED.index {
             // `MouseArea.enabled` is the area's own switch: it neither
             // follows a disabled ancestor nor disables what is inside.
@@ -3449,7 +3451,7 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
         } else {
             parent.is_none_or(|q| e.read(q, p).to_boolean())
         };
-        if let Err(err) = inherit_one(e, obj, p, slot, parent_on) {
+        if let Err(err) = inherit_one(e, obj, p, shared, parent_on) {
             e.log(
                 LogLevel::Warning,
                 SCENE_CATEGORY,
@@ -3457,15 +3459,37 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
             );
         }
     }
-    if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {
-        m.inherit = st;
-    }
     // A covered item is kept shown in the tree (see `apply_geometry`).
     // Uncovered, its own `visible` may be the false it read under the
     // cover, which is no change, so the geometry is not read again by
     // itself.
-    if covered && st.visible.is_none() {
+    let uncovered = shared.borrow_mut().marks.get_mut(obj).is_some_and(|m| {
+        m.inherit.busy = false;
+        m.inherit.visible.is_none()
+    });
+    if covered && uncovered {
         mark(shared, |s| s.set(obj, Dirty::GEOM, |_| ()));
+    }
+}
+
+/// The override that covers `p` of `obj` in this scene; `None` outside it.
+fn cover(shared: &SharedRc, obj: ObjectId, p: PropIndex) -> Option<Option<OverrideId>> {
+    let s = shared.borrow();
+    let m = s.marks.get(obj)?;
+    Some(if p == Item::VISIBLE.index {
+        m.inherit.visible
+    } else {
+        m.inherit.enabled
+    })
+}
+
+fn set_cover(shared: &SharedRc, obj: ObjectId, p: PropIndex, id: Option<OverrideId>) {
+    if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {
+        if p == Item::VISIBLE.index {
+            m.inherit.visible = id;
+        } else {
+            m.inherit.enabled = id;
+        }
     }
 }
 
@@ -3473,14 +3497,17 @@ fn inherit_one(
     e: &Engine,
     obj: ObjectId,
     p: PropIndex,
-    slot: &mut Option<OverrideId>,
+    shared: &SharedRc,
     parent_on: bool,
 ) -> Result<(), EngineError> {
+    let Some(slot) = cover(shared, obj, p) else {
+        return Ok(());
+    };
     let own = e.read(obj, p).to_boolean();
-    match (parent_on, *slot) {
+    match (parent_on, slot) {
         (true, None) => Ok(()),
         (true, Some(id)) => {
-            *slot = None;
+            set_cover(shared, obj, p, None);
             // The layer is a binding until something assigns through it;
             // an assignment while covered is the item's new own value.
             let assigned = e.provenance(obj, p) == Some(Provenance::Assigned);
@@ -3493,7 +3520,8 @@ fn inherit_one(
         }
         (false, None) => {
             if own {
-                *slot = Some(push_off(e, obj, p)?);
+                let id = push_off(e, obj, p)?;
+                set_cover(shared, obj, p, Some(id));
             }
             Ok(())
         }
@@ -3501,8 +3529,10 @@ fn inherit_one(
             if own {
                 // `true` was assigned while the parent is off: keep it as
                 // the own value, and keep reading false.
+                set_cover(shared, obj, p, None);
                 e.remove_override(obj, p, id, RestoreMode::None)?;
-                *slot = Some(push_off(e, obj, p)?);
+                let id = push_off(e, obj, p)?;
+                set_cover(shared, obj, p, Some(id));
             }
             Ok(())
         }

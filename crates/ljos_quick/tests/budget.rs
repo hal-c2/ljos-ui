@@ -373,8 +373,8 @@ fn ten_wrapped_listview_delegates() {
     let _alone = alone();
     let (b, made) = listview_delegates(WRAPPED);
     assert_eq!(made, 10);
-    // Per delegate: 3 objects, 8 values, 5 bindings, 10 effects, 2
-    // scopes; 135.4 allocations. The two enumerations its text names,
+    // Per delegate: 3 objects, 6 values, 5 bindings, 8 effects, 2
+    // scopes; 133.8 allocations. The two enumerations its text names,
     // `Text.WordWrap` and `Text.ElideRight`, are looked up as a type once
     // for the file, not once a delegate (twenty fewer lookups, TEXT5).
     // The text is broken into lines and its last line elided without
