@@ -1225,9 +1225,9 @@ impl Input for LjosBackend {
         self.live()?.drive(|d| d.click(Point::new(x, y), b, 1))
     }
 
-    fn double_click(&mut self, x: f64, y: f64) -> Result<()> {
+    fn clicks(&mut self, count: u8, x: f64, y: f64) -> Result<()> {
         self.live()?
-            .drive(|d| d.click(Point::new(x, y), MouseButtons::LEFT, 2))
+            .drive(|d| d.click(Point::new(x, y), MouseButtons::LEFT, count.into()))
     }
 
     fn drag(&mut self, from: (f64, f64), to: (f64, f64)) -> Result<()> {

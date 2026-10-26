@@ -434,9 +434,10 @@ pub trait Input: Backend {
         Err(BackendError::NotImplemented("a click with modifiers held"))
     }
 
-    /// Two clicks at one place in quick succession.
-    fn double_click(&mut self, _x: f64, _y: f64) -> Result<()> {
-        Err(BackendError::NotImplemented("a double click"))
+    /// `count` clicks of the left button at one place in quick
+    /// succession: a double click, a triple click.
+    fn clicks(&mut self, _count: u8, _x: f64, _y: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a double or triple click"))
     }
 
     /// Press at `from`, move to `to` with the button held, release there.

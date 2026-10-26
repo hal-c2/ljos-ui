@@ -86,7 +86,12 @@ fn user_types(w: &mut LjosWorld, text: String) -> StepResult {
 
 #[when(regex = r"^the user double-clicks at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
 fn user_double_clicks(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
-    w.each(|b| b.input()?.double_click(x, y))
+    w.each(|b| b.input()?.clicks(2, x, y))
+}
+
+#[when(regex = r"^the user triple-clicks at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
+fn user_triple_clicks(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
+    w.each(|b| b.input()?.clicks(3, x, y))
 }
 
 #[when(regex = r"^the user drags from ([-\d.]+), ([-\d.]+) to ([-\d.]+), ([-\d.]+)$")]
