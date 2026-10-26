@@ -6332,7 +6332,7 @@ once.
 
 ### Software drawing to shared memory: a lead (2026-10-26)
 
-A design note, not built. Without a GPU, Ljós draws through EGL on Mesa's llvmpipe, as qml6
+A design note; built and measured in SHM1 below. Without a GPU, Ljós draws through EGL on Mesa's llvmpipe, as qml6
 does. The context alone costs:
 
 - about 31.6 MB of malloc, whatever GL API is asked for;
@@ -6373,6 +6373,156 @@ would draw and send only its damage.
 
 **When.** It is chosen where EGL offers only llvmpipe or softpipe, or when asked for. A
 machine with a GPU keeps GL.
+
+### SHM1: a window drawn on the processor, against B0 on llvmpipe and qml6 (2026-10-26)
+
+The lead above, built. `LJOS_PAINTER=cpu` (or `ShellConfig::drawn_on_processor`) draws each
+window with R into a `wl_shm` buffer (an `MIT-SHM` image on X11) through softbuffer. It makes
+no EGL display:
+
+- R draws with `vello_cpu`'s workers (the processor's cores less one, at most three) and the
+  machine's SIMD level;
+- only the parts that differ from the last frame are drawn (`frame_damage`: an item that
+  moved, changed what it draws, its opacity or its clips, came, went or fell behind another);
+- only the changed rectangles are given to `wl_surface.damage_buffer`;
+- Wayland's two buffers take turns, and a buffer's age says which earlier changes it lacks.
+
+What R cannot draw is left out and logged once. That is a `ShaderEffect`'s program, what egui
+draws (the inspector), and a window that can be seen through (drawn over black). The B0
+scenarios' comparison checks the path: `features/window/cpu-drawing.feature` compares the
+window's screencopy with R's picture of the same frame (`app_screenshot`), within 2 levels,
+before and after moves, colour changes and scrolls in a clip.
+
+**Method.** The sandbox is headless sway with `WLR_RENDERER=pixman`, so B0's EGL is llvmpipe
+(`LP_NUM_THREADS` capped at 4, as the shell does) and qml6 draws with llvmpipe too.
+
+- **Benches.** `ljos bench --profile desktop --warm-up --repeat 5 --settle 1 --idle 3 --load 3
+  --gesture scroll`, the manifest of "Start-up against qml6". The apps are list1000, minimal,
+  thermostat, todolist, listview and animations (a full-window animation). Medians of 5.
+- **Malloc.** The `LD_PRELOAD` counter of "Memory against qml6", read 8 s after start and
+  again after 10 s of scrolling.
+- **Load.** The machine was shared, at a load of 12–104. Start-up times moved by up to 2× from
+  run to run, in both directions, so read them as the same order. A first run had the
+  processor faster everywhere (minimal 38 against 94 ms).
+
+**Memory** (MiB; private and swapped is the process's own, after driving):
+
+| app | PSS cpu | PSS B0 | PSS qt | own cpu | own B0 | own qt |
+|---|---:|---:|---:|---:|---:|---:|
+| list1000 | 63.1 | 103 | 222 | 17.7 | 44.9 | 90.2 |
+| minimal | 56.0 | 127 | 161 | 11.7 | 37.9 | 83.2 |
+| thermostat | 97.4 | 50.4* | 181 | 48.3 | 83.1 | 143 |
+| todolist | 85.8 | 131 | 214 | 30.9 | 58.8 | 111 |
+| listview | 60.6 | 126 | 195 | 17.9 | 46.2 | 90.4 |
+| animations | 62.4 | 151 | 224 | 16.6 | 44.2 | 98.4 |
+
+\* B0's thermostat had been swapped out when its PSS was read. Its own memory, swap counted, is
+the comparable figure.
+
+Settled with nothing swapped (RSS / PSS / threads):
+
+| app | cpu | B0 | qt |
+|---|---|---|---|
+| minimal | 69.1 / 60.8 / 15 | 155 / 132.8 / 16 | 219.7 / 181.6 / 71 |
+| list1000 | 74.9 / 66.9 / 15 | 162 / 109 / 16 | 226 / 188 / 71 |
+| thermostat | 119 / 111 / 15 | 209 / 155 / 16 | 302 / 264 / 71 |
+| todolist | 95 / 87 / 16 | 178 / 160 / 17 | 260 / 222 / 71 |
+
+On minimal, B0's extra is LLVM (37 MiB PSS), heap (21 MiB against 3.3) and Mesa's driver
+(12 MiB). The processor's path maps none of them: 145 MiB mapped, against 406 for B0 and
+about 490 for qml6.
+
+**Malloc** (live / peak):
+
+| app | after start: cpu | B0 | qt | after scrolling: cpu | B0 | qt |
+|---|---:|---:|---:|---:|---:|---:|
+| minimal | 7.05M / 7.11M | 47.6M / 49.0M | 135.2M / 136.6M | 7.55M / 7.61M | 47.6M / 49.0M | 135.2M / 136.6M |
+| list1000 | 11.1M / 11.1M | 52.1M / 53.3M | 138.5M / 139.8M | 13.7M / 14.1M | 54.3M / 54.8M | 139.5M / 140.9M |
+| thermostat | 48.6M / 48.9M | 95.7M / 115.8M | 192.0M / 203.9M | 49.3M / 49.4M | 104.1M / 115.8M | 192.3M / 204.0M |
+| todolist | 27.3M / 27.4M | 71.1M / 71.4M | 151.3M / 152.9M | 28.7M / 28.7M | 70.9M / 73.8M | 151.6M / 154.5M |
+
+**Start to first frame** (ms, median):
+
+| app | cpu | B0 | qt |
+|---|---:|---:|---:|
+| list1000 | 69.6 | 65.4 | 361 |
+| minimal | 97.4 | 81.7 | 669 |
+| thermostat | 145 | 381 | 639 |
+| todolist | 193 | 98.3 | 443 |
+| listview | 62.7 | 70.5 | 405 |
+| animations | 128 | 144 | 457 |
+
+**Frames while scrolling and animating.** The median and p95 frame intervals were 16.1–16.3
+ms for all three on list1000, listview and animations: every frame was shown. Input to frame
+had a median of about 8.7 ms on all three. In the first run, B0's p95 input-to-frame was 30.8
+ms (listview) and 65.6 ms (animations), against 15.3 and 15.6 on the processor.
+
+Processor time while driven (% of one core):
+
+| app | cpu | B0 | qt |
+|---|---:|---:|---:|
+| list1000 | 10.8 | 9.97 | 14.0 |
+| listview | 15.6 | 14.1 | 25.6 |
+| animations | 14.8 | 7.08 | 19.5 |
+
+A frame that repaints the whole window costs the processor's path about twice B0's time on
+llvmpipe. It is still below qml6's, and no frame is late.
+
+**Idle.**
+
+- The static apps use 0.00 % of the processor at rest on both paths.
+- Both show 0.33 wakes a second in the 3 s window. That is one wake of the main thread after
+  the last frame, not polling: with a 1 s window it reads 1.00.
+- Animating apps wake per frame: listview 1496 (cpu), 1338 (B0) and 6757 (qt); animations
+  6425, 1174 and 6512 over the window.
+
+**Pi Zero profile** (`--profile pi-zero`, repeat 3; cpu / B0 / qt):
+
+| | list1000 | listview | animations |
+|---|---|---|---|
+| first frame (ms) | 353 / 1264 / 1155 | 311 / 654 / 1293 | 345 / 561 / 892 |
+| processor driven (%) | 3.0 / 13.4 / 7.1 | 6.0 / 9.5 / 12.5 | 5.2 / 4.4 / 7.9 |
+
+- PSS was about 61, 144–157 and 225 MiB.
+- All three showed 59–60 frames a second while driven.
+- At rest, listview's animation showed 59 frames a second on the processor and 39 on B0.
+
+**R's cost per frame** (in-process; 800×600 unless said, wall ms, workers 0 / 3 / 8):
+
+| | wall | processor |
+|---|---|---|
+| 200 rounded rectangles | 0.56 / 0.42 / 0.39 | 0.55 / 0.80 / 1.00 |
+| 2000 rounded rectangles | 3.99 / 2.00 / 2.07 | 3.9 / 4.9 / 6.0 |
+| 2000, 1920×1080 | 4.98 / 3.23 / 2.96 | |
+
+Three workers halve a busy frame. Eight draw it no sooner and cost a fifth more of the
+processor, so the shell gives three. Copying R's RGBA into the window's `0RGB` words as
+little-endian words with the outer bytes swapped took the copy from 0.15 to 0.07 ms at 800×600,
+and from 0.65 to 0.34 ms at 1920×1080.
+
+**DECISION: the shell chooses the processor where EGL would draw in software.** It wins on
+memory everywhere (PSS a half to a third of B0's, malloc 7–49 MB against 48–104 MB). It shows
+every frame while scrolling and in a full-window animation, at no worse latency. Start-up is
+the same order on this loaded machine and 2–4× sooner on the Pi Zero profile. The rule
+(`crates/ljos_shell/src/software.rs`) is told without making an EGL display. The processor is
+chosen when:
+
+- Mesa is told to draw in software (`LIBGL_ALWAYS_SOFTWARE`, `MESA_LOADER_DRIVER_OVERRIDE` of
+  `swrast`, `kms_swrast`, `llvmpipe` or `softpipe`);
+- or no `/dev/dri/renderD*` opens;
+- or the Wayland compositor offers neither `zwp_linux_dmabuf_v1` nor `wl_drm`;
+- or the X server has neither DRI3 nor DRI2.
+
+It applies only with an opaque background, and never when the user chose: `LJOS_PAINTER=gl`,
+`wgpu` or `cpu`, or `drawn_on_processor`. The log says so at start. A window that shows what R
+leaves out, a `ShaderEffect`'s program, what egui draws or a window that can be seen through,
+takes every window to GL before it is drawn. That happens once, so nothing is lost; EGL then
+starts as it would have at start-up (`features/window/software-choice.feature`). A machine with
+a GPU keeps GL.
+
+The cost is a full-window repaint at about twice B0's processor time, which matters on a small
+machine at 60 frames a second. The desktop scenarios keep checking B0 (`LJOS_PAINTER=gl`)
+unless one lets the shell choose.
 
 ### Analysis by class and kept runs for one-line plain text (2026-10-26)
 
