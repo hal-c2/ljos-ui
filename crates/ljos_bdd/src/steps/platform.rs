@@ -1,5 +1,5 @@
 //! The system's services around the application: the clipboard, its
-//! dialogs, drags from other applications, permissions, sensors, a
+//! dialogs, drags from and to other applications, permissions, sensors, a
 //! position, opened URLs and a window's backdrop.
 
 use cucumber::{given, then, when};
@@ -181,6 +181,142 @@ fn outside_drag_taken(w: &mut LjosWorld, which: String) -> StepResult {
                 if want { "not " } else { "" }
             )))
         }
+    })
+}
+
+#[then(regex = r#"^the drag from another application is taken as (copy|move|link)$"#)]
+fn outside_drag_taken_as(w: &mut LjosWorld, action: String) -> StepResult {
+    w.each(|b| match b.platform()?.outside_drag_action()? {
+        Some(a) if a == action => Ok(()),
+        Some(a) => Err(BackendError::Failed(format!(
+            "the drag from another application is taken as {a}"
+        ))),
+        None => Err(BackendError::Failed(
+            "the drag from another application is not taken".into(),
+        )),
+    })
+}
+
+/// `"copy, move"` as the names it lists.
+fn action_names(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(|a| a.trim().to_owned())
+        .filter(|a| !a.is_empty())
+        .collect()
+}
+
+#[given(
+    regex = r#"^the drag from another application allows "([^"]*)" and proposes "(copy|move|link)"$"#
+)]
+fn outside_drags_allow(w: &mut LjosWorld, allowed: String, proposed: String) -> StepResult {
+    let allowed = action_names(&allowed);
+    w.each(|b| b.platform()?.outside_drags_allow(&allowed, &proposed))
+}
+
+#[when(regex = r#"^the drag from another application now proposes "(copy|move|link)"$"#)]
+fn outside_drag_proposes(w: &mut LjosWorld, action: String) -> StepResult {
+    w.each(|b| {
+        b.platform()?
+            .drag_from_outside(&OutsideDrag::Propose(action.clone()))
+    })
+}
+
+// A drag out of the window, as the window system is asked to carry it and
+// tells back how it ended.
+#[given("the window system carries drags to other applications")]
+fn drags_out(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.platform()?.drags_out())
+}
+
+// The table has a `format` and a `data` column.
+#[then("the window system is asked to carry a drag out of the window with:")]
+fn drag_out_asked_with(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let table = step
+        .table
+        .as_ref()
+        .ok_or_else(|| "the step needs a table of format and data".to_owned())?;
+    let want: Vec<(String, String)> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|r| (r[0].clone(), r[1].clone()))
+        .collect();
+    w.each(|b| match b.platform()?.drag_out_asked()? {
+        Some(asked) if asked.formats == want => Ok(()),
+        Some(asked) => Err(BackendError::Failed(format!(
+            "the drag out of the window offers {:?}",
+            asked.formats
+        ))),
+        None => Err(BackendError::Failed(
+            "the window system is asked to carry no drag out of the window".into(),
+        )),
+    })
+}
+
+#[then("the window system is asked to carry no drag out of the window")]
+fn no_drag_out_asked(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| match b.platform()?.drag_out_asked() {
+        Ok(None) | Err(BackendError::NotImplemented(_)) => Ok(()),
+        Ok(Some(asked)) => Err(BackendError::Failed(format!(
+            "the window system is asked to carry a drag out of the window: {asked:?}"
+        ))),
+        Err(e) => Err(e),
+    })
+}
+
+#[then(regex = r#"^the drag out of the window allows "([^"]*)" and proposes "(copy|move|link)"$"#)]
+fn drag_out_actions(w: &mut LjosWorld, allowed: String, proposed: String) -> StepResult {
+    let allowed = action_names(&allowed);
+    w.each(|b| match b.platform()?.drag_out_asked()? {
+        Some(asked) if asked.allowed == allowed && asked.proposed == proposed => Ok(()),
+        Some(asked) => Err(BackendError::Failed(format!(
+            "the drag out of the window allows \"{}\" and proposes \"{}\"",
+            asked.allowed.join(", "),
+            asked.proposed
+        ))),
+        None => Err(BackendError::Failed(
+            "the window system is asked to carry no drag out of the window".into(),
+        )),
+    })
+}
+
+#[when(regex = r#"^the other application takes the drag out of the window as (copy|move|link)$"#)]
+fn drag_out_taken(w: &mut LjosWorld, action: String) -> StepResult {
+    w.each(|b| b.platform()?.drag_out_ends(Some(&action)))
+}
+
+#[when("the other application turns the drag out of the window down")]
+fn drag_out_turned_down(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.platform()?.drag_out_ends(None))
+}
+
+#[then("the drag out of the window was given up")]
+fn drag_out_given_up(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        if b.platform()?.drag_out_given_up()? {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(
+                "the drag out of the window was not given up".into(),
+            ))
+        }
+    })
+}
+
+#[when(regex = r#"^the drag out of the window comes back over ([-\d.]+), ([-\d.]+)$"#)]
+fn drag_out_comes_back(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
+    w.each(|b| b.platform()?.drag_out_comes_back((x, y)))
+}
+
+// Let go over the window it came from: the window system drops it there
+// and tells the source the action the drop was taken with.
+#[when("the drag out of the window is let go there")]
+fn drag_out_let_go_there(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let p = b.platform()?;
+        p.drag_from_outside(&OutsideDrag::Drop)?;
+        let action = p.outside_drag_action()?;
+        p.drag_out_ends(action.as_deref())
     })
 }
 

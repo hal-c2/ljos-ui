@@ -116,7 +116,9 @@ struct Live {
     top: ljos_dev::Top,
     /// What the application answered the last step of a drag from
     /// another application.
-    outside_taken: bool,
+    outside_taken: Option<ljos_platform::DropAction>,
+    /// Where that drag was last.
+    outside_at: (f64, f64),
 }
 
 #[derive(Default)]
@@ -142,6 +144,8 @@ pub struct LjosBackend {
     inspector: Option<inspect::Rig>,
     /// The scenario's file system and the system's dialogs.
     platform: FakePlatform,
+    /// What the drags other applications make allow and propose.
+    outside_actions: ljos_platform::DragActions,
     /// The wall clock the scenario pinned, in milliseconds since the UNIX
     /// epoch; given before anything was loaded.
     wall_clock: Option<f64>,
@@ -226,6 +230,12 @@ fn apply(engine: &Engine, said: Said) {
     }
 }
 
+/// A drop action by the name a scenario gives it.
+fn drop_action(name: &str) -> Result<ljos_platform::DropAction> {
+    ljos_platform::DropAction::named(name)
+        .ok_or_else(|| BackendError::Failed(format!("no drop action is called {name:?}")))
+}
+
 /// The system, which says every setting.
 fn report_all(engine: &Engine, p: ljos_a11y::SystemPrefs) {
     ljos_quick::report_system_prefs(
@@ -294,6 +304,13 @@ impl LjosBackend {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// How many drags the window system has carried out of the window.
+    fn drags_out_started(&self) -> usize {
+        self.platform
+            .drag_out()
+            .map_or(0, ljos_platform::RecordedDragOut::started)
     }
 
     fn live(&mut self) -> Result<&mut Live> {
@@ -378,7 +395,8 @@ impl LjosBackend {
             reloads: None,
             disk: None,
             top: ljos_dev::Top::new(),
-            outside_taken: false,
+            outside_taken: None,
+            outside_at: (0.0, 0.0),
         };
         // A decode takes as long as it takes; scenarios see its result when
         // time is advanced and not before, whatever the machine's speed.
@@ -807,6 +825,15 @@ impl Live {
         })
     }
 
+    /// The press goes to the window system: the scene lets go of it.
+    fn pointer_taken(&mut self) -> Result<()> {
+        self.drive(|d| {
+            let now = d.now();
+            d.send_pointer(&PointerEvent::cancel(now));
+            d.settle()
+        })
+    }
+
     /// The tree as steps see it: role words, names and nesting.
     fn a11y(&self) -> A11yNode {
         // The window is named by its title, as the shell tells it.
@@ -1085,7 +1112,14 @@ impl Backend for LjosBackend {
     }
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
-        self.live()?.pointer(step, x, y)
+        let before = self.drags_out_started();
+        self.live()?.pointer(step, x, y)?;
+        // The window system took the press for the drag it carries now,
+        // as the shell's windows let it go (`QmlView::pointer_taken`).
+        if self.drags_out_started() != before {
+            self.live()?.pointer_taken()?;
+        }
+        Ok(())
     }
 
     fn a11y_tree(&mut self) -> Result<A11yNode> {
@@ -1542,13 +1576,33 @@ impl Platform for LjosBackend {
     fn drag_from_outside(&mut self, step: &super::OutsideDrag) -> Result<()> {
         use super::OutsideDrag;
         use ljos_platform::{DragData, ExternalDrag};
+        let actions = self.outside_actions;
         let live = self.live()?;
         let drag = match step {
-            OutsideDrag::Enter { formats, at } => ExternalDrag::Entered {
-                data: DragData::from_formats(formats.iter().map(|(f, d)| (f, d.as_bytes()))),
-                at: Some(*at),
-            },
-            OutsideDrag::Move(at) => ExternalDrag::Moved { at: *at },
+            OutsideDrag::Enter { formats, at } => {
+                live.outside_at = *at;
+                ExternalDrag::Entered {
+                    data: DragData::from_formats(formats.iter().map(|(f, d)| (f, d.as_bytes()))),
+                    at: Some(*at),
+                    actions,
+                }
+            }
+            OutsideDrag::Move(at) => {
+                live.outside_at = *at;
+                ExternalDrag::moved(*at)
+            }
+            OutsideDrag::Propose(name) => {
+                let proposed = drop_action(name)?;
+                self.outside_actions.proposed = proposed;
+                let live = self.live()?;
+                ExternalDrag::Moved {
+                    at: live.outside_at,
+                    actions: Some(ljos_platform::DragActions {
+                        allowed: actions.allowed,
+                        proposed,
+                    }),
+                }
+            }
             OutsideDrag::Leave => ExternalDrag::Left,
             // What it carries was said when it came in.
             OutsideDrag::Drop => ExternalDrag::Dropped {
@@ -1556,12 +1610,100 @@ impl Platform for LjosBackend {
                 at: None,
             },
         };
+        let live = self.live()?;
         live.outside_taken = ljos_platform::external_drag(&live.engine, &drag);
         live.settle()
     }
 
-    fn outside_drag_taken(&mut self) -> Result<bool> {
-        Ok(self.live()?.outside_taken)
+    fn outside_drag_action(&mut self) -> Result<Option<String>> {
+        Ok(self.live()?.outside_taken.map(|a| a.name().to_owned()))
+    }
+
+    fn outside_drags_allow(&mut self, allowed: &[String], proposed: &str) -> Result<()> {
+        self.outside_actions = ljos_platform::DragActions {
+            allowed: allowed
+                .iter()
+                .map(|a| drop_action(a))
+                .collect::<Result<_>>()?,
+            proposed: drop_action(proposed)?,
+        };
+        Ok(())
+    }
+
+    fn drags_out(&mut self) -> Result<()> {
+        self.platform.carry_drags_out();
+        if let Some(live) = &self.live {
+            self.platform.install_drag_out(&live.engine);
+        }
+        Ok(())
+    }
+
+    fn drag_out_asked(&mut self) -> Result<Option<super::DragOutAsked>> {
+        self.live()?.settle()?;
+        Ok(self
+            .platform
+            .drag_out()
+            .and_then(|out| out.asked())
+            .map(|drag| super::DragOutAsked {
+                formats: drag
+                    .data
+                    .formats()
+                    .into_iter()
+                    .map(|f| {
+                        let data = drag.data.data(&f).unwrap_or_default();
+                        (f, data)
+                    })
+                    .collect(),
+                allowed: drag
+                    .actions
+                    .allowed
+                    .iter()
+                    .map(|a| a.name().to_owned())
+                    .collect(),
+                proposed: drag.actions.proposed.name().to_owned(),
+            }))
+    }
+
+    fn drag_out_given_up(&mut self) -> Result<bool> {
+        self.live()?.settle()?;
+        Ok(self.platform.drag_out().is_some_and(|out| out.given_up()))
+    }
+
+    fn drag_out_ends(&mut self, action: Option<&str>) -> Result<()> {
+        let action = action.map(drop_action).transpose()?;
+        let out = self
+            .platform
+            .drag_out()
+            .cloned()
+            .ok_or_else(|| BackendError::Failed("the window system carries no drags".into()))?;
+        let live = self.live()?;
+        if !out.end(&live.engine, action) {
+            return Err(BackendError::Failed(
+                "no drag out of the window is under way".into(),
+            ));
+        }
+        live.settle()
+    }
+
+    fn drag_out_comes_back(&mut self, at: (f64, f64)) -> Result<()> {
+        let asked = self
+            .platform
+            .drag_out()
+            .and_then(|out| out.asked())
+            .ok_or_else(|| {
+                BackendError::Failed("no drag out of the window was asked for".into())
+            })?;
+        let live = self.live()?;
+        live.outside_at = at;
+        live.outside_taken = ljos_platform::external_drag(
+            &live.engine,
+            &ljos_platform::ExternalDrag::Entered {
+                data: asked.data,
+                at: Some(at),
+                actions: asked.actions,
+            },
+        );
+        live.settle()
     }
 
     fn copy_elsewhere(&mut self, text: &str) -> Result<()> {

@@ -96,6 +96,17 @@ pub struct BackdropAsked {
     pub look: &'static str,
 }
 
+/// A drag out of the window, as the window system is asked to carry it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragOutAsked {
+    /// What it offers, by MIME type, in order.
+    pub formats: Vec<(String, String)>,
+    /// The actions it allows, by name, in the order copy, move, link.
+    pub allowed: Vec<String>,
+    /// The action it proposes.
+    pub proposed: String,
+}
+
 /// The fingers down in one frame of touch input: `(id, x, y)`.
 pub type TouchFrame = Vec<(u32, f64, f64)>;
 
@@ -169,6 +180,9 @@ pub enum OutsideDrag {
         at: (f64, f64),
     },
     Move((f64, f64)),
+    /// Where it is, the other application now proposes this action
+    /// (`"copy"`, `"move"` or `"link"`).
+    Propose(String),
     /// It leaves the window, or is given up.
     Leave,
     /// It is let go where it was last seen.
@@ -683,9 +697,52 @@ pub trait Platform: Backend {
     /// What the application answered the last step: whether a drop target
     /// under the drag takes it (after `Drop`, whether one took the drop).
     fn outside_drag_taken(&mut self) -> Result<bool> {
+        Ok(self.outside_drag_action()?.is_some())
+    }
+
+    /// The action the application answered the last step with (`"copy"`,
+    /// `"move"`, `"link"`); `None` when nothing takes the drag.
+    fn outside_drag_action(&mut self) -> Result<Option<String>> {
         Err(BackendError::NotImplemented(
             "drags from other applications",
         ))
+    }
+
+    /// The drags other applications make from now on allow these actions
+    /// and propose that one; otherwise they allow any and propose a copy.
+    fn outside_drags_allow(&mut self, _allowed: &[String], _proposed: &str) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "the actions of drags from other applications",
+        ))
+    }
+
+    /// The window system carries drags out of the window to other
+    /// applications.
+    fn drags_out(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("drags to other applications"))
+    }
+
+    /// The last drag the window system was asked to carry out of the
+    /// window.
+    fn drag_out_asked(&mut self) -> Result<Option<DragOutAsked>> {
+        Err(BackendError::NotImplemented("drags to other applications"))
+    }
+
+    /// Whether the application gave up a drag out of the window.
+    fn drag_out_given_up(&mut self) -> Result<bool> {
+        Err(BackendError::NotImplemented("drags to other applications"))
+    }
+
+    /// The drag out of the window ends: the application it was let go over
+    /// took it with `action`, or turned it down (`None`).
+    fn drag_out_ends(&mut self, _action: Option<&str>) -> Result<()> {
+        Err(BackendError::NotImplemented("drags to other applications"))
+    }
+
+    /// The drag out of the window comes back over it at `at`, as the
+    /// window system brings any drag: with what it offers and allows.
+    fn drag_out_comes_back(&mut self, _at: (f64, f64)) -> Result<()> {
+        Err(BackendError::NotImplemented("drags to other applications"))
     }
 
     /// Another application copies `text` while this one runs, and nobody

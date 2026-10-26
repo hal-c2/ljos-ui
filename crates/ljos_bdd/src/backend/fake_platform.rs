@@ -17,7 +17,7 @@ use std::sync::Arc;
 use ljos_engine::Engine;
 use ljos_platform::{
     FakeDialogs, FakePermissions, FakeSensors, HttpFetcher, Measurement, PathEnv, Platform,
-    RecordedUrls, SensorKind,
+    RecordedDragOut, RecordedUrls, SensorKind,
 };
 use ljos_positioning::{FixedPosition, GeoCoordinate, PositionFix};
 
@@ -43,6 +43,9 @@ pub struct FakePlatform {
     sensors: FakeSensors,
     /// Where the system is; no position service unless the scenario says.
     position: Option<FixedPosition>,
+    /// A window system that carries drags out of the window, when the
+    /// scenario says so; it carries none to anywhere.
+    drag_out: Option<RecordedDragOut>,
 }
 
 impl std::fmt::Debug for FakePlatform {
@@ -93,6 +96,7 @@ impl FakePlatform {
         if let Some(asking) = &self.permissions {
             platform.set_permissions(Rc::new(asking.clone()));
         }
+        self.install_drag_out(engine);
         platform.set_held(true);
         Ok(())
     }
@@ -132,6 +136,26 @@ impl FakePlatform {
     /// The URLs the application asked the system to open, in order.
     pub fn opened_urls(&self) -> Vec<String> {
         self.opened.urls()
+    }
+
+    /// The window system carries drags out of the window, for an engine
+    /// made from now on; [`FakePlatform::install_drag_out`] gives it to
+    /// one made already.
+    pub fn carry_drags_out(&mut self) -> RecordedDragOut {
+        self.drag_out
+            .get_or_insert_with(RecordedDragOut::default)
+            .clone()
+    }
+
+    pub fn install_drag_out(&self, engine: &Engine) {
+        if let Some(out) = &self.drag_out {
+            Platform::of(engine).set_drag_out(Some(Rc::new(out.clone())));
+        }
+    }
+
+    /// The drags out of the window, when the window system carries them.
+    pub fn drag_out(&self) -> Option<&RecordedDragOut> {
+        self.drag_out.as_ref()
     }
 
     /// The system's dialogs cannot be closed by the application.
