@@ -507,14 +507,22 @@ pub fn layout_runs(engine: &Engine, obj: ObjectId) -> u64 {
     state(engine, obj, |s| s.runs).unwrap_or(0)
 }
 
-/// Whether the scene polishes `obj` through this module: a layout, or one
-/// of the positioners the scene has no kind of its own for.
-pub(crate) fn managed(engine: &Engine, obj: ObjectId) -> bool {
-    kind(engine, obj).is_some()
-        || matches!(
-            positioners::which(engine, obj),
-            Some(positioners::Which::Grid | positioners::Which::Flow)
-        )
+/// Whether the scene polishes a type through this module: a layout, or
+/// one of the positioners the scene has no kind of its own for. Asked of
+/// the type, once (the scene's item class), not of each item.
+pub(crate) fn managed_type(m: &ljos_engine::MetaObject) -> bool {
+    let layout = m.inherits(Layout::static_meta())
+        && [
+            RowLayout::static_meta(),
+            ColumnLayout::static_meta(),
+            GridLayout::static_meta(),
+            StackLayout::static_meta(),
+        ]
+        .into_iter()
+        .any(|t| m.inherits(t));
+    layout
+        || m.inherits(positioners::Grid::static_meta())
+        || m.inherits(positioners::Flow::static_meta())
 }
 
 /// A child that gets its `Layout` object after its layout was measured

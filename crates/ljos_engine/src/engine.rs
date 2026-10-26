@@ -634,6 +634,18 @@ impl Engine {
         Some(self.inner.store.borrow().objects.get(obj)?.meta.clone())
     }
 
+    /// [`MetaObject::class`] of `obj`'s type, `None` once it is gone. The
+    /// description is looked at where it is: `make` runs with the store
+    /// borrowed, so it asks the type and not the engine.
+    pub fn class_of<T: Copy + Send + Sync + 'static>(
+        &self,
+        obj: ObjectId,
+        make: impl FnOnce(&MetaObject) -> T,
+    ) -> Option<T> {
+        let store = self.inner.store.borrow();
+        Some(store.objects.get(obj)?.meta.class(make))
+    }
+
     /// Whether `obj` is alive and of the type `ty` or one derived from it:
     /// [`MetaObject::inherits`] of its [`meta_of`](Self::meta_of), with
     /// the description looked at where it is rather than shared out.

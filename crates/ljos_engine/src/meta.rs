@@ -19,11 +19,11 @@
 //! Name lookup goes through a per-meta map, built the first time a name is
 //! looked up.
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use rustc_hash::FxHashMap;
 
@@ -403,6 +403,9 @@ pub struct MetaObject {
     /// Scripts see a plain object, not a QObject: it prints as one.
     pub plain_object: bool,
     lookup: OnceLock<Lookup>,
+    /// What other crates worked out about the type ([`MetaObject::class`]),
+    /// one entry per Rust type asked for.
+    classes: RwLock<Vec<(TypeId, Box<dyn Any + Send + Sync>)>>,
 }
 
 impl fmt::Debug for MetaObject {
@@ -552,6 +555,34 @@ impl MetaObject {
     /// This type and its bases, most derived first.
     pub fn chain(&self) -> impl Iterator<Item = &MetaObject> {
         std::iter::successors(Some(self), |m| m.base.as_deref())
+    }
+
+    /// What `make` works out about this type, worked out once: a fact
+    /// that follows from the type alone (which native type it derives
+    /// from) is asked of each new object of it and need not walk its
+    /// bases each time. Kept with the description, so a type declared in
+    /// QML drops it with its load. `make` may ask for the class of another
+    /// type, never of this one.
+    pub fn class<T: Copy + Send + Sync + 'static>(&self, make: impl FnOnce(&MetaObject) -> T) -> T {
+        let id = TypeId::of::<T>();
+        let known = |classes: &[(TypeId, Box<dyn Any + Send + Sync>)]| {
+            classes
+                .iter()
+                .find(|(t, _)| *t == id)
+                .and_then(|(_, c)| c.downcast_ref::<T>().copied())
+        };
+        let read = self.classes.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(c) = known(&read) {
+            return c;
+        }
+        drop(read);
+        let c = make(self);
+        let mut write = self.classes.write().unwrap_or_else(|e| e.into_inner());
+        // Another thread may have worked it out meanwhile: the same answer.
+        if known(&write).is_none() {
+            write.push((id, Box::new(c)));
+        }
+        c
     }
 
     /// Whether this type is `other` or derives from it.
@@ -894,6 +925,7 @@ impl MetaBuilder {
                 required_at: Vec::new(),
                 plain_object: false,
                 lookup: OnceLock::new(),
+                classes: RwLock::new(Vec::new()),
             }),
         }
     }

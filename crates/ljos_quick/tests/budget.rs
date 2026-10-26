@@ -267,7 +267,7 @@ fn ten_listview_delegates() {
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 9 values, 6 bindings, 16 effects, 2 scopes,
-    // no member or type lookups, 145.1 allocations. What the component
+    // no member or type lookups, 142.6 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -283,6 +283,9 @@ fn ten_listview_delegates() {
     // A new row's run is kept for when the row is shown again, its text
     // and its glyphs (21 more), and a row analyses as one before it did,
     // without Parley's analyser (seven fewer).
+    // The scene keeps one record an item, its effects held inline, where it
+    // kept a map per concern, a list of effects and a box for the inherited
+    // layers (twenty-five fewer, B27).
     assert_eq!(
         b,
         Budget {
@@ -299,7 +302,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1451,
+            allocations: 1426,
         }
     );
 }
@@ -311,11 +314,12 @@ fn ten_plain_items() {
     assert_eq!(made, 10);
     // Per instance: 2 objects, 6 values, 2 bindings, 15 effects, 2 scopes,
     // 1 member lookup (the property `createObject` is given, by its name)
-    // and no type lookups, 98.3 allocations; the id (`item`) is found
+    // and no type lookups, 95.5 allocations; the id (`item`) is found
     // by slot. One of the ten grows what keeps a text's lines' items
     // between measuring and painting. A one-line plain text is laid out
     // without Parley's builder (fifteen fewer over the ten), and B26 put
-    // each binding in one box (thirty fewer).
+    // each binding in one box (thirty fewer). B27's one scene record an
+    // item took twenty-eight off.
     assert_eq!(
         b,
         Budget {
@@ -332,7 +336,7 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 983,
+            allocations: 955,
         }
     );
 }

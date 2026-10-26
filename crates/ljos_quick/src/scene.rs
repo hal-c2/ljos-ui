@@ -3,8 +3,9 @@
 //! The scene adopts a root item and everything under it. For each item it
 //! installs a few small effects that record what changed (structure,
 //! geometry, anchors, inherited visibility, polish inputs, paint inputs)
-//! into shared dirty sets and wake the host on the clean-to-dirty edge.
-//! Nothing polls: [`QuickScene::frame`] only drains those sets
+//! as marks on the item's record and wake the host on the clean-to-dirty
+//! edge.
+//! Nothing polls: [`QuickScene::frame`] only drains those marks
 //! (ARCHITECTURE §6, steps 3-9), and an idle frame returns the previous
 //! snapshot with `next_wake: None`.
 //!
@@ -17,6 +18,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+
+mod records;
+
+use records::Records;
 
 thread_local! {
     static POLISHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -36,13 +41,14 @@ pub(crate) fn polishes() -> u64 {
 }
 
 use ljos_engine::{
-    Engine, EngineError, JournalKind, LogLevel, NodeId as GraphNode, ObjectId, OverrideContent,
-    OverrideId, PropIndex, Provenance, RestoreMode, Value,
+    Engine, EngineError, JournalKind, LogLevel, MetaObject, NodeId as GraphNode, ObjectId,
+    OverrideContent, OverrideId, PropIndex, Provenance, QmlType, RestoreMode, Value,
 };
 use ljos_render::{ClipSpec, FrameSnapshot, ImageHandle, NodeId, RenderTree, hit_test, kurbo};
 use ljos_runtime::{FrameBudget, Scheduler, Time};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use slotmap::SecondaryMap;
+use smallvec::SmallVec;
 
 use crate::accessible::A11yPass;
 use crate::anchors::{self, AnchorState};
@@ -128,39 +134,83 @@ enum Kind {
     External,
 }
 
-impl Kind {
-    fn of(engine: &Engine, obj: ObjectId) -> Kind {
-        if is_a::<crate::text_input::TextEditor>(engine, obj) {
+/// What the scene asks of an item's type, worked out once per type
+/// ([`MetaObject::class`]): asking the type's bases again for each new item
+/// was a dozen walks up its chain an item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ItemClass {
+    kind: Kind,
+    /// It is an `Item`: the scene shows it.
+    item: bool,
+    /// A `Loader`, whose item is shown only once it is made.
+    loader: bool,
+    /// A `MouseArea`, whose `enabled` neither follows a disabled ancestor
+    /// nor disables what is inside it.
+    mouse_area: bool,
+    /// A `Flickable`, whose content item may scroll.
+    flickable: bool,
+}
+
+impl ItemClass {
+    fn of_type(m: &MetaObject) -> ItemClass {
+        let is = |t: &MetaObject| m.inherits(t);
+        let kind = if is(crate::text_input::TextEditor::static_meta()) {
             Kind::Editor
-        } else if is_a::<Text>(engine, obj) {
+        } else if is(Text::static_meta()) {
             Kind::Text
-        } else if is_a::<Rectangle>(engine, obj) {
+        } else if is(Rectangle::static_meta()) {
             Kind::Rectangle
-        } else if is_a::<crate::image::ImageBase>(engine, obj) {
+        } else if is(crate::image::ImageBase::static_meta()) {
             Kind::Image
-        } else if is_a::<Row>(engine, obj) {
+        } else if is(Row::static_meta()) {
             Kind::Row
-        } else if is_a::<Column>(engine, obj) {
+        } else if is(Column::static_meta()) {
             Kind::Column
-        } else if crate::layouts::managed(engine, obj) {
+        } else if crate::layouts::managed_type(m) {
             Kind::Managed
-        } else if is_a::<crate::shapes::Shape>(engine, obj) {
+        } else if is(crate::shapes::Shape::static_meta()) {
             Kind::Shape
-        } else if is_a::<crate::canvas::Canvas>(engine, obj) {
+        } else if is(crate::canvas::Canvas::static_meta()) {
             Kind::Canvas
-        } else if is_a::<crate::effects::MultiEffect>(engine, obj) {
+        } else if is(crate::effects::MultiEffect::static_meta()) {
             Kind::Effect
-        } else if is_a::<crate::shader_effect::ShaderEffect>(engine, obj) {
+        } else if is(crate::shader_effect::ShaderEffect::static_meta()) {
             Kind::Shader
-        } else if is_a::<crate::shader_effect::ShaderEffectSource>(engine, obj) {
+        } else if is(crate::shader_effect::ShaderEffectSource::static_meta()) {
             Kind::Source
-        } else if crate::paint_item::paint_item(engine, obj).is_some() {
-            Kind::External
         } else {
             Kind::Item
+        };
+        ItemClass {
+            kind,
+            item: is(Item::static_meta()),
+            loader: is(Loader::static_meta()),
+            mouse_area: is(MouseArea::static_meta()),
+            flickable: is(crate::flickable::Flickable::static_meta()),
         }
     }
 
+    /// The class of `obj`, `None` once it is gone. Whether a type of
+    /// another crate paints itself is the engine's to say
+    /// (`crate::register_paint_item`), not the type's: asked of what is
+    /// no other kind.
+    fn of(engine: &Engine, obj: ObjectId) -> Option<ItemClass> {
+        let mut c = engine.class_of(obj, ItemClass::of_type)?;
+        if c.kind == Kind::Item && crate::paint_item::paint_item(engine, obj).is_some() {
+            c.kind = Kind::External;
+        }
+        Some(c)
+    }
+}
+
+/// Whether `obj` is an item the scene shows, by its class.
+fn shows(engine: &Engine, obj: ObjectId) -> bool {
+    engine
+        .class_of(obj, ItemClass::of_type)
+        .is_some_and(|c| c.item)
+}
+
+impl Kind {
     fn paints(self) -> bool {
         matches!(
             self,
@@ -195,7 +245,7 @@ fn shown(g: &Geom, covered: bool, pooled: bool) -> bool {
 /// The geometry of one item, as its render node needs it, but for where
 /// it is (`Place`): an item that only moves, as an animated or flicked one
 /// does, reads two properties a frame instead of all of these.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Geom {
     z: f64,
     w: f64,
@@ -290,29 +340,78 @@ enum Paint {
     External(Rc<dyn crate::paint_item::ItemPaint>),
 }
 
+bitflags::bitflags! {
+    /// What of an item waits for the frame ([`Marks`]).
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct Dirty: u8 {
+        const GEOM = 1;
+        const PLACE = 1 << 1;
+        /// The map of its `transform` list.
+        const LIST = 1 << 2;
+        const CONTENT = 1 << 3;
+        /// Its children.
+        const STRUCTURE = 1 << 4;
+        const POLISH = 1 << 5;
+    }
+}
+
+impl Dirty {
+    const KINDS: usize = 6;
+
+    /// The queue of a single mark.
+    fn slot(self) -> usize {
+        self.bits().trailing_zeros() as usize
+    }
+}
+
+/// What the effects of one item tell the scene, until the frame takes
+/// it. A value is read only while its mark is set.
+struct Marks {
+    dirty: Dirty,
+    geom: Geom,
+    place: Place,
+    list: crate::transform::Projective,
+    content: Option<Paint>,
+    /// What a Text's polish effect last read of it: its paint and its
+    /// polish take it from here, so a text's inputs are read once a change
+    /// and not by each.
+    text: Option<TextInputs>,
+    /// A Text with a content effect: its polish effect gives it its paint.
+    text_shown: bool,
+    inherit: Inherit,
+}
+
+impl Marks {
+    fn new() -> Marks {
+        Marks {
+            dirty: Dirty::empty(),
+            geom: Geom::default(),
+            place: (0.0, 0.0, false),
+            list: crate::transform::Projective::IDENTITY,
+            content: None,
+            text: None,
+            text_shown: false,
+            inherit: Inherit::default(),
+        }
+    }
+}
+
 /// Dirty state written by effects and drained by `frame`.
 #[derive(Default)]
 struct Shared {
-    geom: FxHashMap<ObjectId, Geom>,
-    place: FxHashMap<ObjectId, Place>,
+    /// One for each item the scene shows, made before its effects are, so
+    /// a mark for anything else is nothing.
+    marks: Records<Marks>,
+    /// The items with each mark set, in the order marked. An item joins on
+    /// the edge from clear to set, so it is in each queue once: a set per
+    /// mark cost each item marked a hash insert.
+    queued: [Vec<ObjectId>; Dirty::KINDS],
     /// Items whose place may have changed, read at the frame: the place
     /// effect is told rather than run (see [`QuickScene::adopt`]). An item
     /// is here once for each flush that told it, read once
-    /// ([`Entry::place_read`]): a set cost each item that moved a hash
+    /// ([`Record::place_read`]): a set cost each item that moved a hash
     /// insert every frame.
     placed: Vec<ObjectId>,
-    /// The map of a `transform` list, from [`list_effect`].
-    list: FxHashMap<ObjectId, crate::transform::Projective>,
-    content: FxHashMap<ObjectId, Paint>,
-    /// What each Text's polish effect last read of it: its paint and its
-    /// polish take it from here, so a text's inputs are read once a change
-    /// and not by each.
-    text_inputs: FxHashMap<ObjectId, TextInputs>,
-    /// The Texts that have a content effect: their polish effect gives
-    /// them their paint.
-    texts_shown: FxHashSet<ObjectId>,
-    structure: FxHashSet<ObjectId>,
-    polish: FxHashSet<ObjectId>,
     dead: Vec<ObjectId>,
     /// A ShaderEffectSource inside its own source took a picture that
     /// differs from the last, so the next frame takes another.
@@ -324,15 +423,73 @@ struct Shared {
 
 impl Shared {
     fn pending(&self) -> bool {
-        !(self.geom.is_empty()
-            && self.place.is_empty()
-            && self.placed.is_empty()
-            && self.list.is_empty()
-            && self.content.is_empty()
-            && self.structure.is_empty()
-            && self.polish.is_empty()
-            && self.dead.is_empty()
-            && !self.pictures)
+        self.queued.iter().any(|q| !q.is_empty())
+            || !self.placed.is_empty()
+            || !self.dead.is_empty()
+            || self.pictures
+    }
+
+    /// Sets the mark `what` of `obj`, after `f` gave it its value.
+    fn set(&mut self, obj: ObjectId, what: Dirty, f: impl FnOnce(&mut Marks)) {
+        let Some(m) = self.marks.get_mut(obj) else {
+            return;
+        };
+        f(m);
+        if !m.dirty.contains(what) {
+            m.dirty.insert(what);
+            self.queued[what.slot()].push(obj);
+        }
+    }
+
+    fn is_set(&self, obj: ObjectId, what: Dirty) -> bool {
+        self.marks.get(obj).is_some_and(|m| m.dirty.contains(what))
+    }
+
+    /// Clears the mark `what` of `obj`, and gives what `f` takes of it
+    /// if it was set.
+    fn clear<T>(
+        &mut self,
+        obj: ObjectId,
+        what: Dirty,
+        f: impl FnOnce(&mut Marks) -> T,
+    ) -> Option<T> {
+        let m = self.marks.get_mut(obj)?;
+        if !m.dirty.contains(what) {
+            return None;
+        }
+        m.dirty.remove(what);
+        let q = &mut self.queued[what.slot()];
+        if let Some(i) = q.iter().position(|o| *o == obj) {
+            q.swap_remove(i);
+        }
+        Some(f(m))
+    }
+
+    fn any(&self, what: Dirty) -> bool {
+        !self.queued[what.slot()].is_empty()
+    }
+
+    /// Takes the items marked `what` and what `f` takes of each, clearing
+    /// the mark. The queue keeps its room for the next frame.
+    fn take<T>(&mut self, what: Dirty, mut f: impl FnMut(&mut Marks) -> T) -> Vec<(ObjectId, T)> {
+        let (marks, q) = (&mut self.marks, &mut self.queued[what.slot()]);
+        q.drain(..)
+            .filter_map(|o| {
+                let m = marks.get_mut(o)?;
+                m.dirty.remove(what);
+                Some((o, f(m)))
+            })
+            .collect()
+    }
+
+    /// Forgets `obj`'s marks: it left the scene.
+    fn forget(&mut self, obj: ObjectId) -> Option<Marks> {
+        let m = self.marks.remove(obj)?;
+        // Most items that go were drawn and have no mark left.
+        for what in m.dirty.iter() {
+            self.queued[what.slot()].retain(|o| *o != obj);
+        }
+        Some(m)
     }
 }
 
@@ -387,24 +544,28 @@ fn wake(shared: &SharedRc) {
 
 /// The override layers that make `visible`/`enabled` read false under a
 /// hidden or disabled ancestor.
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct Inherit {
     visible: Option<OverrideId>,
     enabled: Option<OverrideId>,
 }
 
-struct Entry {
+/// What the scene keeps of one item it shows ([`Records`]): one record in
+/// place of a map per concern, each of which an item joined and left.
+struct Record {
     node: NodeId,
-    kind: Kind,
+    class: ItemClass,
     /// The item this one was adopted under; `None` for the root.
     parent: Option<ObjectId>,
-    effects: Vec<GraphNode>,
+    /// The effects made with it, newest last. Room for those that come
+    /// later too, so letting go of them all takes no allocation.
+    effects: SmallVec<[GraphNode; 8]>,
     /// It is on screen and its paint is followed: by `content_effect`, or
     /// for a Text by its polish effect, which reads all its paint does.
     painting: bool,
     content_effect: Option<GraphNode>,
+    paint: Option<Paint>,
     anchors: Rc<RefCell<AnchorState>>,
-    inherit: Rc<RefCell<Inherit>>,
     size: kurbo::Size,
     /// The last geometry and place applied; the node's transform takes
     /// both, and either may change alone.
@@ -478,7 +639,7 @@ pub struct QuickScene {
     shared: SharedRc,
     #[allow(deprecated)]
     log: QuickLog,
-    entries: FxHashMap<ObjectId, Entry>,
+    items: Records<Record>,
     by_node: SecondaryMap<NodeId, ObjectId>,
     /// `Shared::placed` of the last frame, kept for its capacity.
     placed: Vec<ObjectId>,
@@ -486,7 +647,6 @@ pub struct QuickScene {
     places_read: u64,
     /// The items whose place was read this frame, kept for its capacity.
     told_moved: Vec<ObjectId>,
-    paint: FxHashMap<ObjectId, Paint>,
     /// Each `MultiEffect` as read, before it is given the picture of a
     /// source with children, and a fingerprint of the picture it was given
     /// with what it was made from (held, so no display list it names is
@@ -582,7 +742,7 @@ impl std::fmt::Debug for QuickScene {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuickScene")
             .field("root", &self.root)
-            .field("items", &self.entries.len())
+            .field("items", &self.items.len())
             .field("viewport", &self.viewport)
             .field("frame", &self.frame)
             .finish_non_exhaustive()
@@ -604,12 +764,11 @@ impl QuickScene {
             tree: RenderTree::new(),
             shared,
             log: QuickLog::default(),
-            entries: FxHashMap::default(),
+            items: Records::default(),
             by_node: SecondaryMap::new(),
             placed: Vec::new(),
             places_read: 0,
             told_moved: Vec::new(),
-            paint: FxHashMap::default(),
             effect_base: HashMap::new(),
             source_base: HashMap::new(),
             layer_base: HashMap::new(),
@@ -766,10 +925,10 @@ impl QuickScene {
     /// pictures freed.
     pub fn trim(&mut self, engine: &Engine, pressure: ljos_runtime::MemoryPressure) -> usize {
         let canvases = self
-            .entries
+            .items
             .iter()
-            .filter(|(_, e)| e.kind == Kind::Canvas)
-            .map(|(id, _)| *id);
+            .filter(|(_, e)| e.class.kind == Kind::Canvas)
+            .map(|(id, _)| id);
         crate::canvas::trim(engine, canvases);
         crate::image::ImageStore::of(engine).trim(pressure)
     }
@@ -802,9 +961,9 @@ impl QuickScene {
             *seen = None;
         }
         let nodes: Vec<NodeId> = self
-            .entries
+            .items
             .values()
-            .filter(|e| e.kind.paints() && e.painting)
+            .filter(|e| e.class.kind.paints() && e.painting)
             .map(|e| e.node)
             .collect();
         for n in nodes {
@@ -827,21 +986,21 @@ impl QuickScene {
     /// ([`crate::text_engine`]) while the scene is showing.
     pub fn refresh_text(&mut self) {
         let texts: Vec<ObjectId> = self
-            .entries
+            .items
             .iter()
-            .filter(|(_, e)| matches!(e.kind, Kind::Text | Kind::Editor))
-            .map(|(o, _)| *o)
+            .filter(|(_, e)| matches!(e.class.kind, Kind::Text | Kind::Editor))
+            .map(|(o, _)| o)
             .collect();
-        let content: Vec<(ObjectId, NodeId)> = self
-            .entries
-            .iter()
-            .filter(|(_, e)| matches!(e.kind, Kind::Text | Kind::Editor) && e.painting)
-            .map(|(o, e)| (*o, e.node))
-            .collect();
-        for (_, n) in &content {
-            self.tree.mark_content_dirty(*n);
+        for e in self.items.values() {
+            if matches!(e.class.kind, Kind::Text | Kind::Editor) && e.painting {
+                self.tree.mark_content_dirty(e.node);
+            }
         }
-        mark(&self.shared, |s| s.polish.extend(texts));
+        mark(&self.shared, |s| {
+            for o in texts {
+                s.set(o, Dirty::POLISH, |_| ());
+            }
+        });
     }
 
     /// Follows the UI thread's text engine: another engine, or other fonts
@@ -888,18 +1047,14 @@ impl QuickScene {
     pub fn memory(&self) -> SceneMemory {
         let tree = self.tree.memory();
         SceneMemory {
-            items: self.entries.len(),
-            bytes: tree.bytes
-                + self.entries.capacity()
-                    * (std::mem::size_of::<ObjectId>() + std::mem::size_of::<Entry>())
-                + self.paint.capacity()
-                    * (std::mem::size_of::<ObjectId>() + std::mem::size_of::<Paint>()),
+            items: self.items.len(),
+            bytes: tree.bytes + self.items.bytes() + self.shared.borrow().marks.bytes(),
             tree,
         }
     }
 
     pub fn node_of(&self, item: ObjectId) -> Option<NodeId> {
-        self.entries.get(&item).map(|e| e.node)
+        self.items.get(item).map(|e| e.node)
     }
 
     pub fn item_of(&self, node: NodeId) -> Option<ObjectId> {
@@ -1153,12 +1308,7 @@ impl QuickScene {
     }
 
     fn sweep_dead(&mut self, engine: &Engine) {
-        let dead: Vec<ObjectId> = self
-            .entries
-            .keys()
-            .copied()
-            .filter(|o| !engine.is_alive(*o))
-            .collect();
+        let dead: Vec<ObjectId> = self.items.keys().filter(|o| !engine.is_alive(*o)).collect();
         for o in dead {
             if self.root == Some(o) {
                 self.root = None;
@@ -1173,7 +1323,7 @@ impl QuickScene {
             // Items made since the last sync (a view's delegates) join the
             // tree first, so that they are laid out in this polish and not
             // a frame later.
-            if !self.shared.borrow().structure.is_empty() {
+            if self.shared.borrow().any(Dirty::STRUCTURE) {
                 self.reconcile(engine);
             }
             // Counted per pass: a view measures a row it made once a pass
@@ -1185,10 +1335,9 @@ impl QuickScene {
             free = false;
             let mut set: Vec<(usize, ObjectId)> = {
                 let mut s = self.shared.borrow_mut();
-                s.polish
-                    .drain()
-                    .filter(|o| self.entries.contains_key(o))
-                    .map(|o| (depth(engine, o), o))
+                s.take(Dirty::POLISH, |_| ())
+                    .into_iter()
+                    .map(|(o, ())| (depth(engine, o), o))
                     .collect()
             };
             if set.is_empty() {
@@ -1198,7 +1347,7 @@ impl QuickScene {
                 let laid = crate::views::polish_ends(engine);
                 {
                     let s = self.shared.borrow();
-                    if s.polish.is_empty() && s.structure.is_empty() {
+                    if !s.any(Dirty::POLISH) && !s.any(Dirty::STRUCTURE) {
                         return;
                     }
                 }
@@ -1221,7 +1370,7 @@ impl QuickScene {
                 if !engine.is_alive(obj) {
                     continue;
                 }
-                let Some(kind) = self.entries.get(&obj).map(|e| e.kind) else {
+                let Some(kind) = self.items.get(obj).map(|e| e.class.kind) else {
                     continue;
                 };
                 let journaled = engine.is_journaled().then(std::time::Instant::now);
@@ -1230,7 +1379,8 @@ impl QuickScene {
                     Kind::Column => positioners::layout(engine, obj, Axis::Vertical),
                     Kind::Managed => crate::layouts::polish(engine, obj),
                     Kind::Text => {
-                        let read = self.shared.borrow().text_inputs.get(&obj).cloned();
+                        let read =
+                            (self.shared.borrow().marks.get(obj)).and_then(|m| m.text.clone());
                         text::polish(engine, obj, &self.text, read)
                     }
                     // Only after the fonts changed (`refresh_text`).
@@ -1261,7 +1411,7 @@ impl QuickScene {
         }
         POLISHING.set(false);
         crate::views::polish_ends(engine);
-        let left = std::mem::take(&mut self.shared.borrow_mut().polish);
+        let left = self.shared.borrow_mut().take(Dirty::POLISH, |_| ());
         if !left.is_empty() {
             engine.log(
                 LogLevel::Warning,
@@ -1284,30 +1434,31 @@ impl QuickScene {
         parent_node: NodeId,
         index: usize,
     ) -> Result<(), EngineError> {
-        if self.entries.contains_key(&obj) {
+        if self.items.contains(obj) {
             return Ok(());
         }
+        let class = ItemClass::of(engine, obj).ok_or_else(|| EngineError::dead(obj))?;
         init_item(engine, obj)?;
         let node = self.tree.insert_child(parent_node, index);
-        let kind = Kind::of(engine, obj);
-        let may_scroll = parent.is_some_and(|p| is_a::<crate::flickable::Flickable>(engine, p));
+        let kind = class.kind;
+        let may_scroll =
+            parent.is_some_and(|p| self.items.get(p).is_some_and(|r| r.class.flickable));
         if kind == Kind::Editor {
             crate::text_input::init(engine, obj)?;
         }
         let anchors = Rc::new(RefCell::new(AnchorState::default()));
-        let inherit = Rc::new(RefCell::new(Inherit::default()));
         self.items_gen += 1;
-        self.entries.insert(
+        self.items.insert(
             obj,
-            Entry {
+            Record {
                 node,
-                kind,
+                class,
                 parent,
-                effects: Vec::new(),
+                effects: SmallVec::new(),
                 painting: false,
                 content_effect: None,
+                paint: None,
                 anchors: Rc::clone(&anchors),
-                inherit: Rc::clone(&inherit),
                 size: kurbo::Size::ZERO,
                 geom: None,
                 place: (0.0, 0.0, false),
@@ -1317,15 +1468,19 @@ impl QuickScene {
                 may_scroll,
             },
         );
+        // Before the effects, whose first runs mark it.
+        self.shared.borrow_mut().marks.insert(obj, Marks::new());
         self.by_node.insert(node, obj);
 
-        let mut effects = Vec::with_capacity(6);
+        let mut effects = SmallVec::<[GraphNode; 8]>::new();
         let shared = Rc::clone(&self.shared);
+        let loader = class.loader;
         // Root-scoped: an effect scoped to `obj` dies with it silently, and
         // this one has to see the death to drop the render node.
-        effects.push(engine.effect(move |e| structure_effect(e, obj, &shared))?);
+        effects.push(engine.effect(move |e| structure_effect(e, obj, loader, &shared))?);
         let lifted = Rc::clone(&self.shared);
-        effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, &inherit, &lifted))?);
+        let mouse_area = class.mouse_area;
+        effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, mouse_area, &lifted))?);
         effects.push(engine.effect_in(obj, move |e| anchors::run(e, obj, &anchors))?);
         // What an Animator shows is one table for the engine: looked up
         // here, not on each of the runs that follow an animated value.
@@ -1355,7 +1510,7 @@ impl QuickScene {
             let shared = Rc::clone(&self.shared);
             effects.push(engine.effect_in(obj, move |e| polish_effect(e, obj, kind, &shared))?);
         }
-        if let Some(e) = self.entries.get_mut(&obj) {
+        if let Some(e) = self.items.get_mut(obj) {
             e.effects = effects;
         }
         self.a11y.adopt(engine, obj, kind == Kind::Text);
@@ -1363,7 +1518,7 @@ impl QuickScene {
         let children: Vec<ObjectId> = engine
             .untrack(|| shown_children(engine, obj))
             .into_iter()
-            .filter(|c| engine.is_alive(*c) && is_item(engine, *c))
+            .filter(|c| shows(engine, *c))
             .collect();
         for (i, c) in children.into_iter().enumerate() {
             self.adopt(engine, c, Some(obj), node, i)?;
@@ -1374,25 +1529,26 @@ impl QuickScene {
     /// Forgets `obj` and its subtree; removes the render nodes if
     /// `remove_node` (only the top of the subtree needs it).
     fn unadopt(&mut self, engine: &Engine, obj: ObjectId, remove_node: bool) {
-        let Some(entry) = self.entries.remove(&obj) else {
+        let Some(record) = self.items.remove(obj) else {
             return;
         };
+        // First, so nothing that follows marks it: it is not shown again.
+        let marks = self.shared.borrow_mut().forget(obj);
         self.items_gen += 1;
-        if entry.kind == Kind::Text {
+        if record.class.kind == Kind::Text {
             // Its effect is among `effects`; this also forgets the sink.
             text::unfollow(engine, obj);
         }
-        let mut effects = entry.effects;
-        effects.extend(entry.content_effect.into_iter().chain(entry.list_effect));
+        let mut effects = record.effects;
+        effects.extend(record.content_effect.into_iter().chain(record.list_effect));
         engine.graph().dispose_all(&effects);
         self.a11y.forget(engine, obj);
         if !engine.is_alive(obj) {
             crate::focus::tree::forget(engine, obj);
         }
         if engine.is_alive(obj) {
-            entry.anchors.borrow_mut().release(engine, obj);
-            let mut inh = entry.inherit.borrow_mut();
-            let inh = &mut *inh;
+            record.anchors.borrow_mut().release(engine, obj);
+            let mut inh = marks.map(|m| m.inherit).unwrap_or_default();
             let restore = RestoreMode::BindingOrValue;
             let mut going = None;
             for (p, slot) in [
@@ -1411,7 +1567,7 @@ impl QuickScene {
         }
         let kids: Vec<NodeId> = self
             .tree
-            .node(entry.node)
+            .node(record.node)
             .map(|n| n.children().to_vec())
             .unwrap_or_default();
         for k in kids {
@@ -1419,22 +1575,10 @@ impl QuickScene {
                 self.unadopt(engine, c, false);
             }
         }
-        self.by_node.remove(entry.node);
-        self.paint.remove(&obj);
+        self.by_node.remove(record.node);
         if remove_node {
-            let _ = self.tree.remove(entry.node);
+            let _ = self.tree.remove(record.node);
         }
-        let mut s = self.shared.borrow_mut();
-        s.geom.remove(&obj);
-        s.place.remove(&obj);
-        // Its entry is gone, so a place told is not read.
-        s.list.remove(&obj);
-        s.content.remove(&obj);
-        s.text_inputs.remove(&obj);
-        s.texts_shown.remove(&obj);
-        s.structure.remove(&obj);
-        s.polish.remove(&obj);
-        drop(s);
         for g in [&mut self.pointer.passive, &mut self.pointer.hovered] {
             g.retain(|o| *o != obj);
         }
@@ -1445,7 +1589,10 @@ impl QuickScene {
 
     /// Step 8a: render-node structure follows the items' `children`.
     fn reconcile(&mut self, engine: &Engine) {
-        let mut dirty: Vec<ObjectId> = self.shared.borrow_mut().structure.drain().collect();
+        let mut dirty: Vec<ObjectId> = (self.shared.borrow_mut().take(Dirty::STRUCTURE, |_| ()))
+            .into_iter()
+            .map(|(o, ())| o)
+            .collect();
         // In creation order, so the same scene builds the same way each run.
         dirty.sort_unstable();
         let mut orphans = Vec::new();
@@ -1453,19 +1600,19 @@ impl QuickScene {
             if !engine.is_alive(p) {
                 continue;
             }
-            let Some(pnode) = self.entries.get(&p).map(|e| e.node) else {
+            let Some(pnode) = self.items.get(p).map(|e| e.node) else {
                 continue;
             };
             self.a11y.children_changed(p);
             let mut want: Vec<ObjectId> = engine
                 .untrack(|| shown_children(engine, p))
                 .into_iter()
-                .filter(|c| engine.is_alive(*c) && is_item(engine, *c))
+                .filter(|c| shows(engine, *c))
                 .collect();
             let mut seen = FxHashSet::default();
             want.retain(|c| seen.insert(*c));
             for (i, c) in want.iter().enumerate() {
-                match self.entries.get_mut(c) {
+                match self.items.get_mut(*c) {
                     None => {
                         if let Err(e) = self.adopt(engine, *c, Some(p), pnode, i) {
                             engine.log(
@@ -1508,7 +1655,7 @@ impl QuickScene {
         for (o, p) in orphans {
             // Still recorded under `p`: nobody claimed it, so it left the
             // scene.
-            if self.entries.get(&o).is_some_and(|e| e.parent == Some(p)) {
+            if self.items.get(o).is_some_and(|e| e.parent == Some(p)) {
                 self.unadopt(engine, o, true);
             }
         }
@@ -1528,7 +1675,7 @@ impl QuickScene {
         // Set on the entry as it is read: by way of `Shared::place` each
         // moved item cost an insert, a drain and a look more, every frame.
         for obj in self.placed.drain(..) {
-            let Some(e) = self.entries.get_mut(&obj) else {
+            let Some(e) = self.items.get_mut(obj) else {
                 continue;
             };
             if std::mem::replace(&mut e.place_read, self.places_read) == self.places_read {
@@ -1555,9 +1702,9 @@ impl QuickScene {
         // A place the effect's first run gave this frame is older than
         // the one just read.
         let mut s = self.shared.borrow_mut();
-        if !s.place.is_empty() {
+        if s.any(Dirty::PLACE) {
             for obj in &self.told_moved {
-                s.place.remove(obj);
+                s.clear(*obj, Dirty::PLACE, |_| ());
             }
         }
     }
@@ -1568,28 +1715,30 @@ impl QuickScene {
         // an order; what only moved is told apart while the maps stand.
         let (geoms, moved) = {
             let mut s = self.shared.borrow_mut();
-            let s = &mut *s;
             let mut moved = Vec::with_capacity(self.told_moved.len());
             // Before the places, so an item that also moved is told once.
-            for (obj, list) in s.list.drain() {
-                if let Some(e) = self.entries.get_mut(&obj) {
+            for (obj, list) in s.take(Dirty::LIST, |m| m.list) {
+                if let Some(e) = self.items.get_mut(obj) {
                     e.list = list;
-                    if !s.geom.contains_key(&obj) && !s.place.contains_key(&obj) {
+                    if !s.is_set(obj, Dirty::GEOM) && !s.is_set(obj, Dirty::PLACE) {
                         moved.push(obj);
                     }
                 }
             }
-            for (obj, place) in s.place.drain() {
-                if let Some(e) = self.entries.get_mut(&obj) {
+            for (obj, place) in s.take(Dirty::PLACE, |m| m.place) {
+                if let Some(e) = self.items.get_mut(obj) {
                     e.place = place;
-                    if !s.geom.contains_key(&obj) {
+                    if !s.is_set(obj, Dirty::GEOM) {
                         moved.push(obj);
                     }
                 }
             }
             // Each was moved as its place was read.
             self.told_moved.clear();
-            let geoms: Vec<(ObjectId, Geom)> = s.geom.drain().collect();
+            // With whether a hidden parent covers it, which is the
+            // inherit effect's to say.
+            let geoms: Vec<(ObjectId, (Geom, bool))> =
+                s.take(Dirty::GEOM, |m| (m.geom, m.inherit.visible.is_some()));
             (geoms, moved)
         };
         if engine.is_journaled() {
@@ -1597,17 +1746,17 @@ impl QuickScene {
                 engine.journal_step(JournalKind::Placed, obj, None);
             }
         }
-        for (obj, g) in &geoms {
+        for (obj, (g, _)) in &geoms {
             if self
-                .entries
-                .get(obj)
+                .items
+                .get(*obj)
                 .is_some_and(|e| e.list_effect.is_some() != g.listed)
             {
                 self.follow_list(engine, *obj, g.listed);
             }
         }
-        for (obj, g) in geoms {
-            let Some(e) = self.entries.get_mut(&obj) else {
+        for (obj, (g, covered)) in geoms {
+            let Some(e) = self.items.get_mut(obj) else {
                 continue;
             };
             e.geom = Some(g);
@@ -1619,7 +1768,7 @@ impl QuickScene {
             );
             if size != e.size {
                 e.size = size;
-                if e.kind.paints() && e.painting {
+                if e.class.kind.paints() && e.painting {
                     self.tree.mark_content_dirty(node);
                 }
             }
@@ -1629,13 +1778,13 @@ impl QuickScene {
             // An item that reads false only because a parent is hidden is
             // left shown in the tree: the parent prunes it anyway, and a
             // `MultiEffect` drawing that parent shows it as Qt does.
-            let covered = e.inherit.borrow().visible.is_some();
             self.tree
                 .set_visible(node, shown(&g, covered, self.pooled.contains(&obj)));
-            self.tree.set_drawn(node, self.drawn(obj));
+            let drawn = !self.hidden.contains(&obj) && !self.culled.0.contains(&obj);
+            self.tree.set_drawn(node, drawn);
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
-            if let Some(Paint::Editor(ed)) = self.paint.get(&obj) {
+            if let Some(Paint::Editor(ed)) = &e.paint {
                 self.tree
                     .set_content_clip(node, ed.clip(size).map(ClipSpec::rect));
             }
@@ -1643,7 +1792,7 @@ impl QuickScene {
         }
         // What only moved or turned: its transform, and nothing else.
         for obj in moved {
-            if let Some(e) = self.entries.get(&obj)
+            if let Some(e) = self.items.get(obj)
                 && let Some(g) = &e.geom
             {
                 self.tree.set_local(
@@ -1657,7 +1806,7 @@ impl QuickScene {
     /// Makes or drops the effect that follows `obj`'s `transform` list,
     /// as the list came to have entries or lost them.
     fn follow_list(&mut self, engine: &Engine, obj: ObjectId, listed: bool) {
-        let Some(e) = self.entries.get_mut(&obj) else {
+        let Some(e) = self.items.get_mut(obj) else {
             return;
         };
         if let Some(n) = e.list_effect.take() {
@@ -1675,13 +1824,10 @@ impl QuickScene {
             }
             // The effect ran as it was made, unless a batch holds it back:
             // this frame shows the list either way.
-            self.shared
-                .borrow_mut()
-                .list
-                .remove(&obj)
-                .unwrap_or_else(|| engine.untrack(|| crate::transform::list_map(engine, obj)))
+            let ran = self.shared.borrow_mut().clear(obj, Dirty::LIST, |m| m.list);
+            ran.unwrap_or_else(|| engine.untrack(|| crate::transform::list_map(engine, obj)))
         } else {
-            self.shared.borrow_mut().list.remove(&obj);
+            self.shared.borrow_mut().clear(obj, Dirty::LIST, |_| ());
             crate::transform::Projective::IDENTITY
         };
         e.list = list;
@@ -1692,25 +1838,26 @@ impl QuickScene {
         if !engine.is_journaled() {
             return;
         }
-        let mut redrawn: Vec<ObjectId> = self.shared.borrow().content.keys().copied().collect();
+        let mut redrawn = self.shared.borrow().queued[Dirty::CONTENT.slot()].clone();
         redrawn.sort_unstable();
         for obj in redrawn {
-            if self.entries.contains_key(&obj) {
-                engine.journal_step(JournalKind::Redrawn, obj, None);
-            }
+            engine.journal_step(JournalKind::Redrawn, obj, None);
         }
     }
 
     /// Step 8c: rebuild the display lists of items whose paint inputs or
     /// size changed.
     fn apply_content(&mut self) {
-        let mut content: Vec<(ObjectId, Paint)> =
-            self.shared.borrow_mut().content.drain().collect();
+        let mut content: Vec<(ObjectId, Paint)> = (self.shared.borrow_mut())
+            .take(Dirty::CONTENT, |m| m.content.take())
+            .into_iter()
+            .filter_map(|(o, p)| Some((o, p?)))
+            .collect();
         content.sort_unstable_by_key(|c| c.0);
         let mut sources: FxHashSet<ObjectId> = FxHashSet::default();
         let mut shaders = false;
         for (obj, p) in content {
-            if let Some(e) = self.entries.get(&obj) {
+            if let Some(e) = self.items.get_mut(obj) {
                 self.tree.mark_content_dirty(e.node);
                 let p = match p {
                     Paint::Effect(fx) => {
@@ -1756,18 +1903,14 @@ impl QuickScene {
                     let clip = ed.clip(e.size).map(ClipSpec::rect);
                     self.tree.set_content_clip(e.node, clip);
                 }
-                self.paint.insert(obj, p);
+                e.paint = Some(p);
             }
         }
         // A layer no effect samples any more is no longer taken.
         if shaders {
-            let paint = &self.paint;
-            let entries = &self.entries;
-            let sampled: FxHashSet<ObjectId> = paint
-                .iter()
-                .filter(|(o, _)| entries.contains_key(o))
-                .filter_map(|(_, p)| match p {
-                    Paint::Shader(fx) => Some(fx.layers().map(|(item, _)| item)),
+            let sampled: FxHashSet<ObjectId> = (self.items.values())
+                .filter_map(|e| match &e.paint {
+                    Some(Paint::Shader(fx)) => Some(fx.layers().map(|(item, _)| item)),
                     _ => None,
                 })
                 .flatten()
@@ -1781,22 +1924,22 @@ impl QuickScene {
         // What a ShaderEffect samples of one is read from the scene's
         // paint, so a change of how it is sampled paints the effect again.
         if !sources.is_empty() {
-            for (obj, p) in &self.paint {
-                if let Paint::Shader(fx) = p
+            for e in self.items.values() {
+                if let Some(Paint::Shader(fx)) = &e.paint
                     && fx.sources().any(|s| sources.contains(&s))
-                    && let Some(e) = self.entries.get(obj)
                 {
                     self.tree.mark_content_dirty(e.node);
                 }
             }
         }
         self.refresh_hidden();
-        let paint = &self.paint;
+        let items = &self.items;
+        let paint = |o: ObjectId| items.get(o).and_then(|e| e.paint.as_ref());
         let layers = &self.layer_base;
         let by_node = &self.by_node;
         let mut te = self.text.borrow_mut();
         self.tree.rebuild_content(self.scale_factor, |cx, b| {
-            let Some(p) = by_node.get(cx.node).and_then(|o| paint.get(o)) else {
+            let Some(p) = by_node.get(cx.node).and_then(|o| paint(*o)) else {
                 return;
             };
             match p {
@@ -1809,7 +1952,7 @@ impl QuickScene {
                 Paint::Effect(p) => p.paint(cx.size, b),
                 Paint::Shader(p) => p.paint(
                     cx.size,
-                    |s| match (paint.get(&s), layers.get(&s)) {
+                    |s| match (paint(s), layers.get(&s)) {
                         (Some(Paint::Source(src)), _) => Some(src.texture()),
                         (_, Some((layer, _))) => Some(layer.texture()),
                         _ => None,
@@ -1833,8 +1976,8 @@ impl QuickScene {
         {
             return;
         }
-        let entries = &self.entries;
-        self.effect_base.retain(|o, _| entries.contains_key(o));
+        let items = &self.items;
+        self.effect_base.retain(|o, _| items.contains(*o));
         let redrawn = self.draw_shader_sources();
         if self.effect_base.is_empty() {
             if redrawn {
@@ -1844,7 +1987,7 @@ impl QuickScene {
         }
         // Who has children changes only with the items, not every frame.
         if self.parents.0 != self.items_gen {
-            let parents = self.entries.values().filter_map(|e| e.parent).collect();
+            let parents = self.items.values().filter_map(|e| e.parent).collect();
             self.parents = (self.items_gen, parents);
         }
         let parents = &self.parents.1;
@@ -1853,23 +1996,25 @@ impl QuickScene {
         let sampled: FxHashSet<NodeId> = (self.source_base.values())
             .filter_map(|(s, _)| s.source)
             .chain(self.layer_base.keys().copied())
-            .filter_map(|o| self.entries.get(&o).map(|e| e.node))
+            .filter_map(|o| self.items.get(o).map(|e| e.node))
             .collect();
         let mut redrawn = redrawn;
         for (obj, (base, seen)) in &mut self.effect_base {
             let Some(src) = base.source().filter(|s| parents.contains(s)) else {
                 continue;
             };
-            let (Some(src_entry), Some(fx)) = (self.entries.get(&src), self.entries.get(obj))
-            else {
+            let (Some(src_node), Some(fx_node)) = (
+                self.items.get(src).map(|e| e.node),
+                self.items.get(*obj).map(|e| e.node),
+            ) else {
                 continue;
             };
             // A hidden effect is drawn when it is shown: closing a panel
             // with a shadow is not to cost a picture of it.
-            if !in_view(&self.tree, fx.node, &sampled) {
+            if !in_view(&self.tree, fx_node, &sampled) {
                 continue;
             }
-            let Some(snap) = self.tree.compose_subtree(src_entry.node) else {
+            let Some(snap) = self.tree.compose_subtree(src_node) else {
                 continue;
             };
             let print = fingerprint(&snap);
@@ -1881,8 +2026,10 @@ impl QuickScene {
                 None => base.clone(),
             };
             *seen = Some((print, snap));
-            self.paint.insert(*obj, Paint::Effect(paint));
-            self.tree.mark_content_dirty(fx.node);
+            if let Some(e) = self.items.get_mut(*obj) {
+                e.paint = Some(Paint::Effect(paint));
+            }
+            self.tree.mark_content_dirty(fx_node);
             redrawn = true;
         }
         if redrawn {
@@ -1900,8 +2047,8 @@ impl QuickScene {
     /// picture comes out the same: a tunnel that ends where its pictures
     /// are smaller than a pixel, and then costs nothing.
     fn draw_shader_sources(&mut self) -> bool {
-        let entries = &self.entries;
-        self.source_base.retain(|o, _| entries.contains_key(o));
+        let items = &self.items;
+        self.source_base.retain(|o, _| items.contains(*o));
         let mut taken: FxHashSet<ObjectId> = FxHashSet::default();
         let mut again = false;
         for (obj, (base, seen)) in &mut self.source_base {
@@ -1909,13 +2056,14 @@ impl QuickScene {
             if !base.live && seen.is_some() && !asked {
                 continue;
             }
-            let (Some(fx), Some(src)) = (self.entries.get(obj), base.source) else {
+            let (Some(fx_node), Some(src)) = (self.items.get(*obj).map(|e| e.node), base.source)
+            else {
                 continue;
             };
-            let Some(src_entry) = self.entries.get(&src) else {
+            let Some(src_node) = self.items.get(src).map(|e| e.node) else {
                 continue;
             };
-            let Some(snap) = self.tree.compose_subtree(src_entry.node) else {
+            let Some(snap) = self.tree.compose_subtree(src_node) else {
                 continue;
             };
             let print = fingerprint(&snap);
@@ -1940,7 +2088,7 @@ impl QuickScene {
                 let mut at = Some(*obj);
                 std::iter::from_fn(|| {
                     let o = at?;
-                    at = self.entries.get(&o).and_then(|e| e.parent);
+                    at = self.items.get(o).and_then(|e| e.parent);
                     Some(o)
                 })
                 .any(|o| o == src)
@@ -1953,8 +2101,10 @@ impl QuickScene {
                 image: picture,
                 update: base.update,
             });
-            self.paint.insert(*obj, Paint::Source(shown));
-            self.tree.mark_content_dirty(fx.node);
+            if let Some(e) = self.items.get_mut(*obj) {
+                e.paint = Some(Paint::Source(shown));
+            }
+            self.tree.mark_content_dirty(fx_node);
             taken.insert(*obj);
         }
         taken.extend(self.draw_layers());
@@ -1964,10 +2114,9 @@ impl QuickScene {
         if taken.is_empty() {
             return false;
         }
-        for (obj, p) in &self.paint {
-            if let Paint::Shader(fx) = p
+        for e in self.items.values() {
+            if let Some(Paint::Shader(fx)) = &e.paint
                 && fx.sources().any(|s| taken.contains(&s))
-                && let Some(e) = self.entries.get(obj)
             {
                 self.tree.mark_content_dirty(e.node);
             }
@@ -1983,7 +2132,7 @@ impl QuickScene {
             if !shown.live && seen.is_some() {
                 continue;
             }
-            let Some(entry) = self.entries.get(item) else {
+            let Some(entry) = self.items.get(*item) else {
                 continue;
             };
             let Some(snap) = self.tree.compose_subtree(entry.node) else {
@@ -2014,7 +2163,7 @@ impl QuickScene {
         let now: FxHashSet<ObjectId> = self
             .source_base
             .iter()
-            .filter(|(o, (b, _))| b.hide && self.entries.contains_key(o))
+            .filter(|(o, (b, _))| b.hide && self.items.contains(**o))
             .filter_map(|(_, (b, _))| b.source)
             .collect();
         if now == self.hidden {
@@ -2023,7 +2172,7 @@ impl QuickScene {
         let changed: Vec<ObjectId> = now.symmetric_difference(&self.hidden).copied().collect();
         self.hidden = now;
         for obj in changed {
-            if let Some(e) = self.entries.get(&obj) {
+            if let Some(e) = self.items.get(obj) {
                 self.tree.set_drawn(e.node, self.drawn(obj));
             }
         }
@@ -2046,7 +2195,7 @@ impl QuickScene {
         let changed: Vec<ObjectId> = now.symmetric_difference(&self.culled.0).copied().collect();
         self.culled = (now, generation);
         for obj in changed {
-            if let Some(e) = self.entries.get(&obj) {
+            if let Some(e) = self.items.get(obj) {
                 self.tree.set_drawn(e.node, self.drawn(obj));
             }
         }
@@ -2055,13 +2204,11 @@ impl QuickScene {
         self.pooled = pooled;
         for obj in changed {
             // Not laid out yet: the geometry, when it comes, reads the pool.
-            let Some((node, Some(g), inherit)) = self
-                .entries
-                .get(&obj)
-                .map(|e| (e.node, e.geom, e.inherit.borrow().visible.is_some()))
-            else {
+            let Some((node, Some(g))) = self.items.get(obj).map(|e| (e.node, e.geom)) else {
                 continue;
             };
+            let inherit =
+                (self.shared.borrow().marks.get(obj)).is_some_and(|m| m.inherit.visible.is_some());
             self.tree
                 .set_visible(node, shown(&g, inherit, self.pooled.contains(&obj)));
         }
@@ -2095,19 +2242,18 @@ impl QuickScene {
         if sources.is_empty() {
             return FxHashSet::default();
         }
-        self.entries
-            .iter()
-            .filter(|(obj, _)| {
-                let mut at = Some(**obj);
+        self.items
+            .keys()
+            .filter(|obj| {
+                let mut at = Some(*obj);
                 while let Some(o) = at {
                     if sources.binary_search(&o).is_ok() {
                         return true;
                     }
-                    at = self.entries.get(&o).and_then(|e| e.parent);
+                    at = self.items.get(o).and_then(|e| e.parent);
                 }
                 false
             })
-            .map(|(o, _)| *o)
             .collect()
     }
 
@@ -2137,7 +2283,7 @@ impl QuickScene {
                 .copied()
                 .collect()
         } else {
-            self.entries.keys().copied().collect()
+            self.items.keys().collect()
         };
         self.content_looked += looked.len() as u64;
         let mut installed = false;
@@ -2146,10 +2292,11 @@ impl QuickScene {
         let mut dropped = false;
         let mut failed = Vec::new();
         for obj in looked {
-            let Some(e) = self.entries.get_mut(&obj) else {
+            let Some(e) = self.items.get_mut(obj) else {
                 continue;
             };
-            if !e.kind.paints() {
+            let kind = e.class.kind;
+            if !kind.paints() {
                 continue;
             }
             let shown = visible.contains(&obj);
@@ -2158,9 +2305,9 @@ impl QuickScene {
             // frame, so it has one from the start and keeps it.
             // A ShaderEffectSource is often not shown itself, only
             // sampled: it reads its source all the same.
-            let shown = shown || matches!(e.kind, Kind::Shape | Kind::Source);
+            let shown = shown || matches!(kind, Kind::Shape | Kind::Source);
             match (shown, e.painting) {
-                (true, false) if e.kind == Kind::Text => {
+                (true, false) if kind == Kind::Text => {
                     // An effect here would read nothing: what the text
                     // paints is what its polish effect read, and that
                     // effect tells of each change from now on.
@@ -2170,7 +2317,7 @@ impl QuickScene {
                 }
                 (true, false) => {
                     let shared = Rc::clone(&self.shared);
-                    let (o, kind) = (obj, e.kind);
+                    let o = obj;
                     match engine.effect_in(o, move |en| content_effect(en, o, kind, &shared)) {
                         Ok(n) => {
                             e.painting = true;
@@ -2185,22 +2332,24 @@ impl QuickScene {
                         let _ = engine.graph().dispose(n);
                     }
                     e.painting = false;
-                    if e.kind == Kind::Text {
-                        self.shared.borrow_mut().texts_shown.remove(&obj);
+                    if kind == Kind::Text
+                        && let Some(m) = self.shared.borrow_mut().marks.get_mut(obj)
+                    {
+                        m.text_shown = false;
                     }
                     // Text that left the screen keeps its numbers only: the
                     // display list holds the glyph runs, so it goes too
                     // (ARCHITECTURE §7.5). Coming back paints it again.
-                    if e.kind == Kind::Text {
-                        self.paint.remove(&obj);
+                    if kind == Kind::Text {
+                        e.paint = None;
                         self.tree.set_content(e.node, None);
                         dropped = true;
                     }
                     // A picture likewise: the display list is what keeps
                     // its pixels from being dropped under memory pressure
                     // (ARCHITECTURE §8.5).
-                    if e.kind == Kind::Image {
-                        self.paint.remove(&obj);
+                    if kind == Kind::Image {
+                        e.paint = None;
                         self.tree.set_content(e.node, None);
                         crate::image::hidden(engine, obj);
                         dropped = true;
@@ -2924,7 +3073,7 @@ impl QuickScene {
 
 // ---------------------------------------------------------------- effects
 
-fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
+fn structure_effect(e: &Engine, obj: ObjectId, loader: bool, shared: &SharedRc) {
     if !e.is_alive(obj) {
         mark(shared, |s| s.dead.push(obj));
         return;
@@ -2933,7 +3082,7 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     // rebuilt, and copying it here made each child added cost as much as
     // all the children before it.
     let _ = e.read(obj, Item::CHILDREN.index);
-    if is_a::<Loader>(e, obj) {
+    if loader {
         // A Loader's item is its child from the start but shown only once
         // it is made (`shown_children`).
         let _ = e.read(obj, Loader::ITEM.index);
@@ -2942,9 +3091,7 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     // A child that is being made in slices is left out until it is whole
     // (`shown_children`); nothing of the item changes when it is.
     e.watch_incubations();
-    mark(shared, |s| {
-        s.structure.insert(obj);
-    });
+    mark(shared, |s| s.set(obj, Dirty::STRUCTURE, |_| ()));
 }
 
 /// Run where `obj` is alive: as its effect, or by [`shown_changed`].
@@ -2954,17 +3101,13 @@ fn place_effect(e: &Engine, obj: ObjectId, may_scroll: bool, shown: &Shown, shar
         shown_num(e, shown, obj, Item::Y.index),
         may_scroll && crate::flickable::content_moving(e, obj),
     );
-    mark(shared, |s| {
-        s.place.insert(obj, place);
-    });
+    mark(shared, |s| s.set(obj, Dirty::PLACE, |m| m.place = place));
 }
 
 /// Run where `obj` is alive, as [`place_effect`] is.
 fn geometry_effect(e: &Engine, obj: ObjectId, shown: &Shown, shared: &SharedRc) {
     let g = Geom::read(e, obj, shown);
-    mark(shared, |s| {
-        s.geom.insert(obj, g);
-    });
+    mark(shared, |s| s.set(obj, Dirty::GEOM, |m| m.geom = g));
 }
 
 /// Follows the entries of a `transform` list. Made only for an item whose
@@ -2974,9 +3117,7 @@ fn list_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
         return;
     }
     let list = crate::transform::list_map(e, obj);
-    mark(shared, |s| {
-        s.list.insert(obj, list);
-    });
+    mark(shared, |s| s.set(obj, Dirty::LIST, |m| m.list = list));
 }
 
 fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
@@ -3005,9 +3146,7 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             return;
         }
     }
-    mark(shared, |s| {
-        s.polish.insert(obj);
-    });
+    mark(shared, |s| s.set(obj, Dirty::POLISH, |_| ()));
 }
 
 /// What the inputs `t` a Text read make the scene do: lay it out again,
@@ -3016,9 +3155,13 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
     // A new text was measured as it was completed; laid out as it still
     // is, it is not polished to be measured again.
     let measured = text::completion_measured(e, obj, &t);
-    let (same, same_layout) = match shared.borrow().text_inputs.get(&obj) {
-        Some(was) => (*was == t, was.lays_out_as(&t)),
-        None => (false, false),
+    let (same, same_layout, shown) = match shared.borrow().marks.get(obj) {
+        Some(m) => match &m.text {
+            Some(was) => (*was == t, was.lays_out_as(&t), m.text_shown),
+            None => (false, false, m.text_shown),
+        },
+        // Not shown by the scene.
+        None => return,
     };
     // Something it reads changed and it came out the same (the width its
     // own measuring gave it, where it does not elide to it): neither what
@@ -3029,19 +3172,23 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
     }
     // Only how it is painted changed (a colour): it measures the same.
     let polish = !measured && !(t.rich.is_none() && same_layout);
-    let shown = shared.borrow().texts_shown.contains(&obj);
     if !polish && !shown {
         // Nothing for a frame to do.
-        shared.borrow_mut().text_inputs.insert(obj, t);
+        if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {
+            m.text = Some(t);
+        }
         return;
     }
     mark(shared, |s| {
         if shown {
-            s.content.insert(obj, Paint::Text(t.clone()));
+            let paint = Paint::Text(t.clone());
+            s.set(obj, Dirty::CONTENT, |m| m.content = Some(paint));
         }
-        s.text_inputs.insert(obj, t);
+        if let Some(m) = s.marks.get_mut(obj) {
+            m.text = Some(t);
+        }
         if polish {
-            s.polish.insert(obj);
+            s.set(obj, Dirty::POLISH, |_| ());
         }
     });
 }
@@ -3077,11 +3224,10 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             // every change from now on; called untracked, not as an effect.
             // Read here only where that effect has not run yet: when it
             // does, it sees the text shown and paints it again.
-            let read = {
-                let mut s = shared.borrow_mut();
-                s.texts_shown.insert(obj);
-                s.text_inputs.get(&obj).cloned()
-            };
+            let read = shared.borrow_mut().marks.get_mut(obj).and_then(|m| {
+                m.text_shown = true;
+                m.text.clone()
+            });
             Paint::Text(read.unwrap_or_else(|| TextInputs::read(e, obj)))
         }
         Kind::Image => Paint::Image(crate::image::ImagePaint::read_on_screen(e, obj)),
@@ -3101,23 +3247,23 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         _ => return,
     };
     mark(shared, |s| {
-        s.content.insert(obj, p);
+        s.set(obj, Dirty::CONTENT, |m| m.content = Some(p))
     });
 }
 
 /// `visible` and `enabled` read false under a hidden or disabled parent
 /// (Qt documents both as inherited). The item's own value sits below an
 /// override layer and comes back when the parent turns on again.
-fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>, shared: &SharedRc) {
+fn inherit_effect(e: &Engine, obj: ObjectId, mouse_area: bool, shared: &SharedRc) {
     if !e.is_alive(obj) {
         return;
     }
-    let covered = st.borrow().visible.is_some();
-    let parent = e
-        .visual_parent(obj)
-        .filter(|p| e.is_alive(*p) && is_item(e, *p));
-    let mut guard = st.borrow_mut();
-    let st = &mut *guard;
+    // Copied out and back: what the overrides set off may mark the scene.
+    let Some(mut st) = shared.borrow().marks.get(obj).map(|m| m.inherit) else {
+        return;
+    };
+    let covered = st.visible.is_some();
+    let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
     for (p, slot) in [
         (Item::VISIBLE.index, &mut st.visible),
         (Item::ENABLED.index, &mut st.enabled),
@@ -3125,7 +3271,7 @@ fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>, shared: &Sha
         let parent_on = if p == Item::ENABLED.index {
             // `MouseArea.enabled` is the area's own switch: it neither
             // follows a disabled ancestor nor disables what is inside.
-            is_a::<MouseArea>(e, obj) || parent.is_none_or(|q| item_enabled(e, q))
+            mouse_area || parent.is_none_or(|q| item_enabled(e, q))
         } else {
             parent.is_none_or(|q| e.read(q, p).to_boolean())
         };
@@ -3137,17 +3283,16 @@ fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>, shared: &Sha
             );
         }
     }
+    if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {
+        m.inherit = st;
+    }
     // A covered item is kept shown in the tree (see `apply_geometry`).
     // Uncovered, its own `visible` may be the false it read under the
     // cover, which is no change, so the geometry is not read again by
     // itself.
-    let lifted = covered && st.visible.is_none();
-    drop(guard);
-    if lifted {
+    if covered && st.visible.is_none() {
         let g = e.untrack(|| Geom::read(e, obj, &crate::animation::shown::shown(e)));
-        mark(shared, |s| {
-            s.geom.insert(obj, g);
-        });
+        mark(shared, |s| s.set(obj, Dirty::GEOM, |m| m.geom = g));
     }
 }
 
