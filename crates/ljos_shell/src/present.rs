@@ -543,9 +543,29 @@ pub(crate) enum Frame {
 /// Where `shape` can draw: its edges are smoothed a pixel out.
 fn extent(shape: &ClippedShape, pixels_per_point: f32) -> Rect {
     // The clip rectangle is in the space the transform maps to.
-    (shape.transform_after_tessellation * shape.shape.visual_bounding_rect())
+    (shape.transform_after_tessellation * bounds(&shape.shape))
         .expand(1.0 / pixels_per_point)
         .intersect(shape.clip_rect)
+}
+
+/// `shape.visual_bounding_rect()`, a mesh's in plain comparisons:
+/// `f32::min` minds a NaN at each vertex, and the texts of a scrolled list
+/// were most of what the GL painter spent finding where shapes draw. A NaN
+/// is passed over here as there.
+pub(crate) fn bounds(shape: &Shape) -> Rect {
+    let Shape::Mesh(mesh) = shape else {
+        return shape.visual_bounding_rect();
+    };
+    let (mut x0, mut y0) = (f32::INFINITY, f32::INFINITY);
+    let (mut x1, mut y1) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for v in &mesh.vertices {
+        let egui::Pos2 { x, y } = v.pos;
+        x0 = if x < x0 { x } else { x0 };
+        y0 = if y < y0 { y } else { y0 };
+        x1 = if x > x1 { x } else { x1 };
+        y1 = if y > y1 { y } else { y1 };
+    }
+    Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
 }
 
 /// Where `shapes`, the same as before, show something else: they sample
@@ -804,6 +824,28 @@ mod tests {
 
     fn mesh(mesh: &Arc<Mesh>) -> ClippedShape {
         ClippedShape::new(Rect::EVERYTHING, Shape::Mesh(Arc::clone(mesh)))
+    }
+
+    #[test]
+    fn a_mesh_is_bounded_where_epaint_bounds_it() {
+        let at = |pos: [(f32, f32); 4]| {
+            let mut m = Mesh::default();
+            for (x, y) in pos {
+                m.colored_vertex(Pos2::new(x, y), Color32::RED);
+            }
+            Shape::mesh(m)
+        };
+        let shapes = [
+            Shape::mesh(Mesh::default()),
+            at([(3.5, -2.0), (1.0, 7.25), (-4.0, 0.0), (2.0, 2.0)]),
+            at([(f32::NAN, 1.0), (2.0, f32::NAN), (5.0, 6.0), (-1.0, 3.0)]),
+            at([(f32::NAN, f32::NAN); 4]),
+            at([(-0.0, 0.0), (0.0, -0.0), (1e30, -1e30), (0.5, 0.5)]),
+            rect(4.0).shape,
+        ];
+        for shape in &shapes {
+            assert_eq!(bounds(shape), shape.visual_bounding_rect(), "{shape:?}");
+        }
     }
 
     /// Counts the frames drawn for a run of passes, as the shell decides.

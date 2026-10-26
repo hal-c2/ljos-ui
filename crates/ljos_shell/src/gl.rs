@@ -30,7 +30,7 @@ use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentGlCon
 use glutin::display::GlDisplay;
 use glutin::surface::{GlSurface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
 
-use crate::present::{Change, Frame, Steps};
+use crate::present::{Change, Frame, Steps, bounds};
 
 /// How many frames back the areas drawn are remembered: a buffer older
 /// than that is drawn whole.
@@ -1309,7 +1309,7 @@ fn hoist(fills: &mut [Fill<'_>], pixels_per_point: f32) {
         let r = match &s.shape {
             Shape::Noop => return Some(egui::Rect::NOTHING),
             Shape::Callback(_) => return None,
-            other => other.visual_bounding_rect().expand(margin),
+            other => bounds(other).expand(margin),
         };
         Some(r.intersect(s.clip_rect))
     };
