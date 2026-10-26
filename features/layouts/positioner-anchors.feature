@@ -7,8 +7,10 @@
 Feature: Anchors on the children of a positioner
   A positioner owns its children's position along the axis it lays out.
   A child of non-zero size anchored along that axis makes the positioner
-  warn and place nothing in that pass. Children it would skip anyway (invisible, or of zero size) are
-  not checked, so their anchors are no conflict.
+  warn, place nothing in that pass and have no size of its own. Children
+  it would skip anyway (invisible, or of zero size) are not checked, so
+  their anchors are no conflict; one that made it give up still counts
+  once it shrinks to nothing, so it does not start again.
 
   Scenario Outline: A child anchored along the axis stops a <type>
     Given the QML:
@@ -26,10 +28,13 @@ Feature: Anchors on the children of a positioner
     When 100 milliseconds pass
     Then the log has a warning matching "QML <type>: Cannot specify .* anchors for items inside <type>. <type> will not function."
     And the property "<pos>" of "b" is <at>
+    And the property "implicitWidth" of "p" is 0
+    And the property "implicitHeight" of "p" is 0
 
     # A child that fills the positioner has no size until the positioner
     # has one: the first pass places everyone, the next one warns and
-    # leaves them where they are.
+    # leaves them where they are, and the positioner, without its size,
+    # takes the child's away too.
     Examples:
       | type   | pos | at | child                                                     |
       | Column | y   | 20 | MouseArea { anchors.fill: parent }                        |

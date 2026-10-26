@@ -478,6 +478,8 @@ struct Memory {
     populated: bool,
     /// Children a transition is moving, and the place it takes them to.
     going: HashMap<ObjectId, [f64; 2]>,
+    /// A child anchored along the axis made the last pass give up.
+    gave_up: bool,
 }
 
 fn with_memory<R>(
@@ -821,7 +823,7 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
     swap_hidden(engine, obj, which, &mut hidden);
     let visible = hidden.update(engine, obj, &children);
     swap_hidden(engine, obj, which, &mut hidden);
-    let kids: Vec<Kid> = children
+    let shown: Vec<Kid> = children
         .iter()
         .zip(visible)
         .filter(|(c, visible)| *visible && !is_a::<Repeater>(engine, **c))
@@ -830,12 +832,25 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
             w: num(engine, *c, Item::WIDTH.index),
             h: num(engine, *c, Item::HEIGHT.index),
         })
-        .filter(|k| k.w > 0.0 && k.h > 0.0)
         .collect();
-    if let Some(conflict) = anchor_conflict(engine, obj, which, &kids) {
-        // Qt does nothing at all then, size included.
+    let kids: Vec<Kid> = shown
+        .iter()
+        .filter(|k| k.w > 0.0 && k.h > 0.0)
+        .copied()
+        .collect();
+    // A child that fills the positioner shrinks to nothing with it, and
+    // still keeps it from starting again (qml6).
+    let gave_up = with_memory(engine, obj, which, |m| m.gave_up).unwrap_or(false);
+    let checked = if gave_up { &shown } else { &kids };
+    let conflict = anchor_conflict(engine, obj, which, checked);
+    with_memory(engine, obj, which, |m| m.gave_up = conflict.is_some());
+    if let Some(conflict) = conflict {
+        // Qt places nothing then, and the positioner has no size.
         engine.log(LogLevel::Warning, crate::anchors::CATEGORY, conflict);
-        return Ok(());
+        return engine.batch(|| {
+            write_computed(engine, obj, Item::IMPLICIT_WIDTH.index, Value::Real(0.0))?;
+            write_computed(engine, obj, Item::IMPLICIT_HEIGHT.index, Value::Real(0.0))
+        });
     }
     let (content, placed) = match which {
         Which::Row => line(&kids, spacing, true),
