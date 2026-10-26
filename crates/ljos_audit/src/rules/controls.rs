@@ -55,20 +55,52 @@ pub(crate) fn set_checked(engine: &Engine, b: ObjectId, on: bool) {
     }
 }
 
+/// A button's check as [`hold_checked`] kept it.
+pub(crate) struct Held {
+    button: ObjectId,
+    checked: bool,
+    /// `checkState` where the button has one: a tristate box partly
+    /// checked is unchecked as far as `checked` says, and putting
+    /// `checked` back alone would leave it unchecked.
+    state: Option<Value>,
+}
+
 /// Whether each of `buttons` is checked, for [`restore_checked`]: flipping
 /// one of an exclusive group changes another.
-pub(crate) fn hold_checked(engine: &Engine, buttons: &[ObjectId]) -> Vec<(ObjectId, bool)> {
-    buttons.iter().map(|b| (*b, checked(engine, *b))).collect()
+pub(crate) fn hold_checked(engine: &Engine, buttons: &[ObjectId]) -> Vec<Held> {
+    buttons
+        .iter()
+        .map(|b| Held {
+            button: *b,
+            checked: checked(engine, *b),
+            state: engine
+                .property_index(*b, "checkState")
+                .ok()
+                .map(|p| engine.untrack(|| engine.read(*b, p))),
+        })
+        .collect()
 }
 
 /// Puts back what [`hold_checked`] kept: what was unchecked first, so that
-/// checking a group's one choice last leaves no other checked.
-pub(crate) fn restore_checked(engine: &Engine, held: &[(ObjectId, bool)]) {
+/// checking a group's one choice last leaves no other checked, then each
+/// `checkState`, as the toolkit writes it, so a binding on it stays.
+pub(crate) fn restore_checked(engine: &Engine, held: &[Held]) {
     for want in [false, true] {
-        for (b, was) in held {
-            if *was == want && engine.is_alive(*b) && checked(engine, *b) != want {
-                set_checked(engine, *b, want);
+        for h in held {
+            if h.checked == want && engine.is_alive(h.button) && checked(engine, h.button) != want {
+                set_checked(engine, h.button, want);
             }
+        }
+    }
+    for h in held {
+        let Some(was) = &h.state else { continue };
+        if !engine.is_alive(h.button) {
+            continue;
+        }
+        if let Ok(p) = engine.property_index(h.button, "checkState")
+            && engine.untrack(|| engine.read(h.button, p)) != *was
+        {
+            let _ = engine.write(h.button, p, was.clone(), WriteKind::Host);
         }
     }
 }
