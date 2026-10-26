@@ -90,3 +90,24 @@ Feature: Connections
     When "Attached.qml" is loaded
     Then the property "completions" of "attached" is 1
     And the log has no warnings
+
+  Scenario: A function for a signal can also be called as a method
+    Given the file "Called.qml":
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "called"
+        property string log: ""
+        Connections {
+          id: c
+          target: root
+          Component.onCompleted: { onZChanged(); root.log += typeof c.onZChanged }
+          function onZChanged() { root.log += "z" }
+        }
+      }
+      """
+    When "Called.qml" is loaded
+    And the property "z" of "called" is set to 2
+    Then the property "log" of "called" is "zfunctionz"
+    And the log has no warnings

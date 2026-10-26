@@ -1067,7 +1067,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         };
         let name = id.name.to_string();
         // `function onPicked(index) {}` in a Connections handles its
-        // target's signal: it is a handler, not a method anyone calls.
+        // target's signal, and is still a method a script may call itself
+        // (qml6).
         let signal = handled(&name).filter(|_| self.special(owner) == Some(Special::Connections));
         if let Some(signal) = signal {
             let target = format!("{}.{name}", self.tree.objects[owner].name);
@@ -1087,7 +1088,6 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     expr,
                     name_span,
                 });
-            return;
         }
         self.check_name(Declared::Method, &name, id.span);
         let target = format!("{}.{name}()", self.tree.objects[owner].name);

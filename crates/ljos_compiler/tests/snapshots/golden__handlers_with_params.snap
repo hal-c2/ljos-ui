@@ -23,9 +23,10 @@ component c0 Main (file) id=Main signature=0ab03d48
   o2 QtQuick/Text key=/Text[0] parent=o0
     on linkActivated => e6
   o3 QtQml/Connections key=/Connections[0] parent=o0
+    function onPicked = e9
     target := e7
     on picked => e8
-    on countChanged => e9
+    on countChanged => e10
 
 exprs
   e0 handler f0 scope=c0o0 at 8:15 params[] args[index, name] refs[console:js global]
@@ -37,7 +38,8 @@ exprs
   e6 handler f6 scope=c0o2 at 17:26 params[] args[link] refs[Qt:qml global, link:local]
   e7 property f7 scope=c0o3 at 20:17 params[root=c0o0] args[] refs[root:id c0o0]
   e8 handler f8 scope=c0o3 at 21:9 params[] args[index, name] refs[console:js global]
-  e9 handler f9 scope=c0o3 at 22:25 params[root=c0o0] args[] refs[console:js global, root:id c0o0]
+  e9 function f9 scope=c0o3 at 21:9 params[] args[index, name] refs[console:js global]
+  e10 handler f10 scope=c0o3 at 22:25 params[root=c0o0] args[] refs[console:js global, root:id c0o0]
 
 module
 // Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
@@ -83,7 +85,10 @@ export function f7(root) {
 // Main.qml:21:9 Connections.onPicked
 export function f8(index, name) { console.log(index, name) }
 
+// Main.qml:21:9 Connections.onPicked()
+export function f9(index, name) { console.log(index, name) }
+
 // Main.qml:22:25 Connections.onCountChanged
-export function f9(root) {
+export function f10(root) {
   return (console.log(root.count));
 }
