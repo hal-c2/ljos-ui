@@ -377,10 +377,21 @@ fn given_as(engine: &Engine, at: &str, ty: &TypeTag, v: Option<Value>) -> Option
     match converted(ty, &v) {
         Some(Ok(v)) => Some(v),
         Some(Err(why)) => {
-            engine.log(LogLevel::Warning, "qml", format!("{at}: {why}"));
+            engine.warn(format!("{at}: {why}"));
             None
         }
-        None => Some(v),
+        // Refused here rather than where the property takes it, so that
+        // the warning is the change's and is held with its binding's.
+        None => match ty {
+            TypeTag::Enum(_) | TypeTag::Flags(_) | TypeTag::Object(_) => Some(v),
+            _ => match ty.coerce(&v) {
+                Ok(_) => Some(v),
+                Err(why) => {
+                    engine.warn(format!("{at}: {why}"));
+                    None
+                }
+            },
+        },
     }
 }
 
@@ -1064,14 +1075,18 @@ impl Group {
                 }
                 ForeignValue::Binding(f) => {
                     // A run that failed keeps the value of the last that
-                    // did not.
-                    let mut last = engine.untrack(|| engine.read(target, prop));
+                    // did not, or what the property shows.
+                    let mut last: Option<Value> = None;
                     let ask = asked(&ty);
                     OverrideContent::Binding(Box::new(move |e| {
-                        if let Some(v) = given_as(e, &at, &ty, f(e, &ask)) {
-                            last = v;
+                        // Held while the item is made, as a declared
+                        // binding's are, so that one a later binding of
+                        // the property replaces says nothing (qml6).
+                        let v = e.run_binding(target, prop, || given_as(e, &at, &ty, f(e, &ask)));
+                        if let Some(v) = v {
+                            last = Some(v);
                         }
-                        last.clone()
+                        last.clone().unwrap_or_else(|| e.peek(target, prop))
                     }))
                 }
                 // Put in place above.

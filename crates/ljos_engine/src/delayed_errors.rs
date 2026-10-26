@@ -145,13 +145,10 @@ impl Engine {
     }
 
     /// Runs the binding on `prop` of `obj`, holding what it says while a
-    /// creation is running or an earlier run of it is still held.
-    pub(crate) fn run_binding<R>(
-        &self,
-        obj: ObjectId,
-        prop: PropIndex,
-        f: impl FnOnce() -> R,
-    ) -> R {
+    /// creation is running or an earlier run of it is still held. Also for
+    /// a binding a native type keeps itself (a state's), which warns with
+    /// [`Engine::warn`].
+    pub fn run_binding<R>(&self, obj: ObjectId, prop: PropIndex, f: impl FnOnce() -> R) -> R {
         let d = &self.inner.delayed;
         let earlier = d
             .held

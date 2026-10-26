@@ -133,8 +133,9 @@ impl Engine {
         warn.into_iter().map(|e| e.message).collect()
     }
 
-    /// An engine warning in category `qml`.
-    pub(crate) fn warn(&self, msg: String) {
+    /// An engine warning in category `qml`, held instead while a binding
+    /// whose warnings are held runs ([`Engine::run_binding`]).
+    pub fn warn(&self, msg: String) {
         if self.hold_warning(&msg) {
             return;
         }
