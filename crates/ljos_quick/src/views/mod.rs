@@ -630,9 +630,25 @@ fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
     })?;
 
     let layout = st.clone();
+    let mut asked = None;
     e.effect_in(me, move |e| {
         pass::read_inputs(e, me, &layout);
-        e.untrack(|| pass::pass(e, me, &layout, None));
+        // While the scene steps its animations and lays its items out, the
+        // view's size and its rows' lengths change one item at a time (a
+        // width, a text wrapped again, then the column it is in): the rows
+        // are laid out once, when that ends, not once a change. A pass
+        // asked for (`pass::bump`: rows that came into sight as the view
+        // moved, a new model) is laid out at once, as before, and so is a
+        // view a method put at an edge while its rows there take their
+        // length: it moves with them, and what reads the rows at its
+        // place reads them laid out there.
+        let trigger = layout.trigger.get().map(|n| e.graph().get_untracked(n));
+        let bumped = std::mem::replace(&mut asked, trigger.clone()) != trigger;
+        if crate::scene::views_wait() && !bumped && layout.at_edge.get().is_none() {
+            changes::polished_later(e, me);
+        } else {
+            e.untrack(|| pass::pass(e, me, &layout, None));
+        }
         pass::read_sizes(e, me, &layout);
     })?;
 

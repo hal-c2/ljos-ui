@@ -26,6 +26,15 @@ use records::Records;
 thread_local! {
     static POLISHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static POLISHING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static STEPPING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a view that a change reaches lays its rows out when the scene
+/// polishes, not at once: the scene steps its animations, which polish
+/// next (a width that moves wraps the texts in the rows again), or lays
+/// its items out, whose lengths change one at a time.
+pub(crate) fn views_wait() -> bool {
+    POLISHING.get() || STEPPING.get()
 }
 
 /// Whether a scene of this thread is laying its items out: an item's
@@ -1405,11 +1414,13 @@ impl QuickScene {
         self.sync_layer(engine);
         lap(&mut laps, &mut steps.other);
         // 5. Animations, from the frame's time and nothing else.
+        STEPPING.set(true);
         crate::animation::tick(engine, now);
         crate::long_press::tick(engine, now);
         crate::flickable::fling::tick(engine, now);
         crate::canvas::tick(engine);
         crate::views::path_view::tick(engine, now);
+        STEPPING.set(false);
         lap(&mut laps, &mut steps.animations);
         // 6. Polish.
         self.polish(engine);

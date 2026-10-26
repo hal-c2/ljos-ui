@@ -845,3 +845,81 @@ GridView {
     assert_eq!(at.to_number(), 45.0);
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
+
+/// A view beside a panel whose width animates is as wide as what the
+/// panel leaves, and its rows of wrapped text wrap again each frame. It
+/// lays its rows out once a frame, when the texts and the columns they
+/// are in have their new lengths: not once as the width moves and again
+/// as each length changes. A view whose size and rows did not change
+/// (the panel's tabs) is not laid out at all.
+#[test]
+fn a_view_a_moving_width_reaches_lays_its_rows_out_once_a_frame() {
+    let e = engine();
+    let clock = VirtualClock::new();
+    e.set_clock(Rc::new(clock.clone()));
+    let root = load(
+        &e,
+        r##"import QtQuick
+Item {
+  id: root
+  width: 800; height: 400
+  property bool open: false
+  ListView {
+    objectName: "side"
+    anchors.left: parent.left; anchors.right: panel.left
+    height: 400
+    model: 40
+    delegate: Column {
+      width: ListView.view.width
+      Text { text: "Sender " + index; font.bold: true }
+      Text {
+        width: parent.width
+        wrapMode: Text.Wrap
+        text: "the quick brown fox jumps over a lazy dog while light falls on northern hills " + index
+      }
+    }
+  }
+  Rectangle {
+    id: panel
+    anchors.right: parent.right
+    height: 400
+    width: root.open ? 600 : 0
+    Behavior on width { NumberAnimation { duration: 250 } }
+    clip: true
+    ListView {
+      objectName: "tabs"
+      width: 300; height: 30
+      orientation: ListView.Horizontal
+      model: 3
+      delegate: Item { width: 100; height: 30 }
+    }
+  }
+}"##,
+    );
+    let side = find(&e, root, "side");
+    let tabs = find(&e, root, "tabs");
+    let mut s = scene(&e, root, 800.0, 400.0);
+    let mut t = 0;
+    let mut frame = |s: &mut QuickScene| {
+        clock.set(Time::from_millis(t));
+        s.frame(&e, Time::from_millis(t));
+        t += 16;
+    };
+    for _ in 0..40 {
+        frame(&mut s);
+    }
+    set(&e, root, "open", Value::Bool(true));
+    let mut passes = Vec::new();
+    for _ in 0..12 {
+        let (a, b) = (view_layout_passes(&e, side), view_layout_passes(&e, tabs));
+        frame(&mut s);
+        passes.push((
+            view_layout_passes(&e, side) - a,
+            view_layout_passes(&e, tabs) - b,
+        ));
+    }
+    // The animation starts at the width it had: its first frame moves
+    // nothing.
+    assert_eq!(passes[1..], [(1, 0); 11], "(view, tabs) passes a frame");
+    assert!(num(&e, side, "width") < 800.0);
+}
