@@ -7094,6 +7094,87 @@ DECISIONs:
 - Phase c (B30, structure and text polish) is next. TEXT4's measure-on-read branch in
   `text_polish` is kept; B29 only changed how it stores the inputs.
 
+### B30 (H2): an item's structure, `parent` and `focus` by change hooks, and a positioner and a ListView `remove` once (2026-10-26)
+
+B30 is phase c of the delegate track's dirty-bit seam. It made four changes:
+
+- **Structure by change hooks.** What an item shows of its children used to be one
+  effect per item. Now the change hooks of the properties it read mark the item dirty,
+  as do the engine's listeners for the end of an incubation and for a destruction. The
+  scene reads the structure of a marked item at the frame.
+- **`parent` and `focus` by change hooks.** Each item used to watch both, and a watch is
+  an effect and a value node. Now their change hooks act on a write. They do nothing
+  until `init_item` has run, because it settles both on completion.
+- **A positioner lays out once on completion.** A Row or Column compares its inputs with
+  the ones it last laid out. Its first polish after completion no longer lays out a
+  second time, so the warning that came twice comes once
+  (`features/layouts/positioner-anchors.feature`, untagged).
+- **A ListView's `remove` runs once in the layout pass.** Rows that leave are gathered in
+  the pass. Each run of the transition is told every row that left in the change, inside
+  the layout pass and not after it (`features/views/list-remove-batch.feature`, untagged).
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets):
+
+| | B29 | B30 |
+|---|---:|---:|
+| ListView delegate, heap allocations | 1260 (126.0) | 1209 (120.9) |
+| ListView delegate, effects | 70 (7) | 30 (3) |
+| ListView delegate, values | 80 (8) | 40 (4) |
+| Wrapped delegate, heap allocations | 1281 (128.1) | 1232 (123.2) |
+| Wrapped delegate, effects | 60 (6) | 20 (2) |
+| Wrapped delegate, values | 60 (6) | 20 (2) |
+| `createObject` item, heap allocations | 734 (73.4) | 674 (67.4) |
+| `createObject` item, effects | 50 (5) | 10 (1) |
+| `createObject` item, values | 40 (4) | 0 |
+| Ten `createObject` items destroyed, graph nodes | 110 | 30 |
+
+| Heap bytes kept per instance, over a thousand | B29 | B30 |
+|---|---:|---:|
+| ListView delegate, one-line text | 25 874 | 22 000 |
+| ListView delegate, wrapped text | 25 123 | 24 972 |
+| `createObject` item | 15 832 | 11 721 |
+
+The B29 column is main at 30cec887. Sixteen bytes of each drop come from a1d09698, which
+took the told polish effect out of every item's record.
+
+What a one-line delegate still has as effects: the Rectangle's content effect, and the
+Text's anchors and the Text's follow effect.
+
+callgrind and the scroll run against qml6 were not run for B30. The data drive was at
+98 % with other lanes building, and a profiling build plus a baseline build would have
+needed about 20 GB. The budget and byte pins above are exact.
+
+**positionViewAtEnd in calqlatr.** Each press, frame included, in a debug build over 200
+digit presses and 50 operator presses:
+
+| | Digit, allocations | Digit, time | Operator, allocations | Operator, time |
+|---|---:|---:|---:|---:|
+| `positionViewAtEnd()` | 31.6 | ~255 µs | 222.4 | ~1.35 ms |
+| scroll by hand with `contentY` | 43 | ~360 µs | 214.8 | ~1.15 ms |
+
+A digit press changes the last row in place, and `positionViewAtEnd` takes the path that
+skips layout. An append lays out twice. The first pass places the pending change where the
+view is, and the second places it with the view at the end.
+
+DECISIONs:
+
+- The Text's follow effect stays a tracked effect. It reads state of other objects that no
+  hook on its own properties sees: the SelectionScope switch and the parent chain, the
+  rich document's epoch and images, the system font scale, the anchors,
+  `size_follows_implicit`, and `activeFocus` when the text has links. TEXT4's
+  measure-on-read branch in `text_polish` is untouched.
+- A Row or Column keeps the told polish effect from 43fa21fa. Its skip on completion
+  compares inputs rather than counting polishes.
+- The `remove` transition still runs one target at a time for each Transition. A
+  `running` guard does this, as it does for `add`. Each run is told all of the change's
+  targets. Removals whose op is lost to a reset or a move are finished one by one.
+- The `parent` and `focus` hooks act only once `init_item` has run, which sets both on
+  completion. The initialised test is that the anchor lines are set.
+- `positionViewAtEnd` is left as it is. The first of an append's two passes takes the
+  pending op and the targets of its add transition. A pass with the view already at the
+  end would not take them. It is cheaper than scrolling by hand on a digit press, and
+  0.2 ms dearer on an operator press.
+
 ### B12 (ilang): ListModel.append, and a calqlatr press profiled (2026-10-26)
 
 **Method.** As in B11: instructions are user-space instructions of the whole process,
