@@ -99,6 +99,33 @@ Feature: The design audit acts on the window to check colour, focus and motion
         """
       Then the design audit does not report "color-state-only"
 
+    Scenario: A switch whose handle moves across a pale track
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Switch {
+            id: control
+            Accessible.name: "Heating"
+            indicator: Rectangle {
+              implicitWidth: 56; implicitHeight: 24
+              radius: 12
+              color: control.checked ? "#a8e6c4" : "white"
+              border.color: "#b0b0b0"
+              Rectangle {
+                x: control.checked ? parent.width - width - 2 : 2
+                width: 20; height: 20; radius: 10
+                border.color: "#b0b0b0"
+              }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "color-state-only"
+
     Scenario: A menu that lets the text behind it show through
       Given the QML:
         """qml

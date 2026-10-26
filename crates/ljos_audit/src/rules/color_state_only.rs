@@ -7,7 +7,10 @@
 //! that stands out changes some pixel by 3:1 or more (SC 1.4.1's
 //! Understanding page accepts a difference of 3:1 in lightness with
 //! something more); when the pixels that changed all stay under that, the
-//! two states differ by hue or a faint tint. Then the state is flipped
+//! two states differ by hue or a faint tint. A state shown by where a part
+//! is, or by a part that shows only in it (a switch's handle that moves, a
+//! mark whose picture has not loaded), is a change of shape whatever its
+//! colours, and not reported. Then the state is flipped
 //! back, and every other button's too, should the first have been one of
 //! an exclusive group.
 //!
@@ -22,7 +25,7 @@ use ljos_engine::{ObjectId, Value, WriteKind};
 use ljos_render::kurbo::Rect;
 
 use crate::acting::Act;
-use crate::cx::{is_a, place_of, scene_rect, shown_items, takes_focus};
+use crate::cx::{is_a, place_of, scene_rect, shown_items, shown_opacity, takes_focus, within};
 use crate::pixels::{Painter, Picture, backdrop};
 
 /// No audit flips more than this many buttons: a long list of check
@@ -39,6 +42,36 @@ fn set_checked(act: &Act, b: ObjectId, on: bool) {
     if let Ok(p) = e.property_index(b, "checked") {
         let _ = e.write(b, p, Value::Bool(on), WriteKind::Host);
     }
+}
+
+/// How far a part moves or grows before the move counts as a change of
+/// shape: under that, a rounding of the layout.
+const MOVED_PX: f64 = 1.0;
+
+/// Where every part of `b` that shows is, in the scene.
+fn places(act: &Act, b: ObjectId) -> Vec<(ObjectId, Rect)> {
+    let e = act.engine;
+    shown_items(&act.cx())
+        .into_iter()
+        .filter(|i| *i != b && within(e, *i, b) && shown_opacity(e, *i) > 0.0)
+        .filter_map(|i| scene_rect(e, i).map(|r| (i, r)))
+        .collect()
+}
+
+/// Whether a part showed or hid, moved or changed its size.
+fn reshaped(before: &[(ObjectId, Rect)], after: &[(ObjectId, Rect)]) -> bool {
+    let far = |a: Rect, b: Rect| {
+        [a.x0 - b.x0, a.y0 - b.y0, a.x1 - b.x1, a.y1 - b.y1]
+            .iter()
+            .any(|d| d.abs() > MOVED_PX)
+    };
+    before.len() != after.len()
+        || before.iter().any(|(i, r)| {
+            after
+                .iter()
+                .find(|(j, _)| j == i)
+                .is_none_or(|(_, s)| far(*r, *s))
+        })
 }
 
 fn draw(act: &Act, painter: &mut Painter, region: Rect) -> Option<Picture> {
@@ -77,17 +110,21 @@ pub(crate) fn check(act: &mut Act) {
         let Some(before) = draw(act, &mut painter, region) else {
             continue;
         };
+        let shape = places(act, b);
         let was = checked(act, b);
         set_checked(act, b, !was);
         act.finish();
         let after = draw(act, &mut painter, region);
+        let moved = reshaped(&shape, &places(act, b));
         for (o, c) in &held {
             if e.is_alive(*o) && checked(act, *o) != *c {
                 set_checked(act, *o, *c);
             }
         }
         act.finish();
-        let Some(after) = after.filter(|a| a.width == before.width && a.height == before.height)
+        let Some(after) = after
+            .filter(|a| a.width == before.width && a.height == before.height)
+            .filter(|_| !moved)
         else {
             continue;
         };

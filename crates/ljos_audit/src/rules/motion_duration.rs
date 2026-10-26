@@ -6,7 +6,9 @@
 //! is given. So the audit makes the change and times what it started: it
 //! closes each open popup and opens it again (`limits::motion::
 //! STANDARD_MAX_MS` each way) and checks and unchecks each checkable
-//! control (feedback, `limits::motion::MICRO_MAX_MS`). Motion is unreduced
+//! control (feedback, `limits::motion::MICRO_MAX_MS`); feedback is what
+//! animates the control itself, and not what its handler sets going
+//! elsewhere (a model's value easing to the new state). Motion is unreduced
 //! while it looks. A run is given the one frame it may have ended before
 //! it was seen to. Too short to see is the source's to say: frames of the
 //! display cannot tell 20 ms from 40.
@@ -29,6 +31,20 @@ fn set_checked(act: &Act, b: ObjectId, on: bool) {
     if let Ok(p) = e.property_index(b, "checked") {
         let _ = e.write(b, p, Value::Bool(on), WriteKind::Host);
     }
+}
+
+/// Whether `anim` animates something of `b`'s: the first item that owns
+/// it (a `Behavior`'s, a transition's) is `b` or inside it.
+fn feeds_back(act: &Act, anim: ObjectId, b: ObjectId) -> bool {
+    let e = act.engine;
+    let mut at = e.owner(anim);
+    while let Some(o) = at {
+        if ljos_quick::is_item(e, o) {
+            return crate::cx::within(e, o, b);
+        }
+        at = e.owner(o);
+    }
+    false
 }
 
 /// The runs of `w` longer than `limit`, as found: the animation, what
@@ -86,7 +102,8 @@ pub(crate) fn check(act: &mut Act) {
             for b in buttons {
                 let was = e.untrack(|| e.read_by_name(b, "checked")).to_boolean();
                 let words = crate::cx::words(&act.cx(), b);
-                let w = watch(act, |a| set_checked(a, b, !was), &no_probe);
+                let mut w = watch(act, |a| set_checked(a, b, !was), &no_probe);
+                w.runs.retain(|r| feeds_back(act, r.anim, b));
                 let verb = if was { "unchecking" } else { "checking" };
                 too_long(
                     act,
