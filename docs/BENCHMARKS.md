@@ -5623,7 +5623,7 @@ remaining cost is in the graph:
 - 4 effects.
 - 5 computed writes.
 - The editor's layout batch: 35K.
-- The placeholder's eager measure: 12K.
+- The placeholder's eager measure: 12K. TEXT4 measures it when it is read instead.
 
 Taking the text polish out of the graph would close this gap. That work belongs to the delegate
 track's dirty bits.
@@ -6577,3 +6577,121 @@ nothing waiting and the view at the place asked for, it is now skipped (955 M).
 - **Start-up** read ~9.5 M higher for every build from the working tree than for the
   origin/main build from an exported copy. It was the same before and after these commits,
   so it comes from the build directory, and presses are compared as differences.
+
+### TEXT4: wrapped plain text, and a field's placeholder measured when read (2026-10-26)
+
+#### Wrapped plain text without Parley's builder
+
+TEXT2 and TEXT3 shaped one-line plain text directly. A plain text that wraps still built
+Parley's layout to break it, and an elided last line built two more: the rest of its
+paragraph and each cut. Chat, mail and list rows with descriptions are made of such texts.
+
+- `wrap_direct` breaks a directly shaped text where Parley's breaker would. `break_atoms`
+  takes the soft wrap opportunities from the shared analysis, lets spaces hang, and breaks
+  inside a word only where the wrap mode allows. The ink re-break is the same as before.
+  It covers ASCII text without inline places or justification; any other text takes the
+  builder as before.
+- `elide_direct` cuts a plain left-to-right last line the same way `elide` does. It shapes
+  the rest of the line and each cut directly. Right-to-left text, text with places, spans
+  or inline objects takes the builder.
+- Unit tests in `crates/ljos_text/src/engine.rs` hold the direct path to an engine that
+  builds every layout. They cover breaks over scripts, bidi, hyphen and space runs, tabs, a
+  zero width, ligatures and ink past the width, in three wrap modes, with and without an
+  elided last line, and cuts in every elide mode. The `@qt-parity` wrap and elide
+  scenarios in `features/text/` pass unchanged.
+
+`bench/wrapped.qml` is a ListView of 10,000 rows: a bold sender and a message wrapped on
+two to four lines, the fourth elided into the third.
+
+| `bench/wrapped.qml` under callgrind (main thread) | Before | After |
+|---|---:|---:|
+| Total | 6,268M | 5,443M |
+| Delegates in the window | ≈ 4094 | ≈ 5298 |
+| `build_layout`, per delegate | 904 k | 396 k |
+| Main thread, per delegate | 1.53M | 1.03M |
+| Parley `StyleRunBuilder` calls | 10,214 | 0 |
+| `elided_line`, per call | 614 k | 292 k |
+
+| Scroll, M instructions/s (`scr.sh wrapped`) | Before | After |
+|---|---:|---:|
+| Ljós | 778 | 518–519 |
+| qml6 | 442–443 | 442–443 |
+
+Ten wrapped ListView delegates make 1452 allocations, down from 1772
+(`ten_wrapped_listview_delegates`).
+
+Left for the delegate track: the wrapped delegate looks up `WrapMode` and `ElideMode` by
+type name 20 times, and an elided line still costs 292 k a call, most of it shaping the
+cuts.
+
+#### A field's placeholder, measured when read
+
+A `TextField` or `TextArea` measured its placeholder on every polish, even when it was not
+shown. That was 12K a field for each font switch ("A theme or font switch against qml6,
+continued"). Its measured writes then started a second round of the field's bindings.
+
+Now a `Text` that paints nothing is not polished. That is a plain text that is empty (a
+field's placeholder while the field has text, or one without placeholder text), or one
+whose own `visible` is false. Its seven measured properties are made on read instead:
+`implicitWidth`, `implicitHeight`, `contentWidth`, `contentHeight`, `lineCount`,
+`truncated` and `baselineOffset`. Whatever follows them is told they changed. The first
+read measures once, for all seven. The makers are function pointers
+(`Engine::make_on_read_by`), so nothing is allocated per property.
+
+A text that is only not shown yet, such as a view's new row, is still polished: its first
+frame needs the layout anyway, and the delegate budgets stay at 1451 and 983.
+
+An empty text no longer reads its width and height, because it is one empty line in any
+room. `empty_text_measures_the_same_in_any_room` checks every measured value over widths,
+heights, wrap and elide modes, line counts and line heights.
+
+qml6 gives a text its new size as soon as what it follows changes. Ljós now does the same
+for a hidden text, an empty text and a field's placeholder
+(`features/text/measured-on-read.feature`, `@qt-parity`, checked on Qt 6.11.2). A shown
+text that is not empty still gets its new size at the next polish. That scenario is
+`@backlog` until the delegate track takes the text polish out of the graph.
+`features/text/measured-once.feature` pins that a hidden text is measured only when read.
+
+20 Fusion `TextField`s on a `Pane`, `font.pixelSize` switched 13/14 a frame apart
+(`frame_profile --apart`, 20 switches, release):
+
+| Per field per switch (callgrind) | Before | After |
+|---|---:|---:|
+| Total | 98.3K | 92.3K |
+| Placeholder polish (`write_measured` and what follows it) | 26.4K | 0 |
+| `measure_on_read` (mostly the field's bindings re-run on notify) | | 21.8K |
+| `made_on_read` (the measure itself) | | 0.9K |
+| `TextInputs::read` | 10.0K | 9.3K |
+
+| 20 fields, per switch (wall clock) | Before | After |
+|---|---:|---:|
+| The write and its effects | 108–121 µs | 140–177 µs |
+| The frame's pass | 52 µs | 14 µs |
+
+The work moved from the frame into the write, where qml6 does it, and the sum barely
+changed. A `tst_*.qml` loop of 400 switches with no frames between them shows the move
+alone. Before, it skipped the placeholder until the end of the loop. Now it measures the
+placeholder on every switch, as qml6 does:
+
+| 400 switches, no frames | Ljós before | Ljós after | qml6 |
+|---|---:|---:|---:|
+| Basic | 0.098–0.113 ms | 0.140–0.178 ms | 0.028 ms |
+| Fusion | 0.093–0.128 ms | 0.148–0.168 ms | 0.030–0.033 ms |
+
+What is left of a field's switch is graph traffic. The field's `implicitHeight` binding is
+evaluated before the placeholder's inputs effect runs, and runs again when it hears the
+placeholder changed. Every input is a tracked read. Both belong to the delegate track's
+text polish dirty bits.
+
+DECISIONs:
+
+- Only texts that paint nothing are measured on read. Keying on "not shown" also caught a
+  view's new rows and added allocations to every delegate.
+- Measuring on read pulls a value: the styles always follow the placeholder's
+  `implicitHeight`, so it is measured on each switch, not skipped. It is measured once
+  for all seven properties, outside the frame.
+- `write_measured` writes over values still due without reading them, so a stale maker
+  never runs.
+- The wrapped path compares against the builder in unit tests and against qml6 through the
+  existing wrap and elide scenarios. Nothing a QML program observes changed, so there is no
+  new scenario for it.
