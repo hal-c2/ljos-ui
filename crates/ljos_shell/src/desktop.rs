@@ -2224,8 +2224,12 @@ impl<M: Send + 'static> Desktop<M> {
     }
 
     /// Asks the platform to let the windows draw whose time has come, and
-    /// runs the passes of those that cannot be seen.
-    fn schedule(&mut self, host: &mut Control<'_>, now: Instant) {
+    /// runs the passes of those that cannot be seen. At the start of a
+    /// turn (`early`) it only asks: asked then, the platform lets the
+    /// window draw later in the same turn, after the turn's input; asked
+    /// at its end, it took a turn of its own to hear yes, each frame. What
+    /// it would run itself waits for the end of the turn, for the input.
+    fn schedule(&mut self, host: &mut Control<'_>, now: Instant, early: bool) {
         let mut draw = Vec::new();
         for key in self.repaints.take_due(now) {
             let Some(i) = self.slots.iter().position(|s| s.key == key) else {
@@ -2236,6 +2240,9 @@ impl<M: Send + 'static> Desktop<M> {
             match (slot.surface.as_ref(), held) {
                 // The display would have held a drawn frame this long.
                 (Some(_), Some(until)) if !slot.out_of_sight() => self.repaints.request(key, until),
+                (Some(_), _) if early && !slot.out_of_sight() && slot.free => {
+                    self.repaints.request(key, now);
+                }
                 // The platform would answer at once: it is not asked.
                 (Some(_), _) if !slot.out_of_sight() && slot.free => {
                     slot.redraw_asked.get_or_insert(now);
@@ -2256,6 +2263,9 @@ impl<M: Send + 'static> Desktop<M> {
                 // Another window's scene waits until it is shown.
                 (None, _) => {}
             }
+        }
+        if early {
+            return;
         }
         let mut due = Vec::new();
         for (i, slot) in self.slots.iter_mut().enumerate() {
@@ -2366,7 +2376,7 @@ impl<M: Send + 'static> Desktop<M> {
                 host.exit();
                 return;
             }
-            self.schedule(host, now);
+            self.schedule(host, now, false);
             if !self.unsettled() {
                 break;
             }
@@ -2545,6 +2555,9 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
             Event::Wake => {
                 #[cfg(feature = "mcp")]
                 self.note_wake(|w| w.deadline = true);
+                if !self.exiting && !self.unsettled() {
+                    self.schedule(host, Instant::now(), true);
+                }
             }
             Event::User(ShellEvent::Wake) => {
                 #[cfg(feature = "mcp")]
