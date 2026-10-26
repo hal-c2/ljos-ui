@@ -333,9 +333,9 @@ fn ten_wrapped_listview_delegates() {
     let (b, made) = listview_delegates(WRAPPED);
     assert_eq!(made, 10);
     // Per delegate: 3 objects, 8 values, 5 bindings, 14 effects, 2
-    // scopes, and the two enumerations its text names, `Text.WordWrap`
-    // and `Text.ElideRight`, each looked up as a type; 137.0
-    // allocations. The text is broken into lines and its last line
+    // scopes; 137.0 allocations. The two enumerations its text names,
+    // `Text.WordWrap` and `Text.ElideRight`, are looked up as a type once
+    // for the file, not once a delegate (twenty fewer lookups, TEXT5). The text is broken into lines and its last line
     // elided without Parley's builder or the layouts it makes (32 fewer
     // a delegate, TEXT4).
     // The scene's one record an item, and an anchors effect only for an
@@ -352,7 +352,7 @@ fn ten_wrapped_listview_delegates() {
             },
             lookups: Lookups {
                 members: 0,
-                types: 20,
+                types: 0,
                 names: 0,
                 atoms: 0,
             },

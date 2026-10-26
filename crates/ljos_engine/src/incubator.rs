@@ -2367,7 +2367,12 @@ impl Engine {
                 Color::parse(s).map_or_else(|| Value::String(Atom::new(s)), Value::Color)
             }
             Literal::Enum(e) => {
-                let v = e.value.or_else(|| {
+                // A native type's keys do not change while the file is
+                // loaded; a component's may, with a reload of its file.
+                let native = matches!(e.ty, TypeRef::Native { .. });
+                let at = std::ptr::from_ref(e) as usize;
+                let kept = || inst.file.enum_numbers.borrow().get(&at).copied();
+                let v = e.value.or_else(|| native.then(kept).flatten()).or_else(|| {
                     let meta = self.type_meta(&inst.file, &e.ty).ok();
                     // `Qt` is a namespace, not a registered type.
                     let of_qt = matches!(&e.ty, TypeRef::Native { name, .. } if name == "Qt");
@@ -2378,10 +2383,15 @@ impl Engine {
                     };
                     // A string written for a flags property names several
                     // keys: "LeftButton|RightButton".
-                    e.key
+                    let found = e
+                        .key
                         .split('|')
                         .map(named)
-                        .try_fold(0, |all, one| Some(all | one?))
+                        .try_fold(0, |all, one| Some(all | one?));
+                    if let (true, Some(n)) = (native, found) {
+                        inst.file.enum_numbers.borrow_mut().insert(at, n);
+                    }
+                    found
                 });
                 Value::Int(v.and_then(|v| i32::try_from(v).ok()).unwrap_or(0))
             }
