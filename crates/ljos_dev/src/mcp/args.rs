@@ -580,6 +580,7 @@ pub enum Kind {
     Objects(super::objects::ObjectsArgs),
     Trace(super::trace::TraceArgs),
     Frames(super::timeline::FramesArgs),
+    Audit(super::audit::AuditArgs),
     Memory(super::memory::MemoryArgs),
     Resource(Resource),
     /// Something that changes the application or its input.
@@ -626,10 +627,10 @@ impl Kind {
 }
 
 /// Where the tools that act begin in [`TOOLS`]; the ones before only read.
-pub const FIRST_ACT: usize = 12;
+pub const FIRST_ACT: usize = 13;
 
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 25] = [
+pub const TOOLS: [&str; 26] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -642,6 +643,7 @@ pub const TOOLS: [&str; 25] = [
     "app_objects",
     "app_trace",
     "app_frames",
+    "app_audit",
     "app_click",
     "app_type",
     "app_press",
@@ -696,6 +698,10 @@ pub fn registry() -> ToolRegistry {
         .declare(read(ToolDef::new::<super::timeline::FramesArgs>(
             "app_frames",
             super::timeline::FRAMES,
+        )))
+        .declare(read(ToolDef::new::<super::audit::AuditArgs>(
+            "app_audit",
+            super::audit::AUDIT,
         )))
         .declare(input(ToolDef::new::<ClickArgs>("app_click", CLICK)))
         .declare(input(ToolDef::new::<TypeArgs>("app_type", TYPE)))
@@ -1019,6 +1025,11 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             Kind::Snapshot(a)
         }
         "app_find" => Kind::Find(read(tool, args)?),
+        "app_audit" => {
+            let a: super::audit::AuditArgs = read(tool, args)?;
+            a.options()?;
+            Kind::Audit(a)
+        }
         "app_inspect" => Kind::Inspect(read(tool, args)?),
         "app_screenshot" => {
             let a: ScreenshotArgs = read(tool, args)?;

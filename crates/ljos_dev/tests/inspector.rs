@@ -2769,3 +2769,58 @@ fn frames_that_do_not_fit_one_answer_are_counted_or_paged() {
     assert!(seen.len() >= 400, "{} frames", seen.len());
     assert!(seen.windows(2).all(|w| w[1] == w[0] + 1));
 }
+
+#[test]
+fn app_audit_finds_what_the_window_cuts_off_and_puts_every_setting_back() {
+    let mut app = app_with(
+        r##"import QtQuick
+Rectangle {
+    width: 400; height: 400
+    Rectangle {
+        objectName: "lost"
+        x: 380; width: 60; height: 30
+        Accessible.role: Accessible.Button; Accessible.name: "Help"
+    }
+    Text { objectName: "label"; y: 100; text: "A label that grows with the text size" }
+}
+"##,
+        InspectorConfig::default(),
+    );
+    let prefs = ljos_quick::system_prefs(&app.engine);
+    let viewport = app.scene.viewport();
+    let label = app.named("label");
+    let width = |app: &App| app.engine.read_by_name(label, "width").to_number();
+    let before = width(&app);
+
+    let reply = app.call("app_audit", json!({ "matrix": "full" }));
+    let found = &reply.structured["findings"];
+    let lost = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["locator"] == "#lost" && f["code"] == "layout-offscreen")
+        .unwrap_or_else(|| panic!("#lost is not off the window in {found}"));
+    assert_eq!(lost["role"], "button");
+    assert_eq!(lost["bounds"]["x"], 380.0);
+    assert!(reply.text.contains("layout-offscreen"), "{}", reply.text);
+
+    assert_eq!(ljos_quick::system_prefs(&app.engine), prefs);
+    assert_eq!(app.scene.viewport(), viewport);
+    assert_eq!(width(&app), before);
+    assert_eq!(
+        app.engine.read_by_name(app.root, "width").to_number(),
+        400.0
+    );
+}
+
+#[test]
+fn app_audit_can_keep_to_one_item_and_refuses_an_unknown_rule() {
+    let mut app = app();
+    let all = app.call("app_audit", json!({}));
+    assert!(all.structured["findings"].is_array(), "{}", all.structured);
+    let (code, message, _) = app.refused("app_audit", json!({ "rules": ["layout-nowhere"] }));
+    assert_eq!(code, "invalid_argument");
+    assert!(message.contains("layout-nowhere"), "{message}");
+    let (code, _, _) = app.refused("app_audit", json!({ "max_findings": 0 }));
+    assert_eq!(code, "invalid_argument");
+}

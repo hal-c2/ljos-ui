@@ -16,6 +16,7 @@ mcp = [
     "dep:ljos_mcp_core",
     "dep:ljos_a11y",
     "dep:ljos_drive",
+    "dep:ljos_audit",
     "dep:ljos_render",
     "dep:ljos_platform",
     "dep:tokio",
@@ -45,6 +46,8 @@ ljos_a11y = { path = "../ljos_a11y", optional = true }
 ljos_render = { path = "../ljos_render", default-features = false, optional = true }
 # Acts settle, aim, type and let time pass the way every other driver does.
 ljos_drive = { path = "../ljos_drive", optional = true }
+# `app_audit`: the design audit, on the scene the inspector looks at.
+ljos_audit = { path = "../ljos_audit", optional = true }
 # Requests out to platform threads, for `app_processes`.
 ljos_platform = { path = "../ljos_platform", optional = true }
 tokio = { workspace = true, optional = true }

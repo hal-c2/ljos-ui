@@ -938,6 +938,57 @@
     "read_only": true
   },
   {
+    "description": "The design audit on what the app shows: off-window, covered, cut or faint text, small targets, popups that do not fit, unnamed controls. Each finding: rule, fix, guide, role, name, locator, file:line, bounds, measure. `matrix`: `current`, `full` or points; all is put back.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "matrix": {
+          "default": null,
+          "description": "The settings to audit under: `current` (the app as it is, the\ndefault), `full` (also light and dark at normal and high contrast,\nlarger text and the small window), or points separated by `;`,\neach `scheme=light|dark contrast=normal|high font-scale=<n>\nsize=<w>x<h>|small reduced-motion=true|false`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_findings": {
+          "default": null,
+          "description": "The most findings to list (default 100, at most 500); the answer\nsays how many more there were.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "root": {
+          "default": null,
+          "description": "Only findings about this item and what is inside it: a locator or\na reference, as `app_find` takes. The rest of the window is still\nlooked at (what covers the item may lie outside it).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rules": {
+          "default": [],
+          "description": "Only these rules, by code (`layout-offscreen`) or area (`a11y`,\n`color`, `text`, `layout`, `focus`, `motion`, `content`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "touch": {
+          "default": false,
+          "description": "Hold what can be pressed to the size a finger needs, not a\npointer's.",
+          "type": "boolean"
+        }
+      },
+      "title": "AuditArgs",
+      "type": "object"
+    },
+    "name": "app_audit",
+    "read_only": true
+  },
+  {
     "description": "Click the item `target` (a reference or locator) at its centre: a move, a press and a release through the same hit test as a mouse, so what is on top gets it. `button` is left (default), right or middle; `count` 2 is a double click. Answers once the frame settled, with what changed.",
     "input_schema": {
       "$defs": {

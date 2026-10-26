@@ -64,7 +64,7 @@ fn needs(tool: &str) -> Cap {
         "app_eval" => Cap::Eval,
         "app_status" | "app_snapshot" | "app_find" | "app_inspect" | "app_screenshot"
         | "app_logs" | "app_metrics" | "app_processes" | "app_watch" | "app_objects"
-        | "app_trace" | "app_frames" => Cap::Inspect,
+        | "app_trace" | "app_frames" | "app_audit" => Cap::Inspect,
         _ => Cap::Input,
     }
 }

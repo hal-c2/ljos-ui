@@ -49,6 +49,7 @@
 
 mod act;
 mod args;
+mod audit;
 mod capture;
 mod components;
 mod edits;
@@ -1059,6 +1060,35 @@ impl Inspector {
             let _ = reply.send(answer);
             return;
         }
+        if let Kind::Audit(args) = &kind {
+            let answer = args.options().and_then(|options| {
+                let root = match (&args.root, capture.as_ref()) {
+                    (Some(what), Some(seen)) => Some(
+                        Look {
+                            engine,
+                            scene,
+                            capture: seen,
+                            refs: &mut self.refs,
+                        }
+                        .object(what, "app_audit")?,
+                    ),
+                    _ => None,
+                };
+                Ok(audit::audit(engine, scene, clock.now(), options, root))
+            });
+            // A later request of this round sees the scene as the audit
+            // left it, which is as it was, framed again.
+            if capture.is_some() {
+                *capture = Some(Rc::new(capture::capture(
+                    engine,
+                    scene,
+                    self.cfg.redact_all,
+                    self.pointer_lines,
+                )));
+            }
+            let _ = reply.send(answer);
+            return;
+        }
         let scene: &QuickScene = scene;
         let capture = capture.as_ref();
         let repeats_the_app = matches!(
@@ -1470,6 +1500,8 @@ fn needs_scene(kind: &Kind) -> bool {
         | Kind::Frames(_)
         | Kind::Memory(_) => false,
         Kind::Objects(args) => objects::needs_scene(args),
+        // A locator is found in what was looked at.
+        Kind::Audit(args) => args.root.is_some(),
         Kind::Trace(args) => trace::needs_scene(args),
         Kind::Resource(r) => *r == Resource::Tree,
         Kind::Snapshot(args) => args.cursor.is_none() || args.image,

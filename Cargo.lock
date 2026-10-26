@@ -3770,6 +3770,7 @@ dependencies = [
  "blake3",
  "libc",
  "ljos_a11y",
+ "ljos_audit",
  "ljos_compiler",
  "ljos_drive",
  "ljos_engine",
