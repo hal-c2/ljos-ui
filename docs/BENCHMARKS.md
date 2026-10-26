@@ -5721,7 +5721,7 @@ What is left in `ljos_text`, per row of the microbench:
 
 - **Parley:** about 28 k to build the layout, 2.2 k to push the style and 3.3 k to break
   lines. Shaping is already cached by text and style, so a row pays for layout building,
-  not shaping.
+  not shaping. (The next section removes these for one-line plain text.)
 - **Our own reading of the layout:** about 5 k (glyph iteration and advance snapping) and
   1.7 k to extract it.
 - **Not ours:** `TextInputs::read` in `ljos_quick::text` (16 k per delegate) is mostly
@@ -5729,9 +5729,9 @@ What is left in `ljos_text`, per row of the microbench:
 
 DECISIONs:
 
-- Parley's shaping, line building and font queries are left as they are. Doing their work
-  ourselves for short single-line text would be the next large win, but matching their
-  results exactly is too much risk for "behaviour unchanged".
+- Parley's shaping, line building and font queries were left as they were in this pass.
+  "One-line plain text without Parley's builder" below does that work for short single-line
+  text, and a byte-for-byte dump shows the results are the same.
 - Each commit is measured with the microbench, not with a thin-LTO app build per commit.
   The app is measured once on the whole stack.
 - A run reserves one glyph per byte of its text, which is exact for ASCII. For text of
@@ -5994,3 +5994,89 @@ DECISIONs:
   quick, so it stays.
 - The cut is pinned in a Rust test, because the headless feature runner has no renderer
   whose atlas a scenario could read.
+
+### One-line plain text without Parley's builder (2026-10-26)
+
+This follows "Text per delegate". The microbench, the app capture and `scr.sh` are measured
+the same way. The dump now covers 35 texts × 97 styles × 134 params (about 1.85 M lines),
+plus the elided, advance, ranged and metrics lines, on the bundled and the system fonts.
+The styles include serif, monospace, named, missing and fallback families, and one with
+underline, strikeout and spacing.
+
+**Where a row went, before.** Of the 47.3 k per row, Parley's
+`StyleRunBuilder::build` took 28.0 k:
+
+- `shape_text`: 20.7 k, of which harfrust is 5.5 k, `push_run` 3.7 k and font queries 4.2 k.
+- `analyze_text`: 5.1 k.
+- Style metrics resolved through a font query: 1.6 k.
+
+Pushing the style took 2.2 k and breaking lines 3.3 k. Our own reading of the lines took
+another ~7 k.
+
+**What was reusable through the public API.** The `LayoutContext` and `FontContext` were
+already kept per engine. A builder borrows the context and resolves its styles every time
+it is made; Parley has no public way to keep a resolved style set, a font query or a built
+layout from one builder to the next. So reusing builders, style sets or queries saves
+nothing that can be reached.
+
+**What was done** (one commit, `ljos_text: a one-line plain text is shaped without Parley's
+builder`). A text qualifies when all of these hold: one style, no spans or objects,
+printable ASCII only, no trailing space, no letter or word spacing, and a pinned family
+whose first font covers it. Such a text is analysed and shaped with `parley_engine`'s
+`Analyzer` and `Shaper`, kept warm on the engine, with the pinned font as the only font.
+The shaped clusters become one run on one line. Parley's layout is built later only when a
+layout breaks lines, justifies or places carets. A ranged or justified layout skips the
+direct attempt, so it never shapes twice. A wrapped text that turns out too wide does
+shape twice.
+
+The dump first differed only in blob ids. Parley's builder prunes the font source cache
+each time one is made (`prune(128, false)`), so a font file that no recent builder loaded is
+read again as a new blob. Which id a run carries therefore depends on how many builders
+came before it. The direct path prunes and loads through the source cache at the same
+point a builder would, and only once it has succeeded, so every run carries the blob
+Parley's run would. With that, the dump is the same byte for byte.
+
+| Microbench, per row | Before | After |
+|---|---:|---:|
+| Total | 47,257 | 29,178 (−38 %) |
+| `shape_text` (one font, no query) | 20.7 k | 13.4 k |
+| `analyze_text` | 5.1 k | 5.1 k |
+| Builder, style push, line breaking, Parley's layout | ~13 k | 0 |
+
+| listview under callgrind (main thread, per delegate) | Before | After |
+|---|---:|---:|
+| Delegates (`build_layout` calls) | 9861 | 9851 |
+| Frames | 1051 | 1047 |
+| text: layout and shaping (`ljos_text`) | 48.8 k | 30.0 k |
+| text: completion, measure, follow (`ljos_quick::text`) | 31.0 k | 31.1 k |
+| paint, egui and the event loop | 53.1 k | 48.1 k |
+| Total | 405.4 k | 373.6 k |
+
+The "after" capture is on a main that also has "Paint while scrolling", so only the
+`ljos_text` row belongs to this work.
+
+| Scroll, M instructions/s (`scr.sh listview`) | |
+|---|---:|
+| Ljós | 190.59, 190.64, 190.52 |
+| qml6 | 102.82 |
+
+Before this work, each of the two earlier passes was measured without the other: 207.2 with
+"Text per delegate" and 208.8 with "Paint while scrolling". This run has both.
+Ten ListView delegates now make 1507 allocations, down from 1657. Ten plain items make
+1013, down from 1028.
+
+**What is left in a row.** About 13.4 k is shaping: harfrust's shaping with the plan, GPOS
+kerning, and `push_run` with its font metrics from skrifa. Another 5.1 k is ICU's
+segmentation in `analyze_text`, and 1.4 k is our advance snapping. All of these are inside
+`parley_engine` and harfrust.
+
+DECISIONs:
+
+- Only printable ASCII qualifies. That rules out bidi, more than one script, emoji and
+  clusters that need fallback, so a single run from the pinned font is exactly what
+  Parley's selector would pick. Wider text keeps Parley's path.
+- `parley_engine` is used directly, at the version `parley` itself uses. Its `Analyzer`,
+  `Shaper` and `FontSelector` are public. Nothing reaches into Parley's private state.
+- A wrapped text that turns out wider than its width is shaped twice: directly, then by
+  Parley. Its width is only known once it is shaped. Delegates' texts fit, so the common
+  case shapes once.
