@@ -9,8 +9,8 @@ use ljos_render::kurbo::{Rect, Vec2};
 use parley::{BaseDirection, PositionedLayoutItem};
 
 use super::{
-    BreakClass, OwnedRanged, RawLine, Shape, TextEngine, Vertical, break_lines, ceil64, extract,
-    key_hash, reported_width, shape, snapped, snapped_widths_kept,
+    BreakClass, OwnedRanged, RawLine, Shape, ShapedEntry, TextEngine, Vertical, break_lines,
+    ceil64, extract, key_hash, reported_width, shape, snapped, snapped_widths_kept,
 };
 use crate::direction::in_right_to_left_block;
 use crate::edit::{
@@ -821,24 +821,33 @@ impl TextEngine {
                 }
                 (raw, natural, false)
             } else {
-                let entry = self.shaped(text, style, ranged, class);
+                let entry = self.shaped_whole(text, style, ranged, class);
+                let ShapedEntry {
+                    shape,
+                    broken,
+                    advances,
+                    natural_width,
+                    rtl,
+                    ..
+                } = entry;
+                let shape = shape.as_mut().expect("a whole entry has its layout");
                 // As in `build_layout`: a text that fits as Qt counts it is not
                 // broken because the shaper's advances are a touch wider.
                 let max_advance = width
                     .filter(|_| wraps)
                     .map(|w| w as f32)
-                    .filter(|w| entry.natural_width > *w);
-                if entry.broken != (max_advance, false) {
-                    break_lines(&mut entry.shape, max_advance, false);
-                    entry.broken = (max_advance, false);
+                    .filter(|w| *natural_width > *w);
+                if *broken != (max_advance, false) {
+                    break_lines(shape, max_advance, false);
+                    *broken = (max_advance, false);
                 }
-                let known = (entry.broken == (None, false)).then_some(&entry.advances);
-                let lines = extract(&entry.shape, fallback, None, ranged.objects, known);
-                let places = carets(&entry.shape, text);
+                let known = (*broken == (None, false)).then_some(&*advances);
+                let lines = extract(shape, fallback, None, ranged.objects, known);
+                let places = carets(shape, text);
                 (
                     lines.into_iter().zip(places).collect(),
-                    f64::from(entry.natural_width),
-                    entry.rtl,
+                    f64::from(*natural_width),
+                    *rtl,
                 )
             };
         // The cursor needs a line to stand on after a line break that ends

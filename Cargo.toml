@@ -60,6 +60,9 @@ accesskit = "0.25.0"
 vello_cpu = "0.3"
 hayro = "0.8.0"
 parley = "0.12"
+# Parley's own analysis and shaping, which ljos_text drives itself for a
+# plain one-line text; the version parley depends on.
+parley_engine = "0.12"
 # The library Fontique links on Linux; ljos_text asks it for family substitutes.
 yeslogic-fontconfig-sys = "6.0.1"
 # Must match the skrifa that vello_cpu, parley and epaint use, so the font stack is not duplicated.

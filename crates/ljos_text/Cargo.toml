@@ -12,6 +12,7 @@ publish.workspace = true
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
 parley.workspace = true
+parley_engine.workspace = true
 # Markdown front end of `RichDoc` (ARCHITECTURE §7.5). Only the parser: the
 # HTML renderer is never linked, raw HTML in a document is shown as text.
 pulldown-cmark = { version = "0.13.4", default-features = false }

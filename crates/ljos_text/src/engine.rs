@@ -10,13 +10,19 @@ use std::sync::Arc;
 use ljos_render::kurbo::Rect;
 use ljos_render::{Decorations, FontTables, GlyphRun, PositionedGlyph};
 use ljos_runtime::Platform;
-use parley::fontique::{Blob, CharmapIndex, FontWidth, GenericFamily};
+use parley::fontique::{Blob, CharmapIndex, FontWidth, GenericFamily, SourceInfo, Synthesis};
 use parley::setting::Tag;
 use parley::{
     Alignment, AlignmentOptions, BaseDirection, BreakReason, FontContext, FontData, FontFamily,
     FontFamilyName, FontStyle, FontVariation, FontVariations, FontWeight, InlineBox, InlineBoxKind,
     LayoutContext, OverflowWrap, PositionedLayoutItem, StyleProperty, TextStyle as ParleyStyle,
     WordBreak,
+};
+use parley_engine::itemize::Segment;
+use parley_engine::shape::CharCluster;
+use parley_engine::{
+    Analysis, AnalysisOptions, Analyzer, FontInstanceRef, FontSelector, LineBreakConfig,
+    ShapeOptions, ShapedText, Shaper,
 };
 use rustc_hash::{FxHashMap, FxHasher};
 
@@ -127,7 +133,9 @@ struct ShapedEntry {
     style: TextStyle,
     class: BreakClass,
     ranged: OwnedRanged,
-    shape: Shape,
+    /// `None` for a text shaped without Parley's builder ([`shape_direct`])
+    /// until a layout needs Parley's lines: to break them, or for carets.
+    shape: Option<Shape>,
     /// The width and justification `shape` is broken at now: a layout
     /// that asks the same again does not break it again.
     broken: (Option<f32>, bool),
@@ -341,6 +349,10 @@ type FirstFontEntry = (u32, bool, Option<FirstFont>);
 struct FirstFont {
     family: Arc<str>,
     blob: Blob<u8>,
+    source: SourceInfo,
+    /// In a collection, and the synthesis the style asks of it.
+    index: u32,
+    synthesis: Synthesis,
     charmap: CharmapIndex,
     /// Of the characters below [`PINNED_BELOW`], a bit for each one looked
     /// up in the character map, and one for each found there: a delegate's
@@ -350,14 +362,34 @@ struct FirstFont {
     has: Box<[u64; PINNED_BELOW / 64]>,
 }
 
+/// A family pinned for a text ([`Families::pinned`]), and the font Parley
+/// takes from it for every character.
+struct PinnedFont {
+    family: Arc<str>,
+    font: FontData,
+    /// The file `font` was read from, for the source cache.
+    source: SourceInfo,
+    synthesis: Synthesis,
+}
+
 /// Texts with characters from here up are never pinned.
 const PINNED_BELOW: usize = 0x2000;
 
 impl FirstFont {
-    fn new(family: Arc<str>, blob: Blob<u8>, charmap: CharmapIndex) -> Self {
+    fn new(
+        family: Arc<str>,
+        blob: Blob<u8>,
+        source: SourceInfo,
+        index: u32,
+        synthesis: Synthesis,
+        charmap: CharmapIndex,
+    ) -> Self {
         Self {
             family,
             blob,
+            source,
+            index,
+            synthesis,
             charmap,
             seen: Box::new([0; PINNED_BELOW / 64]),
             has: Box::new([0; PINNED_BELOW / 64]),
@@ -473,7 +505,7 @@ impl Families {
         family: &str,
         weight: FontWeight,
         italic: bool,
-    ) -> Option<Arc<str>> {
+    ) -> Option<PinnedFont> {
         // Below U+2000 no character starts an emoji presentation (that
         // needs U+FE0F, U+20E3 or a pictograph above it, © and ® aside),
         // which parley shapes against an extended stack.
@@ -503,9 +535,11 @@ impl Families {
             }
         };
         let first = entries[at].2.as_mut()?;
-        first.covers(text).then(|| {
-            self.pinned.set(self.pinned.get() + 1);
-            first.family.clone()
+        first.covers(text).then(|| PinnedFont {
+            family: first.family.clone(),
+            font: FontData::new(first.blob.clone(), first.index),
+            source: first.source.clone(),
+            synthesis: first.synthesis,
         })
     }
 
@@ -570,7 +604,16 @@ impl Families {
                 if fcx.collection.family_by_name(name).map(|f| f.id()) != Some(id) {
                     return None;
                 }
-                return Some(FirstFont::new(Arc::from(name), blob, charmap));
+                // As Fontique's query has it.
+                let synthesis = font.synthesis(FontWidth::NORMAL, style, weight);
+                return Some(FirstFont::new(
+                    Arc::from(name),
+                    blob,
+                    font.source().clone(),
+                    font.index(),
+                    synthesis,
+                    charmap,
+                ));
             }
         }
         None
@@ -597,6 +640,7 @@ impl Families {
 pub struct TextEngine {
     fcx: FontContext,
     lcx: LayoutContext<u32>,
+    direct: Direct,
     families: Families,
     shapes: FrameCache<u64, ShapedEntry>,
     layouts: FrameCache<u64, LayoutEntry>,
@@ -701,8 +745,11 @@ fn shape(
     let pinned = (ranged.spans.is_empty() && ranged.objects.is_empty())
         .then(|| families.pinned(fcx, text, &style.family, weight, style.italic))
         .flatten();
+    if pinned.is_some() {
+        families.pinned.set(families.pinned.get() + 1);
+    }
     let names = match &pinned {
-        Some(family) => vec![FontFamilyName::Named(Cow::Borrowed(&**family))],
+        Some(pinned) => vec![FontFamilyName::Named(Cow::Borrowed(&*pinned.family))],
         None => families.stack(style),
     };
     // Resolved before the builder borrows the contexts.
@@ -839,6 +886,188 @@ fn shape(
     b.build(text)
 }
 
+/// Parley's own analysis and shaping, kept warm for [`shape_direct`].
+struct Direct {
+    analyzer: Analyzer,
+    analysis: Analysis,
+    shaper: Shaper,
+    shaped: ShapedText,
+    /// A style index per character, all the one style.
+    styles: Vec<u16>,
+}
+
+impl Direct {
+    fn new() -> Self {
+        Self {
+            analyzer: Analyzer::new(),
+            analysis: Analysis::new(),
+            shaper: Shaper::default(),
+            shaped: ShapedText::new(),
+            styles: Vec::new(),
+        }
+    }
+}
+
+/// Gives every cluster the one font a pinned text is shaped with.
+struct OneFont<'a>(FontInstanceRef<'a>);
+
+impl FontSelector for OneFont<'_> {
+    fn select_font(
+        &mut self,
+        _: &Segment,
+        _: &ShapeOptions<'_>,
+        _: &mut CharCluster,
+    ) -> Option<FontInstanceRef<'_>> {
+        Some(self.0)
+    }
+}
+
+/// The glyphs of a text that Parley lays out as one run on one line, read
+/// as [`snapped_widths_kept`] reads them from Parley's layout, but shaped
+/// with Parley's analyser and shaper alone, as its builder drives them.
+/// Building a layout costs more than shaping such a text: resolving its
+/// style, asking the font query for every cluster, and making the runs
+/// and lines. `None` when the text is not that simple (it is then shaped
+/// in full) or Parley would take more than one run for it.
+///
+/// The text is printable ASCII, so it has one character per byte, is left
+/// to right in one script, and needs no emoji font; with its family pinned
+/// ([`Families::pinned`]) the font query would choose the pinned font for
+/// every cluster, which is the one given here. Without letter or word
+/// spacing Parley neither turns ligatures off nor moves a glyph, and a
+/// line that does not end in a space has nothing hanging. A glyph moved
+/// off the baseline would come out of `extract` rounded through it, so
+/// such a text is shaped in full too.
+fn shape_direct(
+    direct: &mut Direct,
+    fcx: &mut FontContext,
+    families: &Families,
+    text: &str,
+    style: &TextStyle,
+    ranged: &Ranged<'_>,
+    class: BreakClass,
+) -> Option<Snapped> {
+    let bytes = text.as_bytes();
+    let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+    if !families.one_style
+        || !ranged.spans.is_empty()
+        || !ranged.objects.is_empty()
+        || bytes.is_empty()
+        || bytes.last() == Some(&b' ')
+        || !bytes.iter().all(|b| (0x20..0x7f).contains(b))
+        || finite(style.letter_spacing) != 0.0
+        || finite(style.word_spacing) != 0.0
+    {
+        return None;
+    }
+    let weight = FontWeight::new(finite_weight(style.weight));
+    let pinned = families.pinned(fcx, text, &style.family, weight, style.italic)?;
+    let size = usable_size(style.pixel_size);
+    let optical = optical_size(Platform::CURRENT, size);
+    let variations = match &optical {
+        Some(FontVariations::List(list)) => &list[..],
+        _ => &[],
+    };
+    // As Parley's analysis of the one style's breaking.
+    let word_break = match class {
+        BreakClass::Anywhere => WordBreak::BreakAll,
+        BreakClass::Word | BreakClass::WordOrAnywhere => WordBreak::Normal,
+    };
+    let config = LineBreakConfig {
+        word_break,
+        ..LineBreakConfig::default()
+    };
+    let line_break = [(0..text.len(), config)];
+    let line_break = if config == LineBreakConfig::default() {
+        &line_break[..0]
+    } else {
+        &line_break[..]
+    };
+    let options = AnalysisOptions {
+        base_direction: BaseDirection::Auto,
+        line_break,
+        break_spaces: &[],
+        line_break_override: None,
+    };
+    direct
+        .analyzer
+        .analyze(text, &options, &mut direct.analysis);
+    direct.styles.clear();
+    direct.styles.resize(bytes.len(), 0);
+    let item = parley_engine::itemize::Item {
+        char_end: u32::try_from(bytes.len()).ok()?,
+        options: ShapeOptions {
+            font_size: size,
+            language: None,
+            features: &[],
+            variations,
+        },
+    };
+    let font = OneFont(FontInstanceRef {
+        data: &pinned.font.data,
+        index: pinned.font.index,
+        synthesis: &pinned.synthesis,
+    });
+    direct.shaper.shape_text(
+        text,
+        &direct.analysis,
+        &direct.styles,
+        [item],
+        font,
+        &mut direct.shaped,
+    );
+    let [run] = direct.shaped.runs() else {
+        return None;
+    };
+    if run.bidi_level.is_rtl() {
+        return None;
+    }
+    let slice = direct.shaped.run_slice(0);
+    let mut kept = Snapped::default();
+    kept.glyphs.reserve(bytes.len());
+    kept.qt.reserve(bytes.len());
+    for cluster in slice.shaped_clusters_range() {
+        kept.glyphs.extend(slice.shaped_cluster_glyphs(cluster));
+    }
+    if kept.glyphs.iter().any(|g| g.y != 0.0) {
+        return None;
+    }
+    let coords: Vec<i16> = direct
+        .shaped
+        .normalized_coords()
+        .get(run.normalized_coords_range.clone())
+        .unwrap_or(&[])
+        .iter()
+        .map(|c| c.to_bits())
+        .collect();
+    // As Parley's builder does when made: its source cache drops a file no
+    // recent builder loaded, so the file is loaded again, as a new blob,
+    // where Parley's path would load it again.
+    fcx.source_cache.prune(128, false);
+    let font = FontData::new(fcx.source_cache.get(&pinned.source)?, pinned.font.index);
+    snap::advances(&font, run.font_size, &coords, &kept.glyphs, &mut kept.qt);
+    // A style's line has no offset or size of its own, as Parley's
+    // default style has it.
+    let line = |on: bool| on.then_some((None, None));
+    kept.items.push(Item::Run(RunFacts {
+        glyphs: 0..kept.glyphs.len(),
+        offset: 0.0,
+        // Only ever added to and taken from a glyph's y, which is 0.
+        baseline: 0.0,
+        font,
+        font_size: run.font_size,
+        metrics: run.font_metrics,
+        synthesis: pinned.synthesis,
+        coords,
+        underline: line(style.underline),
+        strikethrough: line(style.strikeout),
+        tag: 0,
+    }));
+    kept.lines.push(kept.items.len());
+    families.pinned.set(families.pinned.get() + 1);
+    Some(kept)
+}
+
 /// Break lines at `max` and put every line at x 0. Alignment is the item's
 /// business, so one layout serves every alignment.
 fn break_lines(shape: &mut Shape, max: Option<f32>, justify: bool) {
@@ -870,7 +1099,6 @@ fn extract(
     objects: &[InlineObject],
     known: Option<&Snapped>,
 ) -> Vec<RawLine> {
-    let mut out = Vec::with_capacity(shape.len());
     let read;
     let known = match known {
         Some(known) => known,
@@ -879,9 +1107,35 @@ fn extract(
             &read
         }
     };
-    for (line, items) in shape.lines().zip(known.lines()) {
-        let m = *line.metrics();
-        let reason = line.break_reason();
+    let lines = shape.lines().map(|line| LineFacts {
+        advance: line.metrics().advance,
+        hanging_advance: line.metrics().hanging_advance,
+        reason: line.break_reason(),
+        range: line.text_range(),
+    });
+    extract_lines(lines, known, fallback, justify_width, objects)
+}
+
+/// What [`extract_lines`] takes from a line besides its glyphs.
+struct LineFacts {
+    advance: f32,
+    /// Of the spaces at a wrap, which hang outside the line.
+    hanging_advance: f32,
+    reason: BreakReason,
+    range: Range<usize>,
+}
+
+/// [`extract`] of lines given by their facts and their glyphs in `known`.
+fn extract_lines(
+    lines: impl ExactSizeIterator<Item = LineFacts>,
+    known: &Snapped,
+    fallback: Vertical,
+    justify_width: Option<f32>,
+    objects: &[InlineObject],
+) -> Vec<RawLine> {
+    let mut out = Vec::with_capacity(lines.len());
+    for (m, items) in lines.zip(known.lines()) {
+        let reason = m.reason;
         let wrapped = matches!(reason, BreakReason::Regular | BreakReason::Emergency);
         let mut runs = Vec::new();
         let mut boxes = Vec::new();
@@ -1037,7 +1291,7 @@ fn extract(
         // A line holding only an inline object has no text, and its range
         // comes back inverted (`usize::MAX..0`): it stands, empty, where
         // the line before it ended.
-        let range = line.text_range();
+        let range = m.range;
         let range = if range.start > range.end {
             let at = out.last().map_or(0, |l: &RawLine| l.range.end);
             at..at
@@ -1147,6 +1401,11 @@ fn line_widths(line: &parley::Line<'_, u32>) -> (f32, f32) {
 fn line_widths_kept(line: &parley::Line<'_, u32>, keep: &mut Snapped) -> (f32, f32) {
     let from = keep.items.len();
     keep.read_line(line);
+    items_widths(keep, from)
+}
+
+/// [`line_widths`] of the line whose items in `keep` start at `from`.
+fn items_widths(keep: &Snapped, from: usize) -> (f32, f32) {
     let mut width = 0.0;
     let mut last = 0.0;
     for item in &keep.items[from..] {
@@ -1498,6 +1757,7 @@ impl TextEngine {
         let mut engine = Self {
             fcx,
             lcx: LayoutContext::new(),
+            direct: Direct::new(),
             families: Families {
                 system,
                 default_family: None,
@@ -1929,44 +2189,133 @@ impl TextEngine {
         ranged: &Ranged<'_>,
         class: BreakClass,
     ) -> &mut ShapedEntry {
+        let key = self.shaped_key(text, style, ranged, class, true);
+        self.shapes
+            .get_mut(&key, self.frame)
+            .expect("the entry was made a moment ago")
+    }
+
+    /// [`Self::shaped`] with Parley's layout of the text in it.
+    fn shaped_whole(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        class: BreakClass,
+    ) -> &mut ShapedEntry {
+        let key = self.shaped_key(text, style, ranged, class, false);
+        self.give_shape(key, text, style, ranged, class);
+        self.shapes
+            .get_mut(&key, self.frame)
+            .expect("the entry was made a moment ago")
+    }
+
+    /// Gives the entry at `key` Parley's layout of its text where it was
+    /// shaped without one.
+    fn give_shape(
+        &mut self,
+        key: u64,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        class: BreakClass,
+    ) {
+        let frame = self.frame;
+        let found = "the entry was made a moment ago";
+        if self
+            .shapes
+            .get_mut(&key, frame)
+            .expect(found)
+            .shape
+            .is_none()
+        {
+            let shape = self.unbroken(text, style, ranged, class);
+            self.shapes.get_mut(&key, frame).expect(found).shape = Some(shape);
+        }
+    }
+
+    /// The key of `text` shaped in the cache, shaping it on a miss:
+    /// directly ([`shape_direct`]) where it can be and `direct` allows,
+    /// which a caller that will need Parley's layout anyway turns off so
+    /// as not to shape twice.
+    fn shaped_key(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        class: BreakClass,
+        direct: bool,
+    ) -> u64 {
         let key = key_hash(text, style, (class, ranged.spans, ranged.objects));
         let frame = self.frame;
         let hit = self.shapes.get_mut(&key, frame).is_some_and(|e| {
             &*e.text == text && e.style == *style && e.class == class && e.ranged.matches(ranged)
         });
-        if !hit {
-            let mut shape = shape(
-                &mut self.fcx,
-                &mut self.lcx,
-                &self.families,
-                text,
-                style,
-                ranged,
-                class,
-                BaseDirection::Auto,
-            );
-            break_lines(&mut shape, None, false);
-            self.stats.shapes_built += 1;
-            let ((advance, natural_width), advances) = snapped_widths_kept(&shape);
-            let entry = ShapedEntry {
-                text: text.into(),
-                style: style.clone(),
-                class,
-                ranged: OwnedRanged::of(ranged),
-                advance,
-                natural_width,
-                rtl: shape.is_rtl(),
-                shape,
-                broken: (None, false),
-                advances,
-            };
-            return self.shapes.insert(key, entry, frame);
+        if hit {
+            return key;
         }
-        // Looked up again because the borrow checker cannot yet see that the
-        // first borrow ends on a miss.
-        self.shapes
-            .get_mut(&key, frame)
-            .expect("the entry was found a moment ago")
+        self.stats.shapes_built += 1;
+        let direct = direct
+            .then(|| {
+                shape_direct(
+                    &mut self.direct,
+                    &mut self.fcx,
+                    &self.families,
+                    text,
+                    style,
+                    ranged,
+                    class,
+                )
+            })
+            .flatten();
+        let (shape, (advance, natural_width), advances) = match direct {
+            Some(advances) => {
+                let (width, last) = items_widths(&advances, 0);
+                (None, (width.max(0.0), (width + last).max(0.0)), advances)
+            }
+            None => {
+                let shape = self.unbroken(text, style, ranged, class);
+                let (widths, advances) = snapped_widths_kept(&shape);
+                (Some(shape), widths, advances)
+            }
+        };
+        let entry = ShapedEntry {
+            text: text.into(),
+            style: style.clone(),
+            class,
+            ranged: OwnedRanged::of(ranged),
+            advance,
+            natural_width,
+            rtl: shape.as_ref().is_some_and(Shape::is_rtl),
+            shape,
+            broken: (None, false),
+            advances,
+        };
+        self.shapes.insert(key, entry, frame);
+        key
+    }
+
+    /// Parley's layout of `text` as a shaped entry keeps it, on one line
+    /// for every paragraph.
+    fn unbroken(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        class: BreakClass,
+    ) -> Shape {
+        let mut shape = shape(
+            &mut self.fcx,
+            &mut self.lcx,
+            &self.families,
+            text,
+            style,
+            ranged,
+            class,
+            BaseDirection::Auto,
+        );
+        break_lines(&mut shape, None, false);
+        shape
     }
 
     /// Cut `text` (one line) to `width`. `force` puts the ellipsis even when
@@ -2054,28 +2403,59 @@ impl TextEngine {
         let (mut raw, (advance, natural), rtl) = if text.is_empty() && ranged.objects.is_empty() {
             (Vec::new(), (0.0, 0.0), false)
         } else {
-            let entry = self.shaped(text, style, &ranged, BreakClass::of(wrap));
+            let class = BreakClass::of(wrap);
+            // A wrapped text needs Parley's lines only when it turns out
+            // too wide; a ranged or justified one always does.
+            let key = self.shaped_key(text, style, &ranged, class, !places && !justify);
+            let frame = self.frame;
+            let found = "the entry was made a moment ago";
+            let entry = self.shapes.get_mut(&key, frame).expect(found);
             // Parley breaks lines by the shaper's advances, which are a
             // touch wider than Qt's: a text that fits as Qt counts it (an
             // item as wide as its own text) must not be broken.
             let max_advance = max_advance.filter(|w| entry.natural_width > *w);
-            if entry.broken != (max_advance, justify) {
-                break_lines(&mut entry.shape, max_advance, justify);
-                entry.broken = (max_advance, justify);
+            if places || (max_advance, justify) != (None, false) {
+                self.give_shape(key, text, style, &ranged, class);
             }
-            let unbroken = entry.broken == (None, false);
-            let mut lines = extract(
-                &entry.shape,
-                fallback,
-                max_advance.filter(|_| justify),
-                ranged.objects,
-                unbroken.then_some(&entry.advances),
-            );
-            if places {
-                for (line, carets) in lines.iter_mut().zip(edit::carets(&entry.shape, text)) {
-                    line.clusters = carets.clusters;
+            let entry = self.shapes.get_mut(&key, frame).expect(found);
+            let lines = match &mut entry.shape {
+                Some(shape) => {
+                    if entry.broken != (max_advance, justify) {
+                        break_lines(shape, max_advance, justify);
+                        entry.broken = (max_advance, justify);
+                    }
+                    let unbroken = entry.broken == (None, false);
+                    let mut lines = extract(
+                        shape,
+                        fallback,
+                        max_advance.filter(|_| justify),
+                        ranged.objects,
+                        unbroken.then_some(&entry.advances),
+                    );
+                    if places {
+                        for (line, carets) in lines.iter_mut().zip(edit::carets(shape, text)) {
+                            line.clusters = carets.clusters;
+                        }
+                    }
+                    lines
                 }
-            }
+                // Shaped directly: one line, unbroken, as it was read.
+                None => {
+                    let line = LineFacts {
+                        advance: entry.advances.glyphs.iter().map(|g| g.advance).sum(),
+                        hanging_advance: 0.0,
+                        reason: BreakReason::None,
+                        range: 0..text.len(),
+                    };
+                    extract_lines(
+                        std::iter::once(line),
+                        &entry.advances,
+                        fallback,
+                        None,
+                        ranged.objects,
+                    )
+                }
+            };
             (lines, (entry.advance, entry.natural_width), entry.rtl)
         };
         if raw.is_empty() {

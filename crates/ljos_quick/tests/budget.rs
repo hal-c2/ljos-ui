@@ -203,7 +203,7 @@ fn ten_listview_delegates() {
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 9 values, 6 bindings, 16 effects, 2 scopes,
-    // no member or type lookups, 165.7 allocations. What the component
+    // no member or type lookups, 150.7 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -211,6 +211,8 @@ fn ten_listview_delegates() {
     // Of the text's, a run's glyphs are read from Parley once and reserved
     // for, not grown as they come (two fewer), and its lines' items are
     // kept between measuring and painting (one more).
+    // A one-line plain text is shaped without Parley's builder and the
+    // layout it makes (fifteen fewer).
     assert_eq!(
         b,
         Budget {
@@ -227,7 +229,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1657,
+            allocations: 1507,
         }
     );
 }
@@ -238,9 +240,10 @@ fn ten_plain_items() {
     assert_eq!(made, 10);
     // Per instance: 2 objects, 6 values, 2 bindings, 15 effects, 2 scopes,
     // 1 member lookup (the property `createObject` is given, by its name)
-    // and no type lookups, 102.8 allocations; the id (`item`) is found
+    // and no type lookups, 101.3 allocations; the id (`item`) is found
     // by slot. One of the ten grows what keeps a text's lines' items
-    // between measuring and painting.
+    // between measuring and painting. A one-line plain text is laid out
+    // without Parley's builder (fifteen fewer over the ten).
     assert_eq!(
         b,
         Budget {
@@ -257,7 +260,7 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1028,
+            allocations: 1013,
         }
     );
 }
