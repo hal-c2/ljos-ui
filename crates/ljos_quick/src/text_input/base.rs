@@ -890,9 +890,12 @@ fn focus_changed(engine: &Engine, obj: ObjectId, active: bool) {
         return;
     }
     // A window that is no longer the active one takes the focus from its
-    // items for a while; the selection waits for it to come back.
+    // items for a while; the selection waits for it to come back. So does
+    // a popup, such as the menu a right-click opens to copy it (Qt 6.11).
     let window_left = !focus::is_window_active(engine, focus::tree::top_of(engine, obj));
-    let keeps = window_left || flag(engine, obj, TextEditor::PERSISTENT_SELECTION.index);
+    let to_popup = focus::focus_reason(engine, obj) == focus::FocusReason::Popup;
+    let keeps =
+        window_left || to_popup || flag(engine, obj, TextEditor::PERSISTENT_SELECTION.index);
     {
         let mut s = st.borrow_mut();
         // What an input method was composing is not the user's text yet.

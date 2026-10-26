@@ -1,5 +1,6 @@
 //! The pointer in an editor: a press puts the cursor where it lands and
-//! takes focus, a drag selects, a double click selects a word. A press
+//! takes focus, a drag selects, a double click selects a word and a triple
+//! click the paragraph. A press
 //! released on the link of rich text it landed on activates the link.
 
 use ljos_engine::{Engine, ObjectId, Value};
@@ -19,8 +20,9 @@ use crate::scene::{DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD};
 /// What an editor remembers of the pointer.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PointerState {
-    /// When and where the last press was, to tell a double click.
-    last: Option<(Time, kurbo::Point)>,
+    /// When and where the last press was, and how many came quickly one
+    /// after the other there, to tell a double and a triple click.
+    last: Option<(Time, kurbo::Point, u8)>,
     /// The press the editor holds selects from here: where it landed, or
     /// the word a double click selected. `None` while it selects nothing
     /// (`selectByMouse: false`).
@@ -64,9 +66,17 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
         .untrack(|| engine.read(obj, TextEditor::MOUSE_SELECTION_MODE.index))
         .to_number() as i32
         == selection_mode::SELECT_WORDS;
-    let double = st.borrow().pointer.last.is_some_and(|(t, p)| {
-        ev.time.saturating_since(t) <= DOUBLE_CLICK_INTERVAL && (at - p).hypot() <= DRAG_THRESHOLD
-    });
+    let clicks = match st.borrow().pointer.last {
+        Some((t, p, n))
+            if ev.time.saturating_since(t) <= DOUBLE_CLICK_INTERVAL
+                && (at - p).hypot() <= DRAG_THRESHOLD =>
+        {
+            n + 1
+        }
+        _ => 1,
+    };
+    let double = clicks == 2;
+    let triple = clicks == 3;
     let pos = at_point(&st, at);
     // A link of rich text is activated where the press is released.
     let link = super::rich::link_at(&st, at);
@@ -86,6 +96,11 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
             let reach = !s.multi;
             s.model.select_word(reach);
         }
+        // Qt 6.11 selects the paragraph with its line break, the whole
+        // text of a TextInput, and leaves the cursor at the end.
+        if triple && selects {
+            s.model.select_paragraph();
+        }
         let how = if by_words {
             Drag::Words
         } else if double && s.multi {
@@ -100,16 +115,15 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
             // a double click selected.
             let start = s.model.selection().start;
             (start, start)
-        } else if double {
-            let word = s.model.selection();
-            (word.start, word.end)
+        } else if double || triple {
+            let chosen = s.model.selection();
+            (chosen.start, chosen.end)
         } else {
             (pos, pos)
         };
         s.pointer = PointerState {
-            // A third press starts over: it is no double click of the
-            // second.
-            last: (!double).then_some((ev.time, at)),
+            // A fourth press starts over.
+            last: (!triple).then_some((ev.time, at, clicks)),
             anchor: selects.then_some(base),
             how,
         };
