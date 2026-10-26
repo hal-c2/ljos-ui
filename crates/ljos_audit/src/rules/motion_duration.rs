@@ -21,7 +21,7 @@ use super::controls::{checked, hold_checked, restore_checked, set_checked};
 use crate::acting::Act;
 use crate::cx::{is_a, shown_items, takes_focus};
 use crate::motion_watch::{
-    Watched, anim_words, no_probe, own, reopen_popups, surely, watch, with_motion,
+    Watched, anim_words, no_probe, own, reopened, surely, watch, with_motion,
 };
 
 /// No audit flips more than this many controls.
@@ -62,7 +62,7 @@ fn too_long(
 pub(crate) fn check(act: &mut Act) {
     let e = act.engine;
     let mut found = Vec::new();
-    for r in reopen_popups(act) {
+    for r in reopened(act).iter() {
         let words = crate::cx::words(&act.cx(), r.popup);
         too_long(
             act,
