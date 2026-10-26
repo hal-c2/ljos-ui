@@ -203,11 +203,14 @@ fn ten_listview_delegates() {
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 9 values, 6 bindings, 16 effects, 2 scopes,
-    // no member or type lookups, 166.7 allocations. What the component
+    // no member or type lookups, 165.7 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
     // binding to one.
+    // Of the text's, a run's glyphs are read from Parley once and reserved
+    // for, not grown as they come (two fewer), and its lines' items are
+    // kept between measuring and painting (one more).
     assert_eq!(
         b,
         Budget {
@@ -224,7 +227,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1667,
+            allocations: 1657,
         }
     );
 }
@@ -235,8 +238,9 @@ fn ten_plain_items() {
     assert_eq!(made, 10);
     // Per instance: 2 objects, 6 values, 2 bindings, 15 effects, 2 scopes,
     // 1 member lookup (the property `createObject` is given, by its name)
-    // and no type lookups, 102.7 allocations; the id (`item`) is found
-    // by slot.
+    // and no type lookups, 102.8 allocations; the id (`item`) is found
+    // by slot. One of the ten grows what keeps a text's lines' items
+    // between measuring and painting.
     assert_eq!(
         b,
         Budget {
@@ -253,7 +257,7 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1027,
+            allocations: 1028,
         }
     );
 }
