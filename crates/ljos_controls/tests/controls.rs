@@ -841,6 +841,10 @@ fn colours_bound_on_menus_cost_what_each_menu_holds() {
 /// Changes the font size bound on a pane that holds `fields` text fields,
 /// once, and returns the effects that ran and the field's height after.
 fn fields_resized(fields: usize) -> (u64, f64) {
+    fields_resized_to(fields, 20)
+}
+
+fn fields_resized_to(fields: usize, size: i32) -> (u64, f64) {
     let e = engine();
     let root = load(
         &e,
@@ -859,13 +863,29 @@ Pane {{
     let mut s = scene(&e, root);
     settle(&mut s, &e, Time::ZERO);
     let before = e.graph().stats().effect_runs;
-    e.write_by_name(root, "size", Value::Int(20)).unwrap();
+    e.write_by_name(root, "size", Value::Int(size)).unwrap();
     settle(&mut s, &e, Time::ZERO);
     let ran = e.graph().stats().effect_runs - before;
     let height = e
         .read_by_name(find(&e, root, "field"), "height")
         .to_number();
     (ran, height)
+}
+
+/// A font a little larger leaves a field as high as its frame: the text
+/// it lays out writes sizes the field reads, and they come out as they
+/// were, so its text is laid out and placed once.
+#[test]
+fn a_field_whose_height_stays_with_a_new_font_lays_its_text_out_once() {
+    let (one, height) = fields_resized_to(1, 13);
+    let (two, _) = fields_resized_to(2, 13);
+    assert_eq!(height, 24.0, "the frame gives the height");
+    // It ran 7 when the sizes its layout wrote ran the layout again.
+    assert!(
+        two - one <= 5,
+        "a field ran {} effects for a font change",
+        two - one
+    );
 }
 
 /// A field's height follows the font, so its text is placed twice: once

@@ -187,6 +187,11 @@ impl Flags {
     /// ([`Graph::provenance_tracked`]): its observers are told when that
     /// changes, also when the value stays what it was.
     const ASKED_IF_SET: u16 = 1 << 10;
+    /// An effect that, while it ran, heard that something it had read may
+    /// have changed (a check, not a change): it is checked afterwards and
+    /// runs again only if that source did change. What it read is often
+    /// worked out from what it wrote, and gives what it gave.
+    const RECHECK: u16 = 1 << 11;
 
     fn has(self, f: u16) -> bool {
         self.0 & f != 0
@@ -2670,6 +2675,7 @@ impl<V: Clone + 'static> Graph<V> {
             };
             node.state = NodeState::Computing;
             node.flags.set(Flags::PENDING, false);
+            node.flags.set(Flags::RECHECK, false);
             node.flags.set(Flags::HELD, false);
             // A node run by a check below its queue entry: the run is what
             // the entry was waiting for. Left there, the first flush of a
@@ -2868,12 +2874,21 @@ impl<V: Clone + 'static> Graph<V> {
                             cycle: vec![n],
                         });
                     }
+                    let recheck = i.nodes[n].flags.take(Flags::RECHECK);
                     if i.nodes[n].flags.has(Flags::PENDING) {
                         // It runs again anyway; that run settles the cycle
                         // if its result still travels round.
                         i.nodes[n].flags.set(Flags::PENDING, false);
                         i.nodes[n].flags.set(Flags::CYCLIC, false);
                         i.redirty(n);
+                    } else if recheck {
+                        // Its new edges are in place: the check walks them.
+                        let all = i.options.eager;
+                        let node = &mut i.nodes[n];
+                        node.state = NodeState::Check;
+                        if node.is_eager(all) {
+                            enqueue(&mut i.queues, n, node);
+                        }
                     }
                 } else {
                     // Panicked: keep the old edges so the node still hears
@@ -2881,6 +2896,7 @@ impl<V: Clone + 'static> Graph<V> {
                     // effect waits for its next change rather than looping.
                     let node = &mut i.nodes[n];
                     node.flags.set(Flags::PENDING, false);
+                    node.flags.set(Flags::RECHECK, false);
                     node.flags.set(Flags::SELF_READ, false);
                     if !node.flags.has(Flags::SETTLING) {
                         node.flags.set(Flags::CAME_BACK, false);
@@ -3376,6 +3392,11 @@ impl<V: Clone + 'static> Inner<V> {
                     let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
                     if bound && from_stamp != ALWAYS_STALE {
                         node.flags.set(Flags::CAME_BACK, true);
+                    } else if st == NodeState::Check
+                        && from_stamp != ALWAYS_STALE
+                        && matches!(node.kind, Kind::Effect(_))
+                    {
+                        node.flags.set(Flags::RECHECK, true);
                     } else {
                         node.flags.set(Flags::PENDING, true);
                     }

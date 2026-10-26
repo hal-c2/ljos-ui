@@ -873,6 +873,36 @@ fn an_effect_that_a_check_finds_dirty_runs_once_though_it_writes() {
 }
 
 #[test]
+fn an_effect_whose_write_leaves_what_it_read_as_it_was_runs_once() {
+    // A text lays itself out (the effect), reads the size that follows its
+    // implicit size (the binding), and writes the size of its text, which
+    // the binding reads. A binding that gives what it gave is no change:
+    // the effect is not run again for it. One that gives more is.
+    let g = Graph::new();
+    let font = g.property(g.root(), 12).unwrap();
+    let content = g.property(g.root(), 0).unwrap();
+    let size = g
+        .binding(g.root(), 0, move |g| g.get(content).max(24))
+        .unwrap();
+    let n = counter();
+    let c = n.clone();
+    g.effect(g.root(), move |g| {
+        c.set(c.get() + 1);
+        let f = g.get(font);
+        let _ = g.get(size);
+        g.untrack(|| g.batch(|| g.set(content, f + 2)));
+    })
+    .unwrap();
+    assert_eq!(n.get(), 1);
+    g.set(font, 13);
+    assert_eq!(n.get(), 2, "the size it read stayed");
+    assert_eq!(g.get(size), 24);
+    g.set(font, 30);
+    assert_eq!(n.get(), 4, "the size it read moved");
+    assert_eq!(g.get(size), 32);
+}
+
+#[test]
 fn an_effect_hears_of_a_change_its_own_write_ran_after_it_first_read() {
     // The first effect reads `src` for the first time in this run, then
     // writes; that write runs the second effect, which changes `src`. The
