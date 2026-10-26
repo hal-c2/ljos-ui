@@ -25,10 +25,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, MetaRef, ObjectId, Point, PropIndex, QmlObject, QmlType,
-    QmlValue, QtObject, Value, Vector2d, WriteKind, qml_impl,
+    Atom, Cx, Engine, EngineError, MetaRef, ObjectId, Point, PropIndex, Provenance, QmlObject,
+    QmlType, QmlValue, QtObject, Value, Vector2d, WriteKind, qml_impl,
 };
 use ljos_render::kurbo;
+use smallvec::SmallVec;
 
 pub use drag::{DragAxis, DragHandler, snap_mode};
 pub use hover::HoverHandler;
@@ -265,8 +266,10 @@ pub struct PointerHandler {
     /// How far a point moves, along one axis, before it is a drag.
     #[qml(notify, reset)]
     pub drag_threshold: i32,
-    /// Stored: the shell shows the cursor of what is under the pointer.
-    #[qml(notify, reset, enumeration = "Qt.CursorShape")]
+    /// The shape the pointer takes over the item while the handler is
+    /// active or hovered, once an author gives one
+    /// ([`crate::handlers::cursors`]).
+    #[qml(notify, reset, enumeration = "Qt.CursorShape", change = crate::scene::cursor_shape_changed)]
     pub cursor_shape: i32,
     /// The devices whose pointers the handler takes: a mouse, or a
     /// finger on a touch screen.
@@ -1005,6 +1008,37 @@ fn hooks() -> crate::pointer_item::PointerItem {
 }
 
 // ----------------------------------------------------------------- hover
+
+/// The handlers that give the pointer a shape over their item: the active
+/// one that holds the pointer and the hovered `HoverHandler`s, each with
+/// the shape an author gave it, as `(item, shape)`. A handler given none
+/// leaves the pointer to what is beneath (observed on qml6). Read from
+/// the lists the pointer already keeps, so no handler is looked for.
+pub(crate) fn cursors(engine: &Engine) -> SmallVec<[(ObjectId, i32); 4]> {
+    let g = grabs(engine);
+    let active = g
+        .exclusive
+        .get()
+        .map(|(h, _)| h)
+        .filter(|h| engine.is_alive(*h) && flag(engine, *h, PointerHandler::ACTIVE.index));
+    let hovered = g.hovered.borrow();
+    active
+        .into_iter()
+        .chain(hovered.iter().copied())
+        .filter(|h| {
+            engine.is_alive(*h)
+                && is_a::<PointerHandler>(engine, *h)
+                && engine
+                    .provenance(*h, PointerHandler::CURSOR_SHAPE.index)
+                    .is_some_and(|p| matches!(p, Provenance::Assigned | Provenance::Bound))
+                && usable(engine, *h)
+        })
+        .filter_map(|h| {
+            let shape = num(engine, h, PointerHandler::CURSOR_SHAPE.index) as i32;
+            handler_item(engine, h).map(|item| (item, shape))
+        })
+        .collect()
+}
 
 /// The pointer is over `hits` (topmost first): the `HoverHandler`s of
 /// those items follow.

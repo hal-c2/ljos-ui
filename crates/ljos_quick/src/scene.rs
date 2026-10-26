@@ -556,6 +556,30 @@ pub(crate) fn moved(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
     mark_shown(cx.engine, obj, |s| s.placed.push(obj));
 }
 
+/// How many times a `cursorShape` has changed: a scene whose pointer is
+/// still works its cursor out again at the frame when this moved on.
+#[derive(Default)]
+struct CursorShapes(std::cell::Cell<u64>);
+
+/// The change hook of a MouseArea's or a pointer handler's `cursorShape`:
+/// a shape that changes under a pointer that stays shows at once, as on
+/// qml6. Every scene is woken; it looks again only if its pointer is in it.
+pub(crate) fn cursor_shape_changed(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
+    let changes = cx.engine.extension::<CursorShapes>();
+    changes.0.set(changes.0.get() + 1);
+    let scenes: SmallVec<[SharedRc; 2]> = cx
+        .engine
+        .extension::<Scenes>()
+        .0
+        .borrow()
+        .iter()
+        .filter_map(std::rc::Weak::upgrade)
+        .collect();
+    for s in scenes {
+        wake(&s);
+    }
+}
+
 /// The change hook of what an item's [`Geom`] reads: it is read again at
 /// the frame.
 pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
@@ -775,6 +799,17 @@ struct PointerState {
     held: MouseButtons,
     /// The `Qt.CursorShape` the pointer shows.
     cursor: i32,
+    /// The cursor is a TableView's over the end of a column or row, which
+    /// it keeps while a button is held.
+    cursor_resizes: bool,
+    /// The [`CursorShapes`] count the cursor was worked out at.
+    cursor_shapes: u64,
+    /// Where the pointer is over the scene; none once it has left.
+    at: Option<kurbo::Point>,
+    /// What is under the pointer at the frame it was found in, topmost
+    /// first: what the cursor is worked out from.
+    hits: Vec<ObjectId>,
+    hits_at: Option<(kurbo::Point, u64)>,
     /// The item a right-click no one else took asks for its context menu
     /// when the button comes up, as in Qt.
     context: Option<ObjectId>,
@@ -1347,6 +1382,7 @@ impl QuickScene {
         // Layouts no frame asked for lately are dropped here, on a frame
         // that runs anyway; nothing ages while the scene is idle.
         self.text.borrow_mut().end_frame();
+        self.cursor_again(engine);
         lap(&mut laps, &mut steps.scene);
         if let Some(laps) = laps {
             self.add_frame_times(engine, laps, steps, animating);
@@ -2562,20 +2598,53 @@ impl QuickScene {
         self.pointer.cursor
     }
 
-    /// The cursor after `ev`. While a button is held it stays as it was
-    /// at the press, so a resize drag keeps it off the column's end.
-    fn cursor_for(&self, engine: &Engine, ev: &PointerEvent) -> i32 {
-        match ev.kind {
-            PointerKind::Leave | PointerKind::Cancel => 0,
-            _ if !ev.buttons.is_empty() => self.pointer.cursor,
-            _ => {
-                let hits = self.hits(engine, ev.pos);
-                crate::views::table::resize_cursor(engine, &hits, |o| {
-                    local_point(engine, o, ev.pos)
-                })
-                .unwrap_or(0)
-            }
+    /// The cursor after `ev`: the shape of the topmost thing under the
+    /// pointer that has one ([`cursor_of`]). Over the end of a TableView's
+    /// column it is the TableView's, kept while the end is dragged, off it
+    /// too.
+    fn cursor_for(&mut self, engine: &Engine, ev: &PointerEvent) -> i32 {
+        self.pointer.cursor_shapes = engine.extension::<CursorShapes>().0.get();
+        if matches!(ev.kind, PointerKind::Leave | PointerKind::Cancel) {
+            self.pointer.at = None;
+            self.pointer.cursor_resizes = false;
+            return 0;
         }
+        self.pointer.at = Some(ev.pos);
+        if !ev.buttons.is_empty() && self.pointer.cursor_resizes {
+            return self.pointer.cursor;
+        }
+        // A move has found what is under it already, in this frame's
+        // picture; what else comes looks once.
+        if self.pointer.hits_at != Some((ev.pos, self.frame)) {
+            self.pointer.hits = self.hits(engine, ev.pos);
+            self.pointer.hits_at = Some((ev.pos, self.frame));
+        }
+        let hits = &self.pointer.hits;
+        let resize = if ev.buttons.is_empty() {
+            crate::views::table::resize_cursor(engine, hits, |o| local_point(engine, o, ev.pos))
+        } else {
+            None
+        };
+        self.pointer.cursor_resizes = resize.is_some();
+        resize.unwrap_or_else(|| cursor_of(engine, hits))
+    }
+
+    /// At the frame, after a `cursorShape` changed: the cursor of what the
+    /// pointer was last over. What has come under a pointer that stays
+    /// shows at its next move, as on qml6.
+    fn cursor_again(&mut self, engine: &Engine) {
+        let changes = engine.extension::<CursorShapes>().0.get();
+        if changes == self.pointer.cursor_shapes {
+            return;
+        }
+        self.pointer.cursor_shapes = changes;
+        let Some(at) = self.pointer.at else {
+            return;
+        };
+        if self.pointer.cursor_resizes || self.pointer.hits_at.is_none_or(|(p, _)| p != at) {
+            return;
+        }
+        self.pointer.cursor = cursor_of(engine, &self.pointer.hits);
     }
 
     fn deliver(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
@@ -2960,6 +3029,8 @@ impl QuickScene {
         }
         let hits = self.hits(engine, ev.pos);
         handled |= self.update_hover(engine, ev, &hits);
+        self.pointer.hits = hits;
+        self.pointer.hits_at = Some((ev.pos, self.frame));
         handled || !self.pointer.passive.is_empty()
     }
 
@@ -3593,6 +3664,28 @@ pub(crate) fn item_enabled(e: &Engine, obj: ObjectId) -> bool {
 pub(crate) fn mouse_area_enabled(e: &Engine, m: ObjectId) -> bool {
     e.read(m, Item::ENABLED.index).to_boolean()
         && e.visual_parent(m).is_none_or(|p| item_enabled(e, p))
+}
+
+/// The `Qt.CursorShape` the pointer shows over `hits` (topmost first): the
+/// first that has one gives it. A handler of the item that is hovered or
+/// active and was given a shape comes before the item itself
+/// ([`crate::handlers::cursors`]); a MouseArea always has one, the arrow
+/// until given another, also while its own `enabled` is false, but not
+/// inside a disabled item (observed on qml6, `features/input/pointer-cursor.feature`).
+fn cursor_of(e: &Engine, hits: &[ObjectId]) -> i32 {
+    let handlers = crate::handlers::cursors(e);
+    for &o in hits {
+        if !e.is_alive(o) {
+            continue;
+        }
+        if let Some(&(_, shape)) = handlers.iter().find(|(item, _)| *item == o) {
+            return shape;
+        }
+        if is_a::<MouseArea>(e, o) && e.visual_parent(o).is_none_or(|p| item_enabled(e, p)) {
+            return e.read(o, MouseArea::CURSOR_SHAPE.index).to_number() as i32;
+        }
+    }
+    0
 }
 
 /// The MouseAreas the pointer hovers, innermost first, given the items

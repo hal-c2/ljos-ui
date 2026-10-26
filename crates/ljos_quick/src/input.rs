@@ -243,9 +243,9 @@ pub struct MouseArea {
     pub drag: crate::drag::Drag,
     /// The shape the cursor takes over the area. Kept as Qt keeps it:
     /// the arrow (0) until given, and `undefined` takes a given shape
-    /// back to it. Nothing here draws a cursor; the shape is what the
-    /// area holds, and disabling or hiding the area leaves it as it was.
-    #[qml(notify, reset, enumeration = "Qt.CursorShape")]
+    /// back to it. Disabling or hiding the area leaves it as it was; the
+    /// scene shows it while the pointer is over the area (`cursor_for`).
+    #[qml(notify, reset, enumeration = "Qt.CursorShape", change = crate::scene::cursor_shape_changed)]
     pub cursor_shape: i32,
     /// Milliseconds a press is held before it says `pressAndHold`. A
     /// negative value reads as the system's (`crate::press_and_hold`).

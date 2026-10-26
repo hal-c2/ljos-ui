@@ -2019,6 +2019,8 @@ impl Probes for LjosBackend {
     }
 
     fn pointer_cursor(&mut self) -> Result<i64> {
+        // A shape that changed under the pointer shows at the frame.
+        self.live()?.settle()?;
         Ok(i64::from(self.live()?.scene.cursor_shape()))
     }
 }
