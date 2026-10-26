@@ -64,7 +64,7 @@ use crate::display_list::{
     TextAlign, fill_area,
 };
 use crate::glyph::{baseline_snap, is_upright, snap_bar};
-use crate::glyph_atlas::{BINS, GlyphAtlas, GlyphKey, Slot};
+use crate::glyph_atlas::{BINS, Full, GlyphAtlas, GlyphKey, Slot};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::image_atlas::{ImageAtlas, Place};
 use crate::rgba::Rgba;
@@ -484,18 +484,19 @@ enum Placement {
 
 /// Visit every glyph of `seg` that can touch `clip`, with its atlas key, the
 /// device size it is filled at and its place. Both the atlas pass and the mesh
-/// pass go through here, so they always agree on the keys.
+/// pass go through here, so they always agree on the keys. Whether it was
+/// [`places_all`]: upright text none of which was left out.
 fn place_glyphs(
     seg: &GlyphSeg,
     ppp: f32,
     clip: ERect,
     mut f: impl FnMut(GlyphKey, f64, Placement),
-) {
+) -> bool {
     let run = &*seg.cmd.run;
     let origin = seg.cmd.origin;
     let screen_bounds = erect(seg.to_screen.transform_rect_bbox(run.bounds + origin));
     if !screen_bounds.intersects(clip) {
-        return;
+        return false;
     }
     let ppp = f64::from(ppp);
     let to_device = Affine::scale(ppp) * seg.to_screen;
@@ -508,10 +509,12 @@ fn place_glyphs(
         let reach = size * 2.0 + 2.0;
         let (cx0, cx1) = (f64::from(clip.min.x) * ppp, f64::from(clip.max.x) * ppp);
         let (cy0, cy1) = (f64::from(clip.min.y) * ppp, f64::from(clip.max.y) * ppp);
+        let mut all = true;
         for g in &run.glyphs {
             let x = a * (f64::from(g.x) + origin.x) + e;
             let y = (d * (f64::from(g.y) + origin.y) + ty + dy).round();
             if x + reach < cx0 || x - reach > cx1 || y + reach < cy0 || y - reach > cy1 {
+                all = false;
                 continue;
             }
             let q = (x * BINS as f64).round() as i64;
@@ -525,10 +528,11 @@ fn place_glyphs(
                 },
             );
         }
+        all
     } else {
         let scale = to_device.determinant().abs().sqrt();
         if scale <= 0.0 {
-            return;
+            return false;
         }
         let size = f64::from(run.font_size) * scale;
         for g in &run.glyphs {
@@ -541,6 +545,7 @@ fn place_glyphs(
                 Placement::Free(seg.to_screen * Affine::translate(at) * Affine::scale(px_to_local)),
             );
         }
+        false
     }
 }
 
@@ -685,20 +690,44 @@ fn pos2(p: Point) -> Pos2 {
     Pos2::new(p.x as f32, p.y as f32)
 }
 
-/// Quads for the glyphs of `seg` that are in the atlas, and its bars.
-fn glyph_mesh(seg: &GlyphSeg, atlas: &GlyphAtlas, ppp: f32, clip: ERect) -> Mesh {
-    let mut mesh = Mesh::default();
-    let Some(texture) = atlas.texture_id() else {
-        return mesh;
-    };
-    mesh.texture_id = texture;
+/// What a mesh of glyphs takes from the atlas besides their slots, while it
+/// has a texture.
+#[derive(Clone, Copy)]
+struct AtlasView {
+    texture: egui::TextureId,
+    side: f32,
+    white_uv: Pos2,
+}
+
+impl AtlasView {
+    fn of(atlas: &GlyphAtlas) -> Option<Self> {
+        Some(Self {
+            texture: atlas.texture_id()?,
+            side: atlas.side() as f32,
+            white_uv: atlas.white_uv(),
+        })
+    }
+}
+
+/// Quads for the glyphs of `seg` that `slot` finds in the atlas, and its
+/// bars, with whether it [`places_all`]. `slot` is given each glyph's key
+/// and the device size it is filled at, so the pass that fills the atlas
+/// builds the mesh too and makes and looks up each key once.
+fn glyph_mesh(
+    seg: &GlyphSeg,
+    atlas: AtlasView,
+    ppp: f32,
+    clip: ERect,
+    mut slot: impl FnMut(&GlyphKey, f64) -> Option<Slot>,
+) -> (Mesh, bool) {
+    let mut mesh = Mesh::with_texture(atlas.texture);
     let quads = seg.cmd.run.glyphs.len() + 2;
     mesh.vertices.reserve(quads * 4);
     mesh.indices.reserve(quads * 6);
     let color = color32(seg.cmd.color.with_opacity(seg.opacity));
-    let side = atlas.side() as f32;
+    let side = atlas.side;
     let inv_ppp = 1.0 / f64::from(ppp);
-    place_glyphs(seg, ppp, clip, |key, _, placement| {
+    let whole = place_glyphs(seg, ppp, clip, |key, size, placement| {
         let Some(Slot {
             x,
             y,
@@ -706,7 +735,7 @@ fn glyph_mesh(seg: &GlyphSeg, atlas: &GlyphAtlas, ppp: f32, clip: ERect) -> Mesh
             h,
             left,
             top,
-        }) = atlas.slot(&key)
+        }) = slot(&key, size)
         else {
             return;
         };
@@ -748,9 +777,9 @@ fn glyph_mesh(seg: &GlyphSeg, atlas: &GlyphAtlas, ppp: f32, clip: ERect) -> Mesh
             ]
             .map(|(x, y)| pos2(seg.to_screen * Point::new(x, y))),
         };
-        push_quad(&mut mesh, corners, [atlas.white_uv(); 4], color);
+        push_quad(&mut mesh, corners, [atlas.white_uv; 4], color);
     }
-    mesh
+    (mesh, whole)
 }
 
 #[derive(Clone)]
@@ -1652,27 +1681,56 @@ impl EpaintBackend {
         }
     }
 
-    /// Put every glyph this frame draws into the atlas, then upload it.
+    /// Put every glyph this frame draws into the atlas, then upload it. A
+    /// run is given its mesh as its glyphs go in, unless the atlas moved
+    /// them (it grew or was emptied) after the first of them went in: that
+    /// one is built when it is drawn.
     fn fill_atlas(&mut self, ctx: &Context, order: &[Drawn], stats: &mut EncodeStats) {
         let max_side = GlyphAtlas::max_side(ctx);
+        let ppp = self.ppp;
         for attempt in 0..2 {
             let mut full = false;
             for drawn in order {
                 let Drawn::Node(node, clip) = drawn else {
                     continue;
                 };
-                let Some(ne) = self.nodes.get(*node) else {
+                let Some(ne) = self.nodes.get_mut(*node) else {
                     continue;
                 };
-                for seg in &ne.segs {
+                for seg in &mut ne.segs {
                     let WorldSeg::Glyphs(g) = seg else { continue };
+                    let generation = self.atlas.generation();
                     // A valid mesh means its glyphs are already in the atlas.
-                    if g.mesh_for(self.atlas.generation(), *clip).is_some() {
+                    if g.mesh_for(generation, *clip).is_some() {
                         continue;
                     }
-                    place_glyphs(g, self.ppp, *clip, |key, size, _| {
-                        full |= self.atlas.ensure(&key, &g.cmd.run, size, max_side).is_err();
-                    });
+                    let view = AtlasView::of(&self.atlas);
+                    let atlas = &mut self.atlas;
+                    let run = &g.cmd.run;
+                    let mut ensure =
+                        |key: &GlyphKey, size| match atlas.ensure(key, run, size, max_side) {
+                            Ok(slot) => Some(slot),
+                            Err(Full) => {
+                                full = true;
+                                None
+                            }
+                        };
+                    let Some(view) = view else {
+                        place_glyphs(g, ppp, *clip, |key, size, _| {
+                            ensure(&key, size);
+                        });
+                        continue;
+                    };
+                    let (mesh, whole) = glyph_mesh(g, view, ppp, *clip, ensure);
+                    if self.atlas.generation() == generation {
+                        self.glyph_meshes_built += 1;
+                        g.mesh = Some(GlyphMesh {
+                            generation,
+                            clip: *clip,
+                            whole,
+                            mesh: Arc::new(mesh),
+                        });
+                    }
                 }
             }
             if !full {
@@ -2162,11 +2220,17 @@ impl RenderBackend for EpaintBackend {
                         let generation = self.atlas.generation();
                         if g.mesh_for(generation, clip).is_none() {
                             self.glyph_meshes_built += 1;
+                            let (mesh, whole) = match AtlasView::of(&self.atlas) {
+                                Some(view) => glyph_mesh(g, view, self.ppp, clip, |key, _| {
+                                    self.atlas.slot(key)
+                                }),
+                                None => (Mesh::default(), places_all(g, self.ppp, clip)),
+                            };
                             g.mesh = Some(GlyphMesh {
                                 generation,
                                 clip,
-                                whole: places_all(g, self.ppp, clip),
-                                mesh: Arc::new(glyph_mesh(g, &self.atlas, self.ppp, clip)),
+                                whole,
+                                mesh: Arc::new(mesh),
                             });
                         }
                         if let Some(m) = g.mesh_for(generation, clip)
