@@ -210,6 +210,10 @@ pub(crate) struct PendingOp {
     /// they are after an insertion or a move; of a removal, where each was
     /// once the rows gone before it in the model were, from the last.
     pub target_indexes: Vec<i32>,
+    /// The greatest of `target_indexes`, or above it (-1 with none): rows
+    /// added after it, as appended ones are, move none of them, and a run
+    /// of appends is not a walk over all the rows added before each.
+    pub highest: i32,
     /// Their delegates, when there are any: of a removal, the ones that
     /// are leaving; of the rest, the pass fills this in.
     pub target_items: Vec<ObjectId>,

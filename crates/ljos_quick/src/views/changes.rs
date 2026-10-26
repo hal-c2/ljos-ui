@@ -236,16 +236,21 @@ impl ViewHost for Host {
                 }
                 drop(added);
                 let indexes = (first..first.saturating_add(count)).map(|i| i as i32);
+                let last = first.saturating_add(count) as i32 - 1;
                 let mut pending = st.pending.borrow_mut();
                 match pending.as_mut().filter(|op| op.kind == OpKind::Add) {
                     // Rows added since the last pass are one change to it:
                     // those that came before are where the new ones put them.
                     Some(op) => {
-                        for i in &mut op.target_indexes {
-                            if *i >= first as i32 {
-                                *i += count as i32;
+                        if op.highest >= first as i32 {
+                            for i in &mut op.target_indexes {
+                                if *i >= first as i32 {
+                                    *i += count as i32;
+                                }
                             }
+                            op.highest += count as i32;
                         }
+                        op.highest = op.highest.max(last);
                         op.target_keys.extend(keys);
                         op.target_indexes.extend(indexes);
                     }
@@ -254,6 +259,7 @@ impl ViewHost for Host {
                             kind: OpKind::Add,
                             target_keys: keys.into_iter().collect(),
                             target_indexes: indexes.collect(),
+                            highest: last,
                             target_items: Vec::new(),
                             gone_runs: Vec::new(),
                             gone_items: Vec::new(),
@@ -287,6 +293,8 @@ impl ViewHost for Host {
                         kind: OpKind::Remove,
                         target_keys: Default::default(),
                         target_indexes: Vec::new(),
+                        // Only added rows read it.
+                        highest: -1,
                         target_items: Vec::new(),
                         gone_runs: Vec::new(),
                         gone_items: Vec::new(),
@@ -325,6 +333,7 @@ impl ViewHost for Host {
                         .filter_map(|row| d.key_at(row))
                         .collect(),
                     target_indexes: (to..to + count).map(|i| i as i32).collect(),
+                    highest: (to + count) as i32 - 1,
                     target_items: Vec::new(),
                     gone_runs: Vec::new(),
                     gone_items: Vec::new(),
