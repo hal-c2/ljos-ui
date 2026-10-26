@@ -127,7 +127,7 @@ fn vague_action<'a>(found: &mut Found<'_, '_, '_, 'a>, frame: &Frame<'_, 'a>) {
         text.at,
         "content-vague-action",
         format!(
-            "`{said}` does not say what happens; name the action by its verb and what it acts              on (`Send report`, `Save draft`), so the button reads right out of context"
+            "`{said}` does not say what happens; name the action by its verb and what it acts on (`Send report`, `Save draft`), so the button reads right out of context"
         ),
     );
 }

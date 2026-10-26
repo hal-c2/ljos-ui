@@ -325,7 +325,16 @@ fn placeholder_label<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, '
 const DESTRUCTIVE: &[&str] = &["delete", "remove", "discard", "erase", "clear"];
 
 /// Words after the verb that name something that comes back by itself.
-const REVERSIBLE: &[&str] = &["filter", "filters", "search", "selection", "query"];
+const REVERSIBLE: &[&str] = &[
+    "filter",
+    "filters",
+    "search",
+    "selection",
+    "query",
+    "color",
+    "colour",
+    "field",
+];
 
 fn destructive_undo<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
     let frame = chain.last().expect("the object itself");
