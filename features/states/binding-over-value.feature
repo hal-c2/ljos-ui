@@ -4,6 +4,9 @@
 # Verified on Qt 6.11.2 (qml6, offscreen).
 # Found by ljos-fuzz (states), seeds 101 and 202: buckets value:step:invalid-qt,
 # warning:QPointF_to_int and warning:QML_Case (see crates/ljos_fuzz/known/states.txt).
+# Backlog: Ljós takes the state left off a property before the next state's change is on it,
+# and the graph works the item's own binding out again in between; going from one change to the
+# next waits on the graph (bindings infrastructure). Bucket warning:QString_to_int.
 
 @qt-parity
 Feature: Which change of a property a state keeps
@@ -144,3 +147,25 @@ Feature: Which change of a property a state keeps
       | "s2", "s0", ""        | s2:#ff0000 s0:#0000ff :#000000            |
       | "s2", "s0", "s2", ""  | s2:#ff0000 s0:#0000ff s2:#ff0000 :#000000 |
       | "s0", "s2", ""        | s0:#0000ff s2:#ff0000 :#0000ff            |
+
+  @backlog
+  Scenario Outline: From one state's change of a property to another's, the item's binding is not run
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property int p2: ("" + "")
+        states: [State { name: "s0"; PropertyChanges { target: root; p2: 4 } },
+                 State { name: "s2"; <when> PropertyChanges { target: root; p2: 3 } }]
+        function run() { <run> }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "p2" of "root" is 4
+    And the log has 1 warning matching "Unable to assign QString to int"
+
+    Examples:
+      | when        | run                        |
+      | when: true; | state = "s0"               |
+      |             | state = "s2"; state = "s0" |
