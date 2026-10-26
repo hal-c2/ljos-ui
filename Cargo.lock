@@ -4356,6 +4356,8 @@ dependencies = [
 name = "ljos_text"
 version = "0.0.0"
 dependencies = [
+ "harfrust",
+ "icu_segmenter",
  "ljos_render",
  "ljos_runtime",
  "objc2-core-foundation",

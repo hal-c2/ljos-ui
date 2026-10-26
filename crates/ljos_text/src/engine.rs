@@ -7,6 +7,8 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
 
+use icu_segmenter::LineSegmenter;
+use icu_segmenter::options::{LineBreakOptions, LineBreakStrictness, LineBreakWordOption};
 use ljos_render::kurbo::Rect;
 use ljos_render::{Decorations, FontTables, GlyphRun, PositionedGlyph};
 use ljos_runtime::Platform;
@@ -906,19 +908,27 @@ fn shape(
     b.build(text)
 }
 
-/// Parley's own analysis and shaping, kept warm for [`shape_direct`].
+/// Parley's own analysis and shaping, kept warm for [`shape_direct`], and
+/// harfrust and ICU4X as Parley drives them, for a font set up once.
 struct Direct {
     analyzer: Analyzer,
     shaper: Shaper,
     shaped: ShapedText,
     /// A style index per character, all the one style.
     styles: Vec<u16>,
-    /// Analyses by [`fold`]ed text: what Parley's analyser says of a
-    /// printable ASCII character depends only on its class there, so "Row
-    /// 12" and "Col 99" have one analysis, and a list's rows share a few.
-    analyses: FrameCache<u64, KeptAnalysis>,
-    /// For a text analysed while `analyses` is full.
+    /// For the first text shaped in a font at a size.
     analysis: Analysis,
+    /// Fonts at a size set up for harfrust ([`Voice`]), the latest first.
+    voices: Vec<Voice>,
+    /// Harfrust's buffer, kept for its allocation.
+    buffer: Option<harfrust::UnicodeBuffer>,
+    /// Soft wrap opportunities by [`fold`]ed text: what Parley's analyser
+    /// says of a printable ASCII character depends only on its class
+    /// there, so "Row 12" and "Col 99" break alike, and a list's rows
+    /// share a few.
+    breaks: FrameCache<u64, KeptBreaks>,
+    /// For a text broken while `breaks` is full.
+    soft: Vec<bool>,
     /// The folded text being looked up, kept for its allocation.
     fold: Vec<u8>,
     /// Runs as shaped and snapped, for the same text in the same font
@@ -941,11 +951,35 @@ struct Direct {
     ends: Vec<usize>,
 }
 
-/// An analysis and the folded text it is for.
-struct KeptAnalysis {
+/// The soft wrap opportunities ([`soft_breaks`]) of a folded text.
+struct KeptBreaks {
     fold: Box<[u8]>,
-    analysis: Analysis,
+    soft: Box<[bool]>,
 }
+
+/// A pinned font at a size, set up for harfrust as Parley's shaper sets it
+/// up for the one segment of a printable ASCII text, and what Parley's
+/// shaping of a first text in it said of the run, which no text changes:
+/// every later text is shaped by harfrust alone ([`harf_shape`]), without
+/// Parley's analysis and the per-character bookkeeping of its shaper,
+/// which cost more than the shaping.
+struct Voice {
+    blob: u64,
+    index: u32,
+    synthesis: Synthesis,
+    size: u32,
+    data: harfrust::ShaperData,
+    instance: harfrust::ShaperInstance,
+    plan: harfrust::ShapePlan,
+    /// From font units to pixels, as Parley's shaper computes it.
+    scale: f32,
+    font_size: f32,
+    metrics: parley::FontMetrics,
+    coords: Box<[i16]>,
+}
+
+/// Fonts at a size kept set up: a program uses a few.
+const MAX_VOICES: usize = 16;
 
 /// What [`shape_direct`] made of a text in one font at one size, but the
 /// font's blob, which is taken as Parley's path would take it.
@@ -966,8 +1000,8 @@ struct KeptRun {
 
 /// Folded texts kept from frame to frame, and the most a frame can leave:
 /// a list's rows have a few between them.
-const MAX_ANALYSES: usize = 64;
-const MAX_ANALYSES_AT_ONCE: usize = 2 * MAX_ANALYSES;
+const MAX_BREAKS: usize = 64;
+const MAX_BREAKS_AT_ONCE: usize = 2 * MAX_BREAKS;
 /// Runs kept from frame to frame, the most a frame can leave, and the
 /// longest text one is kept for: about 0.5 MB for short rows, never more
 /// than 4 MB.
@@ -985,8 +1019,11 @@ impl Direct {
             shaper: Shaper::default(),
             shaped: ShapedText::new(),
             styles: Vec::new(),
-            analyses: FrameCache::splitting_frames(MAX_ANALYSES),
             analysis: Analysis::new(),
+            voices: Vec::new(),
+            buffer: None,
+            breaks: FrameCache::splitting_frames(MAX_BREAKS),
+            soft: Vec::new(),
             fold: Vec::new(),
             runs: FrameCache::splitting_frames(MAX_RUNS),
             frame: 0,
@@ -1002,8 +1039,9 @@ impl Direct {
     }
 
     fn clear(&mut self) {
-        self.analyses.clear();
+        self.breaks.clear();
         self.runs.clear();
+        self.voices.clear();
     }
 
     fn bytes(&self) -> usize {
@@ -1018,37 +1056,17 @@ impl Direct {
                     + std::mem::size_of_val(&*r.clusters)
             })
             .sum();
-        let analyses: usize = self
-            .analyses
+        let breaks: usize = self
+            .breaks
             .values()
-            .map(|a| {
-                std::mem::size_of::<KeptAnalysis>()
-                    + a.fold.len()
-                    + std::mem::size_of_val(a.analysis.char_info())
-                    + std::mem::size_of_val(a.analysis.bidi_levels())
-            })
+            .map(|b| std::mem::size_of::<KeptBreaks>() + b.fold.len() + b.soft.len())
             .sum();
-        runs + analyses + self.runs.table_bytes() + self.analyses.table_bytes()
+        runs + breaks + self.runs.table_bytes() + self.breaks.table_bytes()
     }
 
-    /// Analyses `text` as Parley's builder would with one style breaking
-    /// as `word_break` says, or finds the analysis of its [`fold`]: where it
-    /// is in [`Self::analyses`], or `None` for [`Self::analysis`].
-    fn analyse(&mut self, text: &str, word_break: WordBreak) -> Option<u64> {
-        let frame = self.frame;
-        fold(text.as_bytes(), word_break, &mut self.fold);
-        let key = {
-            let mut h = FxHasher::default();
-            self.fold.hash(&mut h);
-            h.finish()
-        };
-        let known = self
-            .analyses
-            .get_mut(&key, frame)
-            .is_some_and(|k| *k.fold == self.fold[..]);
-        if known {
-            return Some(key);
-        }
+    /// Analyses `text` into [`Self::analysis`] as Parley's builder would
+    /// with one style breaking as `word_break` says.
+    fn analyse(&mut self, text: &str, word_break: WordBreak) {
         let config = LineBreakConfig {
             word_break,
             ..LineBreakConfig::default()
@@ -1065,23 +1083,44 @@ impl Direct {
             break_spaces: &[],
             line_break_override: None,
         };
-        // A frame can analyse any number of texts: past a ceiling nothing
+        self.analyzer.analyze(text, &options, &mut self.analysis);
+    }
+
+    /// Finds the soft wrap opportunities of a printable ASCII `text`
+    /// breaking as `word_break` says, by its [`fold`]: where they are in
+    /// [`Self::breaks`], or `None` for [`Self::soft`].
+    fn breaks(&mut self, text: &str, word_break: WordBreak) -> Option<u64> {
+        let frame = self.frame;
+        fold(text.as_bytes(), word_break, &mut self.fold);
+        let key = {
+            let mut h = FxHasher::default();
+            self.fold.hash(&mut h);
+            h.finish()
+        };
+        let known = self
+            .breaks
+            .get_mut(&key, frame)
+            .is_some_and(|k| *k.fold == self.fold[..]);
+        if known {
+            return Some(key);
+        }
+        soft_breaks(text, word_break, &mut self.soft);
+        // A frame can break any number of texts: past a ceiling nothing
         // new is kept until frames make room.
-        if self.analyses.len() >= MAX_ANALYSES_AT_ONCE {
-            self.analyzer.analyze(text, &options, &mut self.analysis);
+        if self.breaks.len() >= MAX_BREAKS_AT_ONCE {
             return None;
         }
-        let mut analysis = Analysis::new();
-        self.analyzer.analyze(text, &options, &mut analysis);
-        let fold = self.fold.as_slice().into();
-        self.analyses
-            .insert(key, KeptAnalysis { fold, analysis }, frame);
+        let kept = KeptBreaks {
+            fold: self.fold.as_slice().into(),
+            soft: self.soft.as_slice().into(),
+        };
+        self.breaks.insert(key, kept, frame);
         Some(key)
     }
 
     fn trim(&mut self, frame: u64, keep: u64) {
         self.frame = frame;
-        self.analyses.trim(frame, keep);
+        self.breaks.trim(frame, keep);
         self.runs.trim(frame, keep.max(KEEP_RUN_FRAMES));
     }
 }
@@ -1108,6 +1147,103 @@ fn fold(text: &[u8], word_break: WordBreak, out: &mut Vec<u8>) {
         b'0'..=b'9' => b'0',
         b => b,
     }));
+}
+
+/// Where a printable ASCII `text` may wrap, a flag a byte, as Parley's
+/// analysis of it with one style breaking as `word_break` says marks it:
+/// ICU4X's line breaks inside the text, by the rules Parley gives such a
+/// style (strict, its default `line-break`). Such a text has no mandatory
+/// break, so each of them is a soft wrap opportunity, and the dictionaries
+/// of complex scripts have no say in it.
+fn soft_breaks(text: &str, word_break: WordBreak, out: &mut Vec<bool>) {
+    out.clear();
+    out.resize(text.len(), false);
+    let mut options = LineBreakOptions::default();
+    options.strictness = Some(LineBreakStrictness::Strict);
+    options.word_option = Some(match word_break {
+        WordBreak::Normal => LineBreakWordOption::Normal,
+        WordBreak::BreakAll => LineBreakWordOption::BreakAll,
+        WordBreak::KeepAll => LineBreakWordOption::KeepAll,
+    });
+    // The text's start and end are boundaries too, and no opportunity.
+    for at in LineSegmenter::new_for_non_complex_scripts(options).segment_str(text) {
+        if let Some(soft) = out.get_mut(at).filter(|_| at > 0) {
+            *soft = true;
+        }
+    }
+}
+
+/// Shapes `text` (printable ASCII, and ellipses) in `voice` as Parley's
+/// shaper shapes its one segment, left to right and Latin (the script
+/// Parley gives a text of Common characters too), with a cluster a
+/// character, and reads its glyphs into `kept` as [`shape_direct`] reads
+/// them from Parley's: a cluster's one glyph without an offset is held
+/// inline there, and read back with offsets of plain zero.
+fn harf_shape(
+    voice: &Voice,
+    font: &FontData,
+    text: &str,
+    buffer: &mut Option<harfrust::UnicodeBuffer>,
+    kept: &mut Snapped,
+) -> Option<()> {
+    let face = harfrust::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
+    let shaper = voice
+        .data
+        .shaper(&face)
+        .instance(Some(&voice.instance))
+        .build();
+    let mut input = buffer.take().unwrap_or_default();
+    input.clear();
+    input.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
+    input.reserve(text.len());
+    let mut chars = 0;
+    for (i, c) in text.chars().enumerate() {
+        input.add(c, u32::try_from(i).ok()?);
+        chars = i + 1;
+    }
+    input.set_pre_context("");
+    input.set_post_context("");
+    input.set_direction(harfrust::Direction::LeftToRight);
+    input.set_script(harfrust::script::LATIN);
+    let options = harfrust::ShapeOptions::new()
+        .plan(Some(&voice.plan))
+        .features(&[])
+        .point_size(Some(f32::from_bits(voice.size)));
+    let output = shaper.shape(input, options);
+    let scale = voice.scale;
+    kept.glyphs.reserve(chars);
+    kept.qt.reserve(chars);
+    let (mut cluster, mut first, mut plain) = (0, 0, true);
+    let mut end = |kept: &mut Snapped, char_end: u32, first: usize| {
+        let glyphs = kept.glyphs.len();
+        if glyphs - first == 1 {
+            let g = &mut kept.glyphs[first];
+            if g.x == 0.0 && g.y == 0.0 {
+                (g.x, g.y) = (0.0, 0.0);
+            }
+        }
+        plain &= glyphs - first == 1 && char_end as usize == kept.clusters.len() + 1;
+        kept.clusters
+            .push((char_end, u32::try_from(glyphs).unwrap_or(u32::MAX)));
+    };
+    for (info, at) in output.glyph_infos().iter().zip(output.glyph_positions()) {
+        if info.cluster != cluster {
+            end(kept, info.cluster, first);
+            (cluster, first) = (info.cluster, kept.glyphs.len());
+        }
+        kept.glyphs.push(parley::Glyph {
+            id: info.glyph_id,
+            x: (at.x_offset as f32) * scale,
+            y: -(at.y_offset as f32) * scale,
+            advance: (at.x_advance as f32) * scale,
+        });
+    }
+    end(kept, u32::try_from(chars).ok()?, first);
+    if plain {
+        kept.clusters.clear();
+    }
+    *buffer = Some(output.clear());
+    Some(())
 }
 
 /// Gives every cluster the one font a pinned text is shaped with.
@@ -1143,8 +1279,9 @@ impl FontSelector for OneFont<'_> {
 /// such a text is shaped in full too.
 ///
 /// A run shaped before in the same font at the same size is taken from
-/// [`Direct::runs`]; otherwise the analysis of a text of the same
-/// [`fold`] is taken from [`Direct::analyses`], and the text is shaped.
+/// [`Direct::runs`]. Otherwise the first text in a font at a size is
+/// shaped by Parley, and every later one by harfrust as Parley drives it
+/// ([`Voice`]).
 fn shape_direct(
     direct: &mut Direct,
     fcx: &mut FontContext,
@@ -1207,72 +1344,29 @@ fn shape_direct(
         let (font_size, metrics, coords) = (run.font_size, run.metrics, run.coords.to_vec());
         (source_font(fcx, &pinned)?, font_size, metrics, coords)
     } else {
-        let analysis = match direct.analyse(text, word_break) {
-            Some(key) => &direct.analyses.get_mut(&key, frame)?.analysis,
-            None => &direct.analysis,
-        };
-        let chars = if text.is_ascii() {
-            bytes.len()
-        } else {
-            text.chars().count()
-        };
-        direct.styles.clear();
-        direct.styles.resize(chars, 0);
-        let item = parley_engine::itemize::Item {
-            char_end: u32::try_from(chars).ok()?,
-            options: ShapeOptions {
-                font_size: size,
-                language: None,
-                features: &[],
-                variations,
-            },
-        };
-        let one = OneFont(FontInstanceRef {
-            data: &pinned.font.data,
-            index,
-            synthesis: &pinned.synthesis,
+        let voice = direct.voices.iter().position(|v| {
+            (v.blob, v.index, v.size) == (blob, index, size_bits) && v.synthesis == pinned.synthesis
         });
-        direct.shaper.shape_text(
-            text,
-            analysis,
-            &direct.styles,
-            [item],
-            one,
-            &mut direct.shaped,
-        );
-        let [run] = direct.shaped.runs() else {
-            return None;
+        let (font_size, metrics, coords) = if let Some(at) = voice {
+            direct.voices[..=at].rotate_right(1);
+            let voice = &direct.voices[0];
+            harf_shape(voice, &pinned.font, text, &mut direct.buffer, &mut kept)?;
+            (voice.font_size, voice.metrics, voice.coords.to_vec())
+        } else {
+            let (font_size, metrics, coords) = parley_shape(
+                direct, &pinned, text, size, variations, word_break, &mut kept,
+            )?;
+            if let Some(voice) = voice_of(&pinned, size, variations, font_size, metrics, &coords) {
+                direct.voices.truncate(MAX_VOICES - 1);
+                direct.voices.insert(0, voice);
+            }
+            (font_size, metrics, coords)
         };
-        if run.bidi_level.is_rtl() {
-            return None;
-        }
-        let slice = direct.shaped.run_slice(0);
-        kept.glyphs.reserve(chars);
-        kept.qt.reserve(chars);
-        for cluster in slice.shaped_clusters_range() {
-            kept.glyphs.extend(slice.shaped_cluster_glyphs(cluster));
-        }
         if kept.glyphs.iter().any(|g| g.y != 0.0) {
             return None;
         }
-        let clusters = slice.shaped_clusters();
-        if clusters.len() != chars || clusters.iter().any(|c| c.glyph_len() != 1) {
-            let mut glyphs = 0;
-            kept.clusters.extend(clusters.iter().map(|c| {
-                glyphs += u32::from(c.glyph_len());
-                (c.chars_range().end, glyphs)
-            }));
-        }
-        let coords: Vec<i16> = direct
-            .shaped
-            .normalized_coords()
-            .get(run.normalized_coords_range.clone())
-            .unwrap_or(&[])
-            .iter()
-            .map(|c| c.to_bits())
-            .collect();
         let font = source_font(fcx, &pinned)?;
-        snap::advances(&font, run.font_size, &coords, &kept.glyphs, &mut kept.qt);
+        snap::advances(&font, font_size, &coords, &kept.glyphs, &mut kept.qt);
         // The trim keeps a frame's runs together, and one frame can lay
         // out any number of texts: past a ceiling nothing new is kept
         // until frames make room.
@@ -1291,12 +1385,12 @@ fn shape_direct(
                     .collect(),
                 coords: coords.as_slice().into(),
                 clusters: kept.clusters.as_slice().into(),
-                font_size: run.font_size,
-                metrics: run.font_metrics,
+                font_size,
+                metrics,
             };
             direct.runs.insert(key, run, frame);
         }
-        (font, run.font_size, run.font_metrics, coords)
+        (font, font_size, metrics, coords)
     };
     // A style's line has no offset or size of its own, as Parley's
     // default style has it.
@@ -1318,6 +1412,126 @@ fn shape_direct(
     kept.lines.push(kept.items.len());
     families.pinned.set(families.pinned.get() + 1);
     Some(kept)
+}
+
+/// Shapes `text` with Parley's analyser and shaper, as its builder drives
+/// them for one style in `pinned`, into `kept`, with the run's size,
+/// metrics and variation coordinates. `None` when Parley takes more than
+/// one run for it, or a right-to-left one.
+fn parley_shape(
+    direct: &mut Direct,
+    pinned: &PinnedFont,
+    text: &str,
+    size: f32,
+    variations: &[FontVariation],
+    word_break: WordBreak,
+    kept: &mut Snapped,
+) -> Option<(f32, parley::FontMetrics, Vec<i16>)> {
+    direct.analyse(text, word_break);
+    let chars = if text.is_ascii() {
+        text.len()
+    } else {
+        text.chars().count()
+    };
+    direct.styles.clear();
+    direct.styles.resize(chars, 0);
+    let item = parley_engine::itemize::Item {
+        char_end: u32::try_from(chars).ok()?,
+        options: ShapeOptions {
+            font_size: size,
+            language: None,
+            features: &[],
+            variations,
+        },
+    };
+    let one = OneFont(FontInstanceRef {
+        data: &pinned.font.data,
+        index: pinned.font.index,
+        synthesis: &pinned.synthesis,
+    });
+    direct.shaper.shape_text(
+        text,
+        &direct.analysis,
+        &direct.styles,
+        [item],
+        one,
+        &mut direct.shaped,
+    );
+    let [run] = direct.shaped.runs() else {
+        return None;
+    };
+    if run.bidi_level.is_rtl() {
+        return None;
+    }
+    let slice = direct.shaped.run_slice(0);
+    kept.glyphs.reserve(chars);
+    kept.qt.reserve(chars);
+    for cluster in slice.shaped_clusters_range() {
+        kept.glyphs.extend(slice.shaped_cluster_glyphs(cluster));
+    }
+    let clusters = slice.shaped_clusters();
+    if clusters.len() != chars || clusters.iter().any(|c| c.glyph_len() != 1) {
+        let mut glyphs = 0;
+        kept.clusters.extend(clusters.iter().map(|c| {
+            glyphs += u32::from(c.glyph_len());
+            (c.chars_range().end, glyphs)
+        }));
+    }
+    let coords = direct
+        .shaped
+        .normalized_coords()
+        .get(run.normalized_coords_range.clone())
+        .unwrap_or(&[])
+        .iter()
+        .map(|c| c.to_bits())
+        .collect();
+    Some((run.font_size, run.font_metrics, coords))
+}
+
+/// `pinned` at `size` set up for [`harf_shape`] as Parley's shaper sets a
+/// font up, with what Parley's shaping of a text in it said of the run.
+fn voice_of(
+    pinned: &PinnedFont,
+    size: f32,
+    variations: &[FontVariation],
+    font_size: f32,
+    metrics: parley::FontMetrics,
+    coords: &[i16],
+) -> Option<Voice> {
+    let face = harfrust::FontRef::from_index(pinned.font.data.as_ref(), pinned.font.index).ok()?;
+    let data = harfrust::ShaperData::new(&face);
+    let synthesis = pinned.synthesis.variation_settings().iter();
+    let settings = synthesis
+        .map(|&(tag, value)| harfrust::Variation { tag, value })
+        .chain(variations.iter().map(|v| harfrust::Variation {
+            tag: harfrust::Tag::new(&v.tag.to_bytes()),
+            value: v.value,
+        }));
+    let instance = harfrust::ShaperInstance::from_variations(&face, settings);
+    let shaper = data.shaper(&face).instance(Some(&instance)).build();
+    let plan = harfrust::ShapePlan::new(
+        &shaper,
+        harfrust::Direction::LeftToRight,
+        Some(harfrust::script::LATIN),
+        None,
+        &[],
+    );
+    // As Parley's shaper scales: its metrics' units per em are the head
+    // table's, as harfrust's are.
+    let scale = size / shaper.units_per_em() as f32;
+    Some(Voice {
+        blob: pinned.font.data.id(),
+        index: pinned.font.index,
+        synthesis: pinned.synthesis,
+        size: size.to_bits(),
+        data,
+        instance,
+        plan,
+        scale,
+        font_size,
+        metrics,
+        coords: coords.into(),
+    })
 }
 
 /// The pinned font's file as Parley's builder takes it when made: its
@@ -1746,7 +1960,8 @@ fn break_atoms(
 /// The lines of a text shaped directly ([`shape_direct`]) and broken at
 /// `max` as [`break_inside`] breaks Parley's layout of it, which is not
 /// built: the clusters are the shaper's, the soft wrap opportunities its
-/// analysis's, and the lines Parley's breaker's ([`break_atoms`]).
+/// analysis's ([`soft_breaks`]), and the lines Parley's breaker's
+/// ([`break_atoms`]).
 fn wrap_direct(
     direct: &mut Direct,
     entry: &mut ShapedEntry,
@@ -1767,12 +1982,11 @@ fn wrap_direct(
     };
     let run = run.clone();
     {
-        let key = direct.analyse(text, word_break_of(entry.class));
-        let analysis = match key.and_then(|k| direct.analyses.get_mut(&k, direct.frame)) {
-            Some(kept) => &kept.analysis,
-            None => &direct.analysis,
+        let key = direct.breaks(text, word_break_of(entry.class));
+        let soft = match key.and_then(|k| direct.breaks.get_mut(&k, direct.frame)) {
+            Some(kept) => &kept.soft[..],
+            None => &direct.soft[..],
         };
-        let info = analysis.char_info();
         atoms.clear();
         let mut push = |chars: Range<usize>, glyphs: Range<usize>| {
             let advance = known.glyphs[glyphs.clone()]
@@ -1782,7 +1996,7 @@ fn wrap_direct(
                 end: chars.end as u32,
                 glyph_end: glyphs.end as u32,
                 advance,
-                soft: info[chars.start].is_soft_wrap_opportunity(),
+                soft: soft[chars.start],
                 hangs: bytes[chars].iter().all(|&b| b == b' '),
             });
         };
@@ -3863,5 +4077,170 @@ mod tests {
                 .collect();
             check(&text);
         }
+    }
+
+    /// Texts of every printable character one and two deep, and of every
+    /// class three deep when `deep`, and `long` longer ones from a fixed
+    /// sequence so a failure repeats.
+    fn printable_grid(deep: bool, long: usize) -> Vec<String> {
+        let printable: Vec<char> = (0x20u8..0x7f).map(char::from).collect();
+        let classes: Vec<char> = printable
+            .iter()
+            .copied()
+            .filter(|c| !c.is_ascii_alphanumeric() || "aZq09".contains(*c))
+            .collect();
+        let mut texts: Vec<String> = printable.iter().map(char::to_string).collect();
+        for &a in &printable {
+            for &b in &printable {
+                texts.push(format!("{a}{b}"));
+            }
+        }
+        for &a in classes.iter().filter(|_| deep) {
+            for &b in &classes {
+                for &c in &classes {
+                    texts.push(format!("{a}{b}{c}"));
+                }
+            }
+        }
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..long {
+            let len = 4 + (next() % 60) as usize;
+            texts.push(
+                (0..len)
+                    .map(|_| printable[(next() % printable.len() as u64) as usize])
+                    .collect(),
+            );
+        }
+        texts.extend(
+            [
+                "Message 42: the well-known fox re-read a lazy dog tomorrow.",
+                "e-mail me at a.b@c.org (or call +1-555-0100), 50% off; ok?",
+                "a/b/c path\\to\\file \"quoted\" 'single' [x] {y} <z> #1 $2 &3",
+                "12,345.67 -8 +9 1/2 3:45 pm -- dashes --- and ... dots!?",
+            ]
+            .map(String::from),
+        );
+        texts
+    }
+
+    /// [`wrap_direct`] wraps a plain text where [`soft_breaks`] says it
+    /// may, which has to be where Parley's analysis of it says.
+    #[test]
+    fn soft_breaks_are_parleys_soft_wrap_opportunities() {
+        let mut analyzer = Analyzer::new();
+        let mut analysis = Analysis::new();
+        let mut soft = Vec::new();
+        for text in printable_grid(true, 2000) {
+            for word_break in [WordBreak::Normal, WordBreak::BreakAll, WordBreak::KeepAll] {
+                let config = LineBreakConfig {
+                    word_break,
+                    ..LineBreakConfig::default()
+                };
+                let line_break = [(0..text.len(), config)];
+                let options = AnalysisOptions {
+                    base_direction: BaseDirection::Auto,
+                    line_break: &line_break,
+                    break_spaces: &[],
+                    line_break_override: None,
+                };
+                analyzer.analyze(&text, &options, &mut analysis);
+                soft_breaks(&text, word_break, &mut soft);
+                let theirs: Vec<bool> = analysis
+                    .char_info()
+                    .iter()
+                    .map(|i| i.is_soft_wrap_opportunity())
+                    .collect();
+                assert_eq!(soft, theirs, "{text:?} {word_break:?}");
+            }
+        }
+    }
+
+    /// [`harf_shape`] stands in for Parley's shaper once a font is set up
+    /// ([`parley_shape`]), so the two have to give the same glyphs and
+    /// clusters, in every font, size and synthesis, and with ellipses.
+    #[test]
+    fn harfrust_shapes_a_plain_text_as_parley_does() {
+        let mut texts = printable_grid(false, 300);
+        texts.extend(
+            [
+                "\u{2026}",
+                "cut here\u{2026}",
+                "office\u{2026}affluent\u{2026}",
+                "fi fl ffi ffl Th st ct WA AV To Ty",
+            ]
+            .map(String::from),
+        );
+        let styles = [
+            ("sans-serif", 400.0, false),
+            ("serif", 700.0, true),
+            ("monospace", 400.0, true),
+            ("sans-serif", 900.0, false),
+        ];
+        let mut compared = 0;
+        for system in [false, true] {
+            let mut engine = TextEngine::build(system);
+            for (family, weight, italic) in styles {
+                for size in [6.0, 13.0, 23.5] {
+                    let weight = FontWeight::new(weight);
+                    let Some(pinned) =
+                        engine
+                            .families
+                            .pinned(&mut engine.fcx, "a", family, weight, italic)
+                    else {
+                        continue;
+                    };
+                    let optical = optical_size(Platform::CURRENT, size);
+                    let variations = match &optical {
+                        Some(FontVariations::List(list)) => &list[..],
+                        _ => &[],
+                    };
+                    let mut voice = None;
+                    for text in &texts {
+                        let mut theirs = Snapped::default();
+                        let direct = &mut engine.direct;
+                        let Some((font_size, metrics, coords)) = parley_shape(
+                            direct,
+                            &pinned,
+                            text,
+                            size,
+                            variations,
+                            WordBreak::Normal,
+                            &mut theirs,
+                        ) else {
+                            continue;
+                        };
+                        let voice = voice.get_or_insert_with(|| {
+                            voice_of(&pinned, size, variations, font_size, metrics, &coords)
+                                .expect("a font Parley shapes in sets up")
+                        });
+                        assert_eq!(voice.font_size.to_bits(), font_size.to_bits());
+                        assert_eq!(&*voice.coords, &coords[..], "{family} {size}");
+                        let mut ours = Snapped::default();
+                        harf_shape(voice, &pinned.font, text, &mut direct.buffer, &mut ours)
+                            .expect("shapes");
+                        let bits = |s: &Snapped| {
+                            let glyphs = s
+                                .glyphs
+                                .iter()
+                                .map(|g| (g.id, g.x.to_bits(), g.y.to_bits(), g.advance.to_bits()));
+                            (glyphs.collect::<Vec<_>>(), s.clusters.clone())
+                        };
+                        assert_eq!(
+                            bits(&ours),
+                            bits(&theirs),
+                            "{text:?} {family} {weight:?} {italic} {size}, system fonts {system}"
+                        );
+                        compared += 1;
+                    }
+                }
+            }
+        }
+        assert!(compared > 100_000, "{compared}");
     }
 }

@@ -306,6 +306,9 @@ fn ten_listview_delegates() {
     // geometry are marks its properties' change hooks set, read at the
     // frame, where each was an effect (four effects and ten allocations
     // fewer a delegate, B28).
+    // A text is shaped by harfrust as Parley drives it once its font is set
+    // up, which sets up the font's lookups as texts first use them (17
+    // more here, the rows' digits being new; none once they are, TEXT5).
     assert_eq!(
         b,
         Budget {
@@ -322,7 +325,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1305,
+            allocations: 1322,
         }
     );
 }
@@ -333,7 +336,7 @@ fn ten_wrapped_listview_delegates() {
     let (b, made) = listview_delegates(WRAPPED);
     assert_eq!(made, 10);
     // Per delegate: 3 objects, 8 values, 5 bindings, 10 effects, 2
-    // scopes; 129.8 allocations. The two enumerations its text names,
+    // scopes; 135.4 allocations. The two enumerations its text names,
     // `Text.WordWrap` and `Text.ElideRight`, are looked up as a type once
     // for the file, not once a delegate (twenty fewer lookups, TEXT5).
     // The text is broken into lines and its last line elided without
@@ -343,6 +346,10 @@ fn ten_wrapped_listview_delegates() {
     // anchored item, make 82 fewer and 20 fewer effects (B27). Place and
     // geometry as marks a change hook sets make 4 fewer effects a
     // delegate (B28).
+    // Its text is shaped by harfrust as Parley drives it once the font is
+    // set up, which sets the font's lookups up as texts first use them (56
+    // more here, in the first rows; a fifth of an allocation a text once a
+    // scroll has warmed the font, TEXT5).
     assert_eq!(
         b,
         Budget {
@@ -359,7 +366,7 @@ fn ten_wrapped_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1298,
+            allocations: 1354,
         }
     );
 }

@@ -63,6 +63,10 @@ parley = "0.12"
 # Parley's own analysis and shaping, which ljos_text drives itself for a
 # plain one-line text; the version parley depends on.
 parley_engine = "0.12"
+# Parley's shaper and line breaker, which ljos_text calls itself for a plain
+# text once a font is set up: the versions and features parley_engine takes.
+harfrust = "0.12"
+icu_segmenter = { version = "2.3", default-features = false, features = ["compiled_data"] }
 # The library Fontique links on Linux; ljos_text asks it for family substitutes.
 yeslogic-fontconfig-sys = "6.0.1"
 # Must match the skrifa that vello_cpu, parley and epaint use, so the font stack is not duplicated.
