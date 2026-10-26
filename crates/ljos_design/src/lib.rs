@@ -259,6 +259,14 @@ pub const RULES: &[Rule] = &[
         "A text field is told apart only by its placeholder, which is gone as soon as one types (WCAG 2.2 3.3.2).",
         "Name it: `Accessible.name`, or a `Label` beside it with the same words.",
     ),
+    r(
+        "a11y-live-status",
+        A11y,
+        Hint,
+        Runtime,
+        "A text the application calls a status, toast or error changes and is not marked as a status, so a screen reader never says it changed.",
+        "Set `Accessible.role: Accessible.StatusBar`, or `Accessible.AlertMessage` for what must be heard at once.",
+    ),
     // Colour.
     r(
         "color-text-contrast",

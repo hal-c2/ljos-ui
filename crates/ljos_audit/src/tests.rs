@@ -763,8 +763,13 @@ fn the_demo_of_the_shell_has_nothing_of_the_styles() {
             place.contains("Main.qml:") && own.as_deref() == Some(place),
             "a finding of the style's:\n{report}"
         );
+        // The demo's icon-only "Add" button has no tooltip: the demo's
+        // too.
         assert!(
-            matches!(f.code, "a11y-unnamed-interactive" | "a11y-unnamed-image"),
+            matches!(
+                f.code,
+                "a11y-unnamed-interactive" | "a11y-unnamed-image" | "a11y-icon-button-no-tooltip"
+            ),
             "the demo is missing names and nothing else:\n{report}"
         );
     }
@@ -992,11 +997,11 @@ fn what_cannot_be_seen_is_not_in_the_accessibility_tree() {
     );
     clean("    Button { x: 20; y: 20; text: \"Delete\"; visible: false }");
     // Left out of the tree, it is still a stop of the Tab round, which
-    // the Tab walk says.
+    // the rule of an ignored stop says.
     let report = run(&page(
         "    Button { x: 20; y: 20; text: \"Delete\"; opacity: 0; Accessible.ignored: true }",
     ));
-    assert_eq!(report.codes(), ["a11y-unnamed-interactive"], "\n{report}");
+    assert_eq!(report.codes(), ["a11y-ignored-focusable"], "\n{report}");
     // A box of no size whose content hangs out of it is seen.
     clean("    Item { x: 20; y: 20\n        Button { text: \"Open\" }\n    }");
 }

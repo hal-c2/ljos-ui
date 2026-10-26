@@ -95,8 +95,6 @@ Guidance below is in the pages, marked "not checked yet", with a proposed code f
 
 | Proposed code | Page | Guidance |
 |---|---|---|
-| `a11y-live-status` | accessibility.md | A status or toast text that changes has no `Accessible.role` of status bar or alert, so it is never announced. |
-| `a11y-drag-only` | accessibility.md | Something done by dragging has no single-pointer or keyboard way (WCAG 2.5.7). |
 | `color-complement-adjacent` | color.md | Two complementary hues at full chroma touch, and vibrate. |
 | `color-semantic-hue` | color.md | A brand accent sits in the hue band reserved for danger, warning, success or info. |
 | `color-accent-weight` | color.md | The accent covers much more than a tenth of the window. |

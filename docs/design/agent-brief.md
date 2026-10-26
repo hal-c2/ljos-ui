@@ -20,6 +20,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Never nest a control inside another clickable item. [a11y-nested-interactive]
 - Give every dialog a `title` or accessible name. [a11y-unnamed-dialog]
 - Name every text field with `Accessible.name` or a `Label`, never the placeholder alone. [a11y-placeholder-label]
+- Mark a changing status line `Accessible.StatusBar`, an urgent one `Accessible.AlertMessage`. [a11y-live-status]
 
 ## Colour
 - Keep text at 4.5:1 (3:1 at 24 px, or 18.66 px bold) in light, dark and high contrast. [color-text-contrast]

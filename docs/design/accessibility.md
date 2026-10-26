@@ -50,6 +50,8 @@ ToolButton {
 }
 ```
 
+Checked by: the runtime audit, on a button with an icon whose text is empty or hidden by `display: AbstractButton.IconOnly` and whose node has no name. It says this instead of `a11y-unnamed-interactive`.
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/non-text-content.html , https://doc.qt.io/qt-6/qml-qtquick-controls-abstractbutton.html#display-prop
 
 <a id="a11y-unnamed-image"></a>
@@ -96,6 +98,8 @@ ToolButton {
 }
 ```
 
+Checked by: the runtime audit, on two enabled controls of one role and one name anywhere in the window. A row, cell, menu or dialog around one gives it its context, as a list's rows do, so those are left out; two siblings are `a11y-duplicate-name`'s, and two that share one `action` do the same thing.
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/link-purpose-in-context.html , https://www.w3.org/WAI/WCAG22/Understanding/headings-and-labels.html
 
 <a id="a11y-icon-button-no-tooltip"></a>
@@ -114,6 +118,8 @@ ToolButton {
     ToolTip.delay: 500
 }
 ```
+
+Checked by: the runtime audit, on a button with an icon and no shown text that has neither `ToolTip.text` nor a `ToolTip` child with text.
 
 Sources: https://developer.apple.com/design/human-interface-guidelines/accessibility , https://www.w3.org/WAI/ARIA/apg/patterns/tooltip/ , https://doc.qt.io/qt-6/qml-qtquick-controls-tooltip.html
 
@@ -217,6 +223,8 @@ delegate: ItemDelegate {
 }
 ```
 
+Checked by: the runtime audit, comparing how the rows look (what is shown, colours, font weight and style, and a button's `highlighted`, `checked` and `down`): the list a combo box opens, and a view of rows one presses whose `currentIndex` the application sets. A view with its own `highlight` marks its row. It reports when the current row looks like all the others.
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html , https://www.w3.org/WAI/ARIA/apg/patterns/listbox/
 
 <a id="a11y-name-mismatch"></a>
@@ -231,6 +239,8 @@ Button { text: qsTr("Send"); Accessible.name: qsTr("Submit message") }
 Button { text: qsTr("Send"); Accessible.name: qsTr("Send message") }
 ```
 
+Checked by: the runtime audit, on a button whose shown text's words are not in its accessible name in the same order (case and punctuation aside).
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/label-in-name.html , axe `label-content-name-mismatch`: https://github.com/dequelabs/axe-core/blob/develop/doc/rule-descriptions.md
 
 <a id="a11y-ignored-focusable"></a>
@@ -244,6 +254,8 @@ Pane { Accessible.ignored: true; Button { text: qsTr("Open") } }
 // Good: only the decoration is ignored
 Pane { Image { source: "card-art.svg"; Accessible.ignored: true }  Button { text: qsTr("Open") } }
 ```
+
+Checked by: the runtime audit, on a shown item with `Accessible.ignored: true` that is a Tab stop. It says this instead of `a11y-unnamed-interactive`'s silent Tab stop.
 
 Sources: axe `aria-hidden-focus`: https://github.com/dequelabs/axe-core/blob/develop/doc/rule-descriptions.md , https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html
 
@@ -262,6 +274,8 @@ RowLayout {
 }
 ```
 
+Checked by: the runtime audit, on a control that is pressed whose node sits inside another pressed node, up to the first composite control (a combo box, spin box, list, menu, tab bar or dialog), which holds its parts on purpose.
+
 Sources: axe `nested-interactive`: https://github.com/dequelabs/axe-core/blob/develop/doc/rule-descriptions.md , https://www.w3.org/WAI/WCAG22/Understanding/name-role-value.html
 
 <a id="a11y-unnamed-dialog"></a>
@@ -275,6 +289,8 @@ Dialog { modal: true; standardButtons: Dialog.Ok | Dialog.Cancel; Label { text: 
 // Good
 Dialog { title: qsTr("Discard changes"); modal: true; standardButtons: Dialog.Ok | Dialog.Cancel }
 ```
+
+Checked by: the runtime audit, on an open dialog or modal popup with no name and no `Accessible.labelledBy`. A drawer is a panel, not a dialog, and is left out.
 
 Sources: axe `aria-dialog-name`: https://github.com/dequelabs/axe-core/blob/develop/doc/rule-descriptions.md , https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/
 
@@ -295,10 +311,29 @@ ColumnLayout {
 
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/labels-or-instructions.html , https://www.w3.org/WAI/tutorials/forms/instructions/#placeholder-text
 
+<a id="a11y-live-status"></a>
+### `a11y-live-status`
+
+**Hint, runtime.** A text the application calls a status, toast, notice or error changes and is not marked as a status, so a screen reader never says that it changed. Mark a polite status with `Accessible.role: Accessible.StatusBar` and an urgent one with `Accessible.AlertMessage`, or call `Accessible.announce`.
+
+```qml
+// Bad
+Label { id: statusLine; text: qsTr("Saved %1 files").arg(count) }
+// Good
+Label {
+    id: statusLine; text: qsTr("Saved %1 files").arg(count)
+    Accessible.role: Accessible.StatusBar
+    Accessible.name: text
+}
+```
+
+Checked by: the runtime audit, on a shown text outside a list whose `text` the application binds or sets and whose `id` or `objectName` says status, toast, notice, notification, snackbar, banner or error, when neither it nor anything around it is announced. It is a Hint: the name is the only sign of what the text is for.
+
+Sources: https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html , https://doc.qt.io/qt-6/qml-qtquick-accessible.html
+
 ## Not checked yet
 
-- **Say what changed** (proposed `a11y-live-status`). A status line or toast that changes needs `Accessible.role: Accessible.StatusBar` (polite) or `Accessible.AlertMessage` (at once), or `Accessible.announce`. https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html
-- **Every drag has another way** (proposed `a11y-drag-only`). Reorder by drag also gets "Move up/Move down" actions or keys. https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html
+- **Every drag has another way.** No rule checks it: the window cannot tell whether a drag also has keys, a menu or buttons. Reorder by drag also gets "Move up/Move down" actions or keys. https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html
 - **Let text grow to 200 %.** Apple asks for at least 200 %; WCAG 1.4.4 the same. The audit runs at `limits::audit::FONT_SCALES`. https://www.w3.org/WAI/WCAG22/Understanding/resize-text.html
 
 ## Sources

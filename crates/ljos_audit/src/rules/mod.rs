@@ -88,6 +88,39 @@ pub(crate) const CHECKS: &[Check] = &[
         codes: &["a11y-set-size"],
         run: sets::check,
     },
+    // Names, layout and content, read off the live tree (batch 2b).
+    Check {
+        codes: &["a11y-unnamed-icon-button", "a11y-icon-button-no-tooltip"],
+        run: icon_buttons::check,
+    },
+    Check {
+        codes: &["a11y-name-mismatch"],
+        run: name_mismatch::check,
+    },
+    Check {
+        codes: &["a11y-nested-interactive"],
+        run: nested_interactive::check,
+    },
+    Check {
+        codes: &["a11y-ignored-focusable"],
+        run: ignored_focusable::check,
+    },
+    Check {
+        codes: &["a11y-unnamed-dialog"],
+        run: unnamed_dialog::check,
+    },
+    Check {
+        codes: &["a11y-ambiguous-name"],
+        run: ambiguous_name::check,
+    },
+    Check {
+        codes: &["a11y-current-unmarked"],
+        run: current_unmarked::check,
+    },
+    Check {
+        codes: &["a11y-live-status"],
+        run: live_status::check,
+    },
 ];
 
 /// The codes the audit implements, each once, in the order they run.
@@ -100,3 +133,14 @@ pub fn implemented() -> Vec<&'static str> {
     }
     out
 }
+
+// Names, layout and content (batch 2b).
+mod ambiguous_name;
+mod controls;
+mod current_unmarked;
+mod icon_buttons;
+mod ignored_focusable;
+mod live_status;
+mod name_mismatch;
+mod nested_interactive;
+mod unnamed_dialog;

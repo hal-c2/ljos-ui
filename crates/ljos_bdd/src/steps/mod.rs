@@ -44,6 +44,7 @@ fn expect_value(
 mod a11y;
 mod application;
 mod authoring;
+mod design_audit;
 mod environment;
 mod files;
 mod input;
@@ -57,7 +58,7 @@ mod scene;
 
 /// The text of every file of steps, in the order they are read: what the
 /// catalogue and `features:lint` read the step patterns from.
-pub const SOURCES: [&str; 13] = [
+pub const SOURCES: [&str; 14] = [
     include_str!("files.rs"),
     include_str!("scene.rs"),
     include_str!("input.rs"),
@@ -71,6 +72,7 @@ pub const SOURCES: [&str; 13] = [
     include_str!("qttest.rs"),
     include_str!("inspector.rs"),
     include_str!("authoring.rs"),
+    include_str!("design_audit.rs"),
 ];
 
 /// Every file of steps, one after the other.
