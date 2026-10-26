@@ -2690,6 +2690,34 @@ fn a_memory_answer_lists_the_types_that_fit_and_counts_the_rest() {
 }
 
 #[test]
+fn a_memory_answer_shows_what_a_crate_told_of_under_its_own_owner() {
+    let mut app = app();
+    app.engine.add_memory_owner(|| ljos_engine::OwnerMemory {
+        key: "decoder",
+        label: "decoded pictures",
+        bytes: 3 << 20,
+        count: 3,
+        of: "frames",
+    });
+    let reply = app.call("app_metrics", json!({ "memory": {} }));
+    assert!(!reply.is_error, "{}", reply.text);
+    let owners = reply.structured["owners"].as_array().unwrap();
+    let decoder = owners
+        .iter()
+        .find(|o| o["owner"] == "decoder")
+        .unwrap_or_else(|| panic!("no decoder owner: {owners:?}"));
+    assert_eq!(decoder["bytes"], 3 << 20);
+    assert_eq!(decoder["count"], 3);
+    assert_eq!(decoder["approximate"], false);
+    assert!(
+        reply.structured["counted_bytes"].as_u64().unwrap() >= 3 << 20,
+        "{}",
+        reply.structured["counted_bytes"]
+    );
+    assert!(reply.text.contains("decoded pictures"), "{}", reply.text);
+}
+
+#[test]
 fn a_memory_answer_the_host_finishes_later_keeps_to_the_budget_too() {
     let mut app = app_with(&many_types(200), InspectorConfig::default());
     app.inspector.as_mut().unwrap().set_measures_render();

@@ -221,6 +221,9 @@ pub(crate) fn memory(
     let compiled = engine.compiled_memory();
     let (model_rows, model_bytes) = model_memory(engine);
     let heap = heap();
+    // What the crates built on the engine hold (a player's decoded
+    // frames), each under its own owner.
+    let crates = engine.memory_owners();
 
     let scenes: usize = windows.iter().map(|w| w.scene.bytes).sum();
     let renders: usize = windows
@@ -234,7 +237,8 @@ pub(crate) fn memory(
         + text.map_or(0, |t| t.bytes)
         + image_bytes
         + scenes
-        + renders;
+        + renders
+        + crates.iter().map(|o| o.bytes).sum::<usize>();
 
     // By owner. The script's is QuickJS's own count, with its objects,
     // when it can be asked (not inside a run); else what its allocator
@@ -318,6 +322,11 @@ pub(crate) fn memory(
             true,
         ),
     ];
+    owners.extend(
+        crates
+            .iter()
+            .map(|o| owner(o.key, o.label, o.bytes, o.count, o.of, false)),
+    );
     let attributed: u64 = owners
         .iter()
         .map(|o| o["bytes"].as_u64().unwrap_or(0))

@@ -26,6 +26,26 @@ pub struct CompiledMemory {
     pub bytes: usize,
 }
 
+/// What a crate built on the engine holds outside the objects, as a
+/// memory tool shows it beside the engine's own owners
+/// ([`Engine::add_memory_owner`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnerMemory {
+    /// A stable key (`media`).
+    pub key: &'static str,
+    /// What a person reads (`decoded media`).
+    pub label: &'static str,
+    pub bytes: usize,
+    pub count: usize,
+    /// What `count` counts (`frames`).
+    pub of: &'static str,
+}
+
+/// The owners crates told of: each is asked when a tool asks, never
+/// kept up to date.
+#[derive(Default)]
+pub(crate) struct MemoryOwners(std::cell::RefCell<Vec<Box<dyn Fn() -> OwnerMemory>>>);
+
 /// The objects of one type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeMemory {
@@ -113,6 +133,23 @@ impl Engine {
     /// ([`ljos_reactive::Graph::bytes`]).
     pub fn graph_bytes(&self) -> usize {
         self.inner.graph.bytes()
+    }
+
+    /// Tells a memory tool of what a crate built on the engine holds that
+    /// no object counts (a decoder's frames, a device's buffers), so it is
+    /// shown under its own owner rather than among what nobody told of.
+    /// `measure` runs when a tool asks, on the Engine thread.
+    pub fn add_memory_owner(&self, measure: impl Fn() -> OwnerMemory + 'static) {
+        self.extension::<MemoryOwners>()
+            .0
+            .borrow_mut()
+            .push(Box::new(measure));
+    }
+
+    /// What the owners [`Engine::add_memory_owner`] told of hold now.
+    pub fn memory_owners(&self) -> Vec<OwnerMemory> {
+        let owners = self.extension::<MemoryOwners>();
+        owners.0.borrow().iter().map(|m| m()).collect()
     }
 
     /// The files loaded and about the bytes their compiled form holds.
