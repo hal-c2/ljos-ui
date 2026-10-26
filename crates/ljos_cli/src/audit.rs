@@ -95,6 +95,12 @@ impl Audit {
         ljos_media::use_null_audio(&engine);
         render::register_modules(&engine);
         ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
+        // `Settings` reads and writes the user's configuration: a home of
+        // the run's own, so that what one audit's points wrote (a theme
+        // that followed the scheme) is not what the next one starts from,
+        // and the user's own settings are neither audited nor changed.
+        let home = Home::new()?;
+        ljos_platform::Platform::of(&engine).set_env(home.env());
         render::register_example(&engine, self.example.as_deref());
         ljos_controls::set_application_arguments(
             &engine,
@@ -127,6 +133,12 @@ impl Audit {
             .scene(&engine, root)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         let report = ljos_audit::audit(&engine, &mut scene, picture.now(), &options);
+        // The engine writes what `Settings` holds as it goes, before the
+        // home it writes in goes.
+        drop(scene);
+        drop(engine);
+        ljos_platform::flush_writes();
+        drop(home);
 
         if self.json {
             println!("{}", report.json());
@@ -144,5 +156,33 @@ impl Audit {
             );
         }
         Ok(i32::from(report.count(Severity::Error) > 0))
+    }
+}
+
+/// A home directory for one run, under the temporary directory, removed
+/// when the run ends.
+struct Home(PathBuf);
+
+impl Home {
+    fn new() -> anyhow::Result<Home> {
+        let dir = std::env::temp_dir().join(format!("ljos-audit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).with_context(|| format!("{}", dir.display()))?;
+        Ok(Home(dir))
+    }
+
+    /// The process's environment with this home and no XDG directory of
+    /// the user's.
+    fn env(&self) -> ljos_platform::PathEnv {
+        let mut env = ljos_platform::PathEnv::from_process();
+        env.home = self.0.clone();
+        env.vars
+            .retain(|k, _| matches!(k.as_str(), "PATH" | "TMPDIR" | "XDG_RUNTIME_DIR"));
+        env
+    }
+}
+
+impl Drop for Home {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
