@@ -575,14 +575,18 @@ impl std::error::Error for ConvertError {}
 
 /// What an `int` makes of a text, as Qt does: a decimal number, rounded
 /// half away from 0, and past the range of an int the least one, as a
-/// double cast to one is. A text that is no such number is none.
+/// double cast to one is. `nan` and `inf`, signed or not, are such
+/// doubles; `infinity` and a number too great for a double are no number.
 fn string_to_int(s: &str) -> Option<i32> {
-    let n = s
-        .trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|n| n.is_finite())?
-        .round();
+    let t = s.trim();
+    let word = t.to_ascii_lowercase();
+    if matches!(word.as_str(), "nan" | "inf" | "+inf" | "-inf") {
+        return Some(i32::MIN);
+    }
+    if word.contains("nan") || word.contains("inf") {
+        return None;
+    }
+    let n = t.parse::<f64>().ok().filter(|n| n.is_finite())?.round();
     Some(if n < f64::from(i32::MIN) || n > f64::from(i32::MAX) {
         i32::MIN
     } else {
