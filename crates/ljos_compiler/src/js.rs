@@ -74,6 +74,9 @@ pub(crate) struct TypeMember {
     pub end: u32,
     /// Where `object` starts when it is nothing but a name.
     pub base: Option<u32>,
+    /// `object` as `value.Name`, where `Name` may be a namespace the type
+    /// is named through (`item.L.Layout`): the name and `value`, whole.
+    pub through: Option<(String, Span)>,
 }
 
 /// What a member is written on: `a.b` of `a.b.x = 1`. Where that is a value
@@ -655,11 +658,19 @@ impl Reader<'_, '_> {
             Expression::Identifier(id) => Some(id.span.start - self.offset),
             _ => None,
         };
+        let through = match &it.object {
+            Expression::StaticMemberExpression(inner) if !inner.optional => Some((
+                inner.property.name.to_string(),
+                self.local(inner.object.span()),
+            )),
+            _ => None,
+        };
         self.analysis.type_members.push(TypeMember {
             name: name.to_string(),
             object: self.local(it.object.span()),
             end: it.property.span.end - self.offset,
             base,
+            through,
         });
     }
 }
