@@ -20,18 +20,10 @@ value:load-handlers:number-vs-list  a Connections' handler and a Binding write o
 value:load-handlers:bool-vs-record  two Connections' handlers of what a state changes write one property while made (features/bindings/writers-from-outside.feature)
 value:load-handlers:record-vs-bool  a Connections' handler and a state write one property while made (features/bindings/writers-from-outside.feature)
 
-# A Binding turned off gives back the old value on Ljós; on Qt not for a list, an object, or
-# a Binding without a value (features/bindings/writers-from-outside.feature).
-value:step:list-vs-number           a Binding of a list turned off (features/bindings/writers-from-outside.feature)
-value:step:list-vs-string           a Binding of a list turned off (features/bindings/writers-from-outside.feature)
-value:step:undefined-ljos           a Binding without a value turned off, after a script wrote an object (features/bindings/writers-from-outside.feature)
-value:step:string-vs-bool           a Binding without a value turned off, after a script wrote a string (features/bindings/writers-from-outside.feature)
-value:load:list-vs-string           a Binding of a list on while made and off once another Binding holds what its when reads (features/bindings/writers-from-outside.feature)
-
-# A colour given null is invalid, silently (features/bindings/writers-from-outside.feature).
-warning:assign(ljos-only):Unable_to_assign_null_to_color   a colour given null warns on Ljós (features/bindings/writers-from-outside.feature)
-
 # Qt's own: Ljós is not to copy these.
+value:step:list-vs-number           a Binding of a list turned off: Qt leaves a var's array held, Ljós gives back what it had (features/bindings/writers-from-outside.feature, qt-diverges)
+value:step:list-vs-string           a Binding of a list turned off: Qt leaves a var's array held, Ljós gives back what it had (features/bindings/writers-from-outside.feature, qt-diverges)
+value:load:list-vs-string           a Binding of a list on while made and off once another Binding holds what its when reads (features/bindings/writers-from-outside.feature, qt-diverges)
 value:load:null-qt                  an explicit PropertyChanges of a list gives a list of nulls on Qt
 value:step:null-qt                  an explicit PropertyChanges of a list gives a list of nulls on Qt
 value:step:record-vs-number         a point a state gives stays on Qt when a state that extends it gives a number
