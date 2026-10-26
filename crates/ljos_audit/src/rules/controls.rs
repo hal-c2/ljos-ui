@@ -127,6 +127,17 @@ pub(crate) fn text_of(engine: &Engine, item: ObjectId) -> Option<String> {
     })
 }
 
+/// Every text the scene shows, with its words: shown, not see-through,
+/// not empty.
+pub(crate) fn shown_texts(cx: &crate::cx::Cx) -> Vec<(ObjectId, String)> {
+    crate::cx::shown_items(cx)
+        .into_iter()
+        .filter(|i| crate::cx::shown_opacity(cx.engine, *i) > 0.0)
+        .filter_map(|i| text_of(cx.engine, i).map(|t| (i, t)))
+        .filter(|(_, t)| !t.trim().is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

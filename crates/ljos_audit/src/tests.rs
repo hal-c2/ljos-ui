@@ -263,6 +263,7 @@ fn what_cannot_be_pressed_may_be_small() {
     Rectangle {
         y: 20; width: 16; height: 16; enabled: false
         Accessible.role: Accessible.Button; Accessible.name: "Later"
+        Accessible.description: "Comes on once the upload is done"
     }"##,
     );
 }
@@ -579,7 +580,7 @@ const STYLE: &str = r##"
         Row {
             spacing: 8
             Button { text: "Save" }
-            Button { text: "Off"; enabled: false }
+            Button { text: "Off"; enabled: false; Accessible.description: "Nothing to turn off" }
             Button { text: "Bold"; checkable: true; checked: true }
             Button { text: "Lit"; highlighted: true }
             Button { text: "Flat"; flat: true }
@@ -660,7 +661,7 @@ fn the_popups_of_the_basic_style_are_clean() {
     Menu {
         Component.onCompleted: open()
         MenuItem { text: "Cut" }
-        MenuItem { text: "Copy"; enabled: false }
+        MenuItem { text: "Copy"; enabled: false; Accessible.description: "Select something first" }
         MenuSeparator {}
         MenuItem { text: "Wrap"; checkable: true; checked: true }
         Menu { title: "More"; MenuItem { text: "Deep" } }

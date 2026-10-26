@@ -56,6 +56,7 @@ item a reader would fix.
 | `content-identical-rows` | `ux-same-label-rows` | five rows all read `Run command` |
 | `content-inconsistent-words` | `ux-retry-vs-try-again` | `Try again` and `Retry` in one window |
 | `content-raw-identifier` | `ux-absolute-path-row` | a row labelled by an absolute path |
+| `content-raw-identifier` | `ux-http-error-line` | a raw HTTP status and URL as the message |
 | `content-raw-identifier` | `ux-uuid-in-toast` | a message that prints a UUID |
 | `content-repeated-text` | `ux-error-repeats-message` | two labels say the same sentence |
 | `focus-escape-dismiss` | `ux-dialog-escape-disabled` | a dialog that Escape does not close |
@@ -92,7 +93,6 @@ item a reader would fix.
 | `text-raw-markup` | `ux-angle-bracket-placeholder-row` | a `<default>` placeholder shown as a row |
 | `text-raw-markup` | `ux-backticks-in-plain-text` | backticks and `**` in plain text |
 | `text-raw-markup` | `ux-envelope-tag-bubble` | an internal result tag shown as characters |
-| `text-raw-markup` | `ux-http-error-line` | a raw HTTP status and URL as the message |
 
 `ljos_design::fixture` reads the headers for every runner, and
 `tests/fixtures.rs` checks the structure.

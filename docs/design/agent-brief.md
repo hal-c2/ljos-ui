@@ -39,6 +39,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Render markup with `textFormat`, or strip it. [text-raw-markup]
 - Leave `font.family` unset or bind it to the theme. [text-font-literal]
 - Never draw text below 10 px; mute secondary text by weight or colour. [text-too-small]
+- Keep reading text under 80 characters a line; bound its width. [text-line-length]
 - Test at 200 % text and the smallest window.
 
 ## Layout

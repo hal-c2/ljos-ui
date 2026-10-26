@@ -220,3 +220,252 @@ Feature: The design audit checks layout and content in the live tree
       When the design audit runs at font scale 1 and window size 320x480
       Then the design audit does not report "layout-reflow"
 
+  Rule: Content, as the window says it
+
+    Scenario: An identifier shown as it is stored
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 500; height: 100
+          color: "white"
+          Label { anchors.centerIn: parent; text: "Closed 3f2c8a1e-9b7d-4c1e-8f2a-5d6e7f8091a2" }
+        }
+        """
+      Then the design audit reports "content-raw-identifier" at line 6
+
+    Scenario: A name shown for what it is
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 500; height: 100
+          color: "white"
+          Label { anchors.centerIn: parent; text: "Closed “Quarterly report”" }
+        }
+        """
+      Then the design audit does not report "content-raw-identifier"
+
+    Scenario: Markdown marks in plain text
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 360; height: 100
+          color: "white"
+          Text {
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            text: "Run `make build` before **continuing**"
+          }
+        }
+        """
+      Then the design audit reports "text-raw-markup" at line 6
+
+    Scenario: The same marks in text that renders them
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 360; height: 100
+          color: "white"
+          Text {
+            anchors.centerIn: parent
+            textFormat: Text.MarkdownText
+            text: "Run `make build` before **continuing**"
+          }
+        }
+        """
+      Then the design audit does not report "text-raw-markup"
+
+    Scenario: An empty list that shows only its heading
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 200
+          color: "white"
+          ListView {
+            anchors.fill: parent
+            model: 0
+            header: Label { text: "Recent files"; font.bold: true }
+            delegate: ItemDelegate { text: "Row" }
+          }
+        }
+        """
+      Then the design audit reports "content-empty-state" at line 6
+
+    Scenario: An empty list that says it is empty
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 200
+          color: "white"
+          ListView {
+            id: files
+            anchors.fill: parent
+            model: 0
+            delegate: ItemDelegate { text: "Row" }
+          }
+          Label { anchors.centerIn: files; visible: files.count === 0; text: "No recent files yet" }
+        }
+        """
+      Then the design audit does not report "content-empty-state"
+
+    Scenario: An error that says its title again
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 160
+          color: "white"
+          Column {
+            spacing: 4
+            Label { text: "The export could not be finished." }
+            Label { text: "The export could not be finished." }
+          }
+        }
+        """
+      Then the design audit reports "content-repeated-text" at line 9
+
+    Scenario: Rows a user cannot tell apart
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 200
+          color: "white"
+          ListView {
+            anchors.fill: parent
+            model: 5
+            delegate: ItemDelegate { width: ListView.view.width; text: "Run command" }
+          }
+        }
+        """
+      Then the design audit reports "content-identical-rows" at line 6
+
+    Scenario: Rows named for what they are
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 200
+          color: "white"
+          ListView {
+            anchors.fill: parent
+            model: ["Build", "Test", "Deploy", "Clean", "Lint"]
+            delegate: ItemDelegate { width: ListView.view.width; text: "Run " + modelData }
+          }
+        }
+        """
+      Then the design audit does not report "content-identical-rows"
+
+    Scenario: One action named two ways
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 200
+          color: "white"
+          Column {
+            spacing: 8
+            Button { text: "Try again" }
+            Button { text: "Retry" }
+          }
+        }
+        """
+      Then the design audit reports "content-inconsistent-words" at line 8
+      And the design audit reports "content-inconsistent-words" at line 9
+
+    Scenario: A menu item switched off with nothing to say why
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 200
+          color: "white"
+          Menu {
+            Component.onCompleted: open()
+            MenuItem { text: "Copy" }
+            MenuItem { text: "Paste"; enabled: false }
+          }
+        }
+        """
+      Then the design audit reports "content-disabled-no-reason" at line 9
+
+    Scenario: A menu item switched off that says what turns it on
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 200
+          color: "white"
+          Menu {
+            Component.onCompleted: open()
+            MenuItem { text: "Copy" }
+            MenuItem {
+              text: "Paste"; enabled: false
+              Accessible.description: "Copy something first"
+            }
+          }
+        }
+        """
+      Then the design audit does not report "content-disabled-no-reason"
+
+    Scenario: A caption drawn too small to read
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Label { x: 20; y: 20; text: "Updated just now"; font.pixelSize: 8 }
+        }
+        """
+      Then the design audit reports "text-too-small" at line 6
+
+    Scenario: A paragraph as wide as a wide window
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 1000; height: 400
+          color: "white"
+          Label {
+            x: 20; width: 960; wrapMode: Text.Wrap
+            text: "Each line of this paragraph runs the whole width of the window. ".repeat(12)
+          }
+        }
+        """
+      Then the design audit reports "text-line-length" at line 6
+
+    Scenario: A paragraph with a measure of its own
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 1000; height: 400
+          color: "white"
+          Label {
+            x: 20; width: 360; wrapMode: Text.Wrap
+            text: "Each line of this paragraph runs the whole width of the window. ".repeat(12)
+          }
+        }
+        """
+      Then the design audit does not report "text-line-length"
