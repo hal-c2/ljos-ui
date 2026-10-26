@@ -6440,9 +6440,9 @@ last ~4 s before the turn are still kept, and the rest are shaped again.
 A wheel scroll of ten notches revisits rows whose layouts are still kept, so text barely
 shows in it.
 
-Ten ListView delegates make 1521 allocations, up from 1507. Each new row's kept run adds
-its text and its glyphs (+21), and the analysis no longer made saves 7. Ten plain items
-still make 1013.
+Ten ListView delegates make 1451 allocations, up from 1437 after B26. Each new row's kept
+run adds its text and its glyphs (+21), and the analysis no longer made saves 7. Ten plain
+items still make 983.
 
 DECISIONs:
 
