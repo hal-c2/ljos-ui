@@ -243,6 +243,9 @@ pub(crate) struct Targets {
 
 pub(crate) type SharedTargets = Rc<Targets>;
 
+/// A delegate whose row left, with the index its `remove` is told.
+pub(crate) type Leaving = (ObjectId, i32);
+
 pub(crate) struct ViewState {
     pub grid: Cell<bool>,
     pub delegates: RefCell<Option<ViewDelegates>>,
@@ -339,6 +342,12 @@ pub(crate) struct ViewState {
     pub populate: Cell<bool>,
     /// Delegates of rows that left and are still shown.
     pub leaving: RefCell<Vec<ObjectId>>,
+    /// Of those, the ones whose `remove` the next pass runs, each with the
+    /// row it had as it left.
+    pub removing: RefCell<Vec<Leaving>>,
+    /// The ones the pass took the removal of, with the index the change
+    /// gives each and the change as it is told.
+    pub removed: RefCell<Option<(SharedTargets, Vec<Leaving>)>>,
     /// Pooled delegates, which are not shown ([`super::cull::pool`]).
     pub hidden: RefCell<FxHashSet<ObjectId>>,
     /// Transitions that are running, and on which item.
@@ -439,6 +448,8 @@ impl Default for ViewState {
             added: RefCell::default(),
             populate: Cell::new(false),
             leaving: RefCell::default(),
+            removing: RefCell::default(),
+            removed: RefCell::default(),
             hidden: RefCell::default(),
             running: RefCell::default(),
             pending: RefCell::default(),

@@ -54,9 +54,6 @@ Feature: Rows removed together are one change to a view
     And 100 milliseconds pass
     Then the property "index" of "root" is 3
 
-  # Blocked on B30 (the scene's polish loop, ADR 0001): qml6 runs `remove` in the layout pass,
-  # once for the whole change; Ljós runs it as each row goes, told that row alone.
-  @blocked
   Scenario: The remove transition is told all the rows removed together
     When 50 milliseconds pass
     And the method "drop" of "root" is called with "4,1 0,1 1,1"

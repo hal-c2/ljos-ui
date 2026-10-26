@@ -877,6 +877,9 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>
     }
     run(e, view, st, over);
     st.in_pass.set(false);
+    if over.is_none() {
+        super::changes::run_removals(e, view, st);
+    }
     // What changed during a pass for a method is laid out once the method
     // has gone where it measured: laid out now, it would be laid out where
     // the view still is, and the row measured would be let go.
@@ -1298,6 +1301,9 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
             targets.indexes.sort_unstable();
         }
         let targets = std::rc::Rc::new(targets);
+        if op.kind == super::state::OpKind::Remove {
+            super::changes::told_removal(st, &op, &targets);
+        }
         for &(row, o, pos, size) in &items {
             let Some(key) = d.key_at(row) else { continue };
             let was = st

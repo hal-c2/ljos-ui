@@ -7,10 +7,11 @@
 //! origin moves) and nothing in sight jumps. qml6 does the same.
 
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use ljos_engine::{Engine, LogLevel, ModelChange, ObjectId, Value, ViewHost};
 
-use super::state::{OpKind, PendingOp, Targets, ViewState};
+use super::state::{OpKind, PendingOp, SharedTargets, Targets, ViewState};
 use super::{
     ItemView, Part, ViewAttached, attached_of, enrol, pass, put, stack, state_of, strike,
     type_name, warn,
@@ -170,6 +171,10 @@ impl ViewHost for Host {
             return;
         };
         st.leaving.borrow_mut().retain(|o| *o != object);
+        st.removing.borrow_mut().retain(|r| r.0 != object);
+        if let Some((_, told)) = st.removed.borrow_mut().as_mut() {
+            told.retain(|r| r.0 != object);
+        }
         if st.hidden.borrow_mut().remove(&object) {
             super::cull::pool(e, object, false);
         }
@@ -528,21 +533,71 @@ fn leave(e: &Engine, view: ObjectId, st: &ViewState, object: ObjectId, index: i3
             // `ListView.delayRemove`: the delegate stays until it is false.
             let watching = e.watch(att, ViewAttached::DELAY_REMOVE.index, move |e, v| {
                 if !v.to_boolean() {
-                    finish(e, view, object, index);
+                    finish(e, view, object, index, None);
                 }
             });
             if let Err(err) = watching {
                 warn(e, "delayRemove", Err(err));
-                finish(e, view, object, index);
+                finish(e, view, object, index, None);
             }
         }
-        None => finish(e, view, object, index),
+        // In the layout pass, once for every row that left with it, as
+        // qml6 runs it ([`run_removals`]).
+        None => st.removing.borrow_mut().push((object, index)),
+    }
+}
+
+/// The pass has taken the removal `op`, told as `targets`: each delegate
+/// that left in it is told the index the change gives its row.
+pub(crate) fn told_removal(st: &ViewState, op: &PendingOp, targets: &SharedTargets) {
+    let mut told = Vec::new();
+    st.removing.borrow_mut().retain(|&(object, _)| {
+        let Some(&(row, _)) = op.gone_items.iter().find(|g| g.1 == object) else {
+            return true;
+        };
+        // A run of rows counts on from where it starts, once the runs
+        // before it are gone.
+        let earlier: usize = (op.gone_runs.iter())
+            .take_while(|r| r.0 + r.1 <= row)
+            .map(|r| r.1)
+            .sum();
+        told.push((object, (row - earlier).min(i32::MAX as usize) as i32));
+        false
+    });
+    if !told.is_empty() {
+        *st.removed.borrow_mut() = Some((Rc::clone(targets), told));
+    }
+}
+
+/// Runs `remove` on the delegates whose rows left before the pass that
+/// just ended, then gives them back. One whose removal no pass will take
+/// (a reset or a move took its place) is told its own row alone.
+pub(crate) fn run_removals(e: &Engine, view: ObjectId, st: &ViewState) {
+    let told = st.removed.borrow_mut().take();
+    if let Some((targets, told)) = told {
+        for (object, index) in told {
+            finish(e, view, object, index, Some(Rc::clone(&targets)));
+        }
+    }
+    let waits = (st.pending.borrow().as_ref()).is_some_and(|op| op.kind == OpKind::Remove);
+    if !waits {
+        let untold = std::mem::take(&mut *st.removing.borrow_mut());
+        for (object, index) in untold {
+            finish(e, view, object, index, None);
+        }
     }
 }
 
 /// Shows a delegate out the way `remove` says, then gives it back.
-/// `index` is the row it had, which the transition is told.
-fn finish(e: &Engine, view: ObjectId, object: ObjectId, index: i32) {
+/// `index` is the row it had, which the transition is told, with the
+/// change's `targets` (that row alone without them).
+fn finish(
+    e: &Engine,
+    view: ObjectId,
+    object: ObjectId,
+    index: i32,
+    targets: Option<SharedTargets>,
+) {
     let Some(st) = state_of(e, view) else {
         return;
     };
@@ -555,7 +610,7 @@ fn finish(e: &Engine, view: ObjectId, object: ObjectId, index: i32) {
         leaving.swap_remove(i);
     }
     let transition = e.untrack(|| e.get(view, ItemView::REMOVE)).ok().flatten();
-    let animated = animate_at(e, view, transition, object, index, move |e| {
+    let animated = animate_at(e, view, transition, object, index, targets, move |e| {
         discard(e, view, object);
         // At the next polish, not now: a transition that ends at once
         // ends while the model is still telling the view of its rows,
@@ -590,7 +645,7 @@ pub(crate) fn animate(
         .and_then(|st| st.delegates())
         .and_then(|d| d.index_of(item))
         .map_or(-1, |i| i as i32);
-    animate_at(e, view, transition, item, index, done)
+    animate_at(e, view, transition, item, index, None, done)
 }
 
 /// [`animate`] on an item the view numbers `index`, which a delegate
@@ -601,6 +656,7 @@ fn animate_at(
     transition: Option<ObjectId>,
     item: ObjectId,
     index: i32,
+    targets: Option<SharedTargets>,
     done: impl Fn(&Engine) + 'static,
 ) -> bool {
     let Some(t) = transition.filter(|t| e.is_alive(*t) && is_a::<Transition>(e, *t)) else {
@@ -614,8 +670,7 @@ fn animate_at(
     }
     // This run, too, is a view transition: it is told the item and the
     // place the view has put it in, so that a transition may read its
-    // `ViewTransition`. Rows that arrive or go together are told one at
-    // a time here, which is as much as one run of a transition can hold.
+    // `ViewTransition`, with the rows of the change it runs for.
     {
         let at = [
             pass::rd(e, item, crate::item::Item::X.index),
@@ -627,9 +682,11 @@ fn animate_at(
             item,
             index,
             at,
-            &std::rc::Rc::new(Targets {
-                indexes: vec![index],
-                items: vec![item],
+            &targets.unwrap_or_else(|| {
+                std::rc::Rc::new(Targets {
+                    indexes: vec![index],
+                    items: vec![item],
+                })
             }),
         );
     }
