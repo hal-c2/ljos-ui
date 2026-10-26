@@ -3444,6 +3444,13 @@ impl Engine {
         found.filter(|o| self.is_alive(*o))
     }
 
+    /// See [`Context::root`].
+    pub(crate) fn set_context_root(&self, ctx: ContextId, obj: ObjectId) {
+        if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
+            c.root = Some(obj);
+        }
+    }
+
     pub fn set_context_object(&self, ctx: ContextId, obj: Option<ObjectId>) {
         if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
             c.context_object = obj;
@@ -3491,13 +3498,14 @@ impl Engine {
 
     /// A name the compiler could not place, looked up from `ctx` outwards
     /// as Qt does at run time: the ids of each context, then its context
-    /// properties. An inline component reads the ids of the file that
-    /// uses it this way.
+    /// properties, the members of its root and of its context object. An
+    /// inline component reads the ids of the file that uses it this way,
+    /// and a file the members of the file it is made in.
     pub(crate) fn context_name(&self, ctx: ContextId, name: &str) -> Option<Value> {
         crate::lookups::name();
         let mut cur = Some(ctx);
         let found = loop {
-            let object = {
+            let objects = {
                 let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(cur?)?;
                 if let Some(o) = c.id(name) {
@@ -3507,10 +3515,12 @@ impl Engine {
                     return Some(v.clone());
                 }
                 cur = c.parent;
-                c.context_object
+                [c.root, c.context_object]
             };
-            if let Some(v) = object.and_then(|o| self.context_object_property(o, name)) {
-                return Some(v);
+            for o in objects.into_iter().flatten() {
+                if let Some(v) = self.context_object_property(o, name) {
+                    return Some(v);
+                }
             }
         };
         Some(if self.is_alive(found) {
@@ -3522,8 +3532,9 @@ impl Engine {
 
     /// Where `name` is from `ctx` outwards: the context object that has a
     /// property of the name, or the value when it is a name a context was
-    /// given outright (or, with `ids`, an id). As
-    /// [`Engine::context_property`] and [`Engine::context_name`] look.
+    /// given outright (or, with `ids`, an id or a member of a context's
+    /// root). As [`Engine::context_property`] and, with `ids`,
+    /// [`Engine::context_name`] look.
     pub(crate) fn context_holder(
         &self,
         ctx: ContextId,
@@ -3533,7 +3544,7 @@ impl Engine {
         crate::lookups::name();
         let mut cur = Some(ctx);
         while let Some(id) = cur {
-            let object = {
+            let objects = {
                 let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(id)?;
                 if ids && let Some(o) = c.id(name) {
@@ -3547,10 +3558,12 @@ impl Engine {
                     return Some(Err(v.clone()));
                 }
                 cur = c.parent;
-                c.context_object
+                [c.root.filter(|_| ids), c.context_object]
             };
-            if let Some(o) = object
-                && self.property_index(o, name).is_ok()
+            if let Some(o) = objects
+                .into_iter()
+                .flatten()
+                .find(|o| self.property_index(*o, name).is_ok())
             {
                 return Some(Ok(o));
             }

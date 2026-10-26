@@ -392,15 +392,48 @@ impl Engine {
         parent: Option<ObjectId>,
         initial_props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
-        let template = self.file_template(url)?;
-        if !self.inner.reload.tracking.get() {
-            return self
-                .as_host_root(|| self.create_from_template(&template, parent, initial_props));
+        self.create_from_url_in(url, parent, initial_props, None)
+    }
+
+    /// [`Engine::create_from_url`] in a context of `scope`'s own, which a
+    /// name the file cannot place finds the members of `scope` in, and then
+    /// what `scope` finds: a Loader's item reads the Loader's members
+    /// first (checked on qml6).
+    pub fn create_from_url_in(
+        &self,
+        url: &str,
+        parent: Option<ObjectId>,
+        initial_props: Vec<(String, Value)>,
+        scope: Option<ObjectId>,
+    ) -> Result<ObjectId, EngineError> {
+        let mut template = self.file_template(url)?;
+        let ctx = scope.map(|s| self.scope_context(s));
+        template.context = ctx;
+        // Kept for a reload to make the file again with.
+        let (props, noted) = if self.inner.reload.tracking.get() {
+            (initial_props.clone(), Some(initial_props))
+        } else {
+            (initial_props, None)
+        };
+        let made = self.as_host_root(|| self.create_from_template(&template, parent, props));
+        match (&made, ctx) {
+            (Ok(root), Some(ctx)) => self.add_context(*root, ctx),
+            (Err(_), Some(ctx)) => self.destroy_context(ctx),
+            _ => {}
         }
-        let root = self
-            .as_host_root(|| self.create_from_template(&template, parent, initial_props.clone()))?;
-        self.reload_note_origin(root, url, parent, &initial_props);
+        let root = made?;
+        if let Some(props) = noted {
+            self.reload_note_origin(root, url, parent, &props, scope);
+        }
         Ok(root)
+    }
+
+    /// A context for what is made in `scope`; see
+    /// [`Engine::create_from_url_in`]. It goes with the object made in it.
+    fn scope_context(&self, scope: ObjectId) -> ContextId {
+        let ctx = self.create_context(self.context_of(scope));
+        self.set_context_root(ctx, scope);
+        ctx
     }
 
     /// A `Component` object for the file at `url` (`Qt.createComponent`).
@@ -1118,6 +1151,9 @@ impl Engine {
             });
             if f.given.is_empty() {
                 self.set_context_slots(f.ctx, &inst);
+            }
+            if let Some(&root) = inst.objects.first() {
+                self.set_context_root(f.ctx, root);
             }
             f.closing = Some((inst, 0));
             return Ok(None);
@@ -3314,6 +3350,10 @@ pub struct CreationJob {
     setup: Option<DelegateSetup>,
     /// What its bindings say, held from the first slice to the last.
     errors: Option<crate::delayed_errors::CreationErrors>,
+    /// See [`CreationJob::in_scope`].
+    scope: Option<ObjectId>,
+    /// The context made for `scope`, until the object made in it owns it.
+    scope_ctx: Option<ContextId>,
 }
 
 impl std::fmt::Debug for CreationJob {
@@ -3392,6 +3432,8 @@ impl CreationJob {
                 done: None,
                 setup: None,
                 errors: None,
+                scope: None,
+                scope_ctx: None,
             },
             handle,
         )
@@ -3443,9 +3485,19 @@ impl CreationJob {
                 done: None,
                 setup: None,
                 errors: None,
+                scope: None,
+                scope_ctx: None,
             },
             SharedCreation(inner),
         )
+    }
+
+    /// The job making a file in a context of `scope`'s own, as
+    /// [`Engine::create_from_url_in`] does.
+    #[must_use]
+    pub fn in_scope(mut self, scope: ObjectId) -> Self {
+        self.scope = Some(scope);
+        self
     }
 
     /// Calls `f` with the result when the job ends, unless it was
@@ -3461,6 +3513,10 @@ impl CreationJob {
 
     fn finish(&mut self, engine: Option<&Engine>, r: Result<ObjectId, EngineError>) -> JobPoll {
         self.phase = Phase::Done;
+        // Made for an object that was not made.
+        if let (Some(e), Some(ctx)) = (engine, self.scope_ctx.take()) {
+            e.destroy_context(ctx);
+        }
         self.handle.0.progress.set(1.0);
         *self.handle.0.result.borrow_mut() = Some(r.clone());
         if let (Some(e), Some(f)) = (engine, self.done.take())
@@ -3474,6 +3530,9 @@ impl CreationJob {
     /// Ends a job nobody waits for any more: what it made goes away.
     fn abandon(&mut self, engine: Option<&Engine>, why: EngineError) -> JobPoll {
         self.unmake(engine);
+        if let (Some(e), Some(ctx)) = (engine, self.scope_ctx.take()) {
+            e.destroy_context(ctx);
+        }
         // Not `finish`: the callback belongs to whoever called it off.
         self.done = None;
         self.finish(None, Err(why))
@@ -3544,7 +3603,14 @@ impl CreationJob {
             match std::mem::replace(&mut self.phase, Phase::Done) {
                 Phase::Load => {
                     let template = match &self.source {
-                        JobSource::Url(url) => e.file_template(url).map(Rc::new),
+                        JobSource::Url(url) => e.file_template(url).map(|mut t| {
+                            if let Some(scope) = self.scope {
+                                let ctx = e.scope_context(scope);
+                                self.scope_ctx = Some(ctx);
+                                t.context = Some(ctx);
+                            }
+                            Rc::new(t)
+                        }),
                         JobSource::Component(c) => e.component_template(*c),
                         // Stepped above, never here.
                         JobSource::Shared(_) => Err(EngineError::Load("a shared job".into())),
@@ -3582,6 +3648,9 @@ impl CreationJob {
                     let append = setup.is_none();
                     match e.allocated_template(&mut cr, inst, self.parent, append) {
                         Ok(root) => {
+                            if let Some(ctx) = self.scope_ctx.take() {
+                                e.add_context(root, ctx);
+                            }
                             if let (Some(setup), Some(top)) = (setup, &cr.top) {
                                 setup(&e, root, top.context);
                             }

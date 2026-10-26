@@ -422,7 +422,9 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
     // Made at once, the new item takes the old one's place with no empty
     // item told between (qml6).
     let made = match &origin {
-        Origin::Url(url) => e.create_from_url(&e.resolve_url(me, url), Some(me), props),
+        Origin::Url(url) => {
+            e.create_from_url_in(&e.resolve_url(me, url), Some(me), props, Some(me))
+        }
         Origin::Component(c) => e.component_create(*c, Some(me), props),
     };
     finish(e, me, generation, made);
@@ -462,7 +464,8 @@ fn start_job(
     let (job, handle) = match origin {
         Origin::Url(url) => {
             let url = e.resolve_url(me, url);
-            CreationJob::new(e, &url, Some(me), props, Lane::Visible, owner)
+            let (job, handle) = CreationJob::new(e, &url, Some(me), props, Lane::Visible, owner);
+            (job.in_scope(me), handle)
         }
         Origin::Component(c) => {
             CreationJob::for_component(e, *c, Some(me), props, Lane::Visible, owner)
