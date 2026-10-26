@@ -1107,3 +1107,40 @@ fn a_binding_on_focus_outlives_the_audit() {
         assert_eq!(focus(), on, "editing: {on}");
     }
 }
+
+/// A node of an item's that draws nothing is passed by, and its fill is
+/// found on the next.
+#[test]
+fn an_item_whose_first_node_draws_nothing_has_its_fill_found() {
+    let e = engine();
+    let s = mount(
+        &e,
+        &page("    Rectangle { x: 20; y: 20; width: 100; height: 60; color: \"#336699\" }"),
+    );
+    let root = s.root().unwrap();
+    let panel = ljos_quick::child_items(&e, root)[0];
+    let snapshot = s.snapshot().unwrap();
+    let at = snapshot
+        .items
+        .iter()
+        .position(|p| s.item_of(p.node) == Some(panel))
+        .unwrap();
+    let mut items = snapshot.items.clone();
+    let mut bare = items[at].clone();
+    bare.list = None;
+    items.insert(at, bare);
+    let two_nodes = ljos_render::FrameSnapshot {
+        frame: snapshot.frame,
+        viewport: snapshot.viewport,
+        items,
+        clips: snapshot.clips.clone(),
+        stats: snapshot.stats,
+    };
+    let options = Options::desktop();
+    let cx = crate::cx::Cx::new(&e, &s, &options);
+    let (fill, _) = crate::surfaces::own_rect(&cx, &two_nodes, panel).expect("its fill");
+    assert_eq!(
+        [fill.r, fill.g, fill.b, fill.a].map(|c| (c * 255.0).round() as u8),
+        [0x33, 0x66, 0x99, 0xff]
+    );
+}
