@@ -58,7 +58,11 @@ pub(crate) fn own_rect(cx: &Cx, snapshot: &FrameSnapshot, item: ObjectId) -> Opt
         if cx.scene.item_of(p.node) != Some(item) {
             continue;
         }
-        let list = p.list.as_ref()?;
+        // A node of the item's that draws nothing (one that only clips or
+        // holds others) is passed by: a later one may paint its fill.
+        let Some(list) = p.list.as_ref() else {
+            continue;
+        };
         for op in list.ops() {
             if let DrawOp::Rect { fill, border, .. } = op {
                 let fill = match fill {
