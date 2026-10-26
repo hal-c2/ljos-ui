@@ -12,6 +12,6 @@ Transition {
     readonly property bool reduced: Qt.styleHints.accessibility !== undefined && Qt.styleHints.accessibility.motionPreference === 1
 
     PropertyAction { property: "transformOrigin"; value: root.origin }
-    NumberAnimation { property: "opacity"; from: 1; to: 0; duration: root.reduced ? Math.min(root.duration, 200) : root.duration; easing.type: Easing.BezierSpline; easing.bezierCurve: [0.165, 0.84, 0.44, 1, 1, 1] }
+    NumberAnimation { property: "opacity"; from: 1; to: 0; duration: root.reduced ? Math.min(root.duration, 150) : root.duration; easing.type: Easing.BezierSpline; easing.bezierCurve: [0.165, 0.84, 0.44, 1, 1, 1] }
     NumberAnimation { property: "scale"; from: 1; to: root.reduced ? 1 : 0.95; duration: root.reduced ? 0 : root.duration; easing.type: Easing.BezierSpline; easing.bezierCurve: [0.165, 0.84, 0.44, 1, 1, 1] }
 }

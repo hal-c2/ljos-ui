@@ -46,7 +46,10 @@ Feature: The design module built in
       | color scheme | "dark" | #007cb7 | #b5bbc0 |
       | contrast     | "high" | #005e8c | #242729 |
 
-  Scenario: With reduced motion a popup is there at once and does not grow
+  # The transition fades on its own with reduced motion and the runtime
+  # keeps that fade, capped at the same 150 milliseconds, rather than
+  # ending it or adding a second one.
+  Scenario: With reduced motion a popup fades in without growing
     Given the system setting "reduced motion" is true
     And the QML:
       """qml
@@ -56,10 +59,17 @@ Feature: The design module built in
       Item {
         objectName: "root"; width: 400; height: 400
         property bool reduced: Motion.reduced
+        property bool faint: p.opacity > 0 && p.opacity < 1
         Popup { id: p; objectName: "p"; width: 100; height: 100; enter: EnterTransition {} }
       }
       """
     When the method "open" of "p" is called
+    And 32 milliseconds pass
     Then the property "reduced" of "root" is true
-    And the property "opened" of "p" is true
+    And the property "scale" of "p" is 1
+    And the property "faint" of "root" is true
+    And the property "opened" of "p" is false
+    When 150 milliseconds pass
+    Then the property "opened" of "p" is true
+    And the property "opacity" of "p" is 1
     And the property "scale" of "p" is 1

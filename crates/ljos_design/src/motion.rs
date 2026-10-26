@@ -527,7 +527,7 @@ pub fn token(kind: Kind, size: Size, frequency: Frequency) -> Token {
         }
     } else {
         Reduced {
-            duration_ms: duration.min(lim::MICRO_MAX_MS),
+            duration_ms: duration.min(lim::REDUCED_FADE_MAX_MS),
             property: "opacity",
             easing: EASE_OUT_SOFT,
         }
@@ -632,7 +632,7 @@ mod tests {
                 "{t:?}: {} ms, limit {limit}",
                 t.duration_ms
             );
-            assert!(t.reduced.duration_ms <= lim::MICRO_MAX_MS, "{t:?}");
+            assert!(t.reduced.duration_ms <= lim::REDUCED_FADE_MAX_MS, "{t:?}");
         }
     }
 
