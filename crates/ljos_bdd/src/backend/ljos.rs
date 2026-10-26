@@ -304,6 +304,20 @@ fn qmldir_of(name: &str) -> Option<&str> {
 }
 
 impl LjosBackend {
+    /// Runs a step of the user's input and takes where the items are
+    /// once it has settled as where they rest: what the user's own input
+    /// moves (a panel they open) is not a layout shift, and what moves
+    /// later by itself still is.
+    fn input(&mut self, step: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        step(self)?;
+        let live = self.live()?;
+        live.rest = Some(Arc::new(ljos_audit::Placement::of(
+            &live.engine,
+            &live.scene,
+        )));
+        Ok(())
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -1105,15 +1119,16 @@ impl Backend for LjosBackend {
     }
 
     fn click(&mut self, role: &str, name: &str) -> Result<()> {
-        // A user's click: a pointer in the middle of the control, so
-        // whatever covers it there takes the click, as on screen. One a
-        // user could not click there (disabled, outside the window) is
-        // not clicked, and the step goes on, as the user would.
-        self.live()?
-            .drive(|d| match d.click_accessible(role, name) {
+        self.input(|b| {
+            // A user's click: a pointer in the middle of the control, so
+            // whatever covers it there takes the click, as on screen. One a
+            // user could not click there (disabled, outside the window) is
+            // not clicked, and the step goes on, as the user would.
+            b.live()?.drive(|d| match d.click_accessible(role, name) {
                 Err(DriveError::Refused { .. }) => Ok(()),
                 r => r,
             })
+        })
     }
 
     fn key(&mut self, chord: &str) -> Result<()> {
@@ -1121,14 +1136,16 @@ impl Backend for LjosBackend {
     }
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
-        let before = self.drags_out_started();
-        self.live()?.pointer(step, x, y)?;
-        // The window system took the press for the drag it carries now,
-        // as the shell's windows let it go (`QmlView::pointer_taken`).
-        if self.drags_out_started() != before {
-            self.live()?.pointer_taken()?;
-        }
-        Ok(())
+        self.input(|b| {
+            let before = b.drags_out_started();
+            b.live()?.pointer(step, x, y)?;
+            // The window system took the press for the drag it carries now,
+            // as the shell's windows let it go (`QmlView::pointer_taken`).
+            if b.drags_out_started() != before {
+                b.live()?.pointer_taken()?;
+            }
+            Ok(())
+        })
     }
 
     fn a11y_tree(&mut self) -> Result<A11yNode> {
@@ -1189,70 +1206,88 @@ impl Backend for LjosBackend {
 
 impl Input for LjosBackend {
     fn key_hold(&mut self, chord: &str, repeats: u32) -> Result<()> {
-        let chord = Chord::parse(chord).map_err(failed)?;
-        self.live()?.drive(|d| d.chord(&chord, repeats))
+        self.input(|b| {
+            let chord = Chord::parse(chord).map_err(failed)?;
+            b.live()?.drive(|d| d.chord(&chord, repeats))
+        })
     }
 
     fn window_active(&mut self, active: bool) -> Result<()> {
-        let live = self.live()?;
-        live.scene.set_window_active(&live.engine, active);
-        live.settle()
+        self.input(|b| {
+            let live = b.live()?;
+            live.scene.set_window_active(&live.engine, active);
+            live.settle()
+        })
     }
 
     fn touch(&mut self, x: f64, y: f64) -> Result<()> {
-        self.live()?
-            .drive(|d| d.touch(Point::new(x, y), kurbo::Vec2::ZERO))
+        self.input(|b| {
+            b.live()?
+                .drive(|d| d.touch(Point::new(x, y), kurbo::Vec2::ZERO))
+        })
     }
 
     fn click_holding(&mut self, modifiers: &str, x: f64, y: f64) -> Result<()> {
-        let held = parse_modifiers(modifiers).map_err(failed)?;
-        self.live()?.tap_holding(held, x, y)
+        self.input(|b| {
+            let held = parse_modifiers(modifiers).map_err(failed)?;
+            b.live()?.tap_holding(held, x, y)
+        })
     }
 
     fn touch_frames(&mut self, frames: &[super::TouchFrame]) -> Result<()> {
-        self.live()?.touch_frames(frames)
+        self.input(|b| b.live()?.touch_frames(frames))
     }
 
     fn wheel(&mut self, at: (f64, f64), by: super::WheelBy) -> Result<()> {
-        let by = match by {
-            super::WheelBy::Notches(x, y) => Wheel::Notches(x, y),
-            super::WheelBy::Pixels(x, y) => Wheel::Pixels(x, y),
-        };
-        self.live()?
-            .drive(|d| d.wheel(Point::new(at.0, at.1), by).map(|_| ()))
+        self.input(|b| {
+            let by = match by {
+                super::WheelBy::Notches(x, y) => Wheel::Notches(x, y),
+                super::WheelBy::Pixels(x, y) => Wheel::Pixels(x, y),
+            };
+            b.live()?
+                .drive(|d| d.wheel(Point::new(at.0, at.1), by).map(|_| ()))
+        })
     }
 
     fn type_text(&mut self, text: &str) -> Result<()> {
-        self.live()?.drive(|d| d.type_text(text))
+        self.input(|b| b.live()?.drive(|d| d.type_text(text)))
     }
 
     fn click_button(&mut self, button: super::OtherButton, x: f64, y: f64) -> Result<()> {
-        let b = match button {
-            super::OtherButton::Right => MouseButtons::RIGHT,
-            super::OtherButton::Middle => MouseButtons::MIDDLE,
-        };
-        self.live()?.drive(|d| d.click(Point::new(x, y), b, 1))
+        self.input(|b| {
+            let which = match button {
+                super::OtherButton::Right => MouseButtons::RIGHT,
+                super::OtherButton::Middle => MouseButtons::MIDDLE,
+            };
+            b.live()?.drive(|d| d.click(Point::new(x, y), which, 1))
+        })
     }
 
     fn clicks(&mut self, count: u8, x: f64, y: f64) -> Result<()> {
-        self.live()?
-            .drive(|d| d.click(Point::new(x, y), MouseButtons::LEFT, count.into()))
+        self.input(|b| {
+            b.live()?
+                .drive(|d| d.click(Point::new(x, y), MouseButtons::LEFT, count.into()))
+        })
     }
 
     fn drag(&mut self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
-        let (from, to) = (Point::new(from.0, from.1), Point::new(to.0, to.1));
-        self.live()?.drive(|d| d.drag(from, to))
+        self.input(|b| {
+            let (from, to) = (Point::new(from.0, from.1), Point::new(to.0, to.1));
+            b.live()?.drive(|d| d.drag(from, to))
+        })
     }
 
     fn compose(&mut self, text: &str) -> Result<()> {
-        let live = self.live()?;
-        // With no editor in focus the input method has nowhere to compose;
-        // the scenario says what it expects of that.
-        live.drive(|d| d.preedit(text, None).map(|_| ()))
+        self.input(|b| {
+            let live = b.live()?;
+            // With no editor in focus the input method has nowhere to compose;
+            // the scenario says what it expects of that.
+            live.drive(|d| d.preedit(text, None).map(|_| ()))
+        })
     }
 
     fn commit(&mut self, text: &str) -> Result<()> {
-        self.live()?.drive(|d| d.commit(text).map(|_| ()))
+        self.input(|b| b.live()?.drive(|d| d.commit(text).map(|_| ())))
     }
 }
 
