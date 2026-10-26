@@ -693,14 +693,14 @@ pub const RULES: &[Rule] = &[
         "motion-reduced-ignored",
         Motion,
         Hint,
-        Static,
+        Both,
         "An endless animation moves something and never reads `Qt.styleHints.accessibility.motionPreference`: on Qt it keeps moving for someone who asked for less motion.",
         "Gate it, or animate opacity instead.",
     ),
     r(
         "motion-dropped-frames",
         Motion,
-        Warning,
+        Hint,
         Runtime,
         "An animation dropped frames while it ran.",
         "Profile with `app_frames`; animate cheap properties and avoid relayout while it runs.",
@@ -728,6 +728,14 @@ pub const RULES: &[Rule] = &[
         Static,
         "A popup scales in from its centre, not from the control that opened it.",
         "Set `transformOrigin` toward that control, or fade instead of scaling.",
+    ),
+    r(
+        "motion-theme-switch",
+        Motion,
+        Hint,
+        Runtime,
+        "Switching between light and dark animates colour for longer than the limit, or flashes a colour that is neither theme's on the way.",
+        "Switch colours instantly, or within the limit for frequent actions, straight from the old colour to the new.",
     ),
     // Content.
     r(

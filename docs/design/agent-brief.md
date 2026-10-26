@@ -94,6 +94,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Never flash more than three times a second. [motion-flash]
 - Bind `running` on endless animations and timers that change what is shown. [motion-endless]
 - Set `transformOrigin` toward the trigger of a popup that scales in. [motion-origin]
+- Switch light and dark instantly, ≤ 100 ms, straight from the old colour to the new. [motion-theme-switch]
 - Grow popups from their trigger; under reduced motion cross-fade only.
 
 ## Content

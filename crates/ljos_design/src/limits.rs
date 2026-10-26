@@ -99,6 +99,21 @@ pub mod motion {
     /// Moving or changing content that starts by itself may run this long
     /// before it needs a way to pause or stop (WCAG 2.2 SC 2.2.2).
     pub const ENDLESS_MAX_MS: u32 = 5000;
+    /// How far along an entrance is at half its time, at most, for its
+    /// curve to be an ease-in: a quadratic ease-in is at 0.25 and a cubic
+    /// at 0.125; linear and in-out curves are at 0.5, ease-out further.
+    /// Between the two, so that neither a sampled frame nor a mild in-out
+    /// curve tips it.
+    pub const EASE_IN_HALFWAY_MAX: f32 = 0.35;
+    /// Switching between light and dark is done every day, often by the
+    /// system at dusk: instant, or as quick as anything frequent.
+    pub const THEME_SWITCH_MAX_MS: u32 = FREQUENT_MAX_MS;
+    /// A colour on the way from one theme to the other that is lighter or
+    /// darker than both ends by more than this OKLab lightness is a flash:
+    /// a tenth of the way from black to white, well past what an
+    /// interpolation between the ends can wander (none, in OKLab; a little
+    /// in sRGB).
+    pub const THEME_FLASH_MIN_L: f32 = 0.1;
 }
 
 /// What the runtime audit looks at besides the window as it is.
