@@ -242,7 +242,6 @@ Feature: A list property declared in QML
     And the property "copyIs" of "root" is true
 
   # Found by ljos-fuzz (bindings), bucket value:double:step-set(literal).
-  @backlog
   Scenario: An empty list given an empty list is told as a change
     Given the QML:
       """qml

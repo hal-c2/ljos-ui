@@ -1204,6 +1204,14 @@ impl Value {
         if self.unwritten() != other.unwritten() {
             return false;
         }
+        // Every empty list shares one allocation, but a new one given is
+        // a change all the same (Qt 6.11.2).
+        if let (Value::List(a), Value::List(b)) = (self, other)
+            && a.is_empty()
+            && b.is_empty()
+        {
+            return false;
+        }
         self.same_kind_equals(other)
     }
 
