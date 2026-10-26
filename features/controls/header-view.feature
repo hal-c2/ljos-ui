@@ -137,3 +137,25 @@ Feature: HorizontalHeaderView and VerticalHeaderView
     When 50 milliseconds pass
     And the method "names" of "root" is called
     Then the property "out" of "root" is "c00:1:false c01:2:false c02:3:false"
+
+  Scenario: A header makes a section only for each row or column the view it heads has
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls
+      import Qt.labs.qmlmodels
+      Item {
+        id: root; objectName: "root"; width: 300; height: 300
+        property var made: [0, 0, 0, 0]
+        function bump(i) { let m = made.slice(); m[i]++; made = m }
+        component Section: Rectangle { property int at; implicitWidth: 10; implicitHeight: 10; Component.onCompleted: root.bump(at) }
+        TableView { id: none; width: 200; height: 100 }
+        TableView { id: column; width: 200; height: 100; model: TableModel { TableModelColumn { display: "a" } } }
+        VerticalHeaderView { syncView: none; width: 50; height: 100; delegate: Section { at: 0 } }
+        VerticalHeaderView { syncView: column; width: 50; height: 100; delegate: Section { at: 1 } }
+        HorizontalHeaderView { syncView: none; width: 50; height: 100; delegate: Section { at: 2 } }
+        HorizontalHeaderView { syncView: column; width: 50; height: 100; delegate: Section { at: 3 } }
+      }
+      """
+    When 50 milliseconds pass
+    Then the property "made" of "root" is [0, 0, 0, 1]

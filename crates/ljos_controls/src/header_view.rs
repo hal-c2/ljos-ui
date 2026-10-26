@@ -180,6 +180,13 @@ fn start(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
         return Ok(());
     }
     let proxy = e.create_native(ProxyObject::default(), Some(me))?;
+    // Without its sections yet the proxy would be a model of one object,
+    // and the header would make a delegate for it.
+    let empty: Rc<dyn ItemTree> = Rc::new(Proxy {
+        source: None,
+        across,
+    });
+    check(e, "header model", e.set_object_tree(proxy, empty));
     e.bind(me, TableView::MODEL.index, move |e| {
         if object(e, me, TableView::SYNC_VIEW.index).is_some() {
             Value::Object(proxy)
