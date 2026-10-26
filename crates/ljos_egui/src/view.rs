@@ -242,8 +242,9 @@ pub struct QmlView {
     /// the pointer is gone: where a file drag with no position is put.
     pointer_seen: Option<Pos2>,
     /// A drag from another application that the host follows itself
-    /// ([`QmlView::window_drag`]), and where the scene was last told it is.
-    window_drag: Option<(ljos_quick::PlatformDrag, Option<kurbo::Point>)>,
+    /// ([`QmlView::window_drag`]), where the scene was last told it is, and
+    /// the `Qt.DropAction` it answered.
+    window_drag: Option<(ljos_quick::PlatformDrag, Option<kurbo::Point>, i32)>,
     /// Where in the window the scene was last shown: a host's drag comes in
     /// the window's points, between passes.
     shown_at: Option<Rect>,
@@ -253,12 +254,19 @@ pub struct QmlView {
 /// says where it is tells it, at points of the window.
 #[derive(Clone, Debug)]
 pub enum WindowDrag {
-    /// It came into the window, carrying `data`.
+    /// It came into the window, carrying `data`, with the actions its
+    /// source allows and would like.
     Entered {
         data: ljos_quick::DragData,
         at: Pos2,
+        actions: ljos_quick::DragActions,
     },
-    Moved(Pos2),
+    /// It moved, or its source changed the actions it allows or would
+    /// like.
+    Moved {
+        at: Pos2,
+        actions: Option<ljos_quick::DragActions>,
+    },
     Left,
     /// It was let go where it last was.
     Dropped,
@@ -1413,69 +1421,97 @@ impl QmlView {
         }
     }
 
+    /// The window system took the pointer, as it does for a drag it
+    /// carries out of the window: a press held here is cancelled, as Qt
+    /// cancels the grab of what started the drag. Whether one was held;
+    /// the host asks for a pass after it.
+    pub fn pointer_taken(&mut self) -> bool {
+        if self.pointer.held.is_empty() {
+            return false;
+        }
+        self.pointer.held = MouseButtons::empty();
+        self.pointer.inside = false;
+        let now = self.clock.now();
+        self.scene
+            .pointer_event(&self.engine, &PointerEvent::cancel(now));
+        true
+    }
+
     /// Tells the scene of a step of a drag from another application, for
     /// a host that follows such drags itself rather than through egui,
-    /// which knows only of files. Says whether a `DropArea` under the drag
-    /// takes it, or, for [`WindowDrag::Dropped`], took the drop: what the
-    /// host answers the window system.
+    /// which knows only of files. Says which action a `DropArea` under the
+    /// drag takes it with, or, for [`WindowDrag::Dropped`], took the drop
+    /// with (`None` when none does): what the host answers the window
+    /// system.
     ///
     /// Outside the view's place in the window the drag is outside the
     /// scene. It runs between passes; the host asks for one after it.
-    pub fn window_drag(&mut self, step: WindowDrag) -> bool {
-        use ljos_quick::{
-            IGNORE_ACTION, PlatformDrag, PlatformDragKind, platform_drag, platform_drag_target,
-        };
+    pub fn window_drag(&mut self, step: WindowDrag) -> Option<ljos_quick::DropAction> {
+        use ljos_quick::DropAction;
+        use ljos_quick::{IGNORE_ACTION, PlatformDrag, PlatformDragKind, platform_drag};
         let engine = &self.engine;
         let rect = self.shown_at;
         let inside = |p: Pos2| {
             rect.filter(|r| r.contains(p))
                 .map(|r| kurbo::Point::new(f64::from(p.x - r.min.x), f64::from(p.y - r.min.y)))
         };
-        let at = match step {
-            WindowDrag::Entered { data, at } => {
-                if let Some((drag, _)) = self.window_drag.take() {
+        let (at, changed) = match step {
+            WindowDrag::Entered { data, at, actions } => {
+                if let Some((drag, ..)) = self.window_drag.take() {
                     platform_drag(engine, &drag, &PlatformDragKind::Leave);
                 }
-                let drag = PlatformDrag::new(data);
+                let drag = PlatformDrag::new(data).with_actions(actions);
                 let drag = match self.scene.root() {
                     Some(root) => drag.over(engine, root),
                     None => drag,
                 };
-                self.window_drag = Some((drag, None));
-                at
+                self.window_drag = Some((drag, None, IGNORE_ACTION));
+                (at, false)
             }
-            WindowDrag::Moved(at) => at,
+            WindowDrag::Moved { at, actions } => {
+                let changed = match (self.window_drag.as_mut(), actions) {
+                    (Some((drag, ..)), Some(actions)) => {
+                        let before = (drag.supported_actions, drag.proposed_action);
+                        drag.set_actions(actions);
+                        before != (drag.supported_actions, drag.proposed_action)
+                    }
+                    _ => false,
+                };
+                (at, changed)
+            }
             WindowDrag::Left => {
-                if let Some((drag, _)) = self.window_drag.take() {
+                if let Some((drag, ..)) = self.window_drag.take() {
                     platform_drag(engine, &drag, &PlatformDragKind::Leave);
                 }
-                return false;
+                return None;
             }
             WindowDrag::Dropped => {
-                let Some((drag, told)) = self.window_drag.take() else {
-                    return false;
-                };
+                let (drag, told, _) = self.window_drag.take()?;
                 return match told {
-                    Some(at) => {
-                        platform_drag(engine, &drag, &PlatformDragKind::Drop(at)) != IGNORE_ACTION
-                    }
+                    Some(at) => DropAction::from_qt(platform_drag(
+                        engine,
+                        &drag,
+                        &PlatformDragKind::Drop(at),
+                    )),
                     None => {
                         platform_drag(engine, &drag, &PlatformDragKind::Leave);
-                        false
+                        None
                     }
                 };
             }
         };
-        let Some((drag, told)) = self.window_drag.as_mut() else {
-            return false;
-        };
+        let (drag, told, action) = self.window_drag.as_mut()?;
         let at = inside(at);
-        if *told != at {
+        // A source that proposes another action where the drag is asks
+        // the area again.
+        if *told != at || changed {
             *told = at;
-            let kind = at.map_or(PlatformDragKind::Leave, PlatformDragKind::Move);
-            platform_drag(engine, drag, &kind);
+            *action = match at {
+                Some(at) => platform_drag(engine, drag, &PlatformDragKind::Move(at)),
+                None => platform_drag(engine, drag, &PlatformDragKind::Leave),
+            };
         }
-        at.is_some() && platform_drag_target(engine).is_some()
+        DropAction::from_qt(*action)
     }
 
     /// Keeps a scroll the scene used from also scrolling an egui scroll
