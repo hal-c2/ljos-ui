@@ -129,11 +129,13 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
     }
 
     /// Whether the object has the member `name`: one its type or the file
-    /// says it has, or one Ljós adds to a type of Qt's table, which that
-    /// table does not list.
+    /// says it has, one Ljós adds to a type of Qt's table, which that
+    /// table does not list, or `destroy`, which QML gives every object
+    /// and no type lists.
     fn has(&self, object: usize, name: &str) -> bool {
         let tree = self.tree;
-        tree.member(self.types, object, name).is_some()
+        name == "destroy"
+            || tree.member(self.types, object, name).is_some()
             || tree.objects[object]
                 .kind
                 .as_ref()
