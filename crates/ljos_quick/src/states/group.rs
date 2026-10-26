@@ -419,6 +419,9 @@ struct Round {
     /// wait in `later` until it has started (qml6).
     transition: bool,
     later: Vec<ObjectId>,
+    /// The properties the state left was to give back, and how: a state
+    /// entered that would not give one back gives it back so (qml6).
+    restoring: Vec<(ObjectId, PropIndex, RestoreMode)>,
 }
 
 /// Holds every changed property at the value it had, so that an animation
@@ -775,9 +778,16 @@ impl Group {
         let applied = std::mem::take(&mut *self.applied.borrow_mut());
         for a in &applied {
             if let Applied::Layer {
-                obj, prop, what, ..
+                obj,
+                prop,
+                what,
+                restore,
+                ..
             } = a
             {
+                if *what == Layer::Property && *restore != RestoreMode::None {
+                    round.restoring.push((*obj, *prop, *restore));
+                }
                 match what {
                     Layer::Property => round.note(engine, *obj, *prop, ChangeKind::Property),
                     Layer::Anchor if !round.anchored.contains(obj) => round.anchored.push(*obj),
@@ -880,17 +890,32 @@ impl Group {
         for p in &pending {
             round.note(engine, p.target, p.prop, ChangeKind::Property);
         }
-        // A change a later plain value replaces shows nothing; one a later
-        // binding replaces is still made first, for the binding may read
-        // it (qml6).
+        for p in &mut pending {
+            if p.restore == RestoreMode::None
+                && let Some((.., r)) = round
+                    .restoring
+                    .iter()
+                    .find(|(o, q, _)| (*o, *q) == (p.target, p.prop))
+            {
+                p.restore = *r;
+            }
+        }
+        // A value a later value replaces shows nothing; a binding a later
+        // one replaces is still made first, for that one may read it. The
+        // bindings go in after the values, so that a property the state
+        // both binds and gives a value is bound, whichever comes first
+        // (qml6).
         let mut i = 0;
         while i < pending.len() {
             let (target, prop) = (pending[i].target, pending[i].prop);
-            if pending[i + 1..].iter().any(|p| {
-                p.target == target
-                    && p.prop == prop
-                    && matches!(p.content, OverrideContent::Value(_))
-            }) {
+            let value = matches!(pending[i].content, OverrideContent::Value(_));
+            if value
+                && pending[i + 1..].iter().any(|p| {
+                    p.target == target
+                        && p.prop == prop
+                        && matches!(p.content, OverrideContent::Value(_))
+                })
+            {
                 pending.remove(i);
             } else {
                 i += 1;
@@ -899,9 +924,10 @@ impl Group {
         let (values, exprs): (Vec<_>, Vec<_>) = pending
             .into_iter()
             .partition(|p| matches!(p.content, OverrideContent::Value(_)));
-        round
-            .bound
-            .retain(|at| !values.iter().any(|p| (p.target, p.prop) == *at));
+        round.bound.retain(|at| {
+            !values.iter().any(|p| (p.target, p.prop) == *at)
+                || exprs.iter().any(|p| (p.target, p.prop) == *at)
+        });
         round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
         for p in values.into_iter().chain(exprs) {
             let at = (p.target, p.prop);
