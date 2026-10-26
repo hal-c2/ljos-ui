@@ -18,6 +18,7 @@
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ljos_engine::{
     Atom, Cx, Engine, EngineError, MetaRef, NodeId, ObjectId, QmlObject, QmlType, Rect, Url, Value,
@@ -93,6 +94,50 @@ pub struct VideoOutput {
     serial: Option<NodeId>,
     #[qml(skip)]
     player: Option<ObjectId>,
+}
+
+/// The bytes of the frames outputs show (and their turned copies), for
+/// the media owner in app memory.
+static SHOWN_BYTES: AtomicUsize = AtomicUsize::new(0);
+static SHOWN_FRAMES: AtomicUsize = AtomicUsize::new(0);
+
+/// What every output's shown frames hold: bytes and pictures.
+pub(crate) fn on_screen() -> (usize, usize) {
+    (
+        SHOWN_BYTES.load(Ordering::Relaxed),
+        SHOWN_FRAMES.load(Ordering::Relaxed),
+    )
+}
+
+impl VideoOutput {
+    fn held(&self) -> (usize, usize) {
+        let turned = self.turned.as_ref().map(|(_, i)| i);
+        [self.frame.as_ref(), turned]
+            .into_iter()
+            .flatten()
+            .fold((0, 0), |(b, n), i| (b + i.byte_len(), n + 1))
+    }
+
+    /// Changes the frames shown through `f`, keeping [`on_screen`] true.
+    fn reshow<R>(&mut self, f: impl FnOnce(&mut VideoOutput) -> R) -> R {
+        let (was_bytes, was_frames) = self.held();
+        let r = f(self);
+        let (bytes, frames) = self.held();
+        SHOWN_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        SHOWN_BYTES.fetch_sub(was_bytes, Ordering::Relaxed);
+        SHOWN_FRAMES.fetch_add(frames, Ordering::Relaxed);
+        SHOWN_FRAMES.fetch_sub(was_frames, Ordering::Relaxed);
+        r
+    }
+}
+
+impl Drop for VideoOutput {
+    fn drop(&mut self) {
+        self.reshow(|v| {
+            v.frame = None;
+            v.turned = None;
+        });
+    }
 }
 
 impl fmt::Debug for VideoOutput {
@@ -300,8 +345,10 @@ pub(crate) fn paint(e: &Engine, o: ObjectId, image: ImageHandle) {
         height: r.height(),
     };
     let Ok(serial) = e.with_mut::<VideoOutput, _>(o, |v| {
-        v.frame = Some(image);
-        v.turned = None;
+        v.reshow(|v| {
+            v.frame = Some(image);
+            v.turned = None;
+        });
         v.serial
     }) else {
         return;
@@ -316,8 +363,11 @@ pub(crate) fn unpaint(e: &Engine, o: ObjectId) {
         return;
     }
     let Ok((had, serial)) = e.with_mut::<VideoOutput, _>(o, |v| {
-        v.turned = None;
-        (v.frame.take().is_some(), v.serial)
+        let had = v.reshow(|v| {
+            v.turned = None;
+            v.frame.take().is_some()
+        });
+        (had, v.serial)
     }) else {
         return;
     };
@@ -415,7 +465,7 @@ fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
                 Some((t, image)) if *t == turns => Some(image.clone()),
                 _ => {
                     let image = turn(&frame, turns).unwrap_or(frame);
-                    v.turned = Some((turns, image.clone()));
+                    v.reshow(|v| v.turned = Some((turns, image.clone())));
                     Some(image)
                 }
             }

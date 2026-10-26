@@ -28,6 +28,10 @@ pub(crate) struct Opened {
     pub samples: Option<std::sync::Arc<[f32]>>,
     #[cfg(feature = "decode")]
     pub source: filmcraft_media::SharedSource,
+    /// The video read in order for playback, when the file is one
+    /// [`crate::mp4_video`] reads.
+    #[cfg(feature = "decode")]
+    pub video_reader: Option<crate::mp4_video::Mp4Video>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -298,7 +302,10 @@ pub(crate) fn from_bytes(
 }
 
 #[cfg(feature = "decode")]
-fn from_path(path: &std::path::Path, samples: Option<Format>) -> Result<Opened, OpenError> {
+pub(crate) fn from_path(
+    path: &std::path::Path,
+    samples: Option<Format>,
+) -> Result<Opened, OpenError> {
     let reader =
         filmcraft_media::reader::FileReader::open(path).map_err(|_| OpenError::Resource)?;
     let name = path
@@ -337,6 +344,10 @@ fn from_reader(
             25.0
         },
     });
+    let video_reader = info
+        .video
+        .as_ref()
+        .and_then(|v| crate::mp4_video::Mp4Video::open(&reader, v.color));
     let title = crate::meta::mp4_title(&*reader);
     let (meta, audio_tracks, video_tracks) = crate::meta::describe(&info, duration_ms, title);
     let samples = match (samples, info.has_audio()) {
@@ -358,5 +369,6 @@ fn from_reader(
         video_tracks,
         samples,
         source,
+        video_reader,
     })
 }

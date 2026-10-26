@@ -20,6 +20,7 @@ decode = [
     "dep:filmcraft-color",
     "dep:filmcraft-h264",
     "dep:filmcraft-bitstream",
+    "dep:filmcraft-isobmff",
 ]
 # Play sound on the system's device. Without it, or with no device, sound
 # goes to a null sink and the engine's clock is the media clock.
@@ -42,6 +43,9 @@ filmcraft-time = { workspace = true, optional = true }
 # be handed out as soon as they are decoded.
 filmcraft-h264 = { workspace = true, optional = true }
 filmcraft-bitstream = { workspace = true, optional = true }
+# An MP4's video read in order for playback, without the frame cache
+# FilmCraft's sources keep for an editor (src/mp4_video.rs).
+filmcraft-isobmff = { workspace = true, optional = true }
 cpal = { workspace = true, optional = true }
 
 [dev-dependencies]

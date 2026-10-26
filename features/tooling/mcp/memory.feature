@@ -126,11 +126,25 @@ Feature: An agent reads where the application's memory is
     Then the answer's "/reconciled/resident_bytes" is at least 1
     And the answer's "/reconciled/attributed_bytes" is at least 1
     And the answer's "/reconciled/not_attributed_share" is at least 0
-    And the answer's "/owners/10/owner" is "program"
-    And the answer's "/owners/12/owner" is "not_attributed"
-    And the answer's "/owners/13/owner" is "textures"
-    And the answer's "/owners/13/gpu" is true
+    And the answer's "/owners/11/owner" is "program"
+    And the answer's "/owners/13/owner" is "not_attributed"
+    And the answer's "/owners/14/owner" is "textures"
+    And the answer's "/owners/14/gpu" is true
     And the answer's text contains "not attributed:"
+
+  # A crate built on the engine tells of what it holds that no object
+  # counts: the multimedia types of the pictures their players decoded and
+  # their outputs show. Nothing plays here, so they hold none.
+  Scenario: What the media types hold is under an owner of its own
+    When the agent calls the tool "app_metrics" with:
+      """json
+      {"memory": {}}
+      """
+    Then the answer's "/owners/10/owner" is "media"
+    And the answer's "/owners/10/of" is "frames"
+    And the answer's "/owners/10/count" is 0
+    And the answer's "/owners/10/approximate" is false
+    And the answer's text contains "decoded media"
 
   # The kernel's map of the process names each mapping's file; it is read
   # only when asked. Elsewhere than on Linux `known` is false.

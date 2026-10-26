@@ -599,7 +599,7 @@ fn opened(e: &Engine, me: ObjectId, generation: u64, outcome: Result<Opened, Ope
 
 fn loaded(e: &Engine, me: ObjectId, o: Opened) {
     #[cfg(feature = "decode")]
-    let decoder = crate::decoder::Decoder::new(o.source.clone());
+    let decoder = crate::decoder::Decoder::new(o.source.clone(), o.video_reader);
     run(e, me, |r| {
         r.media = Some(Media {
             duration: o.duration_ms,

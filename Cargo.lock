@@ -4127,6 +4127,7 @@ dependencies = [
  "filmcraft-color",
  "filmcraft-frame",
  "filmcraft-h264",
+ "filmcraft-isobmff",
  "filmcraft-media",
  "filmcraft-time",
  "ljos_compiler",

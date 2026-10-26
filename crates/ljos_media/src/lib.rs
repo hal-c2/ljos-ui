@@ -67,6 +67,8 @@ mod video_sink;
 
 #[cfg(feature = "decode")]
 mod decoder;
+#[cfg(feature = "decode")]
+mod mp4_video;
 
 use ljos_engine::Engine;
 
@@ -97,6 +99,32 @@ pub fn register(engine: &Engine) {
         SoundEffect,
     ]));
     video::register_paint(engine);
+    engine.add_memory_owner(decoded_media);
+}
+
+/// The pictures outputs show and players hold decoded, with what
+/// FilmCraft keeps of the media it decoded: its sources' frame caches
+/// (files `mp4_video` does not read) and the planes it keeps to reuse.
+fn decoded_media() -> ljos_engine::OwnerMemory {
+    let (shown, shown_frames) = video::on_screen();
+    #[cfg(feature = "decode")]
+    let (decoded, frames) = {
+        let (held, frames) = mp4_video::held();
+        let pool = filmcraft_frame::pool::stats();
+        (
+            held + filmcraft_codecs::cached_bytes() + pool.idle_bytes,
+            frames,
+        )
+    };
+    #[cfg(not(feature = "decode"))]
+    let (decoded, frames) = (0, 0);
+    ljos_engine::OwnerMemory {
+        key: "media",
+        label: "decoded media",
+        bytes: shown + decoded,
+        count: shown_frames + frames,
+        of: "frames",
+    }
 }
 
 /// Sends all sound to the null sink, whatever devices the system has: for

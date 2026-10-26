@@ -20,6 +20,7 @@ use ljos_engine::Engine;
 use ljos_platform::Reply;
 use ljos_render::ImageHandle;
 
+use crate::mp4_video::Mp4Video;
 use crate::sink::{Format, STREAM_AHEAD, Voice, interleave};
 
 /// What the Engine thread does with a frame: `None` when it could not
@@ -71,8 +72,9 @@ struct Feed {
 }
 
 impl Decoder {
-    /// A thread for `source`; `None` when none could be started.
-    pub(crate) fn new(source: SharedSource) -> Option<Decoder> {
+    /// A thread for `source`, its pictures read by `video` when there is
+    /// one; `None` when none could be started.
+    pub(crate) fn new(source: SharedSource, video: Option<Mp4Video>) -> Option<Decoder> {
         let shared = Arc::new(Shared {
             job: Mutex::new(Job::default()),
             wake: Condvar::new(),
@@ -80,7 +82,7 @@ impl Decoder {
         let worker = Arc::clone(&shared);
         std::thread::Builder::new()
             .name("ljos-media-decode".to_owned())
-            .spawn(move || work(&worker, &source))
+            .spawn(move || work(&worker, &source, video))
             .ok()?;
         Some(Decoder { shared })
     }
@@ -163,7 +165,7 @@ struct Chunk {
     serial: u64,
 }
 
-fn work(shared: &Shared, source: &SharedSource) {
+fn work(shared: &Shared, source: &SharedSource, mut video: Option<Mp4Video>) {
     loop {
         let (frame, chunk) = {
             let mut job = shared.job.lock().unwrap_or_else(PoisonError::into_inner);
@@ -218,7 +220,7 @@ fn work(shared: &Shared, source: &SharedSource) {
             (job.frame.take(), chunk)
         };
         if let Some(f) = frame {
-            let image = decode_frame(source, f.at_ms);
+            let image = decode_frame(source, video.as_mut(), f.at_ms);
             let deliver = f.deliver;
             f.reply.send(move |e| deliver(e, image));
         }
@@ -239,10 +241,17 @@ fn work(shared: &Shared, source: &SharedSource) {
     }
 }
 
-fn decode_frame(source: &SharedSource, at_ms: f64) -> Option<ImageHandle> {
-    let frame = source
-        .video_frame(FrameRequest::full(Tick::from_seconds_f64(at_ms / 1000.0)))
-        .ok()?;
+fn decode_frame(
+    source: &SharedSource,
+    video: Option<&mut Mp4Video>,
+    at_ms: f64,
+) -> Option<ImageHandle> {
+    let at = Tick::from_seconds_f64(at_ms / 1000.0);
+    // The source's cache would keep every frame shown (see `mp4_video`).
+    let frame = match video {
+        Some(v) => v.frame(at)?,
+        None => Arc::unwrap_or_clone(source.video_frame(FrameRequest::full(at)).ok()?),
+    };
     let rgba = frame.to_rgba8();
     ImageHandle::from_straight(frame.width, frame.height, rgba).ok()
 }
