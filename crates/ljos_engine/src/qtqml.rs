@@ -14,6 +14,7 @@ use ljos_js::{JsRef, JsValue, Scope};
 use ljos_reactive::NodeState;
 use ljos_runtime::{Clock, FrameScheduler, SystemClock, Time, TimerId, TimerKind};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::atom::Atom;
 use crate::builtins::QtObject;
@@ -311,8 +312,12 @@ impl Engine {
                 return;
             }
             let g = &self.inner.graph;
-            let (mut ids, mut due) = (Vec::new(), Vec::new());
-            let mut stack = vec![obj];
+            // A delegate is a handful of objects, which these hold without
+            // an allocation.
+            let mut ids: SmallVec<[ObjectId; 8]> = SmallVec::new();
+            let mut due = Vec::new();
+            let mut stack: SmallVec<[ObjectId; 8]> = SmallVec::new();
+            stack.push(obj);
             while let Some(id) = stack.pop() {
                 let Some(h) = store.objects.get(id) else {
                     continue;

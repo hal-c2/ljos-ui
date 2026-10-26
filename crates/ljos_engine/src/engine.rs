@@ -730,8 +730,9 @@ impl Engine {
     fn tell_destroyed(&self, obj: ObjectId) {
         let handlers = {
             let store = self.inner.store.borrow();
-            let mut order = Vec::new();
-            let mut stack = vec![obj];
+            let mut order: SmallVec<[ObjectId; 8]> = SmallVec::new();
+            let mut stack: SmallVec<[ObjectId; 8]> = SmallVec::new();
+            stack.push(obj);
             while let Some(id) = stack.pop() {
                 if let Some(h) = store.objects.get(id) {
                     order.push(id);
@@ -763,14 +764,16 @@ impl Engine {
     pub fn destroy_now(&self, obj: ObjectId) -> bool {
         self.tell_destruction_going(obj);
         self.tell_destroyed(obj);
-        // Post-order: children before their owner.
+        // Post-order: children before their owner. A view's delegate is a
+        // handful of objects, which these hold without an allocation.
         let order = {
             let store = self.inner.store.borrow();
             if !store.objects.contains_key(obj) {
                 return false;
             }
-            let mut order = Vec::new();
-            let mut stack = vec![(obj, false)];
+            let mut order: SmallVec<[ObjectId; 8]> = SmallVec::new();
+            let mut stack: SmallVec<[(ObjectId, bool); 8]> = SmallVec::new();
+            stack.push((obj, false));
             while let Some((id, expanded)) = stack.pop() {
                 if expanded {
                     order.push(id);
@@ -906,7 +909,9 @@ impl Engine {
     /// deleted object. A `property list<T>` written in QML keeps its
     /// length and reads `null` there, so it is left alone.
     fn forget_in_lists(&self, holder: ObjectId) {
-        let lists: SmallVec<[PropIndex; 4]> = {
+        // An item has more than four (`children`, `resources`, `data`,
+        // `states`, ...), which spilled out of a smaller array each time.
+        let lists: SmallVec<[PropIndex; 8]> = {
             let store = self.inner.store.borrow();
             let Some(h) = store.objects.get(holder) else {
                 return;
@@ -2310,7 +2315,7 @@ impl Engine {
         f: impl FnMut(&Engine) -> Value + 'static,
     ) -> Result<(), EngineError> {
         let mut f = f;
-        self.bind_impl(obj, prop, Box::new(move |e| Some(f(e))), false)
+        self.bind_impl(obj, prop, move |e| Some(f(e)), false)
     }
 
     /// [`Engine::bind`] for what a native type gives a property it was not
@@ -2329,7 +2334,7 @@ impl Engine {
             self.provenance(obj, prop),
             Some(Provenance::Default | Provenance::Animated | Provenance::Host) | None
         ) {
-            self.bind_impl(obj, prop, Box::new(move |e| Some(f(e))), false)?;
+            self.bind_impl(obj, prop, move |e| Some(f(e)), false)?;
         }
         Ok(())
     }
@@ -2343,7 +2348,7 @@ impl Engine {
         f: impl FnMut(&Engine) -> Value + 'static,
     ) -> Result<(), EngineError> {
         let mut f = f;
-        self.bind_impl(obj, prop, Box::new(move |e| Some(f(e))), true)
+        self.bind_impl(obj, prop, move |e| Some(f(e)), true)
     }
 
     /// [`Engine::bind_initial`] for a binding that can fail (a JS
@@ -2354,7 +2359,7 @@ impl Engine {
         prop: PropIndex,
         f: impl FnMut(&Engine) -> Option<Value> + 'static,
     ) -> Result<(), EngineError> {
-        self.bind_impl(obj, prop, Box::new(f), true)
+        self.bind_impl(obj, prop, f, true)
     }
 
     /// [`Engine::bind_fallible`] that checks the property is writable
@@ -2365,7 +2370,7 @@ impl Engine {
         prop: PropIndex,
         f: impl FnMut(&Engine) -> Option<Value> + 'static,
     ) -> Result<(), EngineError> {
-        self.bind_impl(obj, prop, Box::new(f), false)
+        self.bind_impl(obj, prop, f, false)
     }
 
     /// [`Engine::bind`] for a value native code computes (a size that
@@ -2379,20 +2384,14 @@ impl Engine {
         f: impl FnMut(&Engine) -> Value + 'static,
     ) -> Result<(), EngineError> {
         let mut f = f;
-        self.bind_free(
-            obj,
-            prop,
-            Box::new(move |e| Some(f(e))),
-            false,
-            Free::Always,
-        )
+        self.bind_free(obj, prop, move |e| Some(f(e)), false, Free::Always)
     }
 
     fn bind_impl(
         &self,
         obj: ObjectId,
         prop: PropIndex,
-        f: BindingFn,
+        f: impl FnMut(&Engine) -> Option<Value> + 'static,
         internal: bool,
     ) -> Result<(), EngineError> {
         // A binding the creator installs gives the property its first
@@ -2401,24 +2400,58 @@ impl Engine {
         self.bind_free(obj, prop, f, internal, free)
     }
 
-    pub(crate) fn bind_free(
+    /// Installs `f` as the binding of `prop`. The creator's closure goes
+    /// into the graph's box with the wrapper around it: one allocation per
+    /// binding, where a box of its own made it two (B26).
+    pub(crate) fn bind_free<F>(
         &self,
         obj: ObjectId,
         prop: PropIndex,
-        f: BindingFn,
+        f: F,
         internal: bool,
         free: Free,
-    ) -> Result<(), EngineError> {
+    ) -> Result<(), EngineError>
+    where
+        F: FnMut(&Engine) -> Option<Value> + 'static,
+    {
         let to = self.redirect(obj, prop);
-        let f = if to == (obj, prop) {
-            f
-        } else {
-            self.traced_as_alias(obj, prop, to, f)
-        };
+        if to != (obj, prop) {
+            let f = self.traced_as_alias(obj, prop, to, Box::new(f));
+            return self.bind_redirected(obj, prop, to, f, internal, free);
+        }
+        self.bind_redirected(obj, prop, to, f, internal, free)
+    }
+
+    fn bind_redirected<F>(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        to: (ObjectId, PropIndex),
+        f: F,
+        internal: bool,
+        free: Free,
+    ) -> Result<(), EngineError>
+    where
+        F: FnMut(&Engine) -> Option<Value> + 'static,
+    {
         if let Some(target) = self.alias_member(obj, prop) {
-            return self.bind_member(target, f, internal, free);
+            return self.bind_member(target, Box::new(f), internal, free);
         }
         let (obj, prop) = to;
+        let (n, ty, last) = self.binding_target(obj, prop, internal)?;
+        let wrapper = self.binding_wrapper(obj, prop, ty, last, f, free);
+        self.inner.graph.bind(n, wrapper)?;
+        self.binding_installed(n, obj, prop)
+    }
+
+    /// The node a binding of `prop` goes on, the type it gives and what it
+    /// keeps when it fails.
+    fn binding_target(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        internal: bool,
+    ) -> Result<(NodeId, TypeTag, Value), EngineError> {
         self.drop_maker(obj, prop);
         let ty = {
             let store = self.inner.store.borrow();
@@ -2439,8 +2472,15 @@ impl Engine {
         } else {
             g.untrack(|| g.try_get(n))
         };
-        let wrapper = self.binding_wrapper(obj, prop, ty, last.unwrap_or_default(), f, free);
-        g.bind(n, wrapper)?;
+        Ok((n, ty, last.unwrap_or_default()))
+    }
+
+    fn binding_installed(
+        &self,
+        n: NodeId,
+        obj: ObjectId,
+        prop: PropIndex,
+    ) -> Result<(), EngineError> {
         if self.inner.eager_bindings.get() && !self.in_deferred_contents(obj) {
             let held = match self.inner.eager_hold.borrow_mut().as_mut() {
                 Some(held) => {
@@ -2455,7 +2495,7 @@ impl Engine {
                 None => false,
             };
             if !held {
-                g.set_eager(n, true)?;
+                self.inner.graph.set_eager(n, true)?;
             }
         }
         Ok(())
@@ -2486,128 +2526,32 @@ impl Engine {
 
     /// Wraps a user binding for the graph: runs it tracked, coerces the
     /// result, keeps the last good value on failure and writes the field
-    /// cache.
-    fn binding_wrapper(
+    /// cache. What it keeps between runs is [`Wrapped`], which is not
+    /// generic: only the call of `f` is made once per closure type.
+    fn binding_wrapper<F>(
         &self,
         obj: ObjectId,
         prop: PropIndex,
         ty: TypeTag,
-        mut last: Value,
-        mut f: BindingFn,
-        mut free: Free,
-    ) -> impl FnMut(&Graph<Value>) -> Value + 'static {
-        let weak = Rc::downgrade(&self.inner);
-        let reset = self.reset_of(obj, prop);
-        // Where a number property's field is, found at the first run: a
-        // number it gives then goes straight into it, as an animation's
-        // steps do. It is looked for again whenever it stops fitting.
-        let mut slot: Option<crate::NumberSlot> = None;
-        let mut sought = false;
-        move |_g| {
-            let Some(inner) = weak.upgrade() else {
-                return last.clone();
-            };
-            let engine = Engine::from_inner(inner);
-            if engine.destruction_told(obj) {
-                return last.clone();
-            }
-            // While a trace follows bindings each run is told: what it
-            // read that changed, how long it took and what it gave.
-            // Otherwise this is one look at a flag.
-            let _timed = engine.inner.timing.binding();
-            let _profiled = engine.profile_binding(obj, prop);
-            let _journaled = engine.journal_binding(obj, prop);
-            let followed = if engine.inner.traces.follows_bindings() {
-                engine
-                    .binding_runs(obj, prop)
-                    .map(|run| (run, last.clone()))
-            } else {
-                None
-            };
-            let mut run = || -> Value {
-                let unseen = free != Free::Never;
-                if free == Free::First {
-                    free = Free::Never;
-                }
-                let v = {
-                    let _t = Tracking::enter(&engine.inner.tracking);
-                    f(&engine)
-                };
-                let Some(v) = v else {
-                    return last.clone();
-                };
-                // A binding that yields `undefined` takes the property back
-                // and stays: its next value is given as any other.
-                let v = match reset {
-                    Some(reset) if reset.takes_back(&v) => {
-                        let _t = Tracking::enter(&engine.inner.tracking);
-                        engine.reset_value(obj, prop, reset)
-                    }
-                    _ => v,
-                };
-                if !sought {
-                    sought = true;
-                    slot = engine.number_slot(obj, prop);
-                }
-                // A number needs none of the conversions and has no filter.
-                if let Some(s) = slot
-                    && let Some(n) = s.number(&v)
-                {
-                    last = n;
-                    if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
-                        return shown;
-                    }
-                    if !engine.store_number(&s, &last) {
-                        slot = None;
-                        sought = false;
-                        engine.store_value(obj, prop, &last);
-                    }
-                    return last.clone();
-                }
-                let v = engine.for_slot(obj, prop, v);
-                let coerced = {
-                    let store = engine.inner.store.borrow();
-                    coerce_for(&store, Some(obj), &ty, &v).and_then(|v| {
-                        match store.objects.get(obj) {
-                            Some(h) => Ok(filter_in(h, prop, v)?),
-                            None => Ok(Filtered::Done(Some(v))),
-                        }
-                    })
-                };
-                let coerced = match coerced {
-                    Ok(Filtered::Done(v)) => Ok(v),
-                    Ok(setter) => engine.finish_filter(obj, prop, setter),
-                    Err(e) => Err(e),
-                };
-                match coerced {
-                    // The type refused it: the property keeps what it holds.
-                    Ok(None) => {}
-                    Ok(Some(v)) => last = v,
-                    Err(e) => {
-                        let e = engine.refusal(&v, &e);
-                        // Qt's message is the binding's place and the error; a
-                        // binding made at run time has no place to give.
-                        match engine.binding_place(obj, prop) {
-                            Some(at) => engine.warn(format!("{at}: {e}")),
-                            None => {
-                                let (t, p) = engine.describe(obj, prop);
-                                engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
-                            }
-                        }
-                    }
-                }
-                if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
-                    return shown;
-                }
-                engine.store_value(obj, prop, &last);
-                last.clone()
-            };
-            let v = run();
-            if let Some((run, before)) = followed {
-                engine.binding_ran(run, &before, &v);
-            }
-            v
-        }
+        last: Value,
+        mut f: F,
+        free: Free,
+    ) -> impl FnMut(&Graph<Value>) -> Value + 'static
+    where
+        F: FnMut(&Engine) -> Option<Value> + 'static,
+    {
+        let mut w = Wrapped {
+            weak: Rc::downgrade(&self.inner),
+            obj,
+            prop,
+            ty,
+            last,
+            free,
+            reset: self.reset_of(obj, prop),
+            slot: None,
+            sought: false,
+        };
+        move |_g| w.run(&mut f)
     }
 
     /// Tells observers that a field changed behind the engine's back (a
@@ -2809,7 +2753,7 @@ impl Engine {
             }
             OverrideContent::Binding(mut f) => {
                 let last = g.untrack(|| g.try_get(n)).unwrap_or_default();
-                let f: BindingFn = Box::new(move |e| Some(f(e)));
+                let f = move |e: &Engine| Some(f(e));
                 // An override's first value is put in place like a value
                 // override is: no interceptor sees it.
                 OverrideValue::binding(self.binding_wrapper(obj, prop, ty, last, f, Free::First))
@@ -3807,4 +3751,137 @@ fn primitive(v: &Value) -> bool {
         v,
         Value::Int(_) | Value::Real(_) | Value::Bool(_) | Value::String(_)
     )
+}
+
+/// What a binding keeps between runs (see [`Engine::binding_wrapper`]).
+struct Wrapped {
+    weak: Weak<Inner>,
+    obj: ObjectId,
+    prop: PropIndex,
+    ty: TypeTag,
+    last: Value,
+    free: Free,
+    reset: Option<crate::meta::Reset>,
+    /// Where a number property's field is, found at the first run: a
+    /// number it gives then goes straight into it, as an animation's
+    /// steps do. It is looked for again whenever it stops fitting.
+    slot: Option<crate::NumberSlot>,
+    sought: bool,
+}
+
+impl Wrapped {
+    fn run(&mut self, f: &mut dyn FnMut(&Engine) -> Option<Value>) -> Value {
+        let Wrapped {
+            ref weak,
+            obj,
+            prop,
+            ref ty,
+            ref mut last,
+            ref mut free,
+            reset,
+            ref mut slot,
+            ref mut sought,
+        } = *self;
+        let Some(inner) = weak.upgrade() else {
+            return last.clone();
+        };
+        let engine = Engine::from_inner(inner);
+        if engine.destruction_told(obj) {
+            return last.clone();
+        }
+        // While a trace follows bindings each run is told: what it
+        // read that changed, how long it took and what it gave.
+        // Otherwise this is one look at a flag.
+        let _timed = engine.inner.timing.binding();
+        let _profiled = engine.profile_binding(obj, prop);
+        let _journaled = engine.journal_binding(obj, prop);
+        let followed = if engine.inner.traces.follows_bindings() {
+            engine
+                .binding_runs(obj, prop)
+                .map(|run| (run, last.clone()))
+        } else {
+            None
+        };
+        let mut run = || -> Value {
+            let unseen = *free != Free::Never;
+            if *free == Free::First {
+                *free = Free::Never;
+            }
+            let v = {
+                let _t = Tracking::enter(&engine.inner.tracking);
+                f(&engine)
+            };
+            let Some(v) = v else {
+                return last.clone();
+            };
+            // A binding that yields `undefined` takes the property back
+            // and stays: its next value is given as any other.
+            let v = match reset {
+                Some(reset) if reset.takes_back(&v) => {
+                    let _t = Tracking::enter(&engine.inner.tracking);
+                    engine.reset_value(obj, prop, reset)
+                }
+                _ => v,
+            };
+            if !*sought {
+                *sought = true;
+                *slot = engine.number_slot(obj, prop);
+            }
+            // A number needs none of the conversions and has no filter.
+            if let Some(s) = *slot
+                && let Some(n) = s.number(&v)
+            {
+                *last = n;
+                if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, last) {
+                    return shown;
+                }
+                if !engine.store_number(&s, last) {
+                    *slot = None;
+                    *sought = false;
+                    engine.store_value(obj, prop, last);
+                }
+                return last.clone();
+            }
+            let v = engine.for_slot(obj, prop, v);
+            let coerced = {
+                let store = engine.inner.store.borrow();
+                coerce_for(&store, Some(obj), ty, &v).and_then(|v| match store.objects.get(obj) {
+                    Some(h) => Ok(filter_in(h, prop, v)?),
+                    None => Ok(Filtered::Done(Some(v))),
+                })
+            };
+            let coerced = match coerced {
+                Ok(Filtered::Done(v)) => Ok(v),
+                Ok(setter) => engine.finish_filter(obj, prop, setter),
+                Err(e) => Err(e),
+            };
+            match coerced {
+                // The type refused it: the property keeps what it holds.
+                Ok(None) => {}
+                Ok(Some(v)) => *last = v,
+                Err(e) => {
+                    let e = engine.refusal(&v, &e);
+                    // Qt's message is the binding's place and the error; a
+                    // binding made at run time has no place to give.
+                    match engine.binding_place(obj, prop) {
+                        Some(at) => engine.warn(format!("{at}: {e}")),
+                        None => {
+                            let (t, p) = engine.describe(obj, prop);
+                            engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
+                        }
+                    }
+                }
+            }
+            if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, last) {
+                return shown;
+            }
+            engine.store_value(obj, prop, last);
+            last.clone()
+        };
+        let v = run();
+        if let Some((run, before)) = followed {
+            engine.binding_ran(run, &before, &v);
+        }
+        v
+    }
 }
