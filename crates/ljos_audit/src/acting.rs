@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use ljos_engine::{Engine, ObjectId};
+use ljos_engine::{Engine, ObjectId, Value, WriteKind};
 use ljos_quick::focus::{FocusReason, active_focus_item, focus_reason, force_active_focus};
 use ljos_quick::{Item, QuickScene};
 use ljos_runtime::Time;
@@ -120,10 +120,13 @@ pub(crate) fn hold_focus(act: &Act) -> HeldFocus {
 pub(crate) fn restore_focus(act: &mut Act, held: &HeldFocus) {
     let e = act.engine;
     let now = |i: ObjectId| e.untrack(|| e.read(i, Item::FOCUS.index)).to_boolean();
+    // Written as the focus chain writes it, not as an assignment: a
+    // binding on `focus` (`focus: root.editing`) stays, and still decides
+    // once the audit is done.
     for want in [false, true] {
         for (item, was) in &held.flags {
             if *was == want && e.is_alive(*item) && now(*item) != want {
-                let _ = e.set(*item, Item::FOCUS, want);
+                let _ = e.write(*item, Item::FOCUS.index, Value::Bool(want), WriteKind::Host);
             }
         }
     }
