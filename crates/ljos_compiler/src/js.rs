@@ -897,7 +897,7 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
 /// that of the last expression statement it ran, as the completion value of
 /// a script is (Qt 6.11.2, by running qml6). The edits that make each such
 /// statement of `text` (a block) return its expression: the last statement
-/// of a block, and of both branches of an `if`.
+/// of a block, of both branches of an `if` and of a label.
 pub(crate) fn completion_returns(text: &str) -> Vec<Edit> {
     fn tails(statement: &Statement<'_>, out: &mut Vec<Span>) {
         match statement {
@@ -913,6 +913,8 @@ pub(crate) fn completion_returns(text: &str) -> Vec<Edit> {
                     tails(alternate, out);
                 }
             }
+            // `{ k: 1 }` is a block whose statement has a label.
+            Statement::LabeledStatement(it) => tails(&it.body, out),
             _ => {}
         }
     }

@@ -10,7 +10,7 @@ pub mod ast;
 mod recovery;
 
 use oxc_allocator::ArenaVec;
-use oxc_ast::ast::{Comment, Expression, IdentifierName, ObjectPropertyKind, PropertyKey};
+use oxc_ast::ast::{Comment, Expression, IdentifierName, ObjectExpression, ObjectPropertyKind};
 use oxc_diagnostics::Diagnostics;
 use oxc_span::Span;
 
@@ -458,44 +458,45 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         QmlBindingValue::Expression(expression)
     }
 
-    /// `name: { ... }` is an object literal when it parses as one and a script
-    /// block otherwise, which is how Qt's own parser resolves the ambiguity.
-    /// `{ a }` and `{ a = b }` are both to JavaScript's grammar, the second
-    /// until it turns out not to be a pattern; in QML they are blocks. So is
-    /// `{ if (a) { } }`, which to JavaScript's grammar is also an object with
-    /// a method named `if`.
+    /// `name: { ... }` is a script block, valued as the last statement it
+    /// runs, unless it starts as JSON does: `{ "key":` or `{ 1:`. Then it is
+    /// an object, and every key of it a string or a number. Qt tells the two
+    /// apart by those first tokens alone (Qt 6.11.2, by running qml6):
+    /// `{}` is an empty block, `{ k: 1 }` a block with a label, and
+    /// `{ k: 1, j: 2 }` no script at all.
     fn parse_qml_braced_value(&mut self) -> QmlBindingValue<'a> {
-        let checkpoint = self.checkpoint_with_error_recovery();
-        let errors_before = self.errors_count();
-        let start = self.cur_token().span().start;
-        let value = self.parse_qml_expression_value();
-        let initialized = self.state.cover_initialized_name.keys().any(|at| *at >= start);
-        let is_literal = match &value {
-            QmlBindingValue::Expression(Expression::ObjectExpression(object)) => {
-                object.properties.is_empty()
-                    || object.properties.iter().any(|property| match property {
-                        ObjectPropertyKind::ObjectProperty(property) => {
-                            !property.shorthand && !(property.method && Self::qml_names_statement(&property.key))
-                        }
-                        ObjectPropertyKind::SpreadProperty(_) => true,
-                    })
-            }
-            _ => true,
-        };
-        if self.fatal_error.is_none() && self.errors_count() == errors_before && !initialized && is_literal {
-            return value;
+        let keyed = self.lookahead(|p| {
+            p.bump_any();
+            let literal = p.at(Kind::Str) || p.cur_kind().is_number();
+            p.bump_any();
+            literal && p.at(Kind::Colon)
+        });
+        if !keyed {
+            return QmlBindingValue::Statement(
+                self.context_add(Context::Return, |p| p.parse_block_statement()),
+            );
         }
-        self.state.cover_initialized_name.retain(|at, _| *at < start);
-        self.rewind(checkpoint);
-        QmlBindingValue::Statement(
-            self.context_add(Context::Return, |p| p.parse_block_statement()),
-        )
-    }
-
-    /// A method by the name of a statement that is written as a call and a
-    /// block: `if (a) { }`.
-    fn qml_names_statement(key: &PropertyKey<'a>) -> bool {
-        matches!(key, PropertyKey::StaticIdentifier(name) if matches!(name.name.as_str(), "if" | "while" | "with" | "switch" | "for"))
+        let start = self.cur_start();
+        self.expect(Kind::LCurly);
+        let mut properties = ArenaVec::new_in(&self.ast);
+        while !self.at(Kind::RCurly) && !self.has_fatal_error() {
+            if !self.at(Kind::Str) && !self.cur_kind().is_number() {
+                self.expect(Kind::Decimal);
+                break;
+            }
+            let property = self.context_add(Context::In, |p| p.parse_object_literal_element());
+            properties.push(ObjectPropertyKind::ObjectProperty(property));
+            if !self.eat(Kind::Comma) {
+                break;
+            }
+        }
+        self.expect(Kind::RCurly);
+        self.asi();
+        QmlBindingValue::Expression(Expression::ObjectExpression(ObjectExpression::boxed(
+            self.end_span(start),
+            properties,
+            self,
+        )))
     }
 
     /// At `Type {` or `Ns.Type {`, where the brace is on the same line.
