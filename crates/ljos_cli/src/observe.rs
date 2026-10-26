@@ -178,6 +178,25 @@ impl InspectorClient {
     #[qml(signal)]
     fn answered(serial: i32, tool: String, ok: bool, result: String);
 
+    /// The areas of the design rules the audit checks, comma separated, in
+    /// the order of the rules' table: what the Audit page offers to keep
+    /// the findings of. They come from the table, not from a list the
+    /// window keeps, so a rule added there is offered here.
+    #[qml(invokable)]
+    fn audit_areas(_cx: &Cx) -> String {
+        audit_areas().join(",")
+    }
+
+    /// Where a rule's guide (`docs/design/<page>#<code>`, as the audit
+    /// gives it) can be read in a browser.
+    #[qml(invokable)]
+    fn guide_url(_cx: &Cx, guide: String) -> String {
+        format!(
+            "{}/blob/main/{guide}",
+            env!("CARGO_PKG_REPOSITORY").trim_end_matches('/')
+        )
+    }
+
     /// Calls `tool` with `arguments`, a JSON object as text.
     #[qml(invokable)]
     fn call(cx: &Cx, tool: String, arguments: String) -> Result<i32, EngineError> {
@@ -244,6 +263,25 @@ impl InspectorClient {
         }
         Ok(serial)
     }
+}
+
+/// The areas of the rules a running scene can be held to, each once.
+fn audit_areas() -> Vec<String> {
+    let mut areas: Vec<String> = Vec::new();
+    for rule in ljos_design::RULES {
+        if rule.check == ljos_design::Check::Static || rule.area == ljos_design::Area::Meta {
+            continue;
+        }
+        let area = serde_json::to_value(rule.area)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned));
+        if let Some(area) = area
+            && !areas.contains(&area)
+        {
+            areas.push(area);
+        }
+    }
+    areas
 }
 
 /// How long a call may take beyond the wait it asks for.
@@ -348,6 +386,21 @@ mod tests {
         assert!(matches!(read_answer(&response(&streamed)), Ok(Ok(_))));
         let refused = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"no"}}"#;
         assert!(matches!(read_answer(&response(refused)), Ok(Err(m)) if m == "no"));
+    }
+
+    #[test]
+    fn the_audit_page_offers_the_areas_the_rules_table_has() {
+        let areas = audit_areas();
+        assert!(areas.contains(&"a11y".to_owned()), "{areas:?}");
+        assert!(areas.contains(&"layout".to_owned()), "{areas:?}");
+        // The audit takes each as its `rules` argument.
+        for area in &areas {
+            ljos_audit::Options::desktop().only(&[area]).unwrap();
+        }
+        let mut sorted = areas.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), areas.len());
     }
 
     #[test]

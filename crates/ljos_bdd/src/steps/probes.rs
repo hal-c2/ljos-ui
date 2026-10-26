@@ -79,6 +79,101 @@ fn application_observed(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.observe())
 }
 
+// The observer's window is driven with its own inspector, as an agent
+// would: it is found by locator and pressed, never reached into.
+// A quote in a locator is written \" in a feature.
+fn unescaped(text: &str) -> String {
+    text.replace("\\\"", "\"")
+}
+
+#[when(regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked$"#)]
+fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
+    let locator = unescaped(&locator);
+    w.each(|b| {
+        b.probes()?
+            .observer_call("app_click", serde_json::json!({ "target": locator }))
+            .map(|_| ())
+    })
+}
+
+#[then(regex = r#"^the observer shows "([^"]+)"$"#)]
+fn observer_shows(w: &mut LjosWorld, text: String) -> StepResult {
+    observer_matches(w, &format!("text={text}"), true)
+}
+
+#[then(regex = r#"^the observer does not show "([^"]+)"$"#)]
+fn observer_does_not_show(w: &mut LjosWorld, text: String) -> StepResult {
+    observer_matches(w, &format!("text={text}"), false)
+}
+
+#[then(regex = r#"^the observer has "((?:[^"\\]|\\.)+)"$"#)]
+fn observer_has(w: &mut LjosWorld, locator: String) -> StepResult {
+    observer_matches(w, &unescaped(&locator), true)
+}
+
+fn observer_matches(w: &mut LjosWorld, locator: &str, present: bool) -> StepResult {
+    w.each(|b| {
+        let found = b
+            .probes()?
+            .observer_call("app_find", serde_json::json!({ "locator": locator }))?;
+        let count = found["total"].as_u64().unwrap_or(0);
+        match (present, count) {
+            (true, 0) => {
+                let seen = b.probes()?.observer_call(
+                    "app_find",
+                    serde_json::json!({ "locator": "text=", "limit": 200 }),
+                )?;
+                let names: Vec<String> = seen["matches"]
+                    .as_array()
+                    .map(|all| {
+                        all.iter()
+                            .map(|m| format!("{} {}", m["role"], m["name"]))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Err(BackendError::Failed(format!(
+                    "the observer shows nothing matching {locator}; it shows {names:?}"
+                )))
+            }
+            (false, 1..) => Err(BackendError::Failed(format!(
+                "the observer shows {count} matching {locator}"
+            ))),
+            _ => Ok(()),
+        }
+    })
+}
+
+// The observer is itself an application with a window: the audit it
+// offers is held to its own rules.
+#[then("the observer passes its own audit")]
+fn observer_passes_audit(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let report = b
+            .probes()?
+            .observer_call("app_audit", serde_json::json!({ "matrix": "current" }))?;
+        let errors: Vec<String> = report["findings"]
+            .as_array()
+            .map(|all| {
+                all.iter()
+                    .filter(|f| f["severity"] == "error")
+                    .map(|f| {
+                        format!(
+                            "{}: {}",
+                            f["code"].as_str().unwrap_or("?"),
+                            f["message"].as_str().unwrap_or("")
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(errors.join("; ")))
+        }
+    })
+}
+
 #[when("the work of the application and its observer is counted")]
 fn work_is_counted(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.count_work())

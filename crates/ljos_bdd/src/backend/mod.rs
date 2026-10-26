@@ -1087,6 +1087,20 @@ pub trait Probes: Backend {
         })
     }
 
+    /// Calls a tool of the observer's own inspector (`ljos observe
+    /// --mcp=inspect,input`), to see what its window shows and to press
+    /// what is on it, as an agent would.
+    fn observer_call(
+        &mut self,
+        _tool: &str,
+        _arguments: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "driving an observer window",
+        })
+    }
+
     /// Starts counting the work the application and its observer do
     /// (passes, frames, jobs, messages), less what the counting causes.
     fn count_work(&mut self) -> Result<()> {
