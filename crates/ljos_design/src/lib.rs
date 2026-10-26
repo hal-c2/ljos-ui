@@ -19,6 +19,7 @@ pub mod module;
 pub mod motion;
 pub mod palette;
 pub mod scale;
+pub mod words;
 
 /// How sure a check is that a finding hurts a user.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -372,6 +373,14 @@ pub const RULES: &[Rule] = &[
         Both,
         "Text is drawn smaller than the smallest size any platform allows for reading.",
         "Use a step of the type scale at or above the limit; set secondary text apart by weight or a muted text colour that still passes contrast, not by size.",
+    ),
+    r(
+        "text-line-length",
+        Text,
+        Hint,
+        Runtime,
+        "A paragraph's lines run longer than 80 characters, so the eye loses its place going back to the next line.",
+        "Bound the text's width (a maximum width, a column, margins) so lines hold 45 to 75 characters.",
     ),
     // Layout.
     r(

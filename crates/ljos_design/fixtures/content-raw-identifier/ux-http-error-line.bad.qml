@@ -1,4 +1,4 @@
-// expect: text-raw-markup at 10
+// expect: content-raw-identifier at 10
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

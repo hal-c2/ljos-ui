@@ -157,6 +157,42 @@ pub(crate) const CHECKS: &[Check] = &[
         codes: &["layout-shift"],
         run: layout_shift::check,
     },
+    Check {
+        codes: &["content-raw-identifier"],
+        run: identifiers::check,
+    },
+    Check {
+        codes: &["text-raw-markup"],
+        run: raw_markup::check,
+    },
+    Check {
+        codes: &["content-empty-state"],
+        run: empty_state::check,
+    },
+    Check {
+        codes: &["content-repeated-text"],
+        run: repeated_text::check,
+    },
+    Check {
+        codes: &["content-identical-rows"],
+        run: identical_rows::check,
+    },
+    Check {
+        codes: &["content-inconsistent-words"],
+        run: inconsistent_words::check,
+    },
+    Check {
+        codes: &["content-disabled-no-reason"],
+        run: disabled_no_reason::check,
+    },
+    Check {
+        codes: &["text-too-small"],
+        run: text_too_small::check,
+    },
+    Check {
+        codes: &["text-line-length"],
+        run: line_length::check,
+    },
 ];
 
 /// The codes the audit implements, each once, in the order they run.
@@ -190,3 +226,13 @@ mod resize_handle;
 mod stacked_scrims;
 mod window_controls;
 mod wrap_separator;
+
+mod disabled_no_reason;
+mod empty_state;
+mod identical_rows;
+mod identifiers;
+mod inconsistent_words;
+mod line_length;
+mod raw_markup;
+mod repeated_text;
+mod text_too_small;

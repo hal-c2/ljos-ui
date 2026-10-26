@@ -134,3 +134,15 @@ pub const WINDOW_CONTROLS_MAX_INSET_PX: f32 = 24.0;
 /// The width WCAG 2.2 SC 1.4.10 asks content to reflow at without
 /// scrolling both ways: 320 CSS px, a logical pixel here.
 pub const REFLOW_WIDTH_PX: f32 = 320.0;
+/// A paragraph's lines run at most this many characters: WCAG 2.2 SC
+/// 1.4.8 asks for 80 at most (typographers aim for 45 to 75).
+pub const LINE_LENGTH_MAX_CHARS: usize = 80;
+/// A paragraph is this many lines or more; a shorter text is a label or a
+/// caption, whose line length is no matter.
+pub const LINE_LENGTH_MIN_LINES: usize = 3;
+/// A hexadecimal run at least this long, with letters and digits both,
+/// is a hash or an address rather than a word or a number.
+pub const HASH_MIN_CHARS: usize = 12;
+/// An empty view smaller than this along either side is a strip (a bar,
+/// a row of chips), not a place a user looks for content.
+pub const EMPTY_VIEW_MIN_PX: f32 = 48.0;

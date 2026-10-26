@@ -25,6 +25,8 @@ Button { text: qsTr("Retry") }
 MenuItem { text: qsTr("Retry") }
 ```
 
+Checked by: the runtime audit, on the names of controls in one window that use two words of one group of `ljos_design::words::SYNONYMS` (`Retry` and `Try again`, `Delete` and `Remove`); each control that uses one of them is reported, naming the other.
+
 Sources: https://www.nngroup.com/articles/ten-usability-heuristics/ , https://developer.apple.com/design/human-interface-guidelines/writing
 
 <a id="content-raw-identifier"></a>
@@ -41,6 +43,8 @@ Label { text: model.title
     HoverHandler { id: hover } }
 ```
 
+Checked by: the runtime audit, on a shown text that holds an object dump (`QQuickItem(0x…)`), a UUID, a URL with a query, an absolute path of two or more parts, or a run of `limits::HASH_MIN_CHARS` or more hexadecimal letters and digits.
+
 Sources: https://www.nngroup.com/articles/ten-usability-heuristics/ (match between the system and the real world)
 
 <a id="content-repeated-text"></a>
@@ -54,6 +58,8 @@ Column { Label { text: qsTr("Downloads") } Label { text: qsTr("Your downloads") 
 // Good
 Column { Label { text: qsTr("Downloads") } Label { text: qsTr("%n file(s), 2 in progress", "", count) } }
 ```
+
+Checked by: the runtime audit, on two shown texts of the application, two words or more, that say the same under one parent.
 
 Sources: https://www.refactoringui.com/ , https://www.nngroup.com/articles/ten-usability-heuristics/
 
@@ -76,6 +82,8 @@ ListView {
 }
 ```
 
+Checked by: the runtime audit, on a shown list or grid with no rows, larger than `limits::EMPTY_VIEW_MIN_PX` both ways, over which no text other than its header and footer is shown and no busy indicator runs. A combo box's list is left out.
+
 Sources: https://vercel.com/design/guidelines , https://m3.material.io/foundations/content-design/overview
 
 <a id="content-identical-rows"></a>
@@ -89,6 +97,8 @@ delegate: ItemDelegate { text: qsTr("Command") }
 // Good
 delegate: ItemDelegate { required property string command; text: command }
 ```
+
+Checked by: the runtime audit, on a view where `limits::IDENTICAL_ROWS_MIN` or more rows carry one label (their accessible name, or the words they show); it is reported on the view.
 
 Sources: https://www.nngroup.com/articles/ten-usability-heuristics/ (recognition rather than recall)
 
@@ -123,6 +133,8 @@ RowLayout {
     Label { visible: !form.valid; text: qsTr("Add a title to publish"); color: palette.placeholderText }
 }
 ```
+
+Checked by: the runtime audit, on a control whose own `enabled` is set or bound false while its parent is enabled, with no `ToolTip.text`, no tooltip child and no `Accessible.description`. A control switched off with all its siblings by a disabled parent is the parent's matter.
 
 Sources: https://www.nngroup.com/articles/ten-usability-heuristics/ (help users recognize, diagnose and recover), https://vercel.com/design/guidelines
 

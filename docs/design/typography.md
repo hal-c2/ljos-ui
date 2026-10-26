@@ -79,6 +79,8 @@ Label { text: "**Saved** to `notes.txt`" }
 Label { textFormat: Text.MarkdownText; text: "**Saved** to `notes.txt`" }
 ```
 
+Checked by: the runtime audit, on a shown text whose `textFormat` shows tags as they are: a word starting with a tag (`<b>`, `<tool_call>`) in `Text.PlainText`, a tag that is not HTML in the other formats, or a pair of backticks or `**` outside `Text.MarkdownText`.
+
 Sources: https://www.nngroup.com/articles/ten-usability-heuristics/ (aesthetic and minimalist design)
 
 <a id="text-font-literal"></a>
@@ -107,12 +109,29 @@ Label { text: qsTr("Updated just now"); font.pixelSize: 9 }
 Label { text: qsTr("Updated just now"); font.pixelSize: 12; color: palette.placeholderText }
 ```
 
+Checked by: the runtime audit as well, on a text whose drawn glyphs are smaller than `limits::TEXT_MIN_PX`, once per text.
+
 Sources: https://developer.apple.com/design/human-interface-guidelines/typography , https://m3.material.io/styles/typography/type-scale-tokens
+
+<a id="text-line-length"></a>
+### `text-line-length`
+
+**Hint, runtime.** A paragraph's lines run longer than `limits::LINE_LENGTH_MAX_CHARS` (80) characters, so the eye loses its place on the way back to the start of the next line. Typographers aim for 45 to 75.
+
+```qml
+// Bad: the paragraph is as wide as a wide window
+Label { width: parent.width; wrapMode: Text.Wrap; text: help }
+// Good: the paragraph has a measure of its own
+Label { width: Math.min(parent.width, 36 * font.pixelSize); wrapMode: Text.Wrap; text: help }
+```
+
+Checked by: the runtime audit, on a wrapping text of `limits::LINE_LENGTH_MIN_LINES` lines or more whose characters per line, on average, are more than `limits::LINE_LENGTH_MAX_CHARS`. A shorter text is a label or a caption.
+
+Sources: https://www.w3.org/WAI/WCAG22/Understanding/visual-presentation.html , https://practicaltypography.com/line-length.html
 
 ## Not checked yet
 
-- **Line length** (proposed `text-line-length`): a paragraph wider than about 75 characters is hard to track back to the next line; set `Layout.maximumWidth` on reading text.
-- **Tabular figures** (proposed `text-tabular-figures`): numbers that change in place (timers, counters, table columns) should use tabular figures (`font.features: { "tnum": 1 }`) so they do not jitter.
+- **Tabular figures**: numbers that change in place (timers, counters, table columns) should use tabular figures (`font.features: { "tnum": 1 }`) so they do not jitter. No rule checks this: one look at a scene cannot tell a number that changes in place from one that does not, and most of the fonts a platform ships draw their figures tabular already, so a rule would be mostly noise.
 - **Don't change weight on hover**: the text reflows and the row jumps (Rauno Freiberg). https://interfaces.rauno.me/
 
 ## Sources
