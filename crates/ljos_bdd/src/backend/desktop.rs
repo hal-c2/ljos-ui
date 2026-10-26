@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ljos_bench::sway::Sway;
@@ -55,6 +56,8 @@ const CALLS_PER_SECOND: usize = 18;
 /// change before it is taken: the application has presented its last
 /// frame, and the compositor shows it within a frame or two of its own.
 const STILL: Duration = Duration::from_millis(100);
+/// How much of a child's stderr is kept to say why it ended.
+const STDERR_TAIL: usize = 8 * 1024;
 /// How long a picture may take, the window settling included.
 const PICTURE: Duration = Duration::from_secs(10);
 
@@ -109,6 +112,9 @@ impl Sandbox {
 struct Running {
     app: Child,
     attach: Child,
+    /// The last of what `ljos attach` wrote to its stderr, kept so that
+    /// its end can say why.
+    attach_stderr: Arc<Mutex<Vec<u8>>>,
     to_app: ChildStdin,
     from_app: BufReader<ChildStdout>,
     next_id: u64,
@@ -125,13 +131,31 @@ impl Running {
             .args(["attach".as_ref(), token.as_os_str()])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?;
+        let attach_stderr = Arc::new(Mutex::new(Vec::new()));
+        // Drained as it comes, so the pipe never fills, and bounded.
+        if let Some(mut stderr) = attach.stderr.take() {
+            let tail = Arc::clone(&attach_stderr);
+            std::thread::spawn(move || {
+                let mut chunk = [0u8; 1024];
+                while let Ok(n) = std::io::Read::read(&mut stderr, &mut chunk) {
+                    if n == 0 {
+                        break;
+                    }
+                    let mut tail = tail.lock().unwrap_or_else(|e| e.into_inner());
+                    tail.extend_from_slice(&chunk[..n]);
+                    let over = tail.len().saturating_sub(STDERR_TAIL);
+                    tail.drain(..over);
+                }
+            });
+        }
         let to_app = attach.stdin.take().expect("piped");
         let from_app = BufReader::new(attach.stdout.take().expect("piped"));
         Ok(Running {
             app,
             attach,
+            attach_stderr,
             to_app,
             from_app,
             next_id: 0,
@@ -207,9 +231,7 @@ impl Running {
         loop {
             line.clear();
             if self.from_app.read_line(&mut line)? == 0 {
-                return Err(BackendError::Failed(
-                    "the application's inspector went away".into(),
-                ));
+                return Err(BackendError::Failed(self.went_away()));
             }
             let answer: Value = serde_json::from_str(&line)
                 .map_err(|e| BackendError::Failed(format!("the inspector said {line:?}: {e}")))?;
@@ -252,6 +274,35 @@ impl Running {
                 ..Answer::default()
             });
         }
+    }
+
+    /// Why the way in ended: how `ljos attach` and the process behind it
+    /// ended, and what attach said last.
+    fn went_away(&mut self) -> String {
+        let mut said = String::from("the application's inspector went away");
+        let ended = |child: &mut Child| match child.try_wait() {
+            Ok(Some(status)) => format!("ended ({status})"),
+            Ok(None) => "still running".to_owned(),
+            Err(e) => format!("not known ({e})"),
+        };
+        // Attach is given a moment to be reaped: its pipe closed first.
+        let until = Instant::now() + Duration::from_secs(1);
+        while matches!(self.attach.try_wait(), Ok(None)) && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let attach = ended(&mut self.attach);
+        said.push_str(&format!(
+            ": `ljos attach` {attach}; the process it reaches {}",
+            ended(&mut self.app)
+        ));
+        let tail = self.attach_stderr.lock().unwrap_or_else(|e| e.into_inner());
+        let tail = String::from_utf8_lossy(&tail);
+        if tail.trim().is_empty() {
+            said.push_str("; attach said nothing");
+        } else {
+            said.push_str(&format!("; attach said:\n{}", tail.trim_end()));
+        }
+        said
     }
 
     /// The UI thread's last rest (`app_watch`'s `rest`), and the count of
