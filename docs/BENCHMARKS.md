@@ -7549,3 +7549,114 @@ Left:
 - `flickable::put` and `views::current::normalise` still cost per row, not per changed
   row.
 - Wrapped StyledText laid out again at each width, and encode.
+
+### MEDIAMEM: what mediaplayer held that no owner counted (2026-10-26)
+
+MEM2 left 385–470 MiB of mediaplayer's memory as Rust allocation no owner told of. It was
+FilmCraft's frame cache. A FilmCraft source keeps a `GopCache` built for an editor that
+scrubs back and forth: 384 MiB a source, at least 64 frames, and the pool trims idle caches
+only past 1 GiB. Every frame a player was given stayed there. Pictures that left the cache
+went to the pool's shelf for reuse. Asked while mediaplayer's 1080p60 clip played, the cache
+held 382 MiB and the shelf 20–41 MiB.
+
+FilmCraft is used unmodified (`third_party/`), so the bound is in Ljós. An MP4 or MOV's video
+is now read in order by a reader of the player's own (`ljos_media::mp4_video`), built on
+`filmcraft-isobmff` and the source's decoder. It picks samples the way the source does: the
+edit list, the frame grid, open-GOP leading pictures and sync samples. It keeps:
+- the pictures decoded past the last one asked for;
+- that last one, so a repeated time costs nothing.
+
+That is four pictures at most for this clip, about 12 MiB at 1080p. A dropped picture is
+freed, not kept on a shelf.
+
+`a_reader_gives_the_frames_the_source_gives` checks that its pictures are the source's,
+pixel for pixel, at the same times:
+- a clip with B-frames and no edit list;
+- a rotated one with an edit list;
+- seeks forward, back and to the same frame.
+
+`a_reader_playing_holds_a_few_pictures` checks the bound.
+
+The frame an output shows stays on the CPU, with its turned copy for 90 and 270. A video
+frame cannot be made again from fewer bytes, and a turn or a lost surface paints it again.
+It is now counted too.
+
+**The decoder.** FilmCraft's H.264 decoder threads by frame, with a thread per core (up
+to 16). Each thread holds pictures in flight and hands them out in bursts. With it the reader
+held 15 pictures and the process 320 MB. The reader now starts on FilmCraft's two-thread
+background decoder: 72 MB, 3.8 ms a frame on average, 11.8 ms at p99 and 15.6 ms at most,
+against 16.7 ms a frame at 60 fps. It watches the average decode time per sample. When that
+passes half a frame's time, it moves to the full decoder at the next IDR picture, so a clip
+too heavy for two threads still plays
+(`a_reader_too_slow_for_its_clip_takes_a_full_decoder_at_a_refresh`).
+
+**Counted.** `Engine::add_memory_owner` lets a crate built on the engine tell
+`app_metrics`' `memory` what it holds. `ljos_media` tells of `media` ("decoded media",
+frames), which adds up:
+- the reader's pictures;
+- the shown frames;
+- what FilmCraft's caches still hold for the containers the reader does not read;
+- the pool's shelf.
+
+It is added to `counted_bytes` and to what is attributed, so it leaves "allocated by Rust
+code, no owner tells of it". The scenario is in features/tooling/mcp/memory.feature.
+
+**Measured.** Release build, off-screen in the cua sandbox (llvmpipe), 32 cores, with the
+machine's load average beside each run. "Private" is `Pss_Anon + SwapPss`. "Before" is the
+same build with the reader turned off, so the player goes through the FilmCraft source as on
+origin/main.
+
+`play.qml` is a 960×540 window with a `MediaPlayer`, looping, on a `VideoOutput`, playing
+Qt_LogoMergeEffect.mp4 (1080p60 H.264, 19 s, the clip mediaplayer plays). It counts
+`videoSink.videoFrameChanged`:
+- CPU is taken over seconds 5–25, playing;
+- memory is read at 25 s;
+- the player pauses at 25 s, and CPU is taken again over seconds 30–40.
+
+Two runs each, alternating:
+
+| play.qml | Private MiB | RSS MiB | CPU playing | CPU paused | Frames s5–s25 (1200 due) | Load |
+|---|---:|---:|---:|---:|---:|---|
+| qml6 | 168, 168 | 108, 91 | 51 %, 43 % | 0.0 %, 0.0 % | 1260, 1260 | 71→77, 78→85 |
+| Ljós before | 600, 597 | 599, 634 | 270 %, 273 % | 0.0 %, 0.0 % | 1181, 1190 | 76→78, 86→90 |
+| Ljós after | 122, 124 | 121, 188 | 265 %, 263 % | 0.1 %, 0.0 % | 1182, 1190 | 77→76, 85→86 |
+
+qml6's sink reports some frames twice: it reports 94 in the second the clip loops. Its
+count is not a count of distinct frames. Ljós's sink reports each frame shown once. Ljós
+showed the same frames before and after, 10–19 short of 1200 at a load of 76–90. The bound
+cost no frames.
+
+mediaplayer itself, with `--example mediaplayer` for its file-name provider, measured over
+seconds 10–30 of its clip and read at 30 s. qml6 cannot run it:
+
+| mediaplayer | Private MiB | RSS MiB | CPU playing | Load |
+|---|---:|---:|---:|---|
+| before | 560, 562 | 273, 541 | 160 %, 152 % | 74→65, 60→50 |
+| after | 99, 99 | 80, 86 | 157 %, 157 % | 79→74, 64→60 |
+
+Its private memory fell from 560 MiB to 99 MiB. qml6 holds 168 MiB for the bare player.
+(RSS reads low in the before runs because most of the cache was in swap.)
+
+**What is left.** Playing costs far more CPU than qml6's: 263–273 % against 43–51 % for
+play.qml. The memory work did not change that. Software decoding takes about 23 % of a core
+(3.8 ms × 60). The rest has not been measured: converting each 1080p picture to RGBA, and
+uploading and scaling it on llvmpipe. qml6 converts YUV in its shader and decodes with
+FFmpeg. A YUV upload, converted on the GPU, is the next step for that.
+
+Changes FilmCraft would need, for its own repository:
+- a playback mode for its sources, with a small `GopCache` budget and no 64-frame floor, so
+  MKV, WebM, Ogg and MPEG-TS bound the same way;
+- a trim of the pool's shelf.
+
+DECISIONs:
+
+- The bound is a reader of Ljós's own for MP4 and MOV. FilmCraft's sources are not changed.
+  Other containers go through the source, counted under `media`.
+- The reader starts on the two-thread decoder and moves to the full one at an IDR picture
+  when decoding takes more than half a frame's time. A move never happens mid-GOP.
+- A track with a clean aperture (`clap`) goes through the source, which crops it.
+- The frame an output shows is kept on the CPU and counted. It is not let go after upload.
+- One owner, `media`, for the multimedia types. It is not split per player: asking is a sum
+  of running counts, and nothing is kept per object for it.
+- Before and after come from one build with the reader switched off for "before". The switch
+  was removed before commit.
