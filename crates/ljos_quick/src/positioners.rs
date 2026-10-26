@@ -480,6 +480,22 @@ struct Memory {
     going: HashMap<ObjectId, [f64; 2]>,
     /// A child anchored along the axis made the last pass give up.
     gave_up: bool,
+    /// What the pass a Row or Column made as it was completed read, until
+    /// the next pass: one that reads the same is the scene's first polish
+    /// of it, which Qt does not make, and is left out with its warning.
+    completed: Option<Box<Inputs>>,
+}
+
+/// What a Row's or Column's pass reads, to tell a pass that would do what
+/// the last did.
+#[derive(Debug, PartialEq)]
+struct Inputs {
+    pad: Pad,
+    spacing: f64,
+    /// The positioner's width, where it places from the right.
+    rtl: Option<f64>,
+    shown: Vec<Kid>,
+    conflict: Option<String>,
 }
 
 fn with_memory<R>(
@@ -656,7 +672,7 @@ fn init(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError>
         })?;
     }
     // The children were completed first, their own positioners laid out.
-    polish(engine, obj, which)
+    engine.untrack(|| run(engine, obj, which, true))
 }
 
 /// `rowSpacing = undefined`: the grid uses `spacing` between its rows
@@ -690,7 +706,7 @@ fn side_padding(engine: &Engine, obj: ObjectId, side: PropIndex, all: PropIndex)
 }
 
 /// Left, top, right and bottom padding.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Pad {
     left: f64,
     top: f64,
@@ -788,7 +804,7 @@ pub(crate) fn track(engine: &Engine, obj: ObjectId, which: Which) {
 }
 
 /// A child a positioner places.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Kid {
     id: ObjectId,
     w: f64,
@@ -810,10 +826,11 @@ struct Placed {
 /// Invisible children and children of zero size are skipped, as the Qt
 /// docs say ("items with a width or height of 0 are not positioned").
 pub(crate) fn polish(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> {
-    engine.untrack(|| run(engine, obj, which))
+    engine.untrack(|| run(engine, obj, which, false))
 }
 
-fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> {
+/// One pass; `completing` as the positioner is completed.
+fn run(engine: &Engine, obj: ObjectId, which: Which, completing: bool) -> Result<(), EngineError> {
     let p = props(which);
     let pad = paddings(engine, obj, &p);
     let spacing = num(engine, obj, p.spacing);
@@ -843,7 +860,29 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
     let gave_up = with_memory(engine, obj, which, |m| m.gave_up).unwrap_or(false);
     let checked = if gave_up { &shown } else { &kids };
     let conflict = anchor_conflict(engine, obj, which, checked);
-    with_memory(engine, obj, which, |m| m.gave_up = conflict.is_some());
+    let completed = with_memory(engine, obj, which, |m| {
+        m.gave_up = conflict.is_some();
+        m.completed.take()
+    })
+    .flatten();
+    if matches!(which, Which::Row | Which::Column) && (completing || completed.is_some()) {
+        let inputs = Inputs {
+            pad,
+            spacing,
+            rtl: rtl.then(|| num(engine, obj, Item::WIDTH.index)),
+            shown: shown.clone(),
+            conflict: conflict.clone(),
+        };
+        // Nothing it reads moved since it was completed: Qt lays it out
+        // then and again only on a change, and this pass would place
+        // everyone where they are and warn a second time.
+        if completed.is_some_and(|c| *c == inputs) {
+            return Ok(());
+        }
+        if completing {
+            with_memory(engine, obj, which, |m| m.completed = Some(Box::new(inputs)));
+        }
+    }
     if let Some(conflict) = conflict {
         // Qt places nothing then, and the positioner has no size.
         engine.log(LogLevel::Warning, crate::anchors::CATEGORY, conflict);
