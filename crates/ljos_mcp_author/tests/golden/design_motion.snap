@@ -1,0 +1,244 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "Motion tokens by kind (enter, exit, move, sheet-in, gesture…), size and how often it is met: duration within the limits, easing as cubic-bezier points, a spring for gestures, what reduced motion does, and the QML to paste. Paginated.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "frequency": {
+        "description": "`rare`, `occasional` (the default for most things) or `frequent`\n(many times a day: tabs, selection, focus).",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "kind": {
+        "description": "`enter`, `exit`, `move`, `expand`, `collapse`, `sheet-in`,\n`sheet-out`, `gesture` or `loop`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "properties": {
+        "description": "What the QML snippet animates; `opacity,scale` when not given.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "size": {
+        "description": "`small` (a button, a tooltip), `panel` (a menu, a dialog) or\n`screen` (a page, a drawer).",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "MotionArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "design_motion",
+  "outputSchema": {
+    "$defs": {
+      "CurveOut": {
+        "properties": {
+          "bezier": {
+            "description": "`x1, y1, x2, y2`.",
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "qml": {
+            "description": "For `easing.bezierCurve` with `easing.type: Easing.BezierSpline`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "bezier",
+          "qml"
+        ],
+        "type": "object"
+      },
+      "ReducedOut": {
+        "properties": {
+          "duration_ms": {
+            "description": "0: nothing plays, the end state shows at once.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "easing": {
+            "type": "string"
+          },
+          "property": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "duration_ms",
+          "property",
+          "easing"
+        ],
+        "type": "object"
+      },
+      "SpringOut": {
+        "properties": {
+          "damping": {
+            "format": "float",
+            "type": "number"
+          },
+          "damping_ratio": {
+            "format": "float",
+            "type": "number"
+          },
+          "mass": {
+            "format": "float",
+            "type": "number"
+          },
+          "qml_damping": {
+            "format": "float",
+            "type": "number"
+          },
+          "qml_epsilon": {
+            "format": "float",
+            "type": "number"
+          },
+          "qml_mass": {
+            "format": "float",
+            "type": "number"
+          },
+          "qml_spring": {
+            "description": "`SpringAnimation`'s `spring`, `damping`, `mass` and `epsilon` for\na value in pixels.",
+            "format": "float",
+            "type": "number"
+          },
+          "stiffness": {
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "stiffness",
+          "damping",
+          "mass",
+          "damping_ratio",
+          "qml_spring",
+          "qml_damping",
+          "qml_mass",
+          "qml_epsilon"
+        ],
+        "type": "object"
+      },
+      "TokenOut": {
+        "properties": {
+          "duration_ms": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "easing": {
+            "type": "string"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "limit_ms": {
+            "description": "What `motion-duration` allows here.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "qml": {
+            "type": "string"
+          },
+          "reduced": {
+            "$ref": "#/$defs/ReducedOut"
+          },
+          "size": {
+            "type": "string"
+          },
+          "spring": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SpringOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "size",
+          "frequency",
+          "duration_ms",
+          "limit_ms",
+          "easing",
+          "reduced",
+          "qml"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "curves": {
+        "items": {
+          "$ref": "#/$defs/CurveOut"
+        },
+        "type": "array"
+      },
+      "enter_scale": {
+        "description": "The scale an entrance starts from, with a fade.",
+        "format": "float",
+        "type": "number"
+      },
+      "next_cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "tokens": {
+        "items": {
+          "$ref": "#/$defs/TokenOut"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "tokens",
+      "curves",
+      "enter_scale"
+    ],
+    "title": "MotionOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

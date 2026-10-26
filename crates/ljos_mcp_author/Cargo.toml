@@ -17,6 +17,8 @@ qt_types = { path = "../qt_types" }
 # and the IR it is read from.
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_ir = { path = "../ljos_ir" }
+# The design tools: rules, motion tokens, palettes and contrast.
+ljos_design = { path = "../ljos_design" }
 # `qml_format`: the layout `ljos fmt` gives too.
 qml_fmt = { path = "../qml_fmt" }
 # `ljos://features/steps`: the step catalogue, from the steps themselves.

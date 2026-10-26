@@ -129,7 +129,7 @@ Feature: Listing and running scenarios with the authoring tools
 
     Scenario: An agent without the right is not offered the tool
       Given the authoring tools are connected
-      Then the agent is offered the tools "qml_check, qml_lint, type_lookup, api_status, project_info, qml_format, binding_tier_explain, docs_search, features_list, run_status, run_cancel"
+      Then the agent is offered the tools "qml_check, qml_lint, type_lookup, api_status, project_info, qml_format, binding_tier_explain, docs_search, features_list, run_status, run_cancel, design_rules, design_motion, design_palette, design_contrast"
 
     Scenario: An agent without the right is refused and told what is missing
       Given the authoring tools are connected
@@ -139,7 +139,7 @@ Feature: Listing and running scenarios with the authoring tools
 
     Scenario: An agent with the right is offered the tool
       Given the authoring tools are connected with the capabilities "run"
-      Then the agent is offered the tools "qml_check, qml_lint, type_lookup, api_status, project_info, qml_format, binding_tier_explain, docs_search, features_list, features_run, run_status, run_cancel"
+      Then the agent is offered the tools "qml_check, qml_lint, type_lookup, api_status, project_info, qml_format, binding_tier_explain, docs_search, features_list, features_run, run_status, run_cancel, design_rules, design_motion, design_palette, design_contrast"
 
     Scenario: A project that has no runner cannot run, and the refusal says how to name one
       Given the authoring tools are connected with the capabilities "run"

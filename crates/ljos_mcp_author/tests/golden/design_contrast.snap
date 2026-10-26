@@ -1,0 +1,152 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "WCAG 2.2 ratio and APCA Lc of a foreground on a background, through translucent layers and opacity as the scene blends them; when it fails, the nearest foreground of the same hue that passes.",
+  "inputSchema": {
+    "$defs": {
+      "Layer": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "description": "The layer's colour, translucent or not.",
+            "type": "string"
+          },
+          "opacity": {
+            "description": "The layer item's `opacity`, 1 when not given.",
+            "format": "float",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "color"
+        ],
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "background": {
+        "description": "The opaque colour at the bottom: the window, a page.",
+        "type": "string"
+      },
+      "foreground": {
+        "description": "The text or mark: `#rrggbb`, `#aarrggbb` or a colour name.",
+        "type": "string"
+      },
+      "kind": {
+        "description": "`text` (the default) or `nontext` (borders, icons, focus rings).",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "layers": {
+        "description": "What lies between, bottom first: a card, a hover tint.",
+        "items": {
+          "$ref": "#/$defs/Layer"
+        },
+        "type": "array"
+      },
+      "opacity": {
+        "description": "The foreground item's `opacity` (and its parents'), 1 when not given.",
+        "format": "float",
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "pixel_size": {
+        "description": "Text size in logical pixels; large text needs less.",
+        "format": "float",
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "weight": {
+        "description": "`font.weight` (400 when not given); bold text is large sooner.",
+        "format": "uint16",
+        "maximum": 65535,
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "foreground",
+      "background"
+    ],
+    "title": "ContrastArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "design_contrast",
+  "outputSchema": {
+    "properties": {
+      "apca": {
+        "description": "APCA Lc and what it advises; never failed on.",
+        "format": "float",
+        "type": "number"
+      },
+      "apca_advised": {
+        "format": "float",
+        "type": "number"
+      },
+      "background": {
+        "type": "string"
+      },
+      "foreground": {
+        "description": "What reaches the eye after blending.",
+        "type": "string"
+      },
+      "nearest_passing": {
+        "description": "The opaque colour of the foreground's hue, nearest in lightness,\nthat passes here; absent when it passes already or nothing does.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "passes": {
+        "type": "boolean"
+      },
+      "ratio": {
+        "format": "double",
+        "type": "number"
+      },
+      "required": {
+        "format": "float",
+        "type": "number"
+      },
+      "rule": {
+        "description": "The rule a failure is reported under.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "foreground",
+      "background",
+      "ratio",
+      "required",
+      "passes",
+      "apca",
+      "apca_advised",
+      "rule"
+    ],
+    "title": "ContrastOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

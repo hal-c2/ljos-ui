@@ -7,8 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, api, docs, features, format, runs,
-    tiers,
+    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, api, design, docs, features,
+    format, runs, tiers,
 };
 
 const PAGE: usize = 100;
@@ -363,5 +363,25 @@ pub(crate) fn registry(
             ToolDef::new::<runs::CancelArgs>("run_cancel", runs::CANCEL)
                 .output::<runs::StatusOut>()
                 .annotated(ToolAnnotations::WRITE),
+        )
+        .with(
+            ToolDef::new::<design::RulesArgs>("design_rules", design::RULES)
+                .output::<design::RulesOut>(),
+            design::rules_handler(),
+        )
+        .with(
+            ToolDef::new::<design::MotionArgs>("design_motion", design::MOTION)
+                .output::<design::MotionOut>(),
+            design::motion_handler(),
+        )
+        .with(
+            ToolDef::new::<design::PaletteArgs>("design_palette", design::PALETTE)
+                .output::<design::PaletteOut>(),
+            design::palette_handler(),
+        )
+        .with(
+            ToolDef::new::<design::ContrastArgs>("design_contrast", design::CONTRAST)
+                .output::<design::ContrastOut>(),
+            design::contrast_handler(),
         )
 }

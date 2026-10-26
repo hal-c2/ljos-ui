@@ -1,0 +1,131 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "The design rules every check names: code, area, severity, whether the source or the running scene tells it, what is wrong, the fix and its guideline; and the limits they hold to. Filter by `code` or `area`; paginated.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "area": {
+        "description": "`a11y`, `color`, `text`, `layout`, `focus`, `motion` or `content`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "code": {
+        "description": "One rule, for example `motion-ease-in-enter`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "RulesArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "design_rules",
+  "outputSchema": {
+    "$defs": {
+      "LimitOut": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "value": {
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "unit"
+        ],
+        "type": "object"
+      },
+      "RuleOut": {
+        "properties": {
+          "area": {
+            "type": "string"
+          },
+          "check": {
+            "description": "`static`, `runtime` or `both`.",
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          },
+          "guide": {
+            "description": "`docs/design/<page>#<code>`.",
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "severity": {
+            "description": "`error` fails `ljos check` and `ljos audit`; `warning` needs a\nreason to keep; `hint` is advice.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "area",
+          "severity",
+          "check",
+          "rule",
+          "fix",
+          "guide"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "limits": {
+        "items": {
+          "$ref": "#/$defs/LimitOut"
+        },
+        "type": "array"
+      },
+      "next_cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "rules": {
+        "items": {
+          "$ref": "#/$defs/RuleOut"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "rules",
+      "limits"
+    ],
+    "title": "RulesOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

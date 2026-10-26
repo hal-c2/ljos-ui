@@ -1,0 +1,195 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "A palette from a seed (`#rrggbb`, a colour name or a hue): twelve-step OKLCH ramps, the roles (surface, text, accent, onAccent, danger…), every contrast pair they pass, and hue harmonies at the seed's lightness.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "contrast": {
+        "description": "`normal` (the default) or `high`: text at 7:1.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "scheme": {
+        "description": "`light` (the default) or `dark`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "seed": {
+        "description": "`#rrggbb`, a colour name, or an OKLCH hue in degrees (`250`).",
+        "type": "string"
+      }
+    },
+    "required": [
+      "seed"
+    ],
+    "title": "PaletteArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "design_palette",
+  "outputSchema": {
+    "$defs": {
+      "HarmonyOut": {
+        "properties": {
+          "colors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "colors"
+        ],
+        "type": "object"
+      },
+      "PairOut": {
+        "properties": {
+          "apca": {
+            "format": "float",
+            "type": "number"
+          },
+          "background": {
+            "type": "string"
+          },
+          "foreground": {
+            "type": "string"
+          },
+          "kind": {
+            "description": "`text` or `nontext`.",
+            "type": "string"
+          },
+          "ratio": {
+            "format": "float",
+            "type": "number"
+          },
+          "required": {
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "foreground",
+          "background",
+          "kind",
+          "ratio",
+          "required",
+          "apca"
+        ],
+        "type": "object"
+      },
+      "RampOut": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "steps": {
+            "description": "Steps 1 to 12: backgrounds, fills by state, borders, solid, text.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "steps"
+        ],
+        "type": "object"
+      },
+      "RoleOut": {
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "color"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "checks": {
+        "description": "Every pair the roles promise, each passing.",
+        "items": {
+          "$ref": "#/$defs/PairOut"
+        },
+        "type": "array"
+      },
+      "contrast": {
+        "type": "string"
+      },
+      "failing": {
+        "description": "Pairs below what they need; empty unless a seed could not be\nbrought to pass.",
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "harmonies": {
+        "items": {
+          "$ref": "#/$defs/HarmonyOut"
+        },
+        "type": "array"
+      },
+      "ramps": {
+        "items": {
+          "$ref": "#/$defs/RampOut"
+        },
+        "type": "array"
+      },
+      "roles": {
+        "items": {
+          "$ref": "#/$defs/RoleOut"
+        },
+        "type": "array"
+      },
+      "scheme": {
+        "type": "string"
+      },
+      "seed_chroma": {
+        "format": "float",
+        "type": "number"
+      },
+      "seed_hue": {
+        "format": "float",
+        "type": "number"
+      }
+    },
+    "required": [
+      "scheme",
+      "contrast",
+      "seed_hue",
+      "seed_chroma",
+      "roles",
+      "ramps",
+      "checks",
+      "failing",
+      "harmonies"
+    ],
+    "title": "PaletteOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

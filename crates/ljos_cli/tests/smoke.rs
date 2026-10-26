@@ -74,7 +74,11 @@ fn mcp_server_answers_over_stdio() {
             "features_list",
             // `features_run` is offered only with `--caps run`.
             "run_status",
-            "run_cancel"
+            "run_cancel",
+            "design_rules",
+            "design_motion",
+            "design_palette",
+            "design_contrast"
         ]
     );
 
