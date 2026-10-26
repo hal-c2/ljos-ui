@@ -3,12 +3,14 @@
 //! more after it has laid its rows out, once for however many passes
 //! reached the end before it asked.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ljos::item::kurbo;
 use ljos::prelude::*;
+use ljos_quick::QuickScene;
 use ljos_runtime::{Clock as _, VirtualClock};
 
 #[derive(Default)]
@@ -100,6 +102,9 @@ Item {
 struct App {
     engine: Engine,
     clock: Arc<VirtualClock>,
+    // A model's new rows are laid out when the scene is next polished, so
+    // a pass must polish as a frame does.
+    scene: RefCell<QuickScene>,
     view: ObjectId,
 }
 
@@ -119,9 +124,12 @@ impl App {
             .set_object_model(lines, Some(Rc::new(Paged(log.clone()))))
             .unwrap();
         engine.invoke_by_name(root, "show", &[]).unwrap();
+        let mut scene = QuickScene::new(kurbo::Size::new(100.0, 100.0));
+        scene.set_root(&engine, root).unwrap();
         Self {
             engine,
             clock,
+            scene: RefCell::new(scene),
             view,
         }
     }
@@ -129,6 +137,7 @@ impl App {
     fn pass_ms(&self, ms: u64) {
         self.clock.set(self.clock.now() + Duration::from_millis(ms));
         self.engine.advance_timers(self.clock.now());
+        self.scene.borrow_mut().lay_out(&self.engine);
     }
 
     fn count(&self) -> i32 {
