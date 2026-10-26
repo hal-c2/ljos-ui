@@ -709,7 +709,8 @@ impl Surface {
         } else if self.window.is_minimized() == Some(true) {
             WindowState::Minimized
         } else if maximized(
-            cfg!(target_os = "macos") && !self.window.is_decorated(),
+            cfg!(target_os = "macos")
+                && !(self.window.is_decorated() && self.window.is_resizable()),
             known,
             || self.window.is_maximized(),
         ) {
@@ -721,13 +722,15 @@ impl Surface {
 }
 
 /// Whether a window is maximized. AppKit answers only for a window with a
-/// title bar, so winit gives a window without one a title bar for the
-/// question and takes it away again; the change ends its user's drag of
-/// an edge after its first step and cuts the window to the screen's
-/// visible frame (#133). Such a window has no zoom button: it is
-/// maximized when the application asked, and the platform is not asked.
-fn maximized(untitled_mac: bool, known: Option<WindowState>, ask: impl FnOnce() -> bool) -> bool {
-    if untitled_mac {
+/// title bar that can be resized, so winit gives any other window that
+/// title bar alone for the question and takes it away again; the change
+/// ends its user's drag of an edge after its first step and cuts the
+/// window to the screen's visible frame (#133), and of a frameless
+/// window's hidden title bar (#140) it shows the bar for the moment.
+/// Such a window has no zoom button: it is maximized when the
+/// application asked, and the platform is not asked.
+fn maximized(unzoomable_mac: bool, known: Option<WindowState>, ask: impl FnOnce() -> bool) -> bool {
+    if unzoomable_mac {
         known == Some(WindowState::Maximized)
     } else {
         ask()
@@ -867,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mac_window_without_a_title_bar_is_not_asked_whether_it_is_maximized() {
+    fn a_mac_window_without_a_resizable_title_bar_is_not_asked_whether_it_is_maximized() {
         let asked = std::cell::Cell::new(false);
         let ask = || {
             asked.set(true);

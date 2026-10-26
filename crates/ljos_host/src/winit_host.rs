@@ -304,7 +304,6 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
         let mut attrs = Window::default_attributes()
             .with_title(a.title.clone())
             .with_visible(a.visible)
-            .with_decorations(a.decorations)
             .with_resizable(a.resizable)
             .with_transparent(a.transparent)
             .with_window_level(level(a.level))
@@ -323,6 +322,7 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
         if let Some([x, y]) = a.position {
             attrs = attrs.with_position(LogicalPosition::new(x, y));
         }
+        attrs = platform::with_frame(attrs, a.decorations);
         attrs = platform::with_kind(attrs, a.kind);
         if let Some(id) = &a.app_id {
             attrs = platform::with_app_id(attrs, id);
@@ -335,6 +335,7 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
             .event_loop
             .create_window(attrs)
             .map_err(|e| HostError::Window(e.to_string()))?;
+        platform::made(&window);
         if a.state == WindowState::Minimized {
             window.set_minimized(true);
         }
@@ -389,7 +390,7 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
                     WindowState::FullScreen => w.set_minimized(false),
                 }
             }
-            WindowChange::Decorations(on) => w.set_decorations(on),
+            WindowChange::Decorations(on) => platform::set_frame(w, on),
             WindowChange::Resizable(on) => w.set_resizable(on),
             WindowChange::Level(l) => w.set_window_level(level(l)),
             WindowChange::Backdrop(b, look) => platform::set_backdrop(w, b, look),
@@ -977,6 +978,24 @@ mod platform {
         HAS_WINDOW_KINDS, Icons, is_wayland, loop_is_wayland, set_application_icon, set_backdrop,
         set_taskbar_icon, use_x11, with_app_id, with_kind, with_taskbar_icon,
     };
+
+    /// The system's frame, or none: winit's decorations, but on macOS a
+    /// title bar that does not show (see `TitleBar`).
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn with_frame(attrs: WindowAttributes, decorated: bool) -> WindowAttributes {
+        attrs.with_decorations(decorated)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn set_frame(window: &Window, decorated: bool) {
+        window.set_decorations(decorated);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn made(_: &Window) {}
+
+    #[cfg(target_os = "macos")]
+    pub(crate) use crate::winit_host::appkit_frame::{made, set_frame, with_frame};
 }
 
 /// AppKit asks the application's delegate what to do when the user opens
@@ -1236,6 +1255,148 @@ mod appkit_backdrop {
     }
 }
 
+/// What of AppKit's title bar a window has. A window without the
+/// system's frame keeps a title bar on macOS and shows none of it: AppKit
+/// gives a borderless window a resize area only inside its frame, and a
+/// titled one an area that reaches onto its edge and a few points past it,
+/// where users aim (#140). Its content covers the whole window, as a
+/// borderless one's does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct TitleBar {
+    transparent: bool,
+    title_hidden: bool,
+    buttons_hidden: bool,
+    content_under_it: bool,
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn title_bar(decorated: bool) -> TitleBar {
+    let hidden = !decorated;
+    TitleBar {
+        transparent: hidden,
+        title_hidden: hidden,
+        buttons_hidden: hidden,
+        content_under_it: hidden,
+    }
+}
+
+/// [`TitleBar`] on AppKit's window. winit's own change of decorations
+/// would make the window borderless again, so the window stays titled and
+/// what shows of its title bar changes.
+#[cfg(target_os = "macos")]
+mod appkit_frame {
+    use std::ffi::CString;
+    use std::sync::Once;
+
+    use objc2::MainThreadMarker;
+    use objc2::encode::Encode;
+    use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Sel};
+    use objc2::sel;
+    use objc2_app_kit::{NSView, NSWindowButton, NSWindowStyleMask, NSWindowTitleVisibility};
+    use winit::platform::macos::WindowAttributesExtMacOS;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use winit::window::{Window, WindowAttributes};
+
+    use super::{TitleBar, title_bar};
+
+    pub(crate) fn with_frame(attrs: WindowAttributes, decorated: bool) -> WindowAttributes {
+        let t = title_bar(decorated);
+        attrs
+            .with_decorations(true)
+            .with_titlebar_transparent(t.transparent)
+            .with_title_hidden(t.title_hidden)
+            .with_titlebar_buttons_hidden(t.buttons_hidden)
+            .with_fullsize_content_view(t.content_under_it)
+    }
+
+    pub(crate) fn set_frame(window: &Window, decorated: bool) {
+        let Some(content) = content(window) else {
+            return;
+        };
+        let Some(ns) = content.window() else {
+            return;
+        };
+        let t: TitleBar = title_bar(decorated);
+        let mut mask = ns.styleMask() | NSWindowStyleMask::Titled;
+        mask.set(NSWindowStyleMask::FullSizeContentView, t.content_under_it);
+        ns.setStyleMask(mask);
+        ns.setTitlebarAppearsTransparent(t.transparent);
+        ns.setTitleVisibility(if t.title_hidden {
+            NSWindowTitleVisibility::Hidden
+        } else {
+            NSWindowTitleVisibility::Visible
+        });
+        for b in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            if let Some(button) = ns.standardWindowButton(b) {
+                button.setHidden(t.buttons_hidden);
+            }
+        }
+        // A new style mask leaves the window without a first responder
+        // until it is clicked; keys go to the content again.
+        ns.makeFirstResponder(Some(content));
+    }
+
+    /// Done for each window made: the content under a hidden title bar
+    /// takes its presses, which would otherwise move the window. A view
+    /// says so with `mouseDownCanMoveWindow`; winit's view does not, and
+    /// NSView answers yes for a view that is not opaque. The application
+    /// moves its window itself, with `startSystemMove`, AppKit's
+    /// `performWindowDrag(with:)`, which a view that says no calls for the
+    /// parts it lets move the window.
+    pub(crate) fn made(window: &Window) {
+        static ADDED: Once = Once::new();
+        let Some(content) = content(window) else {
+            return;
+        };
+        let object: &AnyObject = content.as_ref();
+        let class: &AnyClass = object.class();
+        ADDED.call_once(|| {
+            let Ok(types) = CString::new(format!(
+                "{}{}{}",
+                Bool::ENCODING,
+                <*mut AnyObject>::ENCODING,
+                Sel::ENCODING,
+            )) else {
+                return;
+            };
+            // SAFETY: the function has the selector's signature, as
+            // `types` says; the class is winit's view, made at run time,
+            // and gets one method its superclass has and it does not.
+            unsafe {
+                let imp: Imp = std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(*mut AnyObject, Sel) -> Bool,
+                    Imp,
+                >(cannot_move_window);
+                objc2::ffi::class_addMethod(
+                    std::ptr::from_ref(class).cast_mut(),
+                    sel!(mouseDownCanMoveWindow),
+                    imp,
+                    types.as_ptr(),
+                );
+            }
+        });
+    }
+
+    unsafe extern "C-unwind" fn cannot_move_window(_this: *mut AnyObject, _cmd: Sel) -> Bool {
+        Bool::NO
+    }
+
+    fn content(window: &Window) -> Option<&NSView> {
+        MainThreadMarker::new()?;
+        let Ok(RawWindowHandle::AppKit(handle)) = window.window_handle().map(|h| h.as_raw()) else {
+            return None;
+        };
+        // SAFETY: the handle is winit's content view, which lives as long
+        // as `window`, and this is the main thread.
+        Some(unsafe { handle.ns_view.cast().as_ref() })
+    }
+}
+
 fn resize_direction(edge: crate::ResizeEdge) -> ResizeDirection {
     use crate::ResizeEdge as E;
     match edge {
@@ -1253,6 +1414,22 @@ fn resize_direction(edge: crate::ResizeEdge) -> ResizeDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_frameless_window_keeps_a_title_bar_on_macos_and_shows_none_of_it() {
+        assert_eq!(
+            title_bar(false),
+            TitleBar {
+                transparent: true,
+                title_hidden: true,
+                buttons_hidden: true,
+                content_under_it: true,
+            }
+        );
+        let framed = title_bar(true);
+        assert!(!framed.transparent && !framed.title_hidden);
+        assert!(!framed.buttons_hidden && !framed.content_under_it);
+    }
 
     #[test]
     fn wayland_has_no_window_positions_and_no_window_kinds() {

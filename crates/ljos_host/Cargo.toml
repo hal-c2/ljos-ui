@@ -36,13 +36,15 @@ wayland-client = { workspace = true, optional = true, features = ["system"] }
 wayland-protocols = { workspace = true, optional = true, features = ["client", "staging"] }
 libc = { workspace = true, optional = true }
 
-# The backdrop's views of the system's materials, and the Dock's icon of
-# the application, which winit has not.
+# The backdrop's views of the system's materials, the Dock's icon of the
+# application and a frameless window's hidden title bar, which winit has not.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { workspace = true, optional = true }
 objc2-app-kit = { workspace = true, optional = true, features = [
     "NSAppearance",
     "NSBitmapImageRep",
+    "NSButton",
+    "NSControl",
     "NSGlassEffectView",
     "NSGraphics",
     "NSImage",
@@ -50,6 +52,7 @@ objc2-app-kit = { workspace = true, optional = true, features = [
     "NSUserInterfaceItemIdentification",
     "NSView",
     "NSVisualEffectView",
+    "NSWindow",
 ] }
 objc2-foundation = { workspace = true, optional = true, features = ["NSArray", "NSEnumerator", "NSGeometry"] }
 
