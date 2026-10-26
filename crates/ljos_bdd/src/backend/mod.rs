@@ -1098,6 +1098,27 @@ pub trait Probes: Backend {
         })
     }
 
+    /// Draws the windows the application opens from now on on the
+    /// processor, into memory shared with the window system, rather than
+    /// through a graphics driver. Only a desktop shell has more than one
+    /// way to draw; the oracle's is its own.
+    fn draw_on_processor(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "drawing the window on the processor",
+        })
+    }
+
+    /// The window as the reference renderer (R) draws the scene it shows
+    /// now, as a PNG the size of [`Backend::grab`]'s. Only a window drawn
+    /// some other way has a second picture to compare.
+    fn reference_picture(&mut self) -> Result<Vec<u8>> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "the reference renderer's picture of the window",
+        })
+    }
+
     /// The `Qt.CursorShape` the pointer shows. The oracle runs off-screen,
     /// where there is no pointer to show one.
     fn pointer_cursor(&mut self) -> Result<i64> {

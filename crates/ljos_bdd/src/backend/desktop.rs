@@ -29,7 +29,8 @@ use serde_json::{Value, json};
 
 use super::inspector::{Answer, Ask, Refusal, Seen};
 use super::{
-    A11yNode, Backend, BackendError, Files, LogEntry, PointerStep, Probes, QmlFile, Result, Tooling,
+    A11yNode, Backend, BackendError, Files, LogEntry, LogLevel, PointerStep, Probes, QmlFile,
+    Result, Tooling,
 };
 
 /// Names the file with the sandbox's sockets; set when one runs.
@@ -238,9 +239,16 @@ impl Running {
                     ..Answer::default()
                 });
             }
+            let picture = result["content"].as_array().and_then(|content| {
+                content
+                    .iter()
+                    .find(|c| c["type"] == "image")
+                    .and_then(|c| ljos_mcp_core::base64_decode(c["data"].as_str()?))
+            });
             return Ok(Answer {
                 structured: result["structuredContent"].clone(),
                 text,
+                picture,
                 ..Answer::default()
             });
         }
@@ -740,7 +748,23 @@ impl Backend for DesktopBackend {
     }
 
     fn log(&mut self) -> Result<Vec<LogEntry>> {
-        Err(not_yet("the log on the desktop"))
+        // What the inspector keeps of the engine's log, the shell's own
+        // lines among them, as `app_logs` lists it.
+        let told = self.running()?.ask("app_logs", json!({"level": "info"}))?;
+        let entries = told["entries"].as_array().cloned().unwrap_or_default();
+        Ok(entries
+            .iter()
+            .filter_map(|e| {
+                let level = match e["level"].as_str()? {
+                    "debug" => LogLevel::Debug,
+                    "info" => LogLevel::Info,
+                    "warning" => LogLevel::Warning,
+                    _ => LogLevel::Critical,
+                };
+                let message = e["message"].as_str()?.to_owned();
+                Some(LogEntry { level, message })
+            })
+            .collect())
     }
 
     fn grab(&mut self) -> Result<Vec<u8>> {
@@ -804,6 +828,27 @@ impl Files for DesktopBackend {
 }
 
 impl Probes for DesktopBackend {
+    fn draw_on_processor(&mut self) -> Result<()> {
+        self.env.push(("LJOS_PAINTER".to_owned(), "cpu".to_owned()));
+        Ok(())
+    }
+
+    fn reference_picture(&mut self) -> Result<Vec<u8>> {
+        // Of the frame the window shows once it rests, as `grab` takes it.
+        let running = self.running()?;
+        running.settle()?;
+        let answer = running.call("app_screenshot", json!({}))?;
+        if let Some(r) = answer.refusal {
+            return Err(BackendError::Failed(format!(
+                "app_screenshot: {}",
+                r.message
+            )));
+        }
+        answer
+            .picture
+            .ok_or_else(|| BackendError::Failed("app_screenshot gave no picture".into()))
+    }
+
     fn count_passes(&mut self) -> Result<()> {
         // Two readings say what one costs: its own pass, and any that pass
         // asked for, which have run once the thread rests.

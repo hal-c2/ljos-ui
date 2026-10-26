@@ -173,6 +173,9 @@ raw-window-handle = "0.6.2"
 # A window property winit has no setter for (KDE's blur on X11); the
 # version winit already brings.
 x11rb = { version = "0.13.2", default-features = false }
+# A window drawn on the processor: a wl_shm buffer on Wayland, an MIT-SHM
+# image on X11, with damage. Its Wayland and X11 crates are winit's.
+softbuffer = { version = "0.4.8", default-features = false }
 
 # Proc macros
 proc-macro2 = "1.0.107"

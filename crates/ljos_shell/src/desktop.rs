@@ -505,6 +505,24 @@ impl Slot {
     }
 }
 
+/// Shows a window once there is a picture in it.
+fn show_when_drawn(
+    host: &mut Control<'_>,
+    surface: &mut Surface,
+    activate: &mut bool,
+    screens_stale: &mut bool,
+) {
+    if !surface.shown {
+        surface.shown = true;
+        host.change_window(surface.id, WindowChange::Visible(true));
+        if std::mem::take(activate) {
+            host.change_window(surface.id, WindowChange::Activate);
+        }
+        // Only now does the platform say which display it is on.
+        *screens_stale = true;
+    }
+}
+
 /// Tells the QML window the size its platform window has, when that is
 /// another than it was last told (or `force`: the application wrote a
 /// size the platform did not give).
@@ -1283,6 +1301,7 @@ impl<M: Send + 'static> Desktop<M> {
         let painter = self.slots[i].painter.as_ref();
         let fills = painter.is_some_and(Painter::fills_rects);
         let shaders = painter.is_some_and(Painter::draws_shaders);
+        let encodes = !painter.is_some_and(Painter::draws_scene);
         let view = match self.slots[i].view.as_mut() {
             Some(view) => view,
             None => self.app.view_mut(),
@@ -1290,6 +1309,7 @@ impl<M: Send + 'static> Desktop<M> {
         view.set_drawn(true);
         view.set_solid_rects(fills);
         view.set_draws_shaders(shaders);
+        view.set_encodes(encodes);
     }
 
     /// The platform refused a window. Without the root's there is no
@@ -1459,6 +1479,9 @@ impl<M: Send + 'static> Desktop<M> {
             // the window showed may be gone (exposed, resized).
             if slot.redraw_asked.is_none() {
                 slot.shown.forget();
+                if let Some(Painter::Cpu(painter)) = slot.painter.as_mut() {
+                    painter.forget();
+                }
             }
             slot.redraw_asked = None;
             slot.stalled = false;
@@ -1617,6 +1640,52 @@ impl<M: Send + 'static> Desktop<M> {
         let clear = view.backdrop().unwrap_or(slot.clear);
         let wake = view.wakes_in();
         let now = Instant::now();
+        if let Painter::Cpu(painter) = painter {
+            // egui's pictures are never drawn: the scene is.
+            slot.pending.clear();
+            let Some(snapshot) = view.scene().snapshot() else {
+                slot.not_drawn(now, wake);
+                return;
+            };
+            let [r, g, b, a] = clear.to_array();
+            let clear = ljos_render::Rgba::from_premul(
+                f32::from(r) / 255.0,
+                f32::from(g) / 255.0,
+                f32::from(b) / 255.0,
+                f32::from(a) / 255.0,
+            );
+            let mut warn = |what: String| engine.log(LogLevel::Warning, CATEGORY, what);
+            let drew = painter.draw(
+                snapshot,
+                pixels_per_point,
+                clear,
+                !shapes.is_empty(),
+                &surface.window,
+                &mut warn,
+            );
+            if !drew {
+                slot.not_drawn(now, wake);
+                #[cfg(feature = "mcp")]
+                if let Some(w) = self.wake.as_mut() {
+                    w.unchanged += 1;
+                }
+                return;
+            }
+            #[cfg(feature = "mcp")]
+            if slot.view.is_none() && !self.drawn_once {
+                app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
+            }
+            show_when_drawn(host, surface, &mut slot.activate, screens_stale);
+            slot.drawn(began, Instant::now());
+            #[cfg(feature = "mcp")]
+            if let Some(w) = self.wake.as_mut() {
+                w.drawn += 1;
+            }
+            if !std::mem::replace(&mut self.drawn_once, true) {
+                self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
+            }
+            return;
+        }
         // Where a pass changed the picture is worked out for a painter that
         // draws all of it too while a client follows items in it.
         #[cfg(feature = "mcp")]
@@ -1709,15 +1778,7 @@ impl<M: Send + 'static> Desktop<M> {
                 app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
             }
         }
-        if !surface.shown {
-            surface.shown = true;
-            host.change_window(surface.id, WindowChange::Visible(true));
-            if std::mem::take(&mut slot.activate) {
-                host.change_window(surface.id, WindowChange::Activate);
-            }
-            // Only now does the platform say which display it is on.
-            *screens_stale = true;
-        }
+        show_when_drawn(host, surface, &mut slot.activate, screens_stale);
         slot.drawn(began, Instant::now());
         #[cfg(feature = "mcp")]
         if let Some(w) = self.wake.as_mut() {
@@ -2585,7 +2646,10 @@ pub(crate) fn run<M: Send + 'static>(
         std::env::var("LJOS_PREFER_X11").ok().as_deref(),
     ))?;
     // The drivers start while the application is built.
-    let painter_choice = surface::Choice::from_env(std::env::var("LJOS_PAINTER").ok().as_deref());
+    let painter_choice = surface::Choice::from_env(
+        std::env::var("LJOS_PAINTER").ok().as_deref(),
+        config.drawn_on_processor,
+    );
     let starting = Starting::start(host.display_handle(), painter_choice);
     // Before `setup`: bindings may measure text while the root is being
     // built. They wait for the fonts; making the engine and registering

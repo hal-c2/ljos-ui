@@ -13,7 +13,8 @@ ljos_a11y = { path = "../ljos_a11y" }
 ljos_controls = { path = "../ljos_controls" }
 ljos_egui = { path = "../ljos_egui" }
 # B0's shader callbacks, which the GL painter runs (src/gl_shader.rs).
-ljos_render = { path = "../ljos_render", features = ["b0"] }
+# R draws a window on the processor, with threads (src/cpu.rs).
+ljos_render = { path = "../ljos_render", features = ["b0", "threads"] }
 ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_runtime = { path = "../ljos_runtime" }
@@ -32,6 +33,9 @@ egui.workspace = true
 # Not its clipboard: the platform's is the system's (see desktop.rs).
 egui-winit = { version = "0.37.0", default-features = false, features = ["accesskit", "links", "wayland", "x11"] }
 egui-wgpu = { version = "0.37.0", features = ["winit", "wayland", "x11"] }
+# A window drawn on the processor shares its pixels with the window system
+# (src/cpu.rs); the system's libraries are loaded when one is.
+softbuffer = { workspace = true, features = ["wayland", "wayland-dlopen", "x11", "x11-dlopen"] }
 # Surface creation is asynchronous in wgpu and immediate on the desktop.
 pollster = "1.0.1"
 thiserror.workspace = true
