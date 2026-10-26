@@ -149,19 +149,30 @@ warning:binding-loop(qt-only):implicitHeight  implicitHeight reading height is a
 
 # Qt's own behaviour that Ljós does not copy.
 warning:binding-loop(qt-only):alias-and-target  Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
+warning:binding-loop(qt-only):load  Qt bug: an alias and its target read together report a loop, here through a binding that reads the alias (@qt-diverges in features/bindings/loops.feature)
+warning:other(qt-only):Could_not_convert_QVariant(QQuickAnchorLine,_)_to_double_for_property_left  Qt's own warning for a rect bound to an item, whose anchor lines it tries as numbers
 value:load:int-range                  Qt bug: a binding reading an alias and its target together stops at a loop it does not report here (features/bindings/loops.feature); Qt's Math.abs of the least int overflows; Math.hypot of three numbers or more is an ulp from Qt's, which Math.pow to a high power makes many (features/language/math-hypot.feature; the rest no scenarios)
 warning:coerce-void(qt-only):*                Qt 6.11 deprecation notice for a call to a function with typed parameters and no return type
 warning:other(qt-only):QFont::fromString:*    QFont::fromString's own warning for a font given text it cannot read
+warning:assign(qt-only):Could_not_find_any_constructor_for_value_type_*  Qt's own warning, naming its value-type classes, for a point, rect, colour or font bound to a list of strings; the value is the same
 
-# Seeds 101 and 202 (2000 cases each), triaged with the causes above where they are the same.
+# Seeds 101, 202 and 303 (2000 cases each), triaged with the causes above where they are the same.
 value:load-handlers:null-ljos         NaN given to height is ignored, so no handler runs (features/items/geometry-nan.feature)
 result:none/none:call:nan-ljos        NaN given to x is ignored (features/items/geometry-nan.feature)
 throws:RangeError/none:call-throwing  NaN given to x by a step is ignored, so x is still 0 (features/items/geometry-nan.feature)
+throws:none/Error:step-member-write   NaN given to x by a handler is ignored, so a font's pixel size given x is 0, not NaN (features/items/geometry-nan.feature)
+throws:none/RangeError:call-throwing  a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:load-handlers:bool-vs-list      a handler run while the objects are made writes a property of a later one whose binding is not made yet (features/bindings/creation-order.feature)
+value:load-member-alias:text-nan-ljos an alias of a colour channel reads it (features/language/color-member-aliases.feature)
+warning:assign(ljos-only):QML_Case:_Unable_to_assign_[undefined]_to_double_(property_"_")  an alias of a colour channel reads it, here in a binding a step gives (features/language/color-member-aliases.feature)
+warning:assign(ljos-only):Unable_to_assign_bool_to_QRectF  a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:assign(qt-only):Unable_to_assign_QString_to_QFont  a font given text with commas is read by Qt as a font description it cannot read (no scenario yet)
 throws:none/Error:call-throwing       a list property is not an Array to Array.isArray (features/language/list-properties.feature)
 value:load-handlers:number-vs-record  a list is told as a change through an alias when made (features/language/list-properties.feature)
 value:load-handlers:text-rounding     a number halfway between two shortest texts is written with the even one (features/language/property-conversions.feature)
 value:alias:invalid-qt                a handler run while the objects are made writes a property of a later one whose binding is not made yet (features/bindings/creation-order.feature)
 warning:assign(ljos-only):Cannot_assign_[undefined]_to_Text::WrapMode  an alias of a colour channel reads it (features/language/color-member-aliases.feature)
+throws:none/TypeError:call            an alias of a colour channel reads it, here as a function's argument (features/language/color-member-aliases.feature)
 warning:assign(qt-only):Unable_to_assign_QRectF_to_QString  a string bound to a rectangle is not told (features/bindings/bound-to-another-type.feature)
 warning:assign(ljos-only):Unable_to_assign_QPointF_to_color  a colour bound to a point is warned about, not made invalid without a word (features/bindings/bound-to-another-type.feature)
 warning:assign(qt-only):Cannot_assign_double_to_QQuickText::HAlignment  a size declared without a value is 0 by 0, so writing a member 0 is no change and its handler does not run (features/language/value-type-defaults.feature)

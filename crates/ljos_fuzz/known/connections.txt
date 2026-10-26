@@ -1,6 +1,6 @@
 # Buckets of ljos-fuzz connections (Connections, Binding and states) that are known: as
 # known/bindings.txt, whose lines this area knows too, one per line, the signature then why.
-# Triaged from seeds 101, 202 and 303 (2000 cases each).
+# Triaged from seeds 101, 202 and 303 (2000 cases each); 101 again after the fixes of seed 303.
 
 # A Connections' handler runs after the bindings that read the property on Qt, before them on
 # Ljós (features/bindings/writers-from-outside.feature). Who writes last differs where a handler, a Binding and a state write the same
@@ -21,16 +21,21 @@ value:load-handlers:bool-vs-record  two Connections' handlers of what a state ch
 value:load-handlers:record-vs-bool  a Connections' handler and a state write one property while made (features/bindings/writers-from-outside.feature)
 value:step:bool-vs-number           a Binding and a state's change write one property, and who writes last differs (features/bindings/writers-from-outside.feature)
 value:step:number-vs-bool           a Connections' handler runs before the bindings that read what it is told of (features/bindings/writers-from-outside.feature)
+value:onChanged:text                a handler that writes a property a binding gives runs before that binding on Ljós, so one change is told, not two (features/bindings/writers-from-outside.feature)
 
 # Qt runs each handler a state's change sets off as the change is made; Ljós makes the changes,
 # then runs the handlers (features/states/state-change-order.feature, backlog).
 value:step:bool-vs-record           a handler of one change of a state reads another the state has not made yet on Qt (features/states/state-change-order.feature)
 value:step:list-vs-record           a handler of one change of a state reads another the state has not made yet on Qt (features/states/state-change-order.feature)
 value:load-handlers:nan-ljos        a handler of one change of a state entered while made reads another not made yet on Qt (features/states/state-change-order.feature)
+value:step:bool-vs-list             a handler of what the state left gives back runs after the next state's binding on Ljós, before it on Qt (features/states/state-change-order.feature)
 
 # What is written to, or bound to, a property a Binding holds after its last write stays when it
 # lets go on Qt; Ljós gives back what it held before (features/states/binding.feature, backlog).
 warning:assign(ljos-only):Unable_to_assign_QPointF_to_int   a binding given a property a Binding holds is dropped when it lets go, and the item's own runs (features/states/binding.feature)
+value:step:string-vs-bool           a value written to a var a Binding holds stays on Qt when it lets go (features/states/binding.feature)
+value:step:undefined-ljos           a value written to a var a Binding holds stays on Qt when it lets go (features/states/binding.feature)
+value:step:text                     a value written to a property a Binding holds, which turns its when false, stays on Qt (features/states/binding.feature)
 
 # Qt's own: Ljós is not to copy these.
 value:step:list-vs-number           a Binding of a list turned off: Qt leaves a var's array held, Ljós gives back what it had (features/bindings/writers-from-outside.feature, qt-diverges)
@@ -56,6 +61,8 @@ value:step:empty-qt                 a state whose change writes its own when
 value:step:null-ljos                a state whose change writes its own when: Qt leaves it and gives the value back
 warning:other(qt-only):<Unknown_File>:_QML_StateGroup:_Can'   a state whose change writes its own when; Qt warns that it cannot apply the change
 warning:other(ljos-only):QML_State:_property_"_"_handlers_re-ran_N_times_in_one_update   a state whose change writes its own when loops on Ljós
+warning:binding-loop(ljos-only):when   a state whose change makes its own when false, beside one whose when holds: Ljós sees a loop
+warning:other(ljos-only):<Unknown_File>:_QML_StateGroup:_Can'   a when an extending state's change works out again, told at another time than in Qt (features/states/transition-start-actions.feature)
 
 # A Binding whose when or value reads what it holds loops: Qt warns "Binding loop detected"
 # and Ljós that the handlers re-ran (no scenario yet).
@@ -64,7 +71,9 @@ warning:other(ljos-only):QML_Binding:_property_"_"_handlers_re-ran_N_times_in_on
 warning:other(ljos-only):QML_Case:_property_"_"_handlers_re-ran_N_times_in_one_update      a Binding whose when reads what it holds loops
 warning:other(ljos-only):QML_Item:_property_"_"_handlers_re-ran_N_times_in_one_update      a Binding whose when reads what it holds loops
 value:step:color-vs-bool            a Binding whose when reads what it holds: where Qt stops the loop, Ljós stops it at another value
+value:load:number                   a Binding whose when reads a binding of what it holds: where Qt stops the loop, Ljós stops it at another value
 
 # As in bindings.
+warning:assign(ljos-only):Unable_to_assign_QString_to_int   a binding a handler replaces while the object is made is not logged on Qt (features/bindings/errors-during-creation.feature)
 warning:TypeError(qt-only):Cannot_call_method_'_'_of_undefined   an invalid colour given a colour is told as a change, so a handler runs (features/language/color-values.feature)
 value:step:invalid-ljos             a string given to an int that is not a number is not told as a change (features/bindings/string-to-int.feature)
