@@ -63,13 +63,13 @@ const GALLERY: &str = r##"
             width: 600
             Row {
                 ToolButton { text: "Back" }
-                ToolButton { text: "Forward"; enabled: false }
+                ToolButton { text: "Forward"; enabled: false; Accessible.description: "Nothing to go forward to yet" }
             }
         }
         Row {
             spacing: 8
             Button { text: "Save" }
-            Button { text: "Off"; enabled: false }
+            Button { text: "Off"; enabled: false; Accessible.description: "Turns on once there is a change" }
             Button { text: "Bold"; checkable: true; checked: true }
             Button { text: "Lit"; highlighted: true }
             Button { text: "Flat"; flat: true }
@@ -133,6 +133,7 @@ const POPUPS: [(&str, &str); 4] = [
         "popup that fades in",
         r##"
     Popup {
+        Accessible.name: "Saved"
         enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1 } }
         Component.onCompleted: open()
         Label { text: "Saved" }
@@ -144,7 +145,7 @@ const POPUPS: [(&str, &str); 4] = [
     Menu {
         Component.onCompleted: open()
         MenuItem { text: "Cut" }
-        MenuItem { text: "Copy"; enabled: false }
+        MenuItem { text: "Copy"; enabled: false; Accessible.description: "Select something to copy" }
         MenuSeparator {}
         MenuItem { text: "Wrap"; checkable: true; checked: true }
         Menu { title: "More"; MenuItem { text: "Deep" } }
@@ -299,7 +300,7 @@ const NAVIGATION: [(&str, &str); 4] = [
             id: bar; width: parent.width
             TabButton { text: "Home" }
             TabButton { text: "Mail" }
-            TabButton { text: "Off"; enabled: false }
+            TabButton { text: "Off"; enabled: false; Accessible.description: "Opens once an account is set up" }
         }
         SwipeView {
             id: view; width: parent.width; height: 200
@@ -378,7 +379,7 @@ const VALUE_CONTROLS: &str = r##"
             DelayButton { text: "Launch" }
             DelayButton { text: "Armed"; checked: true }
             RoundButton { text: "+" }
-            RoundButton { text: "-"; enabled: false }
+            RoundButton { text: "-"; enabled: false; Accessible.description: "Nothing to take away yet" }
         }
         Row {
             spacing: 8
