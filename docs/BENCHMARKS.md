@@ -7660,3 +7660,125 @@ DECISIONs:
   of running counts, and nothing is kept per object for it.
 - Before and after come from one build with the reader switched off for "before". The switch
   was removed before commit.
+
+### MEM3: thermostat at qml6, and where maroon's rounds go (2026-10-27)
+
+Measured as MEM2: `ljos bench --profile desktop --load 60` (grid clicks), off-screen in the
+cua sandbox, "private" being `Pss_Anon + SwapPss` in MiB, qml6 in the run beside Ljós. "Load"
+is the machine's 1-minute load average as the bench recorded it for that run.
+
+**qml6 never played maroon.** `corpus/harness/overlay.sh` writes the qmldir the bench and
+the gallery give qml6 for a module, from the files its CMakeLists names. It split names on
+blanks and brackets but not on quotes, so a module whose CMakeLists quotes its files (maroon,
+calqlatr, photosurface, windowembedding, mediaplayer) got a qmldir with no types. qml6
+started maroon with no towers to build, which made MEM2's flat maroon qml6 column (123 MiB)
+wrong. The split now strips quotes too.
+
+**Maroon's growth is the game's own.** Played over 50 rounds of 20 s:
+
+| maroon, 50 rounds | Load | Start | Round 1 | Round 5 | Round 10 | Round 25 | Round 50 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Ljós (30cec887) | 8.9 | 32.9 | 38.0 | 43.9 | 45.6 | 49.7 | 54.8 |
+| qml6 (same run) | 10.7 | 108.5 | 124.7 | 169.3 | 175.5 | 185.5 | 200.6 |
+| Ljós, this batch | 14.8 | 33.0 | 37.8 | 45.5 | 47.0 | 51.4 | 55.9 |
+
+Both runtimes grow, and for the same reason. The game's `newTower` makes a tower with
+`createObject` and then calls `spawn()` on it. Only the Factory tower has `spawn`, so for
+the other three the call throws a TypeError. The tower is never stored in the game's state,
+and `endGame` never destroys it: 76 such towers in Ljós's run, 79 in qml6's. From round 5
+Ljós grows about 160 KB a leaked tower (counted: objects about 25 KB, graph about 30 KB),
+qml6 about 450 KB. A long-running Ljós app that keeps what it makes keeps it; nothing in
+Ljós grows on its own here.
+
+**Thermostat: MEM2's gap had closed on main.** MEM2's 222 MiB against qml6's 169 was gone
+before this batch, with H2's B27–B29 and FRAMES:
+
+| thermostat, 3 rounds | Load | Start | Rounds |
+|---|---:|---:|---|
+| Ljós, origin/main (30cec887) | 99.1 | 46.7 | 179.2 ×3 |
+| qml6 (same run) | 87.5 | 139.0 | 176.3, 176.4, 176.4 |
+| Ljós, this batch | 9.5 | 45.3 | 180.6 ×3 |
+| qml6 (same run) | 4.2 | 141.1 | 178.1 ×3 |
+| Ljós, this batch with the StackView fix | 16.3 | 45.3 | 179.7 ×3 |
+| qml6 (same run) | 2.1 | 151.9 | 182.4, 182.4, 197.8 |
+
+What Ljós holds at the plateau, from the inspector (`app_metrics`, 3.2 load):
+
+| Owner | MiB |
+|---|---:|
+| graph (298 471 nodes, 14 374 objects) | 68.9 |
+| objects | 32.6 |
+| scene | 7.2 |
+| script heap | 1.8 |
+| fonts | 8.6 |
+| shared memory (the window's buffers) | 11.4 |
+| Rust allocations no owner tells of | 54.4 |
+| C libraries | 10.0 |
+| freed, kept by the allocator | 2.3 |
+
+The bench's clicks replace the page once (ScheduleView: the graph goes from 40 355 to
+298 471 nodes), and it stays. That is about 21 nodes an object. The 54 MiB that no owner
+tells of is mostly heap the nodes hold and `Graph::bytes()` does not count: binding
+closures and the values in them. How many nodes an object makes, and what each holds, is
+the delegate track's (B27–B30), so it is written down here and left.
+
+**A page replaced over and over.** The bench replaces the page only once, so the batch
+drove thermostat with the inspector: `stackView.replace(view, …, Immediate)` through the
+five views of its menu, 20 times, sampled 2.5 s after each:
+
+| Thermostat, after each view | Old (30cec887) | Arena and trim | Arena, trim, StackView fix |
+|---|---:|---:|---:|
+| start | 46.2 | 46.3 | 46.3 |
+| ScheduleView (round 2) | 224.7 | 224.1 | 225.9 |
+| StatisticsView (round 3) | 224.8 | 88.4 | 90.3 |
+| StatisticsView (round 18) | 233.2 | 97.6 | 95.6 |
+| RoomsView (round 20) | 233.2 | 106.8 | 104.0 |
+| graph at round 18, MiB | 103.7 | 16.4 | 14.6 |
+| objects at round 18 | 2576 | 2576 | 2246 |
+
+Before, the graph's slot vector kept the room of the most nodes there ever were (88 MiB
+after ScheduleView), and the heap kept what the objects freed. Now the node arena is
+in pages of 1024 slots. A page whose nodes all went goes back to the allocator, and new
+nodes fill the lowest pages first so the high ones empty. The page that emptied last is
+kept, so making and dropping one node does not make a page each time. And 1 s after at
+least 1024 objects went, the shell gives back what the allocator kept (`malloc_trim` at
+rest, on the one-shot timer it already had). The arena costs about 10 % on the reactive
+crate's chain bench and 5–8 % on fan-out; leaving ScheduleView gives back 135 MiB.
+
+**Settings leaked a page each time.** Thermostat's menu names a SettingsView it has no
+file for. StackView's `replace` took the shown page out of the stack, then threw when the
+new one could not be made. The old page was never removed, and stayed alive with its 110
+objects, one more each time Settings was chosen (2246 → 2356 → … above). Now a push or
+replace whose page cannot be made warns as qml6 does (`QML StackView: replace: <url>: No
+such file`) and leaves the stack as it was (features/controls/stack-view-missing-page.feature).
+qml6 loses the page itself: its stack reads null where the page was, and the page stays
+alive and shown outside it until the application quits. That scenario is `@qt-diverges`.
+With the fix the object count repeats exactly each cycle, and the private memory at the
+same view rises less each cycle (90.3, 93.2, 95.0, 95.6).
+
+**What qml6 does with freed memory.** With an `LD_PRELOAD` shim that logs `malloc_trim`
+and `mallopt`, qml6 called neither, through three rounds of thermostat nor in a small file
+of StackView pages.
+It leaves glibc's defaults: freed memory stays in its arenas, and glibc gives back only
+the top of the heap.
+
+**SoundEffects share what they decode.** Every `SoundEffect` decoded its own copy of its
+source: 48 kHz stereo f32, 43–356 KB for maroon's sounds, one per tower. Now copies decoded
+from the same URL, with the same content, are held once (held weakly, by URL). The bench's
+maroon process had libasound and PipeWire's ALSA plugin mapped, but maroon's numbers did
+not move (the "this batch" row), so the effect on the bench is not measured.
+
+DECISIONs:
+
+- Measured through the real bench with an smaps watcher, and with the inspector where
+  owners were needed; repeated replaces driven with `app_eval`, off-screen.
+- The paged node arena stays: 10 % on a chain bench against 135 MiB given back when a big
+  page goes.
+- The heap is trimmed 1 s after a page of objects (1024) went, on the existing one-shot
+  timer; nothing polls.
+- The arena, the trim and the sound sharing are checked by Rust tests: QML cannot observe
+  memory.
+- A StackView page that cannot be made warns and leaves the stack as it was; where qml6
+  drops the shown page and keeps it alive, Ljós diverges.
+- What thermostat's nodes hold (binding closures, per-node cost) is left to the delegate
+  track.
