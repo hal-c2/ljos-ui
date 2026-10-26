@@ -1,5 +1,7 @@
 # The oxc_parser fork
 
+QuickJS is forked too, for one fix to its number text: see QUICKJS.md.
+
 `vendor/oxc_parser` is [`oxc_parser`](https://crates.io/crates/oxc_parser) **0.144.0** from crates.io with a QML mode added. It is a package of its own, `ljos_oxc_parser`, so it is never mistaken for the published crate; its library is still called `oxc_parser`. The root `Cargo.toml` names it by path:
 
 ```toml

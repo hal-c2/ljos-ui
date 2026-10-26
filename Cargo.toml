@@ -37,7 +37,10 @@ naga = { version = "30.0.1", default-features = false, features = ["glsl-in", "g
 slotmap = "1.1.1"
 smallvec = { version = "1.16", features = ["union"] }
 bitflags = "2.13"
-rquickjs = { version = "0.14.0", default-features = false }
+# QuickJS through Ljós's fork of rquickjs-sys, whose dtoa writes the
+# shortest digits (vendor/QUICKJS.md). rquickjs-core is copied only to
+# reach it by path; `rquickjs` re-exports nothing else that is used.
+rquickjs = { package = "ljos_rquickjs_core", version = "0.14.0", path = "vendor/rquickjs-core", default-features = false }
 salsa = "0.28.5"
 postcard = { version = "1.1", features = ["alloc"] }
 
@@ -253,7 +256,7 @@ debug = "line-tables-only"
 # stays fast enough to work in with hot reload; our own crates stay
 # unoptimised for the debugger.
 [profile.dev.package]
-rquickjs-sys.opt-level = 3
+ljos_rquickjs_sys.opt-level = 3
 png.opt-level = 3
 fdeflate.opt-level = 3
 zune-jpeg.opt-level = 3
