@@ -1652,6 +1652,7 @@ async fn prompts_are_listed_and_name_only_tools_that_exist() {
             "write-component",
             "port-from-qtquick",
             "add-accessibility",
+            "design-review",
             "localise",
             "write-feature"
         ]
@@ -1729,6 +1730,7 @@ async fn write_component_names_its_tools_in_the_order_they_are_used() {
             "api_status",
             "docs_search",
             "features_list",
+            "design_rules",
             "qml_format",
             "qml_check",
             "qml_lint",
@@ -1737,4 +1739,78 @@ async fn write_component_names_its_tools_in_the_order_they_are_used() {
             "run_status",
         ]
     );
+}
+
+/// The design review carries the agent brief as the document has it, and
+/// sends the agent through the lint and the audit, in that order.
+#[tokio::test]
+async fn design_review_carries_the_brief_and_ends_in_the_audit() {
+    let dir = fixture();
+    let c = connect(dir.path(), CapSet::EMPTY).await;
+    let got = c
+        .get_prompt(
+            rmcp::model::GetPromptRequestParams::new("design-review").with_arguments(
+                json!({ "source": "views/NoteCard.qml" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let text = format!("{:?}", got.messages);
+    assert_eq!(
+        tools_named(&text),
+        [
+            "design_rules",
+            "design_palette",
+            "design_contrast",
+            "design_motion",
+            "qml_check",
+            "qml_lint",
+            "docs_search",
+            "qml_format",
+            "features_list",
+            "features_run",
+            "run_status",
+        ]
+    );
+    assert!(text.contains("views/NoteCard.qml"));
+    assert!(text.contains("app_audit"));
+    assert!(text.contains("ljos-allow(<code>): <reason>"));
+    // One line of the brief from each end, as the file has it, so that the
+    // prompt cannot have drifted into a copy.
+    let brief = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/design/agent-brief.md"
+    ))
+    .unwrap();
+    for line in [
+        "- Give everything that reacts to a click, tap or key an accessible name. [a11y-unnamed-interactive]",
+        "- Make popups, menus and dialogs opaque (alpha",
+        "- Never show UUIDs, paths, hashes or object dumps; show names. [content-raw-identifier]",
+    ] {
+        assert!(brief.contains(line), "{line}");
+        assert!(text.contains(line), "{line}");
+    }
+}
+
+/// The prompts that write QML end with the lint and the audit.
+#[tokio::test]
+async fn prompts_that_write_qml_end_with_the_design_checks() {
+    let dir = fixture();
+    let c = connect(dir.path(), CapSet::EMPTY).await;
+    for (prompt, arg) in [("write-component", "name"), ("add-accessibility", "paths")] {
+        let got = c
+            .get_prompt(
+                rmcp::model::GetPromptRequestParams::new(prompt)
+                    .with_arguments(json!({ arg: "views" }).as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap();
+        let text = format!("{:?}", got.messages);
+        assert!(text.contains("agent-brief.md"), "{prompt}");
+        assert!(text.contains("ljos audit"), "{prompt}");
+        assert!(text.contains("app_audit"), "{prompt}");
+    }
 }

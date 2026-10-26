@@ -18,7 +18,7 @@ Feature: Prompts and reference pages of the authoring tools
   Rule: Each prompt names the tools to call, in the order to call them
 
     Scenario: The prompts are offered by name
-      Then the agent is offered the prompts "write-component, port-from-qtquick, add-accessibility, localise, write-feature"
+      Then the agent is offered the prompts "write-component, port-from-qtquick, add-accessibility, design-review, localise, write-feature"
 
     Scenario: Writing a component goes from the ledger to the scenario to the QML
       When the agent asks for the prompt "write-component" with:
@@ -27,7 +27,9 @@ Feature: Prompts and reference pages of the authoring tools
         """
       Then the prompt contains "NoteCard"
       And the prompt contains "one note in a list"
-      And the prompt names the tools "api_status, docs_search, features_list, qml_format, qml_check, qml_lint, binding_tier_explain, features_run, run_status"
+      And the prompt names the tools "api_status, docs_search, features_list, design_rules, qml_format, qml_check, qml_lint, binding_tier_explain, features_run, run_status"
+      And the prompt contains "ljos audit"
+      And the prompt contains "ljos-allow(<code>): <reason>"
 
     Scenario: Porting from Qt Quick starts at what Ljós has
       When the agent asks for the prompt "port-from-qtquick" with:
@@ -44,7 +46,21 @@ Feature: Prompts and reference pages of the authoring tools
         """
       Then the prompt contains "views"
       And the prompt contains "Accessible.name"
-      And the prompt names the tools "qml_lint, type_lookup, qml_check, features_list, features_run, run_status"
+      And the prompt names the tools "qml_lint, design_rules, type_lookup, qml_check, features_list, features_run, run_status"
+      And the prompt contains "docs/design/accessibility.md"
+      And the prompt contains "ljos audit"
+
+    Scenario: A design review goes from the lint to the audit at the full matrix and the guides
+      When the agent asks for the prompt "design-review" with:
+        """json
+        {"source": "views/NoteCard.qml"}
+        """
+      Then the prompt contains "views/NoteCard.qml"
+      And the prompt names the tools "design_rules, design_palette, design_contrast, design_motion, qml_check, qml_lint, docs_search, qml_format, features_list, features_run, run_status"
+      And the prompt contains "ljos audit"
+      And the prompt contains "app_audit"
+      And the prompt contains "ljos-allow(<code>): <reason>"
+      And the prompt contains "[a11y-unnamed-interactive]"
 
     Scenario: Localising goes from the texts nobody can translate to the catalogue
       When the agent asks for the prompt "localise" with:
