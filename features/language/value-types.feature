@@ -187,6 +187,18 @@ Feature: Value types in JavaScript
       And the property "italic" of "root" is true
       And the property "underline" of "root" is false
 
+    Scenario: A font is written with its settings in Qt's order
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property font f: Qt.font({ family: "x" })
+          property string seen: JSON.stringify(f).replace(/"/g, "'")
+        }
+        """
+      Then the property "seen" of "root" is "{'family':'x','styleName':'','bold':false,'weight':400,'italic':false,'underline':false,'overline':false,'strikeout':false,'pointSize':9,'pixelSize':12,'capitalization':0,'letterSpacing':0,'wordSpacing':0,'hintingPreference':0,'kerning':true,'preferShaping':true,'features':{},'variableAxes':{},'contextFontMerging':false,'preferTypoLineMetrics':false}"
+
   Rule: Writing a member of a property changes the property
 
     Scenario: Writing one member of a rect property

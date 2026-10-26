@@ -467,11 +467,14 @@ pub(crate) const FACES: &str = r##"
     (o, [family, pointSize, pixelSize, weight, italic, underline, strikeout, letterSpacing, wordSpacing,
       scaleWithSystem, capitalization, hintingPreference, styleName, overline, kerning, preferShaping,
       contextFontMerging, preferTypoLineMetrics, features, variableAxes]) => {
+      // In Qt's order, which is what JSON.stringify and a for-in list.
       o.family = family;
+      o.styleName = styleName;
       o.bold = weight > 500;
       o.weight = weight;
       o.italic = italic;
       o.underline = underline;
+      o.overline = overline;
       o.strikeout = strikeout;
       o.pointSize = pixelSize > 0 ? pixelSize * 72 / font.dpi : pointSize;
       o.pixelSize = pixelSize > 0 ? pixelSize : pointSize > 0 ? Math.trunc(pointSize * font.dpi / 72) : -1;
@@ -481,14 +484,12 @@ pub(crate) const FACES: &str = r##"
       o.letterSpacing = letterSpacing;
       o.wordSpacing = wordSpacing;
       o.hintingPreference = hintingPreference;
-      o.styleName = styleName;
-      o.overline = overline;
       o.kerning = kerning;
       o.preferShaping = preferShaping;
-      o.contextFontMerging = contextFontMerging;
-      o.preferTypoLineMetrics = preferTypoLineMetrics;
       o.features = features === undefined ? noMap : features;
       o.variableAxes = variableAxes === undefined ? noMap : variableAxes;
+      o.contextFontMerging = contextFontMerging;
+      o.preferTypoLineMetrics = preferTypoLineMetrics;
       // Ours, so not one of the keys a script finds when it lists a font's:
       // those stay Qt's.
       hide(o, "scaleWithSystem", scaleWithSystem);
