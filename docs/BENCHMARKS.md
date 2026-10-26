@@ -5497,3 +5497,87 @@ DECISIONs:
 - Bindings installed through the plan are recorded as bits in the object's `Made`, with
   their place derived on query; an explicit place (a reload, a binding set from script)
   still wins. A reload in place writes the derived places down before it moves anything.
+
+### B25 (H2): the row plan, and where a delegate's time goes (2026-10-26)
+
+A view keeps one row plan per delegate component and set of model roles, made the first time
+a delegate needs it and dropped when the view's source changes or the model resets or
+changes its roles. The plan lists the delegate's required properties, each with the row
+value it is fed from (`index`, `modelData` or a role, by position). When every required
+property has one, no role is read unqualified and the model gives no row object of its own,
+the view writes those properties straight onto the delegate when it makes or reuses it and
+whenever its row changes. There is no row object, no `model` and no binding to them. Other
+delegates still get a row object, built from the plan's role list, and their required
+properties are bound to it by index instead of by name.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets):
+
+| ListView delegate | B24 | B25 |
+|---|---:|---:|
+| Objects | 40 (4) | 30 (3) |
+| Graph values | 80 (8) | 90 (9) |
+| Bindings | 70 (7) | 60 (6) |
+| Effects | 160 (16) | 160 (16) |
+| Member lookups by name | 40 (4) | 0 |
+| Heap allocations | 1796 (179.6) | 1667 (166.7) |
+
+The `createObject` item is unchanged (1027, 1 member lookup). An object and a binding fewer
+are the row object and `index`'s binding to it. The value more is the node `index` needs on
+the delegate once something other than a binding writes it. The row object had no effects,
+so the effect count stays the same.
+
+| listview under callgrind (main thread, 20 s after 40 s) | Run 1 | Run 2 | B24 |
+|---|---:|---:|---:|
+| Per delegate (total ÷ text layouts) | 393.3 k (3.877 G / 9858) | 396.2 k (3.890 G / 9820) | 390.4 k, 404.8 k |
+| Delegates per frame | 10.0 | 9.75 | 12.2, 10.1 |
+| Row setup (`ViewShared::setup`) | 11.8 k | | |
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós | qml6 (same run) | Ljós, B24 |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.47 | 15.32 | 19.46 |
+| listview | 203.81 | 102.79 | 210.25 |
+| listview with `reuseItems: true` | 87.22 | 60.65 | 88.35 |
+
+As with B24's plan, the lookups and allocations go, but per delegate the instructions stay
+within the spread between runs. Scrolling listview is 3 % lower, at a load of 9 to 11.
+
+**Where a delegate's ~395 k goes.** These are the self costs of run 1, each function put in
+the innermost group that holds it on its stack. A function under several groups is split by
+how often each one calls it, and allocator time is folded into whoever allocated. The heap
+is 57 k (14.6 %) of the total. Run 2 is within 1 k on every line.
+
+| Group | Per delegate | Parts |
+|---|---:|---|
+| Text | 88 k | `ljos_text` layout and shaping 57.4 k; `ljos_quick::text` completion, measuring and following inputs 30.5 k |
+| Creation | 87 k | parent and tree (`set_parent_item`, `sync_parent`) 25.4 k; evaluating the delegate's own bindings 20.3 k; `init_item` and item registration 12.7 k; `apply_members` and `apply_unit` 9.2 k; the rest of the creation job 8.8 k; `allocate_step` 4.6 k; completion (not Text's) 3.3 k; row setup 3.0 k |
+| Scene effects | 56 k | anchors 17.2 k, geometry 10.3 k, place 2.6 k (B28: 30.1 k); structure and reconcile 8.2 k (B30); content and list 8.4 k; inherit 6.7 k (B29); the rest of adopt 3.0 k |
+| Teardown | 40 k | graph disposal 17.8 k (B26); the rest of `destroy_now` 14.3 k; `ViewShared::destroy` 4.5 k; `unadopt` 3.8 k |
+| The frame, divided by delegates | 121 k | paint, egui and the event loop 49.3 k; the view's pass (refresh, scrolled, release) 37.5 k; a11y 11.3 k; the rest of the scene's frame 9.1 k; Fill layout and its requests 7.8 k; animation ticks 6.5 k |
+
+The first four groups total ~270 k, the delegate's own work; qml6's ~200 k is its main
+thread only, because it renders on a thread of its own. Mapped to the plan:
+
+- B27 (the item record) takes on parent and tree, `init_item` and registration: ~38 k.
+- B28 (geometry, place, anchors) is ~30 k, plus its share of disposal.
+- B26 (scopes) aims at graph disposal, ~18 k, and part of the rest of teardown.
+- B30 (structure and text polish) is ~8 k, and up to ~18 k more if text's input following
+  moves into it.
+- B29 (inherited state) is the smallest, at 6.7 k.
+- Not on the plan: text layout and shaping (57 k), the view's pass (37.5 k) and paint
+  (49 k). Each of these is larger than any of B26–B30.
+
+DECISIONs:
+
+- The view writes a fed required property as the host. If the delegate has assigned it or
+  bound it itself, the view leaves it alone, which is Qt's rule: an assigned required
+  property stops following its row (`list-delegate-context.feature`, two new scenarios
+  checked on qml6).
+- A row object is still made for object rows and JavaScript-object rows, for a delegate
+  that requires `model`, and when roles are read unqualified. Only those delegates can tell
+  the difference.
+- When a row is removed, a fed delegate keeps its role values and its index becomes -1,
+  as a row object's would. A change of roles alone does nothing to it, because the plan is
+  made again and the next refresh writes from it.
+- The breakdown counts self cost, split proportionally among the groups on the stack.
+  Callgrind's inclusive cost counts recursive and shared functions more than once, so it
+  cannot be added up this way.
