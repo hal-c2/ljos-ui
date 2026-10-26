@@ -151,8 +151,7 @@ fn entry(e: &Engine, kind: Entry, ty: &TypeTag, from: Origin, v: &Value) -> Valu
             Value::Real(r) => *r,
             Value::Bool(b) => f64::from(u8::from(*b)),
             Value::String(s) => s.trim().parse().unwrap_or(f64::NAN),
-            // An entry never written, and `null`.
-            Value::Undefined | Value::Null => 0.0,
+            Value::Null => 0.0,
             _ => f64::NAN,
         }),
         (Entry::String, Origin::Array) => match v {
@@ -501,11 +500,28 @@ impl Engine {
             let given = args.get(2).cloned().unwrap_or(JsValue::Array(Vec::new()));
             // What the script put in is made of the list's type here, by
             // the rules for that; what was in the list is of it already.
+            let holes: Vec<usize> = match args.get(3) {
+                Some(JsValue::Array(at)) => at
+                    .iter()
+                    .filter_map(|i| match i {
+                        JsValue::Number(n) => Some(*n as usize),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
             let v = match engine.js_to_value(scope, given, &ty) {
                 Value::List(items) => Value::list(
                     items
                         .iter()
-                        .map(|i| entry(&engine, kind, &of, Origin::Put, i))
+                        .enumerate()
+                        .map(|(n, i)| {
+                            if kind != Entry::Any && holes.binary_search(&n).is_ok() {
+                                of.default_value()
+                            } else {
+                                entry(&engine, kind, &of, Origin::Put, i)
+                            }
+                        })
                         .collect(),
                 ),
                 other => other,
@@ -554,7 +570,14 @@ pub(crate) const LISTS: &str = r##"
       for (let i = 0; i < now.length; i++) t[i] = now[i];
     };
     const read = () => fill(sync(object, prop));
-    const write = () => fill(store(object, prop, t));
+    // An entry never written is told apart from an `undefined` put there:
+    // a list of reals makes the one 0 and the other NaN.
+    const holes = () => {
+      const at = [];
+      for (let i = 0; i < t.length; i++) if (!(i in t)) at.push(i);
+      return at;
+    };
+    const write = () => fill(store(object, prop, t, holes()));
     const methods = new Map();
     const method = (name, f) => {
       let m = methods.get(name);

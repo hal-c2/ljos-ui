@@ -165,7 +165,6 @@ Feature: A value a binding gives a property of another type
     And the log has a warning matching "Unable to assign QUrl to double"
 
   # Bucket value:list<real>:step-push(color.r).
-  @backlog
   Scenario: undefined pushed onto a list of reals is NaN
     Given the QML:
       """qml
@@ -179,6 +178,25 @@ Feature: A value a binding gives a property of another type
       """
     When the method "add" of "root" is called
     Then the property "seen" of "root" is "1 true"
+
+  Scenario: An entry of a list of reals never written is 0, and one given undefined NaN
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<real> l: [1]
+        property string seen: ""
+        function add() {
+          l[4] = 5; l[1] = undefined; l.splice(3, 0, undefined)
+          seen = l.join(" ")
+          l.length = 8
+          seen += "; " + l.join(" ")
+        }
+      }
+      """
+    When the method "add" of "root" is called
+    Then the property "seen" of "root" is "1 NaN 0 NaN 0 5; 1 NaN 0 NaN 0 5 0 0"
 
   # Bucket value:url:default.
   @backlog
