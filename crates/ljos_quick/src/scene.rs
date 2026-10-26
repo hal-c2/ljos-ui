@@ -3170,6 +3170,36 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
     }
     // Only how it is painted changed (a colour): it measures the same.
     let polish = !measured && !(t.rich.is_none() && same_layout);
+    // A text that paints nothing (hidden, or empty: a field's placeholder)
+    // is measured when one of its sizes is read, not by the frame's polish
+    // and the second round of bindings its writes would start. One that is
+    // only not shown yet (new, as a view makes its rows) is measured by
+    // the polish, which its first frame needs anyway.
+    let blank = t.rich.is_none() && t.text.is_empty();
+    if polish && (blank || (!shown && !e.untrack(|| e.read(obj, Item::VISIBLE.index)).to_boolean()))
+    {
+        let lazy = t.clone();
+        let keep = |s: &mut Shared, t: TextInputs| {
+            if let Some(m) = s.marks.get_mut(obj) {
+                m.text = Some(t);
+            }
+            s.clear(obj, Dirty::POLISH, |_| ());
+        };
+        if shown {
+            mark(shared, |s| {
+                let paint = Paint::Text(t.clone());
+                s.set(obj, Dirty::CONTENT, |m| m.content = Some(paint));
+                keep(s, t);
+            });
+        } else {
+            // Nothing for a frame to do.
+            keep(&mut shared.borrow_mut(), t);
+        }
+        if let Err(err) = e.untrack(|| text::measure_on_read(e, obj, lazy)) {
+            e.log(ljos_engine::LogLevel::Warning, "qml", err.to_string());
+        }
+        return;
+    }
     if !polish && !shown {
         // Nothing for a frame to do.
         if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {

@@ -3594,6 +3594,64 @@ mod tests {
         }
     }
 
+    /// An empty text is one empty line in any room: a Text with no text
+    /// does not follow its own width and height (ljos_quick), so they
+    /// must not change what it measures.
+    #[test]
+    fn empty_text_measures_the_same_in_any_room() {
+        let mut e = TextEngine::new();
+        for line_height in [LineHeight::Proportional(1.0), LineHeight::Fixed(30.0)] {
+            for style in [
+                TextStyle::default(),
+                TextStyle {
+                    pixel_size: 23.0,
+                    weight: 700.0,
+                    ..TextStyle::default()
+                },
+            ] {
+                let free = LayoutParams {
+                    line_height,
+                    ..LayoutParams::default()
+                };
+                let measure = |l: &TextLayout| {
+                    let m = [
+                        l.natural_width,
+                        l.content_width,
+                        l.content_height,
+                        l.implicit_height,
+                        l.baseline,
+                    ];
+                    (summary(l), m.map(f64::to_bits), l.truncated, l.rtl)
+                };
+                let want = measure(&e.layout("", &style, &free));
+                for width in [None, Some(0.0), Some(3.5), Some(200.0)] {
+                    for height in [None, Some(0.0), Some(5.0), Some(300.0)] {
+                        for wrap in [WrapMode::NoWrap, WrapMode::WordWrap, WrapMode::WrapAnywhere] {
+                            for elide in [ElideMode::None, ElideMode::Right, ElideMode::Middle] {
+                                for max_lines in [0, 1, 3] {
+                                    let params = LayoutParams {
+                                        width,
+                                        height,
+                                        wrap,
+                                        elide,
+                                        max_lines,
+                                        line_height,
+                                        justify: max_lines == 3,
+                                    };
+                                    assert_eq!(
+                                        measure(&e.layout("", &style, &params)),
+                                        want,
+                                        "{params:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// A plain text that wraps is broken without Parley's layout of it
     /// ([`wrap_direct`]), and has to break where Parley's breaker breaks
     /// it: here against an engine that builds every layout.

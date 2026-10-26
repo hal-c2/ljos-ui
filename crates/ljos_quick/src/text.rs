@@ -231,6 +231,10 @@ pub struct Text {
     /// look at it: a polish of the same inputs would only measure it again.
     #[qml(skip)]
     measured: Option<Box<TextInputs>>,
+    /// The inputs its sizes are to be measured with when one is read
+    /// ([`measure_on_read`]), and what they measured once one was.
+    #[qml(skip)]
+    due: Option<Box<Due>>,
     /// The effect that reads the inputs, from the completion on.
     #[qml(skip)]
     follow: Option<Rc<Follow>>,
@@ -333,6 +337,7 @@ impl Default for Text {
             bottom_padding: 0.0,
             initialised: false,
             measured: None,
+            due: None,
             follow: None,
             rich: None,
         }
@@ -756,7 +761,11 @@ impl TextInputs {
             let size = num(engine, obj, p);
             (!size_follows_implicit(engine, obj, horizontal)).then_some(size)
         };
-        let constrained = wrap != WrapMode::NoWrap || elide != ElideMode::None;
+        // An empty text is one empty line in any room (a field's
+        // placeholder, most often), so its room is not read: what it would
+        // read is read again when it is given text.
+        let constrained =
+            !written.is_empty() && (wrap != WrapMode::NoWrap || elide != ElideMode::None);
         let width = if constrained {
             own(true, Item::WIDTH.index).map(|w| (w - pad[0] - pad[2]).max(0.0))
         } else {
@@ -1194,6 +1203,41 @@ pub(crate) fn completion_measured(engine: &Engine, obj: ObjectId, t: &TextInputs
         .is_some_and(|m| *m == *t)
 }
 
+/// What a Text measures, in the properties that say it, in this order.
+const MEASURED: [PropIndex; 7] = [
+    Item::IMPLICIT_WIDTH.index,
+    Item::IMPLICIT_HEIGHT.index,
+    Text::CONTENT_WIDTH.index,
+    Text::CONTENT_HEIGHT.index,
+    Text::LINE_COUNT.index,
+    Text::TRUNCATED.index,
+    Item::BASELINE_OFFSET.index,
+];
+
+/// See [`Text::due`].
+#[derive(Debug)]
+pub(crate) struct Due {
+    inputs: TextInputs,
+    values: Option<[Value; 7]>,
+}
+
+/// Lays `t` out and says what that makes each of [`MEASURED`].
+fn measured_values(t: &TextInputs, te: &SharedTextEngine) -> [Value; 7] {
+    MEASURES.set(MEASURES.get() + 1);
+    let m = t.measure(&mut te.borrow_mut());
+    let [left, top, right, bottom] = t.pad;
+    let shift = vertical_offset(t.v_align, t.align_height, m.content_height);
+    [
+        Value::Real(m.natural_width + left + right),
+        Value::Real(m.implicit_height + top + bottom),
+        Value::Real(m.content_width),
+        Value::Real(m.content_height),
+        Value::Int(m.line_count as i32),
+        Value::Bool(m.truncated),
+        Value::Real(top + m.baseline + shift),
+    ]
+}
+
 /// Lays `t` out and writes what it measures on `obj`.
 fn write_measured(
     engine: &Engine,
@@ -1201,30 +1245,66 @@ fn write_measured(
     t: &TextInputs,
     te: &SharedTextEngine,
 ) -> Result<(), EngineError> {
-    MEASURES.set(MEASURES.get() + 1);
     // Borrowed for the layout only: the writes below run bindings.
-    let m = t.measure(&mut te.borrow_mut());
-    let [left, top, right, bottom] = t.pad;
-    let shift = vertical_offset(t.v_align, t.align_height, m.content_height);
+    let values = measured_values(t, te);
+    // What was to be measured on a read is measured now: written over,
+    // not read first, which would measure the older inputs.
+    let due = engine.with_mut(obj, |x: &mut Text| x.due.take())?.is_some();
     engine.batch(|| {
-        let put = |p: PropIndex, v: Value| write_computed(engine, obj, p, v);
-        put(
-            Item::IMPLICIT_WIDTH.index,
-            Value::Real(m.natural_width + left + right),
-        )?;
-        put(
-            Item::IMPLICIT_HEIGHT.index,
-            Value::Real(m.implicit_height + top + bottom),
-        )?;
-        put(Text::CONTENT_WIDTH.index, Value::Real(m.content_width))?;
-        put(Text::CONTENT_HEIGHT.index, Value::Real(m.content_height))?;
-        put(Text::LINE_COUNT.index, Value::Int(m.line_count as i32))?;
-        put(Text::TRUNCATED.index, Value::Bool(m.truncated))?;
-        put(
-            Item::BASELINE_OFFSET.index,
-            Value::Real(top + m.baseline + shift),
-        )
+        for (p, v) in MEASURED.into_iter().zip(values) {
+            if due && engine.is_made_on_read(obj, p) {
+                engine.write_internal(obj, p, v, ljos_engine::WriteKind::Imperative)?;
+            } else {
+                write_computed(engine, obj, p, v)?;
+            }
+        }
+        Ok(())
     })
+}
+
+/// Measures the Text `obj` with `t` when one of its sizes is next read,
+/// not now: nothing shows what it measures (it is hidden, or empty), so a
+/// frame needs none of it. Whatever reads a size already is told it
+/// changed, and gets the new one by reading it again, as on qml6, where a
+/// text's sizes are new as soon as what they follow is.
+pub(crate) fn measure_on_read(
+    engine: &Engine,
+    obj: ObjectId,
+    t: TextInputs,
+) -> Result<(), EngineError> {
+    engine.with_mut(obj, |x: &mut Text| {
+        x.measured = None;
+        x.due = Some(Box::new(Due {
+            inputs: t,
+            values: None,
+        }));
+    })?;
+    for p in MEASURED {
+        engine.make_on_read_by(obj, p, made_on_read)?;
+    }
+    for p in MEASURED {
+        engine.notify(obj, p)?;
+    }
+    Ok(())
+}
+
+/// One of [`MEASURED`] of `obj`, read while it was due: the first read
+/// measures for all of them.
+fn made_on_read(engine: &Engine, obj: ObjectId, p: PropIndex) -> Value {
+    let at = MEASURED.iter().position(|m| *m == p);
+    let due = engine
+        .with_mut(obj, |x: &mut Text| x.due.take())
+        .ok()
+        .flatten();
+    let (Some(at), Some(mut due)) = (at, due) else {
+        return engine.read(obj, p);
+    };
+    let values = due
+        .values
+        .get_or_insert_with(|| measured_values(&due.inputs, &text_engine()));
+    let v = values[at].clone();
+    let _ = engine.with_mut(obj, |x: &mut Text| x.due = Some(due));
+    v
 }
 
 /// Paints the text into an item of `size`: one glyph run per font and

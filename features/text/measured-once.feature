@@ -9,7 +9,9 @@ Feature: A text is measured again only when what it measures changes
   content size and its line count. That is done again when its text, its
   font or the width it wraps to changes, and not when something it does
   not measure with changes: where it is, a width it does not wrap to, a
-  height it is not aligned in, or how it is painted.
+  height it is not aligned in, or how it is painted. A text that is not
+  shown, and whose size nothing follows, is measured only when its size
+  is asked for.
 
   Background:
     Given the QML:
@@ -33,6 +35,10 @@ Feature: A text is measured again only when what it measures changes
         Text {
           objectName: "elided"; y: 120; elide: Text.ElideRight; text: "Cool"
           font.pixelSize: root.tiny ? 10 : 12
+        }
+        Text {
+          objectName: "hidden"; y: 160; width: 50; height: 20
+          visible: false; text: "Hidden"
         }
       }
       """
@@ -86,3 +92,12 @@ Feature: A text is measured again only when what it measures changes
     And 50 milliseconds pass
     Then text was measured at most 2 times since that was counted
 
+
+  Scenario: A hidden text whose size nothing follows is measured when its size is asked for
+    When the property "text" of "hidden" is set to "Hidden away"
+    And the property "font.pixelSize" of "hidden" is set to 20
+    And 50 milliseconds pass
+    Then text was measured at most 0 times since that was counted
+    And the property "implicitWidth" of "hidden" is at least 60
+    And the property "lineCount" of "hidden" is 1
+    And text was measured at most 1 time since that was counted
