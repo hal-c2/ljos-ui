@@ -1947,6 +1947,7 @@ impl Engine {
         matches!(
             ty,
             TypeTag::Font
+                | TypeTag::Color
                 | TypeTag::Point
                 | TypeTag::Size
                 | TypeTag::Rect

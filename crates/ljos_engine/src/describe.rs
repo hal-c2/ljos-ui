@@ -49,7 +49,11 @@ pub const VALUE_TYPES: &[ValueType] = &[
     plain(|| TypeTag::Real, QML),
     plain(|| TypeTag::String, QML),
     plain(|| TypeTag::Url, QML),
-    plain(|| TypeTag::Color, QUICK),
+    ValueType {
+        tag: || TypeTag::Color,
+        module: QUICK,
+        members: &[("r", "real"), ("g", "real"), ("b", "real"), ("a", "real")],
+    },
     ValueType {
         tag: || TypeTag::Font,
         module: QUICK,
@@ -240,7 +244,7 @@ mod tests {
         let every: Vec<&str> = VALUE_TYPES
             .iter()
             .flat_map(|ty| ty.members.iter().map(|(name, _)| *name))
-            .chain(["nothing", "r", "g", "b", "a", "length", "left", "top"])
+            .chain(["nothing", "length", "left", "top", "hsvHue", "valid"])
             .collect();
         for ty in VALUE_TYPES {
             let tag = (ty.tag)();

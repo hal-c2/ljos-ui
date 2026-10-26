@@ -918,6 +918,24 @@ impl Value {
                 }
                 Some(Value::Quaternion(Arc::new(q)))
             }
+            // The one channel is rounded as Qt's `setRedF` rounds it; the
+            // others keep their sixteen bits. An invalid colour is opaque
+            // black first, as in qml6.
+            TypeTag::Color => {
+                let c = match self {
+                    Value::Color(c) if c.is_valid() => *c,
+                    _ => Color::rgba16(0, 0, 0, u16::MAX),
+                };
+                let w = Color::from_rgba_f(n, n, n, n).r;
+                let (r, g, b, a) = match name {
+                    "r" => (w, c.g, c.b, c.a),
+                    "g" => (c.r, w, c.b, c.a),
+                    "b" => (c.r, c.g, w, c.a),
+                    "a" => (c.r, c.g, c.b, w),
+                    _ => return None,
+                };
+                Some(Value::Color(Color::rgba16(r, g, b, a)))
+            }
             TypeTag::Custom(n) => {
                 let ty = crate::value_custom::find(n)?;
                 let now = match self {

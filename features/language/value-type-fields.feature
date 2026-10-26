@@ -11,7 +11,8 @@ Feature: Assigning a field of a value-type property
   `font.bold: true`, `spot.x: 10`. The field may belong to a property of the object itself,
   to a property of a grouped object (`border.width`) or to a property of an attached object
   (`Drag.hotSpot.x`). Each is written in dotted form or in a group block, as a literal or as a
-  binding, and the fields not given keep their defaults.
+  binding, and the fields not given keep their defaults. A colour's channels are its fields
+  too, and a colour that had none starts as opaque black.
 
   Background:
     Given the QML:
@@ -25,6 +26,10 @@ Feature: Assigning a field of a value-type property
         spot.y: 4
         property rect area
         area.width: 30
+        property color tint
+        tint.g: root.k / 6
+        tint.a: 0.25
+        Rectangle { id: fill; color.r: 0.5 }
         Text { id: label; text: "x"; font.bold: true; font.pixelSize: 21 }
         Text { id: block; text: "x"; font { bold: true; pixelSize: 19 } }
         Text { id: bound; text: "x"; font.pixelSize: root.k * 5 }
@@ -37,6 +42,7 @@ Feature: Assigning a field of a value-type property
         function font() { return [label.font.bold, label.font.pixelSize, block.font.bold, block.font.pixelSize].join() }
         function grouped() { return border.border.width + "," + border.border.color + "," + margins.anchors.margins }
         function attached() { return hot.Drag.hotSpot + "," + hotBlock.Drag.hotSpot }
+        function colours() { return tint + "," + fill.color }
         function followed() { return bound.font.pixelSize + "," + hotBound.Drag.hotSpot }
         property string out
       }
@@ -60,6 +66,10 @@ Feature: Assigning a field of a value-type property
       When the property "out" of "root" is bound to "attached()"
       Then the property "out" of "root" is "QPointF(10, 3),QPointF(6, 8)"
 
+    Scenario: Channels of the object's own colour and of another object's
+      When the property "out" of "root" is bound to "colours()"
+      Then the property "out" of "root" is "#40008000,#80ffff"
+
   Rule: A field given by a binding follows it
 
     Scenario: A font field and an attached point field follow what they are bound to
@@ -67,3 +77,8 @@ Feature: Assigning a field of a value-type property
       Then the property "out" of "root" is "15,QPointF(6, 0)"
       When the property "k" of "root" is set to 4
       Then the property "out" of "root" is "20,QPointF(8, 0)"
+
+    Scenario: A channel of a colour follows what it is bound to
+      When the property "out" of "root" is bound to "colours()"
+      And the property "k" of "root" is set to 4
+      Then the property "out" of "root" is "#4000aa00,#80ffff"

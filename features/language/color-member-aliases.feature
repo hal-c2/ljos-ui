@@ -12,7 +12,6 @@ Feature: An alias of a channel of a colour property
   a member of any other value. Reading it reads the channel; giving it a value changes that
   channel of the colour and keeps the others.
 
-  @backlog
   Scenario: Giving the alias a value changes that channel
     Given the QML:
       """qml
@@ -28,7 +27,6 @@ Feature: An alias of a channel of a colour property
     When the method "clear" of "root" is called
     Then the property "tint" of "root" is "#00000000"
 
-  @backlog
   Scenario: An alias of the alpha channel reads it
     Given the QML:
       """qml
@@ -44,7 +42,6 @@ Feature: An alias of a channel of a colour property
     Then the property "text" of "root" is "0.50"
     And the log has no warnings
 
-  @backlog
   Scenario: What an alias of a channel reads can be given to another property
     Given the QML:
       """qml
@@ -61,7 +58,6 @@ Feature: An alias of a channel of a colour property
     Then the property "x" of "root" is 1
 
   # Found by ljos-fuzz (bindings), bucket throws:TypeError/none:step-set(literal).
-  @backlog
   Scenario: Writing an alias of a channel of a read-only colour is a TypeError
     Given the QML:
       """qml
@@ -81,7 +77,6 @@ Feature: An alias of a channel of a colour property
     Then the property "seen" of "root" is "TypeError"
 
   # Found by ljos-fuzz (bindings), bucket warning:RangeError(qt-only):fN.
-  @backlog
   Scenario: A binding that reads an alias of a channel runs again when the colour changes
     Given the QML:
       """qml

@@ -1632,6 +1632,10 @@ module QtQuick
 	vector4d QtQuick.vector4d
 	type QtQuick.color color
 		is value
+		prop r QtQml.real named
+		prop g QtQml.real named
+		prop b QtQml.real named
+		prop a QtQml.real named
 	type QtQuick.font font
 		is value
 		prop family QtQml.string named
