@@ -293,7 +293,6 @@ Feature: Colour values in JavaScript
     And the property "sameText" of "root" is true
 
   # Found by ljos-fuzz (bindings), bucket value:color:default.
-  @backlog
   Scenario: A colour with no alpha at all is written with its alpha
     Given the QML:
       """qml
@@ -309,7 +308,6 @@ Feature: Colour values in JavaScript
 
   # Found by ljos-fuzz (bindings), buckets warning:assign(ljos-only):literal and
   # value:bool:default.
-  @backlog
   Scenario: A colour given an array is an invalid colour and is not reported
     Given the QML:
       """qml

@@ -14,7 +14,6 @@ Feature: A binding to a value of another type
   the origin, both without a word. A string bound to a point or a rectangle is told, and
   stays empty.
 
-  @backlog
   Scenario: A colour or a point bound to another type is converted without a warning
     Given the QML:
       """qml
@@ -32,7 +31,6 @@ Feature: A binding to a value of another type
     Then the property "seen" of "root" is "false,false,false,false,0,0"
     And the log has no warning matching "Unable to assign"
 
-  @backlog
   Scenario Outline: A string bound to a <type> is told, and stays empty
     Given the QML:
       """qml
