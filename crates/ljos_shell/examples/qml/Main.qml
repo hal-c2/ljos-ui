@@ -25,12 +25,18 @@ Item {
             MenuItem { text: "Open a dialog"; onTriggered: dialog.open() }
         }
         // More lines than the window is tall: the menu ends at the window
-        // and its lines scroll.
+        // and its lines scroll. A separator halves them so the eye finds
+        // its place.
         Menu {
             title: "Go"
             Repeater {
-                model: 16
+                model: 8
                 MenuItem { text: "Line " + (index + 1) }
+            }
+            MenuSeparator {}
+            Repeater {
+                model: 8
+                MenuItem { text: "Line " + (index + 9) }
             }
         }
         Menu {
@@ -121,6 +127,8 @@ Item {
                 text: "Add"
                 icon.source: root.plus
                 display: AbstractButton.IconOnly
+                ToolTip.text: text
+                ToolTip.visible: hovered
             }
         }
 
@@ -232,6 +240,10 @@ Item {
             implicitHeight: 56
             radius: 6
             color: root.clicks % 2 ? "#c62828" : "#1565c0"
+            // The fill is the application's own, so it draws keyboard
+            // focus itself.
+            border.width: button.visualFocus ? 3 : 0
+            border.color: "#ffb300"
         }
 
         contentItem: Text {
