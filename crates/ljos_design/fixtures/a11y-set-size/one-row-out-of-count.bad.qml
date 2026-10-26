@@ -1,0 +1,26 @@
+// expect: a11y-set-size at 19
+import QtQuick
+import QtQuick.Controls.Basic
+Rectangle {
+    width: 640; height: 480
+    color: "white"
+    Column {
+        Accessible.role: Accessible.List
+        Accessible.name: "Files"
+        Repeater {
+            model: 3
+            Rectangle {
+                width: 100; height: 30
+                Accessible.role: Accessible.ListItem
+                Accessible.name: "File " + (index + 1)
+                Accessible.focusable: false
+            }
+        }
+        Rectangle {
+            width: 100; height: 30
+            Accessible.role: Accessible.ListItem
+            Accessible.name: "More"
+            Accessible.focusable: false
+        }
+    }
+}
