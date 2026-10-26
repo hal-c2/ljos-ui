@@ -943,6 +943,9 @@ struct Direct {
     wrapped: u64,
     /// Lines elided here ([`TextEngine::elide_direct`]).
     elided: u64,
+    /// Of those, rests read from their whole text's glyphs
+    /// ([`TextEngine::rest_clusters`]).
+    rests: u64,
     /// For [`wrap_direct`], kept for their allocations.
     atoms: Vec<DirectAtom>,
     lines: Vec<DirectLine>,
@@ -994,6 +997,8 @@ struct KeptRun {
     coords: Box<[i16]>,
     /// As [`Snapped::clusters`].
     clusters: Box<[(u32, u32)]>,
+    /// As [`Snapped::unsafe_starts`].
+    unsafe_starts: Option<Box<[u32]>>,
     font_size: f32,
     metrics: parley::FontMetrics,
 }
@@ -1030,6 +1035,7 @@ impl Direct {
             reused: 0,
             wrapped: 0,
             elided: 0,
+            rests: 0,
             atoms: Vec::new(),
             lines: Vec::new(),
             limits: Vec::new(),
@@ -1213,6 +1219,8 @@ fn harf_shape(
     let scale = voice.scale;
     kept.glyphs.reserve(chars);
     kept.qt.reserve(chars);
+    let (bytes, ascii) = (text.as_bytes(), text.is_ascii());
+    let mut unsafe_starts = Vec::new();
     let (mut cluster, mut first, mut plain) = (0, 0, true);
     let mut end = |kept: &mut Snapped, char_end: u32, first: usize| {
         let glyphs = kept.glyphs.len();
@@ -1231,6 +1239,13 @@ fn harf_shape(
             end(kept, info.cluster, first);
             (cluster, first) = (info.cluster, kept.glyphs.len());
         }
+        // A character counts a byte only in ASCII; otherwise every one is
+        // kept, which only costs an elided line its rest's shaping.
+        let starts = info.cluster as usize;
+        let after_space = !ascii || bytes.get(starts.wrapping_sub(1)) == Some(&b' ');
+        if info.unsafe_to_break() && after_space && unsafe_starts.last() != Some(&info.cluster) {
+            unsafe_starts.push(info.cluster);
+        }
         kept.glyphs.push(parley::Glyph {
             id: info.glyph_id,
             x: (at.x_offset as f32) * scale,
@@ -1242,6 +1257,7 @@ fn harf_shape(
     if plain {
         kept.clusters.clear();
     }
+    kept.unsafe_starts = Some(unsafe_starts);
     *buffer = Some(output.clear());
     Some(())
 }
@@ -1341,6 +1357,7 @@ fn shape_direct(
         kept.glyphs.extend(run.glyphs.iter().map(|g| g.0));
         kept.qt.extend(run.glyphs.iter().map(|g| g.1));
         kept.clusters.extend_from_slice(&run.clusters);
+        kept.unsafe_starts = run.unsafe_starts.as_deref().map(<[u32]>::to_vec);
         let (font_size, metrics, coords) = (run.font_size, run.metrics, run.coords.to_vec());
         (source_font(fcx, &pinned)?, font_size, metrics, coords)
     } else {
@@ -1385,6 +1402,7 @@ fn shape_direct(
                     .collect(),
                 coords: coords.as_slice().into(),
                 clusters: kept.clusters.as_slice().into(),
+                unsafe_starts: kept.unsafe_starts.as_deref().map(Into::into),
                 font_size,
                 metrics,
             };
@@ -2071,6 +2089,7 @@ fn wrap_direct(
         items,
         lines: ends,
         clusters: Vec::new(),
+        unsafe_starts: None,
     };
     let facts = lines.iter().map(|line| LineFacts {
         advance: line.advance,
@@ -2175,6 +2194,12 @@ struct Snapped {
     /// ends in the text's characters and in `glyphs`; empty where every
     /// cluster is one character with one glyph, as nearly every one is.
     clusters: Vec<(u32, u32)>,
+    /// Of a text shaped by [`harf_shape`], the characters after a space
+    /// that the shaper says the rest of the text cannot start at and be
+    /// shaped as it is here (kerned against the space, say); `None` where
+    /// that is not known. Only an elided line's rest asks
+    /// ([`TextEngine::rest_clusters`]).
+    unsafe_starts: Option<Vec<u32>>,
 }
 
 enum Item {
@@ -2357,18 +2382,24 @@ fn cluster_advances(shape: &Shape) -> Vec<(Range<usize>, f32)> {
 /// [`cluster_advances`] of a text shaped directly ([`shape_direct`]), as
 /// Parley's layout of it would give them: its clusters there are its
 /// characters, each a grapheme, which share their shaped cluster's
-/// advance evenly, and the first of which holds the glyphs.
-fn direct_cluster_advances(text: &str, shaped: &Snapped) -> Vec<(Range<usize>, f32)> {
+/// advance evenly, and the first of which holds the glyphs. Only those
+/// from character `from` on, counted from there, which has to start a
+/// cluster.
+fn direct_cluster_advances(text: &str, shaped: &Snapped, from: usize) -> Vec<(Range<usize>, f32)> {
     let starts: Vec<usize> = text
         .char_indices()
         .map(|(at, _)| at)
         .chain(std::iter::once(text.len()))
         .collect();
     let chars = starts.len() - 1;
-    let mut out = Vec::with_capacity(chars);
-    let (mut char_start, mut glyph_start) = (0, 0);
-    let ends = (shaped.clusters.is_empty())
-        .then(|| (1..=chars).map(|i| (i, i)))
+    let base = starts[from.min(chars)];
+    let mut out = Vec::with_capacity(chars - from.min(chars));
+    let plain = shaped.clusters.is_empty();
+    // A glyph a character: the first `from` of each are passed at once.
+    let skip = if plain { from.min(chars) } else { 0 };
+    let (mut char_start, mut glyph_start) = (skip, skip);
+    let ends = plain
+        .then(|| (skip + 1..=chars).map(|i| (i, i)))
         .into_iter()
         .flatten()
         .chain(
@@ -2378,6 +2409,10 @@ fn direct_cluster_advances(text: &str, shaped: &Snapped) -> Vec<(Range<usize>, f
                 .map(|&(c, g)| (c as usize, g as usize)),
         );
     for (char_end, glyph_end) in ends {
+        if char_end <= from {
+            (char_start, glyph_start) = (char_end, glyph_end);
+            continue;
+        }
         let glyphs = &shaped.glyphs[glyph_start..glyph_end];
         let qt = &shaped.qt[glyph_start..glyph_end];
         // As the shaper sums a cluster's advance.
@@ -2386,7 +2421,7 @@ fn direct_cluster_advances(text: &str, shaped: &Snapped) -> Vec<(Range<usize>, f
         let given_up: f32 = glyphs.iter().zip(qt).map(|(g, q)| g.advance - q).sum();
         for c in char_start..char_end {
             let own = if c == char_start { given_up } else { 0.0 };
-            out.push((starts[c]..starts[c + 1], share - own));
+            out.push((starts[c] - base..starts[c + 1] - base, share - own));
         }
         (char_start, glyph_start) = (char_end, glyph_end);
     }
@@ -3164,18 +3199,14 @@ impl TextEngine {
     /// it, shaped directly ([`shape_direct`]), without Parley's layout of
     /// any: the line as [`extract`] would read it, `Some(None)` when not
     /// even the ellipsis fits. `None` where one of them is not shaped
-    /// directly; the text is then elided in full.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "internal; a struct would only rename them"
-    )]
+    /// directly; the text is then elided in full. A text whose clusters
+    /// are `known` is not shaped itself, only its cut.
     fn elide_direct(
         &mut self,
         text: &str,
         style: &TextStyle,
-        mode: ElideMode,
-        width: f32,
-        force: bool,
+        (mode, width, force): (ElideMode, f32, bool),
+        known: Option<Clusters>,
         ellipsis: f32,
         fallback: Vertical,
     ) -> Option<Option<RawLine>> {
@@ -3190,14 +3221,20 @@ impl TextEngine {
                 BreakClass::Word,
             )
         };
-        let full = shaped(text)?;
-        if !force && items_widths(&full, 0).0.max(0.0) <= width {
-            return Some(direct_line(&full, text.len(), fallback).pop());
-        }
+        let clusters = match known {
+            // Only a forced cut is known: it is cut however wide it is.
+            Some(clusters) if force => clusters,
+            _ => {
+                let full = shaped(text)?;
+                if !force && items_widths(&full, 0).0.max(0.0) <= width {
+                    return Some(direct_line(&full, text.len(), fallback).pop());
+                }
+                Clusters::new(direct_cluster_advances(text, &full, 0), text.len())
+            }
+        };
         if ellipsis > width {
             return Some(None);
         }
-        let clusters = Clusters::new(direct_cluster_advances(text, &full), text.len());
         let mut keep = clusters.fit(mode, width - ellipsis);
         loop {
             let candidate = clusters.elided(text, mode, keep);
@@ -3207,6 +3244,33 @@ impl TextEngine {
             }
             keep = Clusters::fewer(mode, keep);
         }
+    }
+
+    /// The clusters of a text shaped directly (its shape `key`) from byte
+    /// `start` to its end, read from its glyphs as [`Self::elide_direct`]
+    /// would read them from the rest shaped alone: where the shaper says
+    /// the rest starts after a space and shapes alone as it does in the
+    /// whole, they are the whole's glyphs from there on. `None` where that
+    /// is not known; the rest is then shaped.
+    fn rest_clusters(&mut self, key: u64, start: usize) -> Option<Clusters> {
+        let entry = self.shapes.get_mut(&key, self.frame)?;
+        let (text, shaped) = (&*entry.text, &entry.advances);
+        let unsafe_starts = shaped.unsafe_starts.as_ref()?;
+        let at = u32::try_from(start).ok()?;
+        let boundary = shaped.clusters.is_empty() || shaped.clusters.iter().any(|c| c.0 == at);
+        let after_space = start.checked_sub(1).map(|b| text.as_bytes().get(b)) == Some(Some(&b' '));
+        if !text.is_ascii()
+            || start >= text.len()
+            || !after_space
+            || !boundary
+            || unsafe_starts.contains(&at)
+        {
+            return None;
+        }
+        self.direct.rests += 1;
+        // ASCII: the character at `start` is its byte.
+        let clusters = direct_cluster_advances(text, shaped, start);
+        Some(Clusters::new(clusters, text.len() - start))
     }
 
     fn build_layout(
@@ -3237,57 +3301,64 @@ impl TextEngine {
         let justify = params.justify && wraps;
         let max_advance = width.filter(|_| wraps).map(|w| w as f32);
 
-        let (mut raw, (advance, natural), rtl) = if text.is_empty() && ranged.objects.is_empty() {
-            (Vec::new(), (0.0, 0.0), false)
-        } else {
-            let class = BreakClass::of(wrap);
-            // A wrapped text needs Parley's lines only when it turns out
-            // too wide; a ranged or justified one always does.
-            let key = self.shaped_key(text, style, &ranged, class, !places && !justify);
-            let frame = self.frame;
-            let found = "the entry was made a moment ago";
-            let entry = self.shapes.get_mut(&key, frame).expect(found);
-            // Parley breaks lines by the shaper's advances, which are a
-            // touch wider than Qt's: a text that fits as Qt counts it (an
-            // item as wide as its own text) must not be broken.
-            let max_advance = max_advance.filter(|w| entry.natural_width > *w);
-            // A text shaped directly is broken as it is, as Parley would
-            // break it, unless something needs Parley's layout of it. Its
-            // breaks count a character a byte, which an ellipsis is not.
-            let wrap_directly = entry.shape.is_none() && !places && !justify && text.is_ascii();
-            if places || ((max_advance, justify) != (None, false) && !wrap_directly) {
-                self.give_shape(key, text, style, &ranged, class);
-            }
-            let entry = self.shapes.get_mut(&key, frame).expect(found);
-            let lines = match &mut entry.shape {
-                None if let Some(max) = max_advance => {
-                    wrap_direct(&mut self.direct, entry, max, fallback, ranged.objects)
+        let (mut raw, (advance, natural), rtl, direct) =
+            if text.is_empty() && ranged.objects.is_empty() {
+                (Vec::new(), (0.0, 0.0), false, None)
+            } else {
+                let class = BreakClass::of(wrap);
+                // A wrapped text needs Parley's lines only when it turns out
+                // too wide; a ranged or justified one always does.
+                let key = self.shaped_key(text, style, &ranged, class, !places && !justify);
+                let frame = self.frame;
+                let found = "the entry was made a moment ago";
+                let entry = self.shapes.get_mut(&key, frame).expect(found);
+                // Parley breaks lines by the shaper's advances, which are a
+                // touch wider than Qt's: a text that fits as Qt counts it (an
+                // item as wide as its own text) must not be broken.
+                let max_advance = max_advance.filter(|w| entry.natural_width > *w);
+                // A text shaped directly is broken as it is, as Parley would
+                // break it, unless something needs Parley's layout of it. Its
+                // breaks count a character a byte, which an ellipsis is not.
+                let wrap_directly = entry.shape.is_none() && !places && !justify && text.is_ascii();
+                if places || ((max_advance, justify) != (None, false) && !wrap_directly) {
+                    self.give_shape(key, text, style, &ranged, class);
                 }
-                Some(shape) => {
-                    if entry.broken != (max_advance, justify) {
-                        break_lines(shape, max_advance, justify);
-                        entry.broken = (max_advance, justify);
+                let entry = self.shapes.get_mut(&key, frame).expect(found);
+                let lines = match &mut entry.shape {
+                    None if let Some(max) = max_advance => {
+                        wrap_direct(&mut self.direct, entry, max, fallback, ranged.objects)
                     }
-                    let unbroken = entry.broken == (None, false);
-                    let mut lines = extract(
-                        shape,
-                        fallback,
-                        max_advance.filter(|_| justify),
-                        ranged.objects,
-                        unbroken.then_some(&entry.advances),
-                    );
-                    if places {
-                        for (line, carets) in lines.iter_mut().zip(edit::carets(shape, text)) {
-                            line.clusters = carets.clusters;
+                    Some(shape) => {
+                        if entry.broken != (max_advance, justify) {
+                            break_lines(shape, max_advance, justify);
+                            entry.broken = (max_advance, justify);
                         }
+                        let unbroken = entry.broken == (None, false);
+                        let mut lines = extract(
+                            shape,
+                            fallback,
+                            max_advance.filter(|_| justify),
+                            ranged.objects,
+                            unbroken.then_some(&entry.advances),
+                        );
+                        if places {
+                            for (line, carets) in lines.iter_mut().zip(edit::carets(shape, text)) {
+                                line.clusters = carets.clusters;
+                            }
+                        }
+                        lines
                     }
-                    lines
-                }
-                // Shaped directly: one line, unbroken, as it was read.
-                None => direct_line(&entry.advances, text.len(), fallback),
+                    // Shaped directly: one line, unbroken, as it was read.
+                    None => direct_line(&entry.advances, text.len(), fallback),
+                };
+                let direct = entry.shape.is_none().then_some(key);
+                (
+                    lines,
+                    (entry.advance, entry.natural_width),
+                    entry.rtl,
+                    direct,
+                )
             };
-            (lines, (entry.advance, entry.natural_width), entry.rtl)
-        };
         if raw.is_empty() {
             raw.push(RawLine::empty(fallback));
         }
@@ -3346,13 +3417,16 @@ impl TextEngine {
                     .get(start..end.max(start))
                     .unwrap_or("")
                     .trim_end_matches(['\n', '\r']);
+                let known = direct
+                    .filter(|_| end == text.len() && start > 0)
+                    .and_then(|key| self.rest_clusters(key, start));
                 raw[visible - 1] = self.elided_line(
                     rest,
                     start,
                     style,
                     &ranged,
                     places,
-                    (elide, w32, true),
+                    (elide, w32, true, known),
                     rtl,
                     &metrics,
                 );
@@ -3368,7 +3442,7 @@ impl TextEngine {
                     style,
                     &ranged,
                     places,
-                    (elide, w32, false),
+                    (elide, w32, false, None),
                     rtl,
                     &metrics,
                 );
@@ -3441,6 +3515,8 @@ impl TextEngine {
 
     /// One line of `text` cut to a width. `at` is where `text` starts in the
     /// whole text, which is what `ranged` and the character places count in.
+    /// `known` are its clusters when the whole text's shaping gave them
+    /// ([`Self::rest_clusters`]).
     #[expect(
         clippy::too_many_arguments,
         reason = "internal; a struct would only rename them"
@@ -3452,7 +3528,7 @@ impl TextEngine {
         style: &TextStyle,
         ranged: &Ranged<'_>,
         places: bool,
-        (mode, width, force): (ElideMode, f32, bool),
+        (mode, width, force, known): (ElideMode, f32, bool, Option<Clusters>),
         rtl: bool,
         metrics: &StyleMetrics,
     ) -> RawLine {
@@ -3463,8 +3539,14 @@ impl TextEngine {
         let part = part_of(ranged, at..at + text.len());
         let plain = !places && !rtl && part.spans.is_empty() && part.objects.is_empty();
         if plain
-            && let Some(cut) =
-                self.elide_direct(text, style, mode, width, force, metrics.ellipsis, fallback)
+            && let Some(cut) = self.elide_direct(
+                text,
+                style,
+                (mode, width, force),
+                known,
+                metrics.ellipsis,
+                fallback,
+            )
         {
             self.direct.elided += 1;
             let Some(mut line) = cut else {
@@ -3948,7 +4030,8 @@ mod tests {
     /// A plain line too wide for its item is cut without Parley's layout
     /// of it or of its cuts ([`TextEngine::elide_direct`]), and has to be
     /// cut where Parley's layouts cut it: here against an engine that
-    /// builds every layout.
+    /// builds every layout. That holds for a wrapped text's last line,
+    /// whose rest is read from the whole text's glyphs, too.
     #[test]
     fn elided_plain_text_cuts_as_parley_cuts() {
         let texts = [
@@ -3961,6 +4044,9 @@ mod tests {
             "Grüße Ωμέγα Кириллица and Latin",
             "שלום עולם and English, mixed",
             "tab\tseparated",
+            "Message 42: the well-known fox re-read a lazy dog while light falls on northern hills.",
+            "AVAVAV To Ty Te Wa Yo LT P. F, \"quoted\" (kerned) T.V. AT&T WAVE Tokyo",
+            "e-mail me at a.b@c.org (or call +1-555-0100), 50% off; and then some more words",
         ];
         let widths = [0.0, 5.0, 12.0, 33.3, 64.0, 121.0, 200.0];
         let styles = [
@@ -3981,9 +4067,13 @@ mod tests {
                 for text in texts {
                     for width in widths {
                         for elide in [ElideMode::Left, ElideMode::Middle, ElideMode::Right] {
-                            for (wrap, max_lines) in
-                                [(WrapMode::NoWrap, 0), (WrapMode::WordWrap, 1)]
-                            {
+                            for (wrap, max_lines) in [
+                                (WrapMode::NoWrap, 0),
+                                (WrapMode::WordWrap, 1),
+                                (WrapMode::WordWrap, 2),
+                                (WrapMode::WordWrap, 3),
+                                (WrapMode::WrapAnywhere, 2),
+                            ] {
                                 let params = LayoutParams {
                                     width: Some(width),
                                     wrap,
@@ -4004,6 +4094,8 @@ mod tests {
             }
             assert_eq!(built.direct.elided, 0);
             assert!(direct.direct.elided >= 100, "{}", direct.direct.elided);
+            // A wrapped line's rest is read from its whole text.
+            assert!(direct.direct.rests >= 50, "{}", direct.direct.rests);
         }
     }
 
@@ -4163,7 +4255,10 @@ mod tests {
 
     /// [`harf_shape`] stands in for Parley's shaper once a font is set up
     /// ([`parley_shape`]), so the two have to give the same glyphs and
-    /// clusters, in every font, size and synthesis, and with ellipses.
+    /// clusters, in every font, size and synthesis, and with ellipses. An
+    /// elided line's rest is read from its whole text's glyphs where the
+    /// shaper says it may start ([`Snapped::unsafe_starts`]), so there it
+    /// has to shape alone as it does in the whole.
     #[test]
     fn harfrust_shapes_a_plain_text_as_parley_does() {
         let mut texts = printable_grid(false, 300);
@@ -4182,7 +4277,7 @@ mod tests {
             ("monospace", 400.0, true),
             ("sans-serif", 900.0, false),
         ];
-        let mut compared = 0;
+        let (mut compared, mut rests) = (0, 0);
         for system in [false, true] {
             let mut engine = TextEngine::build(system);
             for (family, weight, italic) in styles {
@@ -4237,10 +4332,37 @@ mod tests {
                             "{text:?} {family} {weight:?} {italic} {size}, system fonts {system}"
                         );
                         compared += 1;
+                        // Where the shaper says the rest may start, it
+                        // shapes alone as it does in the whole.
+                        let unsafe_starts = ours.unsafe_starts.clone().expect("known");
+                        let spaces = text.match_indices(' ').map(|(at, _)| at + 1);
+                        for start in spaces.filter(|_| ours.clusters.is_empty() && text.is_ascii())
+                        {
+                            let at = u32::try_from(start).expect("short");
+                            if start == text.len() || unsafe_starts.contains(&at) {
+                                continue;
+                            }
+                            let mut rest = Snapped::default();
+                            harf_shape(
+                                voice,
+                                &pinned.font,
+                                &text[start..],
+                                &mut direct.buffer,
+                                &mut rest,
+                            )
+                            .expect("shapes");
+                            let tail = Snapped {
+                                glyphs: ours.glyphs[start..].to_vec(),
+                                ..Snapped::default()
+                            };
+                            assert_eq!(bits(&rest), bits(&tail), "{text:?} from {start}");
+                            rests += 1;
+                        }
                     }
                 }
             }
         }
         assert!(compared > 100_000, "{compared}");
+        assert!(rests > 5_000, "{rests}");
     }
 }
