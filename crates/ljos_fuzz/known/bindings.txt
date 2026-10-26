@@ -111,7 +111,7 @@ value:step:string-vs-number           a var given a typed list holds a typed cop
 value:step:number                     a var given a typed list holds a typed copy, which converts what is pushed (features/language/property-conversions.feature); or a font pixel size of zero or less is ignored (features/language/font-pixel-size.feature)
 value:load:text-number                a string given NaN is "nan" (features/language/property-conversions.feature); or a list property is not an Array to Array.isArray (features/language/list-properties.feature)
 value:load:text-int-range             a string given -Infinity is "-inf" (features/language/property-conversions.feature)
-value:load:text-rounding              a number halfway between two shortest texts is written with the even one (features/language/property-conversions.feature); or Math.hypot is an ulp from Qt's (no scenario)
+value:load:text-rounding              a number halfway between two shortest texts is written with the even one (features/language/property-conversions.feature); or Math.hypot of three numbers or more is an ulp from Qt's (features/language/math-hypot.feature)
 value:load:empty-qt                   a string given a point is empty (features/language/property-conversions.feature); or a url given text that is no address is empty (features/language/url-values.feature)
 value:load:record-vs-string           a url is an object to a script (features/language/url-values.feature)
 value:step:record-vs-string           a url is an object to a script (features/language/url-values.feature)
@@ -149,7 +149,7 @@ warning:binding-loop(qt-only):implicitHeight  implicitHeight reading height is a
 
 # Qt's own behaviour that Ljós does not copy.
 warning:binding-loop(qt-only):alias-and-target  Qt bug: an alias and its bound target read together report a loop (@qt-diverges in features/bindings/loops.feature)
-value:load:int-range                  Qt bug: a binding reading an alias and its target together stops at a loop it does not report here (features/bindings/loops.feature); Qt's Math.abs of the least int overflows; Math.hypot is an ulp from Qt's, which Math.pow to a high power makes many (no scenarios)
+value:load:int-range                  Qt bug: a binding reading an alias and its target together stops at a loop it does not report here (features/bindings/loops.feature); Qt's Math.abs of the least int overflows; Math.hypot of three numbers or more is an ulp from Qt's, which Math.pow to a high power makes many (features/language/math-hypot.feature; the rest no scenarios)
 warning:coerce-void(qt-only):*                Qt 6.11 deprecation notice for a call to a function with typed parameters and no return type
 warning:other(qt-only):QFont::fromString:*    QFont::fromString's own warning for a font given text it cannot read
 
