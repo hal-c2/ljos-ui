@@ -13,12 +13,14 @@
 # infrastructure). Seed 303, connections bucket value:step:bool-vs-record.
 # Seed 101, connections bucket value:onChanged+onCompleted:text: a state's binding of a property
 # whose own binding reads another the state gives a value, entered and left.
+# Seed 303, states bucket value:load:invalid-ljos: a when that picks a state where the item is
+# made, which is given another state by name, runs the transition from that one.
 
 @qt-parity
 Feature: The order of a state change
   An item's state given where it is made is told as a change, and the state's scripts run
-  after; a state a `when` picks where the item is made runs the transitions to it, and one
-  given by name does not. A state no state has is still a change transitions run for. A
+  after; a state a `when` picks where the item is made runs the transitions to it, from the
+  state given by name if there is one, and one given by name does not. A state no state has is still a change transitions run for. A
   PropertyChanges that reads what it changes reads it once, and a PropertyAction reads its value
   before the changes are made.
 
@@ -119,6 +121,36 @@ Feature: The order of a state change
       }
       """
     Then the property "seen" of "root" is "|"
+
+  Scenario Outline: A when that picks a state where the item is made runs the transition from the state given by name
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property int p: 1
+        states: [State { name: "s0"; when: <when> },
+                 State { name: "s1"; when: false; PropertyChanges { target: root; p: 5 } },
+                 State { name: "s2" }]
+        <state>
+        onStateChanged: log += "st=" + state + ";"
+        transitions: [Transition { from: "*"; ScriptAction { script: root.log += "t0;" } },
+                      Transition { from: ""; to: "*"; ScriptAction { script: root.log += "t1;" } },
+                      Transition { from: "s1"; ScriptAction { script: root.log += "t2;" } }]
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "log" of "root" is "<log>"
+    And the property "p" of "root" is 1
+
+    Examples:
+      | when  | state       | log       |
+      | true  | state: "s2" | st=s0;t0; |
+      | true  |             | st=s0;t1; |
+      | false | state: "s1" | st=;t2;   |
+      | false | state: "s2" | st=s2;    |
+      | true  | state: "s0" | st=s0;    |
 
   Scenario: A transition runs to a state no state has
     Given the QML:

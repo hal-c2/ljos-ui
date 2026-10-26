@@ -1,6 +1,6 @@
 # Buckets of ljos-fuzz states that are known: as known/bindings.txt, one per line, the
 # signature then why.
-# Triaged from seeds 101 and 202 (2000 cases each). What is left waits on the graph (bindings
+# Triaged from seeds 101, 202 and 303 (2000 cases each). What is left waits on the graph (bindings
 # infrastructure), each with a @backlog scenario.
 
 # A transition's first actions run, and are told, inside the batch the state's changes are made
@@ -13,12 +13,18 @@ value:load:number      two PropertyActions of one property at a transition's sta
 warning:binding-loop(ljos-only):when      a when a transition's first action works out again is a loop to Ljós, a refused state change to Qt (features/states/transition-start-actions.feature)
 warning:other(qt-only):<Unknown_File>:_QML_StateGroup:_Can'      a when a transition's first action works out again: Qt cannot apply a state change within one (features/states/transition-start-actions.feature)
 warning:other(ljos-only):<Unknown_File>:_QML_StateGroup:_Can'      a when a transition's first action works out again, told at another time than in Qt (features/states/transition-start-actions.feature)
+value:step:invalid-qt      a when a transition's first action on the way back works out again: Qt refuses the state it picks, Ljós goes back to it (features/states/transition-start-actions.feature)
 
 # Going from one state's change of a property to another's, Ljós takes the first off before the
 # second is on, and the graph works the property's own binding out in between
 # (features/states/binding-over-value.feature, backlog).
 warning:assign(ljos-only):Unable_to_assign_QString_to_int      the item's own binding, worked out between one state's change and another's (features/states/binding-over-value.feature)
 warning:binding-loop(ljos-only):step-set      a state's binding that reads its property, worked out from the default between one state's change and another's (features/states/binding-over-value.feature)
+value:step:text      a state's binding that reads its property, worked out again under a transition from where the transition starts it (features/states/binding-over-value.feature)
+
+# The handlers of the bindings made while the objects are made run once all are made, in the order
+# the handlers were made, not as each binding is (features/bindings/creation-order.feature, backlog).
+value:onChanged:text      the change handlers of the first bindings run root first, not children first and the last child first (features/bindings/creation-order.feature)
 
 # Qt's own quirk, which Ljós is not to copy: a `when` that a change of its state makes false
 # again sends Qt round the loop, and Ljós stops the loop and says so.

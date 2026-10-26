@@ -273,8 +273,12 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
     // false is left for the base state before it was ever entered.
     let given = text(engine, owner, state);
     g.started.set(true);
+    // The transition a `when` runs here is the one from the state given
+    // by name, though that state was never entered (qml6).
+    g.current.replace(given.clone());
     g.follow_when(engine, None);
     if text(engine, owner, state) == given {
+        g.current.replace(String::new());
         // A `state` given where the object is made is told as a change,
         // also when no state has its name, before its state is entered,
         // which runs no transition.
