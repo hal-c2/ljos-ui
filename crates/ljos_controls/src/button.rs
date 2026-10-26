@@ -130,8 +130,9 @@ mod follows {
     pub const ICON_COLOR: u8 = 64;
 }
 
-/// `AbstractButton.display`.
-pub(crate) mod display {
+/// `AbstractButton.display`: public, so that what reads a button's look
+/// (the design audit) follows a renumbering instead of copying a number.
+pub mod display {
     pub const ICON_ONLY: i32 = 0;
     pub const TEXT_ONLY: i32 = 1;
     pub const TEXT_BESIDE_ICON: i32 = 2;

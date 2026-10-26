@@ -4,12 +4,9 @@
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType};
 use ljos_quick::Text;
 
-use ljos_controls::{AbstractButton, ToolTip, ToolTipAttached};
+use ljos_controls::{AbstractButton, ToolTip, ToolTipAttached, button_display};
 
 use crate::cx::is_a;
-
-/// `AbstractButton.IconOnly`, as Qt documents the enumeration.
-const ICON_ONLY: i32 = 0;
 
 /// What a button shows of itself.
 pub(crate) struct ButtonLook {
@@ -30,7 +27,8 @@ pub(crate) fn button_look(engine: &Engine, item: ObjectId) -> Option<ButtonLook>
             engine.with::<AbstractButton, _>(item, |b| {
                 let icon = !b.icon.name.as_str().is_empty() || !b.icon.source.0.as_str().is_empty();
                 let text = without_mnemonic(b.text.as_str());
-                let text_shown = !text.trim().is_empty() && (b.display != ICON_ONLY || !icon);
+                let text_shown =
+                    !text.trim().is_empty() && (b.display != button_display::ICON_ONLY || !icon);
                 ButtonLook {
                     text,
                     icon,
