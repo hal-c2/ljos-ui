@@ -35,6 +35,7 @@ mod html;
 mod markdown;
 mod plain;
 mod select;
+mod sheet;
 mod styled;
 
 use std::hash::{DefaultHasher, Hash, Hasher};

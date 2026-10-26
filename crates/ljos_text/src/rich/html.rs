@@ -14,9 +14,11 @@
 //! Where two margins meet the larger one counts, and the document's first
 //! and last margin are dropped.
 //!
-//! Nothing here runs or fetches anything. The content of `script`, `style`
-//! and `title` is dropped, unknown tags are dropped and their content kept,
-//! and an image is only its source string.
+//! Nothing here runs or fetches anything. The content of `script` and
+//! `title` is dropped, unknown tags are dropped and their content kept,
+//! and an image is only its source string. The rules of a `style` element
+//! apply to the elements after it that they match, before their own
+//! `style` attribute ([`super::sheet`]).
 //!
 //! Of a `style="…"` attribute four properties are read, as Qt 6.11 reads
 //! them (by looking at its pictures): `color`, `background-color` (and
@@ -37,6 +39,7 @@ use std::sync::Arc;
 use super::doc::HAlign;
 use super::entity;
 use super::flow::{CellBuf, Ctx, Flow, table_block};
+use super::sheet::Sheet;
 use super::styled::{FONT_SCALE, HEADING_SCALE, Marker, marker_text};
 use super::{Block, BlockKind, Inline, InlineBuf, InlineImage};
 use crate::style::BoxAlign;
@@ -87,6 +90,7 @@ struct Parser<'a> {
     /// How many elements were ever opened: a start tag that moved this on
     /// opened one, whatever it closed first.
     opened: u64,
+    sheet: Sheet,
 }
 
 pub(crate) fn parse(source: &str) -> Vec<Block> {
@@ -98,12 +102,13 @@ pub(crate) fn parse(source: &str) -> Vec<Block> {
         open: Vec::new(),
         table: None,
         opened: 0,
+        sheet: Sheet::default(),
     };
     p.run();
     p.finish()
 }
 
-impl Parser<'_> {
+impl<'a> Parser<'a> {
     fn run(&mut self) {
         while self.at < self.src.len() {
             let rest = &self.src[self.at..];
@@ -254,7 +259,10 @@ impl Parser<'_> {
         let attrs = Attrs(attrs);
         if matches!(name.as_str(), "script" | "style" | "title") {
             if !closed {
-                self.skip_raw(&name);
+                let content = self.skip_raw(&name);
+                if name == "style" {
+                    self.sheet.add(content);
+                }
             }
             return true;
         }
@@ -265,14 +273,16 @@ impl Parser<'_> {
         true
     }
 
-    /// Skip to after the end tag of `name`: what is between is not text.
-    fn skip_raw(&mut self, name: &str) {
-        let rest = &self.src[self.at..];
+    /// Skip to after the end tag of `name`: what is between is not text,
+    /// and is returned.
+    fn skip_raw(&mut self, name: &str) -> &'a str {
+        let src = self.src;
+        let rest = &src[self.at..];
         let mut from = 0;
         loop {
             let Some(lt) = rest[from..].find("</") else {
-                self.at = self.src.len();
-                return;
+                self.at = src.len();
+                return rest;
             };
             let after = &rest[from + lt + 2..];
             let is_end = after
@@ -281,7 +291,7 @@ impl Parser<'_> {
             if is_end {
                 let close = after.find('>').map_or(after.len(), |i| i + 1);
                 self.at += from + lt + 2 + close;
-                return;
+                return &rest[..from + lt];
             }
             from += lt + 2;
         }
@@ -375,17 +385,35 @@ impl Parser<'_> {
     fn start_tag(&mut self, name: &str, attrs: &Attrs<'_>) {
         let opened = self.opened;
         self.start_element(name, attrs);
-        if self.opened != opened
-            && let Some(css) = attrs.get("style")
-            && let Some(open) = self.open.last_mut()
-        {
-            apply_style(open, css);
-            if open.boxed {
+        if self.opened == opened {
+            return;
+        }
+        if !self.sheet.is_empty() {
+            let classes = attrs.get("class").unwrap_or("");
+            for css in self.sheet.matching(name, classes) {
+                self.apply_css(&css);
+            }
+        }
+        if let Some(css) = attrs.get("style") {
+            self.apply_css(css);
+            if let Some(open) = self.open.last_mut()
+                && open.boxed
+            {
                 open.empty = css.contains("-qt-paragraph-type:empty");
-                let in_table = self.table.is_some();
-                if let Some(ctx) = self.flow.innermost_mut() {
-                    apply_box_style(ctx, css, !in_table);
-                }
+            }
+        }
+    }
+
+    /// Apply a style to the element just opened, as its `style` attribute.
+    fn apply_css(&mut self, css: &str) {
+        let Some(open) = self.open.last_mut() else {
+            return;
+        };
+        apply_style(open, css);
+        if open.boxed {
+            let in_table = self.table.is_some();
+            if let Some(ctx) = self.flow.innermost_mut() {
+                apply_box_style(ctx, css, !in_table);
             }
         }
     }
@@ -925,7 +953,7 @@ fn css_pixels(value: &str) -> Option<f32> {
 }
 
 /// `css` without its `/* comments */`. One that never ends takes the rest.
-fn without_comments(css: &str) -> std::borrow::Cow<'_, str> {
+pub(super) fn without_comments(css: &str) -> std::borrow::Cow<'_, str> {
     if !css.contains("/*") {
         return css.into();
     }
@@ -1506,6 +1534,29 @@ mod tests {
         let b = &parse("<span style=\"color: red\">a</span>b")[0];
         assert_eq!(b.spans.len(), 1);
         assert_eq!(b.spans[0].range, 0..1);
+    }
+
+    #[test]
+    fn a_style_sheet_applies_before_the_style_attribute() {
+        let sheet = "<style>a{color:#e0115f;text-decoration:none} .big{font-size:24px;font-weight:600;color:#2e8b57}</style>";
+        let link = styled(&format!("{sheet}<a href=\"x\">b</a>"));
+        assert_eq!(link.color.as_deref(), Some("#e0115f"));
+        assert!(link.undecorated);
+        let big = &parse(&format!("{sheet}<p class=\"big\">b</p>"))[0];
+        assert_eq!(big.text, "b", "a style element is no text");
+        let style = &big.spans[0].style;
+        assert_eq!(style.color.as_deref(), Some("#2e8b57"));
+        assert!(style.bold);
+        let own = styled(&format!(
+            "{sheet}<span class=\"big\" style=\"color:red\">b</span>"
+        ));
+        assert_eq!(own.color.as_deref(), Some("red"));
+        // Only what comes after the sheet.
+        let before = &parse(
+            "<span class=\"c\">a</span><style>.c{color:red}</style><span class=\"c\">b</span>",
+        )[0];
+        assert_eq!(before.spans.len(), 1);
+        assert_eq!(before.spans[0].range, 1..2);
     }
 
     #[test]
