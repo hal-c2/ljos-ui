@@ -3957,6 +3957,9 @@ ApplicationWindow {
                                       : r.meshes + " meshes, " + (r.textures + r.pages + r.shape_textures)
                                         + " textures, glyph atlas " + window.bytes(r.glyph_atlas_bytes)
                                         + ", " + window.bytes(r.bytes)
+                                        + (r.glyph_runs_incomplete > 0
+                                           ? ", " + r.glyph_runs_incomplete + " text runs missing glyphs" : "")
+                                        + (r.warnings > 0 ? ", " + r.warnings + " drawing warnings" : "")
                             })
                         }
                     }

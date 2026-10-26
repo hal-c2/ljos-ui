@@ -79,6 +79,9 @@ fn render_json(r: &BackendMemory) -> Value {
         "page_bytes": r.page_bytes,
         "shape_textures": r.shape_textures,
         "shape_texture_bytes": r.shape_texture_bytes,
+        "glyph_runs_incomplete": r.glyph_runs_incomplete,
+        "glyph_meshes_built": r.glyph_meshes_built,
+        "warnings": r.warnings,
         "bytes": r.bytes(),
         "approximate": true,
     })
@@ -665,4 +668,25 @@ fn not_attributed_split(
             .cmp(&a["bytes"].as_u64().unwrap_or(0))
     });
     parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Text drawn without some of its glyphs shows in the renderer's
+    /// figures, so a blank label can be told from one never drawn.
+    #[test]
+    fn the_renderer_says_how_its_text_drawing_went() {
+        let r = BackendMemory {
+            glyph_runs_incomplete: 2,
+            glyph_meshes_built: 40,
+            warnings: 1,
+            ..BackendMemory::default()
+        };
+        let v = render_json(&r);
+        assert_eq!(v["glyph_runs_incomplete"], 2);
+        assert_eq!(v["glyph_meshes_built"], 40);
+        assert_eq!(v["warnings"], 1);
+    }
 }

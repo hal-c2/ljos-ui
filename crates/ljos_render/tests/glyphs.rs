@@ -767,6 +767,121 @@ mod b0 {
             assert_eq!((v.color.g(), v.color.b()), (0, 0));
         }
     }
+
+    /// Two lines on a GPU that takes textures no wider than 256: each fits
+    /// the atlas alone, the two together do not.
+    fn crowded() -> (Scene, NodeId, NodeId, Context) {
+        let mut s = Scene::new(500.0, 200.0);
+        let upper = s.node(None, 0.0, 0.0, 500.0, 90.0);
+        let lower = s.node(None, 0.0, 100.0, 500.0, 90.0);
+        for (n, text) in [(upper, "ABCDEFGHIJ"), (lower, "abcdefghij")] {
+            s.paint(n, |b| {
+                b.glyphs(
+                    Arc::new(run(text, 64.0, 0.0)),
+                    Vec2::new(4.0, 70.0),
+                    Rgba::BLACK,
+                    Decorations::default(),
+                );
+            });
+        }
+        let ctx = Context::default();
+        ljos_render::b0::set_max_texture_side(&ctx, 256);
+        (s, upper, lower, ctx)
+    }
+
+    /// Ink in rows `y0..y1` of the picture.
+    fn ink_in(img: &RgbaImage, y0: u32, y1: u32) -> u64 {
+        (y0..y1)
+            .flat_map(|y| (0..img.width).map(move |x| (x, y)))
+            .map(|(x, y)| u64::from(ink(img, x, y)))
+            .sum()
+    }
+
+    /// What a backend that never saw the crowd draws of the scene now.
+    fn drawn_fresh(s: &mut Scene, ctx: &Context) -> RgbaImage {
+        let mut fresh = EpaintBackend::new();
+        let (shapes, stats) = frame(s, &mut fresh, ctx, 1.0);
+        assert_eq!(stats.warnings, 0, "one line fits alone");
+        blit(&shapes, &fresh, 500, 200, 1.0)
+    }
+
+    /// A run drawn without the glyphs a full atlas had no room for is not
+    /// kept as finished: once there is room, it is drawn whole.
+    #[test]
+    fn b0_draws_what_a_full_atlas_left_out_once_there_is_room() {
+        let (mut s, upper, _, ctx) = crowded();
+        let mut be = EpaintBackend::new();
+        let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+        assert!(stats.warnings >= 1, "the atlas is full");
+        let crowded_img = blit(&shapes, &be, 500, 200, 1.0);
+        assert_eq!(be.memory().glyph_runs_incomplete, 1);
+
+        s.tree.set_content(upper, None);
+        let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+        assert_eq!(stats.warnings, 0);
+        let img = blit(&shapes, &be, 500, 200, 1.0);
+        let whole = drawn_fresh(&mut s, &ctx);
+        assert!(
+            ink_in(&crowded_img, 100, 200) < ink_in(&whole, 100, 200),
+            "the lower line missed glyphs while crowded"
+        );
+        assert_eq!(difference(&img, &whole).0, 0);
+        assert_eq!(be.memory().glyph_runs_incomplete, 0);
+    }
+
+    /// A run that missed glyphs and then scrolled by whole pixels is not
+    /// moved as it was, with its gaps: it is drawn whole where it went.
+    #[test]
+    fn b0_does_not_move_a_run_with_missing_glyphs_as_finished() {
+        let (mut s, upper, lower, ctx) = crowded();
+        let mut be = EpaintBackend::new();
+        frame(&mut s, &mut be, &ctx, 1.0);
+
+        s.tree.set_content(upper, None);
+        s.tree.set_pos(lower, 0.0, 87.0);
+        let (shapes, _) = frame(&mut s, &mut be, &ctx, 1.0);
+        let img = blit(&shapes, &be, 500, 200, 1.0);
+        let whole = drawn_fresh(&mut s, &ctx);
+        assert!(total_ink(&whole) > 0);
+        assert_eq!(difference(&img, &whole).0, 0);
+    }
+
+    /// A run that misses glyphs asks for one more frame, which may find
+    /// room for them; while the atlas stays full it asks no more, so an
+    /// idle window stays idle.
+    #[test]
+    fn b0_asks_once_for_another_frame_for_missing_glyphs() {
+        let (mut s, _, _, ctx) = crowded();
+        let mut be = EpaintBackend::new();
+        let (_, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+        assert!(stats.again);
+        for _ in 0..3 {
+            let (_, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+            assert!(stats.warnings >= 1, "still full");
+            assert!(!stats.again);
+        }
+    }
+
+    /// Text drawn in a frame whose atlas grew, glyph by glyph and run by
+    /// run, is whole in that frame and the next, and asks for no other.
+    #[test]
+    fn b0_draws_every_run_whole_in_a_frame_that_grows_the_atlas() {
+        let (mut s, ..) = crowded();
+        let reference = s.render(1.0);
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        for _ in 0..2 {
+            let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+            assert_eq!(stats.warnings, 0);
+            assert!(!stats.again);
+            assert!(be.glyph_atlas().side > 256, "it grew");
+            let img = blit(&shapes, &be, 500, 200, 1.0);
+            let (max, mean) = difference(&img, &reference);
+            assert!(max <= 40, "max {max}");
+            assert!(mean < 2.0, "mean {mean}");
+            assert_eq!(be.memory().glyph_runs_incomplete, 0);
+        }
+    }
 }
 
 #[test]

@@ -447,19 +447,27 @@ struct GlyphsCmd {
 }
 
 /// A run placed on the screen. Its mesh is built when it is first drawn and
-/// kept until the atlas or the clip rectangle changes.
+/// kept until the atlas or the clip rectangle changes; one that left out
+/// glyphs the atlas had no room for is built again in each frame that
+/// draws it, until it has them all.
 #[derive(Clone)]
 struct GlyphSeg {
     cmd: GlyphsCmd,
     to_screen: Affine,
     opacity: f32,
     mesh: Option<GlyphMesh>,
+    /// Its mesh left glyphs out, and a frame was asked for to try again:
+    /// one is asked for when they go missing, not each frame they stay so.
+    missed: bool,
 }
 
 #[derive(Clone)]
 struct GlyphMesh {
     generation: u64,
     clip: ERect,
+    /// Every glyph it places was in the atlas. One that is not is drawn as
+    /// it is, but not kept as finished.
+    complete: bool,
     /// Where the glyph origins are, when none was left out for being far
     /// from the clip rectangle.
     span: Option<GlyphSpan>,
@@ -509,6 +517,13 @@ impl GlyphSeg {
             .as_ref()
             .filter(|m| m.generation == generation && m.clip == clip)
             .map(|m| &m.mesh)
+    }
+
+    /// Whether its mesh needs nothing more from the atlas.
+    fn finished(&self, generation: u64, clip: ERect) -> bool {
+        self.mesh
+            .as_ref()
+            .is_some_and(|m| m.complete && m.generation == generation && m.clip == clip)
     }
 }
 
@@ -670,9 +685,11 @@ fn carry_glyphs(old: &[WorldSeg], new: &mut [WorldSeg], clip: ERect, ppp: f32) {
         n.mesh = Some(GlyphMesh {
             generation: m.generation,
             clip,
+            complete: m.complete,
             span: Some(span),
             mesh: Arc::new(mesh),
         });
+        n.missed = o.missed;
     }
 }
 
@@ -754,16 +771,17 @@ impl AtlasView {
 }
 
 /// Quads for the glyphs of `seg` that `slot` finds in the atlas, and its
-/// bars, with the span [`place_glyphs`] gives. `slot` is given each glyph's key
-/// and the device size it is filled at, so the pass that fills the atlas
-/// builds the mesh too and makes and looks up each key once.
+/// bars, with the span [`place_glyphs`] gives and whether `slot` found every
+/// glyph. `slot` is given each glyph's key and the device size it is filled
+/// at, so the pass that fills the atlas builds the mesh too and makes and
+/// looks up each key once.
 fn glyph_mesh(
     seg: &GlyphSeg,
     atlas: AtlasView,
     ppp: f32,
     clip: ERect,
     mut slot: impl FnMut(&GlyphKey, f64) -> Option<Slot>,
-) -> (Mesh, Option<GlyphSpan>) {
+) -> (Mesh, Option<GlyphSpan>, bool) {
     let mut mesh = Mesh::with_texture(atlas.texture);
     let quads = seg.cmd.run.glyphs.len() + 2;
     mesh.vertices.reserve(quads * 4);
@@ -771,6 +789,7 @@ fn glyph_mesh(
     let color = color32(seg.cmd.color.with_opacity(seg.opacity));
     let side = atlas.side;
     let inv_ppp = 1.0 / f64::from(ppp);
+    let mut complete = true;
     let span = place_glyphs(seg, ppp, clip, |key, size, placement| {
         let Some(Slot {
             x,
@@ -781,6 +800,7 @@ fn glyph_mesh(
             top,
         }) = slot(&key, size)
         else {
+            complete = false;
             return;
         };
         if w == 0 {
@@ -823,7 +843,7 @@ fn glyph_mesh(
         };
         push_quad(&mut mesh, corners, [atlas.white_uv; 4], color);
     }
-    (mesh, span)
+    (mesh, span, complete)
 }
 
 #[derive(Clone)]
@@ -969,6 +989,8 @@ pub struct EpaintBackend {
     world_rebuilds: u64,
     world_moves: u64,
     glyph_meshes_built: u64,
+    /// [`EncodeStats::warnings`] of the last `encode`.
+    warnings: u32,
     atlas: GlyphAtlas,
     textures: FxHashMap<TextureKey, TextureEntry>,
     /// The shared pages small pictures are put on.
@@ -1299,6 +1321,7 @@ impl EpaintBackend {
             world_rebuilds: 0,
             world_moves: 0,
             glyph_meshes_built: 0,
+            warnings: 0,
             atlas: GlyphAtlas::default(),
             textures: FxHashMap::default(),
             pages: ImageAtlas::default(),
@@ -1397,6 +1420,7 @@ impl EpaintBackend {
                     WorldSeg::Glyphs(g) => {
                         if let Some(g) = &g.mesh {
                             mesh(&g.mesh, &mut m);
+                            m.glyph_runs_incomplete += usize::from(!g.complete);
                         }
                     }
                     WorldSeg::Shape(s) => {
@@ -1431,6 +1455,8 @@ impl EpaintBackend {
         m.pages = self.pages.pages();
         let page = crate::image_atlas::PAGE as usize;
         m.page_bytes = m.pages * page * page * 4;
+        m.glyph_meshes_built = self.glyph_meshes_built;
+        m.warnings = self.warnings;
         m
     }
 
@@ -1744,8 +1770,9 @@ impl EpaintBackend {
                 for seg in &mut ne.segs {
                     let WorldSeg::Glyphs(g) = seg else { continue };
                     let generation = self.atlas.generation();
-                    // A valid mesh means its glyphs are already in the atlas.
-                    if g.mesh_for(generation, *clip).is_some() {
+                    // A finished mesh means its glyphs are already in the
+                    // atlas; one that left some out looks for them again.
+                    if g.finished(generation, *clip) {
                         continue;
                     }
                     let view = AtlasView::of(&self.atlas);
@@ -1765,12 +1792,13 @@ impl EpaintBackend {
                         });
                         continue;
                     };
-                    let (mesh, span) = glyph_mesh(g, view, ppp, *clip, ensure);
+                    let (mesh, span, complete) = glyph_mesh(g, view, ppp, *clip, ensure);
                     if self.atlas.generation() == generation {
                         self.glyph_meshes_built += 1;
                         g.mesh = Some(GlyphMesh {
                             generation,
                             clip: *clip,
+                            complete,
                             span,
                             mesh: Arc::new(mesh),
                         });
@@ -1811,6 +1839,7 @@ impl EpaintBackend {
                     to_screen,
                     opacity,
                     mesh: None,
+                    missed: false,
                 }),
                 LocalSeg::Image(seg) => WorldSeg::Image(ImageSeg {
                     key: seg.key,
@@ -2267,19 +2296,27 @@ impl RenderBackend for EpaintBackend {
                             self.glyph_meshes_built += 1;
                             // The atlas was uploaded before this, so it has
                             // its texture.
-                            let (mesh, span) = match AtlasView::of(&self.atlas) {
+                            let (mesh, span, complete) = match AtlasView::of(&self.atlas) {
                                 Some(view) => glyph_mesh(g, view, self.ppp, clip, |key, _| {
                                     self.atlas.slot(key)
                                 }),
-                                None => (Mesh::default(), None),
+                                None => (Mesh::default(), None, false),
                             };
                             g.mesh = Some(GlyphMesh {
                                 generation,
                                 clip,
+                                complete,
                                 span,
                                 mesh: Arc::new(mesh),
                             });
                         }
+                        // A run with glyphs missing is filled again by the
+                        // next frame, which may have room for them: ask for
+                        // that frame once, so a shortage that lasts does
+                        // not keep an idle window drawing.
+                        let missing = !g.finished(generation, clip);
+                        stats.again |= missing && !g.missed;
+                        g.missed = missing;
                         if let Some(m) = g.mesh_for(generation, clip)
                             && !m.is_empty()
                         {
@@ -2345,6 +2382,7 @@ impl RenderBackend for EpaintBackend {
         self.lists.retain(|_, e| e.owner.strong_count() > 0);
         self.shapes.forget_orphans();
         stats.shapes = sink.shapes.len() as u32;
+        self.warnings = stats.warnings;
         stats
     }
 
@@ -2431,6 +2469,7 @@ mod tests {
             to_screen,
             opacity: 1.0,
             mesh: None,
+            missed: false,
         };
         let clip = ERect::from_min_max(pos2(40.0, 30.0), pos2(160.0, 90.0));
         let (mut near, mut far) = (0, 0);
