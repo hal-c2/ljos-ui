@@ -6919,3 +6919,73 @@ DECISIONs:
   `positioning/position-source.feature` expects `supportedPositioningMethods` to be -1 and
   reads 4294967295. That comes from main's `d4335a0f` (an enum's number reads unsigned),
   which landed after the QtPositioning feature.
+
+### TEXT5: wrapped delegates below qml6 (2026-10-26)
+
+TEXT4 left `bench/wrapped.qml` scrolling at 518 M instructions/s against qml6's 442. It
+also left two costs named: an enum looked up by type name in each delegate, and an elided
+line at 292 k a call. Shaping turned out to be most of what was left. Parley's analysis
+and shaper cost far more than the shaping itself for a plain text in a font it had
+already set up.
+
+- **Enum literals.** The compiler leaves `Text.WordWrap` and `Text.ElideRight` to the
+  runtime. The runtime now keeps the number once per file. It is used only when the
+  literal's type and key match (f865e23f). `literal_value` drops from 1,843 to 548
+  instructions a delegate. Type lookups in `ten_wrapped_listview_delegates` drop from 20
+  to 0.
+- **Shaping by harfrust.** A printable ASCII text in a pinned font is one left-to-right
+  Latin segment with a character a grapheme. The first text in a font at a size is shaped
+  by Parley, which sets up a voice: harfrust's shaper data, instance and plan, with the
+  size, metrics and variation coordinates Parley gave the run. Every later text in that
+  font is shaped by harfrust directly, with Parley's buffer settings, and its glyphs are
+  read as Parley's shaped clusters read. Soft wrap opportunities come from ICU4X's line
+  segmenter with Parley's strict rules.
+- **Elided lines.** The last shown line of a truncated wrapped text used to shape the rest
+  of the text only to estimate the cut. harfrust's unsafe-to-break flags say where a text
+  can be cut and shaped in two without changing. Where the rest starts after a space and
+  the flags allow, its clusters are read from the whole text's glyphs, and only the cut
+  is shaped. The first text in a font, a cut the shaper marks, or a single unbroken line
+  shapes the rest as before. Right-to-left text, and text with places, spans or objects,
+  still takes Parley's builder.
+- **Tests.** Unit tests in `crates/ljos_text/src/engine.rs` compare against Parley:
+  - soft breaks against Parley's analysis, over every printable class three deep, 2,000
+    random texts and real sentences, for normal, break-all and keep-all;
+  - harfrust's glyphs and clusters against Parley's shaper, across fonts, sizes, bold,
+    italic and ellipses (over 100,000 texts);
+  - each rest that the flags allow, shaped alone, against the whole text's glyphs;
+  - elided lines against an engine that builds every layout, over seven widths, three
+    elide modes and one to three lines, in Latin, Greek, Cyrillic, Hebrew and tabs.
+
+  The `@qt-parity` wrap, elide, max-lines and size scenarios in `features/text/` pass
+  unchanged.
+
+| `bench/wrapped.qml` under callgrind (600 frames, 5025 delegates) | main (f865e23f) | TEXT5 |
+|---|---:|---:|
+| Total | 4,987M | 4,152M |
+| Per delegate | 992 k | 826 k |
+| `text::polish`, per delegate | 402 k | 241 k |
+| `build_layout`, per delegate | 398 k | 231 k |
+| `shape_direct`, per call | 154 k | 74 k |
+| `elided_line`, per call | 305 k | 67 k |
+
+| Scroll, M instructions/s (`scr.sh wrapped`, three runs) | main (f865e23f) | TEXT5 |
+|---|---:|---:|
+| Ljós | 497–504 | 417–419 |
+| qml6 | 442–443 | 442–443 |
+
+Two smaller steps fall inside the TEXT5 column. Before the elide change, the shaping change
+alone gave 4,278M total on TEXT4's base (5,064M) and scrolled at 428–433. Before harfrust,
+`elided_line` was 152 k a call.
+
+Ten wrapped ListView delegates now make 1354 allocations, and ten one-line delegates make
+1322 (+56 and +17). A new voice's harfrust shaper data sets up the font's lookups
+lazily, as texts first use them, and the budget counts the first rows. Over a warmed
+scroll, harfrust shaping adds about 0.2 allocations a text.
+
+Left:
+- ICU4X's line iterator is 129M of the 4,152M (25 k a wrapped text). Each message folds
+  differently, so the per-fold cache seldom hits.
+- Driving harfrust is 607M, 56 k a text, and is now the largest single cost.
+- Attached members are applied from a copy (`value_fields_of` clones every assignment).
+  So an attached enum literal's address is not the IR's, and the per-file number is
+  checked against type and key rather than trusted by address.
