@@ -854,6 +854,39 @@ pub(crate) fn moves(engine: &Engine, anim: ObjectId, d: &mut Defaults) -> bool {
     }
 }
 
+/// What the animations of a transition run on `target` do, as reduced
+/// motion sees them: whether one of them moves something
+/// ([`motion::jumps`]), and whether one fades `target` itself.
+pub(crate) fn passage_of(engine: &Engine, anims: &[ObjectId], target: ObjectId) -> (bool, bool) {
+    let defaults = Defaults {
+        obj: target,
+        prop: NO_PROPERTY,
+        to: None,
+        aimed: None,
+    };
+    let (mut moves, mut fades) = (false, false);
+    for anim in anims {
+        if is_a::<SequentialAnimation>(engine, *anim) || is_a::<ParallelAnimation>(engine, *anim) {
+            let (m, f) = passage_of(engine, &objects(engine, *anim, "animations"), target);
+            moves |= m;
+            fades |= f;
+        } else if is_a::<PropertyAnimation>(engine, *anim) || is_a::<Animator>(engine, *anim) {
+            for slot in slots_of(engine, *anim, Some(&defaults), true).0 {
+                if slot.jumps(engine) {
+                    moves = true;
+                } else if slot.obj == target
+                    && engine.property_index(target, "opacity").ok() == Some(slot.prop)
+                {
+                    fades = true;
+                }
+            }
+        } else if is_a::<AnchorAnimation>(engine, *anim) {
+            moves = true;
+        }
+    }
+    (moves, fades)
+}
+
 fn curve_of(engine: &Engine, anim: ObjectId) -> Curve {
     // Read at every start: the types that have the group are read by
     // index, with no names to look up.
@@ -1204,6 +1237,41 @@ impl Timed {
             iter: 0,
             state: State::Idle,
         }
+    }
+
+    /// A fade of `obj`'s `opacity` from `from` to `to` in `micros`, at the
+    /// default easing: what reduced motion puts in place of an entrance or
+    /// an exit that would move. `None` if `obj` has no `opacity`.
+    pub(crate) fn fade(
+        engine: &Engine,
+        obj: ObjectId,
+        from: f64,
+        to: f64,
+        micros: i64,
+    ) -> Option<Timed> {
+        let prop = engine.property_index(obj, "opacity").ok()?;
+        let node = PropNode {
+            kind: Kind::Number,
+            slots: vec![Slot::of(engine, obj, prop)],
+            from: Some(Value::Real(from)),
+            to: Some(Value::Real(to)),
+            tos: Vec::new(),
+            curve: Curve::default(),
+            lerps: None,
+            held: None,
+            jumps: None,
+            pinned: false,
+        };
+        Some(Timed {
+            node: Node::Prop(node),
+            start: 0,
+            pass: micros,
+            base: micros,
+            calm: false,
+            loops: 1,
+            iter: 0,
+            state: State::Idle,
+        })
     }
 
     pub(crate) fn loops(&self) -> i64 {

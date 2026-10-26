@@ -239,11 +239,8 @@ pub(crate) fn start_driven(
     done: Option<Done>,
 ) {
     let d = driver(engine);
-    engine.batch(|| {
-        let Some(old) = d.find(anim) else {
-            begin(engine, &d, anim, Some(defaults), true, done);
-            return;
-        };
+    let reused = engine.batch(|| {
+        let old = d.find(anim)?;
         // A Behavior given value after value between two frames: the
         // timeline the run has is the one a build would make, unless the
         // animation was changed since.
@@ -262,12 +259,16 @@ pub(crate) fn start_driven(
                 if fits { t.take() } else { None }
             });
         d.remove(engine, &old);
-        match reused {
-            // `running` shows true already.
-            Some(timeline) => launch(engine, &d, anim, *timeline, true, done, false),
-            None => begin(engine, &d, anim, Some(defaults), true, done),
-        }
+        reused
     });
+    // Outside the batch: a run that is over in its first step (reduced
+    // motion, no duration) calls `done` with what it wrote already heard,
+    // as one that ends in a frame does.
+    match reused {
+        // `running` shows true already.
+        Some(timeline) => launch(engine, &d, anim, *timeline, true, done, false),
+        None => begin(engine, &d, anim, Some(defaults), true, done),
+    }
 }
 
 /// Ends a driven run where it is.

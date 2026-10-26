@@ -20,8 +20,11 @@
 //! one with an `exit` transition stays visible until that has run and is
 //! `closed` then (measured on Qt 6.11.2, pinned by
 //! `popup-transitions.feature`). The transitions run on the popup, whose
-//! `opacity` and `scale` are its item's. With reduced motion they are
-//! over in the step they start in.
+//! `opacity` and `scale` are its item's. With reduced motion what they
+//! would grow, shrink or slide is at its end at once, and a popup whose
+//! transition does not fade it fades in or out instead
+//! ([`ljos_quick::run_passage`]), so `opened` and `closed` come when the
+//! fade is over (`popup-transitions-reduced-motion.feature`).
 
 mod drawer;
 mod drawer_drag;
@@ -37,7 +40,7 @@ use ljos_engine::{
     QmlObject, QtObject, Value, WriteKind, qml_impl,
 };
 use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
-use ljos_quick::{Item, is_item, set_parent_item};
+use ljos_quick::{Item, Passage, is_item, set_parent_item};
 
 use crate::containers::{Host, content_size, host_append, host_complete, host_insert};
 use crate::control::Control;
@@ -912,7 +915,7 @@ fn arrive(engine: &Engine, popup: ObjectId, state: &Rc<PopupState>) -> Result<()
     };
     state.phase.set(Phase::Coming);
     let st = state.clone();
-    ljos_quick::run_transition(engine, enter, popup, move |e| {
+    ljos_quick::run_passage(engine, enter, popup, Passage::Enter, move |e| {
         if st.phase.get() == Phase::Coming {
             st.phase.set(Phase::Rest);
             check(e, "opened", arrived(e, popup));
@@ -1036,7 +1039,7 @@ pub(crate) fn close(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
     });
     state.before_exit.set(Some((opacity, scale)));
     let st = state.clone();
-    ljos_quick::run_transition(engine, exit, popup, move |e| {
+    ljos_quick::run_passage(engine, exit, popup, Passage::Exit, move |e| {
         if st.phase.get() == Phase::Going {
             check(e, "closed", gone(e, popup, &st));
         }

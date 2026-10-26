@@ -13,7 +13,7 @@
 # signals come in the same order as with motion, opened and closed when the
 # fade ends. Runs on Ljós only.
 
-@ljos-only @a11y @backlog
+@ljos-only @a11y
 Feature: Popup transitions with reduced motion
   When the system asks for reduced motion a popup fades in and out in place:
   it neither grows nor slides, and it says that it opened or closed when

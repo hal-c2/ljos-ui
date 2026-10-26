@@ -24,7 +24,7 @@ use ljos_engine::{
     Component, Cx, Engine, EngineError, MetaRef, Migrate, NodeId, ObjectId, OverrideContent,
     OverrideId, PropIndex, QmlObject, QmlType, RestoreMode, Value, WriteKind, qml_impl,
 };
-use ljos_quick::{Item, Transition, follows_implicit_size, is_item, set_parent_item};
+use ljos_quick::{Item, Passage, Transition, follows_implicit_size, is_item, set_parent_item};
 
 use crate::control::Control;
 use crate::util::{check, is_a, num, object, set_computed};
@@ -1041,13 +1041,21 @@ fn idle(e: &Engine, me: ObjectId) {
 struct Step {
     page: ObjectId,
     transition: Option<ObjectId>,
+    /// Whether the page comes or goes, which reduced motion fades it by.
+    passage: Passage,
     end: Finish,
 }
 
-fn step(page: ObjectId, transition: Option<ObjectId>, end: impl FnOnce(&Engine) + 'static) -> Step {
+fn step(
+    page: ObjectId,
+    transition: Option<ObjectId>,
+    passage: Passage,
+    end: impl FnOnce(&Engine) + 'static,
+) -> Step {
     Step {
         page,
         transition,
+        passage,
         end: Box::new(end),
     }
 }
@@ -1068,9 +1076,11 @@ fn animate(e: &Engine, me: ObjectId, steps: Vec<Step>) {
     // A transition moves one page at a time.
     let mut used: Vec<ObjectId> = Vec::new();
     let mut runs: Vec<PageRun> = Vec::new();
+    let mut moving: Vec<(ObjectId, ObjectId, Passage)> = Vec::new();
     for s in steps {
         let transition = s.transition.filter(|t| !used.contains(t));
         used.extend(transition);
+        moving.extend(transition.map(|t| (t, s.page, s.passage)));
         runs.push(PageRun {
             op,
             page: s.page,
@@ -1085,19 +1095,15 @@ fn animate(e: &Engine, me: ObjectId, steps: Vec<Step>) {
         idle(e, me);
         return;
     }
-    let moving: Vec<(ObjectId, ObjectId)> = runs
-        .iter()
-        .filter_map(|r| Some((r.transition?, r.page)))
-        .collect();
     st.runs.borrow_mut().extend(runs);
     check(
         e,
         "StackView",
         set_computed(e, me, StackView::BUSY.index, Value::Bool(true)),
     );
-    for (transition, page) in moving {
+    for (transition, page, passage) in moving {
         let st = st.clone();
-        ljos_quick::run_transition(e, transition, page, move |e| {
+        ljos_quick::run_passage(e, transition, page, passage, move |e| {
             let run = {
                 let mut runs = st.runs.borrow_mut();
                 let at = runs
@@ -1172,11 +1178,11 @@ fn push(e: &Engine, me: ObjectId, r: Request) -> Result<Value, EngineError> {
             if let Some(old) = old {
                 tell(e, old, status::DEACTIVATING, "deactivating");
             }
-            let mut steps = vec![step(new, enter, move |e| {
+            let mut steps = vec![step(new, enter, Passage::Enter, move |e| {
                 tell(e, new, status::ACTIVE, "activated");
             })];
             if let Some(old) = old {
-                steps.push(step(old, exit, move |e| {
+                steps.push(step(old, exit, Passage::Exit, move |e| {
                     tell(e, old, status::INACTIVE, "deactivated");
                     show(e, old, false);
                 }));
@@ -1256,12 +1262,12 @@ fn pop_to(
             }));
             let mut steps = Vec::new();
             if let Some(old) = old {
-                steps.push(step(old, exit, move |e| {
+                steps.push(step(old, exit, Passage::Exit, move |e| {
                     tell(e, old, status::INACTIVE, "deactivated");
                 }));
             }
             if let Some(new) = new {
-                steps.push(step(new, enter, move |e| {
+                steps.push(step(new, enter, Passage::Enter, move |e| {
                     tell(e, new, status::ACTIVE, "activated");
                 }));
             }
@@ -1321,12 +1327,12 @@ fn replace(e: &Engine, me: ObjectId, keep: usize, r: Request) -> Result<Value, E
                 .push(Box::new(move |e| removed(e, all)));
             let mut steps = Vec::new();
             if let Some(new) = new {
-                steps.push(step(new, enter, move |e| {
+                steps.push(step(new, enter, Passage::Enter, move |e| {
                     tell(e, new, status::ACTIVE, "activated");
                 }));
             }
             if let Some(old) = old {
-                steps.push(step(old, exit, move |e| {
+                steps.push(step(old, exit, Passage::Exit, move |e| {
                     tell(e, old, status::INACTIVE, "deactivated");
                 }));
             }

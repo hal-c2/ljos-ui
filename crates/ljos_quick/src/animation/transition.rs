@@ -25,7 +25,8 @@ use ljos_engine::{Atom, Engine, ObjectId, PropIndex, QmlList, QmlObject, QtObjec
 use ljos_reactive::WriteKind;
 
 use super::driver;
-use super::timeline::{Defaults, NO_PROPERTY};
+use super::motion;
+use super::timeline::{Defaults, NO_PROPERTY, Timed, passage_of};
 
 /// `Transition` (QtQuick).
 #[derive(Debug, QmlObject)]
@@ -58,6 +59,11 @@ pub struct Transition {
     /// stopped or replaced is not taken for the end of the present one.
     #[qml(skip)]
     run: Rc<Cell<u64>>,
+    /// The object reduced motion fades in place of a passage that would
+    /// move it, and the opacity it had: given back when the run is
+    /// stopped or the way out is over.
+    #[qml(skip)]
+    faded: Rc<Cell<Option<(ObjectId, f64)>>>,
 }
 
 impl Default for Transition {
@@ -71,6 +77,7 @@ impl Default for Transition {
             reversible: false,
             running: false,
             run: Rc::default(),
+            faded: Rc::default(),
         }
     }
 }
@@ -99,8 +106,8 @@ pub(crate) fn animations(engine: &Engine, transition: ObjectId) -> Vec<ObjectId>
 
 /// Runs the animations of `transition` on `target`, all at once, and
 /// calls `done` when the last of them has ended: before this returns if
-/// none takes time (no animations, a transition that is not enabled,
-/// reduced motion). A run of it that is under way is replaced, and its
+/// none takes time (no animations, a transition that is not enabled, or
+/// with reduced motion one that only moves). A run of it that is under way is replaced, and its
 /// `done` is never called. Nothing if `transition` is no `Transition`.
 pub fn run_transition(
     engine: &Engine,
@@ -137,6 +144,133 @@ pub fn run_transition_to(
         aimed: None,
     };
     run(engine, transition, &defaults, Rc::new(done));
+}
+
+/// Which way an object goes when a transition is run on it as a passage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Passage {
+    /// It comes into view: a popup opens, a page is pushed.
+    Enter,
+    /// It goes out of view.
+    Exit,
+}
+
+/// Runs `transition` on `target` as [`run_transition`] does, for an object
+/// coming into view or going out of it. With reduced motion a passage
+/// that would move `target` (grow it, slide it) and does not fade it
+/// fades it instead, where it ends ([`Passage::Enter`]: from transparent
+/// to the opacity it has) or where it is ([`Passage::Exit`]: to
+/// transparent, and then the movement, which is at its end at once, and
+/// the opacity it had back). `done` is called when the fade is over too,
+/// so that what the end of the passage tells comes when it is seen to end.
+pub fn run_passage(
+    engine: &Engine,
+    transition: ObjectId,
+    target: ObjectId,
+    passage: Passage,
+    done: impl Fn(&Engine) + 'static,
+) {
+    let Ok((run, faded)) =
+        engine.with::<Transition, _>(transition, |t| (t.run.clone(), t.faded.clone()))
+    else {
+        return;
+    };
+    let enabled = engine
+        .untrack(|| engine.read(transition, Transition::ENABLED.index))
+        .to_boolean();
+    let calm = enabled && crate::system_prefs::reduced_motion_now(engine);
+    let (moves, fades) = if calm {
+        passage_of(engine, &animations(engine, transition), target)
+    } else {
+        (false, false)
+    };
+    let opacity = engine
+        .property_index(target, "opacity")
+        .ok()
+        .map(|p| engine.untrack(|| engine.read(target, p)).to_number());
+    let (Some(opacity), true, false) = (opacity, moves, fades) else {
+        run_transition(engine, transition, target, done);
+        return;
+    };
+    let (from, to) = match passage {
+        Passage::Enter => (0.0, opacity),
+        Passage::Exit => (opacity, 0.0),
+    };
+    let micros = i64::from(motion::REDUCED_FADE_MAX_MS) * 1000;
+    let Some(fade) = Timed::fade(engine, target, from, to, micros) else {
+        run_transition(engine, transition, target, done);
+        return;
+    };
+    let done: Rc<dyn Fn(&Engine)> = Rc::new(done);
+    match passage {
+        Passage::Enter => {
+            // The movement is at its end at once; the passage is over when
+            // the fade is too.
+            let left = Rc::new(Cell::new(2u8));
+            let part = {
+                let (left, done) = (left.clone(), done.clone());
+                Rc::new(move |e: &Engine| {
+                    left.set(left.get().saturating_sub(1));
+                    if left.get() == 0 {
+                        show_running(e, transition, false);
+                        done(e);
+                    }
+                })
+            };
+            run_transition(engine, transition, target, {
+                let part = part.clone();
+                move |e| part(e)
+            });
+            let id = run.get();
+            faded.set(Some((target, opacity)));
+            show_running(engine, transition, true);
+            let ended: driver::Done = Rc::new(move |e| {
+                if run.get() == id {
+                    faded.set(None);
+                    part(e);
+                }
+            });
+            driver::start_timeline(engine, transition, fade, Some(ended));
+        }
+        Passage::Exit => {
+            stop_transition(engine, transition);
+            let id = run.get();
+            faded.set(Some((target, opacity)));
+            show_running(engine, transition, true);
+            let ended: driver::Done = Rc::new(move |e| {
+                if run.get() != id {
+                    return;
+                }
+                // Starting the transition stops what ran before it, which
+                // would give the opacity back while it is still to be
+                // seen.
+                let saved = faded.take();
+                let over = Rc::new(Cell::new(false));
+                run_transition(e, transition, target, {
+                    let (faded, over, done) = (faded.clone(), over.clone(), done.clone());
+                    move |e| {
+                        over.set(true);
+                        restore(e, faded.take().or(saved));
+                        done(e);
+                    }
+                });
+                if !over.get() {
+                    faded.set(saved);
+                }
+            });
+            driver::start_timeline(engine, transition, fade, Some(ended));
+        }
+    }
+}
+
+/// Gives a faded object back the opacity it had.
+fn restore(engine: &Engine, faded: Option<(ObjectId, f64)>) {
+    if let Some((obj, opacity)) = faded
+        && engine.is_alive(obj)
+        && let Ok(p) = engine.property_index(obj, "opacity")
+    {
+        let _ = engine.write_internal(obj, p, Value::Real(opacity), WriteKind::Animation);
+    }
 }
 
 fn run(engine: &Engine, transition: ObjectId, defaults: &Defaults, done: Rc<dyn Fn(&Engine)>) {
@@ -194,11 +328,18 @@ fn run(engine: &Engine, transition: ObjectId, defaults: &Defaults, done: Rc<dyn 
 
 /// Ends a run of `transition` where it is: the properties stay as they
 /// are, and what was to be called at the end of the run is not called.
+/// What reduced motion faded in place of a passage has its opacity back.
 pub fn stop_transition(engine: &Engine, transition: ObjectId) {
-    let Ok(run) = engine.with::<Transition, _>(transition, |t| t.run.clone()) else {
+    let Ok((run, faded)) =
+        engine.with::<Transition, _>(transition, |t| (t.run.clone(), t.faded.clone()))
+    else {
         return;
     };
     run.set(run.get() + 1);
+    if let Some(was) = faded.take() {
+        driver::forget_driven(engine, transition);
+        restore(engine, Some(was));
+    }
     for anim in animations(engine, transition) {
         driver::stop_driven(engine, anim);
     }

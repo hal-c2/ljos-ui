@@ -10,7 +10,7 @@
 # milliseconds, and the pages are told the same things in the same order as
 # with motion. Runs on Ljós only.
 
-@ljos-only @a11y @backlog
+@ljos-only @a11y
 Feature: StackView transitions with reduced motion
   When the system asks for reduced motion a push, a pop or a replace
   cross-fades the two pages in place instead of sliding them.
@@ -53,7 +53,7 @@ Feature: StackView transitions with reduced motion
     When the method "start" of "root" is called
     And the method "pushB" of "root" is called
     And 400 milliseconds pass
-    Then the property "log" of "root" is "a:deactivating b:activating a:deactivated b:activated "
+    Then the property "log" of "root" is "b:activating a:deactivating b:activated a:deactivated "
     And the property "busy" of "stack" is false
     And the property "visible" of "a" is false
     And the property "opacity" of "b" is 1

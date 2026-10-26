@@ -81,7 +81,9 @@ pub use animation::{
     PropertyAnimation, RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation,
     easing, running_animation_count, running_animations, set_animation_frame_period,
 };
-pub use animation::{Transition, run_transition, run_transition_to, stop_transition};
+pub use animation::{
+    Passage, Transition, run_passage, run_transition, run_transition_to, stop_transition,
+};
 pub use context_menu::{ContextMenuHook, ContextMenuReason, register_context_menu};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
 pub use drop_area::{
