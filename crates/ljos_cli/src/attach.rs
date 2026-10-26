@@ -303,6 +303,7 @@ mod tests {
         Ok(Answer {
             status,
             body: body.as_bytes().to_vec(),
+            retry_after: None,
         })
     }
 

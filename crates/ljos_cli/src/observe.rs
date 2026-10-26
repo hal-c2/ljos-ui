@@ -379,6 +379,7 @@ mod tests {
         let response = |body: &str| Answer {
             status: 200,
             body: body.as_bytes().to_vec(),
+            retry_after: None,
         };
         let plain = r#"{"jsonrpc":"2.0","id":1,"result":{"isError":false}}"#;
         assert!(matches!(read_answer(&response(plain)), Ok(Ok(_))));
@@ -408,6 +409,7 @@ mod tests {
         let busy = Answer {
             status: 429,
             body: br#"{"error":{"code":"rate_limited"}}"#.to_vec(),
+            retry_after: None,
         };
         assert!(matches!(read_answer(&busy), Ok(Err(m)) if m.starts_with("rate_limited")));
     }
