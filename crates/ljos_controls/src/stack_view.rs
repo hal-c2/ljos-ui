@@ -27,7 +27,7 @@ use ljos_engine::{
 use ljos_quick::{Item, Passage, Transition, follows_implicit_size, is_item, set_parent_item};
 
 use crate::control::Control;
-use crate::util::{check, is_a, num, object, set_computed};
+use crate::util::{check, is_a, num, object, set_computed, warn};
 
 fn stack_view_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![
@@ -1153,11 +1153,13 @@ fn push(e: &Engine, me: ObjectId, r: Request) -> Result<Value, EngineError> {
     interrupt(e, me, &[old], &both(pair));
     st.entries.borrow_mut().extend(r.pages);
     let top = depth_of(e, me) - 1;
-    let Some(new) = load(e, me, top)? else {
+    let made = load(e, me, top);
+    let Ok(Some(new)) = made else {
         // Nothing could be made of it: the stack is as it was.
         st.entries.borrow_mut().truncate(top);
         update(e, me)?;
         idle(e, me);
+        cannot_make(e, me, "push", made);
         return Ok(Value::Null);
     };
     update(e, me)?;
@@ -1191,6 +1193,16 @@ fn push(e: &Engine, me: ObjectId, r: Request) -> Result<Value, EngineError> {
         }
     }
     Ok(Value::Object(new))
+}
+
+/// Says, as qml6 does, why `op` made no page: a file that cannot be
+/// loaded warns, and the code that asked goes on.
+fn cannot_make(e: &Engine, me: ObjectId, op: &str, made: Result<Option<ObjectId>, EngineError>) {
+    if let Err(err) = made {
+        let at = e.declared_at(me).unwrap_or_default();
+        let ty = e.warning_type_name(me, "StackView");
+        warn(e, format!("{at}QML {ty}: {op}: {err}"));
+    }
 }
 
 /// Pops every page above the first `keep`, and returns the one that was
@@ -1291,14 +1303,26 @@ fn replace(e: &Engine, me: ObjectId, keep: usize, r: Request) -> Result<Value, E
     interrupt(e, me, &[old], &both(pair));
     let keep = keep.min(depth_of(e, me));
     let mut gone: Vec<Entry> = st.entries.borrow_mut().drain(keep..).collect();
-    st.kept.set(st.kept.get().min(keep));
-    let top = gone.pop();
-    let old = top.as_ref().and_then(|en| en.item);
+    let kept = st.kept.replace(st.kept.get().min(keep));
     st.entries.borrow_mut().extend(r.pages);
     let at = depth_of(e, me) - 1;
-    let new = load(e, me, at)?;
+    let made = load(e, me, at);
+    let Ok(Some(new)) = made else {
+        // The pages it would replace stay: out of the stack they would
+        // be held, never removed, for as long as the application runs.
+        let mut entries = st.entries.borrow_mut();
+        entries.truncate(keep);
+        entries.extend(gone);
+        drop(entries);
+        st.kept.set(kept);
+        update(e, me)?;
+        idle(e, me);
+        cannot_make(e, me, "replace", made);
+        return Ok(reply(old));
+    };
+    let top = gone.pop();
     update(e, me)?;
-    let pair = new.and(old).and(pair);
+    let pair = old.and(pair);
     let mut all: Vec<Entry> = top.into_iter().collect();
     all.extend(gone);
     match pair {
@@ -1308,29 +1332,22 @@ fn replace(e: &Engine, me: ObjectId, keep: usize, r: Request) -> Result<Value, E
                 tell(e, old, status::INACTIVE, "deactivated");
             }
             removed(e, all);
-            if let Some(new) = new {
-                place_still(e, new);
-                tell(e, new, status::ACTIVATING, "activating");
-                tell(e, new, status::ACTIVE, "activated");
-            }
+            place_still(e, new);
+            tell(e, new, status::ACTIVATING, "activating");
+            tell(e, new, status::ACTIVE, "activated");
             idle(e, me);
         }
         Some((enter, exit)) => {
-            if let Some(new) = new {
-                tell(e, new, status::ACTIVATING, "activating");
-            }
+            tell(e, new, status::ACTIVATING, "activating");
             if let Some(old) = old {
                 tell(e, old, status::DEACTIVATING, "deactivating");
             }
             st.after
                 .borrow_mut()
                 .push(Box::new(move |e| removed(e, all)));
-            let mut steps = Vec::new();
-            if let Some(new) = new {
-                steps.push(step(new, enter, Passage::Enter, move |e| {
-                    tell(e, new, status::ACTIVE, "activated");
-                }));
-            }
+            let mut steps = vec![step(new, enter, Passage::Enter, move |e| {
+                tell(e, new, status::ACTIVE, "activated");
+            })];
             if let Some(old) = old {
                 steps.push(step(old, exit, Passage::Exit, move |e| {
                     tell(e, old, status::INACTIVE, "deactivated");
@@ -1339,7 +1356,7 @@ fn replace(e: &Engine, me: ObjectId, keep: usize, r: Request) -> Result<Value, E
             animate(e, me, steps);
         }
     }
-    Ok(reply(new))
+    Ok(Value::Object(new))
 }
 
 /// Every page leaves at once, transitions under way or not.
