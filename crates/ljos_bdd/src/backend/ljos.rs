@@ -122,6 +122,10 @@ struct Live {
     /// Where the scene had its items when the last load came to rest: a
     /// design audit after time passed finds what moved since.
     rest: Option<Arc<ljos_audit::Placement>>,
+    /// When the grace of the user's last input ends, while it has not:
+    /// what moves until then is that input's doing, and `rest` is taken
+    /// again there.
+    rest_due: Option<ljos_runtime::Time>,
 }
 
 #[derive(Default)]
@@ -310,17 +314,19 @@ fn qmldir_of(name: &str) -> Option<&str> {
 }
 
 impl LjosBackend {
-    /// Runs a step of the user's input and takes where the items are
-    /// once it has settled as where they rest: what the user's own input
-    /// moves (a panel they open) is not a layout shift, and what moves
-    /// later by itself still is.
+    /// Runs a step of the user's input and takes where the items rest
+    /// again once its grace has passed: what the user's own input moves
+    /// (a panel they open, sliding in) is not a layout shift, and what
+    /// moves later by itself still is. A settle does not run an
+    /// animation the input started, so where the items are when the step
+    /// ends is only its first frame.
     fn input(&mut self, step: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
         step(self)?;
         let live = self.live()?;
-        live.rest = Some(Arc::new(ljos_audit::Placement::of(
-            &live.engine,
-            &live.scene,
-        )));
+        live.take_rest();
+        let grace =
+            Duration::from_millis(u64::from(ljos_design::limits::LAYOUT_SHIFT_INPUT_GRACE_MS));
+        live.rest_due = Some(live.clock.now().saturating_add(grace));
         Ok(())
     }
 
@@ -421,6 +427,7 @@ impl LjosBackend {
             outside_taken: None,
             outside_at: (0.0, 0.0),
             rest: None,
+            rest_due: None,
         };
         // A decode takes as long as it takes; scenarios see its result when
         // time is advanced and not before, whatever the machine's speed.
@@ -510,6 +517,35 @@ impl Live {
         self.drive(|d| d.settle())
     }
 
+    /// Takes where the items rest once the last input's grace ends, if
+    /// it ends by `end`: when nothing is due before then, the scene stays
+    /// as it is now until then, so no frame is made to look.
+    fn rest_after_grace(&mut self, end: ljos_runtime::Time) {
+        let Some(due) = self.rest_due.filter(|due| *due <= end) else {
+            return;
+        };
+        let next = [
+            self.engine.next_timer_deadline(),
+            self.drive.wake,
+            self.reload_due(),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        if next.is_none_or(|t| t > due) {
+            self.take_rest();
+            self.rest_due = None;
+        }
+    }
+
+    /// Takes where the items are now as where they rest.
+    fn take_rest(&mut self) {
+        self.rest = Some(Arc::new(ljos_audit::Placement::of(
+            &self.engine,
+            &self.scene,
+        )));
+    }
+
     /// Runs `act` on the scene driver, with this backend playing the
     /// host's part around each settle.
     fn drive<R>(
@@ -550,10 +586,8 @@ impl Live {
         ljos_quick::add_data(&self.engine, self.driver, obj).map_err(failed)?;
         self.roots.push(obj);
         self.settle()?;
-        self.rest = Some(Arc::new(ljos_audit::Placement::of(
-            &self.engine,
-            &self.scene,
-        )));
+        self.take_rest();
+        self.rest_due = None;
         Ok(())
     }
 
@@ -783,6 +817,7 @@ impl Live {
         // the next frame a held press asked for.
         self.drive(|d| d.finish_promised())?;
         loop {
+            self.rest_after_grace(advance.end());
             let due = self.reload_due();
             let stop = advance
                 .stop(&self.engine, &*self.clock, self.drive.wake, due)
@@ -2047,7 +2082,8 @@ impl Probes for LjosBackend {
                 .unwrap_or("current")
                 .parse()
                 .map_err(|e| failed(format!("{e}")))?,
-            before: live.rest.clone(),
+            // Within an input's grace, what moved since is its doing.
+            before: live.rest.clone().filter(|_| live.rest_due.is_none()),
             // The scenario's application is the test's own: acting on it
             // is what the acting checks' scenarios are about.
             act: true,

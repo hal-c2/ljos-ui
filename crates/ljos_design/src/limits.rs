@@ -152,6 +152,10 @@ pub mod audit {
 /// Content that moves this far or more after it was shown counts as a
 /// layout shift.
 pub const LAYOUT_SHIFT_MIN_PX: f32 = 4.0;
+/// What moves this soon after the user's input is that input's doing
+/// (a panel they open sliding into place), not a layout shift: the
+/// window Cumulative Layout Shift gives a recent input.
+pub const LAYOUT_SHIFT_INPUT_GRACE_MS: u32 = 500;
 /// A menu with more items than this needs a separator or a submenu.
 pub const MENU_MAX_UNGROUPED: usize = 10;
 /// This many rows of one list with one label cannot be told apart.
