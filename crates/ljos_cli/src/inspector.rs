@@ -282,11 +282,18 @@ impl Address {
     }
 }
 
+/// The longest `Retry-After` that is waited for: a server asking for more
+/// is answered with its refusal.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(5);
+
 /// What the inspector sent back: its status and the body, as it came.
 #[derive(Debug)]
 pub struct Answer {
     pub status: u16,
     pub body: Vec<u8>,
+    /// When the inspector turned the call away (429), how long its
+    /// `Retry-After` says to wait.
+    pub retry_after: Option<Duration>,
 }
 
 impl Answer {
@@ -310,8 +317,23 @@ impl Answer {
 
 /// Posts `message` (one JSON-RPC message as text) to `target`; `Err` is
 /// why the inspector could not be reached at all. Gives up after `limit`.
+///
+/// A call turned away for asking too often (429) is asked again once, after
+/// the `Retry-After` the inspector gave, within `limit`: it was refused
+/// before anything ran, so asking again cannot do a thing twice. A second
+/// refusal is the answer.
 pub async fn post(target: &Target, message: String, limit: Duration) -> Result<Answer, String> {
-    match tokio::time::timeout(limit, post_now(target, message)).await {
+    let asked = async {
+        let first = post_now(target, message.clone()).await?;
+        match first.retry_after {
+            Some(wait) if first.status == 429 => {
+                tokio::time::sleep(wait.min(MAX_RETRY_AFTER)).await;
+                post_now(target, message).await
+            }
+            _ => Ok(first),
+        }
+    };
+    match tokio::time::timeout(limit, asked).await {
         Ok(answer) => answer,
         Err(_) => Err(format!(
             "the inspector at {} did not answer within {} s",
@@ -381,8 +403,18 @@ where
         .await
         .map_err(|e| e.to_string())?;
     let status = response.status().as_u16();
+    let retry_after = response
+        .headers()
+        .get(http::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs);
     let body = read_body(response.into_body()).await?;
-    Ok(Answer { status, body })
+    Ok(Answer {
+        status,
+        body,
+        retry_after,
+    })
 }
 
 // DECISION: match the server's 1 MiB request cap for inspector responses.
@@ -471,6 +503,39 @@ fn start() -> Result<Thread, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An inspector that turns the first call away for a moment, as its
+    /// rate limit does, and answers the second.
+    #[tokio::test]
+    async fn a_call_turned_away_is_asked_again_after_the_retry_after() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let served = tokio::spawn(async move {
+            let mut statuses = Vec::new();
+            for reply in [
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            ] {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let _ = conn.read(&mut buf).await.unwrap();
+                conn.write_all(reply.as_bytes()).await.unwrap();
+                statuses.push(reply.len());
+            }
+            statuses.len()
+        });
+        let target = Target {
+            url: format!("http://127.0.0.1:{port}/mcp"),
+            token: "t".into(),
+            pid: None,
+        };
+        let answer = post(&target, "{}".into(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(answer.status, 200);
+        assert_eq!(served.await.unwrap(), 2);
+    }
 
     #[tokio::test]
     async fn response_frames_are_capped_even_without_content_length() {
@@ -721,6 +786,7 @@ mod tests {
         let answer = |body: &str| Answer {
             status: 200,
             body: body.as_bytes().to_vec(),
+            retry_after: None,
         };
         let plain = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
         assert_eq!(answer(plain).messages(), [plain]);
