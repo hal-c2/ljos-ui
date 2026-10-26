@@ -107,6 +107,7 @@ mod tree;
 mod tree_model;
 mod types;
 mod url_global;
+mod url_text;
 mod value;
 mod value_custom;
 pub use value_custom::{CustomMember, CustomType, CustomValue};

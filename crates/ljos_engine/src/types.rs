@@ -34,6 +34,7 @@
 //! here with it (`crate::reset`). The `null`-to-`string` and
 //! `null`-to-number cases are recorded as to be verified against Qt.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::atom::Atom;
@@ -297,7 +298,11 @@ impl TypeTag {
             },
             TypeTag::Url => match v {
                 Value::Url(_) => v.clone(),
-                Value::String(s) => Value::Url(s.clone()),
+                Value::String(s) => Value::Url(match crate::url_text::url_text(s) {
+                    Some(Cow::Borrowed(_)) => s.clone(),
+                    Some(Cow::Owned(t)) => t.into(),
+                    None => Atom::EMPTY,
+                }),
                 _ => return fail(),
             },
             TypeTag::Point => match v {

@@ -60,7 +60,6 @@ Feature: A url as a script sees it
     And the property "same" of "root" is false
 
   # Found by ljos-fuzz (bindings), bucket value:url:string-as-url.
-  @backlog
   Scenario Outline: A url given <text>, which is no address, is empty
     Given the QML:
       """qml
@@ -79,7 +78,6 @@ Feature: A url as a script sees it
       | ("a b" + ":c") |
 
   # Found by ljos-fuzz (bindings), buckets value:load:encoding and value:step:encoding.
-  @backlog
   Scenario Outline: A url given <text> writes what an address cannot hold in percent codes
     Given the QML:
       """qml
