@@ -304,6 +304,23 @@ impl Engine {
         })
     }
 
+    /// What a `var` is given of the list a face stands for: a copy, an
+    /// array of the script's own, that makes what is put into it with
+    /// `push`, `unshift`, `splice` or `fill` an entry of the list's type,
+    /// as qml6's copy of a typed list does. `None` when `r` is no face.
+    pub(crate) fn face_copy(&self, r: &JsRef, items: &[Value]) -> Option<Value> {
+        let js = self.inner.js.borrow().clone()?;
+        let (obj, prop) = js.lists.of(r)?;
+        let elem = self.list_entries(obj, prop)?;
+        let items = items.iter().map(|i| self.to_js(i)).collect();
+        Some(Value::Js(crate::value::JsHandle(
+            match entry_kind(&elem).0 {
+                Entry::Any => JsRef::array(items),
+                _ => JsRef::array_of_kind(items, &elem),
+            },
+        )))
+    }
+
     /// The face of the list property `prop` of `obj` (the property itself,
     /// see [`Engine::script_list`]), made the first time.
     pub(crate) fn list_face(
@@ -537,6 +554,30 @@ impl Engine {
             done.map_err(|e| HostError::msg(e.to_string()))?;
             Ok(now.map_or(JsValue::Undefined, |v| engine.to_js(&v)))
         });
+        // What `push` and its like put into a copy of a typed list
+        // (`Engine::face_copy`): entries of the list's type.
+        let w = Rc::downgrade(&self.inner);
+        let convert: HostFn = Rc::new(move |scope, args| {
+            let (Some(inner), [JsValue::String(elem), given, ..]) = (w.upgrade(), args) else {
+                return Ok(JsValue::Undefined);
+            };
+            let engine = Engine::from_inner(inner);
+            let elem = Atom::intern(elem);
+            let (kind, of) = entry_kind(&elem);
+            let ty = TypeTag::List(Some(elem));
+            Ok(match engine.js_to_value(scope, given.clone(), &ty) {
+                Value::List(items) => JsValue::Array(
+                    items
+                        .iter()
+                        .map(|i| engine.to_js(&entry(&engine, kind, &of, Origin::Put, i)))
+                        .collect(),
+                ),
+                _ => JsValue::Array(Vec::new()),
+            })
+        });
+        js.host
+            .set_global_function("__ljos_listConvert", convert)
+            .map_err(err)?;
         js.host
             .set_global_function("__ljos_listSync", sync)
             .map_err(err)?;
@@ -562,6 +603,27 @@ pub(crate) const LISTS: &str = r##"
     "push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin",
   ]);
   const isIndex = (key) => typeof key === "string" && /^(0|[1-9]\d*)$/.test(key);
+  // A copy of a typed list in a var: an array whose additions are made
+  // entries of the list's type. A write to an index is not seen.
+  const convert = g.__ljos_listConvert;
+  const kinds = new Map();
+  g.__ljos_arrayMade = function (array, elem) {
+    let p = kinds.get(elem);
+    if (p === undefined) {
+      p = Object.create(proto);
+      const of = (items) => convert(elem, items);
+      const own = (name, f) => Object.defineProperty(p, name, { value: f, writable: true, configurable: true });
+      own("push", function (...items) { return proto.push.apply(this, of(items)); });
+      own("unshift", function (...items) { return proto.unshift.apply(this, of(items)); });
+      own("splice", function (start, count, ...items) {
+        return arguments.length < 3 ? proto.splice.apply(this, arguments)
+          : proto.splice.call(this, start, count, ...of(items));
+      });
+      own("fill", function (value, ...range) { return proto.fill.call(this, of([value])[0], ...range); });
+      kinds.set(elem, p);
+    }
+    Object.setPrototypeOf(array, p);
+  };
   g.__ljos_list = function (object, prop) {
     const t = [];
     const fill = (now) => {

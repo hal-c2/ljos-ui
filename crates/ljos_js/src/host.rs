@@ -585,6 +585,14 @@ impl<'js> Scope<'js> {
                 for (i, item) in items.iter().enumerate() {
                     arr.set(i, self.to_value(item)?)?;
                 }
+                if let Some(kind) = r.kind()
+                    && let Ok(made) = self
+                        .ctx
+                        .globals()
+                        .get::<_, rquickjs::Function<'js>>("__ljos_arrayMade")
+                {
+                    made.call::<_, ()>((arr.clone(), kind))?;
+                }
                 Ok(arr.into_value())
             }
             Pending::Object(fields) => {

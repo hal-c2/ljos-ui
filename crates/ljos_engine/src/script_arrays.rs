@@ -224,14 +224,22 @@ impl Engine {
             // A var's array is that array to another var; a list is given
             // a copy of it, entries and all.
             Value::Js(h) if h.0.is_array() => match self.slot_of(obj, prop) {
-                Slot::Var => v,
+                // A copy of a typed list is copied again, as qml6 does.
+                Slot::Var => match (h.0.kind(), self.plain_if_kind(&v)) {
+                    (Some(kind), Some(Value::List(items))) => Value::Js(JsHandle(
+                        JsRef::array_of_kind(items.iter().map(|i| self.to_js(i)).collect(), kind),
+                    )),
+                    _ => v,
+                },
                 Slot::Other => self.copied(self.plain(&v)),
             },
             // A list property a script handed on: a copy of the entries it
             // has now, and no longer that property's list.
             Value::Js(h) => match self.face_list(&h.0) {
                 Some(list) => match (self.slot_of(obj, prop), self.copied(list)) {
-                    (Slot::Var, Value::List(items)) => self.script_array(&items),
+                    (Slot::Var, Value::List(items)) => self
+                        .face_copy(&h.0, &items)
+                        .unwrap_or_else(|| self.script_array(&items)),
                     (_, list) => list,
                 },
                 _ => v,
@@ -245,6 +253,15 @@ impl Engine {
         };
         // A `list<T>` declared in QML makes each entry a `T`.
         self.for_list(obj, prop, v)
+    }
+
+    /// [`Engine::plain`] of a copy of a typed list ([`JsRef::kind`]), and
+    /// `None` of anything else, which is not read.
+    fn plain_if_kind(&self, v: &Value) -> Option<Value> {
+        match v {
+            Value::Js(h) if h.0.kind().is_some() => Some(self.plain(v)),
+            _ => None,
+        }
     }
 
     /// Arguments for native code: see [`Engine::plain`].

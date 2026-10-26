@@ -90,6 +90,8 @@ pub(crate) struct RefSlot {
     /// What a value made on the Rust side holds until a script gets it.
     pending: Mutex<Option<Pending>>,
     array: bool,
+    /// What [`JsRef::array_of_kind`] was given.
+    kind: Option<Arc<str>>,
 }
 
 /// What a [`JsRef`] made on the Rust side becomes in JS.
@@ -134,6 +136,7 @@ impl JsRef {
             live,
             pending: Mutex::new(None),
             array,
+            kind: None,
         }))
     }
 
@@ -144,6 +147,21 @@ impl JsRef {
             live: OnceLock::new(),
             pending: Mutex::new(Some(Pending::Array(items))),
             array: true,
+            kind: None,
+        }))
+    }
+
+    /// [`JsRef::array`], which once it is made in JS is handed with `kind`
+    /// to the global function `__ljos_arrayMade(array, kind)`, if a host
+    /// defined one: an array that is the host's kind of array, still an
+    /// array, as a copy of a typed list is one that makes entries of its
+    /// type.
+    pub fn array_of_kind(items: Vec<JsValue>, kind: &str) -> Self {
+        Self(Arc::new(RefSlot {
+            live: OnceLock::new(),
+            pending: Mutex::new(Some(Pending::Array(items))),
+            array: true,
+            kind: Some(kind.into()),
         }))
     }
 
@@ -154,6 +172,7 @@ impl JsRef {
             live: OnceLock::new(),
             pending: Mutex::new(Some(Pending::Object(fields))),
             array: false,
+            kind: None,
         }))
     }
 
@@ -161,6 +180,11 @@ impl JsRef {
     /// changes in place, and what Rust reads with `Scope::array_items`.
     pub fn is_array(&self) -> bool {
         self.0.array
+    }
+
+    /// The kind of array this is to the host ([`JsRef::array_of_kind`]).
+    pub fn kind(&self) -> Option<&str> {
+        self.0.kind.as_deref()
     }
 
     /// The entries of an array no script has seen yet; `None` once one

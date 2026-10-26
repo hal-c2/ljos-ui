@@ -311,6 +311,8 @@ Feature: A value a binding gives a property of another type
     Then the property "seen" of "root" is "1 #000000"
 
   # Bucket value:var(array):step-push(literal).
+  # Bound to the list itself, the var is given the list's entries without a script, and so
+  # without its type: the binding's plan would have to say where the list came from.
   @backlog
   Scenario: A var given a list of strings holds a copy that makes text of what is pushed
     Given the QML:
@@ -326,6 +328,33 @@ Feature: A value a binding gives a property of another type
       """
     When the method "add" of "root" is called
     Then the property "seen" of "root" is "string 0"
+
+  Scenario: A var a script gives a typed list holds a copy that makes entries of its type
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<string> names: ["a"]
+        property list<real> reals: [1]
+        property list<int> ints: [1]
+        property var held
+        property var again
+        property var hr
+        property var hi
+        property string seen
+        function add() {
+          held = names; hr = reals; hi = ints
+          held.push(0, null, {}, true); held.splice(1, 0, 2)
+          again = held; again.push(3)
+          hr.push("2", undefined); hi.push(1.5, "x")
+          seen = [held.map(x => typeof x + ":" + x).join(","), held.length, again[6],
+                  typeof again[6], names.length, hr.join(","), hi.join(","), reals.length].join(" ")
+        }
+      }
+      """
+    When the method "add" of "root" is called
+    Then the property "seen" of "root" is "string:a,string:2,string:0,string:,string:,string:true 6 3 string 1 1,2,NaN 1,2,0 1"
 
   # Bucket result:none/none:call(number-plus-string).
   @backlog
