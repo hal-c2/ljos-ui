@@ -33,7 +33,7 @@ pub const LINK_ACTION: i32 = 4;
 
 /// What a drag carries: the platform's, so that a drag from another
 /// application carries the same.
-pub use ljos_platform::DragData;
+pub use ljos_platform::{DragActions, DragData, DropAction, DropActions};
 
 /// The `drag` group of a `DropArea`: the drag over it.
 #[derive(Debug, Default, QmlObject)]
@@ -256,12 +256,21 @@ pub(crate) struct Tracker {
     over: Cell<Option<ObjectId>>,
     /// The areas that turned it down and that it is still over.
     refused: RefCell<Vec<ObjectId>>,
+    /// The `Qt.DropAction` the area it is over left in the last event it
+    /// had: what a drop there would be.
+    action: Cell<i32>,
 }
 
 impl Tracker {
     /// The area that took the drag, if any.
     pub(crate) fn target(&self) -> Option<ObjectId> {
         self.over.get()
+    }
+
+    /// What the area the drag is over would do with a drop now;
+    /// `Qt.IgnoreAction` over none.
+    pub(crate) fn action(&self) -> i32 {
+        self.over.get().map_or(IGNORE_ACTION, |_| self.action.get())
     }
 }
 
@@ -470,7 +479,10 @@ pub(crate) fn track(engine: &Engine, t: &Tracker, offer: &Offer) {
             area,
             crate::handlers::local(engine, area, offer.pos),
         );
-        emit_event(engine, area, "positionChanged", offer);
+        let (accepted, action) = emit_event(engine, area, "positionChanged", offer);
+        if accepted {
+            t.action.set(action);
+        }
         return;
     }
     if let Some(area) = over {
@@ -491,12 +503,13 @@ pub(crate) fn track(engine: &Engine, t: &Tracker, offer: &Offer) {
             crate::handlers::local(engine, area, offer.pos),
         );
         show_source(engine, area, offer.source);
-        let (accepted, _) = emit_event(engine, area, "entered", offer);
+        let (accepted, action) = emit_event(engine, area, "entered", offer);
         if !engine.is_alive(area) {
             continue;
         }
         if accepted {
             t.over.set(Some(area));
+            t.action.set(action);
             put(
                 engine,
                 area,
@@ -584,6 +597,25 @@ impl PlatformDrag {
         self.window = Some(engine.untrack(|| crate::focus::tree::top_of(engine, item)));
         self
     }
+
+    /// The actions the dragging application allows and would like, as it
+    /// says them now.
+    pub fn with_actions(mut self, actions: DragActions) -> Self {
+        self.set_actions(actions);
+        self
+    }
+
+    pub fn set_actions(&mut self, actions: DragActions) {
+        self.supported_actions = actions.allowed.qt();
+        self.proposed_action = actions.proposed.qt();
+    }
+
+    fn actions(&self) -> DragActions {
+        DragActions {
+            allowed: DropActions::from_qt(self.supported_actions),
+            proposed: DropAction::from_qt(self.proposed_action).unwrap_or(DropAction::Copy),
+        }
+    }
 }
 
 /// The platform drag in progress. Per engine: a window has one pointer.
@@ -593,41 +625,74 @@ struct Platform {
     last: Cell<Option<kurbo::Point>>,
 }
 
-/// Tells the window's DropAreas of a drag from outside it. For a drop,
-/// returns the `Qt.DropAction` the area that took it chose
-/// (`Qt.IgnoreAction` when none did); `Qt.IgnoreAction` otherwise.
+/// Tells the window's DropAreas of a drag from outside it. Returns the
+/// `Qt.DropAction` the window system tells the dragging application: for
+/// a move, the one the area under the drag would take a drop with; for a
+/// drop, the one the area that took it chose; `Qt.IgnoreAction` when no
+/// area takes it. An action the drag does not allow is not told
+/// (`DragActions::told`).
 ///
 /// Platform drags have no source item, and their keys are their MIME
-/// types (`text/uri-list` for files), as in Qt.
+/// types (`text/uri-list` for files), as in Qt. One that is the
+/// application's own drag out of the window (`Drag.Automatic`), come
+/// back over it, is that item's drag: its source and keys, and the item's
+/// `Drag.target`.
 pub fn platform_drag(engine: &Engine, drag: &PlatformDrag, kind: &PlatformDragKind) -> i32 {
     let p = engine.extension::<Platform>();
-    let offer = |pos| Offer {
+    let at = |base: Offer, pos| Offer {
         pos,
         window: drag.window,
-        source: None,
-        keys: drag.data.formats(),
         supported: drag.supported_actions,
         proposed: drag.proposed_action,
-        data: drag.data.clone(),
+        ..base
     };
+    let action = crate::drag::own_drag(engine, |tracker, own| {
+        tell(engine, tracker, &p.last, kind, |pos| at(own.clone(), pos))
+    })
+    .unwrap_or_else(|| {
+        let theirs = Offer {
+            pos: kurbo::Point::ZERO,
+            window: drag.window,
+            source: None,
+            keys: drag.data.formats(),
+            supported: drag.supported_actions,
+            proposed: drag.proposed_action,
+            data: drag.data.clone(),
+        };
+        tell(engine, &p.tracker, &p.last, kind, |pos| {
+            at(theirs.clone(), pos)
+        })
+    });
+    drag.actions()
+        .told(DropAction::from_qt(action))
+        .map_or(IGNORE_ACTION, DropAction::qt)
+}
+
+fn tell(
+    engine: &Engine,
+    t: &Tracker,
+    last: &Cell<Option<kurbo::Point>>,
+    kind: &PlatformDragKind,
+    offer: impl Fn(kurbo::Point) -> Offer,
+) -> i32 {
     match kind {
         PlatformDragKind::Move(pos) => {
-            p.last.set(Some(*pos));
-            track(engine, &p.tracker, &offer(*pos));
-            IGNORE_ACTION
+            last.set(Some(*pos));
+            track(engine, t, &offer(*pos));
+            t.action()
         }
         PlatformDragKind::Leave => {
-            p.last.set(None);
-            leave(engine, &p.tracker);
+            last.set(None);
+            leave(engine, t);
             IGNORE_ACTION
         }
         PlatformDragKind::Drop(pos) => {
             // A drop where the drag was never seen still enters first; one
             // where it was last seen is not a move.
-            if p.last.take() != Some(*pos) {
-                track(engine, &p.tracker, &offer(*pos));
+            if last.take() != Some(*pos) {
+                track(engine, t, &offer(*pos));
             }
-            drop(engine, &p.tracker, &offer(*pos))
+            drop(engine, t, &offer(*pos))
         }
     }
 }
@@ -662,37 +727,45 @@ pub(crate) fn register(engine: &Engine) {
     ljos_platform::Platform::of(engine).set_drop_handler(move |engine, drag| {
         use ljos_platform::ExternalDrag;
         let point = |at: (f64, f64)| kurbo::Point::new(at.0, at.1);
+        let told = |n: i32| DropAction::from_qt(n);
         match drag {
-            ExternalDrag::Entered { data, at } => {
+            ExternalDrag::Entered { data, at, actions } => {
                 // Cloned out: no borrow is held while the areas are told.
-                let drag = current
-                    .borrow_mut()
-                    .get_or_insert_with(|| PlatformDrag::new(data.clone()))
-                    .clone();
+                let drag = {
+                    let mut current = current.borrow_mut();
+                    let drag = current.get_or_insert_with(|| {
+                        PlatformDrag::new(data.clone()).with_actions(*actions)
+                    });
+                    drag.set_actions(*actions);
+                    drag.clone()
+                };
                 // Where it is is not always known when it comes in; the
                 // areas hear of it when a position is.
-                if let Some(at) = at {
-                    let pos = point(*at);
-                    last.set(Some(pos));
-                    platform_drag(engine, &drag, &PlatformDragKind::Move(pos));
-                }
-                platform_drag_target(engine).is_some()
+                let at = at.map(point)?;
+                last.set(Some(at));
+                told(platform_drag(engine, &drag, &PlatformDragKind::Move(at)))
             }
-            ExternalDrag::Moved { at } => {
-                let Some(drag) = current.borrow().clone() else {
-                    return false; // A move of a drag that never came in.
+            ExternalDrag::Moved { at, actions } => {
+                let drag = {
+                    // A move of a drag that never came in is nothing.
+                    let mut current = current.borrow_mut();
+                    let drag = current.as_mut()?;
+                    if let Some(actions) = actions {
+                        drag.set_actions(*actions);
+                    }
+                    drag.clone()
                 };
                 let pos = point(*at);
                 last.set(Some(pos));
-                platform_drag(engine, &drag, &PlatformDragKind::Move(pos));
-                platform_drag_target(engine).is_some()
+                told(platform_drag(engine, &drag, &PlatformDragKind::Move(pos)))
             }
             ExternalDrag::Left => {
                 last.set(None);
-                if let Some(drag) = current.borrow_mut().take() {
+                let drag = current.borrow_mut().take();
+                if let Some(drag) = drag {
                     platform_drag(engine, &drag, &PlatformDragKind::Leave);
                 }
-                false
+                None
             }
             ExternalDrag::Dropped { data, at } => {
                 // Let go where it was last seen when the drop itself has
@@ -704,12 +777,10 @@ pub(crate) fn register(engine: &Engine) {
                 let at = at.map(point).or_else(|| last.take());
                 last.set(None);
                 match at {
-                    Some(pos) => {
-                        platform_drag(engine, &drag, &PlatformDragKind::Drop(pos)) != IGNORE_ACTION
-                    }
+                    Some(pos) => told(platform_drag(engine, &drag, &PlatformDragKind::Drop(pos))),
                     None => {
                         platform_drag(engine, &drag, &PlatformDragKind::Leave);
-                        false
+                        None
                     }
                 }
             }

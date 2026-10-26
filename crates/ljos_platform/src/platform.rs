@@ -20,7 +20,7 @@ use ljos_runtime::{DrainBudget, SendError, SystemClock, UiHandle, UiInbox};
 use crate::badge::{BadgeService, RecordedBadge};
 use crate::clipboard::{ClipboardService, MemoryClipboard};
 use crate::dialogs::{DialogService, NoSystemDialogs};
-use crate::drop::ExternalDrag;
+use crate::drop::{DragOutService, DropAction, ExternalDrag};
 use crate::fetch::{FetchError, Fetcher, NoNetwork, Request, Response};
 use crate::icon::Icon;
 use crate::open_url::{OpenUrlService, RecordedUrls};
@@ -213,7 +213,7 @@ impl Drop for Reply {
 }
 
 /// What takes a drag from another application; true when a target took it.
-pub(crate) type DropHandler = Rc<dyn Fn(&Engine, &ExternalDrag) -> bool>;
+pub(crate) type DropHandler = Rc<dyn Fn(&Engine, &ExternalDrag) -> Option<DropAction>>;
 
 /// The platform services of one engine. See the module documentation.
 pub struct Platform {
@@ -237,6 +237,7 @@ pub struct Platform {
     application: RefCell<Option<(String, String)>>,
     desktop_file_name: RefCell<Option<String>>,
     drop_handler: RefCell<Option<DropHandler>>,
+    drag_out: RefCell<Option<Rc<dyn DragOutService>>>,
     pub(crate) external_drops: RefCell<crate::drop::ExternalDrops>,
     fetches: RefCell<HashMap<u64, FetchDone>>,
     // A parallel map to `fetches`, not one map of an enum: a request's
@@ -294,6 +295,7 @@ impl Default for Platform {
             application: RefCell::new(None),
             desktop_file_name: RefCell::new(None),
             drop_handler: RefCell::new(None),
+            drag_out: RefCell::new(None),
             external_drops: RefCell::default(),
             fetches: RefCell::new(HashMap::new()),
             requests: RefCell::new(HashMap::new()),
@@ -752,14 +754,28 @@ impl Platform {
     }
 
     /// Who hears of drags from other applications: the drag-and-drop of
-    /// `ljos_quick` installs itself here. It returns whether a target took
-    /// the drop.
-    pub fn set_drop_handler(&self, handler: impl Fn(&Engine, &ExternalDrag) -> bool + 'static) {
+    /// `ljos_quick` installs itself here. It returns the action the target
+    /// under the drag takes it with, or took the drop with.
+    pub fn set_drop_handler(
+        &self,
+        handler: impl Fn(&Engine, &ExternalDrag) -> Option<DropAction> + 'static,
+    ) {
         *self.drop_handler.borrow_mut() = Some(Rc::new(handler));
     }
 
     pub(crate) fn drop_handler(&self) -> Option<DropHandler> {
         self.drop_handler.borrow().clone()
+    }
+
+    /// The host's window system carries drags out of the application
+    /// (`None`: it does not, and they stay in the window).
+    pub fn set_drag_out(&self, service: Option<Rc<dyn DragOutService>>) {
+        *self.drag_out.borrow_mut() = service;
+    }
+
+    /// The way drags leave the application, when the host has one.
+    pub fn drag_out(&self) -> Option<Rc<dyn DragOutService>> {
+        self.drag_out.borrow().clone()
     }
 
     /// Gives `url` these bytes instead of what a file or the network has:

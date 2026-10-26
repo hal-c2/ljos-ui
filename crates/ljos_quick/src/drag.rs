@@ -11,9 +11,21 @@
 //! - `drop()` gives the area `dropped` and no `exited`; turning `active`
 //!   off or `cancel()` gives it `exited`.
 //!
-//! Deviation: `Drag.Automatic` and `startDrag()` do not hand the drag to
-//! the platform, so it cannot leave the window. They say `dragStarted` and
-//! `dragFinished` all the same, and the drag goes on inside the window.
+//! `Drag.Automatic` and `startDrag()` hand the drag to the host's window
+//! system when it carries drags out of the application
+//! (`ljos_platform::DragOutService`): it offers what `mimeData` has, and
+//! `dragFinished` says the action the application it was let go over
+//! took, when the host tells it. In between the window system has the
+//! pointer, so the item's moves are not followed; the drag reaches the
+//! window's own areas only when the window system brings it back over the
+//! window (`drop_area::platform_drag`). Qt waits in a loop of its own
+//! until the drag ends; here `startDrag()` returns at once and the
+//! application goes on. A binding that turns `active` off (the press that
+//! started it was taken by the window system) does not end such a drag;
+//! `cancel()`, `drop()` and a script's `active = false` give it up.
+//!
+//! A host that does not carry drags out keeps them in the window: they
+//! say `dragStarted` and `dragFinished` all the same.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -196,6 +208,16 @@ struct DragState {
     watching: Cell<bool>,
     /// Started as a platform drag: ends with `dragFinished`.
     automatic: Cell<bool>,
+    /// The drag the window system carries out of the window, by the
+    /// number it was started as; 0 for none.
+    out: Cell<u64>,
+}
+
+/// The drag out of the window under way, if any: one pointer, one drag.
+#[derive(Default)]
+struct Outgoing {
+    att: Cell<Option<ObjectId>>,
+    started: Cell<u64>,
 }
 
 #[qml_impl]
@@ -333,7 +355,8 @@ fn show_active(engine: &Engine, att: ObjectId, on: bool, how: WriteKind) {
 /// The areas hear where the item is now.
 fn flush(engine: &Engine, att: ObjectId, st: &DragState) {
     st.pending.set(false);
-    if !st.active.get() {
+    // The window system has the pointer: where the item is says nothing.
+    if !st.active.get() || st.out.get() != 0 {
         return;
     }
     if let Some(o) = offer(engine, att) {
@@ -347,16 +370,113 @@ fn begin(engine: &Engine, att: ObjectId, automatic: bool, how: WriteKind) {
     if st.active.get() {
         return;
     }
+    if automatic && hand_out(engine, att, &st) {
+        show_active(engine, att, true, how);
+        let _ = engine.emit_by_name(att, "dragStarted", &[]);
+        return;
+    }
     st.active.set(true);
     st.automatic.set(automatic);
     watch_moves(engine, att, &st);
-    if automatic {
-        let _ = engine.emit_by_name(att, "dragStarted", &[]);
-    }
     flush(engine, att, &st);
     if st.active.get() {
         show_active(engine, att, true, how);
+        if automatic {
+            let _ = engine.emit_by_name(att, "dragStarted", &[]);
+        }
     }
+}
+
+/// Hands the drag to the window system, when the host's carries drags out
+/// of the application and takes this one.
+fn hand_out(engine: &Engine, att: ObjectId, st: &DragState) -> bool {
+    let Some(service) = ljos_platform::Platform::of(engine).drag_out() else {
+        return false;
+    };
+    let Some(item) = engine.owner(att).filter(|o| engine.is_alive(*o)) else {
+        return false;
+    };
+    let number = |p: ljos_engine::PropIndex| read(engine, att, p).to_number() as i32;
+    let drag = ljos_platform::OutgoingDrag {
+        data: data_of(engine, &read(engine, att, DragAttached::MIME_DATA.index)),
+        actions: ljos_platform::DragActions {
+            allowed: ljos_platform::DropActions::from_qt(number(
+                DragAttached::SUPPORTED_ACTIONS.index,
+            )),
+            proposed: ljos_platform::DropAction::from_qt(number(
+                DragAttached::PROPOSED_ACTION.index,
+            ))
+            .unwrap_or(ljos_platform::DropAction::Move),
+        },
+        window: Some(engine.untrack(|| crate::focus::tree::top_of(engine, item))),
+    };
+    let out = engine.extension::<Outgoing>();
+    let started = out.started.get() + 1;
+    let done = Box::new(
+        move |e: &Engine, action: Option<ljos_platform::DropAction>| {
+            handed_back(e, att, started, action);
+        },
+    );
+    if !service.start(engine, drag, done) {
+        return false;
+    }
+    out.started.set(started);
+    // A drag out the host gave up for this one is over.
+    if let Some(old) = out.att.get().filter(|a| *a != att) {
+        let number = state(engine, old).map_or(0, |s| s.out.get());
+        handed_back(engine, old, number, None);
+    }
+    out.att.set(Some(att));
+    st.active.set(true);
+    st.automatic.set(true);
+    st.out.set(started);
+    true
+}
+
+/// The window system ended the drag it carried out of the window that
+/// was started as `started`, with `action` taken.
+fn handed_back(
+    engine: &Engine,
+    att: ObjectId,
+    started: u64,
+    action: Option<ljos_platform::DropAction>,
+) {
+    let Some(st) = state(engine, att).filter(|st| started != 0 && st.out.get() == started) else {
+        return; // Given up or ended already.
+    };
+    st.out.set(0);
+    let out = engine.extension::<Outgoing>();
+    if out.att.get() == Some(att) {
+        out.att.set(None);
+    }
+    let took = st.tracker.target();
+    drop_area::leave(engine, &st.tracker);
+    st.active.set(false);
+    st.pending.set(false);
+    // An area of the window that took the drop stays the target, as an
+    // item's drop leaves it.
+    if action.is_none() || took.is_none() {
+        show_target(engine, att, &st);
+    }
+    // The window system ended it, not a script: a binding on `active`
+    // stays, to start the next drag.
+    show_active(engine, att, false, WriteKind::Host);
+    if st.automatic.replace(false) {
+        let action = action.map_or(drop_area::IGNORE_ACTION, ljos_platform::DropAction::qt);
+        let _ = engine.emit_by_name(att, "dragFinished", &[Value::Int(action)]);
+    }
+}
+
+/// Runs `f` with the drag the window system carries out of the window, as
+/// the window's areas are told of it when it comes back over the window:
+/// its tracker and what it offers. `None` when there is none.
+pub(crate) fn own_drag<R>(engine: &Engine, f: impl FnOnce(&Tracker, &Offer) -> R) -> Option<R> {
+    let att = engine.extension::<Outgoing>().att.get()?;
+    let st = state(engine, att).filter(|st| st.out.get() != 0)?;
+    let offer = offer(engine, att)?;
+    let r = f(&st.tracker, &offer);
+    show_target(engine, att, &st);
+    Some(r)
 }
 
 /// Ends the drag: a drop when `dropping`. What the area did with a drop.
@@ -365,6 +485,13 @@ fn end(engine: &Engine, att: ObjectId, dropping: bool, how: WriteKind) -> i32 {
         return drop_area::IGNORE_ACTION;
     };
     if !st.active.get() {
+        return drop_area::IGNORE_ACTION;
+    }
+    if st.out.get() != 0 {
+        if let Some(service) = ljos_platform::Platform::of(engine).drag_out() {
+            service.cancel(engine);
+        }
+        handed_back(engine, att, st.out.get(), None);
         return drop_area::IGNORE_ACTION;
     }
     let mut took = None;
@@ -502,7 +629,12 @@ fn toggle(engine: &Engine, att: ObjectId, on: bool, how: WriteKind) {
             return;
         }
         begin(engine, att, kind == drag_type::AUTOMATIC, how);
-    } else if state(engine, att).is_some_and(|st| st.active.get()) {
+    } else if let Some(st) = state(engine, att).filter(|st| st.active.get()) {
+        // The window system took the press that a binding follows; the
+        // drag it carries goes on.
+        if st.out.get() != 0 && how == WriteKind::Host {
+            return;
+        }
         end(engine, att, false, how);
     } else {
         show_active(engine, att, false, how);

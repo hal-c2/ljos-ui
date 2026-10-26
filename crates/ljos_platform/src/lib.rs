@@ -64,7 +64,10 @@ pub use dialogs::{
     DialogService, FileDialog, FolderDialog, FontDialog, MessageDialog, NO, NameFilter,
     NoSystemDialogs, OK, STANDARD_BUTTONS, YES, button_named, button_role, role, system_buttons,
 };
-pub use drop::{DragData, ExternalDrag, external_drag, uri_list};
+pub use drop::{
+    DragActions, DragData, DragOutDone, DragOutService, DropAction, DropActions, ExternalDrag,
+    OutgoingDrag, RecordedDragOut, external_drag, uri_list,
+};
 pub use fakes::FakeDialogs;
 pub use fetch::{
     FetchError, Fetcher, Incoming, Method, NoNetwork, Request, Response, is_remote, reason_phrase,

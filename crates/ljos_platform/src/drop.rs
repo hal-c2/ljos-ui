@@ -1,25 +1,33 @@
-//! Drags from other applications: the seam between a host's window system
-//! and the application's drop targets.
+//! Drags between applications: the seam between a host's window system
+//! and the application's drag-and-drop.
 //!
-//! A host turns what its window system says into [`ExternalDrag`]s and
-//! hands them to [`external_drag`]: whatever the drag offers, as
-//! [`DragData`] (files, other URLs, text, any MIME type), and the target
-//! decides. The drag-and-drop of the items (`DropArea`) installs itself
-//! as the handler ([`crate::Platform::set_drop_handler`]) and treats them
-//! as drags that came from outside.
+//! A host turns what its window system says of a drag from another
+//! application into [`ExternalDrag`]s and hands them to [`external_drag`]:
+//! whatever the drag offers, as [`DragData`] (files, other URLs, text, HTML,
+//! any MIME type), with the actions its source allows and the one it would
+//! like ([`DragActions`]). The target decides, and the action it chose is
+//! what the host tells the source. The drag-and-drop of the items
+//! (`DropArea`) installs itself as the handler
+//! ([`crate::Platform::set_drop_handler`]) and treats them as drags that
+//! came from outside.
 //!
-//! Not carried yet: which action the source allows (copy, move, link) and
-//! a way to tell it which one the target took, and drags out of the
-//! application into another.
+//! A host whose window system carries drags out of the application
+//! installs a [`DragOutService`] ([`crate::Platform::set_drag_out`]): an
+//! item's automatic drag ([`OutgoingDrag`]) is handed to it, and the host
+//! says later which action the application it was let go over took. Such
+//! a drag that comes back over the application's own window comes in as
+//! any other, and the drag-and-drop knows it for its own.
 //!
 //! A host whose window system brings no drops from outside at all says so
 //! ([`Platform::set_external_drops_unavailable`]), and the first drop
 //! target that would take files is warned of once
 //! ([`Platform::note_external_drop_target`]).
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
-use ljos_engine::{Engine, LogLevel};
+use ljos_engine::{Engine, LogLevel, ObjectId};
 
 use crate::platform::{CATEGORY, Platform};
 
@@ -169,6 +177,122 @@ fn decode(bytes: &[u8]) -> String {
     text.trim_end_matches('\0').to_owned()
 }
 
+/// What a drop does with what it gets, numbered as `Qt.DropAction`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DropAction {
+    Copy = 1,
+    Move = 2,
+    Link = 4,
+}
+
+impl DropAction {
+    pub const ALL: [DropAction; 3] = [DropAction::Copy, DropAction::Move, DropAction::Link];
+
+    /// Its `Qt.DropAction` number.
+    pub fn qt(self) -> i32 {
+        self as i32
+    }
+
+    /// The action a `Qt.DropAction` number names; `None` for
+    /// `Qt.IgnoreAction` and anything that is not one action.
+    pub fn from_qt(n: i32) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.qt() == n)
+    }
+
+    /// `copy`, `move` or `link`.
+    pub fn name(self) -> &'static str {
+        match self {
+            DropAction::Copy => "copy",
+            DropAction::Move => "move",
+            DropAction::Link => "link",
+        }
+    }
+
+    /// The action [`DropAction::name`] gives `name`.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.name() == name)
+    }
+}
+
+/// Actions, as `Qt.DropActions` sets them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct DropActions(u8);
+
+impl DropActions {
+    pub const NONE: DropActions = DropActions(0);
+    pub const ALL: DropActions = DropActions(1 | 2 | 4);
+
+    /// The actions of a `Qt.DropActions` number; other bits are left out.
+    pub fn from_qt(n: i32) -> Self {
+        Self((n & Self::ALL.qt()) as u8)
+    }
+
+    pub fn qt(self) -> i32 {
+        i32::from(self.0)
+    }
+
+    pub fn contains(self, action: DropAction) -> bool {
+        self.qt() & action.qt() != 0
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Its actions: copy, then move, then link.
+    pub fn iter(self) -> impl Iterator<Item = DropAction> {
+        DropAction::ALL
+            .into_iter()
+            .filter(move |a| self.contains(*a))
+    }
+}
+
+impl From<DropAction> for DropActions {
+    fn from(action: DropAction) -> Self {
+        Self(action.qt() as u8)
+    }
+}
+
+impl FromIterator<DropAction> for DropActions {
+    fn from_iter<I: IntoIterator<Item = DropAction>>(iter: I) -> Self {
+        Self(iter.into_iter().fold(0, |bits, a| bits | a.qt() as u8))
+    }
+}
+
+/// The actions a drag's source allows, and the one it would like.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DragActions {
+    pub allowed: DropActions,
+    pub proposed: DropAction,
+}
+
+impl Default for DragActions {
+    /// A source that says nothing of actions: any, a copy preferred.
+    fn default() -> Self {
+        Self {
+            allowed: DropActions::ALL,
+            proposed: DropAction::Copy,
+        }
+    }
+}
+
+impl DragActions {
+    /// What the source is told of a target that chose `chosen`. An action
+    /// it does not allow is not one the target can take: as Qt's
+    /// `QDropEvent` takes only "one of the possible actions", that leaves
+    /// the proposed one, else the first it allows.
+    pub fn told(self, chosen: Option<DropAction>) -> Option<DropAction> {
+        let chosen = chosen?;
+        if self.allowed.contains(chosen) {
+            Some(chosen)
+        } else if self.allowed.contains(self.proposed) {
+            Some(self.proposed)
+        } else {
+            self.allowed.iter().next()
+        }
+    }
+}
+
 /// A drag from another application, as a host reports it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExternalDrag {
@@ -177,9 +301,15 @@ pub enum ExternalDrag {
     Entered {
         data: DragData,
         at: Option<(f64, f64)>,
+        actions: DragActions,
     },
-    /// The drag moved.
-    Moved { at: (f64, f64) },
+    /// The drag moved, or its source now allows or would like other
+    /// actions (`actions`, when it says so), as a modifier key changes
+    /// them.
+    Moved {
+        at: (f64, f64),
+        actions: Option<DragActions>,
+    },
     /// The drag left the window, or was given up.
     Left,
     /// It was let go over the window. A host that only learns what was
@@ -197,7 +327,13 @@ impl ExternalDrag {
         ExternalDrag::Entered {
             data: DragData::files(files),
             at,
+            actions: DragActions::default(),
         }
+    }
+
+    /// The drag moved to `at`.
+    pub fn moved(at: (f64, f64)) -> Self {
+        ExternalDrag::Moved { at, actions: None }
     }
 
     /// Files let go.
@@ -276,12 +412,13 @@ fn warn(engine: &Engine, due: Option<String>) {
     }
 }
 
-/// Hands a drag from outside to the application. Returns whether a target
-/// took it: for `Entered` and `Moved`, whether a target is under the drag
-/// that takes it now (a drop there would go to it); for `Dropped`,
-/// whether the target took the drop. With no drag-and-drop installed
-/// nothing does.
-pub fn external_drag(engine: &Engine, drag: &ExternalDrag) -> bool {
+/// Hands a drag from outside to the application. Returns the action the
+/// target took, which the host tells the source: for `Entered` and
+/// `Moved`, the one a target under the drag takes it with now (a drop
+/// there would go to it); for `Dropped`, the one it took the drop with.
+/// `None` when no target takes it; with no drag-and-drop installed none
+/// does.
+pub fn external_drag(engine: &Engine, drag: &ExternalDrag) -> Option<DropAction> {
     match Platform::of(engine).drop_handler() {
         Some(handler) => handler(engine, drag),
         None => {
@@ -292,7 +429,186 @@ pub fn external_drag(engine: &Engine, drag: &ExternalDrag) -> bool {
                     "a drop from another application found no drop target",
                 );
             }
-            false
+            None
         }
+    }
+}
+
+/// A drag out of the application, as the host's window system is asked
+/// to carry it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutgoingDrag {
+    /// What it offers, by MIME type.
+    pub data: DragData,
+    pub actions: DragActions,
+    /// The window it starts from, as the top item of its tree.
+    pub window: Option<ObjectId>,
+}
+
+/// How a drag out of the application ended: told once, on the Engine
+/// thread, with the action the application it was let go over took;
+/// `None` when none took it.
+pub type DragOutDone = Box<dyn FnOnce(&Engine, Option<DropAction>)>;
+
+/// A host's way of carrying drags out of the application.
+pub trait DragOutService {
+    /// Hands `drag` to the window system. `false` when it cannot carry it
+    /// now (no press to start it from, or another drag under way), and
+    /// `done` goes untold. Otherwise `done` is told when the drag ends,
+    /// never from inside `start`: the application is in the middle of
+    /// starting it.
+    fn start(&self, engine: &Engine, drag: OutgoingDrag, done: DragOutDone) -> bool;
+
+    /// The application gives the drag under way up. Its `done` goes
+    /// untold: the application ended the drag itself.
+    fn cancel(&self, engine: &Engine);
+}
+
+/// Carries nothing and keeps the drag it was asked to carry, until the
+/// test ends it with [`RecordedDragOut::end`]. Its clones share one
+/// record, so a test keeps one and installs another.
+#[derive(Clone, Default)]
+pub struct RecordedDragOut {
+    record: Rc<RefCell<DragOutRecord>>,
+}
+
+#[derive(Default)]
+struct DragOutRecord {
+    asked: Option<OutgoingDrag>,
+    done: Option<DragOutDone>,
+    given_up: bool,
+    started: usize,
+}
+
+impl std::fmt::Debug for RecordedDragOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let r = self.record.borrow();
+        f.debug_struct("RecordedDragOut")
+            .field("asked", &r.asked)
+            .field("under_way", &r.done.is_some())
+            .field("given_up", &r.given_up)
+            .finish()
+    }
+}
+
+impl RecordedDragOut {
+    /// The last drag it was asked to carry.
+    pub fn asked(&self) -> Option<OutgoingDrag> {
+        self.record.borrow().asked.clone()
+    }
+
+    /// The application gave a drag up.
+    pub fn given_up(&self) -> bool {
+        self.record.borrow().given_up
+    }
+
+    /// How many drags it has carried, so that a host knows when one took
+    /// the pointer.
+    pub fn started(&self) -> usize {
+        self.record.borrow().started
+    }
+
+    /// The drag under way ends, taken with `action` (`None`: turned
+    /// down). `false` when none is under way.
+    pub fn end(&self, engine: &Engine, action: Option<DropAction>) -> bool {
+        // Taken out first: the application may start another drag.
+        let done = self.record.borrow_mut().done.take();
+        match done {
+            Some(done) => {
+                done(engine, action);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+impl DragOutService for RecordedDragOut {
+    fn start(&self, _engine: &Engine, drag: OutgoingDrag, done: DragOutDone) -> bool {
+        let mut r = self.record.borrow_mut();
+        if r.done.is_some() {
+            return false;
+        }
+        r.asked = Some(drag);
+        r.done = Some(done);
+        r.started += 1;
+        true
+    }
+
+    fn cancel(&self, _engine: &Engine) {
+        let mut r = self.record.borrow_mut();
+        if r.done.take().is_some() {
+            r.given_up = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn copy_or_move(proposed: DropAction) -> DragActions {
+        DragActions {
+            allowed: [DropAction::Copy, DropAction::Move].into_iter().collect(),
+            proposed,
+        }
+    }
+
+    #[test]
+    fn the_action_told_is_one_the_source_allows() {
+        let a = copy_or_move(DropAction::Move);
+        assert_eq!(a.told(Some(DropAction::Copy)), Some(DropAction::Copy));
+        assert_eq!(a.told(Some(DropAction::Link)), Some(DropAction::Move));
+        assert_eq!(a.told(None), None);
+        // A proposal it does not allow itself gives the first it does.
+        let odd = DragActions {
+            allowed: DropActions::from(DropAction::Move),
+            proposed: DropAction::Copy,
+        };
+        assert_eq!(odd.told(Some(DropAction::Link)), Some(DropAction::Move));
+    }
+
+    #[test]
+    fn actions_are_qt_flags() {
+        let all: DropActions = DropAction::ALL.into_iter().collect();
+        assert_eq!(all.qt(), 7);
+        assert_eq!(
+            DropActions::from_qt(5).iter().collect::<Vec<_>>(),
+            [DropAction::Copy, DropAction::Link]
+        );
+        assert_eq!(DropAction::named("move"), Some(DropAction::Move));
+        assert_eq!(DropAction::from_qt(4).map(DropAction::name), Some("link"));
+    }
+
+    #[test]
+    fn a_recorded_drag_out_ends_once_and_not_after_it_is_given_up() {
+        let engine = Engine::new();
+        let out = RecordedDragOut::default();
+        let told = Rc::new(RefCell::new(Vec::new()));
+        let start = |out: &RecordedDragOut| {
+            let told = told.clone();
+            out.start(
+                &engine,
+                OutgoingDrag {
+                    data: DragData::text("hi"),
+                    actions: DragActions::default(),
+                    window: None,
+                },
+                Box::new(move |_, a| told.borrow_mut().push(a)),
+            )
+        };
+        assert!(start(&out));
+        assert!(!start(&out), "one drag at a time");
+        assert!(out.end(&engine, Some(DropAction::Copy)));
+        assert!(!out.end(&engine, None));
+        assert!(start(&out));
+        out.cancel(&engine);
+        assert!(out.given_up());
+        assert!(!out.end(&engine, None));
+        assert_eq!(*told.borrow(), [Some(DropAction::Copy)]);
+        assert_eq!(
+            out.asked().map(|d| d.data.formats()),
+            Some(vec!["text/plain".to_owned()])
+        );
     }
 }

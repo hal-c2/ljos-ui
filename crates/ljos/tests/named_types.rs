@@ -120,5 +120,5 @@ fn the_paths_and_a_drag_from_elsewhere_have_facade_names() {
     platform.set_env(PathEnv::sandbox(env.home.clone(), "/"));
     // Nothing in the window takes a drop, so no one took the drag.
     let drag = ExternalDrag::Left;
-    assert!(!external_drag(&engine, &drag));
+    assert!(external_drag(&engine, &drag).is_none());
 }

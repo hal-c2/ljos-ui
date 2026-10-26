@@ -87,8 +87,8 @@ pub use animation::{
 pub use context_menu::{ContextMenuHook, ContextMenuReason, register_context_menu};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
 pub use drop_area::{
-    DragData, DragEvent, DropArea, DropAreaDrag, IGNORE_ACTION, PlatformDrag, PlatformDragKind,
-    platform_drag, platform_drag_target,
+    DragActions, DragData, DragEvent, DropAction, DropActions, DropArea, DropAreaDrag,
+    IGNORE_ACTION, PlatformDrag, PlatformDragKind, platform_drag, platform_drag_target,
 };
 pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
