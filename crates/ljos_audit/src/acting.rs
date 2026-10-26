@@ -173,5 +173,10 @@ pub(crate) fn run(
             (check.run)(&mut act);
         }
     }
+    // Each instance of a delegate or a component says the same of the one
+    // place in the source that makes them all: one fix, one finding.
+    let mut seen = std::collections::HashSet::new();
+    act.out
+        .retain(|f| seen.insert((f.code, f.place.clone(), f.message.clone())));
     act.out
 }
