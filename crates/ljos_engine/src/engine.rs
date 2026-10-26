@@ -263,7 +263,7 @@ impl Engine {
         // scripts every one runs compiled while it is being set up.
         crate::js::compile_globals_ahead();
         let graph = Graph::with_options(Options {
-            equals: Value::change_equals,
+            equals: Value::write_equals,
             // Qt runs a handler that writes its own property again inside
             // itself until its script stack runs out, 835 runs deep on Qt
             // 6.11; a cycle that ends there ends here too.

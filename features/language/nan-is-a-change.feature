@@ -5,15 +5,14 @@
 # Found by ljos-fuzz (states), buckets warning:binding-loop(qt-only):load (a state change of a
 # NaN that reads a binding of itself) and value:onChanged:text, seed 101 (a NaN bound again
 # through Qt.binding) (see crates/ljos_fuzz/known/states.txt).
-# Backlog: Ljós's graph takes NaN for NaN when it asks whether a value changed
-# (Value::change_equals), which is bindings infrastructure.
+# Found again by ljos-fuzz (connections), seed 303, bucket value:onChanged:text (a NaN real
+# given itself).
 
 @qt-parity
 Feature: NaN given to a real that is NaN
   NaN is not equal to itself, so a real that is NaN and is given NaN again is told as a change,
   and a binding that gives it NaN through itself is a loop.
 
-  @backlog
   Scenario: Each NaN given to a NaN is told as a change
     Given the QML:
       """qml
@@ -31,7 +30,6 @@ Feature: NaN given to a real that is NaN
     When the method "run" of "root" is called
     Then the property "log" of "root" is "a;c;|c;"
 
-  @backlog
   Scenario: A state change that gives a NaN NaN through a binding of it is a loop
     Given the QML:
       """qml
@@ -47,7 +45,6 @@ Feature: NaN given to a real that is NaN
     When the method "run" of "root" is called
     Then the log has a warning matching "Binding loop detected for property .a."
 
-  @backlog
   Scenario: A NaN bound again through Qt.binding is told as a change
     Given the QML:
       """qml

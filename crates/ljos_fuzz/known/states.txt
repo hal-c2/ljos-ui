@@ -20,11 +20,6 @@ warning:other(ljos-only):<Unknown_File>:_QML_StateGroup:_Can'      a when a tran
 warning:assign(ljos-only):Unable_to_assign_QString_to_int      the item's own binding, worked out between one state's change and another's (features/states/binding-over-value.feature)
 warning:binding-loop(ljos-only):step-set      a state's binding that reads its property, worked out from the default between one state's change and another's (features/states/binding-over-value.feature)
 
-# NaN is not equal to itself (features/language/nan-is-a-change.feature, backlog).
-value:onChanged:text      Qt tells more changes: NaN bound again through Qt.binding (features/language/nan-is-a-change.feature)
-warning:binding-loop(qt-only):load      NaN given to a NaN is a change, so a change giving it NaN through a binding of it is a loop (features/language/nan-is-a-change.feature)
-warning:binding-loop(qt-only):step-set      a state's binding that gives its property NaN through itself is a loop to Qt (features/language/nan-is-a-change.feature)
-
 # Qt's own quirk, which Ljós is not to copy: a `when` that a change of its state makes false
 # again sends Qt round the loop, and Ljós stops the loop and says so.
 warning:binding-loop(qt-only):when      a when its own state makes false is a loop to Qt

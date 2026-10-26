@@ -1207,8 +1207,18 @@ impl Value {
         self.same_kind_equals(other)
     }
 
-    /// Change detection for the reactive graph: `===` except that NaN
-    /// equals NaN.
+    /// Whether a property given `other` over `self` is told as changed:
+    /// `===`, so NaN given to NaN is a change (qml6), but an invalid colour
+    /// or an unwritten font given its like is not.
+    pub fn write_equals(&self, other: &Value) -> bool {
+        if let (Some(a), Some(b)) = (self.as_number(), other.as_number()) {
+            return a == b;
+        }
+        self.change_equals(other)
+    }
+
+    /// Change detection for what is not a property's write: `===` except
+    /// that NaN equals NaN.
     pub fn change_equals(&self, other: &Value) -> bool {
         if let (Some(a), Some(b)) = (self.as_number(), other.as_number()) {
             return a == b || (a.is_nan() && b.is_nan());
