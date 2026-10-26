@@ -2646,17 +2646,12 @@ pub(crate) fn run<M: Send + 'static>(
             }
         })
     });
-    let (none, out) = {
-        let drags = desktop.drags.borrow();
-        (
-            drags.is_none(),
-            drags.as_ref().is_some_and(drags::Drags::carries_out),
-        )
-    };
-    if none && wayland_drag::is_wayland(&host.display_handle()) {
+    // What follows drags in carries them out too.
+    let follows = desktop.drags.borrow().is_some();
+    if !follows && wayland_drag::is_wayland(&host.display_handle()) {
         crate::platform::note_no_wayland_drops(desktop.app.engine());
     }
-    if out {
+    if follows {
         let drag_out = Rc::new(drags::DragOut::new(Rc::clone(&desktop.drags)));
         ljos_platform::Platform::of(desktop.app.engine()).set_drag_out(Some(
             Rc::clone(&drag_out) as Rc<dyn ljos_platform::DragOutService>

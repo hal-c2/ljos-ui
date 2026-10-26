@@ -5,8 +5,8 @@
 //! they stay winit's: files only, placed where `QmlView` guesses.
 //!
 //! Drags out of the application go to the window system the same way,
-//! where the shell carries them ([`DragOut`]): on Wayland only. Elsewhere
-//! they stay in the window.
+//! where the shell carries them ([`DragOut`]): on Wayland and X11. On
+//! macOS and Windows they stay in the window.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -106,29 +106,24 @@ impl Drags {
         }
     }
 
-    /// Whether it carries drags out of the application.
-    pub(crate) fn carries_out(&self) -> bool {
-        matches!(self, Self::Wayland(_))
-    }
-
     fn start_out(&mut self, data: &DragData, actions: DragActions) -> bool {
         match self {
             Self::Wayland(drags) => drags.start_out(data, actions),
-            Self::X11(_) => false,
+            Self::X11(drags) => drags.start_out(data, actions),
         }
     }
 
     fn cancel_out(&mut self) {
         match self {
             Self::Wayland(drags) => drags.cancel_out(),
-            Self::X11(_) => {}
+            Self::X11(drags) => drags.cancel_out(),
         }
     }
 
     fn out_ended(&mut self) -> Option<Option<DropAction>> {
         match self {
             Self::Wayland(drags) => drags.out_ended(),
-            Self::X11(_) => None,
+            Self::X11(drags) => drags.out_ended(),
         }
     }
 }
