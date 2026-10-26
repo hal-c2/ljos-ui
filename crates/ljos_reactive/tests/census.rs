@@ -50,3 +50,29 @@ fn the_census_counts_values_bindings_effects_and_scopes() {
     );
     assert_eq!(g.len(), 0);
 }
+
+/// A page made while the one it replaces is still there doubles the
+/// nodes for a moment; once the old one goes, the room its nodes had
+/// goes too, and the page after reuses the low room again.
+#[test]
+fn the_room_of_a_page_replaced_goes_with_it() {
+    fn page(g: &Graph<i64>) -> ljos_reactive::ScopeId {
+        let s = g.create_scope(g.root()).unwrap();
+        for i in 0..20_000 {
+            let a = g.property(s, i).unwrap();
+            g.binding(s, 0, move |g| g.get(a) + 1).unwrap();
+        }
+        s
+    }
+    let g = Graph::new();
+    let base = g.bytes();
+    let mut shown = page(&g);
+    let one = g.bytes() - base;
+    for _ in 0..3 {
+        let next = page(&g);
+        g.dispose_scope(std::mem::replace(&mut shown, next))
+            .unwrap();
+        let held = g.bytes() - base;
+        assert!(held < one * 5 / 4, "{held} bytes held for a page of {one}");
+    }
+}

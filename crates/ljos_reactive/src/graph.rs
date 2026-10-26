@@ -9,6 +9,8 @@ use std::rc::Rc;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 
+use crate::slots::Slots;
+
 use crate::types::{
     BindingFn, Census, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
     OverrideValue, Provenance, ReactiveError, Reader, RestoreMode, ScopeId, Stats, WriteKind,
@@ -308,7 +310,7 @@ struct Frame {
 }
 
 struct Inner<V> {
-    nodes: SlotMap<NodeId, Node<V>>,
+    nodes: Slots<NodeId, Node<V>>,
     /// [`Graph::set_node_data`]'s tags, beside the nodes: few nodes have
     /// one, and every node would pay for the room.
     tags: HashMap<NodeId, u64>,
@@ -597,7 +599,7 @@ impl<V: Clone + 'static> Graph<V> {
         let root = scopes.insert(Scope::new(None, false));
         Graph {
             inner: RefCell::new(Inner {
-                nodes: SlotMap::with_key(),
+                nodes: Slots::new(),
                 tags: HashMap::new(),
                 scopes,
                 root,
@@ -1188,7 +1190,7 @@ impl<V: Clone + 'static> Graph<V> {
         let mut dead = {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
-            let stays = |nodes: &SlotMap<NodeId, Node<V>>, m: NodeId| {
+            let stays = |nodes: &Slots<NodeId, Node<V>>, m: NodeId| {
                 nodes.get(m).is_some_and(|o| match going {
                     // A node never changes scope, so the scope says which go.
                     Going::Scope(scope) => o.scope != scope,
@@ -1234,7 +1236,7 @@ impl<V: Clone + 'static> Graph<V> {
                 let kind = std::mem::replace(&mut node.kind, Kind::Effect(None));
                 dead.push((kind, node.value.take()));
                 // What is left of it runs no user code when dropped.
-                i.nodes.remove(n);
+                i.nodes.delete(n);
                 if has_tags {
                     i.tags.remove(&n);
                 }
@@ -2319,7 +2321,7 @@ impl<V: Clone + 'static> Graph<V> {
     /// Costs O(graph); meant for tests and debug builds.
     pub fn check_invariants(&self) -> Result<(), String> {
         let i = self.inner.borrow();
-        for (id, node) in &i.nodes {
+        for (id, node) in i.nodes.iter() {
             for (idx, e) in node.sources.iter().enumerate() {
                 let src = i
                     .nodes
@@ -2431,7 +2433,7 @@ impl<V: Clone + 'static> Graph<V> {
             .map(|l| l.capacity() * id)
             .sum::<usize>()
             + i.dead_nodes.capacity() * std::mem::size_of::<(Kind<V>, Option<V>)>();
-        i.nodes.capacity() * std::mem::size_of::<Node<V>>()
+        i.nodes.bytes()
             + i.scopes.capacity() * std::mem::size_of::<Scope>()
             + i.tags.capacity() * (id + 8)
             + nodes
@@ -3035,11 +3037,7 @@ enum Going<'a> {
 /// Removes `src.observers[at]` and repairs the back-index of the entry that
 /// the swap moved into its place. Returns the removed entry. The mirror
 /// entry in the observer's `sources` is the caller's to remove.
-fn drop_observer_slot<V>(
-    nodes: &mut SlotMap<NodeId, Node<V>>,
-    src: NodeId,
-    at: u32,
-) -> Option<Edge> {
+fn drop_observer_slot<V>(nodes: &mut Slots<NodeId, Node<V>>, src: NodeId, at: u32) -> Option<Edge> {
     let list = &mut nodes.get_mut(src)?.observers;
     if at as usize >= list.len() {
         debug_assert!(false, "observer slot out of range");
@@ -3058,7 +3056,7 @@ fn drop_observer_slot<V>(
 }
 
 /// The mirror of [`drop_observer_slot`] for `obs.sources[at]`.
-fn drop_source_slot<V>(nodes: &mut SlotMap<NodeId, Node<V>>, obs: NodeId, at: u32) -> Option<Edge> {
+fn drop_source_slot<V>(nodes: &mut Slots<NodeId, Node<V>>, obs: NodeId, at: u32) -> Option<Edge> {
     let list = &mut nodes.get_mut(obs)?.sources;
     if at as usize >= list.len() {
         debug_assert!(false, "source slot out of range");

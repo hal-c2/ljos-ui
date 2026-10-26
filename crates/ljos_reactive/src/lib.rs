@@ -109,6 +109,7 @@
 //! ```
 
 mod graph;
+mod slots;
 mod types;
 
 pub use graph::{Changed, Graph, MAX_JOURNAL, ScopeHandle};
