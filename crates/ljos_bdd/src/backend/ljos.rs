@@ -873,7 +873,7 @@ impl Host for Hosting<'_> {
             return;
         }
         for i in 0..self.windows.len() {
-            while let Some(new) = swaps.take(self.windows[i]) {
+            while let Some(new) = swaps.take(engine, self.windows[i]) {
                 let old = self.windows[i];
                 ljos_quick::roots::adopt(engine, old, new);
                 self.windows[i] = new;

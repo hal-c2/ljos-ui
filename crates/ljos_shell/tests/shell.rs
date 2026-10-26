@@ -185,6 +185,50 @@ fn a_panicking_message_is_a_fault_and_the_rest_are_handled() {
     assert_eq!(*handled.borrow(), vec![100, 101, 102]);
 }
 
+/// A root asked for and destroyed before the host makes the change is
+/// dropped: the window keeps the root it shows (issue #141).
+#[test]
+fn a_root_destroyed_before_the_swap_leaves_the_one_shown() {
+    let current = Rc::new(Cell::new(None::<ObjectId>));
+    let root = current.clone();
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(320.0, 200.0))
+        .build_eframe(move |cc| {
+            ShellApp::new(
+                &cc.egui_ctx,
+                &ShellConfig::default(),
+                Arc::new(SystemClock::new()),
+                move |s: &mut Setup<'_, f64>| {
+                    let e = s.engine();
+                    let first = e
+                        .create_native(Item::default(), None)
+                        .map_err(|e| e.to_string())?;
+                    e.complete(first).map_err(|e| e.to_string())?;
+                    root.set(Some(first));
+                    s.on_message(move |e, _| {
+                        let old = root.get().unwrap();
+                        let next = e.create_native(Item::default(), None).unwrap();
+                        e.complete(next).unwrap();
+                        replace_root(e, old, next).unwrap();
+                        e.destroy(next);
+                    });
+                    Ok(first)
+                },
+            )
+            .unwrap()
+        });
+    h.run();
+    let first = current.get().unwrap();
+    h.state().handle().send(1.0).unwrap();
+    h.run();
+    let e = h.state().engine();
+    assert!(e.is_alive(first));
+    assert_eq!(h.state().view().scene().root(), Some(first));
+    // It is the shown root again: another may take its window.
+    let next = e.create_native(Item::default(), None).unwrap();
+    assert_eq!(replace_root(e, first, next), Ok(()));
+}
+
 /// The application makes its interface again from a handler and puts the
 /// new root where the old one was (issue #100's repro, with a message for
 /// the click).

@@ -53,7 +53,7 @@ impl<M> ShellApp<M> {
             return;
         }
         while let Some(old) = self.view.scene().root()
-            && let Some(new) = swaps.take(old)
+            && let Some(new) = swaps.take(&engine, old)
         {
             let shown = self
                 .view

@@ -7,9 +7,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos_engine::{Engine, ObjectId};
+use ljos_engine::{Engine, ObjectFlags, ObjectId};
 
 use crate::Item;
+use crate::item::is_item;
 
 /// Why [`replace_root`] refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -20,6 +21,8 @@ pub enum RootError {
     NotShown(ObjectId),
     #[error("{0:?} is shown already")]
     Shown(ObjectId),
+    #[error("{0:?} is not an Item, which a window shows")]
+    NotAnItem(ObjectId),
 }
 
 /// The roots the hosts of an engine show, and the replacements asked for
@@ -71,18 +74,29 @@ impl RootSwaps {
     }
 
     /// The root asked to go in the window of `root`, if one was. The host
-    /// calls [`adopt`] and puts it in the window, then destroys `root`.
-    pub fn take(&self, root: ObjectId) -> Option<ObjectId> {
-        let mut pending = self.pending.borrow_mut();
-        let at = pending.iter().position(|(old, _)| *old == root)?;
-        Some(pending.remove(at).1)
+    /// calls [`adopt`] and puts it in the window, then destroys `root`. One
+    /// destroyed since it was asked for is dropped, and `root` stays.
+    pub fn take(&self, engine: &Engine, root: ObjectId) -> Option<ObjectId> {
+        let new = {
+            let mut pending = self.pending.borrow_mut();
+            let at = pending.iter().position(|(old, _)| *old == root)?;
+            pending.remove(at).1
+        };
+        if lasts(engine, new) {
+            return Some(new);
+        }
+        self.shows(Some(new), root);
+        None
     }
 
     fn ask(&self, engine: &Engine, old: ObjectId, new: ObjectId) -> Result<(), RootError> {
-        for o in [old, new] {
-            if !engine.is_alive(o) {
+        for (o, alive) in [(old, engine.is_alive(old)), (new, lasts(engine, new))] {
+            if !alive {
                 return Err(RootError::Gone(o));
             }
+        }
+        if !is_item(engine, new) {
+            return Err(RootError::NotAnItem(new));
         }
         {
             let mut shown = self.shown.borrow_mut();
@@ -124,10 +138,18 @@ impl RootSwaps {
 /// takes the platform window `old` had, and a plain item fills it.
 ///
 /// # Errors
-/// `old` or `new` is gone, `old` is no root a window shows, or `new` is
-/// shown already.
+/// `old` or `new` is gone, `new` is not an `Item`, `old` is no root a
+/// window shows, or `new` is shown already.
 pub fn replace_root(engine: &Engine, old: ObjectId, new: ObjectId) -> Result<(), RootError> {
     RootSwaps::of(engine).ask(engine, old, new)
+}
+
+/// Whether `obj` is alive and not to be destroyed: a root that is goes
+/// from the window as soon as it is shown.
+pub(crate) fn lasts(engine: &Engine, obj: ObjectId) -> bool {
+    engine
+        .flags(obj)
+        .is_some_and(|f| !f.contains(ObjectFlags::PENDING_DELETE))
 }
 
 /// What a host does before it shows `new` where `old` was: `new` takes the

@@ -1008,11 +1008,11 @@ impl QuickScene {
     }
 
     /// Shows `root` and everything under it, replacing any previous root.
+    /// A root it cannot show leaves the scene as it was, the previous root
+    /// shown.
     pub fn set_root(&mut self, engine: &Engine, root: ObjectId) -> Result<(), EngineError> {
-        if let Some(old) = self.root.take() {
-            self.unadopt(engine, old, true);
-            crate::focus::tree::remove_window(engine, old);
-            crate::keys::reset_shortcuts(engine, old);
+        if !crate::roots::lasts(engine, root) {
+            return Err(EngineError::dead(root));
         }
         if !is_item(engine, root) {
             return Err(EngineError::WrongType {
@@ -1023,7 +1023,33 @@ impl QuickScene {
             });
         }
         let top = self.tree.root();
-        self.adopt(engine, root, None, top, 0)?;
+        let old = self.root;
+        // The new tree is adopted beside the old one and the old one goes
+        // only once it is: undoing a part-made adoption puts nothing of the
+        // old one back. Where one tree holds the other, the old one goes
+        // first, as the new one shows some of what it shows.
+        let nested =
+            old.is_some_and(|o| self.items.contains(root) || shown_within(engine, o, root));
+        if nested && let Some(old) = self.root.take() {
+            self.forget_root(engine, old);
+        }
+        if let Err(err) = self.adopt(engine, root, None, top, 0) {
+            self.unadopt(engine, root, true);
+            if nested && let Some(old) = old {
+                let going = self.going.take();
+                if self.adopt(engine, old, None, top, 0).is_ok() {
+                    self.root = Some(old);
+                    crate::focus::tree::add_window(engine, old);
+                } else {
+                    self.unadopt(engine, old, true);
+                }
+                self.going = going;
+            }
+            return Err(err);
+        }
+        if let Some(old) = self.root.take() {
+            self.forget_root(engine, old);
+        }
         if !std::mem::replace(&mut self.watching_shown, true) {
             let shared = Rc::downgrade(&self.shared);
             crate::animation::shown::watch(engine, move |e, obj, prop| {
@@ -1049,6 +1075,12 @@ impl QuickScene {
             }
         });
         Ok(())
+    }
+
+    fn forget_root(&mut self, engine: &Engine, old: ObjectId) {
+        self.unadopt(engine, old, true);
+        crate::focus::tree::remove_window(engine, old);
+        crate::keys::reset_shortcuts(engine, old);
     }
 
     /// [`QuickScene::set_root`] for a host that destroys the old root
@@ -3972,6 +4004,18 @@ fn fingerprint(snap: &FrameSnapshot) -> u64 {
 }
 
 /// Whether `root` is `obj` or owns it, however deep.
+/// Whether `obj` is `root` or shown under it.
+fn shown_within(engine: &Engine, obj: ObjectId, root: ObjectId) -> bool {
+    let mut at = Some(obj);
+    while let Some(o) = at {
+        if o == root {
+            return true;
+        }
+        at = engine.visual_parent(o);
+    }
+    false
+}
+
 fn owned_by(engine: &Engine, obj: ObjectId, root: ObjectId) -> bool {
     let mut at = Some(obj);
     while let Some(o) = at {
