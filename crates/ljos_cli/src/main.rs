@@ -12,6 +12,7 @@ mod attach;
 mod bench;
 mod check;
 mod demand;
+mod design;
 mod fmt;
 #[cfg(feature = "dhat-heap")]
 mod heap;
@@ -96,6 +97,11 @@ enum Command {
     /// JSON-RPC message, posted to the inspector's port or Unix socket.
     /// The application is one started with `ljos run --mcp`.
     Attach(attach::Attach),
+    /// The module Ljos.Design: `export` writes it as QML files.
+    Design {
+        #[command(subcommand)]
+        command: design::DesignCommand,
+    },
     /// What `ljos bench` starts an application through.
     #[command(hide = true)]
     BenchGate(bench::Gate),
@@ -155,6 +161,7 @@ fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Command::I18n { command } => i18n::run(command),
+        Command::Design { command } => design::run(command),
         Command::Check(check) => check.run(),
         Command::Run(run) => run.run(),
         Command::Observe(observe) => observe.run(),

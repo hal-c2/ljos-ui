@@ -19,6 +19,8 @@ ljos_mcp_author = { path = "../ljos_mcp_author" }
 # `ljos i18n extract`: the compiler finds the texts, ljos_i18n writes `.ts`.
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_i18n = { path = "../ljos_i18n" }
+# `ljos design export` writes the files of Ljos.Design.
+ljos_design = { path = "../ljos_design" }
 # `ljos run`: the desktop shell, with the dev loop (the watcher and the
 # reload driver) and, for `--mcp`, the read-only inspector. A development
 # tool may link them; a shipped application takes the shell without `dev`
