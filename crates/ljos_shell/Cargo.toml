@@ -60,11 +60,13 @@ zbus.workspace = true
 blocking.workspace = true
 
 # The application's badge: the Dock tile. The workspace's accessibility
-# display options and their change notification.
+# display options and their change notification. Drags from other
+# applications (src/appkit_drag.rs): the destination's methods on the
+# content view, and the dragging pasteboard.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSAccessibility"] }
-objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "block2"] }
+objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSAccessibility", "NSDragging", "NSPasteboard", "NSPasteboardItem", "NSView"] }
+objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "block2", "NSArray", "NSData", "NSGeometry"] }
 block2.workspace = true
 
 # What the system prefers: system parameters, the Accessibility key, and a
@@ -80,6 +82,20 @@ windows-sys = { workspace = true, features = [
   "Win32_UI_Accessibility",
   "Win32_UI_WindowsAndMessaging",
 ] }
+# Drags from other applications (src/win32_drag.rs): an `IDropTarget` in
+# place of winit's, and the source's `IDataObject`.
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_SystemServices",
+  "Win32_UI_Shell",
+] }
+windows-core = { workspace = true }
 
 # GL on EGL (src/gl.rs; build.rs says where): wgpu's GL present copies
 # every frame once more, which on a software rasteriser is most of what a

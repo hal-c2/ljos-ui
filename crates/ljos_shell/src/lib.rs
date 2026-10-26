@@ -31,6 +31,8 @@ pub use ljos_dev::{TopRow, TopView};
 #[cfg(feature = "mcp")]
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
+#[cfg(target_os = "macos")]
+mod appkit_drag;
 mod badge;
 mod cpu;
 mod desktop;
@@ -44,6 +46,7 @@ mod gl;
 mod gl_mesh;
 #[cfg(gl_painter)]
 mod gl_shader;
+mod native_drag;
 mod network;
 mod platform;
 mod present;
@@ -58,6 +61,8 @@ mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
 mod test_bus;
 mod wayland_drag;
+#[cfg(target_os = "windows")]
+mod win32_drag;
 mod windows;
 mod x11_drag;
 

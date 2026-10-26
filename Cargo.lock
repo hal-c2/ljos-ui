@@ -4329,6 +4329,8 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing-subscriber",
  "wayland-client",
+ "windows",
+ "windows-core",
  "windows-sys 0.52.0",
  "x11rb",
  "zbus",

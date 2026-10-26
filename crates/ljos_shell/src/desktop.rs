@@ -1212,8 +1212,10 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(window) = host.window(id).cloned() else {
             return;
         };
-        if let Some(drags) = self.drags.borrow().as_ref() {
-            drags.window_opened(&window);
+        if let Some(drags) = self.drags.borrow().as_ref()
+            && let Err(why) = drags.window_opened(&window)
+        {
+            engine.log(LogLevel::Warning, CATEGORY, why);
         }
         let display = host.event_loop().owned_display_handle();
         if self.gpu.is_none() {
