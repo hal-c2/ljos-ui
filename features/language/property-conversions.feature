@@ -76,7 +76,6 @@ Feature: A value a binding gives a property of another type
       | size  | Qt.size(0, 0)  | QSizeF  |
 
   # Bucket value:var(array):pair.
-  @backlog
   Scenario: A real property keeps the sign of zero
     Given the QML:
       """qml
@@ -88,6 +87,26 @@ Feature: A value a binding gives a property of another type
       }
       """
     Then the property "inverse" of "root" is "-Infinity"
+
+  Scenario: A script's -0 keeps its sign in a real, a var and a list of reals
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property real r
+        property var v
+        property list<real> l
+        property string seen
+        function write() {
+          const zero = -0
+          r = zero; v = zero; l = [zero]; l.push(zero)
+          seen = [1 / r, 1 / v, 1 / l[0], 1 / l[1]].join(" ")
+        }
+      }
+      """
+    When the method "write" of "root" is called
+    Then the property "seen" of "root" is "-Infinity -Infinity -Infinity -Infinity"
 
   # Bucket value:var(number):step-emit(color.hslLightness).
   @backlog

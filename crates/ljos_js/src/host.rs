@@ -1032,6 +1032,10 @@ impl<'js> Scope<'js> {
             JsValue::Undefined => Value::new_undefined(ctx.clone()),
             JsValue::Null => Value::new_null(ctx.clone()),
             JsValue::Bool(b) => Value::new_bool(ctx.clone(), *b),
+            // `new_number` makes -0 the int 0, which has no sign.
+            JsValue::Number(n) if *n == 0.0 && n.is_sign_negative() => {
+                Value::new_float(ctx.clone(), *n)
+            }
             JsValue::Number(n) => Value::new_number(ctx.clone(), *n),
             JsValue::String(s) => rquickjs::String::from_str(ctx.clone(), s)?.into_value(),
             JsValue::Array(items) => {
@@ -2478,8 +2482,8 @@ unsafe fn raw_plain<T>(
 #[allow(clippy::float_cmp)]
 fn raw_number(n: f64) -> rquickjs::qjs::JSValue {
     use rquickjs::qjs;
-    // As `Value::new_number` makes it.
-    if n == f64::from(n as i32) {
+    // As `Value::new_number` makes it, but for -0, which an int cannot be.
+    if n == f64::from(n as i32) && !(n == 0.0 && n.is_sign_negative()) {
         qjs::JS_MKVAL(qjs::JS_TAG_INT, n as i32)
     } else {
         qjs::JS_NewFloat64(n)
