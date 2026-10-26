@@ -109,6 +109,8 @@ enter: Transition { NumberAnimation { property: "opacity"; to: 1; duration: 200;
 
 Sources: https://animations.dev/learn/animation-theory/the-easing-blueprint , https://m3.material.io/styles/motion/easing-and-duration/applying-easing-and-duration
 
+Checked by: the runtime audit, for popups the application declared that are open: it closes each one and opens it again with motion unreduced, reads its opacity, scale and place at every frame of the way in on the scene's clock, and reports a way in that is less than `limits::motion::EASE_IN_HALFWAY_MAX` of the way at half its time. So a curve bound to a setting is found too. Popups that are closed are not opened: that would run the application's code.
+
 <a id="motion-default-easing"></a>
 ### `motion-default-easing`
 
@@ -137,6 +139,8 @@ Drawer { enter: Transition { NumberAnimation { property: "position"; duration: 3
 
 Sources: https://www.nngroup.com/articles/animation-duration/ , https://m3.material.io/styles/motion/easing-and-duration/tokens-specs , https://lawsofux.com/doherty-threshold/
 
+Checked by: the runtime audit, for the long half: it closes and opens again each open popup the application declared (`limits::motion::STANDARD_MAX_MS` each way) and checks and unchecks each checkable control (`limits::motion::MICRO_MAX_MS`), with motion unreduced, and times each animation the application declared that the change started on the scene's clock, one display frame given to the application. A duration bound to a property or a model is found as well as a written one. The short half is the source's: frames of the display cannot tell 20 ms from 40.
+
 <a id="motion-scale-from-zero"></a>
 ### `motion-scale-from-zero`
 
@@ -153,6 +157,8 @@ ParallelAnimation {
 ```
 
 Sources: https://github.com/emilkowalski/skills , https://interfaces.rauno.me/
+
+Checked by: the runtime audit, for popups the application declared that are open: it closes each one and opens it again with motion unreduced and reads the scale it is drawn at every frame of the way in. The smallest scale shown is what the user saw, whatever `from` is bound to.
 
 <a id="motion-bounce"></a>
 ### `motion-bounce`
@@ -224,6 +230,8 @@ delegate: ItemDelegate {
 
 Sources: https://github.com/emilkowalski/skills , https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
 
+Checked by: the runtime audit, on the rows a view or a `Repeater` made: every `PauseAnimation` one declaration made is a group, and with three or more distinct durations the step is the smallest gap between them and the wait the largest less the smallest. A delay that comes from the model is found as well as `index * 120`.
+
 <a id="motion-frequent"></a>
 ### `motion-frequent`
 
@@ -237,6 +245,8 @@ ListView { highlightMoveDuration: 0 }
 ```
 
 Sources: https://github.com/emilkowalski/skills , https://interfaces.rauno.me/ , https://developer.apple.com/design/human-interface-guidelines/motion
+
+Checked by: the runtime audit, which does what a user does many times a day with motion unreduced: it gives each Tab stop keyboard focus, and moves each tab bar the application declared to another tab and back, and times each animation the application declared that this started, on the scene's clock. A `Behavior` on a colour focus changes, or a page that slides on each tab switch, is found whatever its duration is bound to. Focus and the tabs are put back. A list's current row is not moved, so `highlightMoveDuration` is the source's.
 
 <a id="motion-timer-driven"></a>
 ### `motion-timer-driven`
@@ -257,7 +267,7 @@ Sources: https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions
 <a id="motion-reduced-ignored"></a>
 ### `motion-reduced-ignored`
 
-**Hint, static.** An endless animation (`loops: Animation.Infinite`) moves something (`x`, `y`, `scale`, `rotation`, a size) and nothing in it reads `Qt.styleHints.accessibility.motionPreference`. Ljós keeps an endless run going under reduced motion, as a busy indicator must; on Qt the application alone decides, so endless decoration keeps moving for someone who asked for less motion (WCAG 2.3.3). Gate it, or animate opacity instead.
+**Hint, static and runtime.** An endless animation (`loops: Animation.Infinite`) moves something (`x`, `y`, `scale`, `rotation`, a size) and nothing in it reads `Qt.styleHints.accessibility.motionPreference`. Ljós keeps an endless run going under reduced motion, as a busy indicator must; on Qt the application alone decides, so endless decoration keeps moving for someone who asked for less motion (WCAG 2.3.3). Gate it, or animate opacity instead.
 
 ```qml
 // Bad: a badge that bobs for ever
@@ -273,10 +283,12 @@ SequentialAnimation on y { loops: Animation.Infinite
 
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html , https://doc.qt.io/qt-6/qaccessibilityhints.html#motionPreference-prop , https://web.dev/articles/prefers-reduced-motion
 
+Checked by: the runtime audit as well, which turns reduced motion on, lets what was running come to rest, and frames the scene for `limits::audit::ANIMATION_WAIT_MS` on its clock: an item the application declared whose place, size, scale or rotation still changes is reported, topmost first. A fade or a colour may go on, and so may a `BusyIndicator` or an indeterminate `ProgressBar` and what is inside them. A `Timer` runs on the engine's clock, which the audit does not move: that is `motion-timer-driven`'s, in the source.
+
 <a id="motion-dropped-frames"></a>
 ### `motion-dropped-frames`
 
-**Warning, runtime.** An animation took longer than `limits::motion::FRAME_BUDGET_MS` for some frames while it ran. Stutter reads as slowness, whatever the duration says. Profile with `app_frames`.
+**Hint, runtime.** An animation took longer than `limits::motion::FRAME_BUDGET_MS` for some frames while it ran. Stutter reads as slowness, whatever the duration says. Profile with `app_frames`.
 
 ```qml
 // Bad: a blur re-rendered every frame of a slide
@@ -284,6 +296,8 @@ NumberAnimation { target: blurredPanel; property: "width"; duration: 250 }
 // Good: slide the finished panel
 NumberAnimation { target: blurredPanel; property: "x"; duration: 250; easing.type: Easing.OutCubic }
 ```
+
+Checked by: the runtime audit, which times the scene's own work for each frame (bindings, script, layout, the paint list) while an animation the application declared runs: what runs at rest, for half a second of the scene's clock, and each open popup's way in. The middle frame over `limits::motion::FRAME_BUDGET_MS` is reported. It is a hint because it is measured on the machine that runs the audit, in the build it runs, and painting to the screen is not counted; the message says which build. `app_frames` measures a running application on its device.
 
 Sources: https://web.dev/articles/rendering-performance , https://web.dev/articles/animations-guide
 
@@ -334,9 +348,22 @@ Menu { transformOrigin: Popup.TopLeft
 
 Sources: https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#transformOrigin-prop , https://animations.dev/learn/animation-theory/the-easing-blueprint
 
-## Not checked yet
+<a id="motion-theme-switch"></a>
+### `motion-theme-switch`
 
-- **No motion on a theme switch** (proposed `motion-theme-switch`): colours that animate while the theme changes make every surface pulse.
+**Hint, runtime.** Switching between light and dark animates a colour for longer than `limits::motion::THEME_SWITCH_MAX_MS`, or shows a colour on the way that is neither theme's. A switch is done every day, often by the system at dusk: a window that cross-fades for half a second makes every surface pulse, and a card that goes through black on its way from one light grey to another flashes.
+
+```qml
+// Bad: the whole window cross-fades
+background: Rectangle { color: page.palette.window; Behavior on color { ColorAnimation { duration: 600 } } }
+// Good: the new colours at once
+background: Rectangle { color: page.palette.window }
+```
+
+Checked by: the runtime audit, which switches the system's colour scheme to the other one and back, as a user does from the desktop, with motion unreduced. It reports each animation the application declared that the switch started and that runs longer than the limit, and each rectangle the application declared whose lightness (OKLab L) on the way goes past both the old and the new colour by more than `limits::motion::THEME_FLASH_MIN_L`.
+
+Sources: https://developer.apple.com/design/human-interface-guidelines/dark-mode , https://www.w3.org/WAI/WCAG22/Understanding/three-flashes-or-below-threshold.html , https://github.com/emilkowalski/skills
+
 
 ## Sources
 

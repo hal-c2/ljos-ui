@@ -28,6 +28,14 @@ mod focus_indicator_missing;
 mod focus_order;
 mod focus_popup_stranded;
 mod focus_shortcut_under_modal;
+mod motion_dropped_frames;
+mod motion_duration;
+mod motion_ease_in_enter;
+mod motion_frequent;
+mod motion_reduced_ignored;
+mod motion_scale_from_zero;
+mod motion_stagger;
+mod motion_theme_switch;
 
 use crate::acting::Acting;
 use crate::cx::Cx;
@@ -236,6 +244,10 @@ pub(crate) const CHECKS: &[Check] = &[
         codes: &["focus-arrow-keys"],
         run: focus_arrow_keys::check,
     },
+    Check {
+        codes: &["motion-stagger"],
+        run: motion_stagger::check,
+    },
 ];
 
 /// The checks that act on the scene to see what it does (focus an item,
@@ -261,6 +273,34 @@ pub(crate) const ACTS: &[Acting] = &[
     Acting {
         codes: &["focus-escape-dismiss"],
         run: focus_escape_dismiss::check,
+    },
+    Acting {
+        codes: &["motion-duration"],
+        run: motion_duration::check,
+    },
+    Acting {
+        codes: &["motion-ease-in-enter"],
+        run: motion_ease_in_enter::check,
+    },
+    Acting {
+        codes: &["motion-scale-from-zero"],
+        run: motion_scale_from_zero::check,
+    },
+    Acting {
+        codes: &["motion-frequent"],
+        run: motion_frequent::check,
+    },
+    Acting {
+        codes: &["motion-theme-switch"],
+        run: motion_theme_switch::check,
+    },
+    Acting {
+        codes: &["motion-reduced-ignored"],
+        run: motion_reduced_ignored::check,
+    },
+    Acting {
+        codes: &["motion-dropped-frames"],
+        run: motion_dropped_frames::check,
     },
 ];
 

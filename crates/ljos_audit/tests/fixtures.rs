@@ -36,9 +36,38 @@ const KNOWN_MISSES: &[(&str, &str)] = &[
          away sees; the audit cannot tell the two apart, and the rule is an error",
     ),
     (
+        "motion-duration/flicker.bad.qml",
+        "an animation shorter than a frame of the display ends between two frames; the audit cannot time what it does not see, and the source says it",
+    ),
+    (
+        "motion-duration/micro.bad.qml",
+        "the animation runs on hover, and the audit moves no pointer",
+    ),
+    (
+        "motion-ease-in-enter/behavior.bad.qml",
+        "the `Behavior` runs when its opacity changes, which nothing in the scene does",
+    ),
+    (
+        "motion-ease-in-enter/state-shows.bad.qml",
+        "the panel shows in a state nothing enters; the audit enters no states, which would run the application's code",
+    ),
+    (
+        "motion-frequent/behavior.bad.qml",
+        "the row takes focus but is no Tab stop, and the audit gives focus only where Tab goes",
+    ),
+    (
+        "motion-frequent/highlight.bad.qml",
+        "the highlight moves when the current row changes, which the audit does not change in a list",
+    ),
+    (
         "layout-offscreen/ux-tabbar-overflow.bad.qml",
         "a tab bar wider than its tabs' room flicks, as Qt documents it; what can \
          be scrolled into view is left out of the rule",
+    ),
+    (
+        "motion-reduced-ignored/dial-spins.bad.qml",
+        "what spins is an `Item` that draws nothing: there is no movement on \
+         screen to see, and the static lint reads the animation",
     ),
 ];
 
@@ -167,6 +196,16 @@ fn run(source: &str, point: Option<MatrixPoint>) -> Result<Report, String> {
     Ok(audit(&e, &mut s, clock.now(), &options))
 }
 
+/// Whether the fixture's root is an item a viewer can show. A root
+/// `Popup` is a component only the source reads; the static lint holds it.
+fn root_is_item(path: &Path) -> bool {
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return true;
+    };
+    let e = engine();
+    load(&e, &source).map_or(true, |root| ljos_quick::is_item(&e, root))
+}
+
 /// What is wrong with one fixture, or nothing.
 fn check(path: &Path, code: &str) -> Option<String> {
     let source = match std::fs::read_to_string(path) {
@@ -236,6 +275,10 @@ fn every_runtime_fixture_gives_what_it_expects() {
             let id = format!("{code}/{}", name(file));
             if !implemented.contains(&code) {
                 pending.push(id);
+                continue;
+            }
+            if !root_is_item(file) {
+                pending.push(format!("{id} (the root is no item: the source's alone)"));
                 continue;
             }
             ran += 1;

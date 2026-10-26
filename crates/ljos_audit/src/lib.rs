@@ -26,6 +26,7 @@ mod cx;
 mod finding;
 mod focus_walk;
 mod matrix;
+mod motion_watch;
 mod pixels;
 pub mod rules;
 mod shift;

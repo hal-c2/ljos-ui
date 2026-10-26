@@ -5,11 +5,11 @@
 //!
 //! Each check puts back what it changed: focus where it was, with the
 //! reason it had, and a state as it was. What it cannot put back is the
-//! clock: to see an animation to its end the scene is framed later than
-//! `now`, so a `Timer` that was due in that time fires, as it would have
-//! for a user looking on. An animation the host starts afterwards takes
-//! its time from the host's clock again; the ones the audit started have
-//! ended by then.
+//! scene's clock: to see an animation to its end the scene is framed later
+//! than `now`. A `Timer` keeps the engine's clock, which the audit leaves
+//! alone, so none fires early. An animation the host starts afterwards
+//! takes its time from the host's clock again; the ones the audit started
+//! have ended by then.
 
 use std::time::Duration;
 

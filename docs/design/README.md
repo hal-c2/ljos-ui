@@ -97,7 +97,6 @@ Guidance below is in the pages, marked "not checked yet", with a proposed code f
 |---|---|---|
 | `color-complement-adjacent` | color.md | Two complementary hues at full chroma touch, and vibrate. |
 | `focus-busy-feedback` | interaction.md | An action that takes more than a second shows no busy state. |
-| `motion-theme-switch` | motion.md | Colours animate while the theme switches. |
 
 Guidance that no machine can check (what a toast says, how settings pages are titled, where status goes) is written without a code in content.md and interaction.md.
 
