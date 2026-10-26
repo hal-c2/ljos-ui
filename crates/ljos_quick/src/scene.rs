@@ -732,9 +732,6 @@ struct Record {
     /// for a Text by its polish effect, which reads all its paint does.
     painting: bool,
     content_effect: Option<GraphNode>,
-    /// A Row's or Column's polish effect, which is told of a change and
-    /// run again after each polish.
-    polish_effect: Option<GraphNode>,
     paint: Option<Paint>,
     size: kurbo::Size,
     /// The last geometry and place applied; the node's transform takes
@@ -1571,9 +1568,12 @@ impl QuickScene {
                 if !engine.is_alive(obj) {
                     continue;
                 }
-                let Some((kind, told)) =
-                    self.items.get(obj).map(|e| (e.class.kind, e.polish_effect))
-                else {
+                let Some((kind, told)) = self.items.get(obj).map(|e| {
+                    let told = matches!(e.class.kind, Kind::Row | Kind::Column)
+                        .then(|| e.effects.last().copied())
+                        .flatten();
+                    (e.class.kind, told)
+                }) else {
                     continue;
                 };
                 let journaled = engine.is_journaled().then(std::time::Instant::now);
@@ -1677,7 +1677,6 @@ impl QuickScene {
                 effects: SmallVec::new(),
                 painting: false,
                 content_effect: None,
-                polish_effect: None,
                 paint: None,
                 size: kurbo::Size::ZERO,
                 geom: None,
@@ -1702,7 +1701,6 @@ impl QuickScene {
         self.by_node.insert(node, obj);
 
         let mut effects = SmallVec::<[GraphNode; 8]>::new();
-        let mut polish = None;
         let shared = Rc::clone(&self.shared);
         let loader = class.loader;
         // Root-scoped: an effect scoped to `obj` dies with it silently, and
@@ -1736,8 +1734,10 @@ impl QuickScene {
                     }
                 },
             )?;
+            // Last, where `QuickScene::polish` finds it: a field of its
+            // own would make every item's record larger for the few
+            // positioners.
             effects.push(n);
-            polish = Some(n);
         } else if kind.polishes() {
             // A layout's own inputs say what changed (`layouts::read_inputs`).
             let shared = Rc::clone(&self.shared);
@@ -1745,7 +1745,6 @@ impl QuickScene {
         }
         if let Some(e) = self.items.get_mut(obj) {
             e.effects = effects;
-            e.polish_effect = polish;
         }
         self.a11y.adopt(engine, obj, kind == Kind::Text);
 
