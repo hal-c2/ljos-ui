@@ -41,6 +41,7 @@ value:step:text                     a value written to a property a Binding hold
 value:step:list-vs-number           a Binding of a list turned off: Qt leaves a var's array held, Ljós gives back what it had (features/bindings/writers-from-outside.feature, qt-diverges)
 value:step:list-vs-string           a Binding of a list turned off: Qt leaves a var's array held, Ljós gives back what it had (features/bindings/writers-from-outside.feature, qt-diverges)
 value:step:list-vs-bool             a Binding of a list turned off: Qt leaves a var's array held, Ljós gives back what it had (features/bindings/writers-from-outside.feature, qt-diverges)
+value:onChanged+onCompleted:text    a Binding of an object turned off: Qt leaves a var's object held and tells nothing, Ljós gives back what it had (features/bindings/writers-from-outside.feature, qt-diverges)
 value:load:list-vs-string           a Binding of a list on while made and off once another Binding holds what its when reads (features/bindings/writers-from-outside.feature, qt-diverges)
 value:load:null-qt                  an explicit PropertyChanges of a list gives a list of nulls on Qt
 value:step:null-qt                  an explicit PropertyChanges of a list gives a list of nulls on Qt
@@ -70,6 +71,7 @@ warning:binding-loop(qt-only):*     a Binding whose when reads what it holds, or
 warning:other(ljos-only):QML_Binding:_property_"_"_handlers_re-ran_N_times_in_one_update   a Binding whose when reads what it holds loops
 warning:other(ljos-only):QML_Case:_property_"_"_handlers_re-ran_N_times_in_one_update      a Binding whose when reads what it holds loops
 warning:other(ljos-only):QML_Item:_property_"_"_handlers_re-ran_N_times_in_one_update      a Binding whose when reads what it holds loops
+warning:other(ljos-only):QML_QtObject:_property_"_"_handlers_re-ran_N_times_in_one_update  a Binding whose when reads what it holds loops
 value:step:color-vs-bool            a Binding whose when reads what it holds: where Qt stops the loop, Ljós stops it at another value
 value:load:number                   a Binding whose when reads a binding of what it holds: where Qt stops the loop, Ljós stops it at another value
 
