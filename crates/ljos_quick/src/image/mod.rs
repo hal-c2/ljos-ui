@@ -450,7 +450,7 @@ fn warn(e: &Engine, me: ObjectId, reason: &LoadError) {
     e.log(
         LogLevel::Warning,
         "qml",
-        format!("{at}QML {name}: {reason}"),
+        format!("{at}QML {}: {reason}", e.warning_type_name(me, name)),
     );
 }
 

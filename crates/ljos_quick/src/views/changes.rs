@@ -110,7 +110,10 @@ impl ViewHost for Host {
             e.log(
                 LogLevel::Warning,
                 "qml",
-                format!("QML {}: Delegate must be of Item type", type_name(e, view)),
+                format!(
+                    "QML {}: Delegate must be of Item type",
+                    e.warning_type_name(view, type_name(e, view))
+                ),
             );
             return;
         }

@@ -266,12 +266,13 @@ impl ListState {
     }
 
     fn warn(&self, engine: &Engine, what: &str) {
-        let at = self
-            .me
-            .get()
-            .and_then(|o| engine.location_of(o))
-            .unwrap_or_default();
-        engine.warn(format!("{at}QML ListModel: {what}"));
+        let me = self.me.get();
+        let at = me.and_then(|o| engine.location_of(o)).unwrap_or_default();
+        let name = me.map_or_else(
+            || "ListModel".to_owned(),
+            |o| engine.warning_type_name(o, "ListModel"),
+        );
+        engine.warn(format!("{at}QML {name}: {what}"));
     }
 
     /// Where `value` goes when given to the role `name`, and as what:

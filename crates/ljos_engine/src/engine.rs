@@ -39,7 +39,7 @@ use crate::error::EngineError;
 use crate::ids::{ContextId, MethodIndex, ObjectId, PropIndex, PropKey};
 use crate::log::LogState;
 use crate::meta::{
-    CompleteThunk, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags, WriteFilter,
+    CompleteThunk, Declared, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags, WriteFilter,
 };
 use crate::object::{
     AliasTarget, FieldReads, Location, ObjectFlags, ObjectHeader, QmlObject, QmlType,
@@ -3641,6 +3641,21 @@ impl Engine {
     /// line and column, then `": "`. `None` for an object not made from QML.
     pub fn declared_at(&self, obj: ObjectId) -> Option<String> {
         self.location_of(obj)
+    }
+
+    /// The type Qt names after `QML ` in an object's own warning: the
+    /// file or inline component `obj` is the root of, else the nearest
+    /// such type it derives from (`MyCol {}` warns as `QML MyCol:`), else
+    /// `builtin`, the native type the warning is about.
+    pub fn warning_type_name(&self, obj: ObjectId, builtin: &str) -> String {
+        let mut meta = self.meta_of(obj);
+        while let Some(m) = meta {
+            if matches!(m.declared, Some(Declared::File | Declared::Inline)) {
+                return m.name.to_string();
+            }
+            meta = m.base.clone();
+        }
+        builtin.to_owned()
     }
 }
 

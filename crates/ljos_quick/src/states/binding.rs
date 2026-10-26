@@ -311,7 +311,10 @@ fn warn_once(engine: &Engine, me: ObjectId, target: ObjectId, name: &str) {
     engine.log(
         LogLevel::Warning,
         "qml",
-        format!("{at}QML Binding: Property '{name}' does not exist on {ty}."),
+        format!(
+            "{at}QML {}: Property '{name}' does not exist on {ty}.",
+            engine.warning_type_name(me, "Binding")
+        ),
     );
 }
 
