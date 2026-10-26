@@ -475,7 +475,7 @@ fn ten_plain_items() {
                 atoms: 0,
             },
             allocations: 789,
-            bytes: 194600,
+            bytes: 194728,
         }
     );
 }
@@ -531,14 +531,14 @@ fn bytes_a_thousand_instances_keep() {
     };
     // B29 holds what is large and rare apart from the marks and record
     // every item has (688 and 576 bytes, now 56 and 328): 27.3, 29.3
-    // and 17.1 kB before. The rest is mostly the graph's nodes, the
-    // objects and the text's runs.
+    // and 17.1 kB before; B12b's call path keeps eight or nine more. The
+    // rest is mostly the graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 25946,
-            wrapped: 28865,
-            plain: 15893,
+            one_line: 25954,
+            wrapped: 28873,
+            plain: 15902,
         }
     );
 }
@@ -596,6 +596,7 @@ fn hundred_list_model_appends() {
                 atoms: 0,
             },
             allocations: 702,
+            bytes: 7744,
         }
     );
 }
