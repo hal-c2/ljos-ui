@@ -1075,3 +1075,35 @@ fn an_exclusive_group_keeps_its_choice_after_the_audit() {
         assert!(checked(0) && !checked(1), "after {code}");
     }
 }
+
+/// Focus is put back as the focus chain gives it, not assigned: a binding
+/// on `focus` still decides afterwards.
+#[test]
+fn a_binding_on_focus_outlives_the_audit() {
+    let e = engine();
+    let mut s = mount(
+        &e,
+        &page(
+            "    property bool editing: true\n    \
+             TextField { objectName: \"field\"; x: 20; y: 20; width: 200; focus: root.editing }\n    \
+             Button { x: 20; y: 80; text: \"Save\" }",
+        ),
+    );
+    let root = s.root().unwrap();
+    let field = ljos_quick::child_items(&e, root)[0];
+    let focus = || e.read_by_name(field, "focus").to_boolean();
+    assert!(focus());
+    audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    assert!(focus());
+    let editing = e.property_index(root, "editing").unwrap();
+    for on in [false, true, false] {
+        let _ = e.write(
+            root,
+            editing,
+            ljos_engine::Value::Bool(on),
+            ljos_engine::WriteKind::Imperative,
+        );
+        s.frame(&e, Time::ZERO);
+        assert_eq!(focus(), on, "editing: {on}");
+    }
+}
