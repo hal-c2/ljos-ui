@@ -115,6 +115,23 @@ pub mod audit {
     /// Something to operate counts as covered when another item takes
     /// this share of its visible area or more.
     pub const OCCLUDED_SHARE: f32 = 0.5;
+    /// How long the audit lets an animation it started run before it
+    /// looks: twice the longest an interface animation may take
+    /// (`motion::EMPHASIS_MAX_MS`), so whatever keeps to the limits has
+    /// ended, and what has not is too long.
+    pub const ANIMATION_WAIT_MS: u32 = 1000;
+    /// How far past a focused item's box its focus indicator is looked
+    /// for: a ring drawn outside the control (Fusion's, Material's) lies
+    /// within this.
+    pub const FOCUS_MARGIN_PX: f32 = 4.0;
+    /// A pixel counts as changed when its colour moves at least this far
+    /// in OKLab: about one just noticeable difference, as
+    /// `SURFACE_MIN_DELTA_E` has it.
+    pub const VISIBLE_DELTA_E: f32 = super::SURFACE_MIN_DELTA_E;
+    /// Fewer changed pixels than this are no visible change: anti-aliasing
+    /// moving by a pixel or two at an edge. A one-pixel caret or ring
+    /// along one side of the smallest target is many more.
+    pub const VISIBLE_CHANGE_MIN_PX: usize = 8;
 }
 
 /// Content that moves this far or more after it was shown counts as a
@@ -146,3 +163,28 @@ pub const HASH_MIN_CHARS: usize = 12;
 /// An empty view smaller than this along either side is a strip (a bar,
 /// a row of chips), not a place a user looks for content.
 pub const EMPTY_VIEW_MIN_PX: f32 = 48.0;
+
+/// What colour says of meaning and emphasis (`color-semantic-hue`,
+/// `color-accent-weight`).
+pub mod hue {
+    /// A colour has a hue worth reading only with at least this OKLCH
+    /// chroma; below it, it reads as a grey (a tinted surface, a neutral
+    /// text colour).
+    pub const MIN_CHROMA: f32 = 0.06;
+    /// The OKLCH hues, in degrees, read as red: danger, error, destruction
+    /// (ISO 3864-1's safety red; Apple's destructive role and Material 3's
+    /// error colour are red). The band wraps past 360.
+    pub const RED: (f32, f32) = (345.0, 45.0);
+    /// The OKLCH hues read as green: safe, done, success (ISO 3864-1's
+    /// safe condition green; Material and Apple's success green).
+    pub const GREEN: (f32, f32) = (120.0, 175.0);
+    /// At most this share of the window is the accent colour: the accent of
+    /// the 60-30-10 rule that colour guides (Material's colour roles among
+    /// them) give for a balanced screen.
+    pub const ACCENT_MAX_SHARE: f32 = 0.10;
+    /// At most this many highlighted (primary) buttons on one surface: one
+    /// call to action, as Material 3 keeps its filled, high-emphasis button
+    /// for the one most important action and Apple's guidelines give a
+    /// window one default button.
+    pub const PRIMARY_BUTTONS_MAX: usize = 1;
+}

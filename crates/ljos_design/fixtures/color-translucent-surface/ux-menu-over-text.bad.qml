@@ -9,7 +9,7 @@ Item {
     Menu {
         x: 20; y: 20
         Component.onCompleted: open()
-        background: Rectangle { color: Qt.alpha(palette.window, 0.8); border.color: palette.mid }
+        background: Rectangle { implicitWidth: 200; color: Qt.alpha(palette.window, 0.8); border.color: palette.mid }
         MenuItem { text: "Cut" }
         MenuItem { text: "Copy" }
     }

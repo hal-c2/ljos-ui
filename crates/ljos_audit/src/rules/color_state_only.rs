@@ -1,0 +1,122 @@
+//! `color-state-only`: a control shows its state (checked or not) by a
+//! change of hue alone (WCAG 2.2 SC 1.4.1).
+//!
+//! Each checkable button the application declares is flipped, its
+//! animations let run to their end, and the control is drawn to pixels
+//! in both states. A state shown by a mark, a shape, a weight or a fill
+//! that stands out changes some pixel by 3:1 or more (SC 1.4.1's
+//! Understanding page accepts a difference of 3:1 in lightness with
+//! something more); when the pixels that changed all stay under that, the
+//! two states differ by hue or a faint tint. Then the state is flipped
+//! back, and every other button's too, should the first have been one of
+//! an exclusive group.
+//!
+//! Flipping runs `onCheckedChanged`, as a user flipping it would; what a
+//! handler changes elsewhere is not put back.
+
+use ljos_controls::AbstractButton;
+use ljos_design::color::{delta_e_ok, wcag_contrast};
+use ljos_design::limits::NONTEXT_CONTRAST;
+use ljos_design::limits::audit::{VISIBLE_CHANGE_MIN_PX, VISIBLE_DELTA_E};
+use ljos_engine::{ObjectId, Value, WriteKind};
+use ljos_render::kurbo::Rect;
+
+use crate::acting::Act;
+use crate::cx::{is_a, place_of, scene_rect, shown_items, takes_focus};
+use crate::pixels::{Painter, Picture, backdrop};
+
+/// No audit flips more than this many buttons: a long list of check
+/// boxes says the same of each.
+const MOST: usize = 64;
+
+fn checked(act: &Act, b: ObjectId) -> bool {
+    let e = act.engine;
+    e.untrack(|| e.read_by_name(b, "checked")).to_boolean()
+}
+
+fn set_checked(act: &Act, b: ObjectId, on: bool) {
+    let e = act.engine;
+    if let Ok(p) = e.property_index(b, "checked") {
+        let _ = e.write(b, p, Value::Bool(on), WriteKind::Host);
+    }
+}
+
+fn draw(act: &Act, painter: &mut Painter, region: Rect) -> Option<Picture> {
+    let snapshot = act.scene.snapshot()?.clone();
+    painter.draw(&snapshot, region, |_| true)
+}
+
+pub(crate) fn check(act: &mut Act) {
+    act.rest();
+    let e = act.engine;
+    let (buttons, all): (Vec<ObjectId>, Vec<ObjectId>) = {
+        let cx = act.cx();
+        let all: Vec<ObjectId> = shown_items(&cx)
+            .into_iter()
+            .filter(|i| is_a::<AbstractButton>(e, *i))
+            .collect();
+        let buttons = all
+            .iter()
+            .copied()
+            .filter(|b| {
+                takes_focus(e, *b)
+                    && e.untrack(|| e.read_by_name(*b, "checkable")).to_boolean()
+                    && place_of(e, *b).is_some_and(|p| !ljos_controls::is_style_url(&p))
+            })
+            .take(MOST)
+            .collect();
+        (buttons, all)
+    };
+    let mut painter = Painter::new(backdrop(e, act.options));
+    let mut found = Vec::new();
+    for b in buttons {
+        let Some(region) = scene_rect(e, b).map(|r| r.inflate(2.0, 2.0)) else {
+            continue;
+        };
+        let held: Vec<(ObjectId, bool)> = all.iter().map(|o| (*o, checked(act, *o))).collect();
+        let Some(before) = draw(act, &mut painter, region) else {
+            continue;
+        };
+        let was = checked(act, b);
+        set_checked(act, b, !was);
+        act.finish();
+        let after = draw(act, &mut painter, region);
+        for (o, c) in &held {
+            if e.is_alive(*o) && checked(act, *o) != *c {
+                set_checked(act, *o, *c);
+            }
+        }
+        act.finish();
+        let Some(after) = after.filter(|a| a.width == before.width && a.height == before.height)
+        else {
+            continue;
+        };
+        let mut changed = 0;
+        let mut most = 1.0f32;
+        for (x, y) in before.pairs(&after) {
+            if delta_e_ok(x, y) >= VISIBLE_DELTA_E {
+                changed += 1;
+                most = most.max(wcag_contrast(x, y));
+            }
+        }
+        if changed >= VISIBLE_CHANGE_MIN_PX && most + 0.005 < NONTEXT_CONTRAST {
+            found.push((b, was, most));
+        }
+    }
+    for (b, was, most) in found {
+        let words = crate::cx::words(&act.cx(), b);
+        let (from, to) = if was {
+            ("checked", "unchecked")
+        } else {
+            ("unchecked", "checked")
+        };
+        let message = format!(
+            "{words} looks the same {from} and {to} but for its colour: no pixel changes by \
+             more than {most:.2}:1, where a state shown by colour needs {}:1 and a change of \
+             shape, mark or weight as well",
+            NONTEXT_CONTRAST
+        );
+        let f = act.report("color-state-only", Some(b), message);
+        f.measured = Some(format!("{most:.2}:1 < {NONTEXT_CONTRAST}:1"));
+    }
+}

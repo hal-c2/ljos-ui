@@ -10,7 +10,7 @@ Item {
         background: Item {}
         contentItem: Text {
             text: parent.text
-            color: parent.checked ? palette.windowText : palette.mid
+            color: parent.checked ? "#1c71d8" : "#707070"
         }
     }
 }

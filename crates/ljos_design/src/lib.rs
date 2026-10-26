@@ -325,6 +325,22 @@ pub const RULES: &[Rule] = &[
         "A floating or adjacent surface is drawn in nearly the colour behind it, with no border or shadow, so its edge cannot be seen.",
         "Raise it a step on the surface scale, or give it a border or a shadow.",
     ),
+    r(
+        "color-semantic-hue",
+        Color,
+        Hint,
+        Runtime,
+        "A control or message that says it destroys, failed or succeeded is drawn in the hue that means the opposite: a destructive action in green, a success in red.",
+        "Draw destructive actions and errors in the error colour and successes in the success colour, and say it in words too.",
+    ),
+    r(
+        "color-accent-weight",
+        Color,
+        Hint,
+        Runtime,
+        "The accent colour covers more than the limit's share of the window, or more than one button on one surface is highlighted, so nothing stands out.",
+        "Keep the accent for the one most important action and for state; draw the rest on the surface colours.",
+    ),
     // Text.
     r(
         "text-clipped",

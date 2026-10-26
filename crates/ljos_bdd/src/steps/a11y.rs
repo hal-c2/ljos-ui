@@ -148,6 +148,42 @@ fn design_audit_reports(w: &mut LjosWorld, code: String, role: String, name: Str
     })
 }
 
+/// A rule's findings, wherever they are: a part a style or an
+/// application draws (a background, an indicator) has no node to name.
+fn audit_codes(w: &mut LjosWorld, code: &str, want: bool) -> StepResult {
+    w.each(|b| {
+        let report = b.probes()?.design_audit(None)?;
+        let hit = report["findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|f| f["code"] == code);
+        if hit == want {
+            return Ok(());
+        }
+        let lines = audit_lines(&report);
+        Err(BackendError::Failed(format!(
+            "{} {code:?}; the design audit found:\n  {}",
+            if want { "no" } else { "a finding of" },
+            if lines.is_empty() {
+                "nothing".to_owned()
+            } else {
+                lines.join("\n  ")
+            }
+        )))
+    })
+}
+
+#[then(regex = r#"^the design audit reports "([a-z0-9-]+)"$"#)]
+fn design_audit_reports_code(w: &mut LjosWorld, code: String) -> StepResult {
+    audit_codes(w, &code, true)
+}
+
+#[then(regex = r#"^the design audit does not report "([a-z0-9-]+)"$"#)]
+fn design_audit_not_code(w: &mut LjosWorld, code: String) -> StepResult {
+    audit_codes(w, &code, false)
+}
+
 #[then(regex = r#"^the accessibility tree has an? "([^"]+)" named "([^"]*)"$"#)]
 fn a11y_has(w: &mut LjosWorld, role: String, name: String) -> StepResult {
     w.each(|b| {
