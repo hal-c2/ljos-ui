@@ -6,10 +6,11 @@
 //! Each check puts back what it changed: focus where it was, with the
 //! reason it had, and a state as it was. What it cannot put back is the
 //! scene's clock: to see an animation to its end the scene is framed later
-//! than `now`. A `Timer` keeps the engine's clock, which the audit leaves
-//! alone, so none fires early. An animation the host starts afterwards
-//! takes its time from the host's clock again; the ones the audit started
-//! have ended by then.
+//! than `now`. The rest of the audit goes on from the time the checks
+//! reached, so that what a later point of the matrix starts runs forward
+//! from there, and the report says that time ([`crate::Report::until`]): a
+//! host that keeps its own clock moves it there. A `Timer` keeps the
+//! engine's clock, which the audit leaves alone, so none fires early.
 
 use std::time::Duration;
 
@@ -161,13 +162,15 @@ pub(crate) fn every_item(act: &Act) -> Vec<ObjectId> {
     out
 }
 
-/// Runs the acting checks the options ask for, after the reading ones.
+/// Runs the acting checks the options ask for, after the reading ones,
+/// with the scene's clock at `now`. Returns what they found and the time
+/// the scene was last framed at, from which the audit goes on.
 pub(crate) fn run(
     engine: &Engine,
     scene: &mut QuickScene,
     now: Time,
     options: &Options,
-) -> Vec<Finding> {
+) -> (Vec<Finding>, Time) {
     let mut act = Act {
         engine,
         scene,
@@ -186,5 +189,5 @@ pub(crate) fn run(
     let mut seen = std::collections::HashSet::new();
     act.out
         .retain(|f| seen.insert((f.code, f.place.clone(), f.message.clone())));
-    act.out
+    (act.out, act.now)
 }

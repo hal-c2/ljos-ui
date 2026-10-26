@@ -87,14 +87,15 @@ impl AuditArgs {
     }
 }
 
-/// Audits the scene, only what is inside `root` when it is given.
+/// Audits the scene, only what is inside `root` when it is given, and
+/// says the time the scene was last framed at ([`ljos_audit::Report::until`]).
 pub(crate) fn audit(
     engine: &Engine,
     scene: &mut QuickScene,
     now: Time,
     mut options: Options,
     root: Option<ObjectId>,
-) -> ToolReply {
+) -> (ToolReply, Time) {
     options.within = root;
     let report = ljos_audit::audit(engine, scene, now, &options);
     let value = report.json();
@@ -108,5 +109,5 @@ pub(crate) fn audit(
         text.push_str("Nothing found. ");
     }
     text.push_str(&format!("{counts} at {}", points.join("; ")));
-    ToolReply::from(value).with_text(text)
+    (ToolReply::from(value).with_text(text), report.until)
 }
