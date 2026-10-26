@@ -350,6 +350,9 @@ pub struct Inspector {
     /// `holder`).
     models: models::Follows,
     marks: marks::Marks,
+    /// When the host wakes to collect what the scripts left behind, as it
+    /// last said ([`record_collect_due`](Self::record_collect_due)).
+    collect_due: Option<Instant>,
     /// The mailbox and timer counters move while an inspector is served
     /// (`ljos_runtime::observe`).
     _observing: ljos_runtime::ObserveGuard,
@@ -434,6 +437,7 @@ impl Inspector {
             edits: edits::Edits::default(),
             models: models::Follows::new(changes_for_models),
             marks: marks::Marks::default(),
+            collect_due: None,
             _observing: ljos_runtime::observe::enable(),
         };
         (inspector, surface)
@@ -554,6 +558,13 @@ impl Inspector {
     /// where the primary window's pointer was, for `app_watch`'s `rests`.
     pub fn record_rest(&mut self, rest: Rest) {
         self.changes.rested(rest);
+    }
+
+    /// The host's loop goes to sleep and wakes at `due` (if not sooner)
+    /// to collect what the scripts left behind; `None` when it has
+    /// nothing to collect. `app_processes` lists it as a waker.
+    pub fn record_collect_due(&mut self, due: Option<Instant>) {
+        self.collect_due = due;
     }
 
     /// Whether a client follows items with `app_watch`: only then need the
@@ -1143,6 +1154,7 @@ impl Inspector {
                     queued_work: queued > 0 || ljos_quick::running_animation_count(engine) > 0,
                     watching: self.feed.state().watched,
                     source: self.cfg.process_source,
+                    collect_due: self.collect_due,
                 },
                 args,
                 per_copy,

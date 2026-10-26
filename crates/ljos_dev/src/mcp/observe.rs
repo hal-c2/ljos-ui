@@ -12,6 +12,7 @@
 //! UI thread that is stuck still shows its inbox filling up.
 
 use std::fmt::Write as _;
+use std::time::Instant;
 
 use ljos_engine::{Engine, ObjectId};
 use ljos_mcp_core::ToolReply;
@@ -471,7 +472,7 @@ fn owner_text(row: &Value) -> String {
 /// posted) and rows that listen for news that may never come (a file
 /// watcher, a screen reader that may ask). A resting application has
 /// none of the first.
-fn waker_rows(engine: &Engine, watching: bool, text: &mut String) -> Vec<Value> {
+fn waker_rows(engine: &Engine, activity: &ProcessActivity, text: &mut String) -> Vec<Value> {
     let mut rows = Vec::new();
     let now = engine.now();
     for t in engine.running_timers() {
@@ -551,7 +552,21 @@ fn waker_rows(engine: &Engine, watching: bool, text: &mut String) -> Vec<Value> 
         let _ = writeln!(text, "message: {} queued in {}", m.depth, m.name);
         rows.push(row);
     }
-    if watching {
+    // On the system's clock, as the host's loop sleeps on it, whatever
+    // clock the application's timers keep.
+    if let Some(due) = activity.collect_due {
+        let due_in = due.saturating_duration_since(Instant::now());
+        let mut row = waker(engine, "collector", None, true);
+        row["what"] = json!("script garbage");
+        row["due_in_us"] = json!(micros(due_in));
+        let _ = writeln!(
+            text,
+            "collector: what the scripts left behind, once resting, in {:.1} ms",
+            due_in.as_secs_f64() * 1000.0
+        );
+        rows.push(row);
+    }
+    if activity.watching {
         let mut row = waker(engine, "watcher", None, false);
         row["what"] = json!("QML files");
         text.push_str("listens watcher: the QML files, for a change to reload\n");
@@ -566,6 +581,8 @@ pub(crate) struct ProcessActivity {
     pub(crate) queued_work: bool,
     pub(crate) watching: bool,
     pub(crate) source: ProcessSource,
+    /// When the host wakes to collect the scripts' garbage.
+    pub(crate) collect_due: Option<Instant>,
 }
 
 /// Answers `app_processes`, on the UI thread.
@@ -579,7 +596,7 @@ pub(crate) fn processes(
 ) -> ToolReply {
     if args.kind == Some(ProcessKind::Waker) {
         let mut text = String::new();
-        let rows = waker_rows(engine, activity.watching, &mut text);
+        let rows = waker_rows(engine, &activity, &mut text);
         let scheduled = rows.iter().filter(|r| r["scheduled"] == true).count();
         let _ = writeln!(
             text,
@@ -888,6 +905,42 @@ mod tests {
             assert_eq!(whole_name(&kept), (kept.clone(), true));
         }
         assert_eq!(whole_name("tokio-rt"), ("tokio-rt".into(), false));
+    }
+
+    /// The host wakes a rest after scripts made garbage, to collect it:
+    /// a waker of its own, scheduled, gone once collected.
+    #[test]
+    fn the_collection_a_rest_away_is_a_waker() {
+        let engine = Engine::new();
+        let activity = |collect_due| ProcessActivity {
+            pending_requests: 0,
+            queued_work: false,
+            watching: false,
+            source: ProcessSource::Platform,
+            collect_due,
+        };
+        let collectors = |rows: &[Value]| {
+            rows.iter()
+                .filter(|r| r["source"] == "collector")
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let mut text = String::new();
+        let due = Instant::now() + std::time::Duration::from_millis(100);
+        let rows = waker_rows(&engine, &activity(Some(due)), &mut text);
+        let found = collectors(&rows);
+        assert_eq!(found.len(), 1, "{rows:?}");
+        assert_eq!(found[0]["kind"], "waker");
+        assert_eq!(found[0]["scheduled"], true);
+        let due_in = found[0]["due_in_us"].as_u64().unwrap();
+        assert!(due_in <= 100_000, "{due_in}");
+        assert!(
+            text.contains("collector: what the scripts left behind"),
+            "{text}"
+        );
+        let mut text = String::new();
+        let rows = waker_rows(&engine, &activity(None), &mut text);
+        assert!(collectors(&rows).is_empty(), "{rows:?}");
     }
 
     #[test]

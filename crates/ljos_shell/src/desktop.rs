@@ -2607,11 +2607,14 @@ impl<M: Send + 'static> Desktop<M> {
                 })
             })
         });
-        self.app.record_rest(ljos_dev::mcp::Rest {
-            wake_at: next,
-            frame_owed,
-            pointer,
-        });
+        self.app.record_rest(
+            ljos_dev::mcp::Rest {
+                wake_at: next,
+                frame_owed,
+                pointer,
+            },
+            self.collect.next(),
+        );
     }
 
     #[cfg(feature = "mcp")]

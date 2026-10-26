@@ -253,9 +253,11 @@ impl<M> ShellApp<M> {
         }
     }
 
-    pub(crate) fn record_rest(&mut self, rest: ljos_dev::mcp::Rest) {
+    pub(crate) fn record_rest(&mut self, rest: ljos_dev::mcp::Rest, collect_due: Option<Instant>) {
         if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().record_rest(rest);
+            let inspector = served.inspector_mut();
+            inspector.record_rest(rest);
+            inspector.record_collect_due(collect_due);
         }
     }
 
