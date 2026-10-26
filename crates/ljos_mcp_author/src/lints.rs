@@ -94,6 +94,8 @@ pub const IMPLEMENTED: &[&str] = &[
     "a11y-placeholder-label",
     "content-vague-action",
     "content-menu-ellipsis",
+    "layout-nested-radius",
+    "focus-destructive-undo",
     "content-duplicate-control",
     "lint-allow-without-reason",
     "lint-allow-unused",

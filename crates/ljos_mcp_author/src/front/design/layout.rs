@@ -61,6 +61,43 @@ pub(super) fn object<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, '
     if found.is(frame, class::MENU) {
         menu_ungrouped(found, frame);
     }
+    if found.is(frame, class::RECTANGLE) {
+        nested_radius(found, chain);
+    }
+}
+
+fn nested_radius<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
+    let [.., parent, frame] = chain else { return };
+    if frame.via.is_some() || !found.is(parent, class::RECTANGLE) {
+        return;
+    }
+    let fills = bound(frame.object, &["anchors", "fill"])
+        .and_then(|b| b.span())
+        .is_some_and(|s| found.text(s).trim() == "parent");
+    if !fills {
+        return;
+    }
+    let (Some(outer), Some(inner)) = (
+        bound(parent.object, &["radius"]).and_then(|b| b.number()),
+        bound(frame.object, &["radius"]),
+    ) else {
+        return;
+    };
+    let Some(inner_radius) = inner.number() else {
+        return;
+    };
+    if inner_radius <= outer || outer <= 0.0 {
+        return;
+    }
+    found.report(
+        inner.at,
+        "layout-nested-radius",
+        format!(
+            "this `Rectangle` has `radius: {inner_radius}` inside a parent of `radius: {outer}`, \
+             so its corners poke out of or leave a gap at the parent's; use the parent's radius \
+             less the margin, as an inner corner is never rounder than the outer"
+        ),
+    );
 }
 
 pub(super) fn file<'a>(found: &mut Found<'_, '_, '_, 'a>, root: &QmlObject<'a>) {

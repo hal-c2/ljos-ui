@@ -2,7 +2,11 @@
 //! (`docs/design/interaction.md`), and the icon button a sighted user cannot
 //! read (`docs/design/accessibility.md`).
 
-use qml_syntax::{GetSpan, ast::QmlObject, js::Expression};
+use qml_syntax::{
+    GetSpan,
+    ast::{QmlBindingValue, QmlObject},
+    js::Expression,
+};
 
 use super::{Found, Frame, bindings, bound, children, class, number};
 
@@ -45,6 +49,12 @@ pub(super) fn object<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, '
     hover_only(found, chain);
     if found.is(frame, class::TEXT_INPUT) {
         placeholder_label(found, chain);
+    }
+    if found.is(frame, class::BUTTON)
+        || found.is(frame, class::MENU_ITEM)
+        || found.is(frame, class::ACTION)
+    {
+        destructive_undo(found, chain);
     }
     if found.is(frame, class::ABSTRACT_BUTTON)
         && !found.is(frame, class::TEXT_ROW_BUTTON)
@@ -307,6 +317,65 @@ fn placeholder_label<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, '
              as the user types and which a screen reader may not read; set `Accessible.name`, \
              or put a `Label` beside it",
             found.name(frame)
+        ),
+    );
+}
+
+/// What a destructive action's text starts with.
+const DESTRUCTIVE: &[&str] = &["delete", "remove", "discard", "erase", "clear"];
+
+/// Words after the verb that name something that comes back by itself.
+const REVERSIBLE: &[&str] = &["filter", "filters", "search", "selection", "query"];
+
+fn destructive_undo<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
+    let frame = chain.last().expect("the object itself");
+    let Some(text) = bound(frame.object, &["text"]) else {
+        return;
+    };
+    let Some(said) = text.literal_text() else {
+        return;
+    };
+    let lower = said.replace('&', "").to_lowercase();
+    let mut said_words = words(&lower);
+    if !said_words.next().is_some_and(|w| DESTRUCTIVE.contains(&w))
+        || said_words.any(|w| REVERSIBLE.contains(&w))
+    {
+        return;
+    }
+    // The confirmation itself is where the deleting happens.
+    if chain.iter().any(|f| {
+        found.is(f, class::POPUP) && !found.is(f, class::MENU) && !found.is(f, class::TOOL_TIP)
+    }) {
+        return;
+    }
+    let mut handler = None;
+    for (name, b) in bindings(frame.object) {
+        if !(name.starts_with("on") && name.ends_with("ed") || name.ends_with("Triggered")) {
+            continue;
+        }
+        let body = match b.value {
+            QmlBindingValue::Expression(e) => found.text(e.span()),
+            QmlBindingValue::Statement(s) => found.text(s.span()),
+            _ => continue,
+        };
+        handler =
+            Some(handler.map_or_else(|| body.to_lowercase(), |h: String| h + &body.to_lowercase()));
+    }
+    // With no handler the action is somebody else's, an `action:` or a
+    // `Connections`.
+    let Some(handler) = handler else { return };
+    if [".open(", ".popup(", "confirm", "undo", "dialog"]
+        .iter()
+        .any(|k| handler.contains(k))
+    {
+        return;
+    }
+    found.report(
+        text.at,
+        "focus-destructive-undo",
+        format!(
+            "`{said}` destroys something and does it at once, with no way back; ask first in a \
+             dialog, or do it and offer `Undo` (a toast or `Ctrl+Z`) so a slip costs nothing"
         ),
     );
 }
