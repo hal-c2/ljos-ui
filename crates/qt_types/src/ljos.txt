@@ -68,6 +68,388 @@ module Ljos
 		signal fileChanged
 		signal lineChanged
 
+module Ljos.Design
+	Colors Ljos/Design/Colors.qml
+	EnterTransition Ljos/Design/EnterTransition.qml
+	ExitTransition Ljos/Design/ExitTransition.qml
+	Motion Ljos/Design/Motion.qml
+	MoveBehavior Ljos/Design/MoveBehavior.qml
+	PressBehavior Ljos/Design/PressBehavior.qml
+	Spacing Ljos/Design/Spacing.qml
+	Typography Ljos/Design/Typography.qml
+	type Ljos/Design/Colors.qml Colors
+		prototype QtQml.QtObject named
+		is singleton
+		prop seedHue QtQml.real named
+		prop dark QtQml.bool named
+		prop highContrast QtQml.bool named
+		prop table QtQml.var named readonly
+		prop roles QtQml.var named readonly
+		prop canvas QtQuick.color named readonly
+		prop surface QtQuick.color named readonly
+		prop surfaceRaised QtQuick.color named readonly
+		prop surfaceHover QtQuick.color named readonly
+		prop surfacePressed QtQuick.color named readonly
+		prop surfaceSelected QtQuick.color named readonly
+		prop border QtQuick.color named readonly
+		prop borderStrong QtQuick.color named readonly
+		prop focusRing QtQuick.color named readonly
+		prop accent QtQuick.color named readonly
+		prop accentHover QtQuick.color named readonly
+		prop accentPressed QtQuick.color named readonly
+		prop textOnAccent QtQuick.color named readonly
+		prop text QtQuick.color named readonly
+		prop textMuted QtQuick.color named readonly
+		prop textDisabled QtQuick.color named readonly
+		prop link QtQuick.color named readonly
+		prop danger QtQuick.color named readonly
+		prop textOnDanger QtQuick.color named readonly
+		prop warning QtQuick.color named readonly
+		prop textOnWarning QtQuick.color named readonly
+		prop success QtQuick.color named readonly
+		prop textOnSuccess QtQuick.color named readonly
+		prop info QtQuick.color named readonly
+		prop textOnInfo QtQuick.color named readonly
+		prop scrim QtQuick.color named readonly
+		prop shadow QtQuick.color named readonly
+		signal seedHueChanged
+		signal darkChanged
+		signal highContrastChanged
+		signal tableChanged
+		signal rolesChanged
+		signal canvasChanged
+		signal surfaceChanged
+		signal surfaceRaisedChanged
+		signal surfaceHoverChanged
+		signal surfacePressedChanged
+		signal surfaceSelectedChanged
+		signal borderChanged
+		signal borderStrongChanged
+		signal focusRingChanged
+		signal accentChanged
+		signal accentHoverChanged
+		signal accentPressedChanged
+		signal textOnAccentChanged
+		signal textChanged
+		signal textMutedChanged
+		signal textDisabledChanged
+		signal linkChanged
+		signal dangerChanged
+		signal textOnDangerChanged
+		signal warningChanged
+		signal textOnWarningChanged
+		signal successChanged
+		signal textOnSuccessChanged
+		signal infoChanged
+		signal textOnInfoChanged
+		signal scrimChanged
+		signal shadowChanged
+	type Ljos/Design/EnterTransition.qml EnterTransition
+		prototype QtQuick.Transition named
+		prop origin QtQml.int named
+		prop duration QtQml.int named
+		prop reduced QtQml.bool named readonly
+		signal originChanged
+		signal durationChanged
+		signal reducedChanged
+	type Ljos/Design/ExitTransition.qml ExitTransition
+		prototype QtQuick.Transition named
+		prop origin QtQml.int named
+		prop duration QtQml.int named
+		prop reduced QtQml.bool named readonly
+		signal originChanged
+		signal durationChanged
+		signal reducedChanged
+	type Ljos/Design/Motion.qml Motion
+		prototype QtQml.QtObject named
+		is singleton
+		prop reduced QtQml.bool named readonly
+		prop enterSmallRare QtQml.int named readonly
+		prop enterSmall QtQml.int named readonly
+		prop enterSmallFrequent QtQml.int named readonly
+		prop enterPanelRare QtQml.int named readonly
+		prop enterPanel QtQml.int named readonly
+		prop enterPanelFrequent QtQml.int named readonly
+		prop enterScreenRare QtQml.int named readonly
+		prop enterScreen QtQml.int named readonly
+		prop enterScreenFrequent QtQml.int named readonly
+		prop exitSmallRare QtQml.int named readonly
+		prop exitSmall QtQml.int named readonly
+		prop exitSmallFrequent QtQml.int named readonly
+		prop exitPanelRare QtQml.int named readonly
+		prop exitPanel QtQml.int named readonly
+		prop exitPanelFrequent QtQml.int named readonly
+		prop exitScreenRare QtQml.int named readonly
+		prop exitScreen QtQml.int named readonly
+		prop exitScreenFrequent QtQml.int named readonly
+		prop moveSmallRare QtQml.int named readonly
+		prop moveSmall QtQml.int named readonly
+		prop moveSmallFrequent QtQml.int named readonly
+		prop movePanelRare QtQml.int named readonly
+		prop movePanel QtQml.int named readonly
+		prop movePanelFrequent QtQml.int named readonly
+		prop moveScreenRare QtQml.int named readonly
+		prop moveScreen QtQml.int named readonly
+		prop moveScreenFrequent QtQml.int named readonly
+		prop expandSmallRare QtQml.int named readonly
+		prop expandSmall QtQml.int named readonly
+		prop expandSmallFrequent QtQml.int named readonly
+		prop expandPanelRare QtQml.int named readonly
+		prop expandPanel QtQml.int named readonly
+		prop expandPanelFrequent QtQml.int named readonly
+		prop expandScreenRare QtQml.int named readonly
+		prop expandScreen QtQml.int named readonly
+		prop expandScreenFrequent QtQml.int named readonly
+		prop collapseSmallRare QtQml.int named readonly
+		prop collapseSmall QtQml.int named readonly
+		prop collapseSmallFrequent QtQml.int named readonly
+		prop collapsePanelRare QtQml.int named readonly
+		prop collapsePanel QtQml.int named readonly
+		prop collapsePanelFrequent QtQml.int named readonly
+		prop collapseScreenRare QtQml.int named readonly
+		prop collapseScreen QtQml.int named readonly
+		prop collapseScreenFrequent QtQml.int named readonly
+		prop sheetInSmallRare QtQml.int named readonly
+		prop sheetInSmall QtQml.int named readonly
+		prop sheetInSmallFrequent QtQml.int named readonly
+		prop sheetInPanelRare QtQml.int named readonly
+		prop sheetInPanel QtQml.int named readonly
+		prop sheetInPanelFrequent QtQml.int named readonly
+		prop sheetInScreenRare QtQml.int named readonly
+		prop sheetInScreen QtQml.int named readonly
+		prop sheetInScreenFrequent QtQml.int named readonly
+		prop sheetOutSmallRare QtQml.int named readonly
+		prop sheetOutSmall QtQml.int named readonly
+		prop sheetOutSmallFrequent QtQml.int named readonly
+		prop sheetOutPanelRare QtQml.int named readonly
+		prop sheetOutPanel QtQml.int named readonly
+		prop sheetOutPanelFrequent QtQml.int named readonly
+		prop sheetOutScreenRare QtQml.int named readonly
+		prop sheetOutScreen QtQml.int named readonly
+		prop sheetOutScreenFrequent QtQml.int named readonly
+		prop gestureSmallRare QtQml.int named readonly
+		prop gestureSmall QtQml.int named readonly
+		prop gestureSmallFrequent QtQml.int named readonly
+		prop gesturePanelRare QtQml.int named readonly
+		prop gesturePanel QtQml.int named readonly
+		prop gesturePanelFrequent QtQml.int named readonly
+		prop gestureScreenRare QtQml.int named readonly
+		prop gestureScreen QtQml.int named readonly
+		prop gestureScreenFrequent QtQml.int named readonly
+		prop loopSmallRare QtQml.int named readonly
+		prop loopSmall QtQml.int named readonly
+		prop loopSmallFrequent QtQml.int named readonly
+		prop loopPanelRare QtQml.int named readonly
+		prop loopPanel QtQml.int named readonly
+		prop loopPanelFrequent QtQml.int named readonly
+		prop loopScreenRare QtQml.int named readonly
+		prop loopScreen QtQml.int named readonly
+		prop loopScreenFrequent QtQml.int named readonly
+		prop press QtQml.int named readonly
+		prop easeOut QtQml.var named readonly
+		prop easeOutSoft QtQml.var named readonly
+		prop easeInOut QtQml.var named readonly
+		prop decelerate QtQml.var named readonly
+		prop drawer QtQml.var named readonly
+		prop linear QtQml.var named readonly
+		prop enterScale QtQml.real named readonly
+		prop pressScale QtQml.real named readonly
+		prop gestureSmallSpring QtQml.real named readonly
+		prop gestureSmallDamping QtQml.real named readonly
+		prop gestureSmallMass QtQml.real named readonly
+		prop gestureSmallEpsilon QtQml.real named readonly
+		prop gesturePanelSpring QtQml.real named readonly
+		prop gesturePanelDamping QtQml.real named readonly
+		prop gesturePanelMass QtQml.real named readonly
+		prop gesturePanelEpsilon QtQml.real named readonly
+		prop gestureScreenSpring QtQml.real named readonly
+		prop gestureScreenDamping QtQml.real named readonly
+		prop gestureScreenMass QtQml.real named readonly
+		prop gestureScreenEpsilon QtQml.real named readonly
+		signal reducedChanged
+		signal enterSmallRareChanged
+		signal enterSmallChanged
+		signal enterSmallFrequentChanged
+		signal enterPanelRareChanged
+		signal enterPanelChanged
+		signal enterPanelFrequentChanged
+		signal enterScreenRareChanged
+		signal enterScreenChanged
+		signal enterScreenFrequentChanged
+		signal exitSmallRareChanged
+		signal exitSmallChanged
+		signal exitSmallFrequentChanged
+		signal exitPanelRareChanged
+		signal exitPanelChanged
+		signal exitPanelFrequentChanged
+		signal exitScreenRareChanged
+		signal exitScreenChanged
+		signal exitScreenFrequentChanged
+		signal moveSmallRareChanged
+		signal moveSmallChanged
+		signal moveSmallFrequentChanged
+		signal movePanelRareChanged
+		signal movePanelChanged
+		signal movePanelFrequentChanged
+		signal moveScreenRareChanged
+		signal moveScreenChanged
+		signal moveScreenFrequentChanged
+		signal expandSmallRareChanged
+		signal expandSmallChanged
+		signal expandSmallFrequentChanged
+		signal expandPanelRareChanged
+		signal expandPanelChanged
+		signal expandPanelFrequentChanged
+		signal expandScreenRareChanged
+		signal expandScreenChanged
+		signal expandScreenFrequentChanged
+		signal collapseSmallRareChanged
+		signal collapseSmallChanged
+		signal collapseSmallFrequentChanged
+		signal collapsePanelRareChanged
+		signal collapsePanelChanged
+		signal collapsePanelFrequentChanged
+		signal collapseScreenRareChanged
+		signal collapseScreenChanged
+		signal collapseScreenFrequentChanged
+		signal sheetInSmallRareChanged
+		signal sheetInSmallChanged
+		signal sheetInSmallFrequentChanged
+		signal sheetInPanelRareChanged
+		signal sheetInPanelChanged
+		signal sheetInPanelFrequentChanged
+		signal sheetInScreenRareChanged
+		signal sheetInScreenChanged
+		signal sheetInScreenFrequentChanged
+		signal sheetOutSmallRareChanged
+		signal sheetOutSmallChanged
+		signal sheetOutSmallFrequentChanged
+		signal sheetOutPanelRareChanged
+		signal sheetOutPanelChanged
+		signal sheetOutPanelFrequentChanged
+		signal sheetOutScreenRareChanged
+		signal sheetOutScreenChanged
+		signal sheetOutScreenFrequentChanged
+		signal gestureSmallRareChanged
+		signal gestureSmallChanged
+		signal gestureSmallFrequentChanged
+		signal gesturePanelRareChanged
+		signal gesturePanelChanged
+		signal gesturePanelFrequentChanged
+		signal gestureScreenRareChanged
+		signal gestureScreenChanged
+		signal gestureScreenFrequentChanged
+		signal loopSmallRareChanged
+		signal loopSmallChanged
+		signal loopSmallFrequentChanged
+		signal loopPanelRareChanged
+		signal loopPanelChanged
+		signal loopPanelFrequentChanged
+		signal loopScreenRareChanged
+		signal loopScreenChanged
+		signal loopScreenFrequentChanged
+		signal pressChanged
+		signal easeOutChanged
+		signal easeOutSoftChanged
+		signal easeInOutChanged
+		signal decelerateChanged
+		signal drawerChanged
+		signal linearChanged
+		signal enterScaleChanged
+		signal pressScaleChanged
+		signal gestureSmallSpringChanged
+		signal gestureSmallDampingChanged
+		signal gestureSmallMassChanged
+		signal gestureSmallEpsilonChanged
+		signal gesturePanelSpringChanged
+		signal gesturePanelDampingChanged
+		signal gesturePanelMassChanged
+		signal gesturePanelEpsilonChanged
+		signal gestureScreenSpringChanged
+		signal gestureScreenDampingChanged
+		signal gestureScreenMassChanged
+		signal gestureScreenEpsilonChanged
+	type Ljos/Design/MoveBehavior.qml MoveBehavior
+		prototype QtQuick.Behavior named
+		prop duration QtQml.int named
+		prop reduced QtQml.bool named readonly
+		signal durationChanged
+		signal reducedChanged
+	type Ljos/Design/PressBehavior.qml PressBehavior
+		prototype QtQuick.Behavior named
+		prop duration QtQml.int named
+		prop reduced QtQml.bool named readonly
+		signal durationChanged
+		signal reducedChanged
+	type Ljos/Design/Spacing.qml Spacing
+		prototype QtQml.QtObject named
+		is singleton
+		prop unit QtQml.int named readonly
+		prop none QtQml.int named readonly
+		prop xxs QtQml.int named readonly
+		prop xs QtQml.int named readonly
+		prop sm QtQml.int named readonly
+		prop md QtQml.int named readonly
+		prop lg QtQml.int named readonly
+		prop xl QtQml.int named readonly
+		prop xxl QtQml.int named readonly
+		prop xxxl QtQml.int named readonly
+		signal unitChanged
+		signal noneChanged
+		signal xxsChanged
+		signal xsChanged
+		signal smChanged
+		signal mdChanged
+		signal lgChanged
+		signal xlChanged
+		signal xxlChanged
+		signal xxxlChanged
+	type Ljos/Design/Typography.qml Typography
+		prototype QtQml.QtObject named
+		is singleton
+		prop captionSize QtQml.int named readonly
+		prop captionLineHeight QtQml.int named readonly
+		prop captionWeight QtQml.int named readonly
+		prop bodySize QtQml.int named readonly
+		prop bodyLineHeight QtQml.int named readonly
+		prop bodyWeight QtQml.int named readonly
+		prop bodyStrongSize QtQml.int named readonly
+		prop bodyStrongLineHeight QtQml.int named readonly
+		prop bodyStrongWeight QtQml.int named readonly
+		prop subtitleSize QtQml.int named readonly
+		prop subtitleLineHeight QtQml.int named readonly
+		prop subtitleWeight QtQml.int named readonly
+		prop titleSize QtQml.int named readonly
+		prop titleLineHeight QtQml.int named readonly
+		prop titleWeight QtQml.int named readonly
+		prop headlineSize QtQml.int named readonly
+		prop headlineLineHeight QtQml.int named readonly
+		prop headlineWeight QtQml.int named readonly
+		prop displaySize QtQml.int named readonly
+		prop displayLineHeight QtQml.int named readonly
+		prop displayWeight QtQml.int named readonly
+		signal captionSizeChanged
+		signal captionLineHeightChanged
+		signal captionWeightChanged
+		signal bodySizeChanged
+		signal bodyLineHeightChanged
+		signal bodyWeightChanged
+		signal bodyStrongSizeChanged
+		signal bodyStrongLineHeightChanged
+		signal bodyStrongWeightChanged
+		signal subtitleSizeChanged
+		signal subtitleLineHeightChanged
+		signal subtitleWeightChanged
+		signal titleSizeChanged
+		signal titleLineHeightChanged
+		signal titleWeightChanged
+		signal headlineSizeChanged
+		signal headlineLineHeightChanged
+		signal headlineWeightChanged
+		signal displaySizeChanged
+		signal displayLineHeightChanged
+		signal displayWeightChanged
+
 module Qt.labs.folderlistmodel
 	FolderListModel Qt.labs.folderlistmodel.FolderListModel
 	type Qt.labs.folderlistmodel.FolderListModel FolderListModel

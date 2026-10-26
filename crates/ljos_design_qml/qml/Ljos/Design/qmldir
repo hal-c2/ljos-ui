@@ -1,0 +1,9 @@
+module Ljos.Design
+singleton Colors 1.0 Colors.qml
+singleton Motion 1.0 Motion.qml
+singleton Spacing 1.0 Spacing.qml
+singleton Typography 1.0 Typography.qml
+EnterTransition 1.0 EnterTransition.qml
+ExitTransition 1.0 ExitTransition.qml
+MoveBehavior 1.0 MoveBehavior.qml
+PressBehavior 1.0 PressBehavior.qml

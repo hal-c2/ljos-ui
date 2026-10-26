@@ -3594,6 +3594,7 @@ dependencies = [
  "ljos_bench",
  "ljos_compiler",
  "ljos_controls",
+ "ljos_design",
  "ljos_dev",
  "ljos_engine",
  "ljos_folderlistmodel",
@@ -3648,6 +3649,7 @@ dependencies = [
  "ljos_bench",
  "ljos_compiler",
  "ljos_controls",
+ "ljos_design",
  "ljos_engine",
  "ljos_folderlistmodel",
  "ljos_gallery_backends",
@@ -3705,6 +3707,7 @@ version = "0.0.0"
 dependencies = [
  "ljos_a11y",
  "ljos_compiler",
+ "ljos_design_qml",
  "ljos_engine",
  "ljos_i18n",
  "ljos_ir",
@@ -3723,6 +3726,17 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ljos_design_qml"
+version = "0.0.0"
+dependencies = [
+ "ljos_compiler",
+ "ljos_design",
+ "ljos_engine",
+ "ljos_ir",
+ "qt_types",
 ]
 
 [[package]]
@@ -3985,6 +3999,7 @@ dependencies = [
  "insta",
  "ljos_bdd",
  "ljos_compiler",
+ "ljos_design",
  "ljos_ir",
  "ljos_mcp_core",
  "oxc_allocator",

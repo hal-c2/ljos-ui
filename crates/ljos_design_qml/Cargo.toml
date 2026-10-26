@@ -1,0 +1,28 @@
+[package]
+name = "ljos_design_qml"
+description = "The QML module Ljos.Design built in: the palette, motion, spacing and type tokens of ljos_design as singletons, and transitions and behaviours that use them, compiled to IR when the crate is built"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+ljos_engine = { path = "../ljos_engine" }
+ljos_ir = { path = "../ljos_ir" }
+
+[build-dependencies]
+# The module's QML is compiled when this crate is built; the crate never
+# links the compiler or the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_ir = { path = "../ljos_ir" }
+qt_types = { path = "../qt_types" }
+
+[dev-dependencies]
+# tests/tokens.rs holds the committed files to what ljos_design writes.
+ljos_design = { path = "../ljos_design" }
+
+[lints]
+workspace = true

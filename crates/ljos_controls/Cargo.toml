@@ -11,6 +11,8 @@ build = "build.rs"
 
 [dependencies]
 ljos_a11y = { path = "../ljos_a11y" }
+# `Ljos.Design`, registered with the controls.
+ljos_design_qml = { path = "../ljos_design_qml" }
 ljos_engine = { path = "../ljos_engine" }
 # SpinBox writes and reads its number as the locale does.
 ljos_i18n = { path = "../ljos_i18n", default-features = false }

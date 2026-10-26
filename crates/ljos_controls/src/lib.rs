@@ -288,4 +288,7 @@ pub fn register(engine: &Engine) {
             }
         }
     }
+    // Ljós's design module: its transitions are for these popups, so a
+    // host that has the controls has it too.
+    ljos_design_qml::register(engine);
 }
