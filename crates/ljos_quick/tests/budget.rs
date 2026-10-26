@@ -14,7 +14,7 @@ use std::cell::Cell;
 
 use common::*;
 use ljos_engine::{Engine, Lookups, ObjectId, Value, lookups};
-use ljos_quick::{Item, QuickScene, child_items};
+use ljos_quick::{Item, QuickScene, child_items, reduced_motion};
 use ljos_reactive::Census;
 use ljos_runtime::Time;
 
@@ -104,6 +104,9 @@ fn spent(e: &Engine, s: &mut QuickScene, from: u64, step: impl FnOnce()) -> Budg
 const FRAMES: u64 = 4;
 
 fn settle(s: &mut QuickScene, e: &Engine, from: u64) {
+    // With motion reduced a view would skip what it animates, and the
+    // counts would be lower than an application pays.
+    assert!(!reduced_motion(e), "counted with reduced motion");
     for i in 0..40 {
         s.frame(e, Time::from_millis(from + i * 16));
     }

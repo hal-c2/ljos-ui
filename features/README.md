@@ -371,6 +371,7 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `When the agent lists the resources` | MCP `resources/list`; the answer is the URIs, one a line |
 | `When the agent asks for the prompt "name"` / `When the agent asks for the prompt "name" with:` + doc string | an MCP prompt, with the arguments in the doc string (labelled `json`) |
 | `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` (or `ljos-fuzz`, the differential fuzzer) |
+| `Given the author's desktop setting "org.freedesktop.appearance" "reduced-motion" is uint32 1` | what the settings portal of a session bus of the scenario's own says to the commands the author runs: `"text"`, `uint32 N`, `true` or `false`; without one their bus is not there, so the developer's desktop never reaches them |
 | `Then the answer's "/pointer" is:` + doc string | a text of the last answer, whole (a diff, a formatted file) |
 | `Then the prompt contains "text"` | part of the prompt's text |
 | `Then the prompt names the tools "a, b, c"` | the tools the prompt names in backticks, in the order it first names them; each must be a tool the agent is offered |

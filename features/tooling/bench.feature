@@ -167,3 +167,36 @@ Feature: Measuring an application under a limit
       When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --memory-max 32M --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
       Then the command exits with status 2
       And the command's output mentions "memory.max is 67108864, not 33554432"
+
+  Rule: Nothing is measured with motion reduced
+
+    # Reduced motion ends what would move at once and shortens fades, so an
+    # application under it does less work than its users see it do. A
+    # number measured so would flatter the runtime; the bench says what the
+    # desktop's settings portal says of motion and will not run when it is
+    # reduced. A desktop with no portal reduces nothing.
+    Scenario: The report says how motion was set
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/motion/reduced_motion" equal to false
+      And the JSON file "out/report.json" has "/motion/portal" equal to false
+
+    Scenario: A desktop that reduces motion is refused
+      Given the author's desktop setting "org.gnome.desktop.a11y.interface" "reduced-motion" is "reduce"
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 2
+      And the command's output mentions "reduced motion is on"
+      And the command's output does not mention "report.json"
+
+    Scenario: A desktop whose motion is not reduced is measured
+      Given the author's desktop setting "org.freedesktop.appearance" "reduced-motion" is uint32 0
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/motion/reduced_motion" equal to false
+      And the JSON file "out/report.json" has "/motion/portal" equal to true
+
+    Scenario: Another harness asks the bench before it measures
+      Given the author's desktop setting "org.freedesktop.appearance" "reduced-motion" is uint32 1
+      When the author runs "ljos bench --check-motion"
+      Then the command exits with status 2
+      And the command's output mentions "reduced motion is on"

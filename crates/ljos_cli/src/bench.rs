@@ -118,6 +118,11 @@ pub struct Bench {
     /// Where `report.json`, `report.md` and the applications' logs go.
     #[arg(long, default_value = "target/bench")]
     out: PathBuf,
+    /// Only check that motion is not reduced, as a run does before it
+    /// measures: status 0 if it is not, 2 if it is. For scripts that
+    /// measure without the bench.
+    #[arg(long)]
+    check_motion: bool,
 }
 
 /// `ljos bench-gate`: the gate an application passes into its scope by.
@@ -184,6 +189,23 @@ pub const REFUSED: i32 = 2;
 
 impl Bench {
     pub fn run(self) -> anyhow::Result<i32> {
+        // The applications' bus, which they read the setting on.
+        let bus = self
+            .app_env
+            .iter()
+            .rev()
+            .find(|(k, _)| k == "DBUS_SESSION_BUS_ADDRESS")
+            .map(|(_, v)| v.as_str());
+        let motion = ljos_bench::motion::read(bus);
+        if motion.reduced_motion {
+            eprintln!(
+                "ljos bench: reduced motion is on: Ljós would move nothing, so no number would compare with Qt's. Turn it off in the desktop's settings and run again."
+            );
+            return Ok(REFUSED);
+        }
+        if self.check_motion {
+            return Ok(0);
+        }
         let me = std::env::current_exe().context("finding this program")?;
         let ljos = match &self.ljos {
             Some(p) => program(p)?,
@@ -289,6 +311,7 @@ impl Bench {
         } else {
             ljos_bench::Report::new(plan.profiles.clone(), plan.notes.clone())
         };
+        let report = ljos_bench::Report { motion, ..report };
         let write = |report: &ljos_bench::Report| -> std::io::Result<()> {
             std::fs::write(&json, serde_json::to_string_pretty(report)? + "\n")?;
             std::fs::write(&md, ljos_bench::report::markdown(report))

@@ -3091,6 +3091,32 @@ fn agent_asks_prompt_with(w: &mut LjosWorld, name: String, step: &Step) -> StepR
     author.prompt(files, &name, &args)
 }
 
+#[given(regex = r#"^the author's desktop setting "([^"]+)" "([^"]+)" is (.+)$"#)]
+fn author_desktop_setting(
+    w: &mut LjosWorld,
+    namespace: String,
+    key: String,
+    value: String,
+) -> StepResult {
+    let value = match value.as_str() {
+        "true" => crate::author::Setting::Bool(true),
+        "false" => crate::author::Setting::Bool(false),
+        v => match v.strip_prefix("uint32 ") {
+            Some(n) => crate::author::Setting::Uint(
+                n.parse().map_err(|_| format!("{n:?} is not a uint32"))?,
+            ),
+            None => crate::author::Setting::Text(
+                v.strip_prefix('"')
+                    .and_then(|v| v.strip_suffix('"'))
+                    .ok_or_else(|| format!("{v:?} is not \"text\", uint32 N, true or false"))?
+                    .to_owned(),
+            ),
+        },
+    };
+    let (author, files) = w.author();
+    author.desktop_setting(files, &namespace, &key, value)
+}
+
 #[given(regex = r#"^the author has run "([^"]+)"$"#)]
 #[when(regex = r#"^the author runs "([^"]+)"$"#)]
 fn author_runs(w: &mut LjosWorld, line: String) -> StepResult {

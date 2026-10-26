@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    Motion,
     measure::{MinMemory, Outcome, Run, Span},
     profile::Profile,
 };
@@ -55,6 +56,10 @@ pub struct Report {
     pub notes: Vec<String>,
     pub runs: Vec<Run>,
     pub min_memory: Vec<MinMemory>,
+    /// The motion settings the applications ran with; a report from before
+    /// it was kept reads as motion.
+    #[serde(default)]
+    pub motion: Motion,
 }
 
 impl Report {
@@ -68,6 +73,7 @@ impl Report {
             notes,
             runs: Vec::new(),
             min_memory: Vec::new(),
+            motion: Motion::default(),
         }
     }
 
@@ -375,6 +381,17 @@ pub fn markdown(report: &Report) -> String {
     for note in &report.notes {
         let _ = writeln!(out, "- {note}");
     }
+    let _ = writeln!(
+        out,
+        "- {} (`motion` in report.json).",
+        if report.motion.reduced_motion {
+            "Motion was reduced: these numbers are not comparable"
+        } else if report.motion.portal {
+            "Motion was full: the desktop's settings portal does not ask to reduce it"
+        } else {
+            "Motion was full: no settings portal answered"
+        }
+    );
     let loads: Vec<f64> = report.runs.iter().filter_map(|r| r.load_average).collect();
     if let (Some(lo), Some(hi)) = (
         loads.iter().copied().reduce(f64::min),

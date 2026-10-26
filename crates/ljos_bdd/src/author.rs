@@ -19,6 +19,9 @@ use std::{
 
 use serde_json::{Value, json};
 
+mod desktop;
+pub use desktop::Setting;
+
 use crate::backend::{
     inspector::{self, Answer, Ask, Refusal, Seen},
     testrun,
@@ -341,6 +344,8 @@ struct Rig {
     server: Option<Server>,
     seen: Seen,
     ran: Option<Ran>,
+    /// What the author's desktop says to the commands they run.
+    settings: desktop::Settings,
 }
 
 impl Rig {
@@ -360,6 +365,7 @@ impl Rig {
             server: None,
             seen: Seen::default(),
             ran: None,
+            settings: desktop::Settings::new(),
         })
     }
 
@@ -512,6 +518,26 @@ impl Rig {
             }
         }
         .map_err(|e| e.to_string())?;
+        // The command meets the scenario's desktop and not the developer's:
+        // a bus with a portal when the scenario set something, else a bus
+        // that is not there, as on a machine without a desktop.
+        let desktop = if self.settings.is_empty() {
+            None
+        } else {
+            Some(desktop::Desktop::start(
+                self.outside.path(),
+                &self.settings,
+            )?)
+        };
+        let bus = desktop.as_ref().map_or_else(
+            || {
+                format!(
+                    "unix:path={}",
+                    self.outside.path().join("no-session-bus").display()
+                )
+            },
+            |d| d.address.clone(),
+        );
         // One pipe for the output and the errors keeps them in the order
         // they were written, which is what a terminal shows.
         let out = Command::new("sh")
@@ -519,6 +545,7 @@ impl Rig {
             .arg(bin)
             .args(words)
             .current_dir(self.dir.path())
+            .env("DBUS_SESSION_BUS_ADDRESS", bus)
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("cannot start `{line}`: {e}"))?;
@@ -632,6 +659,24 @@ impl Slot {
     /// The line is not an `ljos` command, or the program cannot be run.
     pub fn run(&mut self, files: &Files, line: &str) -> Result<(), String> {
         self.rig(files)?.run(line)
+    }
+
+    /// Sets what the author's desktop says for `key` of `namespace` to
+    /// the commands they run from now on.
+    ///
+    /// # Errors
+    /// The project cannot be made.
+    pub fn desktop_setting(
+        &mut self,
+        files: &Files,
+        namespace: &str,
+        key: &str,
+        value: Setting,
+    ) -> Result<(), String> {
+        self.rig(files)?
+            .settings
+            .insert((namespace.to_owned(), key.to_owned()), value);
+        Ok(())
     }
 
     /// What the last command said.

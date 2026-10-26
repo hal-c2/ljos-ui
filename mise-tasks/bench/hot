@@ -27,6 +27,9 @@ mkdir -p "$out/runs"
 sandbox="$("$root/scripts/cua-sandbox.sh" env)"
 value() { sed -n "s/^$1=//p" <<< "$sandbox"; }
 wayland="$(value WAYLAND_DISPLAY)"
+# With motion reduced the apps would skip their animations, and the code
+# that runs them would be laid out as cold.
+DBUS_SESSION_BUS_ADDRESS="$(value DBUS_SESSION_BUS_ADDRESS)" "$bin" bench --check-motion
 
 # One line per app: id, file, size and the arguments Ljós is given, as
 # `ljos bench` starts it.

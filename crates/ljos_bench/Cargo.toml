@@ -9,12 +9,14 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+ljos_a11y = { path = "../ljos_a11y" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 libc.workspace = true
 wayland-client.workspace = true
 wayland-protocols-wlr.workspace = true
+zbus.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

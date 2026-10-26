@@ -12,6 +12,7 @@ pub mod cgroup;
 pub mod counters;
 pub mod gate;
 pub mod measure;
+pub mod motion;
 pub mod procfs;
 pub mod profile;
 pub mod report;
@@ -27,6 +28,7 @@ use std::{
 use serde::Deserialize;
 
 pub use measure::{Error, Gesture, Outcome, Phases, Run, Runtime, Setup};
+pub use motion::Motion;
 pub use profile::Profile;
 pub use report::Report;
 

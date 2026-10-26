@@ -11,6 +11,9 @@ out="${OUT:-${CARGO_TARGET_DIR:-$root/target}/bench-js}"
 export QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=offscreen
 command -v valgrind > /dev/null || { echo "valgrind not found" >&2; exit 1; }
 [[ -x $ljos ]] || { echo "no $ljos; cargo build --release -p ljos_cli, or set LJOS" >&2; exit 1; }
+# Nothing is measured with motion reduced (`ljos bench --check-motion`
+# says why, and exits 2).
+"$ljos" bench --check-motion
 
 # Rounds for the wall clock, and for the instruction count (which also runs
 # twice as many: the difference over the rounds is one round's cost, with
