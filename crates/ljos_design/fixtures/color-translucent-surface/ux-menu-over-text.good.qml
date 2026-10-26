@@ -8,7 +8,7 @@ Item {
     Menu {
         x: 20; y: 20
         Component.onCompleted: open()
-        background: Rectangle { color: palette.window; border.color: palette.mid }
+        background: Rectangle { implicitWidth: 200; color: palette.window; border.color: palette.mid }
         MenuItem { text: "Cut" }
         MenuItem { text: "Copy" }
     }

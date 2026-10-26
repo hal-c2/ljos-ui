@@ -88,6 +88,8 @@ TextField { background: Rectangle { border.color: "#e6e6e6" } }
 TextField { background: Rectangle { color: palette.base; border.color: palette.mid } }
 ```
 
+Checked by: the runtime audit. It draws the part (a field's frame, a box or switch indicator, a slider's groove and handle, an icon button's icon) with the rest of the scene and again without it, and takes the most any changed pixel stands out. Only parts the application draws; a disabled control is left out.
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html
 
 <a id="color-state-only"></a>
@@ -104,6 +106,8 @@ Row {
     Label { text: online ? qsTr("Online") : qsTr("Offline") }
 }
 ```
+
+Checked by: the runtime audit. It flips each checkable control the application draws, draws it both ways, and reports when the pixels changed but the two states stand out less than 3:1 from each other.
 
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html , https://developer.apple.com/design/human-interface-guidelines/accessibility
 
@@ -153,6 +157,8 @@ Menu { background: Rectangle { color: Qt.rgba(1, 1, 1, 0.7) } }
 Menu { background: Rectangle { color: palette.window; border.color: palette.mid } }
 ```
 
+Checked by: the runtime audit, for popup backgrounds the application draws whose fill (with its opacity) is under the limit and through which something other than one flat colour shows. Whether the popup's text still reads is `color-text-contrast`'s.
+
 Sources: https://developer.apple.com/design/human-interface-guidelines/materials , https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html
 
 <a id="color-surface-merge"></a>
@@ -167,13 +173,46 @@ Popup { background: Rectangle { color: palette.window } }
 Popup { background: Rectangle { color: palette.base; border.color: palette.mid; radius: 6 } }
 ```
 
+Checked by: the runtime audit, for open popups whose background has no border and no shadow, against the colour most of what is around them has. Cards inside the window are not looked at: whether they need an edge is the design's.
+
 Sources: https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale , https://www.refactoringui.com/
+
+
+<a id="color-semantic-hue"></a>
+### `color-semantic-hue`
+
+**Hint, runtime.** A control or a message that says it destroys, failed or succeeded is drawn in the hue that means the opposite: Delete in green, Saved in red. The words are read from a button's text, a short label (three words at most) or an item whose `state` is `error`; the colour is the one most of its coloured pixels (chroma at least `limits::hue::MIN_CHROMA`) have as drawn. Red is OKLCH hue `limits::hue::RED`, green `limits::hue::GREEN`.
+
+Checked by: the runtime audit. Only red and green are held against each other: every guide agrees on what they mean (ISO 3864-1 safety colours; Apple's destructive role; Material's error and success roles), while amber and blue are the design's.
+
+```qml
+// Bad
+Button { text: qsTr("Delete"); palette.button: "#26a269" }
+// Good
+Button { text: qsTr("Delete"); palette.button: "#c01c28"; palette.buttonText: "white" }
+```
+
+Sources: https://www.iso.org/standard/51021.html , https://developer.apple.com/design/human-interface-guidelines/buttons , https://m3.material.io/styles/color/roles
+
+<a id="color-accent-weight"></a>
+### `color-accent-weight`
+
+**Hint, runtime.** The accent covers more than `limits::hue::ACCENT_MAX_SHARE` of the window, or more than `limits::hue::PRIMARY_BUTTONS_MAX` button on one surface (the window, or one popup) is highlighted. When everything is accented nothing is: 60-30-10 keeps the accent to about a tenth.
+
+Checked by: the runtime audit. A pixel is in the accent when it is within a just noticeable OKLab step of `palette.highlight`; highlighted buttons are counted per surface.
+
+```qml
+// Bad: two calls to action
+Row { Button { text: qsTr("Save"); highlighted: true } Button { text: qsTr("Publish"); highlighted: true } }
+// Good: one
+Row { Button { text: qsTr("Save") } Button { text: qsTr("Publish"); highlighted: true } }
+```
+
+Sources: https://m3.material.io/components/buttons/guidelines , https://developer.apple.com/design/human-interface-guidelines/buttons
 
 ## Not checked yet
 
-- **No complements touching at full chroma** (proposed `color-complement-adjacent`): see above.
-- **Keep the semantic hues** (proposed `color-semantic-hue`): a brand accent inside the danger, warning, success or info band.
-- **60-30-10** (proposed `color-accent-weight`): the accent covers about a tenth of the window, not a third.
+- **No complements touching at full chroma** (proposed `color-complement-adjacent`): see above. The runtime audit leaves it: where two hues touch, and at what chroma they start to vibrate, has no measure every reader agrees on, and a wrong Hint is noise.
 - **Interactive states need more contrast than rest**, not less (Vercel). https://vercel.com/design/guidelines
 
 ## Sources

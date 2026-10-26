@@ -30,6 +30,8 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Bind every surface to the palette or colour scheme. [color-scheme-ignored]
 - Make popups, menus and dialogs opaque (alpha ≥ 0.95) or blurred. [color-translucent-surface]
 - Set a floating surface apart by colour step, border or shadow. [color-surface-merge]
+- Paint destructive actions red and confirmations green, never the other way round. [color-semantic-hue]
+- Keep the accent for the one primary action: one highlighted button per surface, accent on at most a tenth of the window. [color-accent-weight]
 - Pick hues in OKLCH, keep semantic hues for danger/warning/success/info, weigh colour 60-30-10.
 
 ## Text

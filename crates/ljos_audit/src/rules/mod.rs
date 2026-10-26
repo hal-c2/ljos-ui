@@ -15,7 +15,15 @@ mod tab;
 mod target_size;
 mod text_clipped;
 mod text_elided_hidden;
+// Colour, the second batch.
+mod color_accent_weight;
+mod color_nontext_contrast;
+mod color_semantic_hue;
+mod color_state_only;
+mod color_surface_merge;
+mod color_translucent_surface;
 
+use crate::acting::Acting;
 use crate::cx::Cx;
 
 /// A check: the rules it reports and what runs it.
@@ -193,12 +201,48 @@ pub(crate) const CHECKS: &[Check] = &[
         codes: &["text-line-length"],
         run: line_length::check,
     },
+    // Colour, the second batch.
+    Check {
+        codes: &["color-nontext-contrast"],
+        run: color_nontext_contrast::check,
+    },
+    Check {
+        codes: &["color-semantic-hue"],
+        run: color_semantic_hue::check,
+    },
+    Check {
+        codes: &["color-accent-weight"],
+        run: color_accent_weight::check,
+    },
+];
+
+/// The checks that act on the scene to see what it does (focus an item,
+/// flip a state, run an animation), after all of [`CHECKS`], in the order
+/// a report lists them. Each puts back what it changed.
+pub(crate) const ACTS: &[Acting] = &[
+    Acting {
+        codes: &["color-state-only"],
+        run: color_state_only::check,
+    },
+    Acting {
+        codes: &["color-translucent-surface"],
+        run: color_translucent_surface::check,
+    },
+    Acting {
+        codes: &["color-surface-merge"],
+        run: color_surface_merge::check,
+    },
 ];
 
 /// The codes the audit implements, each once, in the order they run.
 pub fn implemented() -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();
-    for code in CHECKS.iter().flat_map(|c| c.codes.iter().copied()) {
+    let acts = ACTS.iter().flat_map(|c| c.codes.iter().copied());
+    for code in CHECKS
+        .iter()
+        .flat_map(|c| c.codes.iter().copied())
+        .chain(acts)
+    {
         if !out.contains(&code) {
             out.push(code);
         }

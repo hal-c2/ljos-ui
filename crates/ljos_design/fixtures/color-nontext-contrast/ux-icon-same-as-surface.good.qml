@@ -7,6 +7,11 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: palette.window
-        Rectangle { anchors.centerIn: parent; width: 20; height: 20; radius: 10; color: palette.windowText }
+        Button {
+            anchors.centerIn: parent
+            Accessible.name: "Record"
+            background: Item {}
+            contentItem: Rectangle { implicitWidth: 20; implicitHeight: 20; radius: 10; color: palette.windowText }
+        }
     }
 }

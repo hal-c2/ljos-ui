@@ -20,12 +20,15 @@
 //! file and line), where it is, what was measured, and the points of the
 //! matrix where it shows.
 
+mod acting;
 mod apply;
 mod cx;
 mod finding;
 mod matrix;
+mod pixels;
 pub mod rules;
 mod shift;
+mod surfaces;
 #[cfg(test)]
 mod tests;
 
@@ -148,7 +151,12 @@ fn area_named(name: &str) -> bool {
 }
 
 /// The findings at the scene as it is now.
-fn run_checks(engine: &Engine, scene: &QuickScene, options: &Options) -> Vec<Finding> {
+fn run_checks(
+    engine: &Engine,
+    scene: &mut QuickScene,
+    now: Time,
+    options: &Options,
+) -> Vec<Finding> {
     let mut cx = cx::Cx::new(engine, scene, options);
     for check in rules::CHECKS {
         if check.codes.iter().any(|c| options.wants(c)) {
@@ -156,6 +164,8 @@ fn run_checks(engine: &Engine, scene: &QuickScene, options: &Options) -> Vec<Fin
         }
     }
     let mut out = cx.out;
+    // What the scene does when acted on, after what it shows as it is.
+    out.extend(acting::run(engine, scene, now, options));
     out.retain(|f| {
         options.wants(f.code)
             && options
@@ -227,7 +237,7 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
             if i == 0 && point.is_current() {
                 merge(
                     &mut findings,
-                    run_checks(engine, scene, options),
+                    run_checks(engine, scene, now, options),
                     point,
                     many,
                 );
@@ -249,7 +259,7 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
             apply::apply(engine, scene, now, h, &to);
             merge(
                 &mut findings,
-                run_checks(engine, scene, &applied),
+                run_checks(engine, scene, now, &applied),
                 point,
                 many,
             );
