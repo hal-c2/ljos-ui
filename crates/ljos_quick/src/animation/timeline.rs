@@ -798,13 +798,17 @@ pub(crate) fn script_names(engine: &Engine, anims: &[ObjectId]) -> Vec<Atom> {
     out
 }
 
-/// The value of each `PropertyAction` in `anims`, as it is now: a
-/// transition's actions read theirs before the state's changes are made
-/// (qml6), so one that reads what the state changes sets the old value.
+/// The value of each `PropertyAction` in `anims` that was given one, as it
+/// is now: a transition's actions read theirs before the state's changes
+/// are made (qml6), so one that reads what the state changes sets the old
+/// value.
 pub(crate) fn action_values(engine: &Engine, anims: &[ObjectId]) -> Vec<(ObjectId, Value)> {
     let mut out = Vec::new();
     for anim in anims {
         if is_a::<PropertyAction>(engine, *anim) {
+            if is_unset(engine, *anim, PropertyAction::VALUE.index) {
+                continue;
+            }
             out.push((
                 *anim,
                 engine.untrack(|| engine.read_by_name(*anim, "value")),
@@ -974,10 +978,6 @@ impl Timed {
 
     fn build_in(engine: &Engine, anim: ObjectId, env: Env<'_>) -> Timed {
         let defaults = env.defaults;
-        let set = |name: &str| match engine.read_by_name(anim, name) {
-            Value::Undefined => None,
-            v => Some(v),
-        };
         let ends = || property_ends(engine, anim, defaults);
         let children = |env: Env<'_>| -> Vec<Timed> {
             objects(engine, anim, "animations")
@@ -1128,18 +1128,24 @@ impl Timed {
             let (slots, tos) = aimed(Kind::Any);
             // Without a value of its own it sets what the Behavior it is
             // in was given, or what the state gives the property.
-            let read = env
-                .changes
-                .and_then(|c| c.values.iter().find(|(a, _)| *a == anim));
-            let own = match read {
-                Some((_, Value::Undefined)) => None,
-                Some((_, v)) => Some(v.clone()),
-                None => set("value"),
+            // One given `undefined` sets the property to what its type has
+            // before anything is assigned (qml6).
+            let read = match env.changes {
+                Some(c) => c
+                    .values
+                    .iter()
+                    .find(|(a, _)| *a == anim)
+                    .map(|(_, v)| v.clone()),
+                None => given(engine, anim, PropertyAction::VALUE.index),
             };
-            let given = env.changes.is_some() && own.is_some();
-            let own = own.or_else(|| defaults.and_then(|d| d.to.clone()));
+            let blank = matches!(read, Some(Value::Undefined));
+            let own = read.filter(|_| !blank);
+            let given = env.changes.is_some() && (own.is_some() || blank);
+            let own = own.or_else(|| defaults.and_then(|d| d.to.clone()).filter(|_| !blank));
             let values = match env.changes {
+                Some(_) if blank => slots.iter().map(|s| Some(s.ty.default_value())).collect(),
                 Some(_) => tos.into_iter().map(|to| own.clone().or(to)).collect(),
+                None if blank => slots.iter().map(|s| Some(s.ty.default_value())).collect(),
                 None => slots
                     .iter()
                     .map(|_| Some(own.clone().unwrap_or_default()))
