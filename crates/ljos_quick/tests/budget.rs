@@ -129,33 +129,48 @@ fn shown(e: &Engine, view: ObjectId) -> usize {
 
 /// The ListView delegate of `bench/listview.qml`: a Rectangle with a
 /// required index, a binding to the view's width and a Text anchored in it.
-fn listview_delegates() -> (Budget, usize) {
+/// A row's text: one short line.
+const ONE_LINE: &str = r##"Text {
+        anchors.verticalCenter: parent.verticalCenter
+        x: 12
+        text: "Row " + row.index
+      }"##;
+
+/// A row's text: a message wrapped on two lines, the second elided.
+const WRAPPED: &str = r##"Text {
+        x: 12
+        width: row.width - 24
+        wrapMode: Text.WordWrap
+        maximumLineCount: 2
+        elide: Text.ElideRight
+        text: "Message " + row.index + ": the quick brown fox jumps over the lazy dog while light falls on northern hills and every small window glows"
+      }"##;
+
+fn listview_delegates(text: &str) -> (Budget, usize) {
     let e = engine();
     let root = load(
         &e,
-        r##"import QtQuick
-Rectangle {
+        &format!(
+            r##"import QtQuick
+Rectangle {{
   width: 400; height: 200
-  ListView {
+  ListView {{
     objectName: "view"
     anchors.fill: parent
     cacheBuffer: 0
     model: 10000
-    delegate: Rectangle {
+    delegate: Rectangle {{
       id: row
       required property int index
       width: ListView.view.width
       height: 40
       color: index % 2 ? "#eeeeee" : "white"
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        x: 12
-        text: "Row " + row.index
-      }
-    }
-  }
-}
-"##,
+      {text}
+    }}
+  }}
+}}
+"##
+        ),
     );
     let view = find(&e, root, "view");
     let mut s = scene(&e, root, 400.0, 1000.0);
@@ -263,7 +278,7 @@ fn plain_teardown() -> Teardown {
 #[test]
 fn ten_listview_delegates() {
     let _alone = alone();
-    let (b, made) = listview_delegates();
+    let (b, made) = listview_delegates(ONE_LINE);
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 9 values, 6 bindings, 15 effects, 2 scopes,
@@ -305,6 +320,38 @@ fn ten_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1407,
+        }
+    );
+}
+
+#[test]
+fn ten_wrapped_listview_delegates() {
+    let _alone = alone();
+    let (b, made) = listview_delegates(WRAPPED);
+    assert_eq!(made, 10);
+    // Per delegate: 3 objects, 8 values, 5 bindings, 16 effects, 2
+    // scopes, and the two enumerations its text names, `Text.WordWrap`
+    // and `Text.ElideRight`, each looked up as a type; 145.2
+    // allocations. The text is broken into lines and its last line
+    // elided without Parley's builder or the layouts it makes (32 fewer
+    // a delegate, TEXT4).
+    assert_eq!(
+        b,
+        Budget {
+            objects: 30,
+            graph: Census {
+                values: 80,
+                bindings: 50,
+                effects: 160,
+                scopes: 20,
+            },
+            lookups: Lookups {
+                members: 0,
+                types: 20,
+                names: 0,
+                atoms: 0,
+            },
+            allocations: 1452,
         }
     );
 }
