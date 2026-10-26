@@ -5659,3 +5659,80 @@ The off-screen numbers before this section were also inflated. Every devtools ev
 its result runner again, at 857K instructions. An empty eval took 257 µs and now takes 16–47
 µs. `frame_profile --apart` now times each `--start` after a frame of its own, as a tool
 reaching a shown window does.
+
+### Text per delegate (2026-10-26)
+
+The ListView delegate of `bench/listview.qml` lays out one `Text` ("Row {i}"). At the start
+it cost 57.5 k instructions in `ljos_text` and 30.9 k in `ljos_quick::text`, out of 392.9 k
+per delegate. qml6 does a whole delegate in ~200 k. This pass cuts the `ljos_text` part
+and keeps layouts byte-for-byte the same.
+
+How it was measured:
+
+- **Per commit:** a scratch microbench lays out `"Row {i}"` twice per row, once to measure
+  and once to paint, as a delegate does. It uses the system fonts and the default style and
+  params, and calls `end_frame` every 8 rows. After 2000 rows of warm-up, callgrind counts
+  only rows 0..10000 (`--toggle-collect`). Repeat runs agree within about ±10 per row.
+- **Behaviour:** a scratch dump, Debug-printed and deterministic, compared with `cmp`
+  against the baseline after every commit. It covers about 135 k layouts (35 texts × 25
+  styles × 77 params, elided text, advance widths, ranged layouts and font metrics) on two
+  engines.
+- **In the app:** the release build with line tables, under callgrind in the GPU sandbox
+  (20 s after 40 s of warm-up, main thread). Per delegate is the total ÷ `build_layout`
+  calls, and phases are attributed with B25's markers.
+
+| Commit | What | Microbench, per row | Change |
+|---|---|---:|---:|
+| d781a603 | baseline | 55,523 | |
+| 0111321a | a run's glyphs read from Parley once; known advances in pages, not a hash map | 51,826 | −3,697 |
+| 2b4ff999 | a line's items read once, for both widths and painting | 50,551 | −1,275 |
+| d256a163 | a font's tables (for vertical metrics) read once per face | 49,824 | −727 |
+| f8921535 | which characters a pinned font covers, kept as a bit set | 48,165 | −1,659 |
+| 9f6b4eb5 | frame caches trim from a log of stamps, not a sort of every entry | 47,754 | −411 |
+| 6de8b7d7 | a run's glyph vectors reserved once, not grown cluster by cluster | 47,258 | −496 |
+
+That is −8,265 per row (−14.9 %). The messages of 0111321a and 2b4ff999 give numbers from an
+earlier, noisier method (the difference of two whole runs, ±500); the table has the
+toggle-collect numbers.
+
+| listview under callgrind (main thread, per delegate) | Before (d781a603) | After (6de8b7d7) |
+|---|---:|---:|
+| Delegates (`build_layout` calls) | 9779 | 9861 |
+| Frames | 793 | 1051 |
+| text: layout and shaping (`ljos_text`) | 57.5 k | 48.8 k |
+| text: completion, measure, follow (`ljos_quick::text`) | 30.9 k | 31.0 k |
+| paint, egui and the event loop | 43.5 k | 53.1 k |
+| view: pass refresh/scrolled/release | 33.0 k | 39.1 k |
+| Total | 392.9 k | 405.4 k |
+
+The text in `ljos_text` fell by 8.7 k per delegate (−15 %). The total rose because the second
+capture drew a third more frames for about the same number of delegates. Painting and the
+view's pass are paid per frame, so they rose with them, and none of that is text.
+
+| Scroll, M instructions/s (`scr.sh listview`, back to back, twice) | Run 1 | Run 2 |
+|---|---:|---:|
+| Ljós before | 211.11 | 211.45 |
+| Ljós after | 207.30 | 207.15 |
+| qml6 | 102.76 | 103.07 |
+
+Ten ListView delegates now make 1786 allocations, down from 1796 (`budget.rs`, 4ab9b69a).
+
+What is left in `ljos_text`, per row of the microbench:
+
+- **Parley:** about 28 k to build the layout, 2.2 k to push the style and 3.3 k to break
+  lines. Shaping is already cached by text and style, so a row pays for layout building,
+  not shaping.
+- **Our own reading of the layout:** about 5 k (glyph iteration and advance snapping) and
+  1.7 k to extract it.
+- **Not ours:** `TextInputs::read` in `ljos_quick::text` (16 k per delegate) is mostly
+  `Graph::try_get`, which belongs to the graph track (B26–B30).
+
+DECISIONs:
+
+- Parley's shaping, line building and font queries are left as they are. Doing their work
+  ourselves for short single-line text would be the next large win, but matching their
+  results exactly is too much risk for "behaviour unchanged".
+- Each commit is measured with the microbench, not with a thin-LTO app build per commit.
+  The app is measured once on the whole stack.
+- A run reserves one glyph per byte of its text, which is exact for ASCII. For text of
+  wider characters it over-reserves for a run kept in the shape cache.
