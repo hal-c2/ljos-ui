@@ -415,7 +415,6 @@ Feature: A value a binding gives a property of another type
     Then the property "text" of "root" is "AB"
 
   # Bucket value:load:text-rounding.
-  @backlog
   Scenario: A number halfway between two shortest texts is written with the even one
     Given the QML:
       """qml

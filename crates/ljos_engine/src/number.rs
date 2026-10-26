@@ -6,8 +6,9 @@
 /// `Number::toString(x)` in radix 10.
 ///
 /// Rust's `{:e}` already yields the shortest digit string that round-trips
-/// (the same digits ECMAScript asks for); only the layout differs, so we
-/// take the digits and exponent from it and lay them out per the spec.
+/// (the same digits ECMAScript asks for, but for a tie: see
+/// [`even_on_a_tie`]); only the layout differs, so we take the digits and
+/// exponent from it and lay them out per the spec.
 pub fn number_to_string(x: f64) -> String {
     if x.is_nan() {
         return "NaN".to_owned();
@@ -25,6 +26,7 @@ pub fn number_to_string(x: f64) -> String {
     let sci = format!("{x:e}");
     let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
     let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let digits = even_on_a_tie(x, digits);
     let e: i32 = exp.parse().unwrap_or(0);
     let k = digits.len() as i32;
     let n = e + 1;
@@ -52,6 +54,55 @@ pub fn number_to_string(x: f64) -> String {
         out.push_str(&e.unsigned_abs().to_string());
     }
     out
+}
+
+/// The shortest digits of `x`, the even of the two when `x` is exactly
+/// halfway between two that are as short: ECMAScript asks for the one
+/// nearest `x` and then the even one, where Rust's rounds the tie up
+/// (0.50000762939453125 is 0.5000076293945312, not …313).
+fn even_on_a_tie(x: f64, digits: String) -> String {
+    let k = digits.len();
+    // One digit more, rounded: halfway ends in 5 there, which most never do.
+    let longer = format!("{x:.k$e}");
+    let longer: String = longer
+        .split_once('e')
+        .map_or(longer.as_str(), |(m, _)| m)
+        .chars()
+        .filter(|c| *c != '.')
+        .collect();
+    let (base, last) = longer.split_at(k);
+    if last != "5" || base.ends_with('9') || exact_digits(x) != longer {
+        return digits;
+    }
+    let lower = base.as_bytes()[k - 1] - b'0';
+    if lower.is_multiple_of(2) {
+        return base.to_owned();
+    }
+    let mut upper = base.to_owned();
+    upper.pop();
+    upper.push(char::from(b'0' + lower + 1));
+    upper
+}
+
+/// Every significant digit of `x`'s exact value, which has as many places
+/// after the point as its lowest set bit is below the units.
+fn exact_digits(x: f64) -> String {
+    let bits = x.to_bits();
+    let biased = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1 << 52) - 1);
+    let (mantissa, exp) = if biased == 0 {
+        (fraction, -1074)
+    } else {
+        (fraction | 1 << 52, biased - 1075)
+    };
+    let places = (-(exp + mantissa.trailing_zeros() as i32)).max(0) as usize;
+    let fixed = format!("{x:.places$}");
+    fixed
+        .chars()
+        .filter(|c| *c != '.')
+        .collect::<String>()
+        .trim_matches('0')
+        .to_owned()
 }
 
 /// ECMAScript `StrWhiteSpaceChar`: WhiteSpace plus LineTerminator. Not
@@ -221,6 +272,10 @@ mod tests {
             (f64::MAX, "1.7976931348623157e+308"),
             (5e-324, "5e-324"),
             (12.5, "12.5"),
+            // 0.50000762939453125 exactly: halfway between …312 and …313.
+            (0.5 + 2f64.powi(-17), "0.5000076293945312"),
+            (-0.5 - 2f64.powi(-17), "-0.5000076293945312"),
+            (9007199254740993.0, "9007199254740992"),
         ];
         for (x, want) in cases {
             assert_eq!(number_to_string(*x), *want, "{x:?}");
