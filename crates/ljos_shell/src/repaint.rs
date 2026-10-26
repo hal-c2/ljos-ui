@@ -47,6 +47,12 @@ impl<K: Copy + PartialEq> RepaintSchedule<K> {
         self.due.iter().map(|(_, at)| *at).min()
     }
 
+    /// `key` is to be drawn by `by`.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn wants_by(&self, key: K, by: Instant) -> bool {
+        self.due.iter().any(|(k, at)| *k == key && *at <= by)
+    }
+
     /// The window is gone.
     pub(crate) fn forget(&mut self, key: K) {
         self.due.retain(|(k, _)| *k != key);

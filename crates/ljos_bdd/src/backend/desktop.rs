@@ -306,6 +306,20 @@ impl Running {
         Ok(())
     }
 
+    /// Waits until the application rests with its window's last frame
+    /// presented: no pass due, and none owed to the window. Under load
+    /// the window system lets a window draw late, and the thread rests
+    /// meanwhile with only that stall's wake due, so a rest alone can
+    /// come before the frame (`features/window/cpu-drawing.feature`).
+    fn presented(&mut self, deadline: Instant) -> Result<()> {
+        self.rest_until(deadline, |rest| {
+            rest["wake_in_ms"].as_u64() != Some(0) && rest["frame_owed"] == Value::Bool(false)
+        })?;
+        // A window that keeps drawing owes a frame at every rest; the
+        // compositor's picture is then never still, which `grab` says.
+        Ok(())
+    }
+
     fn eval(&mut self, object: &str, source: &str) -> Result<Value> {
         let answer = self.ask(
             "app_eval",
@@ -774,16 +788,17 @@ impl Backend for DesktopBackend {
     fn grab(&mut self) -> Result<Vec<u8>> {
         // What the compositor shows, as a person sees it: the frames the
         // application sent, after whatever it painted them with.
-        // The application has drawn all it was going to once it rests;
-        // the compositor shows its last frame a moment later.
-        self.running()?.settle()?;
+        // The application has drawn all it was going to once it rests
+        // with its last frame presented; the compositor shows that frame
+        // a moment later.
+        let deadline = Instant::now() + PICTURE;
+        self.running()?.presented(deadline)?;
         let rect = self.running()?.rect;
         let display = self
             .sandbox
             .as_ref()
             .ok_or_else(|| BackendError::Failed("no sandbox".into()))?
             .path("WAYLAND_DISPLAY")?;
-        let deadline = Instant::now() + PICTURE;
         let failed = |e: ljos_bench::wayland::Error| {
             BackendError::Failed(format!("the sandbox's screencopy: {e}"))
         };

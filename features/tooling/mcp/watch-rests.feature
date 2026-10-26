@@ -10,8 +10,10 @@ Feature: An agent waits until the application has seen the input it sent
   application's UI thread goes to sleep and what it says is new,
   `app_watch` counts a rest (`rests`, asked for by name): when the thread
   wakes by itself next (`wake_in_ms`, `null` when only input or a message
-  wakes it) and the pointer as the primary window's last pass saw it, in
-  the window's points. A watch waits on the server's thread, so the
+  wakes it), whether the primary window still owes a frame
+  (`frame_owed`: a pass of it is due, or asked of the window system and
+  not yet run), and the pointer as the primary window's last pass saw it,
+  in the window's points. A watch waits on the server's thread, so the
   application runs no pass for it.
 
   Background:
@@ -19,6 +21,7 @@ Feature: An agent waits until the application has seen the input it sent
       """qml
       import QtQuick
       Rectangle {
+        objectName: "root"
         width: 200; height: 100; color: "white"
         MouseArea {
           objectName: "area"
@@ -52,3 +55,13 @@ Feature: An agent waits until the application has seen the input it sent
     When the agent calls the tool "app_watch"
     Then the answer's "/counts/rests" is at least 1
     And the answer's text contains "The UI thread"
+
+  Scenario: Once the window has shown a change it owes no frame
+    When the property "color" of "root" is set to "#ff0000"
+    Then the pixel at 150, 80 of the window is "#ff0000"
+    When the agent calls the tool "app_watch" with:
+      """json
+      {"topics": ["rests"]}
+      """
+    Then the answer's "/rest/frame_owed" is false
+    And the answer's text contains "no frame is owed"

@@ -2576,6 +2576,20 @@ impl<M: Send + 'static> Desktop<M> {
         if !self.app.inspected() {
             return;
         }
+        // What the window shows is not yet the scene while its pass is
+        // due, held to the display's pace, or waits for the window system.
+        // A pass asked for seconds ahead (egui's delayed repaint) is no
+        // frame owed now, and a window out of sight draws nothing until
+        // it is seen again.
+        let now = Instant::now();
+        let frame_owed = self.slots.iter().find(|s| s.is_root()).is_some_and(|slot| {
+            slot.surface.is_some()
+                && !slot.out_of_sight()
+                && (slot.redraw_asked.is_some()
+                    || self
+                        .repaints
+                        .wants_by(slot.key, now + slot.frame_interval()))
+        });
         let pointer = self.slots.iter().find(|s| s.is_root()).and_then(|slot| {
             slot.ctx.input(|i| {
                 i.pointer.latest_pos().map(|p| ljos_dev::mcp::PointerSeen {
@@ -2587,6 +2601,7 @@ impl<M: Send + 'static> Desktop<M> {
         });
         self.app.record_rest(ljos_dev::mcp::Rest {
             wake_at: next,
+            frame_owed,
             pointer,
         });
     }
