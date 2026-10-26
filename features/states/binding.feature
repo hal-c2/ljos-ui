@@ -189,3 +189,37 @@ Feature: The Binding element
       When the method "twice" of "root" is called
       And 100 milliseconds pass
       Then the property "log" of "root" is "width:5 now:5 width:12 "
+
+  Rule: A Binding may name the properties of other objects in its body
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int src: 5
+          property bool on: true
+          Item {
+            id: box; objectName: "box"; width: 1
+            property alias shown: inner.visible
+            Item { id: inner; objectName: "inner" }
+          }
+          Binding { when: root.on; box.width: root.src; box.shown: root.src > 6 }
+        }
+        """
+
+    Scenario: The properties named have the values from the start
+      Then the property "width" of "box" is 5
+      And the property "visible" of "inner" is false
+
+    Scenario: The properties named follow the values while the condition holds
+      When the property "src" of "root" is set to 7
+      Then the property "width" of "box" is 7
+      And the property "visible" of "inner" is true
+
+    Scenario: When the condition no longer holds they have what they had
+      When the property "on" of "root" is set to false
+      Then the property "width" of "box" is 1
+      And the property "visible" of "inner" is true
+      And the log has no warnings
