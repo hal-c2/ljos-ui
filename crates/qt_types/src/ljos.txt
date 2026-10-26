@@ -972,7 +972,7 @@ module QtPositioning
 	type QtPositioning.PositionSource PositionSource
 		prototype QtQml.QtObject named
 		default parameters
-		enum PositioningMethods NoPositioningMethods=0 SatellitePositioningMethods=255 NonSatellitePositioningMethods=-256 AllPositioningMethods=-1
+		flags PositioningMethods NoPositioningMethods=0 SatellitePositioningMethods=255 NonSatellitePositioningMethods=-256 AllPositioningMethods=-1
 		enum SourceError AccessError=0 ClosedError=1 UnknownSourceError=2 NoError=3 UpdateTimeoutError=4
 		prop parameters QtQml.var named list
 		prop active QtQml.bool named
