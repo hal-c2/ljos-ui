@@ -322,9 +322,12 @@ struct Inner<V> {
     /// Node lists of disposed scopes, emptied, for the scopes made next: a
     /// view that makes and disposes delegates grows no list after the first.
     node_lists: Vec<Vec<NodeId>>,
-    /// Nodes a scope's disposal took out, waiting to be dropped once the
-    /// graph is no longer borrowed. Kept, empty, for the next disposal.
-    dead_nodes: Vec<Node<V>>,
+    /// What a scope's disposal took out of its nodes that may hold user
+    /// closures or values, waiting to be dropped once the graph is no
+    /// longer borrowed. Kept, empty, for the next disposal. Only these
+    /// parts: the rest of a node is three times their size, and moving it
+    /// here was a good part of what disposing a node cost.
+    dead_nodes: Vec<(Kind<V>, Option<V>)>,
     walk_pool: Vec<Vec<(NodeId, u32)>>,
     /// (node, colour, read stamp of the node that sent the mark).
     mark_stack: Vec<(NodeId, NodeState, u64)>,
@@ -646,6 +649,26 @@ impl<V: Clone + 'static> Graph<V> {
             None => i.scopes[parent].first_child = Some(id),
         }
         Ok(id)
+    }
+
+    /// How many nodes `scope` holds, not counting its children's (`0` for
+    /// a dead scope). Nodes disposed one by one may still be counted.
+    pub fn scope_len(&self, scope: ScopeId) -> usize {
+        self.inner
+            .borrow()
+            .scopes
+            .get(scope)
+            .map_or(0, |s| s.nodes.len())
+    }
+
+    /// Makes room in `scope` for `nodes` nodes in all, so that a scope
+    /// whose size is known (another made from the same declaration had
+    /// that many) is not grown a few nodes at a time.
+    pub fn reserve_scope(&self, scope: ScopeId, nodes: usize) {
+        if let Some(s) = self.inner.borrow_mut().scopes.get_mut(scope) {
+            let more = nodes.saturating_sub(s.nodes.len());
+            s.nodes.reserve(more);
+        }
     }
 
     /// Creates a child scope that is disposed when the handle drops.
@@ -1193,22 +1216,27 @@ impl<V: Clone + 'static> Graph<V> {
             let mut dead = std::mem::take(&mut i.dead_nodes);
             dead.reserve(ids.len());
             for &n in ids.iter().rev() {
-                if let Some(node) = i.nodes.remove(n) {
-                    if has_tags {
-                        i.tags.remove(&n);
+                let Some(node) = i.nodes.get_mut(n) else {
+                    continue;
+                };
+                let scope = node.scope;
+                let kind = std::mem::replace(&mut node.kind, Kind::Effect(None));
+                dead.push((kind, node.value.take()));
+                // What is left of it runs no user code when dropped.
+                i.nodes.remove(n);
+                if has_tags {
+                    i.tags.remove(&n);
+                }
+                // A scope that is going keeps no count.
+                if let Going::These(_) = going
+                    && let Some(s) = i.scopes.get_mut(scope)
+                {
+                    s.dead += 1;
+                    if s.dead * 2 > s.nodes.len() {
+                        let nodes = &i.nodes;
+                        s.nodes.retain(|id| nodes.contains_key(*id));
+                        s.dead = 0;
                     }
-                    // A scope that is going keeps no count.
-                    if let Going::These(_) = going
-                        && let Some(s) = i.scopes.get_mut(node.scope)
-                    {
-                        s.dead += 1;
-                        if s.dead * 2 > s.nodes.len() {
-                            let nodes = &i.nodes;
-                            s.nodes.retain(|id| nodes.contains_key(*id));
-                            s.dead = 0;
-                        }
-                    }
-                    dead.push(node);
                 }
             }
             i.propagate_marks();
@@ -2370,7 +2398,7 @@ impl<V: Clone + 'static> Graph<V> {
             .iter()
             .map(|l| l.capacity() * id)
             .sum::<usize>()
-            + i.dead_nodes.capacity() * std::mem::size_of::<Node<V>>();
+            + i.dead_nodes.capacity() * std::mem::size_of::<(Kind<V>, Option<V>)>();
         i.nodes.capacity() * std::mem::size_of::<Node<V>>()
             + i.scopes.capacity() * std::mem::size_of::<Scope>()
             + i.tags.capacity() * (id + 8)
