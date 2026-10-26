@@ -1051,3 +1051,27 @@ fn a_tap_handler_is_a_click_an_assistive_technology_must_find() {
          TapHandler { acceptedButtons: Qt.RightButton; onTapped: console.log(\"menu\") }\n    }",
     );
 }
+
+/// Each flip puts back every button: checking one of an exclusive group
+/// unchecked another, and that one is checked again.
+#[test]
+fn an_exclusive_group_keeps_its_choice_after_the_audit() {
+    let e = engine();
+    let mut s = mount(
+        &e,
+        &page(
+            "    Column { x: 20; y: 20\n        \
+             RadioButton { objectName: \"first\"; text: \"First\"; checked: true }\n        \
+             RadioButton { objectName: \"second\"; text: \"Second\" }\n    }",
+        ),
+    );
+    let root = s.root().unwrap();
+    let column = ljos_quick::child_items(&e, root)[0];
+    let radios = ljos_quick::child_items(&e, column);
+    let checked = |i: usize| e.read_by_name(radios[i], "checked").to_boolean();
+    for code in ["motion-duration", "color-state-only"] {
+        let options = Options::desktop().only(&[code]).unwrap();
+        audit(&e, &mut s, Time::ZERO, &options);
+        assert!(checked(0) && !checked(1), "after {code}");
+    }
+}
