@@ -183,3 +183,75 @@ fn a_glyph_is_read_from_its_font_once() {
     );
     assert!(first.advance < again.advance);
 }
+
+#[test]
+fn a_text_laid_out_again_after_its_layout_went_is_not_shaped_again() {
+    let mut e = TextEngine::new();
+    e.set_keep_frames(2);
+    let (s, p) = (TextStyle::default(), LayoutParams::default());
+    let first = e.layout("Row 12", &s, &p);
+    for _ in 0..5 {
+        e.end_frame();
+    }
+    assert_eq!(e.stats().layouts, 0);
+    let again = e.layout("Row 12", &s, &p);
+    assert_eq!(e.stats().runs_reused, 1);
+    assert_eq!(format!("{first:?}"), format!("{again:?}"));
+    // Not when the text, the size or the font differs.
+    e.layout("Row 13", &s, &p);
+    e.layout("Row 12", &TextStyle::sized(20.0), &p);
+    e.layout(
+        "Row 12",
+        &TextStyle {
+            weight: 700.0,
+            ..TextStyle::default()
+        },
+        &p,
+    );
+    assert_eq!(e.stats().runs_reused, 1);
+}
+
+#[test]
+fn kept_runs_are_bounded_and_dropped_when_unused_while_frames_run() {
+    let mut e = TextEngine::new();
+    let (s, p) = (TextStyle::default(), LayoutParams::default());
+    // A frame lays out more than are kept from frame to frame, and more
+    // than a frame may leave.
+    for i in 0..4000 {
+        e.layout(&format!("Row {i}"), &s, &p);
+    }
+    assert_eq!(e.memory().runs, 3072);
+    e.end_frame();
+    assert_eq!(e.memory().runs, 2048);
+    // Frames of a list scrolling a few rows a frame keep the latest rows.
+    for i in 4000..8000 {
+        e.layout(&format!("Row {i}"), &s, &p);
+        if i % 8 == 7 {
+            e.end_frame();
+        }
+    }
+    let kept = e.memory().runs;
+    assert_eq!(kept, 2048);
+    let reused = e.stats().runs_reused;
+    // A row 125 frames back: its layout went, its run did not.
+    e.layout("Row 7000", &s, &p);
+    assert_eq!(e.stats().runs_reused, reused + 1);
+    // A long text is not kept at all.
+    e.layout("Long line of text ".repeat(8).trim_end(), &s, &p);
+    assert_eq!(e.memory().runs, kept);
+    // Ten seconds of frames at 60 a second, none of them asking.
+    for _ in 0..601 {
+        e.end_frame();
+    }
+    assert_eq!(e.memory().runs, 0);
+}
+
+#[test]
+fn registering_a_font_drops_the_kept_runs() {
+    let mut e = TextEngine::new();
+    e.layout("Row 1", &TextStyle::default(), &LayoutParams::default());
+    assert_eq!(e.memory().runs, 1);
+    e.set_default_family("Nothing Installed");
+    e.set_default_family("");
+    assert_eq!(e.memory().runs, 0);
+}

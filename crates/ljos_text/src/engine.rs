@@ -78,6 +78,8 @@ pub struct TextMemory {
     pub paragraphs: usize,
     /// Styles whose metrics are kept.
     pub styles: usize,
+    /// One-line runs kept for being shaped again.
+    pub runs: usize,
     /// Glyphs whose advance or ink this thread keeps, for every engine on it.
     pub glyphs: usize,
     /// About the bytes of all of it.
@@ -103,6 +105,9 @@ pub struct CacheStats {
     /// Texts shaped with only the family every character was found in, in
     /// place of the whole family stack.
     pub shapes_pinned: u64,
+    /// Of those, the ones whose run was kept from shaping the same text in
+    /// the same font before, and not shaped again.
+    pub runs_reused: u64,
 }
 
 /// How a text may break, which Parley decides while shaping. Texts of
@@ -889,23 +894,129 @@ fn shape(
 /// Parley's own analysis and shaping, kept warm for [`shape_direct`].
 struct Direct {
     analyzer: Analyzer,
-    analysis: Analysis,
     shaper: Shaper,
     shaped: ShapedText,
     /// A style index per character, all the one style.
     styles: Vec<u16>,
+    /// Analyses by [`fold`]ed text: what Parley's analyser says of a
+    /// printable ASCII character depends only on its class there, so "Row
+    /// 12" and "Col 99" have one analysis, and a list's rows share a few.
+    analyses: FrameCache<u64, KeptAnalysis>,
+    /// For a text analysed while `analyses` is full.
+    analysis: Analysis,
+    /// The folded text being looked up, kept for its allocation.
+    fold: Vec<u8>,
+    /// Runs as shaped and snapped, for the same text in the same font
+    /// again: a delegate made anew, or a row scrolled back into view after
+    /// its layout was dropped.
+    runs: FrameCache<u64, KeptRun>,
+    /// The engine's frame, as the caches above are stamped with it.
+    frame: u64,
+    /// Runs taken from `runs`.
+    reused: u64,
 }
+
+/// An analysis and the folded text it is for.
+struct KeptAnalysis {
+    fold: Box<[u8]>,
+    analysis: Analysis,
+}
+
+/// What [`shape_direct`] made of a text in one font at one size, but the
+/// font's blob, which is taken as Parley's path would take it.
+struct KeptRun {
+    text: Box<str>,
+    blob: u64,
+    index: u32,
+    size: u32,
+    synthesis: Synthesis,
+    /// Each glyph with Qt's advance, in one allocation.
+    glyphs: Box<[(parley::Glyph, f32)]>,
+    coords: Box<[i16]>,
+    font_size: f32,
+    metrics: parley::FontMetrics,
+}
+
+/// Folded texts kept from frame to frame, and the most a frame can leave:
+/// a list's rows have a few between them.
+const MAX_ANALYSES: usize = 64;
+const MAX_ANALYSES_AT_ONCE: usize = 2 * MAX_ANALYSES;
+/// Runs kept from frame to frame, the most a frame can leave, and the
+/// longest text one is kept for: about 0.5 MB for short rows, never more
+/// than 4 MB.
+const MAX_RUNS: usize = 2048;
+const MAX_RUNS_AT_ONCE: usize = MAX_RUNS + MAX_RUNS / 2;
+const MAX_RUN_TEXT: usize = 64;
+/// A run unused for this many frames is dropped: far longer than a
+/// layout, as a row scrolled away comes back seconds later.
+const KEEP_RUN_FRAMES: u64 = 600;
 
 impl Direct {
     fn new() -> Self {
         Self {
             analyzer: Analyzer::new(),
-            analysis: Analysis::new(),
             shaper: Shaper::default(),
             shaped: ShapedText::new(),
             styles: Vec::new(),
+            analyses: FrameCache::splitting_frames(MAX_ANALYSES),
+            analysis: Analysis::new(),
+            fold: Vec::new(),
+            runs: FrameCache::splitting_frames(MAX_RUNS),
+            frame: 0,
+            reused: 0,
         }
     }
+
+    fn clear(&mut self) {
+        self.analyses.clear();
+        self.runs.clear();
+    }
+
+    fn bytes(&self) -> usize {
+        let runs: usize = self
+            .runs
+            .values()
+            .map(|r| {
+                std::mem::size_of::<KeptRun>()
+                    + r.text.len()
+                    + std::mem::size_of_val(&*r.glyphs)
+                    + std::mem::size_of_val(&*r.coords)
+            })
+            .sum();
+        let analyses: usize = self
+            .analyses
+            .values()
+            .map(|a| {
+                std::mem::size_of::<KeptAnalysis>()
+                    + a.fold.len()
+                    + std::mem::size_of_val(a.analysis.char_info())
+                    + std::mem::size_of_val(a.analysis.bidi_levels())
+            })
+            .sum();
+        runs + analyses + self.runs.table_bytes() + self.analyses.table_bytes()
+    }
+
+    fn trim(&mut self, frame: u64, keep: u64) {
+        self.frame = frame;
+        self.analyses.trim(frame, keep);
+        self.runs.trim(frame, keep.max(KEEP_RUN_FRAMES));
+    }
+}
+
+/// A printable ASCII text with every letter made `a` and every digit `0`,
+/// behind a byte for the line breaking. Parley's analysis of a character
+/// (script, grapheme, word and line boundaries, bidi class) is the same
+/// for every ASCII letter, and for every digit: Latin or Common, ALetter
+/// or Numeric, AL or NU. So a text analyses as its fold does; the test
+/// below holds it to that.
+fn fold(text: &[u8], word_break: WordBreak, out: &mut Vec<u8>) {
+    out.clear();
+    out.push(u8::from(word_break == WordBreak::BreakAll));
+    out.extend(text.iter().map(|&b| match b {
+        b'a'..=b'z' | b'A'..=b'Z' => b'a',
+        b'0'..=b'9' => b'0',
+        b => b,
+    }));
 }
 
 /// Gives every cluster the one font a pinned text is shaped with.
@@ -938,6 +1049,10 @@ impl FontSelector for OneFont<'_> {
 /// line that does not end in a space has nothing hanging. A glyph moved
 /// off the baseline would come out of `extract` rounded through it, so
 /// such a text is shaped in full too.
+///
+/// A run shaped before in the same font at the same size is taken from
+/// [`Direct::runs`]; otherwise the analysis of a text of the same
+/// [`fold`] is taken from [`Direct::analyses`], and the text is shaped.
 fn shape_direct(
     direct: &mut Direct,
     fcx: &mut FontContext,
@@ -947,6 +1062,7 @@ fn shape_direct(
     ranged: &Ranged<'_>,
     class: BreakClass,
 ) -> Option<Snapped> {
+    let frame = direct.frame;
     let bytes = text.as_bytes();
     let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
     if !families.one_style
@@ -989,63 +1105,134 @@ fn shape_direct(
         break_spaces: &[],
         line_break_override: None,
     };
-    direct
-        .analyzer
-        .analyze(text, &options, &mut direct.analysis);
-    direct.styles.clear();
-    direct.styles.resize(bytes.len(), 0);
-    let item = parley_engine::itemize::Item {
-        char_end: u32::try_from(bytes.len()).ok()?,
-        options: ShapeOptions {
-            font_size: size,
-            language: None,
-            features: &[],
-            variations,
-        },
-    };
-    let font = OneFont(FontInstanceRef {
-        data: &pinned.font.data,
-        index: pinned.font.index,
-        synthesis: &pinned.synthesis,
+    // The optical size's variations follow from the size, and no features
+    // are asked for, so the font, its synthesis and the size say what the
+    // shaper is given.
+    let (blob, index, size_bits) = (pinned.font.data.id(), pinned.font.index, size.to_bits());
+    let run_key = (bytes.len() <= MAX_RUN_TEXT).then(|| {
+        let mut h = FxHasher::default();
+        (text, blob, index, size_bits).hash(&mut h);
+        h.finish()
     });
-    direct.shaper.shape_text(
-        text,
-        &direct.analysis,
-        &direct.styles,
-        [item],
-        font,
-        &mut direct.shaped,
-    );
-    let [run] = direct.shaped.runs() else {
-        return None;
+    let same = |k: &KeptRun| {
+        &*k.text == text
+            && k.blob == blob
+            && k.index == index
+            && k.size == size_bits
+            && k.synthesis == pinned.synthesis
     };
-    if run.bidi_level.is_rtl() {
-        return None;
-    }
-    let slice = direct.shaped.run_slice(0);
     let mut kept = Snapped::default();
-    kept.glyphs.reserve(bytes.len());
-    kept.qt.reserve(bytes.len());
-    for cluster in slice.shaped_clusters_range() {
-        kept.glyphs.extend(slice.shaped_cluster_glyphs(cluster));
-    }
-    if kept.glyphs.iter().any(|g| g.y != 0.0) {
-        return None;
-    }
-    let coords: Vec<i16> = direct
-        .shaped
-        .normalized_coords()
-        .get(run.normalized_coords_range.clone())
-        .unwrap_or(&[])
-        .iter()
-        .map(|c| c.to_bits())
-        .collect();
-    // As Parley's builder does when made: its source cache drops a file no
-    // recent builder loaded, so the file is loaded again, as a new blob,
-    // where Parley's path would load it again.
-    fcx.source_cache.prune(128, false);
-    let font = FontData::new(fcx.source_cache.get(&pinned.source)?, pinned.font.index);
-    snap::advances(&font, run.font_size, &coords, &kept.glyphs, &mut kept.qt);
+    let hit = run_key
+        .and_then(|key| direct.runs.get_mut(&key, frame))
+        .filter(|k| same(k));
+    let (font, font_size, metrics, coords) = if let Some(run) = hit {
+        direct.reused += 1;
+        kept.glyphs.extend(run.glyphs.iter().map(|g| g.0));
+        kept.qt.extend(run.glyphs.iter().map(|g| g.1));
+        let (font_size, metrics, coords) = (run.font_size, run.metrics, run.coords.to_vec());
+        (source_font(fcx, &pinned)?, font_size, metrics, coords)
+    } else {
+        fold(bytes, word_break, &mut direct.fold);
+        let fold_key = {
+            let mut h = FxHasher::default();
+            direct.fold.hash(&mut h);
+            h.finish()
+        };
+        let known = direct
+            .analyses
+            .get_mut(&fold_key, frame)
+            .is_some_and(|k| *k.fold == direct.fold[..]);
+        let keep = known || direct.analyses.len() < MAX_ANALYSES_AT_ONCE;
+        if !known && keep {
+            let mut analysis = Analysis::new();
+            direct.analyzer.analyze(text, &options, &mut analysis);
+            let fold = direct.fold.as_slice().into();
+            direct
+                .analyses
+                .insert(fold_key, KeptAnalysis { fold, analysis }, frame);
+        } else if !keep {
+            direct
+                .analyzer
+                .analyze(text, &options, &mut direct.analysis);
+        }
+        let analysis = if keep {
+            &direct.analyses.get_mut(&fold_key, frame)?.analysis
+        } else {
+            &direct.analysis
+        };
+        direct.styles.clear();
+        direct.styles.resize(bytes.len(), 0);
+        let item = parley_engine::itemize::Item {
+            char_end: u32::try_from(bytes.len()).ok()?,
+            options: ShapeOptions {
+                font_size: size,
+                language: None,
+                features: &[],
+                variations,
+            },
+        };
+        let one = OneFont(FontInstanceRef {
+            data: &pinned.font.data,
+            index,
+            synthesis: &pinned.synthesis,
+        });
+        direct.shaper.shape_text(
+            text,
+            analysis,
+            &direct.styles,
+            [item],
+            one,
+            &mut direct.shaped,
+        );
+        let [run] = direct.shaped.runs() else {
+            return None;
+        };
+        if run.bidi_level.is_rtl() {
+            return None;
+        }
+        let slice = direct.shaped.run_slice(0);
+        kept.glyphs.reserve(bytes.len());
+        kept.qt.reserve(bytes.len());
+        for cluster in slice.shaped_clusters_range() {
+            kept.glyphs.extend(slice.shaped_cluster_glyphs(cluster));
+        }
+        if kept.glyphs.iter().any(|g| g.y != 0.0) {
+            return None;
+        }
+        let coords: Vec<i16> = direct
+            .shaped
+            .normalized_coords()
+            .get(run.normalized_coords_range.clone())
+            .unwrap_or(&[])
+            .iter()
+            .map(|c| c.to_bits())
+            .collect();
+        let font = source_font(fcx, &pinned)?;
+        snap::advances(&font, run.font_size, &coords, &kept.glyphs, &mut kept.qt);
+        // The trim keeps a frame's runs together, and one frame can lay
+        // out any number of texts: past a ceiling nothing new is kept
+        // until frames make room.
+        if let Some(key) = run_key.filter(|_| direct.runs.len() < MAX_RUNS_AT_ONCE) {
+            let run = KeptRun {
+                text: text.into(),
+                blob,
+                index,
+                size: size_bits,
+                synthesis: pinned.synthesis,
+                glyphs: kept
+                    .glyphs
+                    .iter()
+                    .copied()
+                    .zip(kept.qt.iter().copied())
+                    .collect(),
+                coords: coords.as_slice().into(),
+                font_size: run.font_size,
+                metrics: run.font_metrics,
+            };
+            direct.runs.insert(key, run, frame);
+        }
+        (font, run.font_size, run.font_metrics, coords)
+    };
     // A style's line has no offset or size of its own, as Parley's
     // default style has it.
     let line = |on: bool| on.then_some((None, None));
@@ -1055,8 +1242,8 @@ fn shape_direct(
         // Only ever added to and taken from a glyph's y, which is 0.
         baseline: 0.0,
         font,
-        font_size: run.font_size,
-        metrics: run.font_metrics,
+        font_size,
+        metrics,
         synthesis: pinned.synthesis,
         coords,
         underline: line(style.underline),
@@ -1066,6 +1253,17 @@ fn shape_direct(
     kept.lines.push(kept.items.len());
     families.pinned.set(families.pinned.get() + 1);
     Some(kept)
+}
+
+/// The pinned font's file as Parley's builder takes it when made: its
+/// source cache drops a file no recent builder loaded, so the file is
+/// loaded again, as a new blob, where Parley's path would load it again.
+fn source_font(fcx: &mut FontContext, pinned: &PinnedFont) -> Option<FontData> {
+    fcx.source_cache.prune(128, false);
+    Some(FontData::new(
+        fcx.source_cache.get(&pinned.source)?,
+        pinned.font.index,
+    ))
 }
 
 /// Break lines at `max` and put every line at x 0. Alignment is the item's
@@ -1795,6 +1993,7 @@ impl TextEngine {
         self.clear_caches();
         self.stats = CacheStats::default();
         self.families.pinned.set(0);
+        self.direct.reused = 0;
     }
 
     /// Add a font file (TrueType, OpenType, or a collection). Returns the
@@ -1865,6 +2064,7 @@ impl TextEngine {
         self.layouts.clear();
         self.paragraphs.clear();
         self.styles.clear();
+        self.direct.clear();
     }
 
     /// How many frames a layout survives without being asked for.
@@ -1881,6 +2081,7 @@ impl TextEngine {
         self.shapes.trim(self.frame, self.keep_frames);
         self.layouts.trim(self.frame, self.keep_frames);
         self.paragraphs.trim(self.frame, self.keep_frames);
+        self.direct.trim(self.frame, self.keep_frames);
         if self.styles.len() > MAX_STYLES {
             self.styles.clear();
         }
@@ -1941,14 +2142,17 @@ impl TextEngine {
         let paragraphs: usize = self.paragraphs.values().map(|e| e.bytes()).sum();
         let styles = self.styles.capacity()
             * (std::mem::size_of::<TextStyle>() + std::mem::size_of::<StyleMetrics>());
+        let direct = self.direct.bytes();
         let (glyphs, faces) = measure::kept();
         TextMemory {
             layouts: self.layouts.len(),
             shapes: self.shapes.len(),
             paragraphs: self.paragraphs.len(),
             styles: self.styles.len(),
+            runs: self.direct.runs.len(),
             glyphs,
             bytes: shaped
+                + direct
                 + laid
                 + paragraphs
                 + styles
@@ -1965,6 +2169,7 @@ impl TextEngine {
             shapes: self.shapes.len(),
             glyphs_measured: measure::measured(),
             shapes_pinned: self.families.pinned.get(),
+            runs_reused: self.direct.reused,
             ..self.stats
         }
     }
@@ -2949,6 +3154,77 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// [`shape_direct`] shapes a text with the analysis of another that
+    /// folds as it does, so the two have to analyse alike.
+    #[test]
+    fn a_printable_ascii_text_analyses_as_its_fold() {
+        let mut analyzer = Analyzer::new();
+        let (mut theirs, mut ours) = (Analysis::new(), Analysis::new());
+        let mut folded = Vec::new();
+        let mut check = |text: &str| {
+            for word_break in [WordBreak::Normal, WordBreak::BreakAll] {
+                fold(text.as_bytes(), word_break, &mut folded);
+                let other = std::str::from_utf8(&folded[1..]).expect("ASCII");
+                let config = LineBreakConfig {
+                    word_break,
+                    ..LineBreakConfig::default()
+                };
+                let line_break = [(0..text.len(), config)];
+                let options = AnalysisOptions {
+                    base_direction: BaseDirection::Auto,
+                    line_break: &line_break,
+                    break_spaces: &[],
+                    line_break_override: None,
+                };
+                analyzer.analyze(text, &options, &mut theirs);
+                analyzer.analyze(other, &options, &mut ours);
+                assert_eq!(
+                    theirs.char_info(),
+                    ours.char_info(),
+                    "{text:?} {word_break:?}"
+                );
+                assert_eq!(theirs.bidi_levels(), ours.bidi_levels(), "{text:?}");
+                assert_eq!(theirs.paragraph_level(), ours.paragraph_level(), "{text:?}");
+            }
+        };
+        let printable: Vec<char> = (0x20u8..0x7f).map(char::from).collect();
+        for &a in &printable {
+            check(&a.to_string());
+            for &b in &printable {
+                check(&format!("{a}{b}"));
+            }
+        }
+        // Every class three deep: some letters of each case and digits,
+        // and every other character as itself.
+        let classes: Vec<char> = printable
+            .iter()
+            .copied()
+            .filter(|c| !c.is_ascii_alphanumeric() || "aZq09".contains(*c))
+            .collect();
+        for &a in &classes {
+            for &b in &classes {
+                for &c in &classes {
+                    check(&format!("{a}{b}{c}"));
+                }
+            }
+        }
+        // Longer texts, from a fixed sequence so a failure repeats.
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..2000 {
+            let len = 4 + (next() % 40) as usize;
+            let text: String = (0..len)
+                .map(|_| printable[(next() % printable.len() as u64) as usize])
+                .collect();
+            check(&text);
         }
     }
 }

@@ -21,6 +21,9 @@ pub(crate) struct FrameCache<K, V> {
     /// is here more than once; only the place with its stamp counts.
     log: VecDeque<(u64, K)>,
     capacity: usize,
+    /// Over capacity, a frame's entries go together or not at all, so a
+    /// frame that uses more than the capacity keeps them all.
+    whole_frames: bool,
 }
 
 impl<K: Hash + Eq + Clone, V> FrameCache<K, V> {
@@ -29,6 +32,17 @@ impl<K: Hash + Eq + Clone, V> FrameCache<K, V> {
             map: FxHashMap::default(),
             log: VecDeque::new(),
             capacity,
+            whole_frames: true,
+        }
+    }
+
+    /// Over capacity, the oldest entries go one by one, a frame's last ones
+    /// staying: for entries kept long after their frame, which a frame
+    /// that used a great many would otherwise hold past the capacity.
+    pub(crate) fn splitting_frames(capacity: usize) -> Self {
+        Self {
+            whole_frames: false,
+            ..Self::new(capacity)
         }
     }
 
@@ -86,6 +100,11 @@ impl<K: Hash + Eq + Clone, V> FrameCache<K, V> {
             let Some(&(stamp, _)) = self.log.front() else {
                 break;
             };
+            if !self.whole_frames {
+                let (stamp, key) = self.log.pop_front().expect("a front was found");
+                self.drop_stamped(&key, stamp);
+                continue;
+            }
             let group = self.log.iter().take_while(|(s, _)| *s == stamp);
             let live = group
                 .filter(|(s, k)| self.map.get(k).is_some_and(|e| e.last_used == *s))
@@ -161,6 +180,21 @@ mod tests {
         // frame 2 stay rather than one by chance.
         assert_eq!(c.len(), 4);
         assert!(c.get_mut(&0, 3).is_none());
+    }
+
+    #[test]
+    fn capacity_can_split_a_frame() {
+        let mut c: FrameCache<u32, u32> = FrameCache::splitting_frames(3);
+        for i in 0..5 {
+            c.insert(i, i, 1);
+        }
+        assert!(c.get_mut(&0, 2).is_some());
+        c.trim(2, 100);
+        // Of frame 1, the two made last; and the one frame 2 used.
+        assert_eq!(c.len(), 3);
+        for kept in [0, 3, 4] {
+            assert!(c.get_mut(&kept, 2).is_some());
+        }
     }
 
     #[test]

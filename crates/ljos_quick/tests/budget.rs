@@ -267,7 +267,7 @@ fn ten_listview_delegates() {
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 9 values, 6 bindings, 16 effects, 2 scopes,
-    // no member or type lookups, 143.7 allocations. What the component
+    // no member or type lookups, 145.1 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -280,6 +280,9 @@ fn ten_listview_delegates() {
     // creator's closure inside the graph's box with the wrapper (seven
     // fewer, B26), and a scope's node list is made the size the
     // declaration's last one was.
+    // A new row's run is kept for when the row is shown again, its text
+    // and its glyphs (21 more), and a row analyses as one before it did,
+    // without Parley's analyser (seven fewer).
     assert_eq!(
         b,
         Budget {
@@ -296,7 +299,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1437,
+            allocations: 1451,
         }
     );
 }
