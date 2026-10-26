@@ -68,12 +68,13 @@ impl std::fmt::Debug for CpuPainter {
     }
 }
 
-/// Workers beside the window's thread: all but one of the processor's
-/// cores, and none on a single core, where a worker only takes turns
-/// with the thread that waits for it.
+/// Workers beside the window's thread: up to three, and none on a single
+/// core, where a worker only takes turns with the thread that waits for
+/// it. Three halve a busy frame's time; more cost processor time and
+/// draw no sooner (docs/BENCHMARKS.md, SHM1).
 fn threads() -> u16 {
     let cores = std::thread::available_parallelism().map_or(1, usize::from);
-    u16::try_from(cores.saturating_sub(1).min(8)).unwrap_or(0)
+    u16::try_from(cores.saturating_sub(1).min(3)).unwrap_or(0)
 }
 
 impl CpuPainter {
@@ -245,8 +246,11 @@ fn copy_part(buffer: &mut [u32], width: u32, part: PixelRect, pixels: &[u8]) {
         let Some(dst) = buffer.get_mut(at..at + row) else {
             return;
         };
-        for (d, [r, g, b, _]) in dst.iter_mut().zip(src.as_chunks::<4>().0) {
-            *d = u32::from(*r) << 16 | u32::from(*g) << 8 | u32::from(*b);
+        // Read as little-endian words, RGBA is 0xAABBGGRR: swapping the
+        // outer bytes is a few shifts the compiler does many at a time.
+        for (d, s) in dst.iter_mut().zip(src.as_chunks::<4>().0) {
+            let v = u32::from_le_bytes(*s);
+            *d = (v & 0x0000_ff00) | (v >> 16 & 0xff) | (v & 0xff) << 16;
         }
     }
 }
