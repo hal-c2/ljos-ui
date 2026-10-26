@@ -362,7 +362,7 @@ impl TextEngine {
         // broken because the shaper's advances are a touch wider.
         let max = max_advance.filter(|w| natural > *w);
         break_lines(&mut shape, max, false);
-        let known = max.is_none().then_some(&*advances);
+        let known = max.is_none().then_some(&advances);
         let lines = extract(&shape, fallback, None, ranged.objects, known);
         let places = carets(&shape, text);
         let lines: Vec<_> = lines.into_iter().zip(places).collect();
@@ -832,7 +832,7 @@ impl TextEngine {
                     break_lines(&mut entry.shape, max_advance, false);
                     entry.broken = (max_advance, false);
                 }
-                let known = (entry.broken == (None, false)).then_some(&*entry.advances);
+                let known = (entry.broken == (None, false)).then_some(&entry.advances);
                 let lines = extract(&entry.shape, fallback, None, ranged.objects, known);
                 let places = carets(&entry.shape, text);
                 (

@@ -135,10 +135,10 @@ struct ShapedEntry {
     advance: f32,
     natural_width: f32,
     rtl: bool,
-    /// Qt's advance of every glyph of `shape` broken without a width, as
-    /// the widths above were counted: a layout that does not break it
-    /// again takes them in place of counting them once more.
-    advances: Vec<f32>,
+    /// Every glyph of `shape` broken without a width, with Qt's advance,
+    /// as the widths above were counted: a layout that does not break it
+    /// again takes them in place of reading and counting them once more.
+    advances: Snapped,
 }
 
 struct LayoutEntry {
@@ -820,18 +820,18 @@ fn break_lines(shape: &mut Shape, max: Option<f32>, justify: bool) {
     );
 }
 
-/// `known` is Qt's advance for every glyph of `shape` as it is broken now,
-/// run after run in the order of its lines ([`snapped_widths_kept`]), where
-/// the caller has them.
+/// `known` is every glyph of `shape` as it is broken now, with Qt's
+/// advance ([`snapped_widths_kept`]), where the caller has them.
 fn extract(
     shape: &Shape,
     fallback: Vertical,
     justify_width: Option<f32>,
     objects: &[InlineObject],
-    known: Option<&[f32]>,
+    known: Option<&Snapped>,
 ) -> Vec<RawLine> {
     let mut out = Vec::with_capacity(shape.len());
-    let mut known = known.filter(|k| !k.is_empty());
+    let mut known_runs = known.map(|k| k.runs()).into_iter().flatten();
+    let mut own = Snapped::default();
     for line in shape.lines() {
         let m = *line.metrics();
         let reason = line.break_reason();
@@ -885,14 +885,13 @@ fn extract(
                     descent: v.descent.max(descent),
                 }))
             };
-            let placed: Vec<parley::Glyph> = gr.positioned_glyphs().collect();
-            let advances = match known.as_mut() {
-                Some(rest) if rest.len() >= placed.len() => {
-                    let (mine, after) = rest.split_at(placed.len());
-                    *rest = after;
-                    Cow::Borrowed(mine)
+            let (placed, advances) = match known_runs.next() {
+                Some(run) => run,
+                None => {
+                    own.clear();
+                    own.push(&gr);
+                    (&own.glyphs[..], &own.qt[..])
                 }
-                _ => Cow::Owned(qt_advances(&gr)),
             };
             // A run that draws nothing (the character an editor keeps for
             // an image) is as tall as its font only on a line without
@@ -907,11 +906,13 @@ fn extract(
             let mut pen = gr.offset();
             let mut advance = 0.0_f32;
             let mut glyphs = Vec::with_capacity(placed.len());
-            for (g, &qt) in placed.iter().zip(advances.iter()) {
+            for (g, &qt) in placed.iter().zip(advances) {
+                // Placed as `GlyphRun::positioned_glyphs` places them, whose
+                // pen is this one.
                 glyphs.push(PositionedGlyph {
                     id: g.id,
-                    x: g.x - shift,
-                    y: g.y - baseline,
+                    x: (g.x + pen) - shift,
+                    y: (g.y + baseline) - baseline,
                 });
                 if justified {
                     advance += g.advance;
@@ -1101,22 +1102,19 @@ fn line_reach(line: &parley::Line<'_, u32>) -> f32 {
 /// A line's width by Qt's advances, and how far its last glyph's ink
 /// reaches past them ([`overhang`]).
 fn line_widths(line: &parley::Line<'_, u32>) -> (f32, f32) {
-    line_widths_kept(line, None)
+    line_widths_kept(line, &mut Snapped::default())
 }
 
-/// [`line_widths`], putting Qt's advance of every glyph in `keep`.
-fn line_widths_kept(line: &parley::Line<'_, u32>, mut keep: Option<&mut Vec<f32>>) -> (f32, f32) {
+/// [`line_widths`], putting every glyph and its advance in `keep`.
+fn line_widths_kept(line: &parley::Line<'_, u32>, keep: &mut Snapped) -> (f32, f32) {
     let mut width = 0.0;
     let mut last = 0.0;
     for item in line.items() {
         match item {
             PositionedLayoutItem::GlyphRun(gr) => {
-                let qt = qt_advances(&gr);
+                let (glyphs, qt) = keep.push(&gr);
                 width += qt.iter().sum::<f32>();
-                if let Some(keep) = keep.as_deref_mut() {
-                    keep.extend_from_slice(&qt);
-                }
-                if let (Some(g), Some(a)) = (gr.glyphs().last(), qt.last()) {
+                if let (Some(g), Some(a)) = (glyphs.last(), qt.last()) {
                     let run = gr.run();
                     let synthesis = run.synthesis();
                     last = overhang(
@@ -1139,17 +1137,55 @@ fn line_widths_kept(line: &parley::Line<'_, u32>, mut keep: Option<&mut Vec<f32>
     (width, last)
 }
 
-/// The glyphs of a run where Parley put them, and the advance Qt gives each
-/// (see [`snap`]).
-fn snapped(gr: &parley::GlyphRun<'_, u32>) -> (Vec<parley::Glyph>, Vec<f32>) {
-    (gr.positioned_glyphs().collect(), qt_advances(gr))
+/// The glyphs of runs as shaped, and the advance Qt gives each (see
+/// [`snap`]), run after run. Reading a run's glyphs from Parley costs more
+/// than anything done with them, so a layout reads them once.
+#[derive(Default)]
+struct Snapped {
+    glyphs: Vec<parley::Glyph>,
+    qt: Vec<f32>,
+    /// Where each run's glyphs end.
+    ends: Vec<usize>,
 }
 
-/// The advance Qt gives each of a run's glyphs (see [`snap`]).
-fn qt_advances(gr: &parley::GlyphRun<'_, u32>) -> Vec<f32> {
-    let run = gr.run();
-    let glyphs = gr.glyphs().map(|g| (g.id, g.advance));
-    snap::advances(run.font(), run.font_size(), &coords(run), glyphs)
+impl Snapped {
+    /// Reads `gr`'s glyphs and returns them with their advances.
+    fn push(&mut self, gr: &parley::GlyphRun<'_, u32>) -> (&[parley::Glyph], &[f32]) {
+        let start = self.glyphs.len();
+        self.glyphs.extend(gr.glyphs());
+        let run = gr.run();
+        snap::advances(
+            run.font(),
+            run.font_size(),
+            &coords(run),
+            &self.glyphs[start..],
+            &mut self.qt,
+        );
+        self.ends.push(self.glyphs.len());
+        (&self.glyphs[start..], &self.qt[start..])
+    }
+
+    fn clear(&mut self) {
+        self.glyphs.clear();
+        self.qt.clear();
+        self.ends.clear();
+    }
+
+    /// Every run's glyphs and advances, in the order they were pushed.
+    fn runs(&self) -> impl Iterator<Item = (&[parley::Glyph], &[f32])> {
+        let starts = std::iter::once(0).chain(self.ends.iter().copied());
+        starts
+            .zip(&self.ends)
+            .map(|(start, &end)| (&self.glyphs[start..end], &self.qt[start..end]))
+    }
+}
+
+/// The glyphs of a run as shaped, and the advance Qt gives each (see
+/// [`snap`]).
+fn snapped(gr: &parley::GlyphRun<'_, u32>) -> (Vec<parley::Glyph>, Vec<f32>) {
+    let mut s = Snapped::default();
+    s.push(gr);
+    (s.glyphs, s.qt)
 }
 
 /// Where on its variation axes a run's font is.
@@ -1164,25 +1200,20 @@ fn coords(run: &parley::Run<'_, u32>) -> Vec<i16> {
 /// The widest line of `shape` by Qt's advances, and with the ink of each
 /// line's last glyph that reaches past them ([`overhang`]).
 fn snapped_widths(shape: &Shape) -> (f32, f32) {
-    snapped_widths_inner(shape, None)
+    snapped_widths_kept(shape).0
 }
 
-/// [`snapped_widths`], and Qt's advance of every glyph, run after run in
+/// [`snapped_widths`], and every glyph with Qt's advance, run after run in
 /// the order of the lines, for [`extract`] of `shape` as it is broken now.
-fn snapped_widths_kept(shape: &Shape) -> ((f32, f32), Vec<f32>) {
-    let mut keep = Vec::new();
-    let widths = snapped_widths_inner(shape, Some(&mut keep));
-    (widths, keep)
-}
-
-fn snapped_widths_inner(shape: &Shape, mut keep: Option<&mut Vec<f32>>) -> (f32, f32) {
+fn snapped_widths_kept(shape: &Shape) -> ((f32, f32), Snapped) {
+    let mut keep = Snapped::default();
     let (mut advance, mut natural) = (0.0_f32, 0.0_f32);
     for line in shape.lines() {
-        let (width, last) = line_widths_kept(&line, keep.as_deref_mut());
+        let (width, last) = line_widths_kept(&line, &mut keep);
         advance = advance.max(width);
         natural = natural.max(width + last);
     }
-    (advance, natural)
+    ((advance, natural), keep)
 }
 
 /// How far the ink of the glyph that ends a line reaches past its advance,
@@ -1216,13 +1247,15 @@ fn cluster_advances(shape: &Shape) -> Vec<(Range<usize>, f32)> {
     for line in shape.lines() {
         for run in line.runs() {
             let coords = coords(&run);
+            let (mut shaped, mut qt) = (Vec::new(), Vec::new());
             for cluster in run.clusters() {
-                let shaped: Vec<(u32, f32)> = cluster.glyphs().map(|g| (g.id, g.advance)).collect();
-                let qt =
-                    snap::advances(run.font(), run.font_size(), &coords, shaped.iter().copied());
+                shaped.clear();
+                qt.clear();
+                shaped.extend(cluster.glyphs());
+                snap::advances(run.font(), run.font_size(), &coords, &shaped, &mut qt);
                 // What Qt's glyphs give up, taken off the cluster's own
                 // advance, which also holds any spacing.
-                let given_up: f32 = shaped.iter().zip(qt).map(|((_, a), q)| a - q).sum();
+                let given_up: f32 = shaped.iter().zip(&qt).map(|(g, q)| g.advance - q).sum();
                 out.push((cluster.text_range(), cluster.advance() - given_up));
             }
         }
@@ -1934,7 +1967,7 @@ impl TextEngine {
                 fallback,
                 max_advance.filter(|_| justify),
                 ranged.objects,
-                unbroken.then_some(&*entry.advances),
+                unbroken.then_some(&entry.advances),
             );
             if places {
                 for (line, carets) in lines.iter_mut().zip(edit::carets(&entry.shape, text)) {
