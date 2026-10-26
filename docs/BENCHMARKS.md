@@ -5581,3 +5581,81 @@ DECISIONs:
 - The breakdown counts self cost, split proportionally among the groups on the stack.
   Callgrind's inclusive cost counts recursive and shared functions more than once, so it
   cannot be added up this way.
+
+### A theme or font switch against qml6, continued (2026-10-26)
+
+These runs follow "A theme or font switch against qml6" above. All builds are release.
+
+#### Palette resolve
+
+A palette now asks the engine once per object which of its open colour slots an author gave
+(`Engine::authored`, `Graph::provenance_each`). Before, it asked colour by colour. An ancestor
+that gave none of the slots is skipped.
+
+| | before | after | qml6 |
+|---|---|---|---|
+| synthetic theme switch, `frame_profile` | 8.77M instructions | 7.67M | |
+| theme tst | 0.40 ms | 0.383–0.400 ms | 0.517–0.522 ms |
+| mediaplayer switch, provenance lookups | 329K | 187K | |
+
+#### A font change on fields and buttons
+
+A field lays out its text and writes `contentHeight`. It also reads its own height, which
+follows `implicitHeight`, which reads `contentHeight`. Its layout effect therefore ran again
+after every change, even when the height came out the same.
+
+Now an effect that hears of a maybe-change while it runs is checked when the run ends. It runs
+again only if a source really changed.
+
+`a_field_whose_height_stays_with_a_new_font_lays_its_text_out_once` pins 5 effect runs per
+field, down from 7.
+
+| | before | after | qml6 |
+|---|---|---|---|
+| field, size change (callgrind, per field) | 118.8K | 100.9K | |
+| 20 fields, bold / size | 0.092 / 0.165 ms | 0.092–0.098 / 0.152–0.160 ms | 0.058 / 0.065–0.068 ms |
+| 40 buttons, bold / size | 0.152 / 0.165 ms | 0.140 / 0.155 ms | 0.142–0.150 / 0.160 ms |
+| 80 labels, bold / size | 0.125 / 0.133 ms | 0.125 / 0.135 ms | 0.125 / 0.130 ms |
+
+**Buttons are now even with qml6, but fields still take about twice as long.** Most of a field's
+remaining cost is in the graph:
+- 42 tracked reads.
+- 4 effects.
+- 5 computed writes.
+- The editor's layout batch: 35K.
+- The placeholder's eager measure: 12K.
+
+Taking the text polish out of the graph would close this gap. That work belongs to the delegate
+track's dirty bits.
+
+#### mediaplayer's radio: sandbox against off-screen
+
+The sandbox timing is taken inside the script (`performance.now` around the write). The
+`frame_profile` timing also covers parsing the eval. Both runs do the same graph work: 66–71
+evaluations and 110–115 effect runs a switch.
+
+| | switch |
+|---|---|
+| sandbox, one switch per eval | 0.97–1.25 ms |
+| sandbox, 50 in one eval | 0.26–0.30 ms each |
+| sandbox, three in one eval | 1.0, 0.45, 0.33 ms |
+| sandbox, 20 ms of busy JS first | 1.0–1.1 ms |
+| off-screen, `--start`s back to back | 0.21–0.22 ms |
+| off-screen, `--apart` (a frame between) | 0.39–0.53 ms |
+| off-screen, 50 in one eval | 0.20–0.25 ms each |
+
+The gap is cold caches, not more work:
+- A switch after a frame runs from a cold cache. Under callgrind it executes only 1.6 % more
+  instructions than one run back to back.
+- A 48 MB sweep between two switches in one eval, with no frame between them, slows the next
+  switch just as a frame does. It goes from 0.29–0.46 to 0.79–0.85 ms off-screen, and from
+  0.45–0.72 to 1.09–1.23 ms in the sandbox.
+- The sandbox draws through llvmpipe, which rasterises every frame on the CPU's own cores and
+  caches. That frame evicts much more than the off-screen pass, which only tessellates.
+
+The fix on Ljós's side is a smaller switch. It now executes 2.43M instructions.
+
+The off-screen numbers before this section were also inflated. Every devtools eval compiled
+its result runner again, at 857K instructions. An empty eval took 257 µs and now takes 16–47
+µs. `frame_profile --apart` now times each `--start` after a frame of its own, as a tool
+reaching a shown window does.
