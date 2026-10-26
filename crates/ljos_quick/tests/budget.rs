@@ -456,7 +456,8 @@ fn ten_plain_items() {
     // parent's change hooks, where each item had an effect reading it:
     // twenty effects, twenty values and forty-seven allocations fewer,
     // and shares a text's inputs between its marks and its paint in one
-    // box, thirteen more. 19.5 kB kept an instance.
+    // box, thirteen more. A call keeps which of its arguments are data in
+    // bits, not a list (ten fewer, B12b). 19.5 kB kept an instance.
     assert_eq!(
         b,
         Budget {
@@ -473,7 +474,7 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 799,
+            allocations: 789,
             bytes: 194600,
         }
     );
@@ -570,13 +571,14 @@ Item {
 #[test]
 fn hundred_list_model_appends() {
     let _alone = alone();
-    // Per row: no lookup, and 7.14 allocations. A model nobody connected
+    // Per row: no lookup, and 7.02 allocations. A model nobody connected
     // to sends no row signals without finding them by name (two member
     // lookups fewer, B12), and one row is held without a list of its own
     // on its way in (two fewer). Of the seven, the row's own are its
     // entries, its role's name and its values; the rest is the call's
     // (the script's object kept for it, its arguments) and the rows' list
-    // growing.
+    // growing. B12b's call path, which takes the arguments it is given
+    // and not copies, took twelve off over the hundred.
     assert_eq!(
         hundred_appends(),
         Budget {
@@ -593,7 +595,7 @@ fn hundred_list_model_appends() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 714,
+            allocations: 702,
         }
     );
 }

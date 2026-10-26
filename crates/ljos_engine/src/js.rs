@@ -554,6 +554,7 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
         let def = MethodDef {
             name: m.name.to_string(),
             id: i as u32,
+            copied: copied_params(&m.params),
         };
         match seen_m.get(m.name.as_str()) {
             Some(at) => methods[*at] = def,
@@ -567,6 +568,7 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
         methods.push(MethodDef {
             name: "destroy".into(),
             id: DESTROY_ID,
+            copied: 0,
         });
     }
     let mut signals: Vec<SignalDef> = Vec::new();
@@ -595,6 +597,18 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
         plain: meta.plain_object,
         base: None,
     }
+}
+
+/// The parameters, by position, a method takes by copy
+/// ([`TypeTag::Copied`]): the JS host reads what a script gives in them as
+/// the call crosses, and keeps nothing of the script's.
+fn copied_params(params: &[(Atom, TypeTag)]) -> u32 {
+    params
+        .iter()
+        .take(32)
+        .enumerate()
+        .filter(|(_, (_, t))| matches!(t, TypeTag::Copied))
+        .fold(0, |mask, (i, _)| mask | 1 << i)
 }
 
 /// What [`type_def`] gives `meta` that its base's prototype, whose entries
@@ -630,6 +644,7 @@ fn own_type_def(meta: &MetaRef) -> TypeDef {
             methods.push(MethodDef {
                 name: m.name.to_string(),
                 id,
+                copied: copied_params(&m.params),
             });
         }
     }
@@ -879,7 +894,8 @@ impl HostObjects for EngineHost {
             JsValue::Object(_) => Some("QObject*"),
             // No property but a var takes a function.
             JsValue::Handle(r)
-                if !matches!(ty, TypeTag::Var | TypeTag::Data) && scope.is_function(r) =>
+                if !matches!(ty, TypeTag::Var | TypeTag::Data | TypeTag::Copied)
+                    && scope.is_function(r) =>
             {
                 return Err(HostError::msg(format!(
                     "Cannot assign JavaScript function to {}",
@@ -990,7 +1006,7 @@ impl HostObjects for EngineHost {
         scope: &Scope<'js>,
         obj: u64,
         method: u32,
-        args: &[JsValue],
+        args: Vec<JsValue>,
     ) -> Result<JsValue, HostError> {
         let engine = self.engine()?;
         let (id, method) = forwarded_method(&engine, u64_to_obj(obj), method);
@@ -1013,11 +1029,12 @@ impl HostObjects for EngineHost {
             .and_then(|m| m.method(MethodIndex(method)))
             .map_or(&[][..], |m| &m.params[..]);
         let vals: Vec<Value> = args
-            .iter()
+            .into_iter()
             .enumerate()
             .map(|(i, a)| match params.get(i) {
-                Some((_, ty @ TypeTag::Data)) => engine.js_to_value(scope, a.clone(), ty),
-                _ => engine.js_to_value_kept(scope, a.clone(), &TypeTag::Var),
+                Some((_, ty @ TypeTag::Data)) => engine.js_to_value(scope, a, ty),
+                Some((_, TypeTag::Copied)) => engine.copied_to_value(scope, a),
+                _ => engine.js_to_value_kept(scope, a, &TypeTag::Var),
             })
             .collect();
         // An exception in a QML function called from JS is the caller's to
@@ -1741,6 +1758,42 @@ impl Engine {
             JsValue::Map(fields) => Value::map(fields.into_iter().map(|(k, v)| (k, deeper(v)))),
             v => self.js_to_value(scope, v, &TypeTag::Var),
         }
+    }
+
+    /// What [`Scope::copy_of`] read of a script's value, for a method that
+    /// takes it by copy ([`TypeTag::Copied`]).
+    pub(crate) fn copied_to_value(&self, scope: &Scope<'_>, v: JsValue) -> Value {
+        match v {
+            JsValue::Number(n) => Value::Real(n),
+            JsValue::Bool(b) => Value::Bool(b),
+            JsValue::String(s) => Value::String(s.into()),
+            JsValue::Map(fields) => Value::map(
+                fields
+                    .into_iter()
+                    .map(|(k, v)| (k, self.copied_to_value(scope, v))),
+            ),
+            JsValue::Array(items) => Value::list(
+                items
+                    .into_iter()
+                    .map(|i| self.copied_to_value(scope, i))
+                    .collect(),
+            ),
+            v => self.js_to_value(scope, v, &TypeTag::Var),
+        }
+    }
+
+    /// `v` as a method that takes it by copy ([`TypeTag::Copied`]) is
+    /// given it, when it comes from somewhere other than a script's call.
+    pub(crate) fn copy_of(&self, v: &Value) -> Value {
+        if !holds_js(v) {
+            return v.clone();
+        }
+        let js = self.to_js(v);
+        self.run_js("copy", |s| {
+            let read = s.copy_of(&s.to_value(&js)?)?;
+            Ok(self.copied_to_value(s, read))
+        })
+        .unwrap_or_else(|| v.clone())
     }
 
     /// A copy of `v` as data: a script's plain objects become

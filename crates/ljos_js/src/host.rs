@@ -1295,6 +1295,121 @@ impl<'js> Scope<'js> {
         }
     }
 
+    /// What a script gave in an argument a method takes by copy
+    /// ([`MethodDef::copied`]), as Qt turns a script's value into a
+    /// variant: an ordinary object is a [`JsValue::Map`] of its own
+    /// enumerable fields and an array a [`JsValue::Array`], each read the
+    /// same way, all the way down; a Date is a new Date of the same time,
+    /// and a function is `undefined`. Anything else, and what is nested
+    /// deeper than a cycle would go, crosses as any argument does.
+    pub fn copy_of(&self, v: &Value<'js>) -> rquickjs::Result<JsValue> {
+        self.copy_at(v, 0)
+    }
+
+    fn copy_at(&self, v: &Value<'js>, depth: u32) -> rquickjs::Result<JsValue> {
+        use rquickjs::qjs;
+        if !v.is_object() || depth > COPY_DEPTH {
+            return self.script_value(v);
+        }
+        let raw = v.as_raw();
+        let ctx = self.ctx.as_raw().as_ptr();
+        // The class says what the object is in one look; asking rquickjs
+        // for its type asks the engine half a dozen things.
+        // SAFETY: `raw` is the live object `v` holds; the class only reads
+        // its header.
+        match unsafe { qjs::JS_GetClassID(raw) } {
+            JS_CLASS_OBJECT => {}
+            JS_CLASS_ARRAY => {
+                let arr = v.as_array().expect("an array");
+                let mut out = Vec::with_capacity(arr.len());
+                for item in arr.iter::<Value>() {
+                    out.push(self.copy_at(&item?, depth + 1)?);
+                }
+                return Ok(JsValue::Array(out));
+            }
+            _ if v.is_proxy() => return self.script_value(v),
+            // SAFETY: as above.
+            _ if unsafe { qjs::JS_IsFunction(ctx, raw) } => return Ok(JsValue::Undefined),
+            // SAFETY: as above.
+            _ if unsafe { qjs::JS_IsDate(raw) } => {
+                let time = v
+                    .get::<rquickjs::convert::Coerced<f64>>()
+                    .map_or(f64::NAN, |c| c.0);
+                // SAFETY: the context is entered; the new Date is owned by
+                // the Value made of it.
+                let copy = unsafe { Value::from_raw(self.ctx.clone(), qjs::JS_NewDate(ctx, time)) };
+                return Ok(JsValue::Handle(self.keep(copy)));
+            }
+            _ => return self.script_value(v),
+        }
+        // A literal's prototype is `Object.prototype`, which no colour or
+        // defined kind has: only another prototype needs looking up.
+        // SAFETY: the context is entered and `raw` is an ordinary object;
+        // both prototypes are freed once compared.
+        let plain = unsafe {
+            let proto = qjs::JS_GetPrototype(ctx, raw);
+            let object = qjs::JS_GetClassProto(ctx, JS_CLASS_OBJECT);
+            let same = qjs::JS_VALUE_GET_TAG(proto) == qjs::JS_TAG_OBJECT
+                && qjs::JS_VALUE_GET_PTR(proto) == qjs::JS_VALUE_GET_PTR(object);
+            qjs::JS_FreeValue(ctx, proto);
+            qjs::JS_FreeValue(ctx, object);
+            same
+        };
+        if !plain
+            && let Some(read) = self.read_by_prototype(v.as_object().expect("object"), depth)?
+        {
+            return Ok(read);
+        }
+        // Its own enumerable string keys, read straight off the engine:
+        // each key is made a string once, and each field is one read (a
+        // getter runs once), in the order a script sees them.
+        let flags = (qjs::JS_GPN_STRING_MASK | qjs::JS_GPN_ENUM_ONLY) as std::ffi::c_int;
+        let mut names = OwnNames {
+            ctx,
+            tab: std::ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: the context is entered and `raw` is live; `names` frees
+        // what is filled in.
+        if unsafe { qjs::JS_GetOwnPropertyNames(ctx, &mut names.tab, &mut names.len, raw, flags) }
+            < 0
+        {
+            return Err(rquickjs::Error::Exception);
+        }
+        let mut fields = Vec::with_capacity(names.len as usize);
+        for i in 0..names.len as usize {
+            // SAFETY: `i` is within the table the engine filled in.
+            let atom = unsafe { (*names.tab.add(i)).atom };
+            let mut n = 0;
+            // SAFETY: as above; the C string is freed once copied.
+            let key = unsafe {
+                let p = qjs::JS_AtomToCStringLen(ctx, &mut n, atom);
+                if p.is_null() {
+                    return Err(rquickjs::Error::Exception);
+                }
+                let bytes = std::slice::from_raw_parts(p.cast(), n as usize);
+                // A lone surrogate in a key is the one thing that is not
+                // UTF-8; the check alone costs less than the lossy read.
+                let key = match std::str::from_utf8(bytes) {
+                    Ok(key) => key.to_owned(),
+                    Err(_) => String::from_utf8_lossy(bytes).into_owned(),
+                };
+                qjs::JS_FreeCString(ctx, p);
+                key
+            };
+            // SAFETY: as above; the field's value is owned by `f`.
+            let f = unsafe {
+                let got = qjs::JS_GetProperty(ctx, raw, atom);
+                if qjs::JS_IsException(got) {
+                    return Err(rquickjs::Error::Exception);
+                }
+                Value::from_raw(self.ctx.clone(), got)
+            };
+            fields.push((key, self.copy_at(&f, depth + 1)?));
+        }
+        Ok(JsValue::Map(fields))
+    }
+
     fn read_value_at(&self, v: &Value<'js>, depth: u32) -> rquickjs::Result<JsValue> {
         // Cyclic arrays would otherwise recurse until the native stack limit.
         if depth > 32 {
@@ -1357,6 +1472,33 @@ impl<'js> Scope<'js> {
         })
     }
 }
+
+/// How deep [`Scope::copy_of`] copies: past it, a cycle is the script's
+/// own object again.
+const COPY_DEPTH: u32 = 32;
+
+/// The own keys `JS_GetOwnPropertyNames` gave, freed with it.
+struct OwnNames {
+    ctx: *mut rquickjs::qjs::JSContext,
+    tab: *mut rquickjs::qjs::JSPropertyEnum,
+    len: u32,
+}
+
+impl Drop for OwnNames {
+    fn drop(&mut self) {
+        if !self.tab.is_null() {
+            // SAFETY: the table and its atoms came from this context.
+            unsafe { rquickjs::qjs::JS_FreePropertyEnum(self.ctx, self.tab, self.len) };
+        }
+    }
+}
+
+/// QuickJS's class of an ordinary object (`JS_CLASS_OBJECT`, which its
+/// header keeps first).
+const JS_CLASS_OBJECT: rquickjs::qjs::JSClassID = 1;
+
+/// QuickJS's class of an array, next after [`JS_CLASS_OBJECT`].
+const JS_CLASS_ARRAY: rquickjs::qjs::JSClassID = 2;
 
 /// The array behind `v`, an array's reference, and its length. A proxy
 /// standing for one (a host's kind of array: see [`JsRef::array_of_kind`])
@@ -1988,7 +2130,7 @@ impl JsHost {
                     if let Some(sig) = take(&mut own_signals, name, |s| s.name.as_str()) {
                         signal_fn::install(&proto, sig)?;
                     } else if let Some(m) = take(&mut own_methods, name, |m| m.name.as_str()) {
-                        install_method(&proto, weak.clone(), m.id, &m.name)?;
+                        install_method(&proto, weak.clone(), m)?;
                     } else {
                         copy_entry(ctx, from, &proto, name)?;
                     }
@@ -2000,7 +2142,7 @@ impl JsHost {
                 listing.members.push(sig.name.clone());
             }
             for m in own_methods.into_iter().flatten() {
-                install_method(&proto, weak.clone(), m.id, &m.name)?;
+                install_method(&proto, weak.clone(), m)?;
                 listing.members.push(m.name.clone());
             }
             // A signal or method of a property's name replaced it on the
@@ -2750,10 +2892,10 @@ unsafe extern "C" fn raw_global(
 fn install_method<'js>(
     proto: &Object<'js>,
     state: Weak<HostState>,
-    method: u32,
-    name: &str,
+    def: &MethodDef,
 ) -> rquickjs::Result<()> {
-    let key = name.to_owned();
+    let (method, copied) = (def.id, def.copied);
+    let key = def.name.clone();
     let getter =
         move |ctx: Ctx<'js>, This(this): This<Value<'js>>| -> rquickjs::Result<Value<'js>> {
             let id = this_id(&ctx, &this)?;
@@ -2762,7 +2904,7 @@ fn install_method<'js>(
             // host says it may give another later.
             let (f, keep) = match host.method_face(&scope, id, method) {
                 MethodFace::Direct(f) => (f, true),
-                MethodFace::Call { keep } => (make_method(&ctx, id, method, &key)?, keep),
+                MethodFace::Call { keep } => (make_method(&ctx, id, method, copied, &key)?, keep),
             };
             if keep && let Some(o) = this.as_object() {
                 o.prop(
@@ -2772,15 +2914,17 @@ fn install_method<'js>(
             }
             Ok(f.into_value())
         };
-    proto.prop(name, Accessor::new_get(getter).configurable())
+    proto.prop(def.name.as_str(), Accessor::new_get(getter).configurable())
 }
 
 /// A method bound to the object `id`: plain C, as a global host function
-/// is ([`raw_global`]), with the object and the method in its data.
+/// is ([`raw_global`]), with the object, the method and the arguments it
+/// takes by copy ([`MethodDef::copied`]) in its data.
 fn make_method<'js>(
     ctx: &Ctx<'js>,
     id: u64,
     method: u32,
+    copied: u32,
     name: &str,
 ) -> rquickjs::Result<Function<'js>> {
     use rquickjs::qjs;
@@ -2790,12 +2934,13 @@ fn make_method<'js>(
         Value::new_int(ctx.clone(), id as u32 as i32).as_raw(),
         Value::new_int(ctx.clone(), (id >> 32) as u32 as i32).as_raw(),
         Value::new_int(ctx.clone(), method as i32).as_raw(),
+        Value::new_int(ctx.clone(), copied as i32).as_raw(),
     ];
     // SAFETY: the context is alive and entered; `JS_NewCFunctionData`
     // copies the data, and the new function is owned by the Value.
     let func = unsafe {
         let raw = ctx.as_raw().as_ptr();
-        let v = qjs::JS_NewCFunctionData(raw, Some(raw_method), 0, 0, 3, data.as_mut_ptr());
+        let v = qjs::JS_NewCFunctionData(raw, Some(raw_method), 0, 0, 4, data.as_mut_ptr());
         if qjs::JS_IsException(v) {
             return Err(rquickjs::Error::Exception);
         }
@@ -2818,21 +2963,26 @@ unsafe extern "C" fn raw_method(
     use rquickjs::qjs;
     // SAFETY: QuickJS calls it on a live context with `argc` arguments,
     // borrowed, so each is duplicated for the Value that frees it, and
-    // with the three numbers `make_method` gave it.
+    // with the four numbers `make_method` gave it.
     unsafe {
         let low = u64::from(qjs::JS_VALUE_GET_INT(*data) as u32);
         let high = u64::from(qjs::JS_VALUE_GET_INT(*data.add(1)) as u32);
         let method = qjs::JS_VALUE_GET_INT(*data.add(2)) as u32;
+        let copied = qjs::JS_VALUE_GET_INT(*data.add(3)) as u32;
         raw_entry(ctx, |scope| {
             let host = scope.state.host()?;
             let args = (0..argc.max(0) as usize)
                 .map(|i| {
                     let a = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, *argv.add(i)));
-                    scope.script_value(&a)
+                    if i < 32 && copied >> i & 1 == 1 {
+                        scope.copy_of(&a)
+                    } else {
+                        scope.script_value(&a)
+                    }
                 })
                 .collect::<rquickjs::Result<Vec<_>>>()?;
             let out = host
-                .call(scope, high << 32 | low, method, &args)
+                .call(scope, high << 32 | low, method, args)
                 .map_err(|e| e.into_js(&scope.ctx));
             raw_out(scope, &scope.back(out)?)
         })

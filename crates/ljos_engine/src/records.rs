@@ -16,6 +16,10 @@
 //!
 //! What a script writes into the object is seen by the next script read of
 //! the same value but not by Rust, which still has the value it stored.
+//!
+//! A record a `ListModel` row keeps is the other way: Qt gives a new copy of
+//! it on each read, and what a script writes into one reaches nothing
+//! ([`Records::copy_each_read`]).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -29,7 +33,8 @@ use crate::value::Value;
 type Held = Weak<Vec<(Atom, Value)>>;
 
 pub(crate) struct Records {
-    by_address: RefCell<HashMap<usize, (Held, JsRef)>>,
+    /// No script object for a record that is copied on each read.
+    by_address: RefCell<HashMap<usize, (Held, Option<JsRef>)>>,
     sweep_at: Cell<usize>,
 }
 
@@ -56,6 +61,13 @@ impl Records {
         })
     }
 
+    /// Every read of the record `fields` gives a new script object, for
+    /// as long as it is held.
+    pub(crate) fn copy_each_read(&self, fields: &Arc<Vec<(Atom, Value)>>) {
+        let at = Arc::as_ptr(fields) as usize;
+        self.keep(at, Arc::downgrade(fields), None);
+    }
+
     fn find(
         &self,
         at: usize,
@@ -67,18 +79,22 @@ impl Records {
         if let Some((held, r)) = self.by_address.borrow().get(&at)
             && held.strong_count() > 0
         {
-            return Some(JsValue::Handle(r.clone()));
+            return r.clone().map(JsValue::Handle);
         }
         if holders < 2 {
             return None;
         }
         let (held, r) = make();
+        self.keep(at, held, Some(r.clone()));
+        Some(JsValue::Handle(r))
+    }
+
+    fn keep(&self, at: usize, held: Held, r: Option<JsRef>) {
         let mut table = self.by_address.borrow_mut();
-        table.insert(at, (held, r.clone()));
+        table.insert(at, (held, r));
         if table.len() >= self.sweep_at.get() {
             table.retain(|_, (held, _)| held.strong_count() > 0);
             self.sweep_at.set((table.len() * 2).max(64));
         }
-        Some(JsValue::Handle(r))
     }
 }

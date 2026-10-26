@@ -19,10 +19,16 @@ pub struct PropDef {
 }
 
 /// One method on a host type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MethodDef {
     pub name: String,
     pub id: u32,
+    /// The arguments it takes by copy, by position (bit 0 the first): an
+    /// object or an array in one crosses as what [`Scope::copy_of`] makes
+    /// of it, and holds nothing of the script's.
+    ///
+    /// [`Scope::copy_of`]: crate::Scope::copy_of
+    pub copied: u32,
 }
 
 /// One signal on a host type. JS reads it as a function: calling it emits,
@@ -191,7 +197,7 @@ pub trait HostObjects {
         scope: &Scope<'js>,
         obj: u64,
         method: u32,
-        args: &[JsArg],
+        args: Vec<JsArg>,
     ) -> Result<JsOut, HostError>;
 
     /// What a script reads for `obj.method`, the first time it reads it.

@@ -100,7 +100,7 @@ fn initial_value(ty: &TypeTag, v: &Value, created: bool) -> Option<Value> {
     let number = |s: &Atom| s.trim().parse::<f64>().ok().filter(|n| n.is_finite());
     let plain = || Some(v.clone());
     match (ty, v) {
-        (TypeTag::Var | TypeTag::Data, _) => plain(),
+        (TypeTag::Var | TypeTag::Data | TypeTag::Copied, _) => plain(),
         (_, Value::Undefined) => None,
         (TypeTag::Bool, Value::String(s)) if created => Some(Value::Bool(
             !(s.is_empty() || &**s == "0" || s.eq_ignore_ascii_case("false")),
@@ -337,7 +337,7 @@ impl Engine {
     /// type is a pointer to its class, a list of values a sequence.
     pub(crate) fn qt_type(&self, ty: &TypeTag) -> String {
         let name = match ty {
-            TypeTag::Var | TypeTag::Data => "QVariant",
+            TypeTag::Var | TypeTag::Data | TypeTag::Copied => "QVariant",
             TypeTag::Bool => "bool",
             TypeTag::Int | TypeTag::Enum(_) | TypeTag::Flags(_) => "int",
             TypeTag::Real

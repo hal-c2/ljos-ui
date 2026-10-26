@@ -19,7 +19,9 @@
 //! the reset, layout, column and header signals are there but never sent.
 
 use std::cell::{Cell, RefCell};
+use std::ops::Deref;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 
 use crate::atom::Atom;
 use crate::builtins::QtObject;
@@ -33,6 +35,7 @@ use crate::model::{
     row_shape,
 };
 use crate::object::QmlType;
+use crate::types::Copied;
 use crate::value::Value;
 use crate::{QmlObject, WriteKind, qml_impl};
 
@@ -357,8 +360,17 @@ impl ListState {
         match value {
             Value::Int(n) => Value::Real(f64::from(n)),
             Value::Enum(_) => Value::Real(value.to_number()),
+            Value::Map(ref fields) => {
+                engine
+                    .extension::<crate::records::Records>()
+                    .copy_each_read(fields);
+                value
+            }
             Value::List(items) => {
-                let rows = items.iter().filter_map(|v| entries_of(engine, v)).collect();
+                let rows: Vec<Entries> = items
+                    .iter()
+                    .filter_map(|v| entries_of(engine, v.clone()))
+                    .collect();
                 match self.me.get() {
                     Some(me) => nested_model(engine, me, rows),
                     None => Value::Undefined,
@@ -419,7 +431,12 @@ impl ListState {
     ) {
         engine.batch(|| {
             if let Some(me) = self.me.get() {
-                let _ = engine.set_internal(me, ListModel::COUNT, self.len() as i32);
+                let _ = engine.write_internal(
+                    me,
+                    ListModel::COUNT.index,
+                    Value::Int(self.len() as i32),
+                    WriteKind::Imperative,
+                );
             }
             if self.roles.borrow().len() != had_roles {
                 self.listeners.emit(engine, &ModelChange::RolesChanged);
@@ -431,15 +448,17 @@ impl ListState {
         });
     }
 
-    fn make_rows(
+    fn make_rows<K: Deref<Target = str>, E: IntoIterator<Item = (K, Value)>>(
         &self,
         engine: &Engine,
-        items: impl IntoIterator<Item = Vec<(String, Value)>>,
+        items: impl IntoIterator<Item = E>,
     ) -> NewRows<ListRow> {
         items
             .into_iter()
             .map(|entries| {
-                let mut values = Vec::with_capacity(self.roles.borrow().len().max(entries.len()));
+                let entries = entries.into_iter();
+                let n = entries.size_hint().0;
+                let mut values = Vec::with_capacity(self.roles.borrow().len().max(n));
                 for (name, v) in entries {
                     if let Some((i, v)) = self.resolve(engine, &name, v, Source::Object) {
                         self.put(&mut values, i, v);
@@ -457,11 +476,11 @@ impl ListState {
             .collect()
     }
 
-    fn insert(
+    fn insert<K: Deref<Target = str>, E: IntoIterator<Item = (K, Value)>>(
         &self,
         engine: &Engine,
         at: usize,
-        items: impl IntoIterator<Item = Vec<(String, Value)>>,
+        items: impl IntoIterator<Item = E>,
     ) {
         let had = self.roles.borrow().len();
         let rows = self.make_rows(engine, items);
@@ -474,7 +493,14 @@ impl ListState {
             &ModelChange::RowsAboutToBeInserted { first: at, count },
         );
         self.tell_rows(engine, "rowsAboutToBeInserted", at, count);
-        self.rows.borrow_mut().splice(at..at, rows);
+        {
+            let mut all = self.rows.borrow_mut();
+            if at == all.len() {
+                all.extend(rows);
+            } else {
+                all.splice(at..at, rows);
+            }
+        }
         self.changed(
             engine,
             had,
@@ -555,11 +581,11 @@ impl ListState {
     }
 
     /// Gives `row` the values in `entries`. True when any was taken.
-    fn set_fields(
+    fn set_fields<K: Deref<Target = str>>(
         &self,
         engine: &Engine,
         row: usize,
-        entries: Vec<(String, Value)>,
+        entries: impl IntoIterator<Item = (K, Value)>,
         source: Source,
     ) -> bool {
         let had = self.roles.borrow().len();
@@ -770,11 +796,71 @@ impl ItemModel for ListState {
     }
 }
 
-/// The roles and values of a JS object given to `append` and the like.
-fn entries_of(engine: &Engine, v: &Value) -> Option<Vec<(String, Value)>> {
+/// The roles and values of an object given to `append` and the like:
+/// read as the call crossed ([`Copied`]), or still a script's.
+fn entries_of(engine: &Engine, v: Value) -> Option<Entries> {
     match v {
-        Value::Js(_) => Some(engine.js_object_entries(v)),
+        Value::Map(fields) => Some(Entries::Map(fields)),
+        Value::Js(_) => Some(Entries::Read(
+            engine
+                .js_object_entries(&v)
+                .into_iter()
+                .map(|(k, v)| (Atom::from(k), v))
+                .collect(),
+        )),
         _ => None,
+    }
+}
+
+/// The fields of an object given to `append` and the like. The map a
+/// call crossed with is read where it is: the caller holds it too.
+enum Entries {
+    Map(Arc<Vec<(Atom, Value)>>),
+    Read(Vec<(Atom, Value)>),
+}
+
+impl IntoIterator for Entries {
+    type Item = (Atom, Value);
+    type IntoIter = EntriesIter;
+
+    fn into_iter(self) -> EntriesIter {
+        match self {
+            Entries::Map(fields) => match Arc::try_unwrap(fields) {
+                Ok(fields) => EntriesIter::Read(fields.into_iter()),
+                Err(fields) => EntriesIter::Map(fields, 0),
+            },
+            Entries::Read(fields) => EntriesIter::Read(fields.into_iter()),
+        }
+    }
+}
+
+enum EntriesIter {
+    Map(Arc<Vec<(Atom, Value)>>, usize),
+    Read(std::vec::IntoIter<(Atom, Value)>),
+}
+
+impl Iterator for EntriesIter {
+    type Item = (Atom, Value);
+
+    fn next(&mut self) -> Option<(Atom, Value)> {
+        match self {
+            EntriesIter::Map(fields, at) => {
+                let field = fields.get(*at)?.clone();
+                *at += 1;
+                Some(field)
+            }
+            EntriesIter::Read(fields) => fields.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            EntriesIter::Map(fields, at) => {
+                let n = fields.len() - *at;
+                (n, Some(n))
+            }
+            EntriesIter::Read(fields) => fields.size_hint(),
+        }
     }
 }
 
@@ -786,7 +872,11 @@ fn index_of(v: &Value) -> Option<i64> {
 
 /// Gives the `ListModel` `model` the rows it is declared with. Nothing
 /// is told: nobody can be listening yet.
-pub(crate) fn declare_rows(engine: &Engine, model: ObjectId, rows: Vec<Vec<(String, Value)>>) {
+pub(crate) fn declare_rows<K: Deref<Target = str>, E: IntoIterator<Item = (K, Value)>>(
+    engine: &Engine,
+    model: ObjectId,
+    rows: Vec<E>,
+) {
     let Some(state) = ListState::of(engine, model) else {
         return;
     };
@@ -802,10 +892,10 @@ pub(crate) fn declare_rows(engine: &Engine, model: ObjectId, rows: Vec<Vec<(Stri
 
 /// A `ListModel` holding `rows`, owned by the model `owner`: what a list
 /// in a role is.
-pub(crate) fn nested_model(
+pub(crate) fn nested_model<K: Deref<Target = str>, E: IntoIterator<Item = (K, Value)>>(
     engine: &Engine,
     owner: ObjectId,
-    rows: Vec<Vec<(String, Value)>>,
+    rows: Vec<E>,
 ) -> Value {
     match engine.create_native_incomplete(ListModel::default(), Some(owner)) {
         Ok(id) => {
@@ -917,18 +1007,18 @@ impl ListModel {
 
     /// Adds a row from a JS object, or one per object of an array.
     #[qml(invokable)]
-    fn append(cx: &Cx, item: Value) {
+    fn append(cx: &Cx, item: Copied) {
         let Some(state) = ListState::of(cx.engine, cx.this) else {
             return;
         };
-        match rows_of(cx.engine, &item) {
+        match rows_of(cx.engine, item.0) {
             Some(rows) => state.insert(cx.engine, state.len(), rows),
             None => state.warn(cx.engine, "append: value is not an object"),
         }
     }
 
     #[qml(invokable)]
-    fn insert(cx: &Cx, index: Value, item: Value) {
+    fn insert(cx: &Cx, index: Value, item: Copied) {
         let Some(state) = ListState::of(cx.engine, cx.this) else {
             return;
         };
@@ -937,7 +1027,7 @@ impl ListModel {
             state.warn(cx.engine, &format!("insert: index {at} out of range"));
             return;
         }
-        match rows_of(cx.engine, &item) {
+        match rows_of(cx.engine, item.0) {
             Some(rows) => state.insert(cx.engine, at as usize, rows),
             None => state.warn(cx.engine, "insert: value is not an object"),
         }
@@ -994,7 +1084,7 @@ impl ListModel {
     /// Changes the roles of the row at `index` that `item` names. At
     /// `count` it appends.
     #[qml(invokable)]
-    fn set(cx: &Cx, index: Value, item: Value) {
+    fn set(cx: &Cx, index: Value, item: Copied) {
         let Some(state) = ListState::of(cx.engine, cx.this) else {
             return;
         };
@@ -1003,7 +1093,7 @@ impl ListModel {
             state.warn(cx.engine, &format!("set: index {at} out of range"));
             return;
         }
-        let Some(entries) = entries_of(cx.engine, &item) else {
+        let Some(entries) = entries_of(cx.engine, item.0) else {
             state.warn(cx.engine, "set: value is not an object");
             return;
         };
@@ -1055,9 +1145,12 @@ impl ListModel {
 }
 
 /// The rows an argument of `append` or `insert` stands for.
-fn rows_of(engine: &Engine, item: &Value) -> Option<NewRows<Vec<(String, Value)>>> {
+fn rows_of(engine: &Engine, item: Value) -> Option<NewRows<Entries>> {
     match item {
-        Value::List(items) => items.iter().map(|v| entries_of(engine, v)).collect(),
+        Value::List(items) => items
+            .iter()
+            .map(|v| entries_of(engine, v.clone()))
+            .collect(),
         v => entries_of(engine, v).map(|e| smallvec::smallvec![e]),
     }
 }
@@ -1229,7 +1322,7 @@ pub(crate) fn reload_rows(engine: &Engine, model: ObjectId, old: CarriedRows, ne
             // What changed, and a role no longer given back to its
             // default.
             let changed = row.iter().filter(|c| !old[i].contains(c)).cloned();
-            let entries = restored_rows(engine, model, vec![changed.collect()])
+            let entries: Vec<_> = restored_rows(engine, model, vec![changed.collect()])
                 .pop()
                 .unwrap_or_default()
                 .into_iter()
