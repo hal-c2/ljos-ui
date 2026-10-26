@@ -6236,3 +6236,140 @@ lines and metrics (1.4 k). The rest is Parley, harfrust and ICU: shaping 21 k (h
 - **Idle**: `idle.qml` (a still rectangle and text) recorded for 2 s: one wake, the
   inspector's own request, which led to nothing, before and after. Pixels: no paint code
   changed, and a frame draws what it drew before, only sooner.
+
+### Start-up against qml6 (2026-10-26)
+
+The five apps of "Memory against qml6" above, started with `ljos bench --profile desktop
+--warm-up --repeat 5` in the cua sandbox. Each cell is the median of five runs. "Answers
+input" is when the window first fills a strip it was resized into. CPU is the cgroup's, from
+launch to the first frame.
+
+**A fair photosurface.** The corpus's photosurface has `gneiss.frag` but no
+`gneiss.frag.qsb`, so a bare `qml6` draws no background behind the photos. Ljós compiles the
+`.frag` beside the `.qsb` path itself. qml6 was measured on a scratch copy of the app with the
+`.qsb` baked by Qt's `qsb` (`--glsl "100es,120,150" --hlsl 50 --msl 12`); Ljós ran on the same
+copy. The background is a full-window program that is costly per pixel on llvmpipe. With it,
+qml6 used 2.8–8.8 s of CPU in its first 2 s, 2.2–6.1 s of it on llvmpipe's threads, whatever
+`LP_NUM_THREADS` was. Before the fix below, Ljós used 1.1 s.
+
+**Where Ljós's photosurface start went.** Per-thread CPU after 1.5 s, before the cut: 1.10 s
+for the process, of which llvmpipe's four threads used 1.04 s, the main thread 60 ms, and
+threads that had ended about 180 ms. The background ran twice, at about 130 ms of wall time
+each. It ran once onto the window for the first frame. It ran again into a picture of its own
+when the second frame drew it unchanged, and later frames copied that picture.
+
+**The cut.** An effect whose program is linked for this draw is now drawn into its picture at
+once and copied. A still background therefore runs once. The first draw of an effect is
+nearly always on the window's first frame, where effects are mostly still. An effect that
+changes each frame pays for one picture, then runs straight onto the window as before. Three
+runs each, process CPU after 1.5 s:
+
+| | before | after |
+|---|---:|---:|
+| photosurface | 1100, 1080, 1170 ms | 610, 610, 620 ms |
+
+Screenshots of the settled window are byte-identical before and after.
+`a_still_effect_goes_into_its_picture_from_its_first_draw` pins the rule.
+
+**The table.** In ms, median of five, with Ljós after the cut. The one-minute load average was
+14–65 while the bench ran.
+
+| App | first frame, Ljós | qml6 | answers input, Ljós | qml6 | CPU to first frame, Ljós | qml6 |
+|---|---:|---:|---:|---:|---:|---:|
+| minimal | 70.6 | 246 | 99.5 | 278 | 111 | 189 |
+| list1000 | 54.5 | 292 | 71.4 | 339 | 106 | 212 |
+| thermostat | 143 | 476 | 327¹ | 2070¹ | 179 | 501 |
+| todolist | 115 | 385 | 132 | 469 | 173 | 307 |
+| photosurface | 205 | 326 | 348 | 599 | 649 | 878 |
+| photosurface, before the cut | 191 | | 464 | | 635 | |
+
+¹ Thermostat answered the resize in one run of five on Ljós and two on qml6. In the others no
+frame filled the strip in time.
+
+- **The cut's effect.** It moves photosurface's answer to input by about 116 ms. The second
+  run came after the first frame, so the first frame and the CPU spent to reach it do not move.
+- **Where photosurface's CPU still goes.** Most of the 649 ms to the first frame is the
+  background's one run: 4 × 120 ms on llvmpipe's threads. The rest is small: the main thread
+  about 30 ms, the font, GPU (EGL) and compile threads 10–20 ms each. The first frame needs
+  that run, and qml6 pays for it too.
+- **The earlier figure.** The 661 against 271 ms in "Memory against qml6" compared Ljós with
+  a qml6 that drew no background.
+- **The other apps.** The cut does not touch minimal, list1000, thermostat or todolist, so
+  their before-and-after differences are noise. Ljós is ahead of qml6 on every app and every
+  column.
+
+#### todolist's 8.3 s `Component.onCompleted`
+
+The 8.3 s once seen at todolist's `Component.onCompleted` is the disk, not Ljós. The method
+was a fresh `XDG_DATA_HOME` for each run, so `LocalStorage` created the database anew. An
+`LD_PRELOAD` shim timed every `fsync`, `fdatasync` and `syncfs` by file. Both runtimes were
+run.
+
+| Run | Ljós syncs, total ms (longest) | qml6 syncs, total ms (longest) | a 4 KB `dd conv=fsync` beside them |
+|---|---|---|---|
+| 1 | 6, 3161 (1844) | 6, 2883 (1666) | 739 ms |
+| 2 | 6, 1478 (1404) | 5, 3296 (1218) | 13 ms |
+| 3 | 6, 19 (7) | 6, 1646 (942) | 1419 ms |
+
+- **Ljós's waits.** Creating the database syncs:
+  - the rollback journal twice (758 and 343 ms in one run, whose other times follow);
+  - its directory (408 ms);
+  - the database (2996 ms);
+  - the write-ahead log once WAL is on (1202 ms).
+- **qml6's waits.** qml6 makes as many syncs. Its longest were 2548 ms on its settings file's
+  `.ini.lock` and 1800 ms on a temporary file it deletes.
+- **A raw sync stalls too.** A 4 KB `dd conv=fsync`, with neither runtime involved, took up to
+  1.4 s.
+- **The drive was busy.** `/proc/pressure/io` read `some avg10=81.8`, `full avg10=70.4`, with a
+  load average of 79. The drive (NVMe, 91 % full) was being written by other builds.
+
+The syncs are what creating a database durably costs, and qml6 makes the same number. Ljós
+already commits in WAL mode with `synchronous=NORMAL` (see "LocalStorage: a commit that does
+not wait for the disk" above), so later commits do not wait for the disk. The time depends on
+the drive; on a quiet one the six syncs took 19 ms. No fix was made. Moving creation off the
+UI thread would change when `Component.onCompleted` sees the tables, which todolist reads at
+once.
+
+### Software drawing to shared memory: a lead (2026-10-26)
+
+A design note, not built. Without a GPU, Ljós draws through EGL on Mesa's llvmpipe, as qml6
+does. The context alone costs:
+
+- about 31.6 MB of malloc, whatever GL API is asked for;
+- 46 MiB of LLVM mapped (26 MiB PSS);
+- 14 MiB of Mesa's driver;
+- four rasteriser threads;
+- 100–265 ms of EGL start (see "Where the first frame's time goes").
+
+On the minimal app that is most of Ljós's 112 MiB of PSS.
+
+**The path.** The window would be a Wayland `wl_shm` buffer, or an X11 `MIT-SHM` image, filled
+by the CPU, with no EGL display made:
+
+1. The frame's display list is drawn with R, the `vello_cpu` renderer `ljos_render` already
+   has. R is deterministic: one thread and a baseline SIMD level. For the screen it would use
+   `vello_cpu`'s threads and the machine's SIMD level.
+2. Only the damaged rectangles are drawn and attached (`wl_surface.damage_buffer`), with
+   two or three buffers in turn, so a blinking cursor costs its own rectangle.
+3. The B0 path (epaint meshes) is left out. Egui-drawn parts, such as the shell's inspector,
+   would need a CPU mesh rasteriser of their own, or would not be offered on this path.
+
+**What it would save.** About 30 MB of malloc and 60 MiB of mappings per process. No EGL
+start, no JIT, and no wakes of llvmpipe's threads at each frame. A frame that changes a little
+would draw and send only its damage.
+
+**What it would cost.**
+
+- **ShaderEffect draws nothing.** This is as in R today, and as in Qt's software scene graph.
+  A naga-to-CPU interpreter would be far slower than llvmpipe's JIT. Photosurface's
+  background would be lost.
+- **Full-window repaints cost more.** Large repaints (a scrolled list, a resize, a
+  full-window animation) are drawn by Ljós on the CPU without llvmpipe's JIT-compiled
+  rasteriser. That needs measuring against B0 on llvmpipe; `vello_cpu` with its threads may
+  well be faster for paths and text.
+- **Buffer memory.** 4 bytes a pixel per buffer: 2.4 MB at 1024×600, 7.4 MB for three.
+- **Two renderers to keep the same.** R and B0 already must agree, and the reference
+  scenarios compare them.
+
+**When.** It is chosen where EGL offers only llvmpipe or softpipe, or when asked for. A
+machine with a GPU keeps GL.
