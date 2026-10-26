@@ -10,7 +10,9 @@
 
 use ljos_design::color::Srgb;
 use ljos_render::kurbo::Rect;
-use ljos_render::{FrameSnapshot, FrameView, PaintItem, RasterConfig, Rgba, VelloCpuReference};
+use ljos_render::{
+    ComposeStats, FrameSnapshot, FrameView, PaintItem, RasterConfig, Rgba, VelloCpuReference,
+};
 
 use crate::Options;
 
@@ -54,6 +56,10 @@ pub(crate) fn backdrop(engine: &ljos_engine::Engine, options: &Options) -> Srgb 
 
 pub(crate) struct Painter {
     renderer: VelloCpuReference,
+    /// The part of the frame drawn last. Its lists are emptied and filled
+    /// again for each draw, not made anew: a check draws many parts of
+    /// one scene.
+    part: FrameSnapshot,
 }
 
 impl Painter {
@@ -64,6 +70,13 @@ impl Painter {
                 background: Rgba::rgb(r, g, b),
                 ..RasterConfig::default()
             }),
+            part: FrameSnapshot {
+                frame: 0,
+                viewport: Rect::ZERO,
+                items: Vec::new(),
+                clips: Vec::new(),
+                stats: ComposeStats::default(),
+            },
         }
     }
 
@@ -81,18 +94,50 @@ impl Painter {
         if r.width() < 1.0 || r.height() < 1.0 {
             return None;
         }
-        let part = FrameSnapshot {
-            frame: snapshot.frame,
-            viewport: r,
-            items: snapshot.items.iter().filter(|i| keep(i)).cloned().collect(),
-            clips: snapshot.clips.clone(),
-            stats: snapshot.stats,
-        };
-        let image = self.renderer.render(&FrameView::new(&part, 1.0)).ok()?;
+        let part = &mut self.part;
+        part.frame = snapshot.frame;
+        part.viewport = r;
+        part.stats = snapshot.stats;
+        part.items.clear();
+        part.items
+            .extend(snapshot.items.iter().filter(|i| keep(i)).cloned());
+        part.clips.clear();
+        part.clips.extend_from_slice(&snapshot.clips);
+        let image = self.renderer.render(&FrameView::new(part, 1.0)).ok()?;
         Some(Picture {
             width: image.width,
             height: image.height,
             data: image.data,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drawing again fills the lists of the last draw: no paint list is
+    /// made per draw.
+    #[test]
+    fn a_painter_draws_into_the_lists_it_has() {
+        let snapshot = FrameSnapshot {
+            frame: 1,
+            viewport: Rect::new(0.0, 0.0, 8.0, 8.0),
+            items: Vec::new(),
+            clips: Vec::new(),
+            stats: ComposeStats::default(),
+        };
+        let mut painter = Painter::new(Srgb::WHITE);
+        painter.part.items.reserve(4);
+        painter.part.clips.reserve(4);
+        let lists = (painter.part.items.as_ptr(), painter.part.clips.as_ptr());
+        for _ in 0..3 {
+            let picture = painter.draw(&snapshot, snapshot.viewport, |_| true);
+            assert_eq!(picture.map(|p| (p.width, p.height)), Some((8, 8)));
+        }
+        assert_eq!(
+            (painter.part.items.as_ptr(), painter.part.clips.as_ptr()),
+            lists
+        );
     }
 }
