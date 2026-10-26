@@ -383,6 +383,31 @@ struct Round {
     later: Vec<ObjectId>,
 }
 
+/// Holds every changed property at the value it had, so that an animation
+/// that begins later still begins there.
+fn hold_starts(
+    engine: &Engine,
+    changes: &Changes,
+    starts: &[Value],
+) -> Vec<(ObjectId, PropIndex, OverrideId, ChangeKind)> {
+    let mut holds = Vec::new();
+    for (c, before) in changes.list.iter().zip(starts) {
+        let hold = OverrideContent::Value(before.clone());
+        if let Ok(id) = engine.push_override(c.obj, c.prop, hold) {
+            holds.push((c.obj, c.prop, id, c.kind));
+        }
+    }
+    holds
+}
+
+/// What keeps a change from showing until its transition shows it.
+struct Held {
+    holds: Vec<(ObjectId, PropIndex, OverrideId, ChangeKind)>,
+    suspended: Vec<(ObjectId, PropIndex, OverrideId)>,
+    /// What the state binds.
+    bound: Vec<(ObjectId, PropIndex)>,
+}
+
 /// One layer a `PropertyChanges` is to put on a property.
 struct Pending {
     target: ObjectId,
@@ -579,7 +604,7 @@ impl Group {
 
     /// Leaves the state called `from` for the one called `to`.
     fn go(self: &Rc<Self>, engine: &Engine, from: &str, to: &str) {
-        engine.batch(|| {
+        let shown = engine.batch(|| {
             let mut round = Round::default();
             self.interrupt(engine, &mut round);
             let chosen = if self.started.get() {
@@ -624,10 +649,20 @@ impl Group {
             }
             match chosen {
                 Some((t, _)) => {
-                    self.run(engine, t, &anims, changes, starts, &round);
+                    let binds = changes
+                        .list
+                        .iter()
+                        .any(|c| round.bound.contains(&(c.obj, c.prop)));
+                    let mut held = self.suspend(engine, &mut changes, &round);
+                    if binds {
+                        return Some((t, anims, changes, starts, held, round.later));
+                    }
+                    held.holds = hold_starts(engine, &changes, &starts);
+                    self.run(engine, t, &anims, &changes, &starts, held);
                     for script in std::mem::take(&mut round.later) {
                         engine.run_script(script, StateChangeScript::SCRIPT.index);
                     }
+                    None
                 }
                 None if self.started.get() => {
                     for (c, before) in changes.list.iter().zip(&starts) {
@@ -635,8 +670,23 @@ impl Group {
                             behavior::follow(engine, c.obj, c.prop, before, &c.to);
                         }
                     }
+                    None
                 }
-                None => {}
+                None => None,
+            }
+        });
+        let Some((t, anims, changes, starts, mut held, later)) = shown else {
+            return;
+        };
+        // A state that binds a property shows each of its changes, then
+        // takes them back to where the transition starts them from; and
+        // its bindings are in force only once the transition is over
+        // (qml6).
+        engine.batch(|| held.holds = hold_starts(engine, &changes, &starts));
+        engine.batch(|| {
+            self.run(engine, t, &anims, &changes, &starts, held);
+            for script in later {
+                engine.run_script(script, StateChangeScript::SCRIPT.index);
             }
         });
     }
@@ -1128,16 +1178,9 @@ impl Group {
         }
     }
 
-    /// Shows the change with `transition`.
-    fn run(
-        self: &Rc<Self>,
-        engine: &Engine,
-        transition: ObjectId,
-        anims: &[ObjectId],
-        mut changes: Changes,
-        starts: Vec<Value>,
-        round: &Round,
-    ) {
+    /// Takes the anchors the state gives out of the way, for a transition
+    /// to show where they put each item.
+    fn suspend(&self, engine: &Engine, changes: &mut Changes, round: &Round) -> Held {
         // Where the new anchors put each item, worked out while they are
         // in force; then they are taken out of the way, so that the item
         // stays where it is until an AnchorAnimation moves it or the
@@ -1183,32 +1226,47 @@ impl Group {
                 }
             }
         }
-        // Every changed property is held at the value it had, so that an
-        // animation that begins later still begins there.
-        let mut holds = Vec::new();
-        for (c, before) in changes.list.iter().zip(&starts) {
-            let hold = OverrideContent::Value(before.clone());
-            if let Ok(id) = engine.push_override(c.obj, c.prop, hold) {
-                holds.push((c.obj, c.prop, id, c.kind));
-            }
+        Held {
+            holds: Vec::new(),
+            suspended,
+            bound: round.bound.clone(),
         }
-        let timeline = Timed::of_transition(engine, anims, &changes);
+    }
+
+    /// Shows the change with `transition`.
+    fn run(
+        self: &Rc<Self>,
+        engine: &Engine,
+        transition: ObjectId,
+        anims: &[ObjectId],
+        changes: &Changes,
+        starts: &[Value],
+        held: Held,
+    ) {
+        let Held {
+            mut holds,
+            suspended,
+            bound,
+        } = held;
+        let timeline = Timed::of_transition(engine, anims, changes);
         let mut moved = Vec::new();
         timeline.moved(&mut moved);
         let mut given = Vec::new();
         timeline.given(&mut given);
-        given.retain(|at| !round.bound.contains(at));
+        given.retain(|at| !bound.contains(at));
         // What the transition does not name has its new value at once,
-        // or is its Behavior's to take there.
+        // or is its Behavior's to take there; what the state binds waits
+        // for the transition's end.
         holds.retain(|(obj, prop, id, _)| {
-            if moved.contains(&(*obj, *prop)) {
+            if moved.contains(&(*obj, *prop)) || bound.contains(&(*obj, *prop)) {
                 return true;
             }
             let _ = engine.remove_override(*obj, *prop, *id, RestoreMode::BindingOrValue);
             false
         });
-        for (c, before) in changes.list.iter().zip(&starts) {
-            if c.kind == ChangeKind::Property && !moved.contains(&(c.obj, c.prop)) {
+        for (c, before) in changes.list.iter().zip(starts) {
+            let at = (c.obj, c.prop);
+            if c.kind == ChangeKind::Property && !moved.contains(&at) && !bound.contains(&at) {
                 behavior::follow(engine, c.obj, c.prop, before, &c.to);
             }
         }
