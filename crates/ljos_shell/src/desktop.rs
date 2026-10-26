@@ -82,6 +82,11 @@ const EGUI_TEXTURE_SIDE: usize = 2048;
 /// picture) reuses it instead.
 const HEAP_TRIM_AFTER: Duration = Duration::from_secs(1);
 
+/// How many objects must have gone since the heap was last given back for
+/// it to be given back again: a page replaced or a loader emptied, not a
+/// delegate scrolled out.
+const OBJECTS_GONE_BEFORE_TRIM: usize = 1024;
+
 /// How long the loop must have nothing to do before what the scripts left
 /// behind is collected: longer than a frame, so that an animation is not
 /// held up by it.
@@ -768,9 +773,11 @@ struct Desktop<M> {
     /// The scripts the windows may run on input were prepared
     /// ([`Engine::prepare_scripts`]).
     scripts_prepared: bool,
-    /// When the heap is next given back to the system, once start-up or
-    /// a burst of picture loads is over.
+    /// When the heap is next given back to the system, once start-up, a
+    /// burst of picture loads or of objects going is over.
     heap_trim: Option<Instant>,
+    /// The most objects there were since the heap was last given back.
+    objects_high: HighWater,
     /// Pictures were loading in the background at the last settle.
     loading: bool,
     /// When what the scripts left behind is next looked at.
@@ -824,6 +831,24 @@ impl AfterRest {
 
     fn next(&self) -> Option<Instant> {
         self.due
+    }
+}
+
+/// The most of something there was since it was last reset: enough of
+/// it gone says memory it held is free.
+#[derive(Debug, Default)]
+struct HighWater(usize);
+
+impl HighWater {
+    /// There are `now`. True when at least `gone` of the most there were
+    /// went, which the next reset forgets.
+    fn fell(&mut self, now: usize, gone: usize) -> bool {
+        self.0 = self.0.max(now);
+        self.0 - now >= gone
+    }
+
+    fn reset(&mut self, now: usize) {
+        self.0 = now;
     }
 }
 
@@ -889,6 +914,7 @@ impl<M: Send + 'static> Desktop<M> {
             wake: None,
             scripts_prepared: false,
             heap_trim: None,
+            objects_high: HighWater::default(),
             collect: AfterRest::default(),
             loading: false,
             drags: Rc::default(),
@@ -2637,14 +2663,22 @@ impl<M: Send + 'static> Desktop<M> {
         }
     }
 
-    /// Start-up and a burst of picture loads free most of what they used
-    /// (the GPU driver's shader compiles, QML being loaded, pictures being
-    /// decoded), but glibc keeps freed memory inside its heaps. A while
-    /// after either is over, it is given back. Each is an event: an
-    /// application that sits idle, or animates, trims nothing more.
+    /// Start-up, a burst of picture loads and a page of objects going
+    /// free most of what they used (the GPU driver's shader compiles, QML
+    /// being loaded, pictures being decoded, the objects and bindings of a
+    /// page a `StackView` replaced), but glibc keeps freed memory inside
+    /// its heaps. A while after each is over, it is given back. Each is an
+    /// event: an application that sits idle, or animates, trims nothing
+    /// more.
     fn trim_heap_when_done(&mut self, engine: &Engine) {
         let loading = ljos_quick::ImageStore::of(engine).pending() > 0;
         if std::mem::replace(&mut self.loading, loading) && !loading {
+            self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
+        }
+        let objects = engine.object_count();
+        if self.objects_high.fell(objects, OBJECTS_GONE_BEFORE_TRIM) {
+            // Pushed back while more go: one trim after the last.
+            self.objects_high.reset(objects);
             self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
         }
         if loading {
@@ -3067,6 +3101,21 @@ mod tests {
         assert!(!collect.settled(false, true, t, rest));
         assert!(!collect.settled(false, false, t + Duration::from_millis(10), rest));
         assert_eq!(collect.next(), None);
+    }
+
+    /// A page of objects replaced by another goes after the new one is
+    /// made: the fall from the most there were is what counts, once.
+    #[test]
+    fn a_page_of_objects_gone_is_noticed_once() {
+        let mut high = HighWater::default();
+        assert!(!high.fell(100, 1024));
+        assert!(!high.fell(14_000, 1024), "the first page");
+        assert!(!high.fell(28_000, 1024), "the next, both alive");
+        assert!(!high.fell(27_500, 1024), "a few delegates");
+        assert!(high.fell(14_000, 1024), "the first page went");
+        high.reset(14_000);
+        assert!(!high.fell(14_000, 1024), "and is not noticed again");
+        assert!(!high.fell(13_500, 1024));
     }
 
     #[test]
