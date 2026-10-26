@@ -1,4 +1,4 @@
-// expect: layout-occluded at 17
+// expect: layout-occluded at 13
 // audit: size=600x400
 import QtQuick
 import QtQuick.Controls

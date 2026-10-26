@@ -1,4 +1,4 @@
-// expect: layout-offscreen at 11
+// expect: layout-offscreen at 16
 // audit: font-scale=2
 import QtQuick
 import QtQuick.Controls

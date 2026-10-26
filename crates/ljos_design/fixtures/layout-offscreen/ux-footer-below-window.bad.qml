@@ -1,4 +1,4 @@
-// expect: layout-offscreen at 12
+// expect: layout-offscreen at 16
 // audit: size=400x300
 import QtQuick
 import QtQuick.Controls

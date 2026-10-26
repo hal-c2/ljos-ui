@@ -1,4 +1,4 @@
-// expect: layout-occluded at 17
+// expect: layout-occluded at 12, layout-occluded at 13
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

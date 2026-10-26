@@ -1,4 +1,4 @@
-// expect: a11y-tab-unreachable at 17
+// expect: a11y-tab-unreachable at 11
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

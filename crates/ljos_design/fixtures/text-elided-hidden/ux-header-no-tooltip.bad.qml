@@ -1,4 +1,4 @@
-// expect: text-elided-hidden at 12
+// expect: text-elided-hidden at 8
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

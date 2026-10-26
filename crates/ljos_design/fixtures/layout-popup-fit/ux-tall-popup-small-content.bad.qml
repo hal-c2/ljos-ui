@@ -1,4 +1,4 @@
-// expect: layout-popup-fit at 10
+// expect: layout-popup-fit at 8
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

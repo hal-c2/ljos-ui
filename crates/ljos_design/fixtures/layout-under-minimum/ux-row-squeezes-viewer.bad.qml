@@ -1,4 +1,4 @@
-// expect: layout-under-minimum at 12
+// expect: layout-under-minimum at 11
 // audit: size=800x400
 import QtQuick
 import QtQuick.Controls

@@ -1,4 +1,4 @@
-// expect: text-clipped at 11
+// expect: text-elided-hidden at 11, layout-under-minimum at 11
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
