@@ -5736,3 +5736,90 @@ DECISIONs:
   The app is measured once on the whole stack.
 - A run reserves one glyph per byte of its text, which is exact for ASCII. For text of
   wider characters it over-reserves for a run kept in the shape cache.
+
+### Paint while scrolling (2026-10-26)
+
+How much of a scrolling frame goes to painting, to egui and to the event loop, and what
+came off it. The view's own pass and the scene graph are B26–B30's, so this covers
+`ljos_render` (compose, B0 encode), `ljos_egui` and `ljos_shell` (presenter, GL painter,
+frame loop).
+
+**Method.** Callgrind on the release-with-symbols build in the GPU sandbox
+(`desktop:cua`, `renderD128`, `LJOS_SCREEN_READER=off`): 8 s warm-up, counters zeroed,
+20 s counted. Each function's inclusive cost is credited to the first phase on its stack,
+divided by `eglSwapBuffers` calls, so "per frame" means per frame shown. `lvstill.qml` is
+listview's delegate scrolled inside a cache buffer that holds every row; listview is
+`bench/listview.qml`. Real time is `scr.sh`: all threads' instructions/s from perf
+counters over 220 wheel notches, run back to back with qml6.
+
+**Where a frame goes, before** (per frame shown, thousands of instructions):
+
+| Phase | lvstill | listview |
+|---|---:|---:|
+| `eglSwapBuffers` and the driver below it | 133.8 | 120.1 |
+| Scene frame (`ljos_quick`, not this work's) | 39.6 | 1460.9 |
+| Engine (not this work's) | 25.7 | 1860.7 |
+| GL painter (`gl.rs`, `gl_mesh.rs`) | 41.0 | 68.3 |
+| B0 encode | 38.3 | 96.3 |
+| egui pass (`Context::run`, end of pass) | 30.8 | 30.8 |
+| Compose, display list, render tree | 28.6 | 135.8 |
+| Presenter (change, clip, tessellate glue) | 28.1 | 20.3 |
+| winit, Wayland, calloop | 21.3 | 19.0 |
+| Event loop, the rest | 18.9 | 15.5 |
+| Total | 413.3 | 3833.8 |
+
+On lvstill, paint, egui and the loop are about half the frame. On listview they are under a
+tenth: the delegates made and torn down each frame are the rest.
+
+**What came off it**, one commit each (callgrind, per frame):
+
+| Commit | What | lvstill | listview |
+|---|---|---:|---:|
+| b0: a run's glyph mesh is built as its glyphs go into the atlas | B0 encode | 38.3 → 38.0 k | 96.3 → 66.6 k |
+| b0: a moved run is told near its clip from the span of its glyphs | `places_all` | 6.7 → 1.5 k | 3.3 → 0.6 k |
+| | B0 encode | 38.0 → 30.7 k | 66.6 → 64.8 k |
+| ljos_shell: a mesh's bounds are found in plain comparisons | Bounds (`visual_bounding_rect` and the hoist closure) | 10.4 → 4.8 k | 11.5 → 4.7 k |
+
+The first commit stops a new run from walking its glyphs three times: once into the atlas,
+once for quads, and once to learn whether a glyph was left out. The second keeps a moved
+mesh's glyph span, so "is it near the clip" takes four comparisons instead of placing every
+glyph again. The third finds a mesh's rect without `f32::min`/`max`, which handle a NaN at
+every vertex. A unit test pins it to epaint's answer. The rects and meshes are the same, so
+no image test or reference changed.
+
+**Real time, back to back with qml6** (M instructions/s, all threads):
+
+| | Ljós before | Ljós after | qml6 |
+|---|---:|---:|---:|
+| `lvstill.qml` | 20.09, 21.82 | 19.08 | 15.22 |
+| listview | 211.11, 211.31 | 208.83 | 102.94 |
+| listview with `reuseItems: true` | 88.72, 88.61 | 86.60 | 60.57 |
+
+"Before" was run on either side of "after". Perf counters count `rep movs` and memcpy as
+fewer instructions than callgrind does, so the real-time gain is smaller than the callgrind
+gain.
+
+**Left, and why** (DECISIONs):
+
+- **The swap**, ~130 k a frame, is mostly one memcpy in the driver below `eglSwapBuffers`:
+  the sandbox's software path. It is not Ljós's to cut.
+- **Three event-loop turns per frame.** Only one turn carries `RedrawRequested`. The other
+  two wake on Wayland traffic: `dispatch_pending` runs six times a frame, which fits the
+  compositor's frame callback and buffer release. A turn with nothing due costs ~1.5 k in
+  `settle`, and each frame makes one redraw request, from the scroll. No repaint request
+  was redundant. No loop or wake code changed, so idle is as before.
+- **The egui pass**, ~31 k a frame, is the same whatever is drawn. It is the begin and end
+  of egui's pass, and Ljós lays out nothing in it. egui stays the host, so the pass stays.
+- **The accesskit compare** (~5.5 k) runs only while an AT client is connected; the
+  sandbox's driver is one.
+- **Compose** (`compose_node`) and **B0 encode** are now flat: no source line costs more
+  than ~0.8 k. What is left is per node and per moved vertex. Reusing a composed subtree
+  across a pure translation would cut it, but it changes what compose hands B0. It is left
+  for after B26–B30, which change the same nodes.
+- **Glyph lookups on listview** (~25 k: key, hash, probe) come from the rows made each
+  frame. A run is looked up once when it first draws; a carried run is not.
+- **Hoist's walk** over the earlier fills, to see what a fill may be moved past, costs
+  ~3 k. An index would add more code than it saves.
+- **A fused copy-and-move for a moved mesh** measured within noise.
+- These numbers predate "Text per delegate" above. That work changes how text is shaped,
+  not how B0 draws it.
