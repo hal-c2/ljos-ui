@@ -7,8 +7,8 @@
 //! gap, and `hhea` only for a font without `OS/2`. Text is as tall here as it
 //! is there, so the same choice is made here.
 
+use ljos_render::FontTables;
 use ljos_render::peniko::FontData;
-use ljos_render::{FontTables, font_tables};
 
 /// FaceMetrics metrics of a font at one size, in pixels, not yet rounded.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -50,7 +50,7 @@ pub(crate) fn chosen(tables: &FontTables, size: f64) -> FaceMetrics {
 /// FaceMetrics metrics for a run in `font`. `shaped` is what the shaper says,
 /// for data whose tables cannot be read.
 pub(crate) fn vertical(font: &FontData, size: f32, shaped: FaceMetrics) -> FaceMetrics {
-    font_tables(font).map_or(shaped, |tables| chosen(&tables, f64::from(size)))
+    crate::measure::font_tables(font).map_or(shaped, |tables| chosen(&tables, f64::from(size)))
 }
 
 #[cfg(test)]

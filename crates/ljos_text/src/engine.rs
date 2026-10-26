@@ -1793,7 +1793,7 @@ impl TextEngine {
         let fm = run.as_ref().map(|run| *run.font_metrics());
         let tables = run
             .as_ref()
-            .and_then(|run| ljos_render::font_tables(run.font()));
+            .and_then(|run| measure::font_tables(run.font()));
         let size = f64::from(style.pixel_size.clamp(0.0, MAX_FONT_SIZE));
         let font = match fm {
             Some(fm) => {

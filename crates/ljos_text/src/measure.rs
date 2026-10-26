@@ -1,20 +1,22 @@
-//! What a font says of single glyphs, read once.
+//! What a font says of single glyphs, and of itself, read once.
 //!
-//! Every layout asks for the font's own advance of each glyph ([`snap`]) and
-//! for the ink of each line's last glyph ([`overhang`]), and reading either
-//! parses the font's tables, the second an outline too. A list that makes a
+//! Every layout asks for the font's own advance of each glyph ([`snap`]),
+//! for the ink of each line's last glyph ([`overhang`]) and for the font's
+//! vertical metrics ([`face`]), and reading any of them parses the font's
+//! tables, the ink an outline too. A list that makes a
 //! delegate per row lays out "Row 1", "Row 2", ... with the same few glyphs,
 //! so they are kept here, for every engine on the thread: font data is
 //! shared between engines, and a font's blob id is never reused.
 //!
 //! [`snap`]: crate::snap
 //! [`overhang`]: crate::engine
+//! [`face`]: crate::face
 
 use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 
 use ljos_render::kurbo::Rect;
-use ljos_render::{GlyphRun, PositionedGlyph};
+use ljos_render::{FontTables, GlyphRun, PositionedGlyph};
 use parley::FontData;
 use rustc_hash::{FxHashMap, FxHasher};
 
@@ -32,6 +34,8 @@ struct Faces {
     /// By blob id, face index and the hash of the variation coordinates;
     /// the coordinates themselves are checked on a hit.
     map: FxHashMap<(u64, u32, u64), Face>,
+    /// By blob id and face index; `None` for data that is not a font.
+    tables: FxHashMap<(u64, u32), Option<FontTables>>,
     glyphs: usize,
     measured: u64,
 }
@@ -50,6 +54,7 @@ impl Faces {
     fn face(&mut self, font: &FontData, coords: &[i16]) -> &mut Face {
         if self.glyphs > MAX_GLYPHS {
             self.map.clear();
+            self.tables.clear();
             self.glyphs = 0;
         }
         let mut h = FxHasher::default();
@@ -167,6 +172,16 @@ pub(crate) fn advances(
     })
 }
 
+/// [`ljos_render::font_tables`], read once for each font.
+pub(crate) fn font_tables(font: &FontData) -> Option<FontTables> {
+    FACES.with_borrow_mut(|faces| {
+        *faces
+            .tables
+            .entry((font.data.id(), font.index))
+            .or_insert_with(|| ljos_render::font_tables(font))
+    })
+}
+
 /// The right edge of `glyph`'s ink with the run's synthetic bold and slant,
 /// from its origin, as [`ljos_render::glyph_ink_bounds`] has it. `None` for
 /// a glyph without ink.
@@ -223,7 +238,8 @@ pub(crate) fn kept() -> (usize, usize) {
                     + f.advances.bytes()
                     + f.ink.capacity() * (16 + std::mem::size_of::<Option<f64>>())
             })
-            .sum();
+            .sum::<usize>()
+            + faces.tables.capacity() * (12 + std::mem::size_of::<Option<FontTables>>());
         (faces.glyphs, bytes)
     })
 }
