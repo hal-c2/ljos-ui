@@ -741,6 +741,12 @@ impl Group {
                         .any(|c| round.bound.contains(&(c.obj, c.prop)));
                     let mut held = self.suspend(engine, &mut changes, &round);
                     if binds {
+                        // Shown, and once a transition that ends at once is
+                        // over, the changes are still the state's
+                        // definition: a `when` they work out cannot change
+                        // the state. A transition that runs on ends later,
+                        // and a `when` its end works out is followed (qml6).
+                        self.applying.set(true);
                         return Some((t, anims, changes, starts, held, round.later));
                     }
                     held.holds = hold_starts(engine, &changes, &starts);
