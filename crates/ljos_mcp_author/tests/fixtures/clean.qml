@@ -26,6 +26,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             text: qsTr("Pressed %1 times").arg(window.count)
             font.pixelSize: 18
+            elide: Text.ElideRight
             Accessible.name: text
         }
 

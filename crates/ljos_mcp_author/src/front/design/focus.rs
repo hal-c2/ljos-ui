@@ -1,0 +1,245 @@
+//! Focus, keyboard and pointer: what only a mouse can do or see
+//! (`docs/design/interaction.md`), and the icon button a sighted user cannot
+//! read (`docs/design/accessibility.md`).
+
+use qml_syntax::{GetSpan, ast::QmlObject, js::Expression};
+
+use super::{Found, Frame, bindings, bound, children, class, number};
+
+/// The handlers that make a pointer area do something.
+const ACTIONS: &[&str] = &[
+    "onClicked",
+    "onDoubleClicked",
+    "onPressed",
+    "onReleased",
+    "onPressAndHold",
+    "onTapped",
+    "onDoubleTapped",
+    "onSingleTapped",
+    "onLongPressed",
+];
+
+/// Names that show something for a reason other than the pointer.
+const NOT_HOVER: &[&str] = &[
+    "activeFocus",
+    "visualFocus",
+    "focus",
+    "pressed",
+    "down",
+    "checked",
+    "current",
+    "isCurrentItem",
+    "selected",
+    "highlighted",
+    "expanded",
+    "opened",
+    "editing",
+    "running",
+];
+
+pub(super) fn object<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
+    let frame = chain.last().expect("the object itself");
+    if found.is(frame, class::MOUSE_AREA) || found.is(frame, class::TAP_HANDLER) {
+        pointer_only(found, chain);
+    }
+    hover_only(found, chain);
+    if found.is(frame, class::ABSTRACT_BUTTON)
+        && !found.is(frame, class::TEXT_ROW_BUTTON)
+        && chain.len() > 1
+    {
+        icon_no_tooltip(found, frame);
+    }
+}
+
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+}
+
+fn pointer_only<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
+    let [.., parent, frame] = chain else { return };
+    if frame.via.is_some() {
+        return;
+    }
+    // A control takes focus and keys itself; a view moves its current item
+    // with the keys; a popup closes with Escape.
+    let handled = |f: &Frame<'_, 'a>| {
+        found.is(f, class::CONTROL) || found.is(f, class::VIEW) || found.is(f, class::POPUP)
+    };
+    if handled(parent) || chain.iter().any(|f| f.via.as_deref() == Some("delegate")) {
+        return;
+    }
+    let mine = bindings(frame.object);
+    if mine.iter().any(|(n, _)| n == "drag.target") {
+        return;
+    }
+    if mine
+        .iter()
+        .find(|(n, _)| n == "acceptedButtons")
+        .and_then(|(_, b)| b.span())
+        .is_some_and(|s| !words(found.text(s)).any(|w| w == "LeftButton" || w == "AllButtons"))
+    {
+        return;
+    }
+    let Some((name, handler)) = mine.iter().find(|(n, _)| ACTIONS.contains(&n.as_str())) else {
+        return;
+    };
+    let body = match handler.value {
+        qml_syntax::ast::QmlBindingValue::Expression(e) => found.text(e.span()),
+        qml_syntax::ast::QmlBindingValue::Statement(s) => found.text(s.span()),
+        _ => return,
+    };
+    // Taking focus or closing something are a pointer's way to what the
+    // keyboard already does.
+    let calls: Vec<&str> = words(body).collect();
+    let only_focus_or_close = calls
+        .iter()
+        .any(|w| matches!(*w, "forceActiveFocus" | "close" | "hide"))
+        && calls.len() <= 3;
+    if only_focus_or_close {
+        return;
+    }
+    let keyboard = bindings(parent.object).iter().any(|(n, b)| {
+        n.starts_with("Keys.")
+            || n == "activeFocusOnTab" && b.boolean() != Some(false)
+            || n == "Accessible.onPressAction"
+            || n == "focus" && b.boolean() == Some(true)
+    }) || mine
+        .iter()
+        .any(|(n, _)| n.starts_with("Keys.") || n == "Accessible.onPressAction")
+        || children(parent.object)
+            .into_iter()
+            .any(|(c, _)| c.type_name.parts.last().is_some_and(|p| *p == "Shortcut"));
+    if keyboard {
+        return;
+    }
+    found.report(
+        handler.at,
+        "focus-pointer-only",
+        format!(
+            "`{name}` on a `{}` in a plain `{}` is the only way to do this, and a keyboard \
+             cannot reach it; use a control (`Button`, `ItemDelegate`), or give the item \
+             `activeFocusOnTab`, a `Keys` handler and `Accessible.onPressAction`",
+            found.name(frame),
+            found.name(parent)
+        ),
+    );
+}
+
+/// Something a user would miss: something to read or to use.
+fn matters<'a>(found: &Found<'_, '_, '_, 'a>, f: &Frame<'_, 'a>) -> bool {
+    found.is(f, class::ABSTRACT_BUTTON)
+        || found.is(f, class::MOUSE_AREA)
+        || found.is(f, class::TAP_HANDLER)
+        || found.is(f, class::TEXT)
+        || found.is(f, class::IMAGE)
+        || found.is(f, class::TEXT_INPUT)
+}
+
+/// Whether `object` holds something that [`matters`].
+fn contains<'a>(found: &Found<'_, '_, '_, 'a>, object: &QmlObject<'a>) -> bool {
+    children(object).into_iter().any(|(c, via)| {
+        via.is_none() && {
+            let f = Frame {
+                object: c,
+                index: found.cx.tree.index_of(c),
+                via: None,
+            };
+            matters(found, &f) || contains(found, c)
+        }
+    })
+}
+
+fn hover_only<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
+    let frame = chain.last().expect("the object itself");
+    if chain.iter().any(|f| found.is(f, class::TOOL_TIP)) {
+        return;
+    }
+    for name in ["visible", "opacity"] {
+        let Some(b) = bound(frame.object, &[name]) else {
+            continue;
+        };
+        let Some(span) = b.span() else { continue };
+        let text = found.text(span);
+        let hover = words(text).any(|w| w == "hovered" || w == "containsMouse");
+        if !hover || words(text).any(|w| NOT_HOVER.contains(&w)) || text.contains('!') {
+            continue;
+        }
+        // An opacity that dims rather than hides still shows it.
+        if name == "opacity" && !hides(b.expression()) {
+            continue;
+        }
+        if name == "visible" && text.contains('?') {
+            continue;
+        }
+        if !(matters(found, frame) || contains(found, frame.object)) {
+            continue;
+        }
+        found.report(
+            b.at,
+            "focus-hover-only",
+            format!(
+                "`{name}` follows the pointer alone, so touch and keyboard users never see this \
+                 `{}`; show it on `hovered || activeFocus` (or `visualFocus`) and give its \
+                 action another way in",
+                found.name(frame)
+            ),
+        );
+    }
+}
+
+/// `hovered ? 1 : 0`: an opacity that hides, not one that dims.
+fn hides(e: Option<&Expression<'_>>) -> bool {
+    match e.map(|e| e.without_parentheses()) {
+        Some(Expression::ConditionalExpression(c)) => [&c.consequent, &c.alternate]
+            .iter()
+            .any(|e| number(e) == Some(0.0)),
+        _ => false,
+    }
+}
+
+fn icon_no_tooltip<'a>(found: &mut Found<'_, '_, '_, 'a>, frame: &Frame<'_, 'a>) {
+    let all = bindings(frame.object);
+    let has = |name: &str| all.iter().any(|(n, _)| n == name);
+    let icon = all
+        .iter()
+        .find(|(n, _)| n == "icon.source" || n == "icon.name")
+        .map(|(_, b)| b.at);
+    let Some(at) = icon else { return };
+    let icon_only = all
+        .iter()
+        .find(|(n, _)| n == "display")
+        .and_then(|(_, b)| b.enumeration())
+        .is_some_and(|(_, v)| v == "IconOnly");
+    let no_text = match all.iter().find(|(n, _)| n == "text") {
+        None => !has("action"),
+        Some((_, b)) => b.string() == Some(""),
+    };
+    if !(icon_only || no_text) {
+        return;
+    }
+    let tooltip = has("ToolTip.text")
+        || children(frame.object).into_iter().any(|(c, _)| {
+            found.is(
+                &Frame {
+                    object: c,
+                    index: found.cx.tree.index_of(c),
+                    via: None,
+                },
+                class::TOOL_TIP,
+            )
+        });
+    if tooltip {
+        return;
+    }
+    found.report(
+        at,
+        "a11y-icon-button-no-tooltip",
+        format!(
+            "this `{}` shows only an icon and has no tooltip, so a sighted user cannot learn \
+             what it does; set `ToolTip.text` (and `ToolTip.visible: hovered`) to the words of \
+             its name",
+            found.name(frame)
+        ),
+    );
+}

@@ -273,7 +273,7 @@ fn a11y_unnamed_interactive_covers_mouse_areas_and_tap_handlers() {
         hits.iter().map(|d| (d.line, d.column)).collect::<Vec<_>>(),
         [(6, 5), (24, 9)]
     );
-    assert!(hits.iter().all(|d| d.severity == Severity::Warning));
+    assert!(hits.iter().all(|d| d.severity == Severity::Error));
 }
 
 #[test]

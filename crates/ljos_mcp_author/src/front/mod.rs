@@ -60,6 +60,7 @@
 
 mod check;
 mod compiled;
+mod design;
 mod facts;
 mod lint;
 mod load;
@@ -139,6 +140,7 @@ pub(crate) fn diagnostic(
     message: impl Into<String>,
 ) -> Diagnostic {
     let (line, column) = qml_syntax::position(source, offset);
+    let design = crate::lint(code).and_then(|l| l.design);
     Diagnostic {
         file: path.to_string_lossy().into_owned(),
         line: line as u32,
@@ -146,6 +148,8 @@ pub(crate) fn diagnostic(
         severity,
         code: code.to_owned(),
         message: message.into(),
+        fix: design.map(|r| r.fix.to_owned()),
+        guide: design.map(|r| r.guide()),
     }
 }
 

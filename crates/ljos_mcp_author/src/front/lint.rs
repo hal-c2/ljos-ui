@@ -12,12 +12,15 @@ use qml_front::{
     scope::Tree,
     types::{Kind, Member, Types},
 };
-use qml_syntax::ast::{QmlBinding, QmlMember, QmlObject};
+use qml_syntax::{
+    GetSpan,
+    ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject},
+};
 
 use super::{
     check::Shape,
     diagnostic,
-    facts::{child_objects, has_binding, is_accessibly_described, string_literal},
+    facts::{child_objects, find_binding, has_binding, is_accessibly_described, string_literal},
 };
 use crate::{Diagnostic, lints};
 
@@ -31,6 +34,7 @@ pub(super) struct Cx<'c, 'a> {
 
 pub(super) fn run<'a>(cx: &Cx<'_, 'a>, root: &QmlObject<'a>, out: &mut Vec<Diagnostic>) {
     visit(cx, root, None, out);
+    super::design::run(cx, root, out);
 }
 
 fn visit<'a>(
@@ -97,6 +101,27 @@ const TAP_HANDLERS: &[&str] = &[
     "onLongPressed",
 ];
 
+/// A pointer action that is a second way to something: a secondary button,
+/// a click with a modifier held, or a double click (a title bar's maximise).
+/// The plain way in is elsewhere, and that is what has to be named; an
+/// error has to be certain.
+fn second_way(source: &str, object: &QmlObject<'_>, handlers: &[&str]) -> bool {
+    let primary = match find_binding(object, &["acceptedButtons"]) {
+        Some(QmlBindingValue::Expression(e)) => {
+            let span = e.span();
+            let text = &source[span.start as usize..span.end as usize];
+            text.contains("LeftButton") || text.contains("AllButtons")
+        }
+        _ => true,
+    };
+    !primary
+        || has_binding(object, &["acceptedModifiers"])
+        || handlers
+            .iter()
+            .filter(|h| has_binding(object, &[h]))
+            .all(|h| h.starts_with("onDouble"))
+}
+
 /// `a11y-unnamed-interactive`, `a11y-unnamed-icon-button`, `a11y-unnamed-image`.
 fn accessibility<'a>(
     cx: &Cx<'_, 'a>,
@@ -115,13 +140,14 @@ fn accessibility<'a>(
         && !is_accessibly_described(object)
         && !parent_described
         && !parent_is_button(cx, parent)
+        && !second_way(cx.source, object, CLICK_HANDLERS)
     {
         out.push(diagnostic(
             cx.path,
             cx.source,
             at,
-            lints::UNNAMED_INTERACTIVE.severity,
-            lints::UNNAMED_INTERACTIVE.code,
+            lints::design("a11y-unnamed-interactive").severity,
+            lints::design("a11y-unnamed-interactive").code,
             format!(
                 "`{name}` reacts to clicks but neither it nor its parent has `Accessible.name`, \
                  so assistive technology cannot tell what it does; set `Accessible.role` and \
@@ -135,13 +161,14 @@ fn accessibility<'a>(
         && TAP_HANDLERS.iter().any(|h| has_binding(object, &[h]))
         && parent.is_some_and(|p| !is_accessibly_described(p))
         && !parent_is_button(cx, parent)
+        && !second_way(cx.source, object, TAP_HANDLERS)
     {
         out.push(diagnostic(
             cx.path,
             cx.source,
             at,
-            lints::UNNAMED_INTERACTIVE.severity,
-            lints::UNNAMED_INTERACTIVE.code,
+            lints::design("a11y-unnamed-interactive").severity,
+            lints::design("a11y-unnamed-interactive").code,
             format!(
                 "`{name}` reacts to taps but the item it is in has no `Accessible.name`, so \
                  assistive technology cannot tell what it does; set `Accessible.role` and \
@@ -161,8 +188,8 @@ fn accessibility<'a>(
             cx.path,
             cx.source,
             at,
-            lints::UNNAMED_ICON_BUTTON.severity,
-            lints::UNNAMED_ICON_BUTTON.code,
+            lints::design("a11y-unnamed-icon-button").severity,
+            lints::design("a11y-unnamed-icon-button").code,
             format!(
                 "`{name}` shows only an icon and has no `text`, `action` or `Accessible.name`, \
                  so assistive technology has nothing to say for it; set `Accessible.name` \
@@ -180,8 +207,8 @@ fn accessibility<'a>(
             cx.path,
             cx.source,
             at,
-            lints::UNNAMED_IMAGE.severity,
-            lints::UNNAMED_IMAGE.code,
+            lints::design("a11y-unnamed-image").severity,
+            lints::design("a11y-unnamed-image").code,
             format!(
                 "`{name}` has neither `Accessible.name` nor `Accessible.ignored`; describe it, \
                  or set `Accessible.ignored: true` if it is only decoration"

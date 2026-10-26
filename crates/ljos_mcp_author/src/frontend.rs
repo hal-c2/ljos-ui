@@ -21,6 +21,12 @@ pub struct Diagnostic {
     pub severity: Severity,
     pub code: String,
     pub message: String,
+    /// For a design rule: what to write instead, in the rule's words.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+    /// For a design rule: its guideline, `docs/design/<page>#<code>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guide: Option<String>,
 }
 
 /// A QML type as the type registry describes it. `properties`, `signals`,

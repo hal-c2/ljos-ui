@@ -15,7 +15,8 @@ Bad and good QML pairs, one directory per rule code in `ljos_design::RULES`:
   finding of its directory's code.
 - Files are minimal and self-contained (QtQuick, QtQuick.Controls,
   QtQuick.Layouts only), generic, and written from scratch.
-- A rule that no runner implements yet is skipped and listed as pending; the
+- A rule that no runner implements yet is skipped and listed as pending (the
+  static runner keeps its set in `ljos_mcp_author::IMPLEMENTED`); the
   fixtures wait for it.
 
 ## `ux-` cases

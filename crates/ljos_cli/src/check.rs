@@ -4,7 +4,8 @@
 //! the rest do not (ARCHITECTURE.md §5.4).
 //!
 //! Each project is linted as well (`lint`, ARCHITECTURE.md §14) unless
-//! `--no-lint` says not to: a finding is a warning, never an error.
+//! `--no-lint` says not to: a finding has its rule's severity, and an
+//! error fails the check unless `--lint=warn` says it is a warning.
 //!
 //! A property or a signal handler of a name its type does not have is
 //! reported too (`members`), as a warning: the compiler leaves it to the
@@ -53,6 +54,10 @@ pub struct Check {
     /// technology, and `qsTr` of what is not written out.
     #[arg(long)]
     no_lint: bool,
+    /// What a lint error is: `error` fails the check; `warn` reports it as
+    /// a warning, for a tree of code that is not yours.
+    #[arg(long, value_enum, default_value_t = LintMode::Error, value_name = "MODE")]
+    lint: LintMode,
     /// Instead of compiling: report the Qt Quick types and members the
     /// projects use that Ljós lacks, by module, most used first.
     #[arg(long)]
@@ -72,6 +77,13 @@ pub struct Check {
     limit: Option<usize>,
 }
 
+/// How a lint that is certain counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum LintMode {
+    Error,
+    Warn,
+}
+
 /// What a run found.
 #[derive(Default)]
 pub struct Checked {
@@ -83,6 +95,8 @@ pub struct Checked {
     pub coverage: Coverage,
     /// Whether the static lints are applied to each project as well.
     pub lint: bool,
+    /// Whether a lint that is certain counts as a warning.
+    pub lint_warn: bool,
 }
 
 impl Check {
@@ -92,6 +106,7 @@ impl Check {
         }
         let mut checked = Checked {
             lint: !self.no_lint,
+            lint_warn: self.lint == LintMode::Warn,
             ..Checked::default()
         };
         for dir in &self.dirs {
@@ -198,10 +213,11 @@ impl Checked {
             };
         }
         if self.lint {
-            // After the compiler's own: a lint is never an error, and a
-            // file that does not parse has none.
-            let linted = lint::project(dir, label, &keys)?;
-            self.warnings += linted.lines.len();
+            // After the compiler's own: a file that does not parse has no
+            // lints.
+            let linted = lint::project(dir, label, &keys, self.lint_warn)?;
+            self.errors += linted.errors;
+            self.warnings += linted.warnings;
             self.diagnostics.extend(linted.lines);
         }
         Ok(())

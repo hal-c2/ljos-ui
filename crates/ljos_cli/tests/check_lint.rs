@@ -1,5 +1,6 @@
 //! `ljos check`: the static lints (ARCHITECTURE.md §14). What has no name
-//! for an assistive technology, and what a translator will never be given.
+//! for an assistive technology, what a translator will never be given, and
+//! the design rules the source can tell, and how severe each is.
 //!
 //! The rules tell a `Button` from an `Item` by the table of types the build
 //! has, which is Qt's where one was generated and Ljós's own where not:
@@ -20,9 +21,9 @@ fn write(dir: &Path, name: &str, source: &str) {
     std::fs::write(path, source).unwrap();
 }
 
-/// What `ljos check` says of a project of one file: the lines of its
-/// warnings and its count.
-fn check(source: &str, more: &[&str]) -> (Vec<String>, String) {
+/// What `ljos check` says of a project of one file: whether it passed, the
+/// lines of its findings and its count.
+fn run(source: &str, more: &[&str]) -> (bool, Vec<String>, String) {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "Main.qml", source);
     let mut args = vec!["check"];
@@ -30,10 +31,33 @@ fn check(source: &str, more: &[&str]) -> (Vec<String>, String) {
     args.push(dir.path().to_str().unwrap());
     let out = ljos(&args);
     let err = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(out.status.success(), "a lint is not an error: {err}");
-    let lines = err.lines().map(str::to_string).collect();
+    let lines = err
+        .lines()
+        .filter(|l| !l.starts_with("ljos: "))
+        .map(str::to_string)
+        .collect();
     let count = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success(), lines, count)
+}
+
+/// [`run`] of a file whose findings are warnings at most.
+fn check(source: &str, more: &[&str]) -> (Vec<String>, String) {
+    let (passed, lines, count) = run(source, more);
+    assert!(passed, "a warning is not a failure: {lines:#?}");
     (lines, count)
+}
+
+/// `file:line:column` of each finding of `code`, at `severity`.
+fn at<'l>(lines: &'l [String], severity: &str, code: &str) -> Vec<&'l str> {
+    lines
+        .iter()
+        .filter(|line| line.ends_with(&format!("[{code}]")))
+        .filter_map(|line| {
+            line.split(&format!(": {severity}: "))
+                .next()
+                .filter(|p| *p != line)
+        })
+        .collect()
 }
 
 const UNNAMED: &str = r#"import QtQuick
@@ -50,32 +74,53 @@ Item {
 "#;
 
 #[test]
-fn what_has_no_name_and_what_cannot_be_translated_is_a_warning() {
-    let (lines, count) = check(UNNAMED, &[]);
-    let at = |code: &str| -> Vec<&str> {
-        lines
-            .iter()
-            .filter(|line| line.ends_with(&format!("[{code}]")))
-            .map(|line| line.split(": warning: ").next().unwrap())
-            .collect()
-    };
+fn what_has_no_name_is_an_error_and_fails_the_check() {
+    let (passed, lines, count) = run(UNNAMED, &[]);
+    assert!(!passed, "{lines:#?}");
     assert_eq!(
-        at("a11y-unnamed-interactive"),
+        at(&lines, "error", "a11y-unnamed-interactive"),
         ["Main.qml:6:9"],
         "{lines:#?}"
     );
     assert_eq!(
-        at("a11y-unnamed-icon-button"),
+        at(&lines, "error", "a11y-unnamed-icon-button"),
         ["Main.qml:8:5"],
         "{lines:#?}"
     );
-    assert_eq!(at("a11y-unnamed-image"), ["Main.qml:9:5"], "{lines:#?}");
+    // An image may be decoration nobody has said so of: a warning.
     assert_eq!(
-        at("i18n-qstr-non-literal"),
+        at(&lines, "warning", "a11y-unnamed-image"),
+        ["Main.qml:9:5"],
+        "{lines:#?}"
+    );
+    assert_eq!(
+        at(&lines, "warning", "i18n-qstr-non-literal"),
         ["Main.qml:10:18"],
         "{lines:#?}"
     );
-    assert_eq!(count, "1 files, 0 errors, 4 warnings");
+    // The pointer area no key reaches, the icon button no tooltip explains.
+    assert_eq!(count, "1 files, 2 errors, 4 warnings");
+}
+
+#[test]
+fn a_design_finding_links_its_guideline() {
+    let (_, lines, _) = run(UNNAMED, &[]);
+    assert!(
+        lines.iter().any(|l| l
+            .ends_with("(docs/design/accessibility.md#a11y-unnamed-image) [a11y-unnamed-image]")),
+        "{lines:#?}"
+    );
+}
+
+#[test]
+fn lint_warn_makes_the_errors_warnings_for_code_that_is_not_yours() {
+    let (lines, count) = check(UNNAMED, &["--lint=warn"]);
+    assert_eq!(
+        at(&lines, "warning", "a11y-unnamed-icon-button"),
+        ["Main.qml:8:5"],
+        "{lines:#?}"
+    );
+    assert_eq!(count, "1 files, 0 errors, 6 warnings");
 }
 
 const NAMED: &str = r#"import QtQuick
@@ -84,9 +129,10 @@ Item {
     Rectangle {
         Accessible.role: Accessible.Button
         Accessible.name: qsTr("Open")
+        Accessible.onPressAction: console.log("pressed")
         MouseArea { anchors.fill: parent; onClicked: console.log("pressed") }
     }
-    Button { icon.source: "save.png"; Accessible.name: qsTr("Save") }
+    Button { icon.source: "save.png"; Accessible.name: qsTr("Save"); ToolTip.text: qsTr("Save") }
     Button { icon.source: "save.png"; text: qsTr("Save") }
     Image { source: "logo.png"; Accessible.name: qsTr("The logo") }
     Image { source: "flourish.png"; Accessible.ignored: true }
@@ -126,9 +172,9 @@ fn no_lint_leaves_them_out() {
 
 #[test]
 fn quiet_keeps_the_count_and_not_the_lines() {
-    let (lines, count) = check(UNNAMED, &["--quiet"]);
+    let (lines, count) = check(UNNAMED, &["--quiet", "--lint=warn"]);
     assert_eq!(lines, Vec::<String>::new());
-    assert_eq!(count, "1 files, 0 errors, 4 warnings");
+    assert_eq!(count, "1 files, 0 errors, 6 warnings");
 }
 
 #[test]
@@ -136,12 +182,12 @@ fn a_file_of_a_tree_of_projects_is_named_under_its_project() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "demos/one/Main.qml", UNNAMED);
     let out = ljos(&["check", "--tree", dir.path().to_str().unwrap()]);
-    assert!(out.status.success());
+    assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
         err.lines()
-            .any(|line| line.starts_with("demos/one/Main.qml:9:5: warning: ")
-                && line.ends_with("[a11y-unnamed-image]")),
+            .any(|line| line.starts_with("demos/one/Main.qml:8:5: error: ")
+                && line.ends_with("[a11y-unnamed-icon-button]")),
         "{err}"
     );
 }

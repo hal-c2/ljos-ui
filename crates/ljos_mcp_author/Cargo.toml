@@ -17,7 +17,8 @@ qt_types = { path = "../qt_types" }
 # and the IR it is read from.
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_ir = { path = "../ljos_ir" }
-# The design tools: rules, motion tokens, palettes and contrast.
+# The design tools (rules, motion tokens, palettes and contrast), and the
+# rules the lints implement: their codes, severities and limits.
 ljos_design = { path = "../ljos_design" }
 # `qml_format`: the layout `ljos fmt` gives too.
 qml_fmt = { path = "../qml_fmt" }

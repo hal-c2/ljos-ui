@@ -20,7 +20,7 @@ use std::{
 use ljos_compiler::{Project, compile_file};
 use qml_front::{Code, QtTypeOracle};
 
-use crate::{Diagnostic, LINTS, Severity};
+use crate::{Diagnostic, Severity, lint};
 
 /// `found` (the front end's findings for `files`, in their order) with the
 /// compiler's added in, each file's sorted by place. `held` are the places
@@ -50,10 +50,10 @@ pub(super) fn merge(
                 continue;
             }
             // A lint at the place is about something else.
-            match mine[..front].iter_mut().find(|f| {
-                (f.line, f.column) == (d.line, d.column)
-                    && !LINTS.iter().any(|lint| lint.code == f.code)
-            }) {
+            match mine[..front]
+                .iter_mut()
+                .find(|f| (f.line, f.column) == (d.line, d.column) && lint(&f.code).is_none())
+            {
                 Some(f) => {
                     if d.severity == Severity::Error {
                         f.severity = Severity::Error;
@@ -118,6 +118,8 @@ fn compile(root: &Path, files: &[PathBuf]) -> Vec<Vec<Diagnostic>> {
                     },
                     code: d.code.as_str().to_owned(),
                     message: d.message,
+                    fix: None,
+                    guide: None,
                 })
                 .collect()
         })

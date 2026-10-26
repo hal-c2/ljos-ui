@@ -1,4 +1,4 @@
-// expect: layout-menu-ungrouped at 9
+// expect: layout-menu-ungrouped at 8
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

@@ -52,6 +52,20 @@ expression: value
             "description": "Project-relative path.",
             "type": "string"
           },
+          "fix": {
+            "description": "For a design rule: what to write instead, in the rule's words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "guide": {
+            "description": "For a design rule: its guideline, `docs/design/<page>#<code>`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "line": {
             "format": "uint32",
             "minimum": 0,

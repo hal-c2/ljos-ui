@@ -27,6 +27,6 @@ mod tools;
 pub use front::{ApiUse, QmlFrontEnd, Resolution, Usage};
 pub use frontend::{Diagnostic, FrontEnd, ModuleInfo, Severity, StubFrontEnd, TypeInfo};
 pub use ledger::{ApiStatus, Ledger, LedgerError, LedgerRow, MemberKind};
-pub use lints::{LINTS, Lint};
+pub use lints::{IMPLEMENTED, Lint, lint, lints};
 pub use project::{Project, ProjectError};
 pub use server::{AuthorServer, serve_stdio};

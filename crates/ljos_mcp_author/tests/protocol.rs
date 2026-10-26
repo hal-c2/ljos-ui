@@ -493,10 +493,16 @@ async fn qml_lint_reports_the_accessibility_lints_by_their_codes() {
     let body = ok(&c, "qml_lint", json!({ "paths": ["Main.qml"] })).await;
     let found = &body["diagnostics"][0];
     assert_eq!(found["code"], "a11y-unnamed-interactive");
-    assert_eq!(found["severity"], "warning");
+    assert_eq!(found["severity"], "error");
     assert_eq!(
         (found["file"].as_str(), found["line"].as_u64()),
         (Some("Main.qml"), Some(4))
+    );
+    // A design rule says what to write and where its guideline is.
+    assert!(found["fix"].as_str().unwrap().contains("Accessible.name"));
+    assert_eq!(
+        found["guide"],
+        "docs/design/accessibility.md#a11y-unnamed-interactive"
     );
     assert!(
         found["message"]
@@ -518,7 +524,7 @@ async fn qml_lint_reports_the_accessibility_lints_by_their_codes() {
     // The codes are the ones `ljos check` prints, from the one table both
     // read; the resource says what each wants.
     let rules = read(&c, "ljos://lints").await.unwrap();
-    for lint in ljos_mcp_author::LINTS {
+    for lint in ljos_mcp_author::lints() {
         assert!(
             rules.contains(lint.code),
             "{} is not in ljos://lints",
@@ -526,7 +532,7 @@ async fn qml_lint_reports_the_accessibility_lints_by_their_codes() {
         );
     }
     assert!(
-        ljos_mcp_author::LINTS
+        ljos_mcp_author::lints()
             .iter()
             .any(|l| l.code == "a11y-unnamed-interactive")
     );
