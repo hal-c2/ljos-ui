@@ -175,7 +175,7 @@ fn values_that_are_objects_are_laid_out_too() {
 
 #[test]
 fn declarations_keep_their_words() {
-    let source = "Item {\n    default   property alias content: inner.data;\n    required property string title\n    readonly property var o: ({ a: 1 })\n    required   name;\n    signal picked(int index,\n                  name: string);\n    enum Mode { Off, On = 4 };\n    Item { id: inner }\n}\n";
+    let source = "Item {\n    default   property alias content: inner.data;\n    required property string title\n    readonly property var o: ({ a: 1 })\n    required   name;\n    signal picked(int index,\n                  name: string);\n    enum Mode { Off, On = 4 }\n    Item { id: inner }\n}\n";
     assert_eq!(
         fmt(source),
         "Item {\n    default property alias content: inner.data\n    required property string title\n    readonly property var o: ({ a: 1 })\n    required name\n    signal picked(int index,\n                  name: string)\n    enum Mode { Off, On = 4 }\n    Item {\n        id: inner\n    }\n}\n"

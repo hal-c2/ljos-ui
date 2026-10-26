@@ -700,17 +700,16 @@ ListView {
     settle(&mut s, &e, 1000);
     let before = view_layout_passes(&e, root);
     e.invoke_by_name(root, "add", &[]).unwrap();
-    // The model's change lays the rows out once, when its batch ends,
-    // and again where that takes the view: the end it is kept at. Going
-    // to the end lays them out there, where the new row is measured
-    // already; the view stays, and no pass follows.
-    assert_eq!(view_layout_passes(&e, root) - before, 3);
+    // The model's change waits for the polish; going to the end lays the
+    // rows out first, which measures the new row, and once more where
+    // the view goes. The view stays there, and no pass follows.
+    assert_eq!(view_layout_passes(&e, root) - before, 2);
     assert_eq!(num(&e, root, "contentY"), 13.0 * 20.0 - 100.0);
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
 
 #[test]
-fn going_where_the_view_already_is_lays_the_rows_out_once() {
+fn going_where_the_view_already_is_lays_no_rows_out() {
     let e = engine();
     let root = load(
         &e,
@@ -730,12 +729,12 @@ ListView {
         view_layout_passes(e, root) - before
     };
     e.invoke_by_name(root, "add", &[]).unwrap();
-    // Rows that do not fill the view: the end is where the view is. The
-    // model's change lays the new row out, and going to the end lays
-    // them out where the view stays, once.
+    // Rows that do not fill the view: the end is where the view is. Going
+    // to the end lays the new row out, once, and the view stays. Going
+    // there again lays nothing out: the rows are laid out there already.
     let adds: Vec<u64> = (0..3).map(|_| passes(&e, "add")).collect();
     let end = passes(&e, "positionViewAtEnd");
-    assert_eq!((adds, end), (vec![2; 3], 1));
+    assert_eq!((adds, end), (vec![1; 3], 0));
     assert_eq!(rows(&e, root).len(), 4);
     // Rows that fill it, with the view at the end already.
     for _ in 0..8 {
@@ -743,7 +742,7 @@ ListView {
     }
     settle(&mut s, &e, 1000);
     assert_eq!(num(&e, root, "contentY"), 12.0 * 20.0 - 100.0);
-    assert_eq!(passes(&e, "positionViewAtEnd"), 1);
+    assert_eq!(passes(&e, "positionViewAtEnd"), 0);
     assert_eq!(num(&e, root, "contentY"), 12.0 * 20.0 - 100.0);
     assert_eq!(warnings(&e), Vec::<String>::new());
 }

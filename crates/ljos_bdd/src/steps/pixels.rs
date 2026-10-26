@@ -23,6 +23,55 @@ fn window_pixel_within(
     window_pixel_near(w, x, y, tolerance, &colour)
 }
 
+#[then(regex = r"^the window's picture is within (\d+) of the reference renderer's$")]
+fn window_is_reference(w: &mut LjosWorld, tolerance: u8) -> StepResult {
+    w.each(|b| {
+        let decode = |png: Vec<u8>, what: &str| {
+            ljos_render::RgbaImage::from_png(&png)
+                .map_err(|e| BackendError::Failed(format!("the picture {what}: {e}")))
+        };
+        let shown = decode(b.grab()?, "of the window")?;
+        let reference = decode(
+            b.probes()?.reference_picture()?,
+            "the reference renderer drew",
+        )?;
+        if (shown.width, shown.height) != (reference.width, reference.height) {
+            return Err(BackendError::Failed(format!(
+                "the window is {} by {}, the reference renderer's picture {} by {}",
+                shown.width, shown.height, reference.width, reference.height
+            )));
+        }
+        let mut off = 0usize;
+        let mut first = None;
+        for y in 0..shown.height {
+            for x in 0..shown.width {
+                let (a, b) = (
+                    over_black(shown.pixel(x, y)),
+                    over_black(reference.pixel(x, y)),
+                );
+                if a.iter().zip(b).any(|(a, b)| a.abs_diff(b) > tolerance) {
+                    off += 1;
+                    first.get_or_insert((x, y, a, b));
+                }
+            }
+        }
+        match first {
+            None => Ok(()),
+            Some((x, y, a, b)) => Err(BackendError::Failed(format!(
+                "{off} pixels differ by more than {tolerance}; the first, at {x}, {y}, is \
+                 #{:02x}{:02x}{:02x} in the window and #{:02x}{:02x}{:02x} in the reference",
+                a[0], a[1], a[2], b[0], b[1], b[2]
+            ))),
+        }
+    })
+}
+
+/// A pixel laid over black, as [`window_pixel_near`] reads one.
+fn over_black([r, g, b, a]: [u8; 4]) -> [u8; 3] {
+    let over = |c: u8| ((u16::from(c) * u16::from(a) + 127) / 255) as u8;
+    [over(r), over(g), over(b)]
+}
+
 /// One pixel of the window's picture, each channel give or take `tolerance`.
 ///
 /// The picture is laid over black first: where nothing is painted Qt's
@@ -42,9 +91,7 @@ fn window_pixel_near(w: &mut LjosWorld, x: u32, y: u32, tolerance: u8, colour: &
                 picture.width, picture.height
             )));
         }
-        let [r, g, b, a] = picture.pixel(x, y);
-        let over_black = |c: u8| ((u16::from(c) * u16::from(a) + 127) / 255) as u8;
-        let seen = [over_black(r), over_black(g), over_black(b)];
+        let seen = over_black(picture.pixel(x, y));
         if seen
             .iter()
             .zip(wanted)

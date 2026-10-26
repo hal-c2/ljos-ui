@@ -84,4 +84,4 @@ Feature: A drawing from a file as items
       """
     Then the property "implicitWidth" of "drawing" is 0
     And the property "implicitHeight" of "drawing" is 0
-    And the log has a warning matching "QML VectorImage: Cannot open: file:///.*missing\.svg$"
+    And the log has a warning matching "QML Scenario: Cannot open: file:///.*missing\.svg$"

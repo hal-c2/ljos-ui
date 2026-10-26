@@ -505,6 +505,24 @@ impl Slot {
     }
 }
 
+/// Shows a window once there is a picture in it.
+fn show_when_drawn(
+    host: &mut Control<'_>,
+    surface: &mut Surface,
+    activate: &mut bool,
+    screens_stale: &mut bool,
+) {
+    if !surface.shown {
+        surface.shown = true;
+        host.change_window(surface.id, WindowChange::Visible(true));
+        if std::mem::take(activate) {
+            host.change_window(surface.id, WindowChange::Activate);
+        }
+        // Only now does the platform say which display it is on.
+        *screens_stale = true;
+    }
+}
+
 /// Tells the QML window the size its platform window has, when that is
 /// another than it was last told (or `force`: the application wrote a
 /// size the platform did not give).
@@ -704,6 +722,11 @@ struct Desktop<M> {
     starting: Option<Starting>,
     /// What draws the windows: GL, unless `LJOS_PAINTER` says wgpu.
     painter_choice: surface::Choice,
+    /// The shell chose the processor ([`surface::Chosen::automatic`]).
+    painter_automatic: bool,
+    /// A window drawn on the processor shows what only GL draws: every
+    /// window goes to GL once the pass ends.
+    to_gl: bool,
     /// Why the loop ended, when it was not asked to.
     failure: Rc<RefCell<Option<ShellError>>>,
     screens: Vec<Screen>,
@@ -832,7 +855,9 @@ impl<M: Send + 'static> Desktop<M> {
             proxy,
             dirty,
             gpu: None,
-            painter_choice: starting.choice(),
+            painter_choice: starting.chosen().choice,
+            painter_automatic: starting.chosen().automatic,
+            to_gl: false,
             starting: Some(starting),
             failure,
             screens: Vec::new(),
@@ -1187,8 +1212,10 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(window) = host.window(id).cloned() else {
             return;
         };
-        if let Some(drags) = self.drags.borrow().as_ref() {
-            drags.window_opened(&window);
+        if let Some(drags) = self.drags.borrow().as_ref()
+            && let Err(why) = drags.window_opened(&window)
+        {
+            engine.log(LogLevel::Warning, CATEGORY, why);
         }
         let display = host.event_loop().owned_display_handle();
         if self.gpu.is_none() {
@@ -1280,9 +1307,15 @@ impl<M: Send + 'static> Desktop<M> {
         note_size(slot, engine, sys, false);
         self.repaints.request(slot.key, Instant::now());
         self.screens_stale = true;
+        self.tell_view(i);
+    }
+
+    /// Tells the view of slot `i` what its painter draws.
+    fn tell_view(&mut self, i: usize) {
         let painter = self.slots[i].painter.as_ref();
         let fills = painter.is_some_and(Painter::fills_rects);
         let shaders = painter.is_some_and(Painter::draws_shaders);
+        let encodes = !painter.is_some_and(Painter::draws_scene);
         let view = match self.slots[i].view.as_mut() {
             Some(view) => view,
             None => self.app.view_mut(),
@@ -1290,6 +1323,71 @@ impl<M: Send + 'static> Desktop<M> {
         view.set_drawn(true);
         view.set_solid_rects(fills);
         view.set_draws_shaders(shaders);
+        view.set_encodes(encodes);
+    }
+
+    /// Hands every window drawn on the processor to GL, which the shell
+    /// chose as EGL would draw in software too: a window shows what only
+    /// GL draws. Starting EGL here takes as long as it would have at
+    /// start-up, once.
+    fn leave_processor(&mut self, host: &mut Control<'_>) {
+        self.painter_automatic = false;
+        self.painter_choice = surface::Choice::Gl;
+        let engine = Rc::clone(self.app.engine());
+        engine.log(
+            LogLevel::Info,
+            CATEGORY,
+            "drawn with GL from now on: a window shows what the processor does not draw",
+        );
+        for i in 0..self.slots.len() {
+            let slot = &mut self.slots[i];
+            if !matches!(slot.painter, Some(Painter::Cpu(_))) {
+                continue;
+            }
+            slot.painter = None;
+            // A window not open gets its painter when it opens.
+            let Some(window) = slot.surface.as_ref().map(|s| Arc::clone(&s.window)) else {
+                continue;
+            };
+            let display = host.event_loop().owned_display_handle();
+            match surface::attach(
+                &mut slot.painter,
+                &slot.ctx,
+                &mut self.gpu,
+                display,
+                &window,
+                surface::Choice::Gl,
+            ) {
+                Ok(Some(why)) => engine.log(
+                    LogLevel::Warning,
+                    CATEGORY,
+                    format!("drawing with wgpu: GL could not be had ({why})"),
+                ),
+                Ok(None) => {}
+                Err(e) => {
+                    engine.log(
+                        LogLevel::Warning,
+                        CATEGORY,
+                        format!("a window cannot be drawn: {e}"),
+                    );
+                    continue;
+                }
+            }
+            if let Some(side) = slot.painter.as_ref().and_then(Painter::max_texture_side) {
+                ljos_render::b0::set_max_texture_side(&slot.ctx, side);
+            }
+            resend_font_atlas(&slot.ctx);
+            slot.shown.forget();
+            #[cfg(feature = "mcp")]
+            if slot.is_root()
+                && let Some(info) = slot.painter.as_ref().and_then(Painter::describe)
+            {
+                self.app.set_painter(info);
+            }
+            let key = slot.key;
+            self.repaints.request(key, Instant::now());
+            self.tell_view(i);
+        }
     }
 
     /// The platform refused a window. Without the root's there is no
@@ -1380,6 +1478,9 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
         self.run_pass(host, i, paint);
+        if std::mem::take(&mut self.to_gl) {
+            self.leave_processor(host);
+        }
         #[cfg(feature = "mcp")]
         if self.slots[i].is_root() && self.app.waits_for_resize() {
             // The pass that took the request has not asked the platform
@@ -1459,6 +1560,9 @@ impl<M: Send + 'static> Desktop<M> {
             // the window showed may be gone (exposed, resized).
             if slot.redraw_asked.is_none() {
                 slot.shown.forget();
+                if let Some(Painter::Cpu(painter)) = slot.painter.as_mut() {
+                    painter.forget();
+                }
             }
             slot.redraw_asked = None;
             slot.stalled = false;
@@ -1617,6 +1721,59 @@ impl<M: Send + 'static> Desktop<M> {
         let clear = view.backdrop().unwrap_or(slot.clear);
         let wake = view.wakes_in();
         let now = Instant::now();
+        if let Painter::Cpu(painter) = painter {
+            // egui's pictures are never drawn: the scene is.
+            slot.pending.clear();
+            let Some(snapshot) = view.scene().snapshot() else {
+                slot.not_drawn(now, wake);
+                return;
+            };
+            let [r, g, b, a] = clear.to_array();
+            let clear = ljos_render::Rgba::from_premul(
+                f32::from(r) / 255.0,
+                f32::from(g) / 255.0,
+                f32::from(b) / 255.0,
+                f32::from(a) / 255.0,
+            );
+            if self.painter_automatic && crate::cpu::leaves_out(snapshot, !shapes.is_empty(), clear)
+            {
+                // Not drawn: the window is drawn by GL in the next pass.
+                self.to_gl = true;
+                repaints.request(slot.key, now);
+                return;
+            }
+            let mut warn = |what: String| engine.log(LogLevel::Warning, CATEGORY, what);
+            let drew = painter.draw(
+                snapshot,
+                pixels_per_point,
+                clear,
+                !shapes.is_empty(),
+                &surface.window,
+                &mut warn,
+            );
+            if !drew {
+                slot.not_drawn(now, wake);
+                #[cfg(feature = "mcp")]
+                if let Some(w) = self.wake.as_mut() {
+                    w.unchanged += 1;
+                }
+                return;
+            }
+            #[cfg(feature = "mcp")]
+            if slot.view.is_none() && !self.drawn_once {
+                app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
+            }
+            show_when_drawn(host, surface, &mut slot.activate, screens_stale);
+            slot.drawn(began, Instant::now());
+            #[cfg(feature = "mcp")]
+            if let Some(w) = self.wake.as_mut() {
+                w.drawn += 1;
+            }
+            if !std::mem::replace(&mut self.drawn_once, true) {
+                self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
+            }
+            return;
+        }
         // Where a pass changed the picture is worked out for a painter that
         // draws all of it too while a client follows items in it.
         #[cfg(feature = "mcp")]
@@ -1709,15 +1866,7 @@ impl<M: Send + 'static> Desktop<M> {
                 app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
             }
         }
-        if !surface.shown {
-            surface.shown = true;
-            host.change_window(surface.id, WindowChange::Visible(true));
-            if std::mem::take(&mut slot.activate) {
-                host.change_window(surface.id, WindowChange::Activate);
-            }
-            // Only now does the platform say which display it is on.
-            *screens_stale = true;
-        }
+        show_when_drawn(host, surface, &mut slot.activate, screens_stale);
         slot.drawn(began, Instant::now());
         #[cfg(feature = "mcp")]
         if let Some(w) = self.wake.as_mut() {
@@ -1879,7 +2028,7 @@ impl<M: Send + 'static> Desktop<M> {
             })
         };
         let i = match &step {
-            DragStep::Entered { target, .. } => {
+            DragStep::Offered { target, .. } | DragStep::Entered { target, .. } => {
                 let i = by_target(&self.slots, *target);
                 self.drag_over = i.map(|i| self.slots[i].key);
                 i
@@ -1891,6 +2040,12 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(i) = i else {
             // Over no window the shell shows, or one closed since.
             match step {
+                DragStep::Offered {
+                    answer, answered, ..
+                } => {
+                    answer.taken(None);
+                    answered();
+                }
                 DragStep::Entered { answer, .. } | DragStep::Moved { answer, .. } => {
                     answer.taken(None);
                 }
@@ -1920,6 +2075,19 @@ impl<M: Send + 'static> Desktop<M> {
             None => self.app.view_mut(),
         };
         match step {
+            DragStep::Offered {
+                at,
+                formats,
+                actions,
+                answer,
+                answered,
+                ..
+            } => {
+                answer.taken(view.window_drag_offered(&formats, point(at), actions));
+                answered();
+                // The scene is not told until the data is read.
+                return;
+            }
             DragStep::Entered {
                 at,
                 data,
@@ -2410,6 +2578,20 @@ impl<M: Send + 'static> Desktop<M> {
         if !self.app.inspected() {
             return;
         }
+        // What the window shows is not yet the scene while its pass is
+        // due, held to the display's pace, or waits for the window system.
+        // A pass asked for seconds ahead (egui's delayed repaint) is no
+        // frame owed now, and a window out of sight draws nothing until
+        // it is seen again.
+        let now = Instant::now();
+        let frame_owed = self.slots.iter().find(|s| s.is_root()).is_some_and(|slot| {
+            slot.surface.is_some()
+                && !slot.out_of_sight()
+                && (slot.redraw_asked.is_some()
+                    || self
+                        .repaints
+                        .wants_by(slot.key, now + slot.frame_interval()))
+        });
         let pointer = self.slots.iter().find(|s| s.is_root()).and_then(|slot| {
             slot.ctx.input(|i| {
                 i.pointer.latest_pos().map(|p| ljos_dev::mcp::PointerSeen {
@@ -2421,6 +2603,7 @@ impl<M: Send + 'static> Desktop<M> {
         });
         self.app.record_rest(ljos_dev::mcp::Rest {
             wake_at: next,
+            frame_owed,
             pointer,
         });
     }
@@ -2585,7 +2768,14 @@ pub(crate) fn run<M: Send + 'static>(
         std::env::var("LJOS_PREFER_X11").ok().as_deref(),
     ))?;
     // The drivers start while the application is built.
-    let painter_choice = surface::Choice::from_env(std::env::var("LJOS_PAINTER").ok().as_deref());
+    // A window that can be seen through is not chosen for the
+    // processor: its pixels have no alpha.
+    let opaque = config.background.to_rgba8()[3] == 255;
+    let painter_choice = surface::Choice::from_env(
+        std::env::var("LJOS_PAINTER").ok().as_deref(),
+        config.drawn_on_processor,
+        || opaque && only_software(&host.display_handle()),
+    );
     let starting = Starting::start(host.display_handle(), painter_choice);
     // Before `setup`: bindings may measure text while the root is being
     // built. They wait for the fonts; making the engine and registering
@@ -2620,6 +2810,13 @@ pub(crate) fn run<M: Send + 'static>(
     };
     #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
     let mut app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
+    if painter_choice.automatic {
+        app.engine().log(
+            LogLevel::Info,
+            CATEGORY,
+            "drawn on the processor: EGL would draw in software",
+        );
+    }
     #[cfg(feature = "mcp")]
     app.record_startup(ljos_dev::mcp::StartupStep::Built, began.elapsed());
     let failure = Rc::new(RefCell::new(None));
@@ -2646,17 +2843,12 @@ pub(crate) fn run<M: Send + 'static>(
             }
         })
     });
-    let (none, out) = {
-        let drags = desktop.drags.borrow();
-        (
-            drags.is_none(),
-            drags.as_ref().is_some_and(drags::Drags::carries_out),
-        )
-    };
-    if none && wayland_drag::is_wayland(&host.display_handle()) {
+    // What follows drags in carries them out too.
+    let follows = desktop.drags.borrow().is_some();
+    if !follows && wayland_drag::is_wayland(&host.display_handle()) {
         crate::platform::note_no_wayland_drops(desktop.app.engine());
     }
-    if out {
+    if follows {
         let drag_out = Rc::new(drags::DragOut::new(Rc::clone(&desktop.drags)));
         ljos_platform::Platform::of(desktop.app.engine()).set_drag_out(Some(
             Rc::clone(&drag_out) as Rc<dyn ljos_platform::DragOutService>
@@ -2682,6 +2874,33 @@ fn resize_edge(edges: ResizeEdges) -> ResizeEdge {
         (_, _, true, _) => ResizeEdge::West,
         _ => ResizeEdge::East,
     }
+}
+
+/// Whether EGL would offer only a software rasteriser
+/// ([`crate::software`]); never where there is no EGL.
+fn only_software(display: &egui_winit::winit::event_loop::OwnedDisplayHandle) -> bool {
+    #[cfg(gl_painter)]
+    return crate::software::only_software(display);
+    #[cfg(not(gl_painter))]
+    {
+        let _ = display;
+        false
+    }
+}
+
+/// Makes egui's font atlas again, so that it is sent whole with the next
+/// pass: a painter that was not given it, as one that drew on the
+/// processor was not, has none. egui makes its fonts again when how a
+/// missing glyph is drawn changes; it is changed and changed back.
+fn resend_font_atlas(ctx: &egui::Context) {
+    use egui::epaint::text::MissingGlyphPolicy;
+    let policy = ctx.missing_glyph_policy();
+    let other = match policy {
+        MissingGlyphPolicy::Tofu => MissingGlyphPolicy::Panic,
+        _ => MissingGlyphPolicy::Tofu,
+    };
+    ctx.set_missing_glyph_policy(other);
+    ctx.set_missing_glyph_policy(policy);
 }
 
 #[cfg(test)]

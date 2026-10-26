@@ -74,7 +74,7 @@ mod loader;
 mod log;
 mod lookups;
 mod made_on_read;
-pub use made_on_read::BindOnRead;
+pub use made_on_read::{BindOnRead, MakeOnRead};
 mod journal;
 mod made_when_reached;
 mod member_aliases;
@@ -122,6 +122,7 @@ pub use chooser::{DelegateChoice, DelegateChooser};
 pub use components::{ComponentKind, LoadedComponent};
 pub use context::Context;
 pub use cx::Cx;
+pub use delayed_errors::BindingLayer;
 pub use delegates::{DelegateHost, Delegates, RemovalOrder};
 pub use delegates::{Made, Urgency, ViewDelegates, ViewHost};
 pub use describe::{QtNamespaceEnum, VALUE_TYPES, ValueType, qt_namespace};
@@ -154,10 +155,11 @@ pub use lookups::Lookups;
 pub use lookups::lookups;
 pub use memory::{CompiledMemory, TypeMemory};
 pub use meta::{
-    AttachedTypeId, CompleteThunk, Declared, EnumInfo, Getter, GivenHook, GroupGet, GroupGetMut,
-    ImplInfo, ListAppend, ListField, ListInsert, ListRemove, MetaBuilder, MetaObject, MetaRef,
-    MethodDecl, MethodInfo, MethodThunk, Prop, PropertyAccess, PropertyFlags, PropertyInfo,
-    QmlImplInfo, Reset, ResetApply, ResetValue, Setter, SignalDecl, SignalInfo, WriteFilter,
+    AttachedTypeId, ChangeHook, CompleteThunk, Declared, EnumInfo, Getter, GivenHook, GroupGet,
+    GroupGetMut, ImplInfo, ListAppend, ListField, ListInsert, ListRemove, MetaBuilder, MetaObject,
+    MetaRef, MethodDecl, MethodInfo, MethodThunk, Prop, PropertyAccess, PropertyFlags,
+    PropertyInfo, QmlImplInfo, Reset, ResetApply, ResetValue, Setter, SignalDecl, SignalInfo,
+    WriteFilter,
 };
 pub use model::{DelegateGone, DelegateMade, DelegateRows, DelegateSource, ObjectRows};
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};

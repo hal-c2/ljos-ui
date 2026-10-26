@@ -30,6 +30,7 @@ mod badge;
 mod clipboard;
 mod dialogs;
 mod drop;
+pub mod drop_systems;
 mod fakes;
 mod fetch;
 #[cfg(feature = "http")]

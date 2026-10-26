@@ -227,7 +227,7 @@ fn the_text_of_a_combo_box_that_is_not_editable_is_not_audited() {
 fn the_item_of_an_open_menu_is_too_faint_in_a_dark_scheme() {
     let body = r##"
     menuBar: MenuBar {
-        Menu { title: "File"; MenuItem { text: "New" }; MenuItem { text: "Open" } }
+        Menu { title: "File"; MenuItem { text: "New" } MenuItem { text: "Open" } }
         Menu { title: "Edit"; MenuItem { text: "Cut"; enabled: false } }
     }
     Component.onCompleted: menuBar.itemAt(0).triggered()"##;

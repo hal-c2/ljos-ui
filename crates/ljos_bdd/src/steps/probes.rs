@@ -1,12 +1,22 @@
 //! What the runtime can say of itself: passes, text measures, wakes, the
 //! observer's work, what is scheduled, kept pictures and the pointer's cursor.
 
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 
 use crate::backend::BackendError;
 use crate::world::LjosWorld;
 
 use super::StepResult;
+
+#[given("the window is drawn on the processor")]
+fn drawn_on_processor(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.probes()?.draw_on_processor())
+}
+
+#[given("the shell chooses how the window is drawn")]
+fn shell_chooses_painter(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.probes()?.let_shell_choose_painter())
+}
 
 #[when("the window's passes are counted")]
 fn passes_are_counted(w: &mut LjosWorld) -> StepResult {

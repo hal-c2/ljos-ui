@@ -966,8 +966,9 @@ fn anchor_conflict(
     });
     any.then(|| {
         let at = engine.declared_at(positioner).unwrap_or_default();
+        let ty = engine.warning_type_name(positioner, name);
         format!(
-            "{at}QML {name}: Cannot specify {what} for items inside {name}. {name} will not function."
+            "{at}QML {ty}: Cannot specify {what} for items inside {name}. {name} will not function."
         )
     })
 }

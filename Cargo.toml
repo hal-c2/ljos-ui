@@ -63,6 +63,10 @@ parley = "0.12"
 # Parley's own analysis and shaping, which ljos_text drives itself for a
 # plain one-line text; the version parley depends on.
 parley_engine = "0.12"
+# Parley's shaper and line breaker, which ljos_text calls itself for a plain
+# text once a font is set up: the versions and features parley_engine takes.
+harfrust = "0.12"
+icu_segmenter = { version = "2.3", default-features = false, features = ["compiled_data"] }
 # The library Fontique links on Linux; ljos_text asks it for family substitutes.
 yeslogic-fontconfig-sys = "6.0.1"
 # Must match the skrifa that vello_cpu, parley and epaint use, so the font stack is not duplicated.
@@ -167,12 +171,20 @@ objc2-core-text = { version = "0.3.2", default-features = false, features = ["st
 block2 = { version = "0.6.2", default-features = false, features = ["std"] }
 # Win32 for the shell; the version winit already brings.
 windows-sys = { version = "0.52.0", default-features = false }
+# COM for the shell's `IDropTarget` (an object OLE calls, which windows-sys
+# has no way to write); the version accesskit_windows already brings.
+windows = { version = "0.62.2", default-features = false, features = ["std"] }
+# `#[implement]` names it at the crate root.
+windows-core = { version = "0.62.2", default-features = false, features = ["std"] }
 # The handles of a host's native windows, handed to the application; the
 # version winit already brings.
 raw-window-handle = "0.6.2"
 # A window property winit has no setter for (KDE's blur on X11); the
 # version winit already brings.
 x11rb = { version = "0.13.2", default-features = false }
+# A window drawn on the processor: a wl_shm buffer on Wayland, an MIT-SHM
+# image on X11, with damage. Its Wayland and X11 crates are winit's.
+softbuffer = { version = "0.4.8", default-features = false }
 
 # Proc macros
 proc-macro2 = "1.0.107"

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Open a window that logs what drags from other applications carry (keys, urls, text, html, every format) and the action each drop is answered with; drag into it by hand. Any desktop; the log is kept in target/drag-in.log"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+root="$(pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+log="${DRAG_IN_LOG:-$target/drag-in.log}"
+
+cargo build --quiet -p ljos_cli --bin ljos
+cat >&2 <<'HOW'
+Drag into the window, then close it:
+  left half:  takes anything with the action the source proposes
+  right half: takes text/uri-list alone, as a link (text should be refused)
+From a file manager: one file, then several (urls, keys).
+From a text editor: plain text, then styled text (text, html or rtf among the keys).
+Hold the platform's copy/move/link keys while dragging to change "proposed".
+Leave without letting go to see "exited".
+HOW
+echo "logging to $log" >&2
+"$target/debug/ljos" run scripts/drag-in-probe.qml "$@" 2>&1 | tee "$log"
+echo "drag-in lines:" >&2
+grep "drag-in:" "$log" >&2 || echo "(none: no drag reached a DropArea)" >&2

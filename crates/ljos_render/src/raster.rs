@@ -6,6 +6,11 @@
 //! unhinted glyph outlines (shaping happens earlier, in `ljos_text`). Opacity
 //! is applied per op (multiplied down), as Qt does, not by grouping a subtree
 //! into a layer.
+//!
+//! A window drawn on the processor uses R too ([`VelloCpuReference::for_screen`]):
+//! there it takes the machine's own SIMD level and threads, and draws only
+//! the parts of the window that changed ([`VelloCpuReference::render_area`]).
+//! The determinism above holds for the reference settings only.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -24,7 +29,8 @@ use vello_cpu::{
 use crate::backend::{
     EncodeStats, FrameView, MemoryPressure, RenderBackend, RenderError, RgbaImage,
 };
-use crate::compose::{ClipId, FrameSnapshot};
+use crate::compose::{ClipId, FrameSnapshot, bbox_of};
+use crate::damage::PixelRect;
 use crate::display_list::{Decorations, DrawOp, GlyphRun, Paint, PathStyle, fill_area};
 use crate::glyph::{OutlineCache, baseline_snap, snap_bar};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
@@ -68,7 +74,15 @@ pub struct VelloCpuReference {
     /// that must be sampled on its own, in each tint it is drawn with),
     /// until the image itself is dropped.
     pixmaps: HashMap<PixmapKey, PixmapEntry>,
+    /// SIMD level and threads.
+    settings: RenderSettings,
+    /// What [`Self::render_area`] draws into, kept for the next part.
+    area: Option<Pixmap>,
 }
+
+/// Device pixels kept around an item's bounds when an area is culled:
+/// antialiasing and a snapped baseline reach a little past them.
+const CULL_MARGIN: f64 = 2.0;
 
 /// An image's identity, the part of it cut out, and the tint laid on it.
 type PixmapKey = (u64, Option<[u32; 4]>, Option<[u8; 4]>);
@@ -150,7 +164,34 @@ impl VelloCpuReference {
             resources: Resources::new(),
             outlines: OutlineCache::default(),
             pixmaps: HashMap::new(),
+            settings: RenderSettings {
+                level: Level::baseline(),
+                num_threads: 0,
+            },
+            area: None,
         }
+    }
+
+    /// R drawing a window instead of a reference picture: with the SIMD
+    /// level the processor offers and `threads` workers beside the calling
+    /// thread (none without the `threads` feature). Its pictures may differ
+    /// from the reference's in the last bit of a channel.
+    pub fn for_screen(mut self, threads: u16) -> Self {
+        self.settings = RenderSettings {
+            level: Level::try_detect().unwrap_or(Level::baseline()),
+            num_threads: if cfg!(feature = "threads") {
+                threads
+            } else {
+                0
+            },
+        };
+        self.ctx = None;
+        self
+    }
+
+    /// The colour the picture is cleared to from the next render on.
+    pub fn set_background(&mut self, background: Rgba) {
+        self.config.background = background;
     }
 
     /// How many image copies R holds (whole images and isolated parts).
@@ -180,29 +221,8 @@ impl VelloCpuReference {
         if w16 == 0 || h16 == 0 {
             return Err(RenderError::BadSize { width, height });
         }
-        let settings = RenderSettings {
-            level: Level::baseline(),
-            num_threads: 0,
-        };
-        let mut ctx = match self.ctx.take() {
-            Some(mut c) => {
-                c.reset_and_resize(w16, h16);
-                c
-            }
-            None => RenderContext::new_with(w16, h16, settings),
-        };
-        self.draw(&mut ctx, view);
-        ctx.flush();
         let mut pixmap = Pixmap::new(w16, h16);
-        ctx.render_with(
-            &mut pixmap,
-            &mut self.resources,
-            RasterizerSettings {
-                render_mode: RenderMode::OptimizeSpeed,
-                ..Default::default()
-            },
-        );
-        self.ctx = Some(ctx);
+        self.raster(view, Vec2::ZERO, false, &mut pixmap);
         Ok(RgbaImage {
             width,
             height,
@@ -210,10 +230,64 @@ impl VelloCpuReference {
         })
     }
 
-    fn draw(&mut self, ctx: &mut RenderContext, view: &FrameView<'_>) {
+    /// Draws only `area`, in device pixels, of the picture [`Self::render`]
+    /// draws. Items wholly outside it are passed over, so a small change
+    /// costs little however much the window holds. The pixels are
+    /// premultiplied RGBA8, `area.width` of them to a row.
+    pub fn render_area(
+        &mut self,
+        view: &FrameView<'_>,
+        area: PixelRect,
+    ) -> Result<&[u8], RenderError> {
+        let (width, height) = (area.width, area.height);
+        let (Ok(w16), Ok(h16)) = (u16::try_from(width), u16::try_from(height)) else {
+            return Err(RenderError::BadSize { width, height });
+        };
+        if w16 == 0 || h16 == 0 {
+            return Err(RenderError::BadSize { width, height });
+        }
+        let mut pixmap = match self.area.take() {
+            Some(mut p) => {
+                p.resize(w16, h16);
+                p
+            }
+            None => Pixmap::new(w16, h16),
+        };
+        let origin = Vec2::new(f64::from(area.x), f64::from(area.y));
+        self.raster(view, origin, true, &mut pixmap);
+        Ok(self.area.insert(pixmap).data_as_u8_slice())
+    }
+
+    /// Draws the picture whose device pixel `origin` lands on the target's
+    /// top left corner, at the target's size.
+    fn raster(&mut self, view: &FrameView<'_>, origin: Vec2, cull: bool, target: &mut Pixmap) {
+        let (w16, h16) = (target.width(), target.height());
+        let mut ctx = match self.ctx.take() {
+            Some(mut c) => {
+                c.reset_and_resize(w16, h16);
+                c
+            }
+            None => RenderContext::new_with(w16, h16, self.settings),
+        };
+        self.draw(&mut ctx, view, origin, cull);
+        ctx.flush();
+        ctx.render_with(
+            target,
+            &mut self.resources,
+            RasterizerSettings {
+                render_mode: RenderMode::OptimizeSpeed,
+                ..Default::default()
+            },
+        );
+        self.ctx = Some(ctx);
+    }
+
+    fn draw(&mut self, ctx: &mut RenderContext, view: &FrameView<'_>, origin: Vec2, cull: bool) {
         let snap = view.snapshot;
-        let base = Affine::scale(f64::from(view.scale_factor))
+        let base = Affine::translate(-origin)
+            * Affine::scale(f64::from(view.scale_factor))
             * Affine::translate((-snap.viewport.x0, -snap.viewport.y0));
+        let canvas = Rect::new(0.0, 0.0, f64::from(ctx.width()), f64::from(ctx.height()));
 
         if !self.config.background.is_transparent() {
             ctx.set_transform(Affine::IDENTITY);
@@ -233,8 +307,15 @@ impl VelloCpuReference {
         let mut warned: HashSet<&'static str> = HashSet::new();
         for item in &snap.items {
             let Some(list) = &item.list else { continue };
-            self.sync_clips(ctx, snap, &mut pushed, item.clip, base);
             let to_device = base * item.world;
+            if cull
+                && !bbox_of(to_device, list.bounds())
+                    .inflate(CULL_MARGIN, CULL_MARGIN)
+                    .overlaps(canvas)
+            {
+                continue;
+            }
+            self.sync_clips(ctx, snap, &mut pushed, item.clip, base);
             ctx.set_transform(to_device);
             for op in list.ops() {
                 self.draw_op(ctx, op, item.opacity, to_device, &mut warned);
@@ -699,6 +780,7 @@ impl RenderBackend for VelloCpuReference {
         self.resources = Resources::new();
         self.outlines.clear();
         self.pixmaps.clear();
+        self.area = None;
     }
 
     fn snapshot_rgba(&mut self, view: &FrameView<'_>) -> Option<RgbaImage> {

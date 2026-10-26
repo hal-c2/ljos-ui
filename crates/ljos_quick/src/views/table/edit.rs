@@ -56,7 +56,10 @@ fn refuse(e: &Engine, view: ObjectId, why: &str) {
     e.log(
         LogLevel::Warning,
         "qml",
-        format!("QML {name}: cannot edit: {why}"),
+        format!(
+            "QML {}: cannot edit: {why}",
+            e.warning_type_name(view, name)
+        ),
     );
 }
 

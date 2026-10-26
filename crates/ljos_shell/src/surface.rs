@@ -10,6 +10,7 @@
 use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
+use crate::cpu::CpuPainter;
 use crate::present::{Change, Frame, Steps};
 use egui::ViewportId;
 use egui_wgpu::{
@@ -36,19 +37,51 @@ pub(crate) enum Choice {
     /// GL through EGL, and wgpu where that cannot be had.
     Gl,
     Wgpu,
+    /// The processor, into shared memory ([`crate::cpu`]).
+    Cpu,
 }
 
 impl Choice {
-    /// From `LJOS_PAINTER` (`gl` or `wgpu`); GL where the platform has
-    /// EGL, unless that says otherwise.
-    pub(crate) fn from_env(value: Option<&str>) -> Choice {
-        match value.map(str::trim) {
+    /// From `LJOS_PAINTER` (`gl`, `wgpu` or `cpu`), else the processor
+    /// where the application asked for it (`on_processor`), else GL where
+    /// the platform has EGL. Where EGL would offer only a software
+    /// rasteriser (`only_software`, asked only then), the processor
+    /// instead, chosen by the shell: [`Chosen::automatic`].
+    pub(crate) fn from_env(
+        value: Option<&str>,
+        on_processor: bool,
+        only_software: impl FnOnce() -> bool,
+    ) -> Chosen {
+        let choice = match value.map(str::trim) {
             Some(v) if v.eq_ignore_ascii_case("wgpu") => Choice::Wgpu,
             Some(v) if v.eq_ignore_ascii_case("gl") => Choice::Gl,
+            Some(v) if v.eq_ignore_ascii_case("cpu") => Choice::Cpu,
+            _ if on_processor => Choice::Cpu,
+            _ if cfg!(gl_painter) && only_software() => {
+                return Chosen {
+                    choice: Choice::Cpu,
+                    automatic: true,
+                };
+            }
             _ if cfg!(gl_painter) => Choice::Gl,
             _ => Choice::Wgpu,
+        };
+        Chosen {
+            choice,
+            automatic: false,
         }
     }
+}
+
+/// What the windows are drawn with, and who chose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Chosen {
+    pub(crate) choice: Choice,
+    /// The shell chose the processor, as EGL would draw in software too:
+    /// the windows go to GL as soon as one shows what only GL draws (a
+    /// `ShaderEffect`'s program, what egui draws, a window that can be
+    /// seen through). Chosen by the user, the processor stays.
+    pub(crate) automatic: bool,
 }
 
 /// The device the first window was given. Every later window draws with
@@ -87,6 +120,7 @@ impl Gpu {
             }
             #[cfg(gl_painter)]
             Painter::Gl(painter) => Some(Gpu::Gl(painter.gl())),
+            Painter::Cpu(_) => None,
         }
     }
 }
@@ -98,6 +132,7 @@ pub(crate) enum Painter {
     Wgpu(egui_wgpu::winit::Painter),
     #[cfg(gl_painter)]
     Gl(GlPainter),
+    Cpu(Box<CpuPainter>),
 }
 
 impl Painter {
@@ -109,6 +144,7 @@ impl Painter {
                 .map_err(|e| e.to_string()),
             #[cfg(gl_painter)]
             Painter::Gl(painter) => painter.set_window(window),
+            Painter::Cpu(painter) => painter.set_window(window),
         }
     }
 
@@ -117,6 +153,9 @@ impl Painter {
             Painter::Wgpu(painter) => painter.max_texture_side(),
             #[cfg(gl_painter)]
             Painter::Gl(painter) => Some(painter.max_texture_side()),
+            // Ljós's pictures are drawn by R, which takes any size
+            // vello_cpu does.
+            Painter::Cpu(_) => Some(usize::from(u16::MAX)),
         }
     }
 
@@ -126,6 +165,7 @@ impl Painter {
             Painter::Wgpu(painter) => painter.gc_viewports(&egui::ViewportIdSet::default()),
             #[cfg(gl_painter)]
             Painter::Gl(painter) => painter.forget_window(),
+            Painter::Cpu(painter) => painter.forget_window(),
         }
     }
 
@@ -134,6 +174,7 @@ impl Painter {
             Painter::Wgpu(painter) => painter.on_window_resized(ViewportId::ROOT, w, h),
             #[cfg(gl_painter)]
             Painter::Gl(painter) => painter.resized(w, h),
+            Painter::Cpu(painter) => painter.resized(w, h),
         }
     }
 
@@ -163,6 +204,7 @@ impl Painter {
             }
             #[cfg(gl_painter)]
             Painter::Gl(painter) => Some(painter.describe()),
+            Painter::Cpu(painter) => Some(painter.describe()),
         }
     }
 
@@ -170,7 +212,7 @@ impl Painter {
     /// (`QmlView::set_solid_rects`).
     pub(crate) fn fills_rects(&self) -> bool {
         match self {
-            Painter::Wgpu(_) => false,
+            Painter::Wgpu(_) | Painter::Cpu(_) => false,
             #[cfg(gl_painter)]
             Painter::Gl(_) => true,
         }
@@ -181,10 +223,16 @@ impl Painter {
     /// WGSL and a pipeline of their own; it draws nothing in their place.
     pub(crate) fn draws_shaders(&self) -> bool {
         match self {
-            Painter::Wgpu(_) => false,
+            Painter::Wgpu(_) | Painter::Cpu(_) => false,
             #[cfg(gl_painter)]
             Painter::Gl(_) => true,
         }
+    }
+
+    /// Whether the painter draws the scene itself rather than what egui is
+    /// handed (`QmlView::set_encodes`).
+    pub(crate) fn draws_scene(&self) -> bool {
+        matches!(self, Painter::Cpu(_))
     }
 
     /// The shapes as this painter draws them best.
@@ -195,7 +243,7 @@ impl Painter {
     ) -> Vec<egui::epaint::ClippedShape> {
         match self {
             // Shader callbacks never reach it (`draws_shaders`).
-            Painter::Wgpu(_) => {
+            Painter::Wgpu(_) | Painter::Cpu(_) => {
                 let _ = pixels_per_point;
                 shapes.to_vec()
             }
@@ -212,7 +260,7 @@ impl Painter {
     /// Readies, while the window is idle, what drawing it may soon need.
     pub(crate) fn warm(&mut self) {
         match self {
-            Painter::Wgpu(_) => {}
+            Painter::Wgpu(_) | Painter::Cpu(_) => {}
             #[cfg(gl_painter)]
             Painter::Gl(painter) => painter.warm(),
         }
@@ -223,7 +271,7 @@ impl Painter {
     /// frame whole.
     pub(crate) fn wants_areas(&self) -> bool {
         match self {
-            Painter::Wgpu(_) => false,
+            Painter::Wgpu(_) | Painter::Cpu(_) => false,
             #[cfg(gl_painter)]
             Painter::Gl(painter) => painter.wants_areas(),
         }
@@ -238,7 +286,7 @@ impl Painter {
         pixels_per_point: f32,
     ) -> Vec<egui::Rect> {
         match self {
-            Painter::Wgpu(_) => {
+            Painter::Wgpu(_) | Painter::Cpu(_) => {
                 let _ = (shapes, pending, pixels_per_point);
                 Vec::new()
             }
@@ -258,7 +306,7 @@ impl Painter {
         #[cfg(not(gl_painter))]
         let _ = pixels_per_point;
         match self {
-            Painter::Wgpu(_) => wgpu_frame(change, pending),
+            Painter::Wgpu(_) | Painter::Cpu(_) => wgpu_frame(change, pending),
             #[cfg(gl_painter)]
             Painter::Gl(painter) => painter.frame(change, pixels_per_point),
         }
@@ -308,6 +356,12 @@ impl Painter {
             Painter::Gl(painter) => {
                 painter.paint(pixels_per_point, clear, frame, primitives, pending, window)
             }
+            // It draws the scene itself (`desktop::run_pass`).
+            Painter::Cpu(_) => {
+                let _ = (pixels_per_point, clear, frame, primitives, window);
+                pending.clear();
+                Steps::default()
+            }
         }
     }
 }
@@ -340,7 +394,7 @@ fn wgpu_presents(frame: &Frame) -> bool {
 /// backend. Drivers started side by side, each on a thread of its own,
 /// crashed and hung the process.
 pub(crate) struct Starting {
-    choice: Choice,
+    chosen: Chosen,
     started: Started,
     /// Waited for when the application ends before its first window: a
     /// process that ends while a driver is starting can hang in its exit.
@@ -354,6 +408,8 @@ enum Started {
     },
     #[cfg(gl_painter)]
     Gl(mpsc::Receiver<Result<crate::gl::Display, String>>),
+    /// Nothing to start: the processor draws.
+    Nothing,
 }
 
 impl Drop for Starting {
@@ -371,20 +427,29 @@ impl std::fmt::Debug for Starting {
             Started::Wgpu { setup, .. } => f.field("backends", &setup.instance_descriptor.backends),
             #[cfg(gl_painter)]
             Started::Gl(_) => f.field("backends", &"EGL"),
+            Started::Nothing => f.field("backends", &"none"),
         }
         .finish_non_exhaustive()
     }
 }
 
 impl Starting {
-    /// Starts the drivers `choice` draws with.
-    pub(crate) fn start(display: OwnedDisplayHandle, choice: Choice) -> Self {
+    /// Starts the drivers `chosen` draws with.
+    pub(crate) fn start(display: OwnedDisplayHandle, chosen: Chosen) -> Self {
+        let choice = chosen.choice;
         let spawn = |run: Box<dyn FnOnce() + Send>| {
             std::thread::Builder::new()
                 .name("ljos-gpu".into())
                 .spawn(run)
                 .ok()
         };
+        if choice == Choice::Cpu {
+            return Self {
+                chosen,
+                started: Started::Nothing,
+                thread: None,
+            };
+        }
         // Without the thread the first window's painter starts them.
         #[cfg(gl_painter)]
         if choice == Choice::Gl {
@@ -393,7 +458,7 @@ impl Starting {
                 let _ = tx.send(crate::gl::Display::start(&display));
             }));
             return Self {
-                choice,
+                chosen,
                 started: Started::Gl(display_rx),
                 thread,
             };
@@ -405,7 +470,7 @@ impl Starting {
             let _ = tx.send(pollster::block_on(new.new_instance()));
         }));
         Self {
-            choice,
+            chosen,
             started: Started::Wgpu {
                 instance,
                 setup: Box::new(setup),
@@ -414,9 +479,9 @@ impl Starting {
         }
     }
 
-    /// What the windows are drawn with.
-    pub(crate) fn choice(&self) -> Choice {
-        self.choice
+    /// What the windows are drawn with, and who chose.
+    pub(crate) fn chosen(&self) -> Chosen {
+        self.chosen
     }
 
     /// The device for `window`: GL's context on the display started, or
@@ -425,6 +490,7 @@ impl Starting {
     /// why.
     pub(crate) fn device_for(self, window: &Arc<Window>) -> Option<Gpu> {
         match &self.started {
+            Started::Nothing => None,
             #[cfg(gl_painter)]
             Started::Gl(display) => {
                 let display = display.recv().ok()?.ok()?;
@@ -487,6 +553,12 @@ pub(crate) fn attach(
 ) -> Result<Option<String>, String> {
     if let Some(painter) = painter {
         return pollster::block_on(painter.set_window(window)).map(|()| None);
+    }
+    if choice == Choice::Cpu {
+        let mut made = Painter::Cpu(Box::new(CpuPainter::new(display)));
+        pollster::block_on(made.set_window(window))?;
+        *painter = Some(made);
+        return Ok(None);
     }
     let mut why = None;
     #[cfg(gl_painter)]
@@ -716,6 +788,7 @@ pub(crate) fn free_now(painter: Option<&mut Painter>, pending: &mut egui::Textur
         }
         #[cfg(gl_painter)]
         Some(Painter::Gl(painter)) => painter.free(pending),
+        Some(Painter::Cpu(_)) => pending.free.clear(),
         None => {}
     }
 }
@@ -727,6 +800,10 @@ mod tests {
 
     use super::*;
 
+    fn choice(value: Option<&str>, on_processor: bool) -> Choice {
+        Choice::from_env(value, on_processor, || false).choice
+    }
+
     #[test]
     fn the_painter_is_gl_where_there_is_egl_unless_asked_otherwise() {
         let default = if cfg!(gl_painter) {
@@ -734,12 +811,59 @@ mod tests {
         } else {
             Choice::Wgpu
         };
-        assert_eq!(Choice::from_env(None), default);
-        assert_eq!(Choice::from_env(Some("")), default);
-        assert_eq!(Choice::from_env(Some("vulkan")), default);
-        assert_eq!(Choice::from_env(Some("wgpu")), Choice::Wgpu);
-        assert_eq!(Choice::from_env(Some(" WGPU ")), Choice::Wgpu);
-        assert_eq!(Choice::from_env(Some("gl")), Choice::Gl);
+        assert_eq!(choice(None, false), default);
+        assert_eq!(choice(Some(""), false), default);
+        assert_eq!(choice(Some("vulkan"), false), default);
+        assert_eq!(choice(Some("wgpu"), false), Choice::Wgpu);
+        assert_eq!(choice(Some(" WGPU "), false), Choice::Wgpu);
+        assert_eq!(choice(Some("gl"), false), Choice::Gl);
+        assert_eq!(choice(Some("cpu"), false), Choice::Cpu);
+    }
+
+    #[test]
+    fn an_application_drawn_on_the_processor_can_be_drawn_otherwise() {
+        assert_eq!(choice(None, true), Choice::Cpu);
+        assert_eq!(choice(Some("vulkan"), true), Choice::Cpu);
+        assert_eq!(choice(Some("gl"), true), Choice::Gl);
+        assert_eq!(choice(Some("wgpu"), true), Choice::Wgpu);
+    }
+
+    #[test]
+    fn where_egl_draws_in_software_the_shell_chooses_the_processor() {
+        let software = |value, on_processor| {
+            let mut asked = false;
+            let chosen = Choice::from_env(value, on_processor, || {
+                asked = true;
+                true
+            });
+            (chosen, asked)
+        };
+        let (chosen, asked) = software(None, false);
+        if cfg!(gl_painter) {
+            assert_eq!(
+                chosen,
+                Chosen {
+                    choice: Choice::Cpu,
+                    automatic: true
+                }
+            );
+        } else {
+            assert_eq!(chosen.choice, Choice::Wgpu);
+        }
+        assert_eq!(asked, cfg!(gl_painter));
+        // The user's choice wins, and the system is not asked.
+        for (value, on_processor, want) in [
+            (Some("gl"), false, Choice::Gl),
+            (Some("wgpu"), false, Choice::Wgpu),
+            (Some("cpu"), false, Choice::Cpu),
+            (None, true, Choice::Cpu),
+        ] {
+            let (chosen, asked) = software(value, on_processor);
+            assert_eq!(
+                (chosen.choice, chosen.automatic, asked),
+                (want, false, false)
+            );
+        }
     }
 
     #[test]

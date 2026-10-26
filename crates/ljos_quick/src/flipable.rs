@@ -48,12 +48,12 @@ fn flipable_enums() -> EnumTable {
 pub struct Flipable {
     #[qml(base)]
     pub item: Item,
-    #[qml(notify)]
+    #[qml(notify, change = sides_changed)]
     pub front: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, change = sides_changed)]
     pub back: Option<ObjectId>,
     /// One of [`side`].
-    #[qml(notify, readonly, enumeration = "Side")]
+    #[qml(notify, readonly, enumeration = "Side", change = sides_changed)]
     pub side: i32,
     /// The side the mirror of the back was last worked out for.
     #[qml(skip)]
@@ -172,6 +172,15 @@ fn mirror_back(e: &Engine, me: ObjectId, back: ObjectId) {
     let y = dy.y < 0.0 && dx.x >= 0.0;
     let _ = write_computed(e, t, LocalTransform::MIRROR_X.index, Value::Bool(!y));
     let _ = write_computed(e, t, LocalTransform::MIRROR_Y.index, Value::Bool(y));
+}
+
+/// Which side faces away may have changed: the scene reads its children's
+/// geometry again ([`faces_away`]).
+fn sides_changed(cx: &Cx<'_>, _: ljos_engine::PropIndex) {
+    let (e, me) = (cx.engine, cx.this);
+    for c in crate::child_items(e, me) {
+        crate::scene::reshape(e, c);
+    }
 }
 
 /// Whether `obj` is the side of a Flipable that faces away. Tracked.

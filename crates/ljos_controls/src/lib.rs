@@ -151,7 +151,7 @@ pub fn register(engine: &Engine) {
         Popup, Overlay, Dialog, DialogButtonBox,
         Menu, MenuItem, MenuSeparator, MenuBar, MenuBarItem,
         ToolTip,
-        ComboBox, ItemDelegate,
+        ComboBox, ItemDelegate, ContextMenu,
     ]));
     // Replaces the attached-only `Window` of `ljos_quick` with one that can
     // also be a root; the attached properties are the same type.

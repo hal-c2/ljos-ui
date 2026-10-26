@@ -1,6 +1,10 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtqml-binding.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
+# Backlog: what is written to a property, or bound to it, after the Binding last gave it a value
+# is kept when the Binding lets go, and a binding given so goes on; moving the held layer's own
+# binding down when it is taken off is the graph's (bindings infrastructure). Found by ljos-fuzz
+# (connections), seed 303, bucket warning:assign(ljos-only):Unable_to_assign_QPointF_to_int.
 
 @qt-parity
 Feature: The Binding element
@@ -223,3 +227,80 @@ Feature: The Binding element
       Then the property "width" of "box" is 1
       And the property "visible" of "inner" is true
       And the log has no warnings
+
+  Rule: A Binding takes no property until it is given a value
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var a: 1
+          property var b: 1
+          property int n: 4
+          property int w: width
+          property string seen
+          Binding { id: b1; target: root; property: "a" }
+          Binding { id: b2; target: root; property: "b"; value: undefined }
+          Binding { id: b3; target: root; property: "n" }
+          Binding { id: b4; target: root; property: "w" }
+          function look() { seen += [String(a), String(b), n, w].join("/") + ";" }
+          function run() {
+            look(); b1.value = 7; b3.value = 8
+            look(); width = 50
+            look(); b1.when = false; b2.when = false; b3.when = false; b4.when = false
+            look()
+          }
+          function write() {
+            a = 2; n = 3; b4.when = false; b1.when = false; b3.when = false
+            look()
+          }
+        }
+        """
+
+    Scenario: A value given later takes the property, and an undefined one is a value
+      When the method "run" of "root" is called
+      Then the property "seen" of "root" is "1/undefined/4/0;7/undefined/8/0;7/undefined/8/50;1/1/4/50;"
+      And the log has no warnings
+
+    Scenario: A Binding without a value leaves what is written to the property when it is turned off
+      When the method "write" of "root" is called
+      Then the property "seen" of "root" is "2/undefined/3/0;"
+
+  @backlog
+  Rule: What is given a property after the Binding last gave it a value stays when it lets go
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int k: 3
+          property int v: 0
+          property int bound: k * 10
+          property int plain: 7
+          property int rebound: k * 10
+          property string seen
+          Binding { id: b1; target: root; property: "bound"; value: root.v }
+          Binding { id: b2; target: root; property: "plain"; value: root.v }
+          Binding { id: b3; target: root; property: "rebound"; value: root.v }
+          function look() { seen += [bound, plain, rebound].join(",") + ";" }
+          function run(again) {
+            bound = 55; plain = 55; rebound = Qt.binding(function () { return k + 100 })
+            if (again) v = 1
+            look(); b1.when = false; b2.when = false; b3.when = false
+            look(); k = 4
+            look()
+          }
+        }
+        """
+
+    Scenario: A value written and a binding given while it holds stay, and the binding goes on
+      When the method "run" of "root" is called with false
+      Then the property "seen" of "root" is "55,55,103;55,55,103;55,55,104;"
+
+    Scenario: Once its value changes after them, what it holds comes back as before
+      When the method "run" of "root" is called with true
+      Then the property "seen" of "root" is "1,1,1;30,7,30;40,7,40;"

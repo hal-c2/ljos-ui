@@ -404,9 +404,9 @@ pub struct PositionSource {
     /// only, not when it is made.
     #[qml(readonly, object = "Position")]
     pub position: Option<ObjectId>,
-    #[qml(notify, enumeration = "PositioningMethods")]
+    #[qml(notify, flags = "PositioningMethods")]
     pub preferred_positioning_methods: i32,
-    #[qml(notify, readonly, enumeration = "PositioningMethods")]
+    #[qml(notify, readonly, flags = "PositioningMethods")]
     pub supported_positioning_methods: i32,
     #[qml(notify, readonly, enumeration = "SourceError")]
     pub source_error: i32,

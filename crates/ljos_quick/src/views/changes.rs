@@ -64,11 +64,32 @@ pub(crate) fn polished_later(e: &Engine, view: ObjectId) {
     }
 }
 
+/// The views whose model changed since they last laid their rows out.
+#[derive(Default)]
+struct Changed(RefCell<Vec<ObjectId>>);
+
+/// The model of `view` changed: its rows are laid out when the scene is
+/// next polished, once for all that changes until then, as in qml6.
+pub(crate) fn lay_out_later(e: &Engine, view: ObjectId, st: &ViewState) {
+    if st.due.replace(true) {
+        return;
+    }
+    e.extension::<Changed>().0.borrow_mut().push(view);
+    e.request_wake();
+}
+
 /// The scene has laid its items out: the views that waited for that lay
-/// their rows out with the lengths the delegates have now.
-/// Whether one did.
+/// their rows out with the lengths the delegates have now, and those whose
+/// model changed lay out what it has now. Whether one did.
 pub(crate) fn polish_ends(e: &Engine) -> bool {
-    let due = std::mem::take(&mut *e.extension::<Polishing>().0.borrow_mut());
+    let changed = std::mem::take(&mut *e.extension::<Changed>().0.borrow_mut());
+    let mut due = std::mem::take(&mut *e.extension::<Polishing>().0.borrow_mut());
+    for view in changed {
+        // Laid out since by a method that needed the rows at once.
+        if !due.contains(&view) && state_of(e, view).is_some_and(|st| st.due.get()) {
+            due.push(view);
+        }
+    }
     let mut laid = false;
     for view in due {
         if e.is_alive(view) {
@@ -89,7 +110,10 @@ impl ViewHost for Host {
             e.log(
                 LogLevel::Warning,
                 "qml",
-                format!("QML {}: Delegate must be of Item type", type_name(e, view)),
+                format!(
+                    "QML {}: Delegate must be of Item type",
+                    e.warning_type_name(view, type_name(e, view))
+                ),
             );
             return;
         }
@@ -182,9 +206,13 @@ impl ViewHost for Host {
             // Rows are about to change, or the roles did on the way to a
             // change of rows: the notice of that change is what the view
             // acts on, when its rows and the model's are the same again.
-            ModelChange::RowsAboutToBeInserted { .. }
-            | ModelChange::RowsAboutToBeRemoved { .. }
-            | ModelChange::RolesChanged => return,
+            ModelChange::RowsAboutToBeInserted { .. } => {
+                return lay_out_other_change(e, view, &st, OpKind::Add);
+            }
+            ModelChange::RowsAboutToBeRemoved { .. } => {
+                return lay_out_other_change(e, view, &st, OpKind::Remove);
+            }
+            ModelChange::RolesChanged => return,
             ModelChange::RowsInserted { first, count } => {
                 // A row that arrives exactly where the view starts is the
                 // first one shown; rows before that push the view's rows
@@ -207,15 +235,33 @@ impl ViewHost for Host {
                     }
                 }
                 drop(added);
-                *st.pending.borrow_mut() = Some(PendingOp {
-                    kind: OpKind::Add,
-                    target_keys: keys.into_iter().collect(),
-                    target_indexes: (first..first.saturating_add(count))
-                        .map(|i| i as i32)
-                        .collect(),
-                    target_items: Vec::new(),
-                });
+                let indexes = (first..first.saturating_add(count)).map(|i| i as i32);
+                let mut pending = st.pending.borrow_mut();
+                match pending.as_mut().filter(|op| op.kind == OpKind::Add) {
+                    // Rows added since the last pass are one change to it:
+                    // those that came before are where the new ones put them.
+                    Some(op) => {
+                        for i in &mut op.target_indexes {
+                            if *i >= first as i32 {
+                                *i += count as i32;
+                            }
+                        }
+                        op.target_keys.extend(keys);
+                        op.target_indexes.extend(indexes);
+                    }
+                    None => {
+                        *pending = Some(PendingOp {
+                            kind: OpKind::Add,
+                            target_keys: keys.into_iter().collect(),
+                            target_indexes: indexes.collect(),
+                            target_items: Vec::new(),
+                        });
+                    }
+                }
+                drop(pending);
                 st.places.borrow_mut().clear();
+                stale_from(&st, first);
+                untold_count(e, view, &st, rows);
             }
             ModelChange::RowsRemoved { first, count } => {
                 let end = first.saturating_add(count);
@@ -233,13 +279,27 @@ impl ViewHost for Host {
                 } else if laid_out && current >= first as i64 {
                     set_current(e, view, &st, (first as i64).min(rows - 1));
                 }
-                *st.pending.borrow_mut() = Some(PendingOp {
-                    kind: OpKind::Remove,
-                    target_keys: Default::default(),
-                    target_indexes: gone.iter().map(|(i, _)| *i as i32).collect(),
-                    target_items: gone.iter().map(|(_, o)| *o).collect(),
-                });
+                let indexes = gone.iter().map(|(i, _)| *i as i32);
+                let items = gone.iter().map(|(_, o)| *o);
+                let mut pending = st.pending.borrow_mut();
+                match pending.as_mut().filter(|op| op.kind == OpKind::Remove) {
+                    Some(op) => {
+                        op.target_indexes.extend(indexes);
+                        op.target_items.extend(items);
+                    }
+                    None => {
+                        *pending = Some(PendingOp {
+                            kind: OpKind::Remove,
+                            target_keys: Default::default(),
+                            target_indexes: indexes.collect(),
+                            target_items: items.collect(),
+                        });
+                    }
+                }
+                drop(pending);
                 st.places.borrow_mut().clear();
+                stale_from(&st, first);
+                untold_count(e, view, &st, rows);
             }
             ModelChange::RowsMoved { from, to, count } => {
                 let (from, to, count) = (from as i64, to as i64, count as i64);
@@ -269,6 +329,7 @@ impl ViewHost for Host {
                     target_items: Vec::new(),
                 });
                 st.places.borrow_mut().clear();
+                st.slots_stale.set(true);
             }
             ModelChange::DataChanged { .. } => {
                 // The delegates show the new values already. Only what
@@ -279,6 +340,8 @@ impl ViewHost for Host {
             }
             ModelChange::ModelReset => {
                 forget(e, view, &st);
+                st.slots_stale.set(true);
+                untold_count(e, view, &st, rows);
                 if laid_out {
                     // The first row is the current one again, unless the
                     // author said there is none.
@@ -290,7 +353,47 @@ impl ViewHost for Host {
         for &(_, object) in gone {
             leave(e, view, &st, object);
         }
+        lay_out_later(e, view, &st);
+    }
+}
+
+/// Rows of another kind are about to come or go while a change of rows
+/// waits for the next pass: that one is laid out first, while the model
+/// still has the rows it was about, so that each runs its transitions.
+fn lay_out_other_change(e: &Engine, view: ObjectId, st: &ViewState, coming: OpKind) {
+    let other = st
+        .pending
+        .borrow()
+        .as_ref()
+        .is_some_and(|op| op.kind != coming);
+    if other && st.due.get() {
         pass::refresh(e, view);
+    }
+}
+
+/// Rows from `first` on are not where the last pass placed them.
+fn stale_from(st: &ViewState, first: usize) {
+    if st.slots.borrow().last().is_some_and(|s| s.line >= first) {
+        st.slots_stale.set(true);
+    }
+}
+
+/// `count` is the model's at once, as qml6 reads it, but says it changed
+/// only when the rows are laid out: then the delegates are there, and
+/// `countChanged` comes after their `Component.onCompleted`, as in qml6.
+fn untold_count(e: &Engine, view: ObjectId, st: &ViewState, rows: i64) {
+    let n = rows.clamp(0, i64::from(i32::MAX)) as i32;
+    let g = e.graph();
+    // A binding that read it keeps what it read until it is told; the
+    // field is what a read sees in the meantime.
+    let quiet = e
+        .property_node(view, ItemView::COUNT.index)
+        .is_ok_and(|node| g.replace_quietly(node, Value::Int(n)).unwrap_or(false));
+    if quiet {
+        let _ = e.with_mut(view, |v: &mut ItemView| v.count = n);
+        st.count_untold.set(true);
+    } else {
+        put(e, view, ItemView::COUNT.index, Value::Int(n));
     }
 }
 

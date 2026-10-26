@@ -105,6 +105,39 @@ Feature: A binding that fails while its object is made is forgiven if it recover
       Then the property "text" of "root" is ""
       And the log has no warning matching "TypeError"
 
+    @api-QtQml.Component.completed
+    Scenario: A binding that runs again with a value its property takes is not logged
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: r
+          objectName: "root"
+          property real k
+          property real p: r.k ? 1 : "#000000".a
+          Component.onCompleted: r.k = 1
+        }
+        """
+      Then the property "p" of "root" is 1
+      And the log has no warning matching "Unable to assign"
+
+    # Backlog: an assignment that takes a binding away does not yet forget what the binding
+    # holds, once it has run (bindings infrastructure).
+    @backlog
+    Scenario: A binding whose value its property refuses, replaced by Component.onCompleted, is not logged
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: r
+          objectName: "root"
+          property real p: "#000000".a
+          Component.onCompleted: r.p = 3
+        }
+        """
+      Then the property "p" of "root" is 3
+      And the log has no warning matching "Unable to assign"
+
     @backlog
     Scenario: A binding a change handler replaces while the object is made is not logged
       Given the QML:

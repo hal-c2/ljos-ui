@@ -83,7 +83,10 @@
 //! an author gives the property a value, a binding or an override, once it
 //! is in place; what bindings, animations and layouts write as they run is
 //! not told. A type that follows what few of its objects set follows just
-//! those). Field names are exposed in camelCase unless renamed.
+//! those) and `change = path` (the same kind of `fn`, told each time the
+//! property changes however it does, a binding's change before the binding
+//! has run again: what follows the property on many objects keeps a mark
+//! for each instead of an effect). Field names are exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -306,6 +309,8 @@ struct FieldAttrs {
     /// `given = path`: told when the property is given a value, a binding
     /// or an override.
     given: Option<syn::Path>,
+    /// `change = path`: told when the property changes, however it does.
+    change: Option<syn::Path>,
 }
 
 fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
@@ -407,6 +412,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.write = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("given") {
                 f.given = Some(m.value()?.parse::<syn::Path>()?);
+            } else if p.is_ident("change") {
+                f.change = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("reset") {
                 f.reset = Some(if m.input.peek(syn::Token![=]) {
                     Some(m.value()?.parse::<syn::Expr>()?)
@@ -415,7 +422,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, given",
+                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, given, change",
                 ));
             }
             Ok(())
@@ -589,6 +596,12 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                     "a group is not given whole; put `given` on the group type's fields",
                 ));
             }
+            if a.change.is_some() {
+                return Err(Error::new(
+                    ident.span(),
+                    "a group does not change whole; put `change` on the group type's fields",
+                ));
+            }
             let get = format_ident!("__qml_group_{}", ident);
             let get_mut = format_ident!("__qml_group_mut_{}", ident);
             let fty = if a.lazy {
@@ -651,9 +664,21 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         let get = format_ident!("__qml_get_{}", ident);
         let set = format_ident!("__qml_set_{}", ident);
         let notify = a.notify;
-        // An enum's number reads as Qt's does: unsigned.
-        let read = if a.enumeration.is_some() && !a.flags {
-            quote!(#e::Value::of_enum_field(#p::downcast::<#ty>(o).#ident))
+        // An enum's number reads as Qt's does: unsigned unless a key is
+        // negative. Reads are many, so the enum is asked once, and only
+        // when the number is negative.
+        let read = if let Some(enumeration) = a.enumeration.as_ref().filter(|_| !a.flags) {
+            quote! {{
+                static SIGNED: ::std::sync::OnceLock<bool> = ::std::sync::OnceLock::new();
+                let n: i32 = #p::downcast::<#ty>(o).#ident;
+                #e::Value::of_enum_field(
+                    n,
+                    n >= 0
+                        || *SIGNED.get_or_init(|| {
+                            <#ty as #e::QmlType>::static_meta().enum_signed(#enumeration)
+                        }),
+                )
+            }}
         } else {
             quote!(#e::QmlValue::to_value(&#p::downcast::<#ty>(o).#ident))
         };
@@ -758,6 +783,10 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         if let Some(path) = &a.given {
             let path = self_to(path, ty);
             builder.push(quote!(.given(#path)));
+        }
+        if let Some(path) = &a.change {
+            let path = self_to(path, ty);
+            builder.push(quote!(.change(#path)));
         }
         match &a.reset {
             Some(Some(reset)) => builder.push(quote!(.reset(#reset))),

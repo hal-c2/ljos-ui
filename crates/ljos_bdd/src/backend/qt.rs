@@ -361,7 +361,8 @@ impl QtBackend {
                 let (x, y) = at("x").zip(at("y")).ok_or_else(|| {
                     BackendError::Failed(format!("op {index} has no pointer position"))
                 })?;
-                rfb.double_click(x, y)?;
+                let count = op["count"].as_u64().map_or(2, |c| c.clamp(2, 3) as u8);
+                rfb.clicks(count, x, y)?;
             }
             Some("drag") => {
                 let at = |k: &str| op[k].as_u64().and_then(|v| u16::try_from(v).ok());
@@ -829,10 +830,10 @@ impl Input for QtBackend {
         Ok(())
     }
 
-    fn double_click(&mut self, x: f64, y: f64) -> Result<()> {
+    fn clicks(&mut self, count: u8, x: f64, y: f64) -> Result<()> {
         let (x, y) = on_screen(x, y)?;
         self.not_held()?;
-        self.push(json!({"op": "double", "x": x, "y": y}));
+        self.push(json!({"op": "double", "x": x, "y": y, "count": count}));
         Ok(())
     }
 

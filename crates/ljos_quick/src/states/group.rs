@@ -23,8 +23,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Color, ConnectionId, Engine, ForeignMember, ForeignValue, Interception, LogLevel,
-    ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode, TypeTag, Value, handler_name,
+    Atom, BindingLayer, Color, ConnectionId, Engine, ForeignMember, ForeignValue, Interception,
+    LogLevel, ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode, TypeTag, Value,
+    handler_name,
 };
 use ljos_reactive::WriteKind;
 use ljos_render::kurbo::{Affine, Point};
@@ -112,6 +113,8 @@ enum Applied {
         id: OverrideId,
         restore: RestoreMode,
         what: Layer,
+        /// Where a binding of the change holds what it says.
+        held: BindingLayer,
     },
     /// The parent `target` had before a `ParentChange`.
     Parent {
@@ -159,6 +162,17 @@ pub(crate) struct Group {
     /// the state) is made when this one is done.
     changing: Cell<bool>,
     again: Cell<bool>,
+    /// A state's changes are being put in place without a transition: a
+    /// `when` they make pick another state is refused (qml6).
+    applying: Cell<bool>,
+    /// The state whose `when` asked for the change to be made next.
+    asked_by: Cell<Option<ObjectId>>,
+    /// The state whose `when` asked for the change being made: that `when`
+    /// worked out again meanwhile is a binding loop (qml6).
+    going_for: Cell<Option<ObjectId>>,
+    /// That state's `when`, turned by the changes it put in place without
+    /// a transition: the change it asks for is refused, and the state kept.
+    looped: Cell<Option<ObjectId>>,
     running: RefCell<Option<Running>>,
     /// Counts the transitions, so that the end of one that was cut short
     /// is not taken for the end of the present one.
@@ -198,6 +212,10 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
         started: Cell::new(false),
         changing: Cell::new(false),
         again: Cell::new(false),
+        applying: Cell::new(false),
+        asked_by: Cell::new(None),
+        going_for: Cell::new(None),
+        looped: Cell::new(None),
         running: RefCell::new(None),
         serial: Cell::new(0),
     });
@@ -246,15 +264,21 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
     }
     for s in g.all_states(engine) {
         let on_when = Rc::clone(&g);
-        let _ = engine.watch(s, State::WHEN.index, move |e, _| on_when.follow_when(e));
+        let _ = engine.watch(s, State::WHEN.index, move |e, _| {
+            on_when.follow_when(e, Some(s));
+        });
     }
     // The `when`s are followed first, as in qml6: a state one picks runs
     // the transition to it, and a state given by name whose `when` is
     // false is left for the base state before it was ever entered.
     let given = text(engine, owner, state);
     g.started.set(true);
-    g.follow_when(engine);
+    // The transition a `when` runs here is the one from the state given
+    // by name, though that state was never entered (qml6).
+    g.current.replace(given.clone());
+    g.follow_when(engine, None);
     if text(engine, owner, state) == given {
+        g.current.replace(String::new());
         // A `state` given where the object is made is told as a change,
         // also when no state has its name, before its state is entered,
         // which runs no transition.
@@ -266,6 +290,27 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
         g.started.set(false);
         g.sync(engine);
         g.started.set(true);
+    }
+    // A `when` that is worked out again picks its state again, though it
+    // was true before: one given by name meanwhile is left (qml6).
+    for s in g.all_states(engine) {
+        let on_when = Rc::clone(&g);
+        engine.set_interceptor(
+            s,
+            State::WHEN.index,
+            Some(Rc::new(move |e, v, how| {
+                // A new value is the watch's to follow.
+                let same = || e.peek(s, State::WHEN.index).to_boolean() == v.to_boolean();
+                if how != Interception::Binding {
+                } else if same() {
+                    let g = Rc::clone(&on_when);
+                    e.after_binding(move |e| g.follow_when(e, Some(s)));
+                } else if on_when.applying.get() && on_when.going_for.get() == Some(s) {
+                    on_when.looped.set(Some(s));
+                }
+                false
+            })),
+        );
     }
 }
 
@@ -308,14 +353,24 @@ fn text(engine: &Engine, obj: ObjectId, prop: PropIndex) -> String {
 
 /// How a state's change gives `v` to a property of type `ty` where Qt
 /// converts it otherwise than an assignment does (measured on qml6): a
-/// colour given a bool or a number is an invalid colour, without a
-/// warning, and an int given an array or an object is refused, with one.
-/// `None` for what converts as an assignment does.
-fn converted(ty: &TypeTag, v: &Value) -> Option<Result<Value, &'static str>> {
+/// colour given a bool, a number, an array or an object is an invalid
+/// colour, without a warning, but one given a function is refused; and an
+/// int given an array or an object is refused, with a warning. `None` for
+/// what converts as an assignment does.
+fn converted(engine: &Engine, ty: &TypeTag, v: &Value) -> Option<Result<Value, &'static str>> {
     match (ty, v) {
-        (TypeTag::Color, Value::Bool(_) | Value::Int(_) | Value::Real(_)) => {
-            Some(Ok(Value::Color(Color::INVALID)))
-        }
+        (TypeTag::Color, Value::Js(_)) if engine.is_callable(v) => Some(Err(
+            "Unable to assign a function to a property of any type other than var.",
+        )),
+        (
+            TypeTag::Color,
+            Value::Bool(_)
+            | Value::Int(_)
+            | Value::Real(_)
+            | Value::List(_)
+            | Value::Map(_)
+            | Value::Js(_),
+        ) => Some(Ok(Value::Color(Color::INVALID))),
         (TypeTag::Int, Value::List(_) | Value::Map(_) | Value::Js(_)) => {
             Some(Err("Unable to assign QJSValue to int"))
         }
@@ -336,13 +391,24 @@ fn asked(ty: &TypeTag) -> TypeTag {
 /// the property has, for what fails or is refused.
 fn given_as(engine: &Engine, at: &str, ty: &TypeTag, v: Option<Value>) -> Option<Value> {
     let v = v?;
-    match converted(ty, &v) {
+    match converted(engine, ty, &v) {
         Some(Ok(v)) => Some(v),
         Some(Err(why)) => {
-            engine.log(LogLevel::Warning, "qml", format!("{at}: {why}"));
+            engine.warn(format!("{at}: {why}"));
             None
         }
-        None => Some(v),
+        // Refused here rather than where the property takes it, so that
+        // the warning is the change's and is held with its binding's.
+        None => match ty {
+            TypeTag::Enum(_) | TypeTag::Flags(_) | TypeTag::Object(_) => Some(v),
+            _ => match ty.coerce(&v) {
+                Ok(_) => Some(v),
+                Err(why) => {
+                    engine.warn(format!("{at}: {why}"));
+                    None
+                }
+            },
+        },
     }
 }
 
@@ -381,6 +447,34 @@ struct Round {
     /// wait in `later` until it has started (qml6).
     transition: bool,
     later: Vec<ObjectId>,
+    /// The properties the state left was to give back, and how: a state
+    /// entered that would not give one back gives it back so (qml6).
+    restoring: Vec<(ObjectId, PropIndex, RestoreMode)>,
+}
+
+/// Holds every changed property at the value it had, so that an animation
+/// that begins later still begins there.
+fn hold_starts(
+    engine: &Engine,
+    changes: &Changes,
+    starts: &[Value],
+) -> Vec<(ObjectId, PropIndex, OverrideId, ChangeKind)> {
+    let mut holds = Vec::new();
+    for (c, before) in changes.list.iter().zip(starts) {
+        let hold = OverrideContent::Value(before.clone());
+        if let Ok(id) = engine.push_override(c.obj, c.prop, hold) {
+            holds.push((c.obj, c.prop, id, c.kind));
+        }
+    }
+    holds
+}
+
+/// What keeps a change from showing until its transition shows it.
+struct Held {
+    holds: Vec<(ObjectId, PropIndex, OverrideId, ChangeKind)>,
+    suspended: Vec<(ObjectId, PropIndex, OverrideId)>,
+    /// What the state binds.
+    bound: Vec<(ObjectId, PropIndex)>,
 }
 
 /// One layer a `PropertyChanges` is to put on a property.
@@ -389,6 +483,7 @@ struct Pending {
     prop: PropIndex,
     content: OverrideContent,
     restore: RestoreMode,
+    held: BindingLayer,
 }
 
 impl Round {
@@ -440,7 +535,14 @@ impl Group {
     /// One `when` changed: the object is in the first state whose `when`
     /// is true, and in the base state when the one that held it there
     /// stopped being true.
-    fn follow_when(self: &Rc<Self>, engine: &Engine) {
+    fn follow_when(self: &Rc<Self>, engine: &Engine, by: Option<ObjectId>) {
+        if let Some(s) = by
+            && (self.going_for.get() == by || self.looped.get() == by)
+        {
+            self.looped.set(None);
+            engine.warn_binding_loop(s, State::WHEN.index);
+            return;
+        }
         let conditional = |s: ObjectId| !is_unset(engine, s, State::WHEN.index);
         let holds = |s: ObjectId| {
             engine
@@ -459,6 +561,14 @@ impl Group {
         if want == now {
             return;
         }
+        if self.applying.get() {
+            engine.log(
+                LogLevel::Warning,
+                "qml",
+                "<Unknown File>: QML StateGroup: Can't apply a state change as part of a state definition.",
+            );
+            return;
+        }
         let was = self.changing.replace(true);
         let _ = engine.write_internal(
             self.owner,
@@ -467,6 +577,7 @@ impl Group {
             WriteKind::Imperative,
         );
         self.changing.set(was);
+        self.asked_by.set(by);
         self.sync(engine);
     }
 
@@ -484,7 +595,11 @@ impl Group {
             let from = self.current.borrow().clone();
             if want != from {
                 *self.current.borrow_mut() = want.clone();
+                let by = self.asked_by.take();
+                let (applying, going_for) = (self.applying.get(), self.going_for.replace(by));
                 self.go(engine, &from, &want);
+                self.applying.set(applying);
+                self.going_for.set(going_for);
             }
             if !self.again.get() {
                 break;
@@ -574,12 +689,13 @@ impl Group {
             id,
             restore,
             what: Layer::Property,
+            held: BindingLayer::OWN,
         });
     }
 
     /// Leaves the state called `from` for the one called `to`.
     fn go(self: &Rc<Self>, engine: &Engine, from: &str, to: &str) {
-        engine.batch(|| {
+        let shown = engine.batch(|| {
             let mut round = Round::default();
             self.interrupt(engine, &mut round);
             let chosen = if self.started.get() {
@@ -588,6 +704,7 @@ impl Group {
             } else {
                 None
             };
+            self.applying.set(chosen.is_none());
             let anims = chosen.map_or_else(Vec::new, |(t, _)| transition::animations(engine, t));
             let deferred = script_names(engine, &anims);
             let values = action_values(engine, &anims);
@@ -598,13 +715,14 @@ impl Group {
             for change in self.changes_of(engine, to, &mut seen) {
                 self.enter(engine, change, &mut round, &deferred);
             }
-            self.flush(engine, &mut round);
+            self.flush(engine, &mut round, true);
 
             let mut changes = Changes {
                 list: Vec::new(),
                 reversed: chosen.is_some_and(|(_, reversed)| reversed),
                 scripts: std::mem::take(&mut round.scripts),
                 values,
+                kept: Vec::new(),
             };
             let mut starts = Vec::new();
             for (obj, prop, before, kind) in std::mem::take(&mut round.before) {
@@ -620,14 +738,37 @@ impl Group {
                         kind,
                     });
                     starts.push(before);
+                } else if kind == ChangeKind::Property {
+                    changes.kept.push(Change {
+                        obj,
+                        prop,
+                        to: after,
+                        kind,
+                    });
                 }
             }
             match chosen {
                 Some((t, _)) => {
-                    self.run(engine, t, &anims, changes, starts, &round);
+                    let binds = changes
+                        .list
+                        .iter()
+                        .any(|c| round.bound.contains(&(c.obj, c.prop)));
+                    let mut held = self.suspend(engine, &mut changes, &round);
+                    if binds {
+                        // Shown, and once a transition that ends at once is
+                        // over, the changes are still the state's
+                        // definition: a `when` they work out cannot change
+                        // the state. A transition that runs on ends later,
+                        // and a `when` its end works out is followed (qml6).
+                        self.applying.set(true);
+                        return Some((t, anims, changes, starts, held, round.later));
+                    }
+                    held.holds = hold_starts(engine, &changes, &starts);
+                    self.run(engine, t, &anims, &changes, &starts, held);
                     for script in std::mem::take(&mut round.later) {
                         engine.run_script(script, StateChangeScript::SCRIPT.index);
                     }
+                    None
                 }
                 None if self.started.get() => {
                     for (c, before) in changes.list.iter().zip(&starts) {
@@ -635,8 +776,23 @@ impl Group {
                             behavior::follow(engine, c.obj, c.prop, before, &c.to);
                         }
                     }
+                    None
                 }
-                None => {}
+                None => None,
+            }
+        });
+        let Some((t, anims, changes, starts, mut held, later)) = shown else {
+            return;
+        };
+        // A state that binds a property shows each of its changes, then
+        // takes them back to where the transition starts them from; and
+        // its bindings are in force only once the transition is over
+        // (qml6).
+        engine.batch(|| held.holds = hold_starts(engine, &changes, &starts));
+        engine.batch(|| {
+            self.run(engine, t, &anims, &changes, &starts, held);
+            for script in later {
+                engine.run_script(script, StateChangeScript::SCRIPT.index);
             }
         });
     }
@@ -657,7 +813,7 @@ impl Group {
                     self.enter(engine, change, &mut round, &[]);
                 }
             }
-            self.flush(engine, &mut round);
+            self.flush(engine, &mut round, true);
         });
     }
 
@@ -666,14 +822,48 @@ impl Group {
         let applied = std::mem::take(&mut *self.applied.borrow_mut());
         for a in &applied {
             if let Applied::Layer {
-                obj, prop, what, ..
+                obj,
+                prop,
+                what,
+                restore,
+                ..
             } = a
             {
+                if *what == Layer::Property && *restore != RestoreMode::None {
+                    round.restoring.push((*obj, *prop, *restore));
+                }
                 match what {
                     Layer::Property => round.note(engine, *obj, *prop, ChangeKind::Property),
                     Layer::Anchor if !round.anchored.contains(obj) => round.anchored.push(*obj),
                     Layer::Anchor | Layer::Parent => {}
                 }
+            }
+        }
+        // Every property the state changed is held at what it shows while
+        // the state's layers come off, so that none of the state's bindings
+        // follows a value given back. Then the values go back before the
+        // bindings, so that a binding given back sees what the others give
+        // back. No property tells a change it does not keep (qml6).
+        let mut holds: Vec<(ObjectId, PropIndex, OverrideId, RestoreMode)> = Vec::new();
+        for a in &applied {
+            if let Applied::Layer {
+                obj,
+                prop,
+                what: Layer::Property,
+                restore,
+                ..
+            } = *a
+                && !holds.iter().any(|h| (h.0, h.1) == (obj, prop))
+            {
+                let now = engine.untrack(|| engine.peek(obj, prop));
+                if let Ok(id) = engine.push_override(obj, prop, OverrideContent::Value(now)) {
+                    holds.push((obj, prop, id, restore));
+                }
+            }
+        }
+        if holds.len() < 2 {
+            for (obj, prop, id, _) in holds.drain(..) {
+                let _ = engine.remove_override(obj, prop, id, RestoreMode::None);
             }
         }
         for a in applied.into_iter().rev() {
@@ -683,9 +873,13 @@ impl Group {
                     prop,
                     id,
                     restore,
+                    held,
                     ..
                 } => {
                     let _ = engine.remove_override(obj, prop, id, restore);
+                    if held != BindingLayer::OWN {
+                        engine.forget_held_warnings(obj, prop, held);
+                    }
                 }
                 Applied::Parent { target, old } => {
                     if engine.is_alive(target) && old.is_none_or(|p| engine.is_alive(p)) {
@@ -697,6 +891,12 @@ impl Group {
                 }
             }
         }
+        let (bindings, values): (Vec<_>, Vec<_>) = holds
+            .into_iter()
+            .partition(|&(o, p, _, r)| r != RestoreMode::None && engine.base_is_bound(o, p));
+        for (obj, prop, id, restore) in values.into_iter().chain(bindings) {
+            let _ = engine.remove_override(obj, prop, id, restore);
+        }
     }
 
     fn push(
@@ -706,8 +906,14 @@ impl Group {
         content: OverrideContent,
         restore: RestoreMode,
         what: Layer,
+        held: BindingLayer,
     ) {
         if let Ok(id) = engine.push_override(obj, prop, content) {
+            // The property's own binding is not given back, so it says no
+            // more of what it held while the item was made (qml6).
+            if what == Layer::Property && restore == RestoreMode::None {
+                engine.forget_held_warnings(obj, prop, BindingLayer::OWN);
+            }
             // A later change of the same property (of a state that extends
             // another) takes the place of the earlier one, whose
             // `restoreEntryValues` then counts for nothing (qml6).
@@ -717,9 +923,14 @@ impl Group {
                         if *o == obj && *p == prop)
                 });
                 if let Some(i) = earlier
-                    && let Applied::Layer { id: under, .. } = self.applied.borrow_mut().remove(i)
+                    && let Applied::Layer {
+                        id: under,
+                        held: said,
+                        ..
+                    } = self.applied.borrow_mut().remove(i)
                 {
                     let _ = engine.remove_override(obj, prop, under, RestoreMode::BindingOrValue);
+                    engine.forget_held_warnings(obj, prop, said);
                 }
             }
             self.applied.borrow_mut().push(Applied::Layer {
@@ -728,6 +939,7 @@ impl Group {
                 id,
                 restore,
                 what,
+                held,
             });
         }
     }
@@ -738,7 +950,10 @@ impl Group {
             self.enter_properties(engine, change, round);
             return;
         }
-        self.flush(engine, round);
+        // A script sees the values the state gave before it, and none of
+        // its bindings: those go in once every change is in place (qml6).
+        let script = is_a::<StateChangeScript>(engine, change);
+        self.flush(engine, round, !script);
         if is_a::<AnchorChanges>(engine, change) {
             self.enter_anchors(engine, change, round);
         } else if is_a::<ParentChange>(engine, change) {
@@ -766,22 +981,38 @@ impl Group {
     /// a property is the one that counts, and the plain values go in
     /// before the expressions. An expression that reads another property
     /// the state changes is then no loop through that one's binding.
-    fn flush(&self, engine: &Engine, round: &mut Round) {
+    /// Without `bind` only the values go in, and the expressions wait.
+    fn flush(&self, engine: &Engine, round: &mut Round, bind: bool) {
         let mut pending = std::mem::take(&mut round.pending);
         for p in &pending {
             round.note(engine, p.target, p.prop, ChangeKind::Property);
         }
-        // A change a later plain value replaces shows nothing; one a later
-        // binding replaces is still made first, for the binding may read
-        // it (qml6).
+        for p in &mut pending {
+            if p.restore == RestoreMode::None
+                && let Some((.., r)) = round
+                    .restoring
+                    .iter()
+                    .find(|(o, q, _)| (*o, *q) == (p.target, p.prop))
+            {
+                p.restore = *r;
+            }
+        }
+        // A value a later value replaces shows nothing; a binding a later
+        // one replaces is still made first, for that one may read it. The
+        // bindings go in after the values, so that a property the state
+        // both binds and gives a value is bound, whichever comes first
+        // (qml6).
         let mut i = 0;
         while i < pending.len() {
             let (target, prop) = (pending[i].target, pending[i].prop);
-            if pending[i + 1..].iter().any(|p| {
-                p.target == target
-                    && p.prop == prop
-                    && matches!(p.content, OverrideContent::Value(_))
-            }) {
+            let value = matches!(pending[i].content, OverrideContent::Value(_));
+            if value
+                && pending[i + 1..].iter().any(|p| {
+                    p.target == target
+                        && p.prop == prop
+                        && matches!(p.content, OverrideContent::Value(_))
+                })
+            {
                 pending.remove(i);
             } else {
                 i += 1;
@@ -790,13 +1021,45 @@ impl Group {
         let (values, exprs): (Vec<_>, Vec<_>) = pending
             .into_iter()
             .partition(|p| matches!(p.content, OverrideContent::Value(_)));
-        round
-            .bound
-            .retain(|at| !values.iter().any(|p| (p.target, p.prop) == *at));
-        round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
-        for p in values.into_iter().chain(exprs) {
+        round.bound.retain(|at| {
+            !values.iter().any(|p| (p.target, p.prop) == *at)
+                || exprs.iter().any(|p| (p.target, p.prop) == *at)
+        });
+        // Every property the state binds is off its own binding before any
+        // value goes in or any of the state's bindings runs, so that one
+        // which reads another the state changes sees what it shows, is no
+        // loop through its own binding, and tells no change it does not
+        // keep (qml6).
+        let holds: Vec<_> = if bind && (exprs.len() > 1 || !values.is_empty() && !exprs.is_empty())
+        {
+            exprs
+                .iter()
+                .filter_map(|p| {
+                    let now = engine.untrack(|| engine.peek(p.target, p.prop));
+                    let id = engine
+                        .push_override(p.target, p.prop, OverrideContent::Value(now))
+                        .ok()?;
+                    Some((p.target, p.prop, id))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for p in values {
             let at = (p.target, p.prop);
-            self.push(engine, at, p.content, p.restore, Layer::Property);
+            self.push(engine, at, p.content, p.restore, Layer::Property, p.held);
+        }
+        if !bind {
+            round.pending = exprs;
+            return;
+        }
+        round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
+        for p in exprs {
+            let at = (p.target, p.prop);
+            self.push(engine, at, p.content, p.restore, Layer::Property, p.held);
+        }
+        for (obj, prop, id) in holds {
+            let _ = engine.remove_override(obj, prop, id, RestoreMode::None);
         }
     }
 
@@ -910,33 +1173,43 @@ impl Group {
             }
             let ty = type_of(engine, target, prop);
             let at = at.to_string();
+            let mut held = BindingLayer::OWN;
             let content = match value {
                 // `undefined` takes the property back to what it is
                 // without a value, which only a binding's value does.
                 ForeignValue::Value(Value::Undefined) => {
                     OverrideContent::Binding(Box::new(|_| Value::Undefined))
                 }
-                ForeignValue::Value(v) => match given_as(engine, &at, &ty, Some(v)) {
+                // A plain value, and one worked out once, is a variant.
+                ForeignValue::Value(v) => match given_as(engine, &at, &ty, ty.from_variant(v)) {
                     Some(v) => OverrideContent::Value(v),
                     None => continue,
                 },
                 ForeignValue::Binding(f) if explicit => {
                     let v = engine.untrack(|| f(engine, &asked(&ty)));
-                    match given_as(engine, &at, &ty, v) {
+                    match given_as(engine, &at, &ty, v.and_then(|v| ty.from_variant(v))) {
                         Some(v) => OverrideContent::Value(v),
                         None => continue,
                     }
                 }
                 ForeignValue::Binding(f) => {
                     // A run that failed keeps the value of the last that
-                    // did not.
-                    let mut last = engine.untrack(|| engine.read(target, prop));
+                    // did not, or what the property shows.
+                    let mut last: Option<Value> = None;
                     let ask = asked(&ty);
+                    // Held while the item is made, as a declared binding's
+                    // are, so that one taken off before then says nothing
+                    // (qml6).
+                    let layer = engine.new_binding_layer();
+                    held = layer;
                     OverrideContent::Binding(Box::new(move |e| {
-                        if let Some(v) = given_as(e, &at, &ty, f(e, &ask)) {
-                            last = v;
+                        let v = e.run_layer_binding(target, prop, layer, || {
+                            given_as(e, &at, &ty, f(e, &ask))
+                        });
+                        if let Some(v) = v {
+                            last = Some(v);
                         }
-                        last.clone()
+                        last.clone().unwrap_or_else(|| e.peek(target, prop))
                     }))
                 }
                 // Put in place above.
@@ -947,6 +1220,7 @@ impl Group {
                 prop,
                 content,
                 restore,
+                held,
             });
         }
         for Part {
@@ -998,6 +1272,7 @@ impl Group {
                 prop,
                 content,
                 restore,
+                held: BindingLayer::OWN,
             });
         }
     }
@@ -1065,6 +1340,7 @@ impl Group {
                 content,
                 RestoreMode::BindingOrValue,
                 Layer::Anchor,
+                BindingLayer::OWN,
             );
         }
     }
@@ -1124,20 +1400,14 @@ impl Group {
                 content,
                 RestoreMode::BindingOrValue,
                 Layer::Parent,
+                BindingLayer::OWN,
             );
         }
     }
 
-    /// Shows the change with `transition`.
-    fn run(
-        self: &Rc<Self>,
-        engine: &Engine,
-        transition: ObjectId,
-        anims: &[ObjectId],
-        mut changes: Changes,
-        starts: Vec<Value>,
-        round: &Round,
-    ) {
+    /// Takes the anchors the state gives out of the way, for a transition
+    /// to show where they put each item.
+    fn suspend(&self, engine: &Engine, changes: &mut Changes, round: &Round) -> Held {
         // Where the new anchors put each item, worked out while they are
         // in force; then they are taken out of the way, so that the item
         // stays where it is until an AnchorAnimation moves it or the
@@ -1183,32 +1453,47 @@ impl Group {
                 }
             }
         }
-        // Every changed property is held at the value it had, so that an
-        // animation that begins later still begins there.
-        let mut holds = Vec::new();
-        for (c, before) in changes.list.iter().zip(&starts) {
-            let hold = OverrideContent::Value(before.clone());
-            if let Ok(id) = engine.push_override(c.obj, c.prop, hold) {
-                holds.push((c.obj, c.prop, id, c.kind));
-            }
+        Held {
+            holds: Vec::new(),
+            suspended,
+            bound: round.bound.clone(),
         }
-        let timeline = Timed::of_transition(engine, anims, &changes);
+    }
+
+    /// Shows the change with `transition`.
+    fn run(
+        self: &Rc<Self>,
+        engine: &Engine,
+        transition: ObjectId,
+        anims: &[ObjectId],
+        changes: &Changes,
+        starts: &[Value],
+        held: Held,
+    ) {
+        let Held {
+            mut holds,
+            suspended,
+            bound,
+        } = held;
+        let timeline = Timed::of_transition(engine, anims, changes);
         let mut moved = Vec::new();
         timeline.moved(&mut moved);
         let mut given = Vec::new();
         timeline.given(&mut given);
-        given.retain(|at| !round.bound.contains(at));
+        given.retain(|at| !bound.contains(at));
         // What the transition does not name has its new value at once,
-        // or is its Behavior's to take there.
+        // or is its Behavior's to take there; what the state binds waits
+        // for the transition's end.
         holds.retain(|(obj, prop, id, _)| {
-            if moved.contains(&(*obj, *prop)) {
+            if moved.contains(&(*obj, *prop)) || bound.contains(&(*obj, *prop)) {
                 return true;
             }
             let _ = engine.remove_override(*obj, *prop, *id, RestoreMode::BindingOrValue);
             false
         });
-        for (c, before) in changes.list.iter().zip(&starts) {
-            if c.kind == ChangeKind::Property && !moved.contains(&(c.obj, c.prop)) {
+        for (c, before) in changes.list.iter().zip(starts) {
+            let at = (c.obj, c.prop);
+            if c.kind == ChangeKind::Property && !moved.contains(&at) && !bound.contains(&at) {
                 behavior::follow(engine, c.obj, c.prop, before, &c.to);
             }
         }

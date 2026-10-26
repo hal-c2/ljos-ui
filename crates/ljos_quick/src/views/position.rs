@@ -63,10 +63,16 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
     let Some(row) = usize::try_from(index).ok().filter(|r| *r < d.count()) else {
         return;
     };
+    // A change waiting for the next polish is laid out first, as a script
+    // that asks for a row expects the rows the model has now.
+    if st.due.get() {
+        pass::refresh(e, view);
+    }
     let mut moved = st.passes.get();
     // Whether the rows were laid out where the view already was, as the
     // layout effect last laid them out.
     let mut stayed = false;
+    let mut skipped = false;
     e.untrack(|| {
         let g = pass::read_geo(e, view, &st);
         let dir = flickable::dir(g.main);
@@ -113,10 +119,24 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
             None => g.content_position(to).clamp(b.min.min(b.max), b.max),
         };
         let b0 = flickable::bounds(e, view, g.main);
-        let lay_at = g.viewport(place(&b0));
         st.positioned.set(true);
         // Where it was told to go is where it stays.
         st.follow.set(false);
+        // Already there, with the rows the layout effect laid out there
+        // and nothing waiting: a pass would lay out the same rows again.
+        // A display that shows the last row each time one is edited asks
+        // this at every change.
+        let current = !st.due.get()
+            && !st.dirty.get()
+            && st.pending.borrow().is_none()
+            && !e.graph().batching();
+        if current && !guessed && place(&b0) == p0 {
+            st.bounds.set((b0.min, b0.max, 0.0));
+            st.at_edge.set(edge.map(|end| (end, p0)));
+            skipped = true;
+            return;
+        }
+        let lay_at = g.viewport(place(&b0));
         st.laid.set(None);
         pass::pass(e, view, &st, Some(lay_at));
         moved = st.passes.get();
@@ -139,6 +159,9 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
     // it is run for the delegates the pass made, unless the pass laid
     // out the same ones where the effect last did: it would do the same
     // again.
+    if skipped {
+        return;
+    }
     let Some(st) = state_of(e, view) else {
         return;
     };

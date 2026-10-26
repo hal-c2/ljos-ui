@@ -254,10 +254,10 @@ fn log_has_no_info(w: &mut LjosWorld, pattern: String) -> StepResult {
     log_matches(w, &pattern, LogLevel::Info, false)
 }
 
-#[then(regex = r#"^the log has (\d+) (infos|warnings) matching "([^"]+)"$"#)]
+#[then(regex = r#"^the log has (\d+) (infos?|warnings?) matching "([^"]+)"$"#)]
 fn log_has_infos(w: &mut LjosWorld, count: usize, kind: String, pattern: String) -> StepResult {
     let re = Regex::new(&pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
-    let level = if kind == "infos" {
+    let level = if kind.starts_with("info") {
         LogLevel::Info
     } else {
         LogLevel::Warning

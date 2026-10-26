@@ -1541,11 +1541,19 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     _ => return None,
                 }
             }
-            // `("name")` is an expression to qml6, not a colour written in
-            // the file: a name that is no colour is not refused.
-            Expression::ParenthesizedExpression(inner) => {
+            // `(-1)` and `("name")` are expressions to qml6, not values
+            // written in the file: a name that is no colour is not refused,
+            // and a state's change binds the property. `({ … })` is how an
+            // object is written at all.
+            Expression::ParenthesizedExpression(inner)
+                if matches!(
+                    inner.expression,
+                    Expression::ObjectExpression(_) | Expression::ArrayExpression(_)
+                ) =>
+            {
                 return self.literal(&inner.expression, false);
             }
+            Expression::ParenthesizedExpression(_) => return None,
             Expression::ArrayExpression(array) => {
                 let mut items = Vec::new();
                 for element in &array.elements {

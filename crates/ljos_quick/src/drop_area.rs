@@ -697,6 +697,26 @@ fn tell(
     }
 }
 
+/// The action a drag from outside the window that offers `keys` would be
+/// taken with at `pos`, as far as the DropAreas' `keys` tell it: what the
+/// window system can be told at once, before the drag's data is read and
+/// the areas' handlers run. No handler runs. `None`: no area takes it.
+/// `over` is an item of the window it is over, as for
+/// [`PlatformDrag::over`]; `None` looks in every window.
+pub fn platform_drag_offered(
+    engine: &Engine,
+    over: Option<ObjectId>,
+    keys: &[String],
+    actions: DragActions,
+    pos: kurbo::Point,
+) -> Option<DropAction> {
+    let window = over.map(|item| engine.untrack(|| crate::focus::tree::top_of(engine, item)));
+    if areas_at(engine, pos, window, None, keys).is_empty() {
+        return None;
+    }
+    actions.told(Some(actions.proposed))
+}
+
 /// The DropArea that took the drag from outside the window when it came
 /// over it, if one did: where a drop now would go.
 pub fn platform_drag_target(engine: &Engine) -> Option<ObjectId> {
@@ -729,6 +749,11 @@ pub(crate) fn register(engine: &Engine) {
         let point = |at: (f64, f64)| kurbo::Point::new(at.0, at.1);
         let told = |n: i32| DropAction::from_qt(n);
         match drag {
+            ExternalDrag::Offered {
+                formats,
+                at,
+                actions,
+            } => platform_drag_offered(engine, None, formats, *actions, point(*at)),
             ExternalDrag::Entered { data, at, actions } => {
                 // Cloned out: no borrow is held while the areas are told.
                 let drag = {

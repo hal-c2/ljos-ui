@@ -131,7 +131,10 @@ fn gather(engine: &Engine, me: ObjectId) -> Option<Place> {
                 engine.log(
                     LogLevel::Warning,
                     "qml",
-                    format!("{at}QML Synchronizer: Target object has no property called {name}"),
+                    format!(
+                        "{at}QML {}: Target object has no property called {name}",
+                        engine.warning_type_name(me, "Synchronizer")
+                    ),
                 );
                 None
             }

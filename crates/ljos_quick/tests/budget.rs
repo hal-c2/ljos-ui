@@ -129,33 +129,48 @@ fn shown(e: &Engine, view: ObjectId) -> usize {
 
 /// The ListView delegate of `bench/listview.qml`: a Rectangle with a
 /// required index, a binding to the view's width and a Text anchored in it.
-fn listview_delegates() -> (Budget, usize) {
+/// A row's text: one short line.
+const ONE_LINE: &str = r##"Text {
+        anchors.verticalCenter: parent.verticalCenter
+        x: 12
+        text: "Row " + row.index
+      }"##;
+
+/// A row's text: a message wrapped on two lines, the second elided.
+const WRAPPED: &str = r##"Text {
+        x: 12
+        width: row.width - 24
+        wrapMode: Text.WordWrap
+        maximumLineCount: 2
+        elide: Text.ElideRight
+        text: "Message " + row.index + ": the quick brown fox jumps over the lazy dog while light falls on northern hills and every small window glows"
+      }"##;
+
+fn listview_delegates(text: &str) -> (Budget, usize) {
     let e = engine();
     let root = load(
         &e,
-        r##"import QtQuick
-Rectangle {
+        &format!(
+            r##"import QtQuick
+Rectangle {{
   width: 400; height: 200
-  ListView {
+  ListView {{
     objectName: "view"
     anchors.fill: parent
     cacheBuffer: 0
     model: 10000
-    delegate: Rectangle {
+    delegate: Rectangle {{
       id: row
       required property int index
       width: ListView.view.width
       height: 40
       color: index % 2 ? "#eeeeee" : "white"
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        x: 12
-        text: "Row " + row.index
-      }
-    }
-  }
-}
-"##,
+      {text}
+    }}
+  }}
+}}
+"##
+        ),
     );
     let view = find(&e, root, "view");
     let mut s = scene(&e, root, 400.0, 1000.0);
@@ -263,11 +278,11 @@ fn plain_teardown() -> Teardown {
 #[test]
 fn ten_listview_delegates() {
     let _alone = alone();
-    let (b, made) = listview_delegates();
+    let (b, made) = listview_delegates(ONE_LINE);
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
-    // attached or grouped), 9 values, 6 bindings, 15 effects, 2 scopes,
-    // no member or type lookups, 140.7 allocations. What the component
+    // attached or grouped), 9 values, 6 bindings, 11 effects, 2 scopes,
+    // no member or type lookups, 130.5 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -287,7 +302,13 @@ fn ten_listview_delegates() {
     // kept a map per concern, a list of effects and a box for the inherited
     // layers (twenty-five fewer, B27);
     // only the Text is anchored, and only an anchored item has an anchors
-    // effect (the Rectangle's, and nineteen fewer).
+    // effect (the Rectangle's, and nineteen fewer). An item's place and
+    // geometry are marks its properties' change hooks set, read at the
+    // frame, where each was an effect (four effects and ten allocations
+    // fewer a delegate, B28).
+    // A text is shaped by harfrust as Parley drives it once its font is set
+    // up, which sets up the font's lookups as texts first use them (17
+    // more here, the rows' digits being new; none once they are, TEXT5).
     assert_eq!(
         b,
         Budget {
@@ -295,7 +316,7 @@ fn ten_listview_delegates() {
             graph: Census {
                 values: 90,
                 bindings: 60,
-                effects: 150,
+                effects: 110,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -304,7 +325,48 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1407,
+            allocations: 1322,
+        }
+    );
+}
+
+#[test]
+fn ten_wrapped_listview_delegates() {
+    let _alone = alone();
+    let (b, made) = listview_delegates(WRAPPED);
+    assert_eq!(made, 10);
+    // Per delegate: 3 objects, 8 values, 5 bindings, 10 effects, 2
+    // scopes; 135.4 allocations. The two enumerations its text names,
+    // `Text.WordWrap` and `Text.ElideRight`, are looked up as a type once
+    // for the file, not once a delegate (twenty fewer lookups, TEXT5).
+    // The text is broken into lines and its last line elided without
+    // Parley's builder or the layouts it makes (32 fewer a delegate,
+    // TEXT4).
+    // The scene's one record an item, and an anchors effect only for an
+    // anchored item, make 82 fewer and 20 fewer effects (B27). Place and
+    // geometry as marks a change hook sets make 4 fewer effects a
+    // delegate (B28).
+    // Its text is shaped by harfrust as Parley drives it once the font is
+    // set up, which sets the font's lookups up as texts first use them (56
+    // more here, in the first rows; a fifth of an allocation a text once a
+    // scroll has warmed the font, TEXT5).
+    assert_eq!(
+        b,
+        Budget {
+            objects: 30,
+            graph: Census {
+                values: 80,
+                bindings: 50,
+                effects: 100,
+                scopes: 20,
+            },
+            lookups: Lookups {
+                members: 0,
+                types: 0,
+                names: 0,
+                atoms: 0,
+            },
+            allocations: 1354,
         }
     );
 }
@@ -314,15 +376,17 @@ fn ten_plain_items() {
     let _alone = alone();
     let (b, made) = plain_items();
     assert_eq!(made, 10);
-    // Per instance: 2 objects, 6 values, 2 bindings, 13 effects, 2 scopes,
+    // Per instance: 2 objects, 6 values, 2 bindings, 9 effects, 2 scopes,
     // 1 member lookup (the property `createObject` is given, by its name)
-    // and no type lookups, 90.6 allocations; the id (`item`) is found
+    // and no type lookups, 83.3 allocations; the id (`item`) is found
     // by slot. One of the ten grows what keeps a text's lines' items
     // between measuring and painting. A one-line plain text is laid out
     // without Parley's builder (fifteen fewer over the ten), and B26 put
     // each binding in one box (thirty fewer). B27's one scene record an
     // item took twenty-eight off, and an anchors effect only for an item
-    // with an anchor, which neither has, forty-nine more.
+    // with an anchor, which neither has, forty-nine more. B28's marks for
+    // an item's place and geometry, where it had an effect each, took
+    // seventy-three more.
     assert_eq!(
         b,
         Budget {
@@ -330,7 +394,7 @@ fn ten_plain_items() {
             graph: Census {
                 values: 60,
                 bindings: 20,
-                effects: 130,
+                effects: 90,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -339,7 +403,7 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 906,
+            allocations: 833,
         }
     );
 }
@@ -353,13 +417,14 @@ fn ten_plain_items_torn_down() {
     // its items, the header list and a list edit of the holder. B26 took
     // it from 13.7 by holding the walks over the dead inline. Two nodes
     // fewer an instance since B27: neither item is anchored, and has no
-    // anchors effect to let go of.
+    // anchors effect to let go of; four fewer since B28, which keeps an
+    // item's place and geometry as marks and not as two effects an item.
     assert_eq!(
         plain_teardown(),
         Teardown {
             objects: 20,
             scopes: 20,
-            nodes: 210,
+            nodes: 170,
             allocations: 57,
         }
     );

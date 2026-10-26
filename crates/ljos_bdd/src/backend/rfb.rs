@@ -397,21 +397,24 @@ impl Rfb {
         self.stream.write_all(&buf)
     }
 
-    /// Two clicks of the left button at one place: a double click.
+    /// `count` clicks of the left button at one place: a double click, a
+    /// triple click.
     ///
     /// The one place where time matters: Qt takes two presses with the same
-    /// timestamp for one, so the second click waits until the clock has
+    /// timestamp for one, so each later click waits until the clock has
     /// moved, far inside the double-click interval.
-    pub(super) fn double_click(&mut self, x: u16, y: u16) -> io::Result<()> {
+    pub(super) fn clicks(&mut self, count: u8, x: u16, y: u16) -> io::Result<()> {
         let mut buf = Vec::new();
         Self::pointer(&mut buf, 0, x, y);
-        Self::pointer(&mut buf, 1, x, y);
-        Self::pointer(&mut buf, 0, x, y);
-        self.stream.write_all(&buf)?;
-        thread::sleep(DOUBLE_CLICK_GAP);
-        buf.clear();
-        Self::pointer(&mut buf, 1, x, y);
-        Self::pointer(&mut buf, 0, x, y);
+        for i in 0..count {
+            if i > 0 {
+                self.stream.write_all(&buf)?;
+                thread::sleep(DOUBLE_CLICK_GAP);
+                buf.clear();
+            }
+            Self::pointer(&mut buf, 1, x, y);
+            Self::pointer(&mut buf, 0, x, y);
+        }
         self.ack(&mut buf);
         self.stream.write_all(&buf)
     }

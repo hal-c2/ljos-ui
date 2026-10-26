@@ -29,7 +29,8 @@ use serde_json::{Value, json};
 
 use super::inspector::{Answer, Ask, Refusal, Seen};
 use super::{
-    A11yNode, Backend, BackendError, Files, LogEntry, PointerStep, Probes, QmlFile, Result, Tooling,
+    A11yNode, Backend, BackendError, Files, LogEntry, LogLevel, PointerStep, Probes, QmlFile,
+    Result, Tooling,
 };
 
 /// Names the file with the sandbox's sockets; set when one runs.
@@ -238,9 +239,16 @@ impl Running {
                     ..Answer::default()
                 });
             }
+            let picture = result["content"].as_array().and_then(|content| {
+                content
+                    .iter()
+                    .find(|c| c["type"] == "image")
+                    .and_then(|c| ljos_mcp_core::base64_decode(c["data"].as_str()?))
+            });
             return Ok(Answer {
                 structured: result["structuredContent"].clone(),
                 text,
+                picture,
                 ..Answer::default()
             });
         }
@@ -295,6 +303,20 @@ impl Running {
         })?;
         // An application that keeps animating never rests; what it costs
         // is then measured as it goes.
+        Ok(())
+    }
+
+    /// Waits until the application rests with its window's last frame
+    /// presented: no pass due, and none owed to the window. Under load
+    /// the window system lets a window draw late, and the thread rests
+    /// meanwhile with only that stall's wake due, so a rest alone can
+    /// come before the frame (`features/window/cpu-drawing.feature`).
+    fn presented(&mut self, deadline: Instant) -> Result<()> {
+        self.rest_until(deadline, |rest| {
+            rest["wake_in_ms"].as_u64() != Some(0) && rest["frame_owed"] == Value::Bool(false)
+        })?;
+        // A window that keeps drawing owes a frame at every rest; the
+        // compositor's picture is then never still, which `grab` says.
         Ok(())
     }
 
@@ -440,6 +462,10 @@ impl DesktopBackend {
             .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
             .env_remove("AT_SPI_BUS_ADDRESS")
             .envs(sandbox.env.iter().filter(|(k, _)| *k != "DISPLAY"))
+            // The sandbox's compositor composes in software, where the
+            // shell would draw on the processor of itself: the scenarios
+            // check GL's drawing unless one says otherwise.
+            .env("LJOS_PAINTER", "gl")
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -740,22 +766,39 @@ impl Backend for DesktopBackend {
     }
 
     fn log(&mut self) -> Result<Vec<LogEntry>> {
-        Err(not_yet("the log on the desktop"))
+        // What the inspector keeps of the engine's log, the shell's own
+        // lines among them, as `app_logs` lists it.
+        let told = self.running()?.ask("app_logs", json!({"level": "info"}))?;
+        let entries = told["entries"].as_array().cloned().unwrap_or_default();
+        Ok(entries
+            .iter()
+            .filter_map(|e| {
+                let level = match e["level"].as_str()? {
+                    "debug" => LogLevel::Debug,
+                    "info" => LogLevel::Info,
+                    "warning" => LogLevel::Warning,
+                    _ => LogLevel::Critical,
+                };
+                let message = e["message"].as_str()?.to_owned();
+                Some(LogEntry { level, message })
+            })
+            .collect())
     }
 
     fn grab(&mut self) -> Result<Vec<u8>> {
         // What the compositor shows, as a person sees it: the frames the
         // application sent, after whatever it painted them with.
-        // The application has drawn all it was going to once it rests;
-        // the compositor shows its last frame a moment later.
-        self.running()?.settle()?;
+        // The application has drawn all it was going to once it rests
+        // with its last frame presented; the compositor shows that frame
+        // a moment later.
+        let deadline = Instant::now() + PICTURE;
+        self.running()?.presented(deadline)?;
         let rect = self.running()?.rect;
         let display = self
             .sandbox
             .as_ref()
             .ok_or_else(|| BackendError::Failed("no sandbox".into()))?
             .path("WAYLAND_DISPLAY")?;
-        let deadline = Instant::now() + PICTURE;
         let failed = |e: ljos_bench::wayland::Error| {
             BackendError::Failed(format!("the sandbox's screencopy: {e}"))
         };
@@ -804,6 +847,33 @@ impl Files for DesktopBackend {
 }
 
 impl Probes for DesktopBackend {
+    fn draw_on_processor(&mut self) -> Result<()> {
+        self.env.push(("LJOS_PAINTER".to_owned(), "cpu".to_owned()));
+        Ok(())
+    }
+
+    fn let_shell_choose_painter(&mut self) -> Result<()> {
+        // Set and empty: chosen by nobody, and not GL by default (`start`).
+        self.env.push(("LJOS_PAINTER".to_owned(), String::new()));
+        Ok(())
+    }
+
+    fn reference_picture(&mut self) -> Result<Vec<u8>> {
+        // Of the frame the window shows once it rests, as `grab` takes it.
+        let running = self.running()?;
+        running.settle()?;
+        let answer = running.call("app_screenshot", json!({}))?;
+        if let Some(r) = answer.refusal {
+            return Err(BackendError::Failed(format!(
+                "app_screenshot: {}",
+                r.message
+            )));
+        }
+        answer
+            .picture
+            .ok_or_else(|| BackendError::Failed("app_screenshot gave no picture".into()))
+    }
+
     fn count_passes(&mut self) -> Result<()> {
         // Two readings say what one costs: its own pass, and any that pass
         // asked for, which have run once the thread rests.

@@ -7,13 +7,20 @@
 # Found by ljos-fuzz (states), seeds 101 and 202: buckets value:onChanged:text,
 # onChanged:empty-ljos, value:load:empty-ljos, value:load:number, value:step:color,
 # binding-loop(ljos-only), warning:assign(ljos-only) and the restoreEntryValues ones (see
-# crates/ljos_fuzz/known/states.txt).
+# crates/ljos_fuzz/known/states.txt); after B26, value:step:invalid-qt, a colour given a list.
+# Backlog: a state's changes are made in one batch and the handlers they set off run after it,
+# where qml6 runs each as its change is made; that is the graph's batching (bindings
+# infrastructure). Seed 303, connections bucket value:step:bool-vs-record.
+# Seed 101, connections bucket value:onChanged+onCompleted:text: a state's binding of a property
+# whose own binding reads another the state gives a value, entered and left.
+# Seed 303, states bucket value:load:invalid-ljos: a when that picks a state where the item is
+# made, which is given another state by name, runs the transition from that one.
 
 @qt-parity
 Feature: The order of a state change
   An item's state given where it is made is told as a change, and the state's scripts run
-  after; a state a `when` picks where the item is made runs the transitions to it, and one
-  given by name does not. A state no state has is still a change transitions run for. A
+  after; a state a `when` picks where the item is made runs the transitions to it, from the
+  state given by name if there is one, and one given by name does not. A state no state has is still a change transitions run for. A
   PropertyChanges that reads what it changes reads it once, and a PropertyAction reads its value
   before the changes are made.
 
@@ -114,6 +121,36 @@ Feature: The order of a state change
       }
       """
     Then the property "seen" of "root" is "|"
+
+  Scenario Outline: A when that picks a state where the item is made runs the transition from the state given by name
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property int p: 1
+        states: [State { name: "s0"; when: <when> },
+                 State { name: "s1"; when: false; PropertyChanges { target: root; p: 5 } },
+                 State { name: "s2" }]
+        <state>
+        onStateChanged: log += "st=" + state + ";"
+        transitions: [Transition { from: "*"; ScriptAction { script: root.log += "t0;" } },
+                      Transition { from: ""; to: "*"; ScriptAction { script: root.log += "t1;" } },
+                      Transition { from: "s1"; ScriptAction { script: root.log += "t2;" } }]
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "log" of "root" is "<log>"
+    And the property "p" of "root" is 1
+
+    Examples:
+      | when  | state       | log       |
+      | true  | state: "s2" | st=s0;t0; |
+      | true  |             | st=s0;t1; |
+      | false | state: "s1" | st=;t2;   |
+      | false | state: "s2" | st=s2;    |
+      | true  | state: "s0" | st=s0;    |
 
   Scenario: A transition runs to a state no state has
     Given the QML:
@@ -238,6 +275,42 @@ Feature: The order of a state change
     Then the property "seen" of "root" is "#000000 false 4 4"
     And the log has 2 warnings matching "Unable to assign"
 
+  Scenario Outline: A change of a colour to <what> makes it invalid, unwarned
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property color c: Qt.rgba(0, 0, 1, 1)
+        states: [State { name: "s0"; PropertyChanges { target: root; c: <value> } }]
+      }
+      """
+    When the property "state" of "root" is set to "s0"
+    Then the property "c" of "root" is "#000000"
+    And the log has no warnings
+
+    Examples:
+      | what              | value                |
+      | a worked-out list | "".split(",")        |
+      | an empty list     | []                   |
+      | an object's keys  | Object.keys({k0: 1}) |
+      | an object         | ({a: 1})             |
+      | a date            | new Date(0)          |
+
+  Scenario: A change of a colour to a function is refused, and warned of
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property color c: "blue"
+        states: [State { name: "s0"; PropertyChanges { target: root; c: (function () { return 1 }) } }]
+      }
+      """
+    When the property "state" of "root" is set to "s0"
+    Then the property "c" of "root" is "#0000ff"
+    And the log has 1 warning matching "Scenario.qml:5:70: Unable to assign a function to a property of any type other than var."
+
   Scenario: A change an extended state keeps is restored when the default state is set
     Given the QML:
       """qml
@@ -337,3 +410,57 @@ Feature: The order of a state change
       """
     When the method "run" of "root" is called
     Then the log has a warning matching "Binding loop detected for property .a."
+
+  Scenario Outline: A state's binding of a property whose own binding reads what it changes tells no change it does not keep
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property bool p0
+        property bool p1: root.p0
+        property bool p2: !root.p0
+        states: [State { name: "s1"; <changes> }]
+        <made>
+        onP1Changed: log += "p1:" + p1 + ";"
+        Component.onCompleted: log += "made;"
+        function run() { state = "s1"; log += "in;"; state = ""; log += "out;" }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "log" of "root" is "<log>"
+
+    Examples:
+      | made        | changes                                                                                | log                               |
+      | state: "s1" | PropertyChanges { target: root; p1: isNaN(255) } PropertyChanges { root.p0: true }     | made;in;out;                      |
+      |             | PropertyChanges { target: root; p1: isNaN(255) } PropertyChanges { root.p0: true }     | made;in;out;                      |
+      |             | PropertyChanges { root.p0: true } PropertyChanges { target: root; p1: root.p2 }       | made;in;out;                      |
+      |             | PropertyChanges { target: root; p0: true; p1: false; p2: root.p1 }                     | made;in;out;                      |
+      |             | PropertyChanges { target: root; p1: isNaN(255); restoreEntryValues: false } PropertyChanges { root.p0: true } | made;in;out;    |
+      |             | PropertyChanges { target: root; p1: isNaN(255) } PropertyChanges { root.p0: true; restoreEntryValues: false } | made;in;p1:true;out; |
+      |             | PropertyChanges { target: root; p1: false; p0: true }                                  | made;in;out;                      |
+
+  @backlog
+  Scenario Outline: A handler a state's change sets off runs as the change is made
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property int p0
+        property var p1
+        states: [State { name: "s0"; PropertyChanges { target: root; p1: <v> } },
+                 State { name: "s1"; extend: "s0"; PropertyChanges { root.p0: 42 } }]
+        onP0Changed: { log += "p0;"; root.p1 = ({k0: 1}); }
+        onP1Changed: log += "p1=" + JSON.stringify(p1).replace(/"/g, "") + ";"
+      }
+      """
+    When the property "state" of "root" is set to "s1"
+    Then the property "log" of "root" is "<log>"
+
+    Examples:
+      | v               | log                    |
+      | (true && false) | p0;p1={k0:1};p1=false; |
+      | false           | p1=false;p0;p1={k0:1}; |

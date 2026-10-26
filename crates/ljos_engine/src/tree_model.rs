@@ -258,12 +258,13 @@ impl TreeState {
     }
 
     pub(crate) fn warn(&self, engine: &Engine, what: &str) {
-        let at = self
-            .me
-            .get()
-            .and_then(|o| engine.location_of(o))
-            .unwrap_or_default();
-        engine.warn(format!("{at}QML {}: {what}", self.name));
+        let me = self.me.get();
+        let at = me.and_then(|o| engine.location_of(o)).unwrap_or_default();
+        let name = me.map_or_else(
+            || self.name.to_owned(),
+            |o| engine.warning_type_name(o, self.name),
+        );
+        engine.warn(format!("{at}QML {name}: {what}"));
     }
 
     /// Writes `rows` back, so scripts read the tree as it is now.

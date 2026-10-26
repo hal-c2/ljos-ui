@@ -31,7 +31,10 @@ pub use ljos_dev::{TopRow, TopView};
 #[cfg(feature = "mcp")]
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
+#[cfg(target_os = "macos")]
+mod appkit_drag;
 mod badge;
+mod cpu;
 mod desktop;
 mod desktop_font;
 mod drags;
@@ -43,6 +46,7 @@ mod gl;
 mod gl_mesh;
 #[cfg(gl_painter)]
 mod gl_shader;
+mod native_drag;
 mod network;
 mod platform;
 mod present;
@@ -50,11 +54,15 @@ mod repaint;
 mod roots;
 mod screen_reader;
 mod settings;
+#[cfg(gl_painter)]
+mod software;
 mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
 mod test_bus;
 mod wayland_drag;
+#[cfg(target_os = "windows")]
+mod win32_drag;
 mod windows;
 mod x11_drag;
 
@@ -110,6 +118,16 @@ pub struct ShellConfig {
     /// The environment's `LJOS_PREFER_X11` (`1` or `0`) overrides it, for
     /// the user to choose either way.
     pub prefer_x11: bool,
+    /// [`run`] draws its windows on the processor, into memory it shares
+    /// with the window system (`wl_shm`, X11's MIT-SHM), with no graphics
+    /// driver: the reference renderer draws what changed. A `ShaderEffect`'s
+    /// own program and what egui draws (the inspector) are left out, and
+    /// the log says so once. False draws with GL, or wgpu where there is
+    /// no GL; where EGL would offer only a software rasteriser and the
+    /// background is opaque, the shell draws on the processor itself, and
+    /// goes to GL as soon as a window shows what it leaves out. The
+    /// environment's `LJOS_PAINTER` (`cpu`, `gl` or `wgpu`) overrides it.
+    pub drawn_on_processor: bool,
 }
 
 impl Default for ShellConfig {
@@ -125,6 +143,7 @@ impl Default for ShellConfig {
             system_fonts: true,
             system_locale: true,
             prefer_x11: false,
+            drawn_on_processor: false,
         }
     }
 }
@@ -156,6 +175,12 @@ impl ShellConfig {
     /// See [`ShellConfig::prefer_x11`].
     pub fn prefer_x11(mut self) -> Self {
         self.prefer_x11 = true;
+        self
+    }
+
+    /// See [`ShellConfig::drawn_on_processor`].
+    pub fn drawn_on_processor(mut self) -> Self {
+        self.drawn_on_processor = true;
         self
     }
 }

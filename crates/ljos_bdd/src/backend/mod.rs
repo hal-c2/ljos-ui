@@ -179,6 +179,12 @@ pub enum OutsideDrag {
         formats: Vec<(String, String)>,
         at: (f64, f64),
     },
+    /// It comes over the window at this point, offering these MIME
+    /// types, before the window system has handed over what they hold.
+    Offer {
+        formats: Vec<String>,
+        at: (f64, f64),
+    },
     Move((f64, f64)),
     /// Where it is, the other application now proposes this action
     /// (`"copy"`, `"move"` or `"link"`).
@@ -428,9 +434,10 @@ pub trait Input: Backend {
         Err(BackendError::NotImplemented("a click with modifiers held"))
     }
 
-    /// Two clicks at one place in quick succession.
-    fn double_click(&mut self, _x: f64, _y: f64) -> Result<()> {
-        Err(BackendError::NotImplemented("a double click"))
+    /// `count` clicks of the left button at one place in quick
+    /// succession: a double click, a triple click.
+    fn clicks(&mut self, _count: u8, _x: f64, _y: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a double or triple click"))
     }
 
     /// Press at `from`, move to `to` with the button held, release there.
@@ -1095,6 +1102,37 @@ pub trait Probes: Backend {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "counting the work an observed application does",
+        })
+    }
+
+    /// Draws the windows the application opens from now on on the
+    /// processor, into memory shared with the window system, rather than
+    /// through a graphics driver. Only a desktop shell has more than one
+    /// way to draw; the oracle's is its own.
+    fn draw_on_processor(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "drawing the window on the processor",
+        })
+    }
+
+    /// Lets the shell choose what draws the windows the application opens
+    /// from now on, as it does for a user who did not choose: the
+    /// processor where a graphics driver would draw in software too.
+    fn let_shell_choose_painter(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "the shell's own choice of what draws the window",
+        })
+    }
+
+    /// The window as the reference renderer (R) draws the scene it shows
+    /// now, as a PNG the size of [`Backend::grab`]'s. Only a window drawn
+    /// some other way has a second picture to compare.
+    fn reference_picture(&mut self) -> Result<Vec<u8>> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "the reference renderer's picture of the window",
         })
     }
 

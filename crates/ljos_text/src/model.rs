@@ -413,6 +413,19 @@ impl TextModel {
         self.cursor = r.end;
     }
 
+    /// Selects the paragraph the cursor is in with the line break that
+    /// ends it, and leaves the cursor after that: what a triple click
+    /// selects in Qt 6.11. A one-line field is one paragraph.
+    pub fn select_paragraph(&mut self) {
+        let r = self.paragraph_bytes(self.cursor);
+        self.anchor = r.start;
+        self.cursor = if r.end < self.text.len() {
+            r.end + 1
+        } else {
+            r.end
+        };
+    }
+
     fn paragraph_bytes(&self, at: usize) -> Range<usize> {
         let start = self.text[..at].rfind('\n').map_or(0, |i| i + 1);
         let end = self.text[at..]
@@ -1063,6 +1076,21 @@ mod tests {
         assert_eq!((m.next_word(0), m.next_word(5)), (5, 6));
         let m = model("hello brave\nworld");
         assert_eq!((m.prev_word(17), m.prev_word(12)), (12, 11));
+    }
+
+    #[test]
+    fn select_paragraph_takes_its_line_break_with_it() {
+        let mut m = model("one two\nthree");
+        m.move_to(4, false);
+        m.select_paragraph();
+        assert_eq!((m.anchor(), m.selection()), (0, 0..8));
+        m.move_to(10, false);
+        m.select_paragraph();
+        assert_eq!(m.selection(), 8..13);
+        let mut m = model("one");
+        m.move_to(1, false);
+        m.select_paragraph();
+        assert_eq!(m.selection(), 0..3);
     }
 
     #[test]

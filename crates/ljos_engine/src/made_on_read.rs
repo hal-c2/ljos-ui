@@ -17,11 +17,16 @@ use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
 use crate::value::Value;
 
-/// See [`Engine::make_on_read`] and [`Engine::bind_on_read`].
+/// See [`Engine::make_on_read`], [`Engine::make_on_read_by`] and
+/// [`Engine::bind_on_read`].
 pub(crate) enum Maker {
     Value(Box<dyn FnOnce(&Engine) -> Value>),
+    By(MakeOnRead),
     Bind(BindOnRead),
 }
+
+/// Makes the value of `prop` of `obj`; see [`Engine::make_on_read_by`].
+pub type MakeOnRead = fn(&Engine, ObjectId, PropIndex) -> Value;
 
 /// Binds `prop` of `obj`; see [`Engine::bind_on_read`].
 pub type BindOnRead = fn(&Engine, ObjectId, PropIndex) -> Result<(), EngineError>;
@@ -105,6 +110,26 @@ impl Engine {
         h.ext_mut()
             .made_on_read
             .set(prop, Maker::Value(Box::new(make)));
+        Ok(())
+    }
+
+    /// [`Engine::make_on_read`] by a function, which costs no allocation:
+    /// an item that makes several values on a read from one piece of work
+    /// (a text's sizes from its layout) keeps that work itself and hands
+    /// each property its part.
+    pub fn make_on_read_by(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        make: MakeOnRead,
+    ) -> Result<(), EngineError> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let mut store = self.inner.store.borrow_mut();
+        let h = store
+            .objects
+            .get_mut(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
+        h.ext_mut().made_on_read.set(prop, Maker::By(make));
         Ok(())
     }
 
@@ -255,9 +280,11 @@ impl Engine {
     /// A read of `prop` is about to happen: its value is made first if it
     /// is still to be.
     pub(crate) fn make_if_due(&self, obj: ObjectId, prop: PropIndex) {
-        let make = match self.take_maker(obj, prop) {
+        let v = match self.take_maker(obj, prop) {
             None => return,
-            Some(Maker::Value(make)) => make,
+            // Untracked: what the maker reads is not what the reader reads.
+            Some(Maker::Value(make)) => self.untrack(|| make(self)),
+            Some(Maker::By(make)) => self.untrack(|| make(self, obj, prop)),
             Some(Maker::Bind(bind)) => {
                 // Untracked: the binding's reads are not the reader's.
                 if let Err(err) = self.untrack(|| bind(self, obj, prop)) {
@@ -266,8 +293,6 @@ impl Engine {
                 return;
             }
         };
-        // Untracked: what the maker reads is not what the reader reads.
-        let v = self.untrack(|| make(self));
         let v = self.for_slot(obj, prop, v);
         let node = {
             let mut store = self.inner.store.borrow_mut();

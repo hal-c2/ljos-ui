@@ -1490,7 +1490,7 @@ impl Engine {
                     ),
                 }
             }
-            Value::Enum(e) => JsValue::Number(f64::from(e.number())),
+            Value::Enum(e) => JsValue::Number(f64::from(e.value)),
             Value::Js(h) => JsValue::Handle(h.0.clone()),
         }
     }
@@ -2628,6 +2628,31 @@ const PRELUDE: &str = r##"
       return i === 0 && search === "" && String(this) === "" ? -1 : i;
     });
   }
+
+  // Qt's Math.hypot divides each number by the largest and sums the
+  // squares in order, which is at times an ulp from the engine's correctly
+  // rounded one; a number written out shows that ulp.
+  method(Math, "hypot", function hypot(x, y) {
+    const n = arguments.length;
+    const xs = new Array(n);
+    let most = 0;
+    let nan = false;
+    for (let i = 0; i < n; i++) {
+      const v = Math.abs(+arguments[i]);
+      xs[i] = v;
+      if (v !== v) nan = true;
+      else if (v > most) most = v;
+    }
+    if (most === Infinity) return Infinity;
+    if (nan) return NaN;
+    if (most === 0) return 0;
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const q = xs[i] / most;
+      sum += q * q;
+    }
+    return Math.sqrt(sum) * most;
+  });
 })();
 "##;
 

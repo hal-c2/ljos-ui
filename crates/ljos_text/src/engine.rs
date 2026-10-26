@@ -7,6 +7,8 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
 
+use icu_segmenter::LineSegmenter;
+use icu_segmenter::options::{LineBreakOptions, LineBreakStrictness, LineBreakWordOption};
 use ljos_render::kurbo::Rect;
 use ljos_render::{Decorations, FontTables, GlyphRun, PositionedGlyph};
 use ljos_runtime::Platform;
@@ -377,8 +379,12 @@ struct PinnedFont {
     synthesis: Synthesis,
 }
 
-/// Texts with characters from here up are never pinned.
+/// Texts with characters from here up are never pinned, but for the
+/// ellipsis.
 const PINNED_BELOW: usize = 0x2000;
+
+/// [`ELLIPSIS`] as a character.
+const ELLIPSIS_CHAR: char = '\u{2026}';
 
 impl FirstFont {
     fn new(
@@ -402,10 +408,20 @@ impl FirstFont {
     }
 
     /// Whether the font has a glyph for every character of `text`, all
-    /// below [`PINNED_BELOW`].
+    /// below [`PINNED_BELOW`] or the ellipsis.
     fn covers(&mut self, text: &str) -> bool {
         let mut charmap = None;
         for c in text.chars() {
+            if c == ELLIPSIS_CHAR {
+                // Only an elided text has it; not worth a bit.
+                let Some(map) = self.charmap.charmap(self.blob.as_ref()) else {
+                    return false;
+                };
+                if map.map(c).is_none_or(|g| g == 0) {
+                    return false;
+                }
+                continue;
+            }
             let at = c as usize;
             let (word, bit) = (at / 64, 1_u64 << (at % 64));
             if self.seen[word] & bit == 0 {
@@ -513,12 +529,13 @@ impl Families {
     ) -> Option<PinnedFont> {
         // Below U+2000 no character starts an emoji presentation (that
         // needs U+FE0F, U+20E3 or a pictograph above it, © and ® aside),
-        // which parley shapes against an extended stack.
+        // which parley shapes against an extended stack; nor does the
+        // ellipsis an elided text ends in.
         if !self.pin
             || text.is_empty()
-            || !text
-                .chars()
-                .all(|c| (c as usize) < PINNED_BELOW && c != '\u{a9}' && c != '\u{ae}')
+            || !text.chars().all(|c| {
+                (c as usize) < PINNED_BELOW && c != '\u{a9}' && c != '\u{ae}' || c == ELLIPSIS_CHAR
+            })
         {
             return None;
         }
@@ -891,19 +908,27 @@ fn shape(
     b.build(text)
 }
 
-/// Parley's own analysis and shaping, kept warm for [`shape_direct`].
+/// Parley's own analysis and shaping, kept warm for [`shape_direct`], and
+/// harfrust and ICU4X as Parley drives them, for a font set up once.
 struct Direct {
     analyzer: Analyzer,
     shaper: Shaper,
     shaped: ShapedText,
     /// A style index per character, all the one style.
     styles: Vec<u16>,
-    /// Analyses by [`fold`]ed text: what Parley's analyser says of a
-    /// printable ASCII character depends only on its class there, so "Row
-    /// 12" and "Col 99" have one analysis, and a list's rows share a few.
-    analyses: FrameCache<u64, KeptAnalysis>,
-    /// For a text analysed while `analyses` is full.
+    /// For the first text shaped in a font at a size.
     analysis: Analysis,
+    /// Fonts at a size set up for harfrust ([`Voice`]), the latest first.
+    voices: Vec<Voice>,
+    /// Harfrust's buffer, kept for its allocation.
+    buffer: Option<harfrust::UnicodeBuffer>,
+    /// Soft wrap opportunities by [`fold`]ed text: what Parley's analyser
+    /// says of a printable ASCII character depends only on its class
+    /// there, so "Row 12" and "Col 99" break alike, and a list's rows
+    /// share a few.
+    breaks: FrameCache<u64, KeptBreaks>,
+    /// For a text broken while `breaks` is full.
+    soft: Vec<bool>,
     /// The folded text being looked up, kept for its allocation.
     fold: Vec<u8>,
     /// Runs as shaped and snapped, for the same text in the same font
@@ -914,13 +939,50 @@ struct Direct {
     frame: u64,
     /// Runs taken from `runs`.
     reused: u64,
+    /// Texts whose lines were broken here ([`wrap_direct`]).
+    wrapped: u64,
+    /// Lines elided here ([`TextEngine::elide_direct`]).
+    elided: u64,
+    /// Of those, rests read from their whole text's glyphs
+    /// ([`TextEngine::rest_clusters`]).
+    rests: u64,
+    /// For [`wrap_direct`], kept for their allocations.
+    atoms: Vec<DirectAtom>,
+    lines: Vec<DirectLine>,
+    limits: Vec<f32>,
+    items: Vec<Item>,
+    ends: Vec<usize>,
 }
 
-/// An analysis and the folded text it is for.
-struct KeptAnalysis {
+/// The soft wrap opportunities ([`soft_breaks`]) of a folded text.
+struct KeptBreaks {
     fold: Box<[u8]>,
-    analysis: Analysis,
+    soft: Box<[bool]>,
 }
+
+/// A pinned font at a size, set up for harfrust as Parley's shaper sets it
+/// up for the one segment of a printable ASCII text, and what Parley's
+/// shaping of a first text in it said of the run, which no text changes:
+/// every later text is shaped by harfrust alone ([`harf_shape`]), without
+/// Parley's analysis and the per-character bookkeeping of its shaper,
+/// which cost more than the shaping.
+struct Voice {
+    blob: u64,
+    index: u32,
+    synthesis: Synthesis,
+    size: u32,
+    data: harfrust::ShaperData,
+    instance: harfrust::ShaperInstance,
+    plan: harfrust::ShapePlan,
+    /// From font units to pixels, as Parley's shaper computes it.
+    scale: f32,
+    font_size: f32,
+    metrics: parley::FontMetrics,
+    coords: Box<[i16]>,
+}
+
+/// Fonts at a size kept set up: a program uses a few.
+const MAX_VOICES: usize = 16;
 
 /// What [`shape_direct`] made of a text in one font at one size, but the
 /// font's blob, which is taken as Parley's path would take it.
@@ -933,14 +995,18 @@ struct KeptRun {
     /// Each glyph with Qt's advance, in one allocation.
     glyphs: Box<[(parley::Glyph, f32)]>,
     coords: Box<[i16]>,
+    /// As [`Snapped::clusters`].
+    clusters: Box<[(u32, u32)]>,
+    /// As [`Snapped::unsafe_starts`].
+    unsafe_starts: Option<Box<[u32]>>,
     font_size: f32,
     metrics: parley::FontMetrics,
 }
 
 /// Folded texts kept from frame to frame, and the most a frame can leave:
 /// a list's rows have a few between them.
-const MAX_ANALYSES: usize = 64;
-const MAX_ANALYSES_AT_ONCE: usize = 2 * MAX_ANALYSES;
+const MAX_BREAKS: usize = 64;
+const MAX_BREAKS_AT_ONCE: usize = 2 * MAX_BREAKS;
 /// Runs kept from frame to frame, the most a frame can leave, and the
 /// longest text one is kept for: about 0.5 MB for short rows, never more
 /// than 4 MB.
@@ -958,18 +1024,30 @@ impl Direct {
             shaper: Shaper::default(),
             shaped: ShapedText::new(),
             styles: Vec::new(),
-            analyses: FrameCache::splitting_frames(MAX_ANALYSES),
             analysis: Analysis::new(),
+            voices: Vec::new(),
+            buffer: None,
+            breaks: FrameCache::splitting_frames(MAX_BREAKS),
+            soft: Vec::new(),
             fold: Vec::new(),
             runs: FrameCache::splitting_frames(MAX_RUNS),
             frame: 0,
             reused: 0,
+            wrapped: 0,
+            elided: 0,
+            rests: 0,
+            atoms: Vec::new(),
+            lines: Vec::new(),
+            limits: Vec::new(),
+            items: Vec::new(),
+            ends: Vec::new(),
         }
     }
 
     fn clear(&mut self) {
-        self.analyses.clear();
+        self.breaks.clear();
         self.runs.clear();
+        self.voices.clear();
     }
 
     fn bytes(&self) -> usize {
@@ -981,25 +1059,83 @@ impl Direct {
                     + r.text.len()
                     + std::mem::size_of_val(&*r.glyphs)
                     + std::mem::size_of_val(&*r.coords)
+                    + std::mem::size_of_val(&*r.clusters)
             })
             .sum();
-        let analyses: usize = self
-            .analyses
+        let breaks: usize = self
+            .breaks
             .values()
-            .map(|a| {
-                std::mem::size_of::<KeptAnalysis>()
-                    + a.fold.len()
-                    + std::mem::size_of_val(a.analysis.char_info())
-                    + std::mem::size_of_val(a.analysis.bidi_levels())
-            })
+            .map(|b| std::mem::size_of::<KeptBreaks>() + b.fold.len() + b.soft.len())
             .sum();
-        runs + analyses + self.runs.table_bytes() + self.analyses.table_bytes()
+        runs + breaks + self.runs.table_bytes() + self.breaks.table_bytes()
+    }
+
+    /// Analyses `text` into [`Self::analysis`] as Parley's builder would
+    /// with one style breaking as `word_break` says.
+    fn analyse(&mut self, text: &str, word_break: WordBreak) {
+        let config = LineBreakConfig {
+            word_break,
+            ..LineBreakConfig::default()
+        };
+        let line_break = [(0..text.len(), config)];
+        let line_break = if config == LineBreakConfig::default() {
+            &line_break[..0]
+        } else {
+            &line_break[..]
+        };
+        let options = AnalysisOptions {
+            base_direction: BaseDirection::Auto,
+            line_break,
+            break_spaces: &[],
+            line_break_override: None,
+        };
+        self.analyzer.analyze(text, &options, &mut self.analysis);
+    }
+
+    /// Finds the soft wrap opportunities of a printable ASCII `text`
+    /// breaking as `word_break` says, by its [`fold`]: where they are in
+    /// [`Self::breaks`], or `None` for [`Self::soft`].
+    fn breaks(&mut self, text: &str, word_break: WordBreak) -> Option<u64> {
+        let frame = self.frame;
+        fold(text.as_bytes(), word_break, &mut self.fold);
+        let key = {
+            let mut h = FxHasher::default();
+            self.fold.hash(&mut h);
+            h.finish()
+        };
+        let known = self
+            .breaks
+            .get_mut(&key, frame)
+            .is_some_and(|k| *k.fold == self.fold[..]);
+        if known {
+            return Some(key);
+        }
+        soft_breaks(text, word_break, &mut self.soft);
+        // A frame can break any number of texts: past a ceiling nothing
+        // new is kept until frames make room.
+        if self.breaks.len() >= MAX_BREAKS_AT_ONCE {
+            return None;
+        }
+        let kept = KeptBreaks {
+            fold: self.fold.as_slice().into(),
+            soft: self.soft.as_slice().into(),
+        };
+        self.breaks.insert(key, kept, frame);
+        Some(key)
     }
 
     fn trim(&mut self, frame: u64, keep: u64) {
         self.frame = frame;
-        self.analyses.trim(frame, keep);
+        self.breaks.trim(frame, keep);
         self.runs.trim(frame, keep.max(KEEP_RUN_FRAMES));
+    }
+}
+
+/// How Parley's analysis breaks words for a text breaking as `class` does.
+fn word_break_of(class: BreakClass) -> WordBreak {
+    match class {
+        BreakClass::Anywhere => WordBreak::BreakAll,
+        BreakClass::Word | BreakClass::WordOrAnywhere => WordBreak::Normal,
     }
 }
 
@@ -1017,6 +1153,113 @@ fn fold(text: &[u8], word_break: WordBreak, out: &mut Vec<u8>) {
         b'0'..=b'9' => b'0',
         b => b,
     }));
+}
+
+/// Where a printable ASCII `text` may wrap, a flag a byte, as Parley's
+/// analysis of it with one style breaking as `word_break` says marks it:
+/// ICU4X's line breaks inside the text, by the rules Parley gives such a
+/// style (strict, its default `line-break`). Such a text has no mandatory
+/// break, so each of them is a soft wrap opportunity, and the dictionaries
+/// of complex scripts have no say in it.
+fn soft_breaks(text: &str, word_break: WordBreak, out: &mut Vec<bool>) {
+    out.clear();
+    out.resize(text.len(), false);
+    let mut options = LineBreakOptions::default();
+    options.strictness = Some(LineBreakStrictness::Strict);
+    options.word_option = Some(match word_break {
+        WordBreak::Normal => LineBreakWordOption::Normal,
+        WordBreak::BreakAll => LineBreakWordOption::BreakAll,
+        WordBreak::KeepAll => LineBreakWordOption::KeepAll,
+    });
+    // The text's start and end are boundaries too, and no opportunity.
+    for at in LineSegmenter::new_for_non_complex_scripts(options).segment_str(text) {
+        if let Some(soft) = out.get_mut(at).filter(|_| at > 0) {
+            *soft = true;
+        }
+    }
+}
+
+/// Shapes `text` (printable ASCII, and ellipses) in `voice` as Parley's
+/// shaper shapes its one segment, left to right and Latin (the script
+/// Parley gives a text of Common characters too), with a cluster a
+/// character, and reads its glyphs into `kept` as [`shape_direct`] reads
+/// them from Parley's: a cluster's one glyph without an offset is held
+/// inline there, and read back with offsets of plain zero.
+fn harf_shape(
+    voice: &Voice,
+    font: &FontData,
+    text: &str,
+    buffer: &mut Option<harfrust::UnicodeBuffer>,
+    kept: &mut Snapped,
+) -> Option<()> {
+    let face = harfrust::FontRef::from_index(font.data.as_ref(), font.index).ok()?;
+    let shaper = voice
+        .data
+        .shaper(&face)
+        .instance(Some(&voice.instance))
+        .build();
+    let mut input = buffer.take().unwrap_or_default();
+    input.clear();
+    input.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
+    input.reserve(text.len());
+    let mut chars = 0;
+    for (i, c) in text.chars().enumerate() {
+        input.add(c, u32::try_from(i).ok()?);
+        chars = i + 1;
+    }
+    input.set_pre_context("");
+    input.set_post_context("");
+    input.set_direction(harfrust::Direction::LeftToRight);
+    input.set_script(harfrust::script::LATIN);
+    let options = harfrust::ShapeOptions::new()
+        .plan(Some(&voice.plan))
+        .features(&[])
+        .point_size(Some(f32::from_bits(voice.size)));
+    let output = shaper.shape(input, options);
+    let scale = voice.scale;
+    kept.glyphs.reserve(chars);
+    kept.qt.reserve(chars);
+    let (bytes, ascii) = (text.as_bytes(), text.is_ascii());
+    let mut unsafe_starts = Vec::new();
+    let (mut cluster, mut first, mut plain) = (0, 0, true);
+    let mut end = |kept: &mut Snapped, char_end: u32, first: usize| {
+        let glyphs = kept.glyphs.len();
+        if glyphs - first == 1 {
+            let g = &mut kept.glyphs[first];
+            if g.x == 0.0 && g.y == 0.0 {
+                (g.x, g.y) = (0.0, 0.0);
+            }
+        }
+        plain &= glyphs - first == 1 && char_end as usize == kept.clusters.len() + 1;
+        kept.clusters
+            .push((char_end, u32::try_from(glyphs).unwrap_or(u32::MAX)));
+    };
+    for (info, at) in output.glyph_infos().iter().zip(output.glyph_positions()) {
+        if info.cluster != cluster {
+            end(kept, info.cluster, first);
+            (cluster, first) = (info.cluster, kept.glyphs.len());
+        }
+        // A character counts a byte only in ASCII; otherwise every one is
+        // kept, which only costs an elided line its rest's shaping.
+        let starts = info.cluster as usize;
+        let after_space = !ascii || bytes.get(starts.wrapping_sub(1)) == Some(&b' ');
+        if info.unsafe_to_break() && after_space && unsafe_starts.last() != Some(&info.cluster) {
+            unsafe_starts.push(info.cluster);
+        }
+        kept.glyphs.push(parley::Glyph {
+            id: info.glyph_id,
+            x: (at.x_offset as f32) * scale,
+            y: -(at.y_offset as f32) * scale,
+            advance: (at.x_advance as f32) * scale,
+        });
+    }
+    end(kept, u32::try_from(chars).ok()?, first);
+    if plain {
+        kept.clusters.clear();
+    }
+    kept.unsafe_starts = Some(unsafe_starts);
+    *buffer = Some(output.clear());
+    Some(())
 }
 
 /// Gives every cluster the one font a pinned text is shaped with.
@@ -1041,8 +1284,9 @@ impl FontSelector for OneFont<'_> {
 /// and lines. `None` when the text is not that simple (it is then shaped
 /// in full) or Parley would take more than one run for it.
 ///
-/// The text is printable ASCII, so it has one character per byte, is left
-/// to right in one script, and needs no emoji font; with its family pinned
+/// The text is printable ASCII, and may have ellipses in it, which only an
+/// elided text has: it is left to right in one script, and needs no emoji
+/// font. Only an ellipsis takes more than a byte. With its family pinned
 /// ([`Families::pinned`]) the font query would choose the pinned font for
 /// every cluster, which is the one given here. Without letter or word
 /// spacing Parley neither turns ligatures off nor moves a glyph, and a
@@ -1051,8 +1295,9 @@ impl FontSelector for OneFont<'_> {
 /// such a text is shaped in full too.
 ///
 /// A run shaped before in the same font at the same size is taken from
-/// [`Direct::runs`]; otherwise the analysis of a text of the same
-/// [`fold`] is taken from [`Direct::analyses`], and the text is shaped.
+/// [`Direct::runs`]. Otherwise the first text in a font at a size is
+/// shaped by Parley, and every later one by harfrust as Parley drives it
+/// ([`Voice`]).
 fn shape_direct(
     direct: &mut Direct,
     fcx: &mut FontContext,
@@ -1070,7 +1315,8 @@ fn shape_direct(
         || !ranged.objects.is_empty()
         || bytes.is_empty()
         || bytes.last() == Some(&b' ')
-        || !bytes.iter().all(|b| (0x20..0x7f).contains(b))
+        || !(bytes.iter().all(|b| (0x20..0x7f).contains(b))
+            || text.chars().all(|c| matches!(c, ' '..='~' | ELLIPSIS_CHAR)))
         || finite(style.letter_spacing) != 0.0
         || finite(style.word_spacing) != 0.0
     {
@@ -1085,26 +1331,7 @@ fn shape_direct(
         _ => &[],
     };
     // As Parley's analysis of the one style's breaking.
-    let word_break = match class {
-        BreakClass::Anywhere => WordBreak::BreakAll,
-        BreakClass::Word | BreakClass::WordOrAnywhere => WordBreak::Normal,
-    };
-    let config = LineBreakConfig {
-        word_break,
-        ..LineBreakConfig::default()
-    };
-    let line_break = [(0..text.len(), config)];
-    let line_break = if config == LineBreakConfig::default() {
-        &line_break[..0]
-    } else {
-        &line_break[..]
-    };
-    let options = AnalysisOptions {
-        base_direction: BaseDirection::Auto,
-        line_break,
-        break_spaces: &[],
-        line_break_override: None,
-    };
+    let word_break = word_break_of(class);
     // The optical size's variations follow from the size, and no features
     // are asked for, so the font, its synthesis and the size say what the
     // shaper is given.
@@ -1129,86 +1356,34 @@ fn shape_direct(
         direct.reused += 1;
         kept.glyphs.extend(run.glyphs.iter().map(|g| g.0));
         kept.qt.extend(run.glyphs.iter().map(|g| g.1));
+        kept.clusters.extend_from_slice(&run.clusters);
+        kept.unsafe_starts = run.unsafe_starts.as_deref().map(<[u32]>::to_vec);
         let (font_size, metrics, coords) = (run.font_size, run.metrics, run.coords.to_vec());
         (source_font(fcx, &pinned)?, font_size, metrics, coords)
     } else {
-        fold(bytes, word_break, &mut direct.fold);
-        let fold_key = {
-            let mut h = FxHasher::default();
-            direct.fold.hash(&mut h);
-            h.finish()
-        };
-        let known = direct
-            .analyses
-            .get_mut(&fold_key, frame)
-            .is_some_and(|k| *k.fold == direct.fold[..]);
-        let keep = known || direct.analyses.len() < MAX_ANALYSES_AT_ONCE;
-        if !known && keep {
-            let mut analysis = Analysis::new();
-            direct.analyzer.analyze(text, &options, &mut analysis);
-            let fold = direct.fold.as_slice().into();
-            direct
-                .analyses
-                .insert(fold_key, KeptAnalysis { fold, analysis }, frame);
-        } else if !keep {
-            direct
-                .analyzer
-                .analyze(text, &options, &mut direct.analysis);
-        }
-        let analysis = if keep {
-            &direct.analyses.get_mut(&fold_key, frame)?.analysis
-        } else {
-            &direct.analysis
-        };
-        direct.styles.clear();
-        direct.styles.resize(bytes.len(), 0);
-        let item = parley_engine::itemize::Item {
-            char_end: u32::try_from(bytes.len()).ok()?,
-            options: ShapeOptions {
-                font_size: size,
-                language: None,
-                features: &[],
-                variations,
-            },
-        };
-        let one = OneFont(FontInstanceRef {
-            data: &pinned.font.data,
-            index,
-            synthesis: &pinned.synthesis,
+        let voice = direct.voices.iter().position(|v| {
+            (v.blob, v.index, v.size) == (blob, index, size_bits) && v.synthesis == pinned.synthesis
         });
-        direct.shaper.shape_text(
-            text,
-            analysis,
-            &direct.styles,
-            [item],
-            one,
-            &mut direct.shaped,
-        );
-        let [run] = direct.shaped.runs() else {
-            return None;
+        let (font_size, metrics, coords) = if let Some(at) = voice {
+            direct.voices[..=at].rotate_right(1);
+            let voice = &direct.voices[0];
+            harf_shape(voice, &pinned.font, text, &mut direct.buffer, &mut kept)?;
+            (voice.font_size, voice.metrics, voice.coords.to_vec())
+        } else {
+            let (font_size, metrics, coords) = parley_shape(
+                direct, &pinned, text, size, variations, word_break, &mut kept,
+            )?;
+            if let Some(voice) = voice_of(&pinned, size, variations, font_size, metrics, &coords) {
+                direct.voices.truncate(MAX_VOICES - 1);
+                direct.voices.insert(0, voice);
+            }
+            (font_size, metrics, coords)
         };
-        if run.bidi_level.is_rtl() {
-            return None;
-        }
-        let slice = direct.shaped.run_slice(0);
-        kept.glyphs.reserve(bytes.len());
-        kept.qt.reserve(bytes.len());
-        for cluster in slice.shaped_clusters_range() {
-            kept.glyphs.extend(slice.shaped_cluster_glyphs(cluster));
-        }
         if kept.glyphs.iter().any(|g| g.y != 0.0) {
             return None;
         }
-        let coords: Vec<i16> = direct
-            .shaped
-            .normalized_coords()
-            .get(run.normalized_coords_range.clone())
-            .unwrap_or(&[])
-            .iter()
-            .map(|c| c.to_bits())
-            .collect();
         let font = source_font(fcx, &pinned)?;
-        snap::advances(&font, run.font_size, &coords, &kept.glyphs, &mut kept.qt);
+        snap::advances(&font, font_size, &coords, &kept.glyphs, &mut kept.qt);
         // The trim keeps a frame's runs together, and one frame can lay
         // out any number of texts: past a ceiling nothing new is kept
         // until frames make room.
@@ -1226,12 +1401,14 @@ fn shape_direct(
                     .zip(kept.qt.iter().copied())
                     .collect(),
                 coords: coords.as_slice().into(),
-                font_size: run.font_size,
-                metrics: run.font_metrics,
+                clusters: kept.clusters.as_slice().into(),
+                unsafe_starts: kept.unsafe_starts.as_deref().map(Into::into),
+                font_size,
+                metrics,
             };
             direct.runs.insert(key, run, frame);
         }
-        (font, run.font_size, run.font_metrics, coords)
+        (font, font_size, metrics, coords)
     };
     // A style's line has no offset or size of its own, as Parley's
     // default style has it.
@@ -1253,6 +1430,126 @@ fn shape_direct(
     kept.lines.push(kept.items.len());
     families.pinned.set(families.pinned.get() + 1);
     Some(kept)
+}
+
+/// Shapes `text` with Parley's analyser and shaper, as its builder drives
+/// them for one style in `pinned`, into `kept`, with the run's size,
+/// metrics and variation coordinates. `None` when Parley takes more than
+/// one run for it, or a right-to-left one.
+fn parley_shape(
+    direct: &mut Direct,
+    pinned: &PinnedFont,
+    text: &str,
+    size: f32,
+    variations: &[FontVariation],
+    word_break: WordBreak,
+    kept: &mut Snapped,
+) -> Option<(f32, parley::FontMetrics, Vec<i16>)> {
+    direct.analyse(text, word_break);
+    let chars = if text.is_ascii() {
+        text.len()
+    } else {
+        text.chars().count()
+    };
+    direct.styles.clear();
+    direct.styles.resize(chars, 0);
+    let item = parley_engine::itemize::Item {
+        char_end: u32::try_from(chars).ok()?,
+        options: ShapeOptions {
+            font_size: size,
+            language: None,
+            features: &[],
+            variations,
+        },
+    };
+    let one = OneFont(FontInstanceRef {
+        data: &pinned.font.data,
+        index: pinned.font.index,
+        synthesis: &pinned.synthesis,
+    });
+    direct.shaper.shape_text(
+        text,
+        &direct.analysis,
+        &direct.styles,
+        [item],
+        one,
+        &mut direct.shaped,
+    );
+    let [run] = direct.shaped.runs() else {
+        return None;
+    };
+    if run.bidi_level.is_rtl() {
+        return None;
+    }
+    let slice = direct.shaped.run_slice(0);
+    kept.glyphs.reserve(chars);
+    kept.qt.reserve(chars);
+    for cluster in slice.shaped_clusters_range() {
+        kept.glyphs.extend(slice.shaped_cluster_glyphs(cluster));
+    }
+    let clusters = slice.shaped_clusters();
+    if clusters.len() != chars || clusters.iter().any(|c| c.glyph_len() != 1) {
+        let mut glyphs = 0;
+        kept.clusters.extend(clusters.iter().map(|c| {
+            glyphs += u32::from(c.glyph_len());
+            (c.chars_range().end, glyphs)
+        }));
+    }
+    let coords = direct
+        .shaped
+        .normalized_coords()
+        .get(run.normalized_coords_range.clone())
+        .unwrap_or(&[])
+        .iter()
+        .map(|c| c.to_bits())
+        .collect();
+    Some((run.font_size, run.font_metrics, coords))
+}
+
+/// `pinned` at `size` set up for [`harf_shape`] as Parley's shaper sets a
+/// font up, with what Parley's shaping of a text in it said of the run.
+fn voice_of(
+    pinned: &PinnedFont,
+    size: f32,
+    variations: &[FontVariation],
+    font_size: f32,
+    metrics: parley::FontMetrics,
+    coords: &[i16],
+) -> Option<Voice> {
+    let face = harfrust::FontRef::from_index(pinned.font.data.as_ref(), pinned.font.index).ok()?;
+    let data = harfrust::ShaperData::new(&face);
+    let synthesis = pinned.synthesis.variation_settings().iter();
+    let settings = synthesis
+        .map(|&(tag, value)| harfrust::Variation { tag, value })
+        .chain(variations.iter().map(|v| harfrust::Variation {
+            tag: harfrust::Tag::new(&v.tag.to_bytes()),
+            value: v.value,
+        }));
+    let instance = harfrust::ShaperInstance::from_variations(&face, settings);
+    let shaper = data.shaper(&face).instance(Some(&instance)).build();
+    let plan = harfrust::ShapePlan::new(
+        &shaper,
+        harfrust::Direction::LeftToRight,
+        Some(harfrust::script::LATIN),
+        None,
+        &[],
+    );
+    // As Parley's shaper scales: its metrics' units per em are the head
+    // table's, as harfrust's are.
+    let scale = size / shaper.units_per_em() as f32;
+    Some(Voice {
+        blob: pinned.font.data.id(),
+        index: pinned.font.index,
+        synthesis: pinned.synthesis,
+        size: size.to_bits(),
+        data,
+        instance,
+        plan,
+        scale,
+        font_size,
+        metrics,
+        coords: coords.into(),
+    })
 }
 
 /// The pinned font's file as Parley's builder takes it when made: its
@@ -1572,6 +1869,249 @@ fn break_by(shape: &mut Shape, max: f32, limits: &[f32]) {
     breaker.finish();
 }
 
+/// What Parley's line breaker takes from a cluster of a text shaped
+/// directly: for printable ASCII each cluster is a whole grapheme, so
+/// clusters are the atoms it breaks between.
+#[derive(Clone, Copy)]
+struct DirectAtom {
+    /// Where it ends in the text (a byte, as a character is one) and in
+    /// the glyphs.
+    end: u32,
+    glyph_end: u32,
+    /// Its glyphs' advances added up as the shaper adds them.
+    advance: f32,
+    /// A line may wrap before it.
+    soft: bool,
+    /// It is spaces, which hang past the end of a line.
+    hangs: bool,
+}
+
+/// A line [`break_atoms`] made: what Parley's line breaker says of it.
+#[derive(Clone)]
+struct DirectLine {
+    atoms: Range<usize>,
+    advance: f32,
+    hanging: f32,
+    reason: BreakReason,
+}
+
+/// Parley's greedy line breaking (`BreakLines::break_next` with nothing
+/// but one left-to-right run of one style that preserves spaces and
+/// wraps), over atoms: a line ends where the next atom would cross its
+/// limit, at the last soft wrap opportunity before it, or else, where
+/// overflow may wrap anywhere (`emergency`), before the last atom; spaces
+/// hang past the limit. The line at `i` is broken at `limits[i]`, or at
+/// `max` past the end of `limits`.
+fn break_atoms(
+    atoms: &[DirectAtom],
+    max: f32,
+    limits: &[f32],
+    emergency: bool,
+    out: &mut Vec<DirectLine>,
+) {
+    out.clear();
+    let mut i = 0;
+    while i < atoms.len() {
+        let limit = limits.get(out.len()).copied().unwrap_or(max);
+        let start = i;
+        let mut x = 0.0_f32;
+        let mut regular: Option<(usize, f32)> = None;
+        let mut fallback: Option<(usize, f32)> = None;
+        let mut reason = BreakReason::None;
+        while let Some(atom) = atoms.get(i) {
+            // Never at the start of a line, so a line always takes
+            // something and too long a word overflows.
+            if atom.soft {
+                if x != 0.0 {
+                    regular = Some((i, x));
+                }
+            } else if emergency && x != 0.0 {
+                fallback = Some((i, x));
+            }
+            let next = x + atom.advance;
+            let hanging = if atom.hangs { atom.advance } else { 0.0 };
+            if next <= limit || atom.hangs || next - hanging <= limit {
+                x = next;
+                i += 1;
+                continue;
+            }
+            if let Some((at, before)) = regular {
+                (i, x, reason) = (at, before, BreakReason::Regular);
+                break;
+            }
+            if let Some((at, before)) = fallback {
+                (i, x, reason) = (at, before, BreakReason::Emergency);
+                break;
+            }
+            x = next;
+            i += 1;
+        }
+        // As `hanging_whitespace` counts it: spaces before a wrap hang in
+        // full, and spaces that end the text only as far as they are past
+        // the limit.
+        let overflow = match reason {
+            BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
+            _ => x - limit,
+        };
+        let mut hanging = 0.0_f32;
+        let mut conditional: Option<f32> = None;
+        for atom in atoms[start..i].iter().rev() {
+            let hangs = if atom.hangs { atom.advance } else { 0.0 };
+            *conditional.get_or_insert(0.0) += hangs;
+            hanging += hangs;
+            if !atom.hangs {
+                break;
+            }
+        }
+        if let Some(advance) = conditional {
+            hanging -= advance - advance.min(overflow).max(0.0);
+        }
+        out.push(DirectLine {
+            atoms: start..i,
+            advance: x,
+            hanging,
+            reason,
+        });
+    }
+}
+
+/// The lines of a text shaped directly ([`shape_direct`]) and broken at
+/// `max` as [`break_inside`] breaks Parley's layout of it, which is not
+/// built: the clusters are the shaper's, the soft wrap opportunities its
+/// analysis's ([`soft_breaks`]), and the lines Parley's breaker's
+/// ([`break_atoms`]).
+fn wrap_direct(
+    direct: &mut Direct,
+    entry: &mut ShapedEntry,
+    max: f32,
+    fallback: Vertical,
+    objects: &[InlineObject],
+) -> Vec<RawLine> {
+    direct.wrapped += 1;
+    let mut atoms = std::mem::take(&mut direct.atoms);
+    let mut lines = std::mem::take(&mut direct.lines);
+    let mut limits = std::mem::take(&mut direct.limits);
+    let text = &*entry.text;
+    let bytes = text.as_bytes();
+    let known = &mut entry.advances;
+    let found = "a text shaped directly has its run";
+    let Some(Item::Run(run)) = known.items.first() else {
+        unreachable!("{found}");
+    };
+    let run = run.clone();
+    {
+        let key = direct.breaks(text, word_break_of(entry.class));
+        let soft = match key.and_then(|k| direct.breaks.get_mut(&k, direct.frame)) {
+            Some(kept) => &kept.soft[..],
+            None => &direct.soft[..],
+        };
+        atoms.clear();
+        let mut push = |chars: Range<usize>, glyphs: Range<usize>| {
+            let advance = known.glyphs[glyphs.clone()]
+                .iter()
+                .fold(0.0_f32, |sum, g| sum + g.advance);
+            atoms.push(DirectAtom {
+                end: chars.end as u32,
+                glyph_end: glyphs.end as u32,
+                advance,
+                soft: soft[chars.start],
+                hangs: bytes[chars].iter().all(|&b| b == b' '),
+            });
+        };
+        if known.clusters.is_empty() {
+            for at in 0..bytes.len() {
+                push(at..at + 1, at..at + 1);
+            }
+        } else {
+            let (mut chars, mut glyphs) = (0, 0);
+            for &(end, glyph_end) in &known.clusters {
+                let (end, glyph_end) = (end as usize, glyph_end as usize);
+                push(chars..end, glyphs..glyph_end);
+                (chars, glyphs) = (end, glyph_end);
+            }
+        }
+    }
+    let starts = |atoms: &[DirectAtom], line: &DirectLine| {
+        let before = line.atoms.start.checked_sub(1).map(|i| atoms[i]);
+        (
+            before.map_or(0, |a| a.end as usize)..atoms[line.atoms.end - 1].end as usize,
+            before.map_or(0, |a| a.glyph_end as usize)
+                ..atoms[line.atoms.end - 1].glyph_end as usize,
+        )
+    };
+    // As `ink_crosses`: by advances and the most ink can reach first, and
+    // by Qt's advances and the last glyph's ink only near the width.
+    let crosses = |line: &DirectLine| {
+        if line.advance + run.font_size <= max {
+            return false;
+        }
+        let glyphs = starts(&atoms, line).1;
+        let (shaped, qt) = (&known.glyphs[glyphs.clone()], &known.qt[glyphs]);
+        let width = 0.0 + qt.iter().sum::<f32>();
+        let past = last_overhang(&run, shaped, qt).unwrap_or(0.0);
+        past > 0.0 && width + past > max
+    };
+    let emergency = entry.class != BreakClass::Word;
+    limits.clear();
+    break_atoms(&atoms, max, &limits, emergency, &mut lines);
+    let mut from = 0;
+    while let Some((index, advance)) = lines
+        .iter()
+        .enumerate()
+        .skip(from)
+        .find_map(|(i, l)| crosses(l).then_some((i, l.advance)))
+    {
+        let before = lines.get(index).map(|l| l.atoms.clone());
+        limits.resize(index, max);
+        limits.push((advance - 0.01).min(max));
+        break_atoms(&atoms, max, &limits, emergency, &mut lines);
+        from = if lines.get(index).map(|l| l.atoms.clone()) == before {
+            index + 1
+        } else {
+            index
+        };
+    }
+    // The lines' glyphs as a broken Parley layout would be read: the run
+    // cut at each line, at the line's start.
+    let mut items = std::mem::take(&mut direct.items);
+    let mut ends = std::mem::take(&mut direct.ends);
+    items.clear();
+    ends.clear();
+    for line in &lines {
+        let mut facts = run.clone();
+        facts.glyphs = starts(&atoms, line).1;
+        items.push(Item::Run(facts));
+        ends.push(items.len());
+    }
+    let broken = Snapped {
+        glyphs: std::mem::take(&mut known.glyphs),
+        qt: std::mem::take(&mut known.qt),
+        items,
+        lines: ends,
+        clusters: Vec::new(),
+        unsafe_starts: None,
+    };
+    let facts = lines.iter().map(|line| LineFacts {
+        advance: line.advance,
+        hanging_advance: line.hanging,
+        reason: line.reason,
+        range: starts(&atoms, line).0,
+    });
+    let raw = extract_lines(facts, &broken, fallback, None, objects);
+    let Snapped {
+        glyphs,
+        qt,
+        mut items,
+        lines: ends,
+        ..
+    } = broken;
+    (known.glyphs, known.qt) = (glyphs, qt);
+    items.clear();
+    (direct.atoms, direct.lines, direct.limits) = (atoms, lines, limits);
+    (direct.items, direct.ends) = (items, ends);
+    raw
+}
+
 /// Whether a line is wider than `max` as Qt counts it: its advances and
 /// the ink its last glyph reaches past them.
 fn ink_crosses(line: &parley::Line<'_, u32>, max: f32) -> bool {
@@ -1611,16 +2151,8 @@ fn items_widths(keep: &Snapped, from: usize) -> (f32, f32) {
             Item::Run(run) => {
                 let (glyphs, qt) = keep.glyphs(run);
                 width += qt.iter().sum::<f32>();
-                if let (Some(g), Some(a)) = (glyphs.last(), qt.last()) {
-                    last = overhang(
-                        &run.font,
-                        run.font_size,
-                        &run.coords,
-                        run.synthesis.embolden(),
-                        run.synthesis.skew().map_or(0.0, |d| d.to_radians().tan()),
-                        g.id,
-                        *a,
-                    );
+                if let Some(past) = last_overhang(run, glyphs, qt) {
+                    last = past;
                 }
             }
             Item::Box(placed) => {
@@ -1630,6 +2162,20 @@ fn items_widths(keep: &Snapped, from: usize) -> (f32, f32) {
         }
     }
     (width, last)
+}
+
+/// [`overhang`] of the last of `glyphs`, drawn as `run` draws them.
+fn last_overhang(run: &RunFacts, glyphs: &[parley::Glyph], qt: &[f32]) -> Option<f32> {
+    let (g, a) = (glyphs.last()?, qt.last()?);
+    Some(overhang(
+        &run.font,
+        run.font_size,
+        &run.coords,
+        run.synthesis.embolden(),
+        run.synthesis.skew().map_or(0.0, |d| d.to_radians().tan()),
+        g.id,
+        *a,
+    ))
 }
 
 /// A shape's lines as read from Parley: every run with its glyphs as
@@ -1644,6 +2190,16 @@ struct Snapped {
     items: Vec<Item>,
     /// Where each line's items end.
     lines: Vec<usize>,
+    /// Of a text shaped directly ([`shape_direct`]), where each cluster
+    /// ends in the text's characters and in `glyphs`; empty where every
+    /// cluster is one character with one glyph, as nearly every one is.
+    clusters: Vec<(u32, u32)>,
+    /// Of a text shaped by [`harf_shape`], the characters after a space
+    /// that the shaper says the rest of the text cannot start at and be
+    /// shaped as it is here (kerned against the space, say); `None` where
+    /// that is not known. Only an elided line's rest asks
+    /// ([`TextEngine::rest_clusters`]).
+    unsafe_starts: Option<Vec<u32>>,
 }
 
 enum Item {
@@ -1652,6 +2208,7 @@ enum Item {
 }
 
 /// What a glyph run's glyphs are drawn with.
+#[derive(Clone)]
 struct RunFacts {
     /// In [`Snapped::glyphs`].
     glyphs: Range<usize>,
@@ -1820,6 +2377,67 @@ fn cluster_advances(shape: &Shape) -> Vec<(Range<usize>, f32)> {
         }
     }
     out
+}
+
+/// [`cluster_advances`] of a text shaped directly ([`shape_direct`]), as
+/// Parley's layout of it would give them: its clusters there are its
+/// characters, each a grapheme, which share their shaped cluster's
+/// advance evenly, and the first of which holds the glyphs. Only those
+/// from character `from` on, counted from there, which has to start a
+/// cluster.
+fn direct_cluster_advances(text: &str, shaped: &Snapped, from: usize) -> Vec<(Range<usize>, f32)> {
+    let starts: Vec<usize> = text
+        .char_indices()
+        .map(|(at, _)| at)
+        .chain(std::iter::once(text.len()))
+        .collect();
+    let chars = starts.len() - 1;
+    let base = starts[from.min(chars)];
+    let mut out = Vec::with_capacity(chars - from.min(chars));
+    let plain = shaped.clusters.is_empty();
+    // A glyph a character: the first `from` of each are passed at once.
+    let skip = if plain { from.min(chars) } else { 0 };
+    let (mut char_start, mut glyph_start) = (skip, skip);
+    let ends = plain
+        .then(|| (skip + 1..=chars).map(|i| (i, i)))
+        .into_iter()
+        .flatten()
+        .chain(
+            shaped
+                .clusters
+                .iter()
+                .map(|&(c, g)| (c as usize, g as usize)),
+        );
+    for (char_end, glyph_end) in ends {
+        if char_end <= from {
+            (char_start, glyph_start) = (char_end, glyph_end);
+            continue;
+        }
+        let glyphs = &shaped.glyphs[glyph_start..glyph_end];
+        let qt = &shaped.qt[glyph_start..glyph_end];
+        // As the shaper sums a cluster's advance.
+        let advance = glyphs.iter().fold(0.0_f32, |a, g| a + g.advance);
+        let share = advance / (char_end - char_start) as f32;
+        let given_up: f32 = glyphs.iter().zip(qt).map(|(g, q)| g.advance - q).sum();
+        for c in char_start..char_end {
+            let own = if c == char_start { given_up } else { 0.0 };
+            out.push((starts[c] - base..starts[c + 1] - base, share - own));
+        }
+        (char_start, glyph_start) = (char_end, glyph_end);
+    }
+    out
+}
+
+/// The one line of a text shaped directly, as [`extract`] would read it
+/// from Parley's layout of it.
+fn direct_line(shaped: &Snapped, len: usize, fallback: Vertical) -> Vec<RawLine> {
+    let line = LineFacts {
+        advance: shaped.glyphs.iter().map(|g| g.advance).sum(),
+        hanging_advance: 0.0,
+        reason: BreakReason::None,
+        range: 0..len,
+    };
+    extract_lines(std::iter::once(line), shaped, fallback, None, &[])
 }
 
 /// `heights[k]`: height of the first `k + 1` lines.
@@ -2577,6 +3195,84 @@ impl TextEngine {
         }
     }
 
+    /// [`Self::elide`] of a plain left-to-right text, and of every cut of
+    /// it, shaped directly ([`shape_direct`]), without Parley's layout of
+    /// any: the line as [`extract`] would read it, `Some(None)` when not
+    /// even the ellipsis fits. `None` where one of them is not shaped
+    /// directly; the text is then elided in full. A text whose clusters
+    /// are `known` is not shaped itself, only its cut.
+    fn elide_direct(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        (mode, width, force): (ElideMode, f32, bool),
+        known: Option<Clusters>,
+        ellipsis: f32,
+        fallback: Vertical,
+    ) -> Option<Option<RawLine>> {
+        let mut shaped = |text: &str| {
+            shape_direct(
+                &mut self.direct,
+                &mut self.fcx,
+                &self.families,
+                text,
+                style,
+                &Ranged::NONE,
+                BreakClass::Word,
+            )
+        };
+        let clusters = match known {
+            // Only a forced cut is known: it is cut however wide it is.
+            Some(clusters) if force => clusters,
+            _ => {
+                let full = shaped(text)?;
+                if !force && items_widths(&full, 0).0.max(0.0) <= width {
+                    return Some(direct_line(&full, text.len(), fallback).pop());
+                }
+                Clusters::new(direct_cluster_advances(text, &full, 0), text.len())
+            }
+        };
+        if ellipsis > width {
+            return Some(None);
+        }
+        let mut keep = clusters.fit(mode, width - ellipsis);
+        loop {
+            let candidate = clusters.elided(text, mode, keep);
+            let cut = shaped(&candidate)?;
+            if keep == 0 || items_widths(&cut, 0).0.max(0.0) <= width {
+                return Some(direct_line(&cut, candidate.len(), fallback).pop());
+            }
+            keep = Clusters::fewer(mode, keep);
+        }
+    }
+
+    /// The clusters of a text shaped directly (its shape `key`) from byte
+    /// `start` to its end, read from its glyphs as [`Self::elide_direct`]
+    /// would read them from the rest shaped alone: where the shaper says
+    /// the rest starts after a space and shapes alone as it does in the
+    /// whole, they are the whole's glyphs from there on. `None` where that
+    /// is not known; the rest is then shaped.
+    fn rest_clusters(&mut self, key: u64, start: usize) -> Option<Clusters> {
+        let entry = self.shapes.get_mut(&key, self.frame)?;
+        let (text, shaped) = (&*entry.text, &entry.advances);
+        let unsafe_starts = shaped.unsafe_starts.as_ref()?;
+        let at = u32::try_from(start).ok()?;
+        let boundary = shaped.clusters.is_empty() || shaped.clusters.iter().any(|c| c.0 == at);
+        let after_space = start.checked_sub(1).map(|b| text.as_bytes().get(b)) == Some(Some(&b' '));
+        if !text.is_ascii()
+            || start >= text.len()
+            || !after_space
+            || !boundary
+            || unsafe_starts.contains(&at)
+        {
+            return None;
+        }
+        self.direct.rests += 1;
+        // ASCII: the character at `start` is its byte.
+        let clusters = direct_cluster_advances(text, shaped, start);
+        Some(Clusters::new(clusters, text.len() - start))
+    }
+
     fn build_layout(
         &mut self,
         text: &str,
@@ -2605,64 +3301,64 @@ impl TextEngine {
         let justify = params.justify && wraps;
         let max_advance = width.filter(|_| wraps).map(|w| w as f32);
 
-        let (mut raw, (advance, natural), rtl) = if text.is_empty() && ranged.objects.is_empty() {
-            (Vec::new(), (0.0, 0.0), false)
-        } else {
-            let class = BreakClass::of(wrap);
-            // A wrapped text needs Parley's lines only when it turns out
-            // too wide; a ranged or justified one always does.
-            let key = self.shaped_key(text, style, &ranged, class, !places && !justify);
-            let frame = self.frame;
-            let found = "the entry was made a moment ago";
-            let entry = self.shapes.get_mut(&key, frame).expect(found);
-            // Parley breaks lines by the shaper's advances, which are a
-            // touch wider than Qt's: a text that fits as Qt counts it (an
-            // item as wide as its own text) must not be broken.
-            let max_advance = max_advance.filter(|w| entry.natural_width > *w);
-            if places || (max_advance, justify) != (None, false) {
-                self.give_shape(key, text, style, &ranged, class);
-            }
-            let entry = self.shapes.get_mut(&key, frame).expect(found);
-            let lines = match &mut entry.shape {
-                Some(shape) => {
-                    if entry.broken != (max_advance, justify) {
-                        break_lines(shape, max_advance, justify);
-                        entry.broken = (max_advance, justify);
+        let (mut raw, (advance, natural), rtl, direct) =
+            if text.is_empty() && ranged.objects.is_empty() {
+                (Vec::new(), (0.0, 0.0), false, None)
+            } else {
+                let class = BreakClass::of(wrap);
+                // A wrapped text needs Parley's lines only when it turns out
+                // too wide; a ranged or justified one always does.
+                let key = self.shaped_key(text, style, &ranged, class, !places && !justify);
+                let frame = self.frame;
+                let found = "the entry was made a moment ago";
+                let entry = self.shapes.get_mut(&key, frame).expect(found);
+                // Parley breaks lines by the shaper's advances, which are a
+                // touch wider than Qt's: a text that fits as Qt counts it (an
+                // item as wide as its own text) must not be broken.
+                let max_advance = max_advance.filter(|w| entry.natural_width > *w);
+                // A text shaped directly is broken as it is, as Parley would
+                // break it, unless something needs Parley's layout of it. Its
+                // breaks count a character a byte, which an ellipsis is not.
+                let wrap_directly = entry.shape.is_none() && !places && !justify && text.is_ascii();
+                if places || ((max_advance, justify) != (None, false) && !wrap_directly) {
+                    self.give_shape(key, text, style, &ranged, class);
+                }
+                let entry = self.shapes.get_mut(&key, frame).expect(found);
+                let lines = match &mut entry.shape {
+                    None if let Some(max) = max_advance => {
+                        wrap_direct(&mut self.direct, entry, max, fallback, ranged.objects)
                     }
-                    let unbroken = entry.broken == (None, false);
-                    let mut lines = extract(
-                        shape,
-                        fallback,
-                        max_advance.filter(|_| justify),
-                        ranged.objects,
-                        unbroken.then_some(&entry.advances),
-                    );
-                    if places {
-                        for (line, carets) in lines.iter_mut().zip(edit::carets(shape, text)) {
-                            line.clusters = carets.clusters;
+                    Some(shape) => {
+                        if entry.broken != (max_advance, justify) {
+                            break_lines(shape, max_advance, justify);
+                            entry.broken = (max_advance, justify);
                         }
+                        let unbroken = entry.broken == (None, false);
+                        let mut lines = extract(
+                            shape,
+                            fallback,
+                            max_advance.filter(|_| justify),
+                            ranged.objects,
+                            unbroken.then_some(&entry.advances),
+                        );
+                        if places {
+                            for (line, carets) in lines.iter_mut().zip(edit::carets(shape, text)) {
+                                line.clusters = carets.clusters;
+                            }
+                        }
+                        lines
                     }
-                    lines
-                }
-                // Shaped directly: one line, unbroken, as it was read.
-                None => {
-                    let line = LineFacts {
-                        advance: entry.advances.glyphs.iter().map(|g| g.advance).sum(),
-                        hanging_advance: 0.0,
-                        reason: BreakReason::None,
-                        range: 0..text.len(),
-                    };
-                    extract_lines(
-                        std::iter::once(line),
-                        &entry.advances,
-                        fallback,
-                        None,
-                        ranged.objects,
-                    )
-                }
+                    // Shaped directly: one line, unbroken, as it was read.
+                    None => direct_line(&entry.advances, text.len(), fallback),
+                };
+                let direct = entry.shape.is_none().then_some(key);
+                (
+                    lines,
+                    (entry.advance, entry.natural_width),
+                    entry.rtl,
+                    direct,
+                )
             };
-            (lines, (entry.advance, entry.natural_width), entry.rtl)
-        };
         if raw.is_empty() {
             raw.push(RawLine::empty(fallback));
         }
@@ -2721,13 +3417,16 @@ impl TextEngine {
                     .get(start..end.max(start))
                     .unwrap_or("")
                     .trim_end_matches(['\n', '\r']);
+                let known = direct
+                    .filter(|_| end == text.len() && start > 0)
+                    .and_then(|key| self.rest_clusters(key, start));
                 raw[visible - 1] = self.elided_line(
                     rest,
                     start,
                     style,
                     &ranged,
                     places,
-                    (elide, w32, true),
+                    (elide, w32, true, known),
                     rtl,
                     &metrics,
                 );
@@ -2743,7 +3442,7 @@ impl TextEngine {
                     style,
                     &ranged,
                     places,
-                    (elide, w32, false),
+                    (elide, w32, false, None),
                     rtl,
                     &metrics,
                 );
@@ -2816,6 +3515,8 @@ impl TextEngine {
 
     /// One line of `text` cut to a width. `at` is where `text` starts in the
     /// whole text, which is what `ranged` and the character places count in.
+    /// `known` are its clusters when the whole text's shaping gave them
+    /// ([`Self::rest_clusters`]).
     #[expect(
         clippy::too_many_arguments,
         reason = "internal; a struct would only rename them"
@@ -2827,7 +3528,7 @@ impl TextEngine {
         style: &TextStyle,
         ranged: &Ranged<'_>,
         places: bool,
-        (mode, width, force): (ElideMode, f32, bool),
+        (mode, width, force, known): (ElideMode, f32, bool, Option<Clusters>),
         rtl: bool,
         metrics: &StyleMetrics,
     ) -> RawLine {
@@ -2836,6 +3537,27 @@ impl TextEngine {
             descent: metrics.font.descent,
         };
         let part = part_of(ranged, at..at + text.len());
+        let plain = !places && !rtl && part.spans.is_empty() && part.objects.is_empty();
+        if plain
+            && let Some(cut) = self.elide_direct(
+                text,
+                style,
+                (mode, width, force),
+                known,
+                metrics.ellipsis,
+                fallback,
+            )
+        {
+            self.direct.elided += 1;
+            let Some(mut line) = cut else {
+                return RawLine::empty(fallback);
+            };
+            line.range = at..at + text.len();
+            if ranged.strut {
+                line.vertical = line.vertical.max(fallback);
+            }
+            return line;
+        }
         let (shown, shape, own) = self.elide(
             text,
             style,
@@ -3028,6 +3750,7 @@ mod tests {
             "☃ snow",
             "漢字 and Latin",
             "© 2026",
+            "Wait\u{2026}",
         ];
         let families = [
             "",
@@ -3061,6 +3784,53 @@ mod tests {
             // Latin text in an installed family is the common case it serves.
             assert!(pinned.stats().shapes_pinned >= 20, "{:?}", pinned.stats());
         }
+    }
+
+    type Summary = (
+        [u64; 3],
+        Vec<(
+            [u64; 4],
+            Range<usize>,
+            Vec<(u64, u32, u32, Vec<(u32, u32, u32)>, Vec<i16>, bool, u32)>,
+        )>,
+    );
+
+    /// The lines' measures and each run's glyphs; a font by its bytes, as
+    /// each engine loads its own copy.
+    fn summary(l: &TextLayout) -> Summary {
+        let lines = l
+            .lines
+            .iter()
+            .map(|line| {
+                let runs = line
+                    .runs
+                    .iter()
+                    .map(|r| {
+                        let mut h = FxHasher::default();
+                        r.glyphs.font.data.as_ref().hash(&mut h);
+                        let g = r
+                            .glyphs
+                            .glyphs
+                            .iter()
+                            .map(|p| (p.id, p.x.to_bits(), p.y.to_bits()))
+                            .collect();
+                        (
+                            h.finish(),
+                            r.glyphs.font.index,
+                            r.glyphs.font_size.to_bits(),
+                            g,
+                            r.glyphs.normalized_coords.clone(),
+                            r.glyphs.embolden,
+                            r.glyphs.skew.to_bits(),
+                        )
+                    })
+                    .collect();
+                let m = [line.top, line.baseline, line.width, line.height];
+                (m.map(f64::to_bits), line.range.clone(), runs)
+            })
+            .collect();
+        let m = [l.advance, l.natural_width, l.content_width];
+        (m.map(f64::to_bits), lines)
     }
 
     #[test]
@@ -3109,43 +3879,6 @@ mod tests {
                             },
                             ..LayoutParams::default()
                         };
-                        // The lines' measures and each run's glyphs; a font
-                        // by its bytes, as each engine loads its own copy.
-                        let summary = |l: &TextLayout| {
-                            let lines: Vec<_> = l
-                                .lines
-                                .iter()
-                                .map(|line| {
-                                    let runs: Vec<_> = line
-                                        .runs
-                                        .iter()
-                                        .map(|r| {
-                                            let mut h = FxHasher::default();
-                                            r.glyphs.font.data.as_ref().hash(&mut h);
-                                            let g: Vec<_> = r
-                                                .glyphs
-                                                .glyphs
-                                                .iter()
-                                                .map(|p| (p.id, p.x.to_bits(), p.y.to_bits()))
-                                                .collect();
-                                            (
-                                                h.finish(),
-                                                r.glyphs.font.index,
-                                                r.glyphs.font_size.to_bits(),
-                                                g,
-                                                r.glyphs.normalized_coords.clone(),
-                                                r.glyphs.embolden,
-                                                r.glyphs.skew.to_bits(),
-                                            )
-                                        })
-                                        .collect();
-                                    let m = [line.top, line.baseline, line.width, line.height];
-                                    (m.map(f64::to_bits), line.range.clone(), runs)
-                                })
-                                .collect();
-                            let m = [l.advance, l.natural_width, l.content_width];
-                            (m.map(f64::to_bits), lines)
-                        };
                         assert_eq!(
                             summary(&one.layout(text, style, &params)),
                             summary(&built.layout(text, style, &params)),
@@ -3154,6 +3887,215 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// An empty text is one empty line in any room: a Text with no text
+    /// does not follow its own width and height (ljos_quick), so they
+    /// must not change what it measures.
+    #[test]
+    fn empty_text_measures_the_same_in_any_room() {
+        let mut e = TextEngine::new();
+        for line_height in [LineHeight::Proportional(1.0), LineHeight::Fixed(30.0)] {
+            for style in [
+                TextStyle::default(),
+                TextStyle {
+                    pixel_size: 23.0,
+                    weight: 700.0,
+                    ..TextStyle::default()
+                },
+            ] {
+                let free = LayoutParams {
+                    line_height,
+                    ..LayoutParams::default()
+                };
+                let measure = |l: &TextLayout| {
+                    let m = [
+                        l.natural_width,
+                        l.content_width,
+                        l.content_height,
+                        l.implicit_height,
+                        l.baseline,
+                    ];
+                    (summary(l), m.map(f64::to_bits), l.truncated, l.rtl)
+                };
+                let want = measure(&e.layout("", &style, &free));
+                for width in [None, Some(0.0), Some(3.5), Some(200.0)] {
+                    for height in [None, Some(0.0), Some(5.0), Some(300.0)] {
+                        for wrap in [WrapMode::NoWrap, WrapMode::WordWrap, WrapMode::WrapAnywhere] {
+                            for elide in [ElideMode::None, ElideMode::Right, ElideMode::Middle] {
+                                for max_lines in [0, 1, 3] {
+                                    let params = LayoutParams {
+                                        width,
+                                        height,
+                                        wrap,
+                                        elide,
+                                        max_lines,
+                                        line_height,
+                                        justify: max_lines == 3,
+                                    };
+                                    assert_eq!(
+                                        measure(&e.layout("", &style, &params)),
+                                        want,
+                                        "{params:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A plain text that wraps is broken without Parley's layout of it
+    /// ([`wrap_direct`]), and has to break where Parley's breaker breaks
+    /// it: here against an engine that builds every layout.
+    #[test]
+    fn wrapped_plain_text_breaks_as_parley_breaks() {
+        let texts = [
+            "The quick brown fox jumps over the lazy dog",
+            "well-known re-read e-mail--dash - spaced -hyphen- end-",
+            "a  b   c    d     double  spaces   between",
+            "supercalifragilisticexpialidocious and antidisestablishmentarianism",
+            "12.5% of $40,000 (parenthesised) [bracketed] {braced} a/b/c path/to/file.txt",
+            "http://example.com/a?b=c&d=e#frag, \"quoted\" 'single' x+y=z; a:b",
+            "fi fl ffi ligatures in office and affluent waffles",
+            "WWWWWWWWWW iiiiiiii aWaW aWaW aWaW TTTT ffff",
+            "x",
+            " leading space and   more",
+            "Grüße Ωμέγα Кириллица and Latin",
+            "שלום עולם and English, mixed",
+            "مرحبا بالعالم with Latin",
+            "漢字かなカナ and Latin words",
+            "tab\tseparated\tcolumns of text",
+            "zero\u{200b}width\u{200b}space\u{200b}joined",
+            "soft\u{ad}hyphen\u{ad}ated words",
+            "two\nlines of text that wrap",
+            "an ellipsis\u{2026} in a text that wraps",
+        ];
+        let widths = [0.0, 7.5, 33.3, 50.0, 121.0, 200.0];
+        let styles = [
+            TextStyle::default(),
+            TextStyle {
+                family: "serif".into(),
+                weight: 700.0,
+                italic: true,
+                pixel_size: 23.0,
+                ..TextStyle::default()
+            },
+            TextStyle {
+                family: "monospace".into(),
+                pixel_size: 9.0,
+                ..TextStyle::default()
+            },
+        ];
+        for system in [false, true] {
+            let mut direct = TextEngine::build(system);
+            let mut built = TextEngine::build(system);
+            built.families.pin = false;
+            for style in &styles {
+                for text in texts {
+                    for width in widths {
+                        for wrap in [WrapMode::WordWrap, WrapMode::WrapAnywhere, WrapMode::Wrap] {
+                            for (max_lines, elide) in [(0, ElideMode::None), (2, ElideMode::Right)]
+                            {
+                                let params = LayoutParams {
+                                    width: Some(width),
+                                    wrap,
+                                    max_lines,
+                                    elide,
+                                    ..LayoutParams::default()
+                                };
+                                let full = |l: &TextLayout| {
+                                    let m = [l.content_height, l.implicit_height];
+                                    (summary(l), m.map(f64::to_bits), l.truncated)
+                                };
+                                assert_eq!(
+                                    full(&direct.layout(text, style, &params)),
+                                    full(&built.layout(text, style, &params)),
+                                    "{text:?} {style:?} {width} {wrap:?} {max_lines}, system fonts {system}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(built.direct.wrapped, 0);
+            // Every Latin text above but one word ("x") wraps somewhere.
+            assert!(direct.direct.wrapped >= 300, "{}", direct.direct.wrapped);
+        }
+    }
+
+    /// A plain line too wide for its item is cut without Parley's layout
+    /// of it or of its cuts ([`TextEngine::elide_direct`]), and has to be
+    /// cut where Parley's layouts cut it: here against an engine that
+    /// builds every layout. That holds for a wrapped text's last line,
+    /// whose rest is read from the whole text's glyphs, too.
+    #[test]
+    fn elided_plain_text_cuts_as_parley_cuts() {
+        let texts = [
+            "The quick brown fox jumps over the lazy dog",
+            "fi fl ffi ligatures in office and affluent waffles",
+            "WWWWWWWWWW iiiiiiii aWaW TTTT",
+            "an ellipsis\u{2026} in it, and three dots...",
+            "12.5% of $40,000 (parenthesised) a/b/c",
+            "x",
+            "Grüße Ωμέγα Кириллица and Latin",
+            "שלום עולם and English, mixed",
+            "tab\tseparated",
+            "Message 42: the well-known fox re-read a lazy dog while light falls on northern hills.",
+            "AVAVAV To Ty Te Wa Yo LT P. F, \"quoted\" (kerned) T.V. AT&T WAVE Tokyo",
+            "e-mail me at a.b@c.org (or call +1-555-0100), 50% off; and then some more words",
+        ];
+        let widths = [0.0, 5.0, 12.0, 33.3, 64.0, 121.0, 200.0];
+        let styles = [
+            TextStyle::default(),
+            TextStyle {
+                family: "serif".into(),
+                weight: 700.0,
+                italic: true,
+                pixel_size: 23.0,
+                ..TextStyle::default()
+            },
+        ];
+        for system in [false, true] {
+            let mut direct = TextEngine::build(system);
+            let mut built = TextEngine::build(system);
+            built.families.pin = false;
+            for style in &styles {
+                for text in texts {
+                    for width in widths {
+                        for elide in [ElideMode::Left, ElideMode::Middle, ElideMode::Right] {
+                            for (wrap, max_lines) in [
+                                (WrapMode::NoWrap, 0),
+                                (WrapMode::WordWrap, 1),
+                                (WrapMode::WordWrap, 2),
+                                (WrapMode::WordWrap, 3),
+                                (WrapMode::WrapAnywhere, 2),
+                            ] {
+                                let params = LayoutParams {
+                                    width: Some(width),
+                                    wrap,
+                                    max_lines,
+                                    elide,
+                                    ..LayoutParams::default()
+                                };
+                                let full = |l: &TextLayout| (summary(l), l.truncated);
+                                assert_eq!(
+                                    full(&direct.layout(text, style, &params)),
+                                    full(&built.layout(text, style, &params)),
+                                    "{text:?} {style:?} {width} {elide:?} {wrap:?}, system fonts {system}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(built.direct.elided, 0);
+            assert!(direct.direct.elided >= 100, "{}", direct.direct.elided);
+            // A wrapped line's rest is read from its whole text.
+            assert!(direct.direct.rests >= 50, "{}", direct.direct.rests);
         }
     }
 
@@ -3203,6 +4145,7 @@ mod tests {
             .iter()
             .copied()
             .filter(|c| !c.is_ascii_alphanumeric() || "aZq09".contains(*c))
+            .chain(['\u{2026}'])
             .collect();
         for &a in &classes {
             for &b in &classes {
@@ -3226,5 +4169,200 @@ mod tests {
                 .collect();
             check(&text);
         }
+    }
+
+    /// Texts of every printable character one and two deep, and of every
+    /// class three deep when `deep`, and `long` longer ones from a fixed
+    /// sequence so a failure repeats.
+    fn printable_grid(deep: bool, long: usize) -> Vec<String> {
+        let printable: Vec<char> = (0x20u8..0x7f).map(char::from).collect();
+        let classes: Vec<char> = printable
+            .iter()
+            .copied()
+            .filter(|c| !c.is_ascii_alphanumeric() || "aZq09".contains(*c))
+            .collect();
+        let mut texts: Vec<String> = printable.iter().map(char::to_string).collect();
+        for &a in &printable {
+            for &b in &printable {
+                texts.push(format!("{a}{b}"));
+            }
+        }
+        for &a in classes.iter().filter(|_| deep) {
+            for &b in &classes {
+                for &c in &classes {
+                    texts.push(format!("{a}{b}{c}"));
+                }
+            }
+        }
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..long {
+            let len = 4 + (next() % 60) as usize;
+            texts.push(
+                (0..len)
+                    .map(|_| printable[(next() % printable.len() as u64) as usize])
+                    .collect(),
+            );
+        }
+        texts.extend(
+            [
+                "Message 42: the well-known fox re-read a lazy dog tomorrow.",
+                "e-mail me at a.b@c.org (or call +1-555-0100), 50% off; ok?",
+                "a/b/c path\\to\\file \"quoted\" 'single' [x] {y} <z> #1 $2 &3",
+                "12,345.67 -8 +9 1/2 3:45 pm -- dashes --- and ... dots!?",
+            ]
+            .map(String::from),
+        );
+        texts
+    }
+
+    /// [`wrap_direct`] wraps a plain text where [`soft_breaks`] says it
+    /// may, which has to be where Parley's analysis of it says.
+    #[test]
+    fn soft_breaks_are_parleys_soft_wrap_opportunities() {
+        let mut analyzer = Analyzer::new();
+        let mut analysis = Analysis::new();
+        let mut soft = Vec::new();
+        for text in printable_grid(true, 2000) {
+            for word_break in [WordBreak::Normal, WordBreak::BreakAll, WordBreak::KeepAll] {
+                let config = LineBreakConfig {
+                    word_break,
+                    ..LineBreakConfig::default()
+                };
+                let line_break = [(0..text.len(), config)];
+                let options = AnalysisOptions {
+                    base_direction: BaseDirection::Auto,
+                    line_break: &line_break,
+                    break_spaces: &[],
+                    line_break_override: None,
+                };
+                analyzer.analyze(&text, &options, &mut analysis);
+                soft_breaks(&text, word_break, &mut soft);
+                let theirs: Vec<bool> = analysis
+                    .char_info()
+                    .iter()
+                    .map(|i| i.is_soft_wrap_opportunity())
+                    .collect();
+                assert_eq!(soft, theirs, "{text:?} {word_break:?}");
+            }
+        }
+    }
+
+    /// [`harf_shape`] stands in for Parley's shaper once a font is set up
+    /// ([`parley_shape`]), so the two have to give the same glyphs and
+    /// clusters, in every font, size and synthesis, and with ellipses. An
+    /// elided line's rest is read from its whole text's glyphs where the
+    /// shaper says it may start ([`Snapped::unsafe_starts`]), so there it
+    /// has to shape alone as it does in the whole.
+    #[test]
+    fn harfrust_shapes_a_plain_text_as_parley_does() {
+        let mut texts = printable_grid(false, 300);
+        texts.extend(
+            [
+                "\u{2026}",
+                "cut here\u{2026}",
+                "office\u{2026}affluent\u{2026}",
+                "fi fl ffi ffl Th st ct WA AV To Ty",
+            ]
+            .map(String::from),
+        );
+        let styles = [
+            ("sans-serif", 400.0, false),
+            ("serif", 700.0, true),
+            ("monospace", 400.0, true),
+            ("sans-serif", 900.0, false),
+        ];
+        let (mut compared, mut rests) = (0, 0);
+        for system in [false, true] {
+            let mut engine = TextEngine::build(system);
+            for (family, weight, italic) in styles {
+                for size in [6.0, 13.0, 23.5] {
+                    let weight = FontWeight::new(weight);
+                    let Some(pinned) =
+                        engine
+                            .families
+                            .pinned(&mut engine.fcx, "a", family, weight, italic)
+                    else {
+                        continue;
+                    };
+                    let optical = optical_size(Platform::CURRENT, size);
+                    let variations = match &optical {
+                        Some(FontVariations::List(list)) => &list[..],
+                        _ => &[],
+                    };
+                    let mut voice = None;
+                    for text in &texts {
+                        let mut theirs = Snapped::default();
+                        let direct = &mut engine.direct;
+                        let Some((font_size, metrics, coords)) = parley_shape(
+                            direct,
+                            &pinned,
+                            text,
+                            size,
+                            variations,
+                            WordBreak::Normal,
+                            &mut theirs,
+                        ) else {
+                            continue;
+                        };
+                        let voice = voice.get_or_insert_with(|| {
+                            voice_of(&pinned, size, variations, font_size, metrics, &coords)
+                                .expect("a font Parley shapes in sets up")
+                        });
+                        assert_eq!(voice.font_size.to_bits(), font_size.to_bits());
+                        assert_eq!(&*voice.coords, &coords[..], "{family} {size}");
+                        let mut ours = Snapped::default();
+                        harf_shape(voice, &pinned.font, text, &mut direct.buffer, &mut ours)
+                            .expect("shapes");
+                        let bits = |s: &Snapped| {
+                            let glyphs = s
+                                .glyphs
+                                .iter()
+                                .map(|g| (g.id, g.x.to_bits(), g.y.to_bits(), g.advance.to_bits()));
+                            (glyphs.collect::<Vec<_>>(), s.clusters.clone())
+                        };
+                        assert_eq!(
+                            bits(&ours),
+                            bits(&theirs),
+                            "{text:?} {family} {weight:?} {italic} {size}, system fonts {system}"
+                        );
+                        compared += 1;
+                        // Where the shaper says the rest may start, it
+                        // shapes alone as it does in the whole.
+                        let unsafe_starts = ours.unsafe_starts.clone().expect("known");
+                        let spaces = text.match_indices(' ').map(|(at, _)| at + 1);
+                        for start in spaces.filter(|_| ours.clusters.is_empty() && text.is_ascii())
+                        {
+                            let at = u32::try_from(start).expect("short");
+                            if start == text.len() || unsafe_starts.contains(&at) {
+                                continue;
+                            }
+                            let mut rest = Snapped::default();
+                            harf_shape(
+                                voice,
+                                &pinned.font,
+                                &text[start..],
+                                &mut direct.buffer,
+                                &mut rest,
+                            )
+                            .expect("shapes");
+                            let tail = Snapped {
+                                glyphs: ours.glyphs[start..].to_vec(),
+                                ..Snapped::default()
+                            };
+                            assert_eq!(bits(&rest), bits(&tail), "{text:?} from {start}");
+                            rests += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(compared > 100_000, "{compared}");
+        assert!(rests > 5_000, "{rests}");
     }
 }

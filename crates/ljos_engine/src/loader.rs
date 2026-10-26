@@ -516,6 +516,12 @@ pub(crate) struct LoadedFile {
     /// The handlers, by expression, already warned of using a signal's
     /// parameters they do not declare.
     pub(crate) injected_warned: RefCell<rustc_hash::FxHashSet<u32>>,
+    /// The numbers of the enum literals the compiler left to the runtime
+    /// (`Text.WrapMode` where Qt's type table has no numbers), by where the
+    /// literal is in [`LoadedFile::ir`], with the type and key it was found
+    /// for: a native type's keys are found by name once per file, not once
+    /// per object a delegate makes.
+    pub(crate) enum_numbers: RefCell<rustc_hash::FxHashMap<usize, (ljos_ir::TypeRef, String, i64)>>,
     /// What [`LoadedFile::bytes`] found: a file does not change once loaded.
     size: OnceCell<usize>,
 }
@@ -543,6 +549,7 @@ impl LoadedFile {
             epoch: Cell::new(0),
             text: Cell::new(0),
             injected_warned: RefCell::default(),
+            enum_numbers: RefCell::default(),
             size: OnceCell::new(),
         }
     }

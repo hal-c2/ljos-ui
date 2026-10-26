@@ -1,12 +1,13 @@
 //! Drags from other applications, which the shell follows itself where
 //! winit 0.30 does not, or loses what they carry: on Wayland winit has no
 //! data device at all (`wayland_drag`); on X11 it takes files only and
-//! keeps the drag's position to itself (`x11_drag`). On macOS and Windows
-//! they stay winit's: files only, placed where `QmlView` guesses.
+//! keeps the drag's position to itself (`x11_drag`); on macOS (`appkit_drag`)
+//! and Windows (`win32_drag`) it takes files alone, with no position and no
+//! answer for the source.
 //!
 //! Drags out of the application go to the window system the same way,
-//! where the shell carries them ([`DragOut`]): on Wayland only. Elsewhere
-//! they stay in the window.
+//! where the shell carries them ([`DragOut`]): on Wayland and X11. On
+//! macOS and Windows they stay in the window.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -24,12 +25,26 @@ use crate::{wayland_drag, x11_drag};
 pub(crate) enum At {
     /// The surface's logical pixels, as Wayland says it.
     Logical(f64, f64),
-    /// The window's pixels, as X11 says it.
+    /// The window's pixels, as X11 and Windows say it.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Physical(f64, f64),
 }
 
 /// One step of a drag, for the window `target` names ([`target_of`]).
 pub(crate) enum DragStep {
+    /// A drag came over the window, offering `formats`, whose data is not
+    /// read yet: the window system needs an answer at once, and some
+    /// sources give their data only to a target that answered. The loop
+    /// answers from the formats alone and then calls `answered`, after
+    /// which the data is read and the drag is [`DragStep::Entered`].
+    Offered {
+        target: usize,
+        at: At,
+        formats: Vec<String>,
+        actions: DragActions,
+        answer: Answer,
+        answered: Box<dyn FnOnce() + Send>,
+    },
     Entered {
         target: usize,
         at: At,
@@ -48,7 +63,9 @@ pub(crate) enum DragStep {
         answer: Answer,
     },
     /// Not a step of a drag in: the drag out of the application ended,
-    /// which wakes the loop to settle it ([`DragOut::settle`]).
+    /// which wakes the loop to settle it ([`DragOut::settle`]). macOS and
+    /// Windows have no drags out yet.
+    #[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
     OutEnded,
 }
 
@@ -67,6 +84,10 @@ pub(crate) type Answer = Box<dyn Reply>;
 pub(crate) enum Drags {
     Wayland(wayland_drag::Drags),
     X11(x11_drag::Drags),
+    #[cfg(target_os = "macos")]
+    AppKit(crate::appkit_drag::Drags),
+    #[cfg(target_os = "windows")]
+    Win32(crate::win32_drag::Drags),
 }
 
 impl Drags {
@@ -76,6 +97,18 @@ impl Drags {
         display: &OwnedDisplayHandle,
         post: Arc<dyn Fn(DragStep) + Send + Sync>,
     ) -> Option<Self> {
+        // The window system's own calls find the drags there, not winit's
+        // display.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let _ = display;
+        #[cfg(target_os = "macos")]
+        return crate::appkit_drag::start(post).map(Self::AppKit);
+        #[cfg(target_os = "windows")]
+        return crate::win32_drag::start(post).map(Self::Win32);
+        #[cfg_attr(
+            any(target_os = "macos", target_os = "windows"),
+            allow(unreachable_code)
+        )]
         if wayland_drag::is_wayland(display) {
             return wayland_drag::start(display, post).map(Self::Wayland);
         }
@@ -83,19 +116,26 @@ impl Drags {
     }
 
     /// A platform window was made: drags over it come to the shell.
-    pub(crate) fn window_opened(&self, window: &Window) {
+    /// `Err`: they do not, and why.
+    pub(crate) fn window_opened(&self, window: &Window) -> Result<(), String> {
         match self {
-            Self::Wayland(_) => {}
-            Self::X11(drags) => drags.window_opened(window),
+            Self::Wayland(_) => Ok(()),
+            Self::X11(drags) => {
+                drags.window_opened(window);
+                Ok(())
+            }
+            #[cfg(target_os = "macos")]
+            Self::AppKit(drags) => drags.window_opened(window),
+            #[cfg(target_os = "windows")]
+            Self::Win32(drags) => drags.window_opened(window),
         }
     }
 
     /// Handles what the window system said of drags since the last time;
     /// the loop calls it each time before it sleeps.
     pub(crate) fn dispatch(&mut self) {
-        match self {
-            Self::Wayland(drags) => drags.dispatch(),
-            Self::X11(_) => {}
+        if let Self::Wayland(drags) = self {
+            drags.dispatch();
         }
     }
 
@@ -103,32 +143,38 @@ impl Drags {
         match self {
             Self::Wayland(drags) => drags.stop(),
             Self::X11(drags) => drags.stop(),
+            #[cfg(target_os = "macos")]
+            Self::AppKit(drags) => drags.stop(),
+            #[cfg(target_os = "windows")]
+            Self::Win32(drags) => drags.stop(),
         }
-    }
-
-    /// Whether it carries drags out of the application.
-    pub(crate) fn carries_out(&self) -> bool {
-        matches!(self, Self::Wayland(_))
     }
 
     fn start_out(&mut self, data: &DragData, actions: DragActions) -> bool {
         match self {
             Self::Wayland(drags) => drags.start_out(data, actions),
-            Self::X11(_) => false,
+            Self::X11(drags) => drags.start_out(data, actions),
+            // Drags out stay in the window there.
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            _ => false,
         }
     }
 
     fn cancel_out(&mut self) {
         match self {
             Self::Wayland(drags) => drags.cancel_out(),
-            Self::X11(_) => {}
+            Self::X11(drags) => drags.cancel_out(),
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            _ => {}
         }
     }
 
     fn out_ended(&mut self) -> Option<Option<DropAction>> {
         match self {
             Self::Wayland(drags) => drags.out_ended(),
-            Self::X11(_) => None,
+            Self::X11(drags) => drags.out_ended(),
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            _ => None,
         }
     }
 }
@@ -200,11 +246,24 @@ impl std::fmt::Debug for Drags {
         f.write_str(match self {
             Self::Wayland(_) => "Drags(Wayland)",
             Self::X11(_) => "Drags(X11)",
+            #[cfg(target_os = "macos")]
+            Self::AppKit(_) => "Drags(AppKit)",
+            #[cfg(target_os = "windows")]
+            Self::Win32(_) => "Drags(Win32)",
         })
     }
 }
 
-/// How a drag names `window`: its Wayland surface, or its X11 window.
+/// How a drag names `window`: its Wayland surface, its X11 window, its
+/// AppKit content view or its Win32 handle.
 pub(crate) fn target_of(window: &Window) -> Option<usize> {
+    #[cfg(target_os = "macos")]
+    return crate::appkit_drag::view_id(window);
+    #[cfg(target_os = "windows")]
+    return crate::win32_drag::window_id(window);
+    #[cfg_attr(
+        any(target_os = "macos", target_os = "windows"),
+        allow(unreachable_code)
+    )]
     wayland_drag::surface_of(window).or_else(|| x11_drag::window_of(window))
 }

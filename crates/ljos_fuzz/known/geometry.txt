@@ -1,7 +1,7 @@
 # Buckets of ljos-fuzz geometry that are known: as known/bindings.txt, one per line, the
 # signature then why. A value's context ends in what places the item that differs: free,
 # anchors, fill, center-in, positioner or in-positioner.
-# Triaged from seeds 101 and 202 (2000 cases each).
+# Triaged from seeds 101, 202 and 303 (2000 cases each).
 
 # A write to what anchors place wins on Ljós; on Qt the anchors keep it (features/layouts/placed-geometry-writes.feature).
 value:step-anchors:number       a write of an anchored y or height wins over the anchors (features/layouts/placed-geometry-writes.feature)
@@ -28,9 +28,11 @@ value:step-positioner:nan-ljos      NaN given to a Column's height is ignored (f
 value:onChanged:empty-qt            NaN given to y is ignored, so no change is told (features/items/geometry-nan.feature)
 value:step-free:nan-qt              NaN given to implicitHeight reaches an item's bound height on Qt, which geometry-nan.feature does not cover yet
 value:step-fill:nan-qt              a NaN anchors.leftMargin makes a filled item's x NaN on Qt, which geometry-nan.feature does not cover yet
+value:load-positioner:nan-qt        NaN given to implicitWidth reaches a Row's implicitWidth on Qt, which geometry-nan.feature does not cover yet
 
 # A size binding runs after the literal implicit size it follows, and the change is told (features/layouts/placed-geometry-writes.feature).
 value:onChanged:empty-ljos          a width or height bound to 0 next to a literal implicit size is not told (features/layouts/placed-geometry-writes.feature)
+warning:assign(qt-only):Cannot_assign_[undefined]_to_double  a width bound next to a literal implicit size is told on Qt, and its handler's write of undefined to implicitHeight throws there (features/layouts/placed-geometry-writes.feature)
 
 # Anchors are applied while the item is made on Qt, after onCompleted on Ljós.
 value:onChanged+onCompleted:text    a centred item's x is told after the root's onCompleted, not before it (no scenario yet)
@@ -48,4 +50,7 @@ warning:RangeError(qt-only):Maximum_call_stack_size_exceeded.   a handler of wid
 value:load-free:int-range           a height bound through its own implicitHeight loops; Qt settles on another value
 value:load-center-in:number         a width bound to its own x under anchors.centerIn loops; Qt settles on another value
 value:load-center-in:int-range      a huge item centred: Qt's whole-pixel centring holds x to an int's range
+value:load-anchors:int-range        a huge item centred by anchors.horizontalCenter: Qt's whole-pixel centring holds x to an int's range
+value:load-anchors:rounding         a width bound to its own x under anchors.centerIn loops, read by another item's anchor; Qt settles on another value
+value:load-free:number              an implicitHeight bound to its own height loops; Qt warns "Binding loop detected" and settles on another value
 warning:assign(ljos-only):Unable_to_assign_[undefined]_to_real  a colour's .a given to a margin is told as an assign error on Ljós; Qt gives it as undefined silently (no scenario yet)

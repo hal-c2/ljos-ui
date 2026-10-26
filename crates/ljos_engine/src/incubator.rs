@@ -2367,7 +2367,20 @@ impl Engine {
                 Color::parse(s).map_or_else(|| Value::String(Atom::new(s)), Value::Color)
             }
             Literal::Enum(e) => {
-                let v = e.value.or_else(|| {
+                // A native type's keys do not change while the file is
+                // loaded; a component's may, with a reload of its file.
+                let native = matches!(e.ty, TypeRef::Native { .. });
+                let at = std::ptr::from_ref(e) as usize;
+                // The place alone is not enough: a literal that is not in
+                // the file's IR (a copy, or another file's) may be where a
+                // kept one was, so the kept number is the one for this
+                // type and key.
+                let kept = || {
+                    let kept = inst.file.enum_numbers.borrow();
+                    let (ty, key, n) = kept.get(&at)?;
+                    (*ty == e.ty && *key == e.key).then_some(*n)
+                };
+                let v = e.value.or_else(|| native.then(kept).flatten()).or_else(|| {
                     let meta = self.type_meta(&inst.file, &e.ty).ok();
                     // `Qt` is a namespace, not a registered type.
                     let of_qt = matches!(&e.ty, TypeRef::Native { name, .. } if name == "Qt");
@@ -2378,10 +2391,16 @@ impl Engine {
                     };
                     // A string written for a flags property names several
                     // keys: "LeftButton|RightButton".
-                    e.key
+                    let found = e
+                        .key
                         .split('|')
                         .map(named)
-                        .try_fold(0, |all, one| Some(all | one?))
+                        .try_fold(0, |all, one| Some(all | one?));
+                    if let (true, Some(n)) = (native, found) {
+                        let kept = (e.ty.clone(), e.key.clone(), n);
+                        inst.file.enum_numbers.borrow_mut().insert(at, kept);
+                    }
+                    found
                 });
                 Value::Int(v.and_then(|v| i32::try_from(v).ok()).unwrap_or(0))
             }

@@ -152,6 +152,18 @@ fn outside_drag_formats(w: &mut LjosWorld, x: f64, y: f64, step: &Step) -> StepR
     })
 }
 
+// The window system has not handed over what the formats hold yet.
+#[when(regex = r#"^another application offers the formats "([^"]*)" over ([-\d.]+), ([-\d.]+)$"#)]
+fn outside_drag_offers(w: &mut LjosWorld, formats: String, x: f64, y: f64) -> StepResult {
+    let formats = action_names(&formats);
+    w.each(|b| {
+        b.platform()?.drag_from_outside(&OutsideDrag::Offer {
+            formats: formats.clone(),
+            at: (x, y),
+        })
+    })
+}
+
 #[when(regex = r#"^the drag from another application moves to ([-\d.]+), ([-\d.]+)$"#)]
 fn outside_drag_moves(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
     w.each(|b| b.platform()?.drag_from_outside(&OutsideDrag::Move((x, y))))

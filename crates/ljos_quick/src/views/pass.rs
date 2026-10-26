@@ -865,6 +865,10 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>
         return;
     }
     st.passes.set(st.passes.get() + 1);
+    if over.is_none() {
+        st.due.set(false);
+        st.slots_stale.set(false);
+    }
     run(e, view, st, over);
     st.in_pass.set(false);
     // What changed during a pass for a method is laid out once the method
@@ -874,6 +878,17 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>
         bump(e, st);
     }
     fetch_at_end(e, view, st);
+}
+
+/// Writes `count`, or tells of the one the model gave it already.
+fn tell_count(e: &Engine, view: ObjectId, st: &ViewState, rows: usize) {
+    let v = Value::Int(rows.min(i32::MAX as usize) as i32);
+    let p = ItemView::COUNT.index;
+    if st.count_untold.replace(false) && e.untrack(|| e.read(view, p)).change_equals(&v) {
+        warn(e, "count", e.notify(view, p));
+    } else {
+        put(e, view, p, v);
+    }
 }
 
 /// When the last row has a delegate (or there are none), the model may
@@ -902,7 +917,6 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     let dir = flickable::dir(g.main);
     let first_pass = st.seen_index.get().is_none();
     let rows = d.count();
-    put(e, view, ItemView::COUNT.index, Value::Int(rows as i32));
     let current = current::normalise(e, view, st, rows);
 
     // The direction the rows run in.
@@ -1328,6 +1342,9 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
             let at = Value::Real(g.in_content(end, foot));
             warn(e, "place", write_placed(e, f, pos_p, at));
         }
+        // After the delegates are made and before the content is long
+        // enough for them, as qml6 tells.
+        tell_count(e, view, st, rows);
         let (lo, hi) = (start0 - head, end + foot);
         let origin = if g.reversed { -hi } else { lo };
         if over.is_some() {

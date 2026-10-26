@@ -8,10 +8,11 @@
 //! thread. The UI thread is never woken for a watch: an application at
 //! rest runs nothing, and a client waiting on it costs one sleeping task.
 //!
-//! Each time the UI thread goes to sleep it tells when it wakes next and
-//! where the primary window's pointer was in its last pass (`rests`): a
-//! client that drove the pointer from outside, or wants the application
-//! at rest, waits for that instead of for a while.
+//! Each time the UI thread goes to sleep it tells when it wakes next,
+//! whether the primary window still owes a frame, and where its pointer
+//! was in its last pass (`rests`): a client that drove the pointer from
+//! outside, wants the application at rest, or its picture as drawn, waits
+//! for that instead of for a while.
 //!
 //! A client can also follow a few items: each pass that changed the
 //! picture where one of them lies counts for it. Only while some client
@@ -218,6 +219,11 @@ pub struct Rest {
     /// When it wakes by itself next: a timer, an animation's frame, a
     /// pass asked for. `None` when only input or a message wakes it.
     pub wake_at: Option<Instant>,
+    /// The primary window owes a frame: a pass of it is due, or was asked
+    /// of the window system, which has not yet let it draw. A wake is due
+    /// meanwhile only for the window system's stall, so `wake_at` alone
+    /// cannot tell that what it shows is not yet what the scene is.
+    pub frame_owed: bool,
     /// The pointer as the primary window's last pass saw it, in the
     /// window's points; `None` when it is not over the window.
     pub pointer: Option<PointerSeen>,
@@ -239,7 +245,7 @@ impl Rest {
         let pointer = self
             .pointer
             .map(|p| json!({"x": p.x, "y": p.y, "pressed": p.pressed}));
-        json!({"wake_in_ms": wake_in_ms, "pointer": pointer})
+        json!({"wake_in_ms": wake_in_ms, "frame_owed": self.frame_owed, "pointer": pointer})
     }
 }
 
@@ -485,6 +491,11 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         }
         None => text.push_str(". The UI thread sleeps until something happens"),
     }
+    text.push_str(if rest.frame_owed {
+        "; the window owes a frame"
+    } else {
+        "; no frame is owed"
+    });
     if let Some(p) = rest.pointer {
         let held = if p.pressed { ", held" } else { "" };
         let _ = write!(text, "; pointer at {}, {}{held}", p.x, p.y);
@@ -602,6 +613,7 @@ mod tests {
         let at = Instant::now() + Duration::from_secs(60);
         let rest = Rest {
             wake_at: Some(at),
+            frame_owed: true,
             pointer: Some(PointerSeen {
                 x: 50.0,
                 y: 30.0,
@@ -621,6 +633,7 @@ mod tests {
             told["pointer"],
             json!({"x": 50.0, "y": 30.0, "pressed": true})
         );
+        assert_eq!(told["frame_owed"], json!(true));
         let wake_in = told["wake_in_ms"].as_u64().unwrap();
         assert!((59_000..=60_000).contains(&wake_in), "{wake_in}");
         feed.rested(Rest::default());
@@ -628,7 +641,7 @@ mod tests {
         assert_eq!(reply.structured["counts"]["rests"], json!(2));
         assert_eq!(
             reply.structured["rest"],
-            json!({"wake_in_ms": null, "pointer": null})
+            json!({"wake_in_ms": null, "frame_owed": false, "pointer": null})
         );
     }
 

@@ -32,34 +32,34 @@ use crate::palette::Palette;
 pub struct Item {
     #[qml(base)]
     pub object: QtObject,
-    #[qml(notify)]
+    #[qml(notify, change = crate::scene::moved)]
     pub x: f64,
-    #[qml(notify)]
+    #[qml(notify, change = crate::scene::moved)]
     pub y: f64,
-    #[qml(notify)]
+    #[qml(notify, change = crate::scene::reshaped)]
     pub z: f64,
-    #[qml(notify, reset = SIZE_RESET)]
+    #[qml(notify, reset = SIZE_RESET, change = crate::scene::reshaped)]
     pub width: f64,
-    #[qml(notify, reset = SIZE_RESET)]
+    #[qml(notify, reset = SIZE_RESET, change = crate::scene::reshaped)]
     pub height: f64,
     #[qml(notify)]
     pub implicit_width: f64,
     #[qml(notify)]
     pub implicit_height: f64,
-    #[qml(notify)]
+    #[qml(notify, change = crate::scene::reshaped)]
     pub visible: bool,
-    #[qml(notify, write = Self::keep_opacity)]
+    #[qml(notify, write = Self::keep_opacity, change = crate::scene::reshaped)]
     pub opacity: f64,
-    #[qml(notify)]
+    #[qml(notify, change = crate::scene::reshaped)]
     pub clip: bool,
     #[qml(notify)]
     pub enabled: bool,
-    #[qml(notify)]
+    #[qml(notify, change = crate::scene::reshaped)]
     pub rotation: f64,
-    #[qml(notify)]
+    #[qml(notify, change = crate::scene::reshaped)]
     pub scale: f64,
     /// One of [`crate::enums::transform_origin`].
-    #[qml(notify, enumeration = "TransformOrigin")]
+    #[qml(notify, enumeration = "TransformOrigin", change = crate::scene::reshaped)]
     pub transform_origin: i32,
     /// The visual parent. Assigning it reparents the item (see
     /// [`crate::set_parent_item`]); it follows
@@ -139,7 +139,7 @@ pub struct Item {
     pub transitions: QmlList,
     /// `Rotation`, `Scale`, `Translate`, `Matrix4x4` and `Shear`, applied
     /// after `rotation` and `scale` (see [`crate::transform`]).
-    #[qml(notify, list)]
+    #[qml(notify, list, change = crate::scene::reshaped)]
     pub transform: QmlList,
     #[qml(group)]
     pub layer: ItemLayer,

@@ -192,6 +192,11 @@ impl Flags {
     /// runs again only if that source did change. What it read is often
     /// worked out from what it wrote, and gives what it gave.
     const RECHECK: u16 = 1 << 11;
+    /// A property whose owner is told of each change ([`Graph::set_noted`])
+    /// in place of an effect reading it.
+    const NOTED: u16 = 1 << 12;
+    /// A noted property waiting in `Inner::noted`.
+    const NOTE_DUE: u16 = 1 << 13;
 
     fn has(self, f: u16) -> bool {
         self.0 & f != 0
@@ -346,6 +351,10 @@ struct Inner<V> {
     /// [`Kind::Told`] nodes a change reached, to be told when it has
     /// spread.
     told: Vec<NodeId>,
+    /// Noted properties a change reached, told with [`Kind::Told`] nodes.
+    noted: Vec<NodeId>,
+    /// Who is told of them ([`Graph::set_note_handler`]).
+    note_handler: Option<Rc<dyn Fn(NodeId)>>,
     /// Counts the changes that mark observers, wrapping: what a node's
     /// `marked_by` is told of.
     change: u8,
@@ -606,6 +615,8 @@ impl<V: Clone + 'static> Graph<V> {
                 flush_depth: 0,
                 freeze_later: Vec::new(),
                 told: Vec::new(),
+                noted: Vec::new(),
+                note_handler: None,
                 change: 0,
                 marking: 0,
                 ahead: None,
@@ -2261,6 +2272,27 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(())
     }
 
+    /// Has the note handler ([`Graph::set_note_handler`]) told of each
+    /// change of the property `n` from now on: a value written to it, a
+    /// binding put on it, or a change reaching its binding. Told after the
+    /// change has spread, as a [`Graph::effect_told`] effect is, and once
+    /// however many changes come before; a binding is not run for it, but
+    /// may be out of date until it is read. What follows many properties
+    /// that each change on their own (a scene, the geometry of its items)
+    /// keeps a mark instead of an effect each.
+    pub fn set_noted(&self, n: NodeId) -> Result<(), ReactiveError> {
+        let mut i = self.inner.borrow_mut();
+        let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+        node.flags.set(Flags::NOTED, true);
+        Ok(())
+    }
+
+    /// Who is told of the noted properties' changes ([`Graph::set_noted`]).
+    /// Told outside any internal borrow, so the handler may use the graph.
+    pub fn set_note_handler(&self, handler: impl Fn(NodeId) + 'static) {
+        self.inner.borrow_mut().note_handler = Some(Rc::new(handler));
+    }
+
     /// Attaches an opaque tag to a node. The graph never interprets it; the
     /// caller can use it to map a node back to what it stands for when it
     /// prints a [`Diagnostic`].
@@ -2505,7 +2537,9 @@ impl<V: Clone + 'static> Graph<V> {
         {
             let mut i = self.inner.borrow_mut();
             if i.batch_depth > 0
-                || (i.queues.last().is_none_or(Queue::is_empty) && i.told.is_empty())
+                || (i.queues.last().is_none_or(Queue::is_empty)
+                    && i.told.is_empty()
+                    && i.noted.is_empty())
             {
                 return;
             }
@@ -2560,6 +2594,7 @@ impl<V: Clone + 'static> Graph<V> {
     /// Tells the [`Kind::Told`] nodes a change reached, before the
     /// effects run: what they are told to read is what those see.
     fn tell(&self) {
+        self.tell_noted();
         loop {
             let told = {
                 let mut g = self.inner.borrow_mut();
@@ -2579,6 +2614,28 @@ impl<V: Clone + 'static> Graph<V> {
                 }
             };
             told();
+        }
+    }
+
+    /// Tells the note handler of each noted property a change reached.
+    fn tell_noted(&self) {
+        loop {
+            let (n, handler) = {
+                let mut g = self.inner.borrow_mut();
+                let i = &mut *g;
+                let Some(n) = i.noted.pop() else {
+                    return;
+                };
+                let Some(node) = i.nodes.get_mut(n) else {
+                    continue;
+                };
+                node.flags.set(Flags::NOTE_DUE, false);
+                let Some(h) = &i.note_handler else {
+                    continue;
+                };
+                (n, Rc::clone(h))
+            };
+            handler(n);
         }
     }
 
@@ -3080,6 +3137,14 @@ const SHARED_FLUSH_DEPTH: u32 = 8;
 /// Queues `n` on the innermost flush level. A node already waiting on an
 /// outer level moves in; its old entry is skipped when it comes up, as it
 /// is no longer queued there.
+/// Puts a noted `node` (`n`) in `noted`, once until it is told.
+fn note<V>(noted: &mut Vec<NodeId>, n: NodeId, node: &mut Node<V>) {
+    if node.flags.has(Flags::NOTED) && !node.flags.has(Flags::NOTE_DUE) {
+        node.flags.set(Flags::NOTE_DUE, true);
+        noted.push(n);
+    }
+}
+
 fn enqueue<V>(queues: &mut [Queue], n: NodeId, node: &mut Node<V>) {
     let top = queues.len().saturating_sub(1);
     if node.flags.has(Flags::DEFERRED)
@@ -3349,6 +3414,13 @@ impl<V: Clone + 'static> Inner<V> {
             }
         };
         let mut stack = std::mem::take(&mut self.mark_stack);
+        if self.wave_origin != Some(n)
+            && let Some(node) = self.nodes.get_mut(n)
+        {
+            // A binding's own result was noted by the mark that made it
+            // dirty, as a told effect is.
+            note(&mut self.noted, n, node);
+        }
         if let Some(node) = self.nodes.get(n) {
             let stamp = node.read_stamp;
             stack.extend(node.observers.iter().map(|o| (o.node, first, stamp)));
@@ -3461,6 +3533,9 @@ impl<V: Clone + 'static> Inner<V> {
                 enqueue(&mut self.queues, m, node);
             }
             if was_clean {
+                // A bound property may come out otherwise: its owner reads
+                // it when it gets to it, which brings it up to date.
+                note(&mut self.noted, m, node);
                 // Not when a binding it was waiting on has changed: what it
                 // waits on still came from the change that reached it.
                 node.marked_by = self.marking;

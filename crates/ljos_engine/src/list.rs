@@ -337,6 +337,9 @@ impl Engine {
                 None => {
                     slot.edit(&apply);
                     h.mark_assigned(prop);
+                    let change = crate::engine::change_hook(h, prop);
+                    drop(store);
+                    self.tell_change(obj, prop, change);
                     return Ok(());
                 }
                 // The node's is the one that is edited; the field lets go

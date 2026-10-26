@@ -5623,7 +5623,7 @@ remaining cost is in the graph:
 - 4 effects.
 - 5 computed writes.
 - The editor's layout batch: 35K.
-- The placeholder's eager measure: 12K.
+- The placeholder's eager measure: 12K. TEXT4 measures it when it is read instead.
 
 Taking the text polish out of the graph would close this gap. That work belongs to the delegate
 track's dirty bits.
@@ -6332,7 +6332,7 @@ once.
 
 ### Software drawing to shared memory: a lead (2026-10-26)
 
-A design note, not built. Without a GPU, Ljós draws through EGL on Mesa's llvmpipe, as qml6
+A design note; built and measured in SHM1 below. Without a GPU, Ljós draws through EGL on Mesa's llvmpipe, as qml6
 does. The context alone costs:
 
 - about 31.6 MB of malloc, whatever GL API is asked for;
@@ -6373,6 +6373,156 @@ would draw and send only its damage.
 
 **When.** It is chosen where EGL offers only llvmpipe or softpipe, or when asked for. A
 machine with a GPU keeps GL.
+
+### SHM1: a window drawn on the processor, against B0 on llvmpipe and qml6 (2026-10-26)
+
+The lead above, built. `LJOS_PAINTER=cpu` (or `ShellConfig::drawn_on_processor`) draws each
+window with R into a `wl_shm` buffer (an `MIT-SHM` image on X11) through softbuffer. It makes
+no EGL display:
+
+- R draws with `vello_cpu`'s workers (the processor's cores less one, at most three) and the
+  machine's SIMD level;
+- only the parts that differ from the last frame are drawn (`frame_damage`: an item that
+  moved, changed what it draws, its opacity or its clips, came, went or fell behind another);
+- only the changed rectangles are given to `wl_surface.damage_buffer`;
+- Wayland's two buffers take turns, and a buffer's age says which earlier changes it lacks.
+
+What R cannot draw is left out and logged once. That is a `ShaderEffect`'s program, what egui
+draws (the inspector), and a window that can be seen through (drawn over black). The B0
+scenarios' comparison checks the path: `features/window/cpu-drawing.feature` compares the
+window's screencopy with R's picture of the same frame (`app_screenshot`), within 2 levels,
+before and after moves, colour changes and scrolls in a clip.
+
+**Method.** The sandbox is headless sway with `WLR_RENDERER=pixman`, so B0's EGL is llvmpipe
+(`LP_NUM_THREADS` capped at 4, as the shell does) and qml6 draws with llvmpipe too.
+
+- **Benches.** `ljos bench --profile desktop --warm-up --repeat 5 --settle 1 --idle 3 --load 3
+  --gesture scroll`, the manifest of "Start-up against qml6". The apps are list1000, minimal,
+  thermostat, todolist, listview and animations (a full-window animation). Medians of 5.
+- **Malloc.** The `LD_PRELOAD` counter of "Memory against qml6", read 8 s after start and
+  again after 10 s of scrolling.
+- **Load.** The machine was shared, at a load of 12–104. Start-up times moved by up to 2× from
+  run to run, in both directions, so read them as the same order. A first run had the
+  processor faster everywhere (minimal 38 against 94 ms).
+
+**Memory** (MiB; private and swapped is the process's own, after driving):
+
+| app | PSS cpu | PSS B0 | PSS qt | own cpu | own B0 | own qt |
+|---|---:|---:|---:|---:|---:|---:|
+| list1000 | 63.1 | 103 | 222 | 17.7 | 44.9 | 90.2 |
+| minimal | 56.0 | 127 | 161 | 11.7 | 37.9 | 83.2 |
+| thermostat | 97.4 | 50.4* | 181 | 48.3 | 83.1 | 143 |
+| todolist | 85.8 | 131 | 214 | 30.9 | 58.8 | 111 |
+| listview | 60.6 | 126 | 195 | 17.9 | 46.2 | 90.4 |
+| animations | 62.4 | 151 | 224 | 16.6 | 44.2 | 98.4 |
+
+\* B0's thermostat had been swapped out when its PSS was read. Its own memory, swap counted, is
+the comparable figure.
+
+Settled with nothing swapped (RSS / PSS / threads):
+
+| app | cpu | B0 | qt |
+|---|---|---|---|
+| minimal | 69.1 / 60.8 / 15 | 155 / 132.8 / 16 | 219.7 / 181.6 / 71 |
+| list1000 | 74.9 / 66.9 / 15 | 162 / 109 / 16 | 226 / 188 / 71 |
+| thermostat | 119 / 111 / 15 | 209 / 155 / 16 | 302 / 264 / 71 |
+| todolist | 95 / 87 / 16 | 178 / 160 / 17 | 260 / 222 / 71 |
+
+On minimal, B0's extra is LLVM (37 MiB PSS), heap (21 MiB against 3.3) and Mesa's driver
+(12 MiB). The processor's path maps none of them: 145 MiB mapped, against 406 for B0 and
+about 490 for qml6.
+
+**Malloc** (live / peak):
+
+| app | after start: cpu | B0 | qt | after scrolling: cpu | B0 | qt |
+|---|---:|---:|---:|---:|---:|---:|
+| minimal | 7.05M / 7.11M | 47.6M / 49.0M | 135.2M / 136.6M | 7.55M / 7.61M | 47.6M / 49.0M | 135.2M / 136.6M |
+| list1000 | 11.1M / 11.1M | 52.1M / 53.3M | 138.5M / 139.8M | 13.7M / 14.1M | 54.3M / 54.8M | 139.5M / 140.9M |
+| thermostat | 48.6M / 48.9M | 95.7M / 115.8M | 192.0M / 203.9M | 49.3M / 49.4M | 104.1M / 115.8M | 192.3M / 204.0M |
+| todolist | 27.3M / 27.4M | 71.1M / 71.4M | 151.3M / 152.9M | 28.7M / 28.7M | 70.9M / 73.8M | 151.6M / 154.5M |
+
+**Start to first frame** (ms, median):
+
+| app | cpu | B0 | qt |
+|---|---:|---:|---:|
+| list1000 | 69.6 | 65.4 | 361 |
+| minimal | 97.4 | 81.7 | 669 |
+| thermostat | 145 | 381 | 639 |
+| todolist | 193 | 98.3 | 443 |
+| listview | 62.7 | 70.5 | 405 |
+| animations | 128 | 144 | 457 |
+
+**Frames while scrolling and animating.** The median and p95 frame intervals were 16.1–16.3
+ms for all three on list1000, listview and animations: every frame was shown. Input to frame
+had a median of about 8.7 ms on all three. In the first run, B0's p95 input-to-frame was 30.8
+ms (listview) and 65.6 ms (animations), against 15.3 and 15.6 on the processor.
+
+Processor time while driven (% of one core):
+
+| app | cpu | B0 | qt |
+|---|---:|---:|---:|
+| list1000 | 10.8 | 9.97 | 14.0 |
+| listview | 15.6 | 14.1 | 25.6 |
+| animations | 14.8 | 7.08 | 19.5 |
+
+A frame that repaints the whole window costs the processor's path about twice B0's time on
+llvmpipe. It is still below qml6's, and no frame is late.
+
+**Idle.**
+
+- The static apps use 0.00 % of the processor at rest on both paths.
+- Both show 0.33 wakes a second in the 3 s window. That is one wake of the main thread after
+  the last frame, not polling: with a 1 s window it reads 1.00.
+- Animating apps wake per frame: listview 1496 (cpu), 1338 (B0) and 6757 (qt); animations
+  6425, 1174 and 6512 over the window.
+
+**Pi Zero profile** (`--profile pi-zero`, repeat 3; cpu / B0 / qt):
+
+| | list1000 | listview | animations |
+|---|---|---|---|
+| first frame (ms) | 353 / 1264 / 1155 | 311 / 654 / 1293 | 345 / 561 / 892 |
+| processor driven (%) | 3.0 / 13.4 / 7.1 | 6.0 / 9.5 / 12.5 | 5.2 / 4.4 / 7.9 |
+
+- PSS was about 61, 144–157 and 225 MiB.
+- All three showed 59–60 frames a second while driven.
+- At rest, listview's animation showed 59 frames a second on the processor and 39 on B0.
+
+**R's cost per frame** (in-process; 800×600 unless said, wall ms, workers 0 / 3 / 8):
+
+| | wall | processor |
+|---|---|---|
+| 200 rounded rectangles | 0.56 / 0.42 / 0.39 | 0.55 / 0.80 / 1.00 |
+| 2000 rounded rectangles | 3.99 / 2.00 / 2.07 | 3.9 / 4.9 / 6.0 |
+| 2000, 1920×1080 | 4.98 / 3.23 / 2.96 | |
+
+Three workers halve a busy frame. Eight draw it no sooner and cost a fifth more of the
+processor, so the shell gives three. Copying R's RGBA into the window's `0RGB` words as
+little-endian words with the outer bytes swapped took the copy from 0.15 to 0.07 ms at 800×600,
+and from 0.65 to 0.34 ms at 1920×1080.
+
+**DECISION: the shell chooses the processor where EGL would draw in software.** It wins on
+memory everywhere (PSS a half to a third of B0's, malloc 7–49 MB against 48–104 MB). It shows
+every frame while scrolling and in a full-window animation, at no worse latency. Start-up is
+the same order on this loaded machine and 2–4× sooner on the Pi Zero profile. The rule
+(`crates/ljos_shell/src/software.rs`) is told without making an EGL display. The processor is
+chosen when:
+
+- Mesa is told to draw in software (`LIBGL_ALWAYS_SOFTWARE`, `MESA_LOADER_DRIVER_OVERRIDE` of
+  `swrast`, `kms_swrast`, `llvmpipe` or `softpipe`);
+- or no `/dev/dri/renderD*` opens;
+- or the Wayland compositor offers neither `zwp_linux_dmabuf_v1` nor `wl_drm`;
+- or the X server has neither DRI3 nor DRI2.
+
+It applies only with an opaque background, and never when the user chose: `LJOS_PAINTER=gl`,
+`wgpu` or `cpu`, or `drawn_on_processor`. The log says so at start. A window that shows what R
+leaves out, a `ShaderEffect`'s program, what egui draws or a window that can be seen through,
+takes every window to GL before it is drawn. That happens once, so nothing is lost; EGL then
+starts as it would have at start-up (`features/window/software-choice.feature`). A machine with
+a GPU keeps GL.
+
+The cost is a full-window repaint at about twice B0's processor time, which matters on a small
+machine at 60 frames a second. The desktop scenarios keep checking B0 (`LJOS_PAINTER=gl`)
+unless one lets the shell choose.
 
 ### Analysis by class and kept runs for one-line plain text (2026-10-26)
 
@@ -6524,3 +6674,318 @@ DECISIONs:
   line or fill a script writes, a line a script binds, a line whose expression first
   gives `undefined`, and a state's AnchorChanges on an item with no anchors. They pass on
   Qt and on Ljós before and after the change.
+
+### B11 (ilang): a view lays out its model's changes once, at polish (2026-10-26)
+
+A ListView laid its rows out at every change of its model, so a loop of appends laid them
+out once per row. Now a change marks the view and asks for a frame, and the polish before
+that frame lays the rows out once for every change until then, as qml6 does. `count` reads
+the model's count at once and is told with the layout. `forceLayout()` and
+`positionViewAt*()` lay the rows out first. `features/views/list-layout-at-polish.feature` and
+`list-layout-hidden.feature` pin what a script sees and the order of the signals, against
+qml6 6.11.2.
+
+**Method.** Instructions are user-space instructions of the whole process, all threads,
+from start to exit (`perf_event_open` with `inherit`). calqlatr's presses are 3000
+`digitPressed`/`operatorPressed` calls in 30 timer ticks, and that run minus the same app
+with no presses. Milliseconds are the same scripts' own `Date.now()` around the loop, on a
+loaded machine (load ~80), so the instruction counts are the ones to compare. The scroll
+benches are `scr.sh` from "Paint while scrolling" (GPU sandbox, 220 notches). "Before" is
+origin/main (00b50b7e), built the same way.
+
+| | Before | After | qml6 |
+|---|---:|---:|---:|
+| calqlatr, 3000 presses (M instructions) | 1167 | 955 | ~530 |
+| calqlatr, 3000 presses (ms) | 84–94 | 74–111 | 41–57 |
+| 2,000 appends in one handler (ms) | 28–31 | 3–4 | 1–2 |
+| 2,000 appends, until laid out (ms) | 28–31 | 4–5 | 27–54 |
+| 10,000 appends in one handler (ms) | stopped at its 100 ms slice | 22–26 | 5 |
+| 10,000 appends, until laid out (ms) | — | 26–29 | 28–42 |
+| listview, scrolled (M instructions/s) | 187.3, 187.3 | 187.1, 187.2 | 102.7, 103.1 |
+| listview with `reuseItems: true` (M/s) | 71.1, 71.0 | 70.8, 70.3 | 60.5, 60.6 |
+
+"Until laid out" is when `contentHeight` first changes with every row there. qml6 waits for
+its next frame for that, and Ljós's polish comes sooner after the handler.
+
+**calqlatr.** Deferral alone took 1167 M to 1161 M. Each press appends at most one row and
+then calls `positionViewAtEnd()`, which needs the layout at once, so a press still laid the
+rows out. Most presses only edit the last row, and then going to the end ran a pass where the
+view already was. That pass laid out the same rows the layout effect had just laid out. With
+nothing waiting and the view at the place asked for, it is now skipped (955 M).
+
+**Left** (DECISIONs):
+
+- **calqlatr is still ~1.8× qml6's instructions.** What is left is a press's own work: the
+  model's change, its roles reaching the delegate's bindings, and the pass for a press that
+  appends. The next step is a profile of that per press, not more deferral.
+- **The 10,000-append loop** costs ~2.2 µs an append against qml6's ~0.5 µs. That cost is
+  `ListModel.append` and its change notice, not the view: the view now does nothing until
+  the polish.
+- **`currentIndex`** still moves at once when rows are inserted before the current one. qml6
+  moves it at layout too. The scenarios pin what qml6 shows for appends and removals at the
+  end; inserts before the current row are not pinned yet.
+- **Start-up** read ~9.5 M higher for every build from the working tree than for the
+  origin/main build from an exported copy. It was the same before and after these commits,
+  so it comes from the build directory, and presses are compared as differences.
+
+### TEXT4: wrapped plain text, and a field's placeholder measured when read (2026-10-26)
+
+#### Wrapped plain text without Parley's builder
+
+TEXT2 and TEXT3 shaped one-line plain text directly. A plain text that wraps still built
+Parley's layout to break it, and an elided last line built two more: the rest of its
+paragraph and each cut. Chat, mail and list rows with descriptions are made of such texts.
+
+- `wrap_direct` breaks a directly shaped text where Parley's breaker would. `break_atoms`
+  takes the soft wrap opportunities from the shared analysis, lets spaces hang, and breaks
+  inside a word only where the wrap mode allows. The ink re-break is the same as before.
+  It covers ASCII text without inline places or justification; any other text takes the
+  builder as before.
+- `elide_direct` cuts a plain left-to-right last line the same way `elide` does. It shapes
+  the rest of the line and each cut directly. Right-to-left text, text with places, spans
+  or inline objects takes the builder.
+- Unit tests in `crates/ljos_text/src/engine.rs` hold the direct path to an engine that
+  builds every layout. They cover breaks over scripts, bidi, hyphen and space runs, tabs, a
+  zero width, ligatures and ink past the width, in three wrap modes, with and without an
+  elided last line, and cuts in every elide mode. The `@qt-parity` wrap and elide
+  scenarios in `features/text/` pass unchanged.
+
+`bench/wrapped.qml` is a ListView of 10,000 rows: a bold sender and a message wrapped on
+two to four lines, the fourth elided into the third.
+
+| `bench/wrapped.qml` under callgrind (main thread) | Before | After |
+|---|---:|---:|
+| Total | 6,268M | 5,443M |
+| Delegates in the window | ≈ 4094 | ≈ 5298 |
+| `build_layout`, per delegate | 904 k | 396 k |
+| Main thread, per delegate | 1.53M | 1.03M |
+| Parley `StyleRunBuilder` calls | 10,214 | 0 |
+| `elided_line`, per call | 614 k | 292 k |
+
+| Scroll, M instructions/s (`scr.sh wrapped`) | Before | After |
+|---|---:|---:|
+| Ljós | 778 | 518–519 |
+| qml6 | 442–443 | 442–443 |
+
+Ten wrapped ListView delegates make 1452 allocations, down from 1772
+(`ten_wrapped_listview_delegates`).
+
+Left for the delegate track: the wrapped delegate looks up `WrapMode` and `ElideMode` by
+type name 20 times, and an elided line still costs 292 k a call, most of it shaping the
+cuts.
+
+#### A field's placeholder, measured when read
+
+A `TextField` or `TextArea` measured its placeholder on every polish, even when it was not
+shown. That was 12K a field for each font switch ("A theme or font switch against qml6,
+continued"). Its measured writes then started a second round of the field's bindings.
+
+Now a `Text` that paints nothing is not polished. That is a plain text that is empty (a
+field's placeholder while the field has text, or one without placeholder text), or one
+whose own `visible` is false. Its seven measured properties are made on read instead:
+`implicitWidth`, `implicitHeight`, `contentWidth`, `contentHeight`, `lineCount`,
+`truncated` and `baselineOffset`. Whatever follows them is told they changed. The first
+read measures once, for all seven. The makers are function pointers
+(`Engine::make_on_read_by`), so nothing is allocated per property.
+
+A text that is only not shown yet, such as a view's new row, is still polished: its first
+frame needs the layout anyway, and the delegate budgets stay at 1451 and 983.
+
+An empty text no longer reads its width and height, because it is one empty line in any
+room. `empty_text_measures_the_same_in_any_room` checks every measured value over widths,
+heights, wrap and elide modes, line counts and line heights.
+
+qml6 gives a text its new size as soon as what it follows changes. Ljós now does the same
+for a hidden text, an empty text and a field's placeholder
+(`features/text/measured-on-read.feature`, `@qt-parity`, checked on Qt 6.11.2). A shown
+text that is not empty still gets its new size at the next polish. That scenario is
+`@backlog` until the delegate track takes the text polish out of the graph.
+`features/text/measured-once.feature` pins that a hidden text is measured only when read.
+
+20 Fusion `TextField`s on a `Pane`, `font.pixelSize` switched 13/14 a frame apart
+(`frame_profile --apart`, 20 switches, release):
+
+| Per field per switch (callgrind) | Before | After |
+|---|---:|---:|
+| Total | 98.3K | 92.3K |
+| Placeholder polish (`write_measured` and what follows it) | 26.4K | 0 |
+| `measure_on_read` (mostly the field's bindings re-run on notify) | | 21.8K |
+| `made_on_read` (the measure itself) | | 0.9K |
+| `TextInputs::read` | 10.0K | 9.3K |
+
+| 20 fields, per switch (wall clock) | Before | After |
+|---|---:|---:|
+| The write and its effects | 108–121 µs | 140–177 µs |
+| The frame's pass | 52 µs | 14 µs |
+
+The work moved from the frame into the write, where qml6 does it, and the sum barely
+changed. A `tst_*.qml` loop of 400 switches with no frames between them shows the move
+alone. Before, it skipped the placeholder until the end of the loop. Now it measures the
+placeholder on every switch, as qml6 does:
+
+| 400 switches, no frames | Ljós before | Ljós after | qml6 |
+|---|---:|---:|---:|
+| Basic | 0.098–0.113 ms | 0.140–0.178 ms | 0.028 ms |
+| Fusion | 0.093–0.128 ms | 0.148–0.168 ms | 0.030–0.033 ms |
+
+What is left of a field's switch is graph traffic. The field's `implicitHeight` binding is
+evaluated before the placeholder's inputs effect runs, and runs again when it hears the
+placeholder changed. Every input is a tracked read. Both belong to the delegate track's
+text polish dirty bits.
+
+DECISIONs:
+
+- Only texts that paint nothing are measured on read. Keying on "not shown" also caught a
+  view's new rows and added allocations to every delegate.
+- Measuring on read pulls a value: the styles always follow the placeholder's
+  `implicitHeight`, so it is measured on each switch, not skipped. It is measured once
+  for all seven properties, outside the frame.
+- `write_measured` writes over values still due without reading them, so a stale maker
+  never runs.
+- The wrapped path compares against the builder in unit tests and against qml6 through the
+  existing wrap and elide scenarios. Nothing a QML program observes changed, so there is no
+  new scenario for it.
+
+### B28 (H2): an item's place and geometry as marks, not effects (2026-10-26)
+
+B28 is phase a of the delegate track's dirty-bit seam (step 4). It made two changes:
+
+- A native property can carry a `change` hook (`#[qml(change = path)]`). The hook is told
+  after every change to the property: a value written by code, the host, an animation or a
+  layout, and a change that reaches the property's binding. The graph notes the property's
+  node (`Graph::set_noted`) and tells the engine once the change has spread. A dirty
+  binding is told before it runs, and is not told again until it is read. A store to a
+  property with no node calls the hook directly. Nothing is told on a store that leaves
+  the value as it was.
+- Item's x and y carry `scene::moved`, and z, width, height, visible, opacity, clip,
+  rotation, scale, transformOrigin and transform carry `scene::reshaped`. The hooks mark the
+  item in each scene that shows it. The scene reads the marked items when it places and
+  lays out, where before each item had a place effect and a geometry effect. Flipable's
+  sides and Flickable's `moving` mark the items they affect in the same way. Only user
+  QML bindings, and the effects of later phases, stay in the graph.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets):
+
+| | B27 (main) | B28 |
+|---|---:|---:|
+| ListView delegate, heap allocations | 1407 (140.7) | 1305 (130.5) |
+| ListView delegate, effects | 150 (15) | 110 (11) |
+| `createObject` item, heap allocations | 906 (90.6) | 833 (83.3) |
+| `createObject` item, effects | 130 (13) | 90 (9) |
+| Ten `createObject` items destroyed, graph nodes | 210 | 170 |
+
+| listview under callgrind (main thread, 20 s after 40 s), per delegate | main (B27 + TEXT3) | B28 |
+|---|---:|---:|
+| Total ÷ text layouts, three runs | 338.3 k, 351.8 k, 331.3 k | 333.3 k, 340.3 k, 331.8 k |
+| Median | 338.3 k | 333.3 k |
+| `QuickScene::adopt`, inclusive | 70.3 k | 43.4 k |
+| `QuickScene::unadopt`, inclusive | 16.5 k | 13.6 k |
+| `Geom::read`, inclusive | 17.3 k (in the effect) | 15.2 k (at the frame) |
+| `Engine::tell_change`, inclusive | | 1.5 k (12.2 calls) |
+| `anchors::run`, inclusive | 16.5 k | 16.1 k |
+
+Making and dropping an item no longer creates two effects and their first runs, so
+`adopt` is 27 k cheaper. Most of that work moves to the frame. The geometry is still
+read there, through eleven engine reads per item, so the median falls by only 5 k. qml6
+does a whole delegate in ~200 k. Reading the fields directly from the item's record, and
+not through the engine, is the next lever.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós B28 | qml6 (same run) | Ljós B27 |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.00 | 15.19 | 18.99 |
+| listview | 180.32 | 103.00 | 186.82 |
+| listview with `reuseItems: true` | 70.33 | 60.57 | 71.35 |
+
+Other lanes' builds were running on the machine during these runs. qml6 moved by under
+0.3 % from B27's runs.
+
+DECISIONs:
+
+- The seam is general: an engine hook on the property's meta, filled by a macro attribute,
+  and fed by a noted flag in the graph. It is not a write filter, which would miss changes
+  that come from a binding, and it is not a scene-specific path in the engine. Values made
+  on first read, alias objects and `store_value` (a value set before anything can observe
+  it) are not told.
+- Anchors keep B27's lazy effect and do not become a frame pass. Qt applies anchors as the
+  line moves, so a script that reads an anchored item's geometry between a change and the
+  next frame would see a stale value. The `given` hook still installs the effect.
+- Implicit size has no mark. Only positioners, layouts and text polish read it, and those
+  belong to phase c.
+- Left for phase b: inherited visible and enabled (`inherit_effect`). Its covered case
+  now only marks.
+- Left for phase c: the polish and text effects, and the content effects.
+- `may_scroll` is still fixed when the item is adopted, as before.
+- The gate run on the merged tree has one failure that is not from B28:
+  `positioning/position-source.feature` expects `supportedPositioningMethods` to be -1 and
+  reads 4294967295. That comes from main's `d4335a0f` (an enum's number reads unsigned),
+  which landed after the QtPositioning feature.
+
+### TEXT5: wrapped delegates below qml6 (2026-10-26)
+
+TEXT4 left `bench/wrapped.qml` scrolling at 518 M instructions/s against qml6's 442. It
+also left two costs named: an enum looked up by type name in each delegate, and an elided
+line at 292 k a call. Shaping turned out to be most of what was left. Parley's analysis
+and shaper cost far more than the shaping itself for a plain text in a font it had
+already set up.
+
+- **Enum literals.** The compiler leaves `Text.WordWrap` and `Text.ElideRight` to the
+  runtime. The runtime now keeps the number once per file. It is used only when the
+  literal's type and key match (f865e23f). `literal_value` drops from 1,843 to 548
+  instructions a delegate. Type lookups in `ten_wrapped_listview_delegates` drop from 20
+  to 0.
+- **Shaping by harfrust.** A printable ASCII text in a pinned font is one left-to-right
+  Latin segment with a character a grapheme. The first text in a font at a size is shaped
+  by Parley, which sets up a voice: harfrust's shaper data, instance and plan, with the
+  size, metrics and variation coordinates Parley gave the run. Every later text in that
+  font is shaped by harfrust directly, with Parley's buffer settings, and its glyphs are
+  read as Parley's shaped clusters read. Soft wrap opportunities come from ICU4X's line
+  segmenter with Parley's strict rules.
+- **Elided lines.** The last shown line of a truncated wrapped text used to shape the rest
+  of the text only to estimate the cut. harfrust's unsafe-to-break flags say where a text
+  can be cut and shaped in two without changing. Where the rest starts after a space and
+  the flags allow, its clusters are read from the whole text's glyphs, and only the cut
+  is shaped. The first text in a font, a cut the shaper marks, or a single unbroken line
+  shapes the rest as before. Right-to-left text, and text with places, spans or objects,
+  still takes Parley's builder.
+- **Tests.** Unit tests in `crates/ljos_text/src/engine.rs` compare against Parley:
+  - soft breaks against Parley's analysis, over every printable class three deep, 2,000
+    random texts and real sentences, for normal, break-all and keep-all;
+  - harfrust's glyphs and clusters against Parley's shaper, across fonts, sizes, bold,
+    italic and ellipses (over 100,000 texts);
+  - each rest that the flags allow, shaped alone, against the whole text's glyphs;
+  - elided lines against an engine that builds every layout, over seven widths, three
+    elide modes and one to three lines, in Latin, Greek, Cyrillic, Hebrew and tabs.
+
+  The `@qt-parity` wrap, elide, max-lines and size scenarios in `features/text/` pass
+  unchanged.
+
+| `bench/wrapped.qml` under callgrind (600 frames, 5025 delegates) | main (f865e23f) | TEXT5 |
+|---|---:|---:|
+| Total | 4,987M | 4,152M |
+| Per delegate | 992 k | 826 k |
+| `text::polish`, per delegate | 402 k | 241 k |
+| `build_layout`, per delegate | 398 k | 231 k |
+| `shape_direct`, per call | 154 k | 74 k |
+| `elided_line`, per call | 305 k | 67 k |
+
+| Scroll, M instructions/s (`scr.sh wrapped`, three runs) | main (f865e23f) | TEXT5 |
+|---|---:|---:|
+| Ljós | 497–504 | 417–419 |
+| qml6 | 442–443 | 442–443 |
+
+Two smaller steps fall inside the TEXT5 column. Before the elide change, the shaping change
+alone gave 4,278M total on TEXT4's base (5,064M) and scrolled at 428–433. Before harfrust,
+`elided_line` was 152 k a call.
+
+Ten wrapped ListView delegates now make 1354 allocations, and ten one-line delegates make
+1322 (+56 and +17). A new voice's harfrust shaper data sets up the font's lookups
+lazily, as texts first use them, and the budget counts the first rows. Over a warmed
+scroll, harfrust shaping adds about 0.2 allocations a text.
+
+Left:
+- ICU4X's line iterator is 129M of the 4,152M (25 k a wrapped text). Each message folds
+  differently, so the per-fold cache seldom hits.
+- Driving harfrust is 607M, 56 k a text, and is now the largest single cost.
+- Attached members are applied from a copy (`value_fields_of` clones every assignment).
+  So an attached enum literal's address is not the IR's, and the per-file number is
+  checked against type and key rather than trusted by address.

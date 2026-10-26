@@ -39,7 +39,7 @@ use crate::error::EngineError;
 use crate::ids::{ContextId, MethodIndex, ObjectId, PropIndex, PropKey};
 use crate::log::LogState;
 use crate::meta::{
-    CompleteThunk, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags, WriteFilter,
+    CompleteThunk, Declared, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags, WriteFilter,
 };
 use crate::object::{
     AliasTarget, FieldReads, Location, ObjectFlags, ObjectHeader, QmlObject, QmlType,
@@ -263,7 +263,7 @@ impl Engine {
         // scripts every one runs compiled while it is being set up.
         crate::js::compile_globals_ahead();
         let graph = Graph::with_options(Options {
-            equals: Value::change_equals,
+            equals: Value::write_equals,
             // Qt runs a handler that writes its own property again inside
             // itself until its script stack runs out, 835 runs deep on Qt
             // 6.11; a cycle that ends there ends here too.
@@ -314,6 +314,12 @@ impl Engine {
             frozen: Cell::new(0),
         });
         let weak = Rc::downgrade(&inner);
+        let noted = Rc::downgrade(&inner);
+        inner.graph.set_note_handler(move |n| {
+            if let Some(inner) = noted.upgrade() {
+                Engine { inner }.noted(n);
+            }
+        });
         inner.graph.set_diagnostic_handler(move |d| {
             if let Some(inner) = weak.upgrade() {
                 Engine { inner }.report(d);
@@ -432,6 +438,13 @@ impl Engine {
             }
             (d, None) => format!("QML: {d}"),
         };
+        self.warn(msg);
+    }
+
+    /// Warns of a binding loop through `prop` of `obj`, in Qt's words: for
+    /// a loop a type finds itself, not one the graph does.
+    pub fn warn_binding_loop(&self, obj: ObjectId, prop: PropIndex) {
+        let msg = self.loop_message(obj, prop);
         self.warn(msg);
     }
 
@@ -1839,7 +1852,12 @@ impl Engine {
                 // Nobody observes it: the field is the only copy, and it
                 // is not marked assigned.
                 match filter_in(h, prop, v)? {
-                    Filtered::Done(Some(v)) => store_in(h, prop, &v)?,
+                    Filtered::Done(Some(v)) => {
+                        store_in(h, prop, &v)?;
+                        let change = change_hook(h, prop);
+                        drop(store);
+                        self.tell_change(obj, prop, change);
+                    }
                     Filtered::Done(None) => {}
                     // The setter may write other properties, so it runs
                     // where a write can: unfiltered, through the full path.
@@ -2005,11 +2023,14 @@ impl Engine {
         }
         let n = match (node, how) {
             (Some(n), _) => n,
-            // An override entry only exists on a node, and so does the
-            // host's mark: without one the value would read as assigned,
-            // and what follows a property until its author sets it
-            // (a control's font) would stop following.
-            (None, WriteKind::Override(_) | WriteKind::Host) => self.ensure_node(obj, prop)?,
+            // An override entry only exists on a node, and so do the
+            // host's and an animation's marks: without one the value would
+            // read as assigned, and what follows a property until its
+            // author sets it (a control's font, a style's opacity) would
+            // stop following.
+            (None, WriteKind::Override(_) | WriteKind::Host | WriteKind::Animation) => {
+                self.ensure_node(obj, prop)?
+            }
             // Journaled, a change is the graph's to keep: it gets a node.
             (None, _) if self.is_journaled() => self.ensure_node(obj, prop)?,
             (None, _) => {
@@ -2021,6 +2042,9 @@ impl Engine {
                     .ok_or_else(|| EngineError::dead(obj))?;
                 store_in(h, prop, &v)?;
                 h.mark_assigned(prop);
+                let change = change_hook(h, prop);
+                drop(store);
+                self.tell_change(obj, prop, change);
                 return Ok(());
             }
         };
@@ -2119,6 +2143,9 @@ impl Engine {
                     .ok_or_else(|| EngineError::dead(obj))?;
                 store_in(h, prop, &v)?;
                 h.mark_assigned(prop);
+                let change = change_hook(h, prop);
+                drop(store);
+                self.tell_change(obj, prop, change);
             }
         }
         Ok(true)
@@ -2197,6 +2224,38 @@ impl Engine {
         }
     }
 
+    /// Tells `change` (the property's hook) that the property changed.
+    /// A node's changes the graph tells ([`Engine::noted`]); a field
+    /// without one, whoever wrote it.
+    pub(crate) fn tell_change(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        change: Option<crate::ChangeHook>,
+    ) {
+        if let Some(f) = change {
+            self.untrack(|| f(&Cx::new(self, obj), prop));
+        }
+    }
+
+    /// The graph told of a change to the noted node `n`: the property it
+    /// is has a change hook, which is told.
+    fn noted(&self, n: NodeId) {
+        let change = {
+            let store = self.inner.store.borrow();
+            let Some(k) = store.node_keys.get(n) else {
+                return;
+            };
+            let Some(h) = store.objects.get(k.object) else {
+                return;
+            };
+            change_hook(h, k.prop).map(|f| (f, k.object, k.prop))
+        };
+        if let Some((f, obj, prop)) = change {
+            self.tell_change(obj, prop, Some(f));
+        }
+    }
+
     /// Updates the field cache; a no-op for a dead object.
     pub(crate) fn store_value(&self, obj: ObjectId, prop: PropIndex, v: &Value) {
         let mut store = self.inner.store.borrow_mut();
@@ -2252,7 +2311,7 @@ impl Engine {
         prop: PropIndex,
     ) -> Result<NodeId, EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
-        let (scope, value, assigned) = {
+        let (scope, value, (assigned, noted)) = {
             let store = self.inner.store.borrow();
             let h = store
                 .objects
@@ -2275,7 +2334,7 @@ impl Engine {
             (
                 h.scope,
                 read_access(&*h.native, &h.dynamic, &p.access),
-                h.is_assigned(prop),
+                (h.is_assigned(prop), p.change.is_some()),
             )
         };
         let g = &self.inner.graph;
@@ -2293,6 +2352,9 @@ impl Engine {
             Provenance::Default
         };
         let n = g.property_with(scope, value, provenance)?;
+        if noted {
+            g.set_noted(n)?;
+        }
         let readers = {
             let mut store = self.inner.store.borrow_mut();
             store.node_keys.insert(n, PropKey { object: obj, prop });
@@ -2645,7 +2707,12 @@ impl Engine {
             match h.node(prop) {
                 Some(n) => (n, read_access(&*h.native, &h.dynamic, &p.access)),
                 // Nothing observes it.
-                None if !h.read_without_node(prop) => return Ok(()),
+                None if !h.read_without_node(prop) => {
+                    let change = p.change;
+                    drop(store);
+                    self.tell_change(obj, prop, change);
+                    return Ok(());
+                }
                 None => {
                     // A reader of the field: the node, made with the value
                     // the field has now, re-runs it.
@@ -2782,6 +2849,20 @@ impl Engine {
             .get(obj)
             .and_then(|h| h.node(prop));
         node.is_some_and(|n| self.inner.graph.is_bound(n))
+    }
+
+    /// Whether the property's own layer, under every override, is a
+    /// binding: what taking the overrides off gives back.
+    pub fn base_is_bound(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let node = self
+            .inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .and_then(|h| h.node(prop));
+        node.is_some_and(|n| self.inner.graph.base_provenance(n) == Some(Provenance::Bound))
     }
 
     /// Whether the property's binding ran again for the change that is
@@ -3578,6 +3659,21 @@ impl Engine {
     pub fn declared_at(&self, obj: ObjectId) -> Option<String> {
         self.location_of(obj)
     }
+
+    /// The type Qt names after `QML ` in an object's own warning: the
+    /// file or inline component `obj` is the root of, else the nearest
+    /// such type it derives from (`MyCol {}` warns as `QML MyCol:`), else
+    /// `builtin`, the native type the warning is about.
+    pub fn warning_type_name(&self, obj: ObjectId, builtin: &str) -> String {
+        let mut meta = self.meta_of(obj);
+        while let Some(m) = meta {
+            if matches!(m.declared, Some(Declared::File | Declared::Inline)) {
+                return m.name.to_string();
+            }
+            meta = m.base.clone();
+        }
+        builtin.to_owned()
+    }
 }
 
 fn unknown_index(meta: &MetaObject, prop: PropIndex) -> EngineError {
@@ -3753,6 +3849,12 @@ enum WriteLook {
     Plain,
     Alias,
     Maker,
+}
+
+/// The property's [`ChangeHook`](crate::ChangeHook), told by
+/// [`Engine::tell_change`] of a change to a field without a node.
+pub(crate) fn change_hook(h: &ObjectHeader, prop: PropIndex) -> Option<crate::ChangeHook> {
+    h.meta.property(prop).and_then(|p| p.change)
 }
 
 pub(crate) fn store_in(
@@ -3936,13 +4038,14 @@ impl Wrapped {
                     let e = engine.refusal(&v, &e);
                     // Qt's message is the binding's place and the error; a
                     // binding made at run time has no place to give.
-                    match engine.binding_place(obj, prop) {
-                        Some(at) => engine.warn(format!("{at}: {e}")),
+                    let msg = match engine.binding_place(obj, prop) {
+                        Some(at) => format!("{at}: {e}"),
                         None => {
                             let (t, p) = engine.describe(obj, prop);
-                            engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
+                            format!("QML {t}: {e} (property \"{p}\")")
                         }
-                    }
+                    };
+                    engine.warn_of_binding(obj, prop, msg);
                 }
             }
             if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, last) {
