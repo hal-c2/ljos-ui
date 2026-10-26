@@ -753,8 +753,11 @@ struct Desktop<M> {
     /// When what the scripts left behind is next looked at.
     collect: AfterRest,
     /// What follows drags from other applications, where the shell does
-    /// that itself.
-    drags: Option<drags::Drags>,
+    /// that itself. Shared with `drag_out`, which the Engine calls.
+    drags: Rc<RefCell<Option<drags::Drags>>>,
+    /// What carries the application's drags out of its windows, where
+    /// the shell does.
+    drag_out: Option<Rc<drags::DragOut>>,
     /// The window a drag from another application is over, by its key.
     drag_over: Option<u64>,
 }
@@ -857,7 +860,8 @@ impl<M: Send + 'static> Desktop<M> {
             heap_trim: None,
             collect: AfterRest::default(),
             loading: false,
-            drags: None,
+            drags: Rc::default(),
+            drag_out: None,
             drag_over: None,
         }
     }
@@ -1183,7 +1187,7 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(window) = host.window(id).cloned() else {
             return;
         };
-        if let Some(drags) = &self.drags {
+        if let Some(drags) = self.drags.borrow().as_ref() {
             drags.window_opened(&window);
         }
         let display = host.event_loop().owned_display_handle();
@@ -1865,6 +1869,10 @@ impl<M: Send + 'static> Desktop<M> {
     /// it is over is told, and the window system hears the view's answer.
     fn drag_step(&mut self, step: drags::DragStep) {
         use drags::{At, DragStep};
+        if matches!(step, DragStep::OutEnded) {
+            // `AboutToWait`, which follows, settles it.
+            return;
+        }
         let by_target = |slots: &[Slot], target: usize| {
             slots.iter().position(|s| {
                 s.surface.as_ref().and_then(|x| drags::target_of(&x.window)) == Some(target)
@@ -1884,10 +1892,10 @@ impl<M: Send + 'static> Desktop<M> {
             // Over no window the shell shows, or one closed since.
             match step {
                 DragStep::Entered { answer, .. } | DragStep::Moved { answer, .. } => {
-                    answer.taken(false);
+                    answer.taken(None);
                 }
-                DragStep::Dropped { answer } => answer.dropped(false),
-                DragStep::Left => {}
+                DragStep::Dropped { answer } => answer.dropped(None),
+                DragStep::Left | DragStep::OutEnded => {}
             }
             return;
         };
@@ -1913,15 +1921,27 @@ impl<M: Send + 'static> Desktop<M> {
         };
         match step {
             DragStep::Entered {
-                at, data, answer, ..
+                at,
+                data,
+                actions,
+                answer,
+                ..
             } => {
                 answer.taken(view.window_drag(WindowDrag::Entered {
                     data,
                     at: point(at),
+                    actions,
                 }));
             }
-            DragStep::Moved { at, answer } => {
-                answer.taken(view.window_drag(WindowDrag::Moved(point(at))));
+            DragStep::Moved {
+                at,
+                actions,
+                answer,
+            } => {
+                answer.taken(view.window_drag(WindowDrag::Moved {
+                    at: point(at),
+                    actions,
+                }));
             }
             DragStep::Left => {
                 self.drag_over = None;
@@ -1931,8 +1951,31 @@ impl<M: Send + 'static> Desktop<M> {
                 self.drag_over = None;
                 answer.dropped(view.window_drag(WindowDrag::Dropped));
             }
+            DragStep::OutEnded => {}
         }
         self.repaints.request(key, Instant::now());
+    }
+
+    /// What became of the application's drag out of its windows: the
+    /// views let go of the press the window system took for it, and the
+    /// application hears how it ended.
+    fn drag_out_settle(&mut self) {
+        let Some(out) = self.drag_out.clone() else {
+            return;
+        };
+        if out.took_pointer() {
+            for i in 0..self.slots.len() {
+                let key = self.slots[i].key;
+                let taken = match self.slots[i].view.as_mut() {
+                    Some(view) => view.pointer_taken(),
+                    None => self.app.view_mut().pointer_taken(),
+                };
+                if taken {
+                    self.repaints.request(key, Instant::now());
+                }
+            }
+        }
+        out.settle(&Rc::clone(self.app.engine()));
     }
 
     /// The user asked for window `i` to be closed.
@@ -2434,7 +2477,8 @@ impl<M: Send + 'static> Desktop<M> {
     fn shut_down(&mut self) {
         self.exiting = true;
         // Before the loop lets its display go: the thread reads from it.
-        if let Some(drags) = self.drags.take() {
+        let drags = self.drags.borrow_mut().take();
+        if let Some(drags) = drags {
             drags.stop();
         }
         for slot in &mut self.slots {
@@ -2487,9 +2531,10 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
                     let dirty = self.dirty.get();
                     self.note_wake(|w| w.dirty = dirty);
                 }
-                if let Some(drags) = self.drags.as_mut() {
+                if let Some(drags) = self.drags.borrow_mut().as_mut() {
                     drags.dispatch();
                 }
+                self.drag_out_settle();
                 self.settle(host);
                 #[cfg(feature = "mcp")]
                 self.end_wake();
@@ -2579,7 +2624,7 @@ pub(crate) fn run<M: Send + 'static>(
     {
         desktop.began = began;
     }
-    desktop.drags = drags::Drags::start(&host.display_handle(), {
+    *desktop.drags.borrow_mut() = drags::Drags::start(&host.display_handle(), {
         let proxy = Arc::clone(&desktop.proxy);
         Arc::new(move |step| {
             if let Ok(proxy) = proxy.lock() {
@@ -2588,8 +2633,22 @@ pub(crate) fn run<M: Send + 'static>(
             }
         })
     });
-    if desktop.drags.is_none() && wayland_drag::is_wayland(&host.display_handle()) {
+    let (none, out) = {
+        let drags = desktop.drags.borrow();
+        (
+            drags.is_none(),
+            drags.as_ref().is_some_and(drags::Drags::carries_out),
+        )
+    };
+    if none && wayland_drag::is_wayland(&host.display_handle()) {
         crate::platform::note_no_wayland_drops(desktop.app.engine());
+    }
+    if out {
+        let drag_out = Rc::new(drags::DragOut::new(Rc::clone(&desktop.drags)));
+        ljos_platform::Platform::of(desktop.app.engine()).set_drag_out(Some(
+            Rc::clone(&drag_out) as Rc<dyn ljos_platform::DragOutService>
+        ));
+        desktop.drag_out = Some(drag_out);
     }
     host.run(desktop)?;
     match failure.borrow_mut().take() {

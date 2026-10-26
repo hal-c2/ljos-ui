@@ -59,7 +59,7 @@ mod imp {
         HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
     };
     use egui_winit::winit::window::Window;
-    use ljos_platform::DragData;
+    use ljos_platform::{DragActions, DragData, DropAction, DropActions};
     use x11rb::connection::Connection;
     use x11rb::protocol::Event;
     use x11rb::protocol::xproto::{
@@ -86,6 +86,7 @@ mod imp {
             XdndActionCopy,
             XdndActionMove,
             XdndActionLink,
+            XdndActionList,
             INCR,
             UTF8_STRING,
             LJOS_XDND_DATA,
@@ -286,41 +287,57 @@ mod imp {
         })
     }
 
-    /// The action a drop here is taken with: the one the source proposes
-    /// when it is one a DropArea takes, as `drop.accept()` takes the
-    /// proposed action, else a copy.
-    fn taken_action(atoms: &Atoms, proposed: Atom) -> Atom {
-        if [
-            atoms.XdndActionCopy,
-            atoms.XdndActionMove,
-            atoms.XdndActionLink,
+    fn action_of(atoms: &Atoms, atom: Atom) -> Option<DropAction> {
+        [
+            (atoms.XdndActionCopy, DropAction::Copy),
+            (atoms.XdndActionMove, DropAction::Move),
+            (atoms.XdndActionLink, DropAction::Link),
         ]
-        .contains(&proposed)
-        {
-            proposed
-        } else {
-            atoms.XdndActionCopy
+        .into_iter()
+        .find(|(a, _)| *a == atom)
+        .map(|(_, d)| d)
+    }
+
+    fn atom_of(atoms: &Atoms, action: DropAction) -> Atom {
+        match action {
+            DropAction::Copy => atoms.XdndActionCopy,
+            DropAction::Move => atoms.XdndActionMove,
+            DropAction::Link => atoms.XdndActionLink,
         }
     }
 
-    /// `XdndStatus`: whether a drop would be taken, and that the source is
-    /// to say every move, as a DropArea under it may change.
-    fn status(target: u32, taken: bool, action: Atom) -> [u32; 5] {
+    /// What a source that asks for `requested` allows. XDND lets a target
+    /// take the requested action or a copy; a source that lists more in
+    /// `XdndActionList` (`listed`) allows those too. One it asks for that
+    /// a DropArea cannot take (`ask`, `private`) proposes a copy.
+    fn actions_of(atoms: &Atoms, requested: Atom, listed: &[Atom]) -> DragActions {
+        let proposed = action_of(atoms, requested).unwrap_or(DropAction::Copy);
+        let allowed: DropActions = [DropAction::Copy, proposed]
+            .into_iter()
+            .chain(listed.iter().filter_map(|&a| action_of(atoms, a)))
+            .collect();
+        DragActions { allowed, proposed }
+    }
+
+    /// `XdndStatus`: whether a drop would be taken and with which action,
+    /// and that the source is to say every move, as a DropArea under it
+    /// may change.
+    fn status(target: u32, action: Option<Atom>) -> [u32; 5] {
         [
             target,
-            u32::from(taken) | 2,
+            u32::from(action.is_some()) | 2,
             0,
             0,
-            if taken { action } else { 0 },
+            action.unwrap_or(0),
         ]
     }
 
     /// `XdndFinished`: whether the drop was taken, and how.
-    fn finished(target: u32, taken: bool, action: Atom) -> [u32; 5] {
+    fn finished(target: u32, action: Option<Atom>) -> [u32; 5] {
         [
             target,
-            u32::from(taken),
-            if taken { action } else { 0 },
+            u32::from(action.is_some()),
+            action.unwrap_or(0),
             0,
             0,
         ]
@@ -338,7 +355,10 @@ mod imp {
         target: u32,
         version: u32,
         types: Vec<Atom>,
-        action: Atom,
+        /// What the source allows and asks for, as its last position said.
+        actions: DragActions,
+        /// The source's `XdndActionList`, read once.
+        listed: Option<Vec<Atom>>,
         /// The loop was told it came in, at its first position.
         entered: bool,
     }
@@ -400,7 +420,8 @@ mod imp {
                         target,
                         version,
                         types,
-                        action: self.atoms.XdndActionCopy,
+                        actions: DragActions::default(),
+                        listed: None,
                         entered: false,
                     });
                 }
@@ -414,13 +435,25 @@ mod imp {
                         return;
                     };
                     let at = self.translate(target, root);
-                    let action = taken_action(&self.atoms, action);
+                    if self.current.as_ref().is_some_and(|c| c.listed.is_none()) {
+                        let listed = self.action_list(source);
+                        self.current.as_mut().expect("the drag is there").listed = Some(listed);
+                    }
                     let current = self.current.as_mut().expect("the drag is there");
-                    current.action = action;
+                    let actions = actions_of(
+                        &self.atoms,
+                        action,
+                        current.listed.as_deref().unwrap_or(&[]),
+                    );
+                    current.actions = actions;
                     let answer = self.answer();
                     let current = self.current.as_mut().expect("the drag is there");
                     if std::mem::replace(&mut current.entered, true) {
-                        (self.post)(DragStep::Moved { at, answer });
+                        (self.post)(DragStep::Moved {
+                            at,
+                            actions: Some(actions),
+                            answer,
+                        });
                     } else {
                         let types = current.types.clone();
                         let data = self.read_all(&types, time);
@@ -428,6 +461,7 @@ mod imp {
                             target: target as usize,
                             at,
                             data,
+                            actions,
                             answer,
                         });
                     }
@@ -448,7 +482,7 @@ mod imp {
                     match self.current.take() {
                         Some(c) if c.entered => (self.post)(DragStep::Dropped { answer }),
                         // Dropped before it was anywhere: nothing took it.
-                        _ => answer.dropped(false),
+                        _ => answer.dropped(None),
                     }
                 }
                 Xdnd::Stop => {}
@@ -467,8 +501,25 @@ mod imp {
                 source: c.source,
                 target: c.target,
                 version: c.version,
-                action: c.action,
             })
+        }
+
+        /// The actions a source lists beside the one it asks for; most
+        /// list none.
+        fn action_list(&self, source: u32) -> Vec<Atom> {
+            self.conn
+                .get_property(
+                    false,
+                    source,
+                    self.atoms.XdndActionList,
+                    AtomEnum::ATOM,
+                    0,
+                    16,
+                )
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .and_then(|r| r.value32().map(Iterator::collect))
+                .unwrap_or_default()
         }
 
         /// The root's point in the target window's pixels.
@@ -632,7 +683,6 @@ mod imp {
         source: u32,
         target: u32,
         version: u32,
-        action: Atom,
     }
 
     impl Answer {
@@ -647,20 +697,16 @@ mod imp {
     }
 
     impl Reply for Answer {
-        fn taken(&self, taken: bool) {
-            self.send(
-                self.atoms.XdndStatus,
-                status(self.target, taken, self.action),
-            );
+        fn taken(&self, action: Option<DropAction>) {
+            let action = action.map(|a| atom_of(&self.atoms, a));
+            self.send(self.atoms.XdndStatus, status(self.target, action));
         }
 
-        fn dropped(self: Box<Self>, taken: bool) {
+        fn dropped(self: Box<Self>, action: Option<DropAction>) {
             // Version 1 has no XdndFinished.
             if self.version >= 2 {
-                self.send(
-                    self.atoms.XdndFinished,
-                    finished(self.target, taken, self.action),
-                );
+                let action = action.map(|a| atom_of(&self.atoms, a));
+                self.send(self.atoms.XdndFinished, finished(self.target, action));
             }
         }
     }
@@ -684,6 +730,7 @@ mod imp {
                 XdndActionCopy: 11,
                 XdndActionMove: 12,
                 XdndActionLink: 13,
+                XdndActionList: 18,
                 INCR: 14,
                 UTF8_STRING: 15,
                 LJOS_XDND_DATA: 16,
@@ -743,12 +790,23 @@ mod imp {
         #[test]
         fn the_source_hears_whether_a_drop_is_taken_and_how() {
             let a = atoms();
-            assert_eq!(taken_action(&a, a.XdndActionMove), a.XdndActionMove);
-            assert_eq!(taken_action(&a, 0), a.XdndActionCopy);
-            assert_eq!(status(77, true, a.XdndActionMove), [77, 3, 0, 0, 12]);
-            assert_eq!(status(77, false, a.XdndActionMove), [77, 2, 0, 0, 0]);
-            assert_eq!(finished(77, true, a.XdndActionCopy), [77, 1, 11, 0, 0]);
-            assert_eq!(finished(77, false, a.XdndActionCopy), [77, 0, 0, 0, 0]);
+            assert_eq!(status(77, Some(a.XdndActionMove)), [77, 3, 0, 0, 12]);
+            assert_eq!(status(77, None), [77, 2, 0, 0, 0]);
+            assert_eq!(finished(77, Some(a.XdndActionCopy)), [77, 1, 11, 0, 0]);
+            assert_eq!(finished(77, None), [77, 0, 0, 0, 0]);
+        }
+
+        /// Issue #115: a target may take what the source asks for, or a
+        /// copy, or what it lists.
+        #[test]
+        fn a_source_allows_what_it_asks_for_a_copy_and_what_it_lists() {
+            let a = atoms();
+            let moved = actions_of(&a, a.XdndActionMove, &[]);
+            assert_eq!(moved.proposed, DropAction::Move);
+            assert_eq!(moved.allowed.qt(), 1 | 2);
+            let asked = actions_of(&a, 99, &[a.XdndActionLink, 99]);
+            assert_eq!(asked.proposed, DropAction::Copy);
+            assert_eq!(asked.allowed.qt(), 1 | 4);
         }
 
         /// Issue #115: every MIME type is read, and X11's names of text.

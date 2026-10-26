@@ -3,12 +3,19 @@
 //! data device at all (`wayland_drag`); on X11 it takes files only and
 //! keeps the drag's position to itself (`x11_drag`). On macOS and Windows
 //! they stay winit's: files only, placed where `QmlView` guesses.
+//!
+//! Drags out of the application go to the window system the same way,
+//! where the shell carries them ([`DragOut`]): on Wayland only. Elsewhere
+//! they stay in the window.
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use egui_winit::winit::event_loop::OwnedDisplayHandle;
 use egui_winit::winit::window::Window;
-use ljos_platform::DragData;
+use ljos_engine::Engine;
+use ljos_platform::{DragActions, DragData, DragOutDone, DragOutService, DropAction, OutgoingDrag};
 
 use crate::{wayland_drag, x11_drag};
 
@@ -27,24 +34,31 @@ pub(crate) enum DragStep {
         target: usize,
         at: At,
         data: DragData,
+        actions: DragActions,
         answer: Answer,
     },
+    /// It moved, or the source changed what it allows or would like.
     Moved {
         at: At,
+        actions: Option<DragActions>,
         answer: Answer,
     },
     Left,
     Dropped {
         answer: Answer,
     },
+    /// Not a step of a drag in: the drag out of the application ended,
+    /// which wakes the loop to settle it ([`DragOut::settle`]).
+    OutEnded,
 }
 
 /// What the application says back to the window system of one step.
 pub(crate) trait Reply: Send {
-    /// Whether a drop here would be taken.
-    fn taken(&self, taken: bool);
-    /// After the drop: whether it was taken. The drag is over.
-    fn dropped(self: Box<Self>, taken: bool);
+    /// The action a drop here would be taken with; `None`: it would not.
+    fn taken(&self, action: Option<DropAction>);
+    /// After the drop: the action it was taken with, if it was. The drag
+    /// is over.
+    fn dropped(self: Box<Self>, action: Option<DropAction>);
 }
 
 pub(crate) type Answer = Box<dyn Reply>;
@@ -90,6 +104,94 @@ impl Drags {
             Self::Wayland(drags) => drags.stop(),
             Self::X11(drags) => drags.stop(),
         }
+    }
+
+    /// Whether it carries drags out of the application.
+    pub(crate) fn carries_out(&self) -> bool {
+        matches!(self, Self::Wayland(_))
+    }
+
+    fn start_out(&mut self, data: &DragData, actions: DragActions) -> bool {
+        match self {
+            Self::Wayland(drags) => drags.start_out(data, actions),
+            Self::X11(_) => false,
+        }
+    }
+
+    fn cancel_out(&mut self) {
+        match self {
+            Self::Wayland(drags) => drags.cancel_out(),
+            Self::X11(_) => {}
+        }
+    }
+
+    fn out_ended(&mut self) -> Option<Option<DropAction>> {
+        match self {
+            Self::Wayland(drags) => drags.out_ended(),
+            Self::X11(_) => None,
+        }
+    }
+}
+
+/// The application's drags out of its windows, handed to what follows
+/// drags. It is called from inside the Engine, which the loop is running,
+/// so it reaches [`Drags`] through a cell the loop borrows only between
+/// turns of the Engine.
+pub(crate) struct DragOut {
+    drags: Rc<RefCell<Option<Drags>>>,
+    done: RefCell<Option<DragOutDone>>,
+    /// A drag was handed out since the loop last asked: the window system
+    /// holds the pointer now.
+    took_pointer: Cell<bool>,
+}
+
+impl DragOut {
+    pub(crate) fn new(drags: Rc<RefCell<Option<Drags>>>) -> Self {
+        Self {
+            drags,
+            done: RefCell::new(None),
+            took_pointer: Cell::new(false),
+        }
+    }
+
+    /// Tells the application how its drag out ended, once it has.
+    pub(crate) fn settle(&self, engine: &Engine) {
+        let ended = self.drags.borrow_mut().as_mut().and_then(Drags::out_ended);
+        if let Some(action) = ended
+            && let Some(done) = self.done.take()
+        {
+            done(engine, action);
+        }
+    }
+
+    /// Whether a drag was handed out since the last time it was asked.
+    pub(crate) fn took_pointer(&self) -> bool {
+        self.took_pointer.replace(false)
+    }
+}
+
+impl DragOutService for DragOut {
+    fn start(&self, _engine: &Engine, drag: OutgoingDrag, done: DragOutDone) -> bool {
+        let Ok(mut drags) = self.drags.try_borrow_mut() else {
+            return false;
+        };
+        let started = drags
+            .as_mut()
+            .is_some_and(|d| d.start_out(&drag.data, drag.actions));
+        if started {
+            self.done.replace(Some(done));
+            self.took_pointer.set(true);
+        }
+        started
+    }
+
+    fn cancel(&self, _engine: &Engine) {
+        if let Ok(mut drags) = self.drags.try_borrow_mut()
+            && let Some(d) = drags.as_mut()
+        {
+            d.cancel_out();
+        }
+        self.done.take();
     }
 }
 
