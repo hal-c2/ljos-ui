@@ -67,3 +67,21 @@ Feature: Anchors on the children of a positioner
       | Column | y   | Item { width: 5; height: 5; anchors.left: parent.left }              |
       | Row    | x   | Item { width: 0; height: 5; anchors.left: parent.left }              |
       | Row    | x   | Item { width: 5; height: 5; anchors.bottom: parent.bottom }          |
+
+  # Blocked on B30 (the scene's polish loop, ADR 0001): the scene's first
+  # polish of a positioner lays it out again after the pass its completion
+  # made, so Ljós warns twice where qml6 warns once.
+  @blocked
+  Scenario: A positioner that gives up as it is completed warns once
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        Column {
+          Item { width: 20; height: 20 }
+          Item { width: 5; height: 5; anchors.top: parent.top }
+        }
+      }
+      """
+    When 100 milliseconds pass
+    Then the log has 1 warnings matching "QML Column: Cannot specify .* anchors for items inside Column"
