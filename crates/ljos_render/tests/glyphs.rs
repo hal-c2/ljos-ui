@@ -853,7 +853,7 @@ mod b0 {
         let mut fresh = EpaintBackend::new();
         let (shapes, stats) = frame(s, &mut fresh, ctx, 1.0);
         assert_eq!(stats.warnings, 0, "one line fits alone");
-        blit(&shapes, &ctx, 500, 200, 1.0)
+        blit(&shapes, ctx, 500, 200, 1.0)
     }
 
     /// A run drawn without the glyphs a full atlas had no room for is not
