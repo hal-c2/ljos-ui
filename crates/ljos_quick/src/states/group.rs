@@ -701,7 +701,7 @@ impl Group {
             for change in self.changes_of(engine, to, &mut seen) {
                 self.enter(engine, change, &mut round, &deferred);
             }
-            self.flush(engine, &mut round);
+            self.flush(engine, &mut round, true);
 
             let mut changes = Changes {
                 list: Vec::new(),
@@ -793,7 +793,7 @@ impl Group {
                     self.enter(engine, change, &mut round, &[]);
                 }
             }
-            self.flush(engine, &mut round);
+            self.flush(engine, &mut round, true);
         });
     }
 
@@ -897,7 +897,10 @@ impl Group {
             self.enter_properties(engine, change, round);
             return;
         }
-        self.flush(engine, round);
+        // A script sees the values the state gave before it, and none of
+        // its bindings: those go in once every change is in place (qml6).
+        let script = is_a::<StateChangeScript>(engine, change);
+        self.flush(engine, round, !script);
         if is_a::<AnchorChanges>(engine, change) {
             self.enter_anchors(engine, change, round);
         } else if is_a::<ParentChange>(engine, change) {
@@ -925,7 +928,8 @@ impl Group {
     /// a property is the one that counts, and the plain values go in
     /// before the expressions. An expression that reads another property
     /// the state changes is then no loop through that one's binding.
-    fn flush(&self, engine: &Engine, round: &mut Round) {
+    /// Without `bind` only the values go in, and the expressions wait.
+    fn flush(&self, engine: &Engine, round: &mut Round, bind: bool) {
         let mut pending = std::mem::take(&mut round.pending);
         for p in &pending {
             round.note(engine, p.target, p.prop, ChangeKind::Property);
@@ -968,11 +972,15 @@ impl Group {
             !values.iter().any(|p| (p.target, p.prop) == *at)
                 || exprs.iter().any(|p| (p.target, p.prop) == *at)
         });
-        round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
         for p in values {
             let at = (p.target, p.prop);
             self.push(engine, at, p.content, p.restore, Layer::Property, p.held);
         }
+        if !bind {
+            round.pending = exprs;
+            return;
+        }
+        round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
         // Every property the state binds is off its own binding before any
         // of the state's bindings runs, so that one which reads another the
         // state binds sees what it shows, and is no loop through its own

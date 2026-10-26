@@ -6,6 +6,8 @@
 # warning:QPointF_to_int and warning:QML_Case (see crates/ljos_fuzz/known/states.txt).
 # warning:[undefined]_to_double (seed 101) is the item's own binding a state that does not
 # restore takes the place of.
+# value:step:invalid-qt (seeds 101 and 202) is a StateChangeScript between a state's binding and
+# the value of the state that extends it.
 # warning:binding-loop(ljos-only):load is a state binding that reads another property the state
 # binds, whose own binding reads the first.
 # Backlog: Ljós takes the state left off a property before the next state's change is on it,
@@ -64,6 +66,32 @@ Feature: Which change of a property a state keeps
       | "blue"           | Qt.rgba(1,0,0,1) | #ff0000 |
       | "blue"           | "red"            | #ff0000 |
       | root.k           | root.k           | #00ffff |
+
+  Scenario Outline: A script among the changes sees the values before it and none of the bindings
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property int a: 1
+        property int b: 1
+        property int k: 5
+        states: [State { name: "s1"; <base> }, State { name: "s2"; extend: "s1"; <own> }]
+      }
+      """
+    When the property "state" of "root" is set to "s2"
+    Then the property "log" of "root" is "<log>"
+    And the property "a" of "root" is <a>
+    And the property "b" of "root" is <b>
+
+    Examples:
+      | base                                                                                                          | own                                               | log   | a | b |
+      | StateChangeScript { script: root.log += "a" + root.a + "b" + root.b + ";" }                                   | PropertyChanges { target: root; a: 2; b: root.k } | a1b1; | 2 | 5 |
+      | PropertyChanges { target: root; a: 2 } StateChangeScript { script: root.log += "a" + root.a + "b" + root.b + ";" }      | PropertyChanges { target: root; b: root.k }       | a2b1; | 2 | 5 |
+      | PropertyChanges { target: root; a: 2; b: root.k } StateChangeScript { script: root.log += "a" + root.a + "b" + root.b + ";" } |                                                   | a2b1; | 2 | 5 |
+      | PropertyChanges { target: root; a: root.k } StateChangeScript { script: root.log += "a" + root.a + "b" + root.b + ";" } | PropertyChanges { target: root; a: 3 }            | a1b1; | 5 | 1 |
+      | PropertyChanges { target: root; a: 4 } StateChangeScript { script: root.log += "a" + root.a + "b" + root.b + ";" }      | PropertyChanges { target: root; a: 3 }            | a4b1; | 3 | 1 |
 
   Scenario: A binding that cannot be assigned leaves the value in place, and is reported
     Given the QML:
