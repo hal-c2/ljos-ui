@@ -507,6 +507,43 @@ mod b0 {
         }
     }
 
+    /// A window of a few words keeps a small atlas: 256² coverage and the
+    /// same as RGBA texels, where it once started at 512² (1.25 MiB).
+    #[test]
+    fn b0_starts_with_a_small_atlas() {
+        let mut s = line();
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        frame(&mut s, &mut be, &ctx, 1.0);
+        assert_eq!(be.glyph_atlas().side, 256);
+        assert_eq!(be.memory().glyph_atlas_bytes, 256 * 256 + 256 * 256 * 4);
+    }
+
+    /// Glyphs that do not fit double the atlas, and are drawn as before.
+    #[test]
+    fn b0_grows_the_atlas_and_keeps_the_ink() {
+        let text = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let mut s = Scene::with_run(
+            1900.0,
+            80.0,
+            run(text, 48.0, 0.0),
+            Vec2::new(6.3, 55.0),
+            Decorations::default(),
+        );
+        let reference = s.render(1.0);
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+        assert_eq!(stats.warnings, 0);
+        assert_eq!(be.glyph_atlas().side, 512);
+        let img = blit(&shapes, &be, reference.width, reference.height, 1.0);
+        let (max, mean) = difference(&img, &reference);
+        assert!(max <= 40, "max {max}");
+        assert!(mean < 2.0, "mean {mean}");
+        let ratio = total_ink(&img) as f64 / total_ink(&reference) as f64;
+        assert!((ratio - 1.0).abs() < 0.02, "{ratio}");
+    }
+
     /// Text that only moved keeps its quads, moved: what a backend that
     /// never saw it draws, without a look in the atlas for each glyph.
     #[test]

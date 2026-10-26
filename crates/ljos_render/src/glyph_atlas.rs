@@ -33,7 +33,9 @@ const SIZE_STEPS: f64 = 8.0;
 /// quad never reads a neighbour.
 const PAD: usize = 1;
 
-const START_SIDE: usize = 512;
+/// Side the atlas starts at, and returns to on reset. A window of a few
+/// labels needs a few dozen glyphs, which 256² holds; more doubles it.
+const START_SIDE: usize = 256;
 
 /// Side of the opaque block at the atlas origin that solid bars sample.
 const WHITE_BLOCK: usize = 2;
