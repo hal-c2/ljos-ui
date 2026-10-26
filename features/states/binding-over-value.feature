@@ -6,9 +6,12 @@
 # warning:QPointF_to_int and warning:QML_Case (see crates/ljos_fuzz/known/states.txt).
 # warning:[undefined]_to_double (seed 101) is the item's own binding a state that does not
 # restore takes the place of.
+# warning:binding-loop(ljos-only):load is a state binding that reads another property the state
+# binds, whose own binding reads the first.
 # Backlog: Ljós takes the state left off a property before the next state's change is on it,
 # and the graph works the item's own binding out again in between; going from one change to the
-# next waits on the graph (bindings infrastructure). Bucket warning:QString_to_int.
+# next waits on the graph (bindings infrastructure). Buckets warning:QString_to_int,
+# warning:[undefined]_to_double (ljos-only) and warning:binding-loop(ljos-only):step-set.
 
 @qt-parity
 Feature: Which change of a property a state keeps
@@ -160,6 +163,27 @@ Feature: Which change of a property a state keeps
       | 2           | "#000000".a        | false   | 2  | 5    |
       | 2           | "#000000".a        | true    | 2  | 5    |
 
+  Scenario Outline: A state's binding that reads another the state binds is no loop through that one's own
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string p0
+        property int p2: root.p0.length
+        states: [State { name: "s0"; PropertyChanges { target: root; p0: "x" + Math.round(root.p2) } <more> }]
+        state: "s0"
+      }
+      """
+    Then the property "p0" of "root" is "<p0>"
+    And the log has <n> warnings matching "Binding loop detected for property .p0."
+
+    Examples:
+      | more                                                   | p0 | n |
+      |                                                        | x0 | 1 |
+      | PropertyChanges { target: root; p2: 4 }                | x4 | 0 |
+      | PropertyChanges { target: root; p2: Math.sqrt(42) }    | x6 | 0 |
+
   Scenario Outline: A state that does not restore gives back what the state before it would have
     Given the QML:
       """qml
@@ -208,3 +232,20 @@ Feature: Which change of a property a state keeps
       | when        | run                        |
       | when: true; | state = "s0"               |
       |             | state = "s2"; state = "s0" |
+
+  @backlog
+  Scenario: From one state's change of a property to another's, a binding that reads it is no loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string p0
+        states: [State { name: "s0"; PropertyChanges { target: root; p0: root.p0.padStart(5, "*") } },
+                 State { name: "s2"; PropertyChanges { target: root; p0: "*****" } }]
+        function run() { state = "s2"; state = "s0" }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "p0" of "root" is "*****"
+    And the log has no warning matching "Binding loop"

@@ -961,9 +961,34 @@ impl Group {
                 || exprs.iter().any(|p| (p.target, p.prop) == *at)
         });
         round.bound.extend(exprs.iter().map(|p| (p.target, p.prop)));
-        for p in values.into_iter().chain(exprs) {
+        for p in values {
             let at = (p.target, p.prop);
             self.push(engine, at, p.content, p.restore, Layer::Property, p.held);
+        }
+        // Every property the state binds is off its own binding before any
+        // of the state's bindings runs, so that one which reads another the
+        // state binds sees what it shows, and is no loop through its own
+        // binding (qml6).
+        let holds: Vec<_> = if exprs.len() > 1 {
+            exprs
+                .iter()
+                .filter_map(|p| {
+                    let now = engine.untrack(|| engine.peek(p.target, p.prop));
+                    let id = engine
+                        .push_override(p.target, p.prop, OverrideContent::Value(now))
+                        .ok()?;
+                    Some((p.target, p.prop, id))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for p in exprs {
+            let at = (p.target, p.prop);
+            self.push(engine, at, p.content, p.restore, Layer::Property, p.held);
+        }
+        for (obj, prop, id) in holds {
+            let _ = engine.remove_override(obj, prop, id, RestoreMode::None);
         }
     }
 
