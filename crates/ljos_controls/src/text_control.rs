@@ -111,9 +111,15 @@ pub(crate) fn completed(
         let r = set_computed(e, obj, p.focus_reason, Value::Int(reason));
         check(e, "focusReason", r);
     })?;
+    Ok(())
+}
 
-    // The placeholder says what the field is for. Qt does not say what it
-    // tells a screen reader of it; a description is what the text is.
+/// The placeholder says what the field is for. Qt does not say what it
+/// tells a screen reader of it; a description is what the text is.
+pub(crate) fn placeholder_description(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let Some(p) = props(engine, obj) else {
+        return Ok(());
+    };
     let attacher = MetaRef::Static(Accessible::static_meta());
     let att = engine.attached_object(obj, &attacher)?;
     bind_default(

@@ -7,7 +7,9 @@
 Feature: Shortcuts with the same sequence
   When several enabled shortcuts have the sequence that was typed, none is
   activated. One of them is told it was ambiguous, a different one each time,
-  so that an application can step through them.
+  so that an application can step through them. They take their turns in
+  the order they registered in: declared ones as they complete, the last
+  first, and one whose sequence changes after all the others.
 
   Background:
     Given the QML:
@@ -42,6 +44,14 @@ Feature: Shortcuts with the same sequence
     And the user presses "Ctrl+D"
     And the user presses "Ctrl+D"
     Then the property "log" of "root" is "third second first third "
+
+  Scenario: A shortcut given its sequence again takes its turn last
+    When the property "sequence" of "second" is set to "Ctrl+X"
+    And the property "sequence" of "second" is set to "Ctrl+D"
+    And the user presses "Ctrl+D"
+    And the user presses "Ctrl+D"
+    And the user presses "Ctrl+D"
+    Then the property "log" of "root" is "third first second "
 
   Scenario: A sequence only one shortcut has activates it
     When the user presses "Ctrl+E"

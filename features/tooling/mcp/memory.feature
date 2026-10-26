@@ -9,7 +9,9 @@ Feature: An agent reads where the application's memory is
   `app_metrics` with `memory` breaks down what the application holds, as an observer's
   allocator view does: its objects by type, the script heap, the reactive
   graph, the text caches, and per window the scene's tree and display
-  lists and what its renderer keeps, beside the process's resident bytes.
+  lists and what its renderer keeps (with the text runs it holds drawn
+  without some of their glyphs, the glyph meshes it built and the last
+  frame's warnings), beside the process's resident bytes.
   It is also broken down by owner, each with bytes and a count, and
   reconciled with what is resident: the program, the owners, what the
   allocator keeps free, and the rest, told as not attributed.

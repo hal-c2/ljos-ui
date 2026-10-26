@@ -1000,6 +1000,7 @@ impl QmlView {
         // Paint. egui keeps no retained shapes, so every pass re-emits the
         // snapshot; B0 caches meshes per node, so this is mostly Arc clones.
         self.backdrop = None;
+        let mut again = false;
         if self.drawn && !self.encodes && self.scene.snapshot().is_some() {
             if self.scripts == Scripts::Waiting {
                 self.scripts = Scripts::Due(ctx.cumulative_frame_nr());
@@ -1025,7 +1026,7 @@ impl QmlView {
                 && painter.clip_rect().contains_rect(window);
             sink.solid_rects = self.solid_rects;
             sink.shaders = self.draws_shaders;
-            self.backend.encode(&view, &mut sink);
+            again = self.backend.encode(&view, &mut sink).again;
             sink.paint(&painter);
             self.backdrop = sink.backdrop;
             if self.scripts == Scripts::Waiting {
@@ -1061,7 +1062,10 @@ impl QmlView {
         // Schedule the next pass.
         let missed = self.gate.missed.replace(false) && self.scene.needs_frame();
         match self.next_wake {
-            _ if missed || matches!(self.scripts, Scripts::Due(_)) => {
+            // The renderer drew something without all of it (glyphs a
+            // full atlas left out) and the same snapshot drawn again may
+            // complete it.
+            _ if missed || again || matches!(self.scripts, Scripts::Due(_)) => {
                 self.request_repaint(&ctx, None)
             }
             Some(t) if t <= now => self.request_repaint(&ctx, None),

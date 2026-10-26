@@ -316,6 +316,55 @@ fn the_default_role_is_on_the_attached_object_and_the_author_can_replace_it() {
     );
 }
 
+/// A control's `Accessible` object is made when something first asks for
+/// it, with its defaults: here a screen reader that connects after the
+/// window is up, which finds the whole tree.
+#[test]
+fn a_control_has_its_accessible_object_once_something_asks() {
+    use ljos_a11y::accesskit::Role as AkRole;
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+import QtQuick.Controls.Basic
+Item { width: 200; height: 100; Button { objectName: "go"; text: "&Go" } }"#,
+    );
+    let go = find(&e, root, "go");
+    let attacher = MetaRef::Static(Accessible::static_meta());
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    assert!(e.existing_attached_object(go, &attacher).is_none());
+    s.set_accessibility_active(&e, true);
+    s.frame(&e, Time::ZERO);
+    assert!(s.accessibility_tree().find(AkRole::Button, "Go").is_some());
+    assert!(e.existing_attached_object(go, &attacher).is_some());
+}
+
+/// QML that reads a control's `Accessible` object makes it, and reads
+/// the defaults of the control's type.
+#[test]
+fn qml_reads_the_default_role_of_a_control() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    property int role: box.Accessible.role
+    property string name: box.Accessible.name
+    CheckBox { id: box; text: "Check" }
+}"#,
+    );
+    assert_eq!(
+        e.read_by_name(root, "role"),
+        Value::Int(Role::CheckBox.qt_value())
+    );
+    assert_eq!(
+        e.read_by_name(root, "name").to_js_string().as_str(),
+        "Check"
+    );
+}
+
 #[test]
 fn destroying_a_pressed_button_leaves_nothing_behind() {
     let e = engine();
@@ -643,6 +692,46 @@ fn a_button_without_a_mnemonic_has_no_shortcut() {
     let plain = nodes_each(r#"Button { text: "File" }"#);
     let marked = nodes_each(r#"Button { text: "&File" }"#);
     assert!(marked - plain >= 3.0, "plain {plain}, marked {marked}");
+}
+
+/// An action makes its `Shortcut` with the first sequence it is given
+/// (`features/controls/action-shortcut.feature`); a blank or null one is
+/// none.
+#[test]
+fn an_action_without_a_sequence_has_no_shortcut() {
+    let none = nodes_each("Item { Action {} }");
+    let keyed = nodes_each(r#"Item { Action { shortcut: "Ctrl+K" } }"#);
+    assert!(keyed - none >= 3.0, "none {none}, keyed {keyed}");
+    for decl in [
+        r#"Item { Action { shortcut: "" } }"#,
+        "Item { Action { shortcut: null } }",
+    ] {
+        let blank = nodes_each(decl);
+        assert!(blank - none < 1.0, "{decl}: {blank}, none {none}");
+    }
+}
+
+/// The letters of a menu's rows are the menu's: a row with a mnemonic
+/// makes no `Shortcut` of its own. Its marker costs what it costs a row
+/// outside a menu, less the `Shortcut` (2 nodes against 6).
+#[test]
+fn a_row_of_a_menu_has_no_mnemonic_shortcut() {
+    let mark = |menu: bool| {
+        let row = |text: &str| {
+            let item = format!(r#"MenuItem {{ text: "{text}" }}"#);
+            if menu {
+                nodes_each(&format!("Item {{ Menu {{ {item} }} }}"))
+            } else {
+                nodes_each(&format!("Item {{ {item} }}"))
+            }
+        };
+        row("&Open") - row("Open")
+    };
+    let (inside, outside) = (mark(true), mark(false));
+    assert!(
+        inside + 3.0 <= outside,
+        "in a menu {inside}, outside {outside}"
+    );
 }
 
 /// Makes `rows` buttons one at a time, each with a colour of its own, as

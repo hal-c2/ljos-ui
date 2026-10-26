@@ -91,6 +91,37 @@ Feature: Attached properties in expressions
       When the method "pushParent" of "second" is called
       Then the property "viaParent" of "second" is 8
 
+  Rule: Named through a namespace, after another object it still means that object
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick as Q
+        import QtQuick.Layouts as L
+        import QtQuick.Controls as T
+        L.ColumnLayout {
+          objectName: "column"
+          Q.Item { id: a; L.Layout.fillWidth: true; L.Layout.preferredHeight: 12 }
+          Q.Item { id: k; Q.Keys.enabled: false }
+          T.Button { id: b; T.ToolTip.text: "tip" }
+          property bool fills: a.L.Layout.fillWidth
+          property int tall: a.L.Layout.preferredHeight
+          property bool keys: k.Q.Keys.enabled
+          property string tip: b.T.ToolTip.text
+          function grow() { a.L.Layout.preferredHeight = 20 }
+        }
+        """
+
+    Scenario: A binding reads the attached properties of another object through a namespace
+      Then the property "fills" of "column" is true
+      And the property "tall" of "column" is 12
+      And the property "keys" of "column" is false
+      And the property "tip" of "column" is "tip"
+
+    Scenario: Writing through a namespace changes that object's attached property
+      When the method "grow" of "column" is called
+      Then the property "tall" of "column" is 20
+
   Rule: An attaching type keeps its enumeration next to its attached properties
 
     Scenario: A name and a role are read and written through Accessible

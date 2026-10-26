@@ -74,6 +74,9 @@ pub(crate) struct TypeMember {
     pub end: u32,
     /// Where `object` starts when it is nothing but a name.
     pub base: Option<u32>,
+    /// `object` as `value.Name`, where `Name` may be a namespace the type
+    /// is named through (`item.L.Layout`): the name and `value`, whole.
+    pub through: Option<(String, Span)>,
 }
 
 /// What a member is written on: `a.b` of `a.b.x = 1`. Where that is a value
@@ -655,11 +658,19 @@ impl Reader<'_, '_> {
             Expression::Identifier(id) => Some(id.span.start - self.offset),
             _ => None,
         };
+        let through = match &it.object {
+            Expression::StaticMemberExpression(inner) if !inner.optional => Some((
+                inner.property.name.to_string(),
+                self.local(inner.object.span()),
+            )),
+            _ => None,
+        };
         self.analysis.type_members.push(TypeMember {
             name: name.to_string(),
             object: self.local(it.object.span()),
             end: it.property.span.end - self.offset,
             base,
+            through,
         });
     }
 }
@@ -886,7 +897,7 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
 /// that of the last expression statement it ran, as the completion value of
 /// a script is (Qt 6.11.2, by running qml6). The edits that make each such
 /// statement of `text` (a block) return its expression: the last statement
-/// of a block, and of both branches of an `if`.
+/// of a block, of both branches of an `if` and of a label.
 pub(crate) fn completion_returns(text: &str) -> Vec<Edit> {
     fn tails(statement: &Statement<'_>, out: &mut Vec<Span>) {
         match statement {
@@ -902,6 +913,8 @@ pub(crate) fn completion_returns(text: &str) -> Vec<Edit> {
                     tails(alternate, out);
                 }
             }
+            // `{ k: 1 }` is a block whose statement has a label.
+            Statement::LabeledStatement(it) => tails(&it.body, out),
             _ => {}
         }
     }

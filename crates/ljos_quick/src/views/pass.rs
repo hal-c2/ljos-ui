@@ -86,7 +86,12 @@ pub(crate) fn refresh(e: &Engine, view: ObjectId) {
     // delegates there are now. Where it cannot run at once (in a batch,
     // or behind the effect that is running) the rows are laid out here.
     let before = st.passes.get();
-    bump(e, &st);
+    // The current row's new number is told first, and the layout it
+    // asks for is this one.
+    e.batch(|| {
+        tell_current(e, view, &st);
+        bump(e, &st);
+    });
     // In a batch the effect runs when the batch ends, before the caller
     // that began it goes on: laying the rows out here too would do it
     // twice.
@@ -868,6 +873,7 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>
     if over.is_none() {
         st.due.set(false);
         st.slots_stale.set(false);
+        tell_current(e, view, st);
     }
     run(e, view, st, over);
     st.in_pass.set(false);
@@ -878,6 +884,31 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>
         bump(e, st);
     }
     fetch_at_end(e, view, st);
+}
+
+/// The row that is current: `currentIndex`, or where rows that came or
+/// went since the last layout moved it. What a script gave it since is
+/// what it is.
+pub(crate) fn current_row(e: &Engine, view: ObjectId, st: &ViewState) -> i64 {
+    let read = e.untrack(|| rd(e, view, ItemView::CURRENT_INDEX.index)) as i32;
+    match st.current_due.get() {
+        Some(i) if st.seen_index.get() == Some(read) => i64::from(i),
+        _ => i64::from(read),
+    }
+}
+
+/// Writes the `currentIndex` a change of rows left for the layout,
+/// unless a script gave it one since.
+fn tell_current(e: &Engine, view: ObjectId, st: &ViewState) {
+    let Some(i) = st.current_due.take() else {
+        return;
+    };
+    let p = ItemView::CURRENT_INDEX.index;
+    let read = e.untrack(|| rd(e, view, p)) as i32;
+    if st.seen_index.get() == Some(read) && read != i {
+        st.seen_index.set(Some(i));
+        put(e, view, p, Value::Int(i));
+    }
 }
 
 /// Writes `count`, or tells of the one the model gave it already.
@@ -1260,6 +1291,11 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
                 .filter(|(row, ..)| d.key_at(*row).is_some_and(|k| op.target_keys.contains(&k)))
                 .map(|(_, o, ..)| *o)
                 .collect();
+        }
+        // Rows added are told from the first row down, whatever order they
+        // came in, as qml6 tells them.
+        if op.kind == super::state::OpKind::Add {
+            targets.indexes.sort_unstable();
         }
         let targets = std::rc::Rc::new(targets);
         for &(row, o, pos, size) in &items {

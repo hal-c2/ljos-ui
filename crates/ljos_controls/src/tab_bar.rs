@@ -12,7 +12,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use ljos_a11y::Role;
 use ljos_engine::{
     ConnectionId, Cx, Engine, EngineError, MetaRef, ObjectId, OverrideContent, OverrideId,
     PropIndex, QmlObject, QmlType, RestoreMode, Value, WriteKind, qml_impl,
@@ -104,14 +103,6 @@ impl Default for TabButton {
 }
 
 #[qml_impl]
-impl TabButton {
-    #[qml(on_complete)]
-    fn completed(cx: &Cx) -> Result<(), EngineError> {
-        crate::a11y::defaults(cx.engine, cx.this, Role::PageTab, None)
-    }
-}
-
-#[qml_impl]
 impl TabBar {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
@@ -120,7 +111,7 @@ impl TabBar {
         e.watch(bar, TabBar::POSITION.index, move |e, _| attach_all(e, bar))?;
         items_changed(e, bar);
         current_changed(e, bar);
-        crate::a11y::defaults(e, bar, Role::PageTabList, None)
+        Ok(())
     }
 }
 

@@ -385,6 +385,12 @@ ApplicationWindow {
         return (us / 1000000).toFixed(2) + " s"
     }
 
+    // Whether the platform measured `key` of the process block: what it
+    // did not is named in `not_measured`, and is never shown as 0.
+    function measured(p, key) {
+        return p !== null && p !== undefined && typeof p[key] === "number"
+    }
+
     function bytes(n) {
         if (n === undefined || n === null)
             return "—"
@@ -556,6 +562,8 @@ ApplicationWindow {
                     property var last: null
                     property var parts: ({})
                     property var latest: ({})
+                    // What the platform does not measure, by figure.
+                    property var unmeasured: ({})
 
                     function sample() {
                         parts = {}
@@ -580,14 +588,29 @@ ApplicationWindow {
                         if (t.process)
                             processes.process = t.process
                         var now = Date.now()
-                        var wakeups = 0
+                        // The process's own count where the platform
+                        // keeps one, else its threads' added up; neither
+                        // is unknown, not 0.
+                        var wakeups = window.measured(t.process, "wakeups") ? t.process.wakeups : null
+                        var counted = 0
+                        var everyCounted = true
                         var threadCount = 0
                         for (var i = 0; i < t.processes.length; ++i) {
-                            if (t.processes[i].kind !== "thread")
+                            var th = t.processes[i]
+                            if (th.kind !== "thread")
                                 continue
-                            wakeups += t.processes[i].wakeups || 0
                             threadCount += 1
+                            if (typeof th.wakeups === "number")
+                                counted += th.wakeups
+                            else
+                                everyCounted = false
                         }
+                        if (wakeups === null && threadCount > 0 && everyCounted)
+                            wakeups = counted
+                        var rss = window.measured(t.process, "rss_bytes") ? t.process.rss_bytes : null
+                        var threads = window.measured(t.process, "threads") ? t.process.threads
+                            : t.process ? null : threadCount
+                        unmeasured = { rss: rss === null, wakeups: wakeups === null, threads: threads === null }
                         var depth = 0
                         var boxes = b.mailboxes || []
                         for (var j = 0; j < boxes.length; ++j)
@@ -603,7 +626,7 @@ ApplicationWindow {
                         }
                         var point = {
                             frameMs: 0, drawn: 0, skipped: 0, wakeups: 0,
-                            rss: t.process ? t.process.rss_bytes / (1024 * 1024) : 0,
+                            rss: rss === null ? 0 : rss / (1024 * 1024),
                             inbox: depth,
                         }
                         if (last !== null) {
@@ -612,15 +635,16 @@ ApplicationWindow {
                             point.frameMs = frames > 0 ? (here.frameTotal - last.frameTotal) / frames / 1000 : 0
                             point.drawn = here.drawn - last.drawn
                             point.skipped = here.skipped - last.skipped
-                            point.wakeups = (here.wakeups - last.wakeups) / secs
+                            if (here.wakeups !== null && last.wakeups !== null)
+                                point.wakeups = (here.wakeups - last.wakeups) / secs
                         }
                         last = here
                         latest = {
                             frames: m.frames.count,
                             overruns: m.frames.overruns,
                             objects: m.objects,
-                            threads: t.process ? t.process.threads : threadCount,
-                            rss: t.process ? t.process.rss_bytes : null,
+                            threads: threads,
+                            rss: rss,
                             drawn: here.drawn,
                             skipped: here.skipped,
                             painter: p.painter || "",
@@ -681,11 +705,18 @@ ApplicationWindow {
                                     }
                                     Text {
                                         property var v: overview.latest[modelData[1]]
-                                        text: v === undefined || v === null ? "—"
+                                        readonly property bool unknown: overview.unmeasured[modelData[1]] === true
+                                        width: parent.width
+                                        text: unknown ? "not measured on this platform"
+                                            : v === undefined || v === null ? "—"
                                             : modelData[1] === "rss" ? window.bytes(v) : v
-                                        color: modelData[1] === "overruns" && v > 0 ? theme.bad : theme.text
-                                        font.pixelSize: 19
-                                        font.bold: true
+                                        color: unknown ? theme.subtle
+                                            : modelData[1] === "overruns" && v > 0 ? theme.bad : theme.text
+                                        font.pixelSize: unknown ? 12 : 19
+                                        font.bold: !unknown
+                                        wrapMode: unknown ? Text.WordWrap : Text.NoWrap
+                                        maximumLineCount: 2
+                                        elide: Text.ElideRight
                                     }
                                 }
                             }
@@ -723,6 +754,7 @@ ApplicationWindow {
                                 readonly property var values: overview.series[modelData.key]
                                 readonly property var seconds: modelData.second ? overview.series[modelData.second] : []
                                 readonly property real now: values.length === 0 ? 0 : values[values.length - 1]
+                                readonly property bool unknown: overview.unmeasured[modelData.key] === true
 
                                 Text {
                                     x: 12; y: 10
@@ -733,7 +765,8 @@ ApplicationWindow {
                                     anchors.right: parent.right
                                     anchors.rightMargin: 12
                                     y: 8
-                                    text: chart.values.length === 0 ? "—"
+                                    text: chart.unknown ? "not measured on this platform"
+                                        : chart.values.length === 0 ? "—"
                                         : (Math.round(chart.now * 10) / 10) + (chart.modelData.unit === "" ? "" : " " + chart.modelData.unit)
                                           + (chart.modelData.second && chart.seconds.length > 0
                                              ? " drawn  ·  " + chart.seconds[chart.seconds.length - 1] + " skipped" : "")
@@ -751,6 +784,7 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     anchors.topMargin: 34
                                     anchors.margins: 12
+                                    visible: !chart.unknown
                                     // A point stays where it was drawn and
                                     // the lines move left under the plot, so
                                     // a sample makes one point per line, not
@@ -974,7 +1008,7 @@ ApplicationWindow {
                             status: r.state || "",
                             hasStatus: r.state !== undefined,
                             work: window.ms(r.work_us),
-                            wakeups: r.wakeups === undefined ? "" : String(r.wakeups),
+                            wakeups: typeof r.wakeups === "number" ? String(r.wakeups) : "",
                             detail: r.kind === "timer"
                                     ? "every " + r.interval_ms + " ms" + (r.repeat ? ", repeats" : "")
                                     : r.locator || r.thread_name || "",
@@ -991,6 +1025,28 @@ ApplicationWindow {
                         return false
                     }
 
+                    // The process as a whole: what was measured, then what
+                    // the platform does not measure.
+                    function summary(p) {
+                        if (p === null)
+                            return ""
+                        var parts = []
+                        if (window.measured(p, "threads"))
+                            parts.push(p.threads + " threads")
+                        if (window.measured(p, "rss_bytes"))
+                            parts.push(window.bytes(p.rss_bytes) + " resident")
+                        if (window.measured(p, "cpu_us"))
+                            parts.push(window.ms(p.cpu_us) + " CPU")
+                        var words = { threads: "threads", rss_bytes: "memory", cpu_us: "CPU time" }
+                        var missing = (p.not_measured || []).map(function (k) { return words[k] || k })
+                        if (missing.length > 0)
+                            parts.push(missing.join(", ") + ": not measured on this platform")
+                        return parts.join(" · ")
+                    }
+
+                    readonly property bool threadsUnmeasured: process !== null
+                        && (process.not_measured || []).indexOf("threads") >= 0
+
                     function nameWidth(total) {
                         var rest = 0
                         for (var i = 0; i < widths.length; ++i)
@@ -1005,9 +1061,7 @@ ApplicationWindow {
                             Layout.leftMargin: 12
                             visible: processes.process !== null
                             color: theme.subtle
-                            text: processes.process === null ? ""
-                                : processes.process.threads + " threads · " + window.bytes(processes.process.rss_bytes)
-                                  + " resident · " + window.ms(processes.process.cpu_us) + " CPU"
+                            text: processes.summary(processes.process)
                         }
                         Item { Layout.fillWidth: true }
                         Repeater {
@@ -1059,9 +1113,23 @@ ApplicationWindow {
                         }
                         Rectangle { y: 32; width: parent.width; height: 1; color: theme.rule }
 
+                        // Where the platform lists no threads, the table
+                        // says so rather than leaving them out unsaid.
+                        Text {
+                            id: noThreads
+                            x: 8
+                            y: 33
+                            visible: processes.threadsUnmeasured
+                                && (processes.kind === "" || processes.kind === "thread")
+                            height: visible ? 32 : 0
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Threads: not measured on this platform"
+                            color: theme.subtle
+                        }
+
                         ListView {
                             anchors.fill: parent
-                            anchors.topMargin: 33
+                            anchors.topMargin: 33 + noThreads.height
                             clip: true
                             // A page out of sight lets its rows go: they
                             // are most of what a page costs to hold.
@@ -1779,9 +1847,11 @@ ApplicationWindow {
                     }
 
                     function showProperties(ok, s, r) {
+                        // The rows shrink before the list does, so that
+                        // no row is drawn from past its end.
                         if (!ok) {
-                            props = []
                             propRows = 0
+                            props = []
                             binds = []
                             head = window.refusal(r)
                             where = ""
@@ -1792,6 +1862,7 @@ ApplicationWindow {
                         head = (s.type || "") + (s.id ? "#" + s.id : "") + (s.object_name ? "  \"" + s.object_name + "\"" : "")
                         where = s.source ? s.source.file.split("/").pop() + ":" + s.source.line : ""
                         if (editing === "") {
+                            propRows = Math.min(propRows, s.properties.length)
                             props = s.properties
                             propRows = props.length
                         }
@@ -1952,6 +2023,7 @@ ApplicationWindow {
                                      : nodeHover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
                                      : "transparent"
                                 Row {
+                                    id: nodeRow
                                     x: 10 + (objects.listed ? 0 : node.depth * 14)
                                     height: parent.height
                                     spacing: 6
@@ -1962,14 +2034,23 @@ ApplicationWindow {
                                              : node.dim ? theme.subtle : theme.accent
                                     }
                                     Text {
+                                        id: nodeKind
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: node.kind
                                         color: node.dim ? theme.subtle : theme.text
                                         font.bold: objects.picked === node.handle
                                     }
+                                    // A long name is cut to what the row
+                                    // leaves it, short of the size.
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: text !== ""
+                                        width: Math.max(24, Math.min(implicitWidth,
+                                            (node.size > 0 ? nodeSize.x : node.width) - 12 - nodeRow.x
+                                            - 12 - nodeKind.width - 6
+                                            - (nodeHandle.visible ? nodeHandle.width + 6 : 0)
+                                            - (disclosure.visible ? disclosure.width + 6 : 0)))
+                                        elide: Text.ElideRight
                                         text: node.ident ? "#" + node.ident
                                             : node.oname ? "\"" + node.oname + "\"" : ""
                                         color: theme.accent
@@ -1979,6 +2060,7 @@ ApplicationWindow {
                                     // for the rows of a filter, which all
                                     // may have the id of their component.
                                     Text {
+                                        id: nodeHandle
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: objects.listed || !node.ident && !node.oname
                                         text: node.handle
@@ -1999,6 +2081,7 @@ ApplicationWindow {
                                 }
                                 // About what it holds, at the right.
                                 Text {
+                                    id: nodeSize
                                     anchors.right: parent.right
                                     anchors.rightMargin: 10
                                     anchors.verticalCenter: parent.verticalCenter
@@ -2148,7 +2231,7 @@ ApplicationWindow {
                                         x: 6
                                         width: Math.max(72, Math.min(130, prop.width * 0.3))
                                         anchors.verticalCenter: line.verticalCenter
-                                        text: prop.modelData.name
+                                        text: prop.modelData.name || ""
                                         color: theme.text
                                         elide: Text.ElideRight
                                     }
@@ -2157,7 +2240,7 @@ ApplicationWindow {
                                         anchors.left: propName.right
                                         anchors.verticalCenter: line.verticalCenter
                                         width: 60
-                                        text: prop.modelData.type
+                                        text: prop.modelData.type || ""
                                         color: theme.subtle
                                         font.pixelSize: 11
                                         elide: Text.ElideRight
@@ -2337,8 +2420,8 @@ ApplicationWindow {
                                                 id: chipText
                                                 anchors.centerIn: parent
                                                 text: prop.edited ? (prop.modelData.provenance === "bound" ? "rebound" : "edited")
-                                                    : prop.fixed ? prop.modelData.provenance + " · read-only"
-                                                    : prop.modelData.provenance
+                                                    : prop.fixed ? (prop.modelData.provenance || "") + " · read-only"
+                                                    : prop.modelData.provenance || ""
                                                 color: parent.tone
                                                 font.pixelSize: 11
                                             }
@@ -2759,6 +2842,9 @@ ApplicationWindow {
                     property var tracing: []
                     property int dropped: 0
                     property int unread: 0
+                    // The last event listed: answers to reads that went
+                    // out with the same `since` list an event once.
+                    property int lastSeq: -1
                     // The properties and signals a trace started from now
                     // on keeps to, as typed; blank keeps to none.
                     property string only: ""
@@ -2814,15 +2900,21 @@ ApplicationWindow {
                         tracing = s.tracing
                         dropped = s.dropped
                         since = s.next_since
-                        for (var i = 0; i < s.events.length; ++i)
+                        var added = 0
+                        for (var i = 0; i < s.events.length; ++i) {
+                            if (s.events[i].seq <= lastSeq)
+                                continue
+                            lastSeq = s.events[i].seq
                             put(s.events[i])
+                            added += 1
+                        }
                         var over = traceLines.count - 2000
                         if (over > 0)
                             traceLines.remove(0, over)
-                        if (s.events.length > 0) {
+                        if (added > 0) {
                             traceView.positionViewAtEnd()
                             if (window.page !== 5)
-                                unread += s.events.length
+                                unread += added
                         }
                         if (s.more)
                             load()
@@ -3957,6 +4049,9 @@ ApplicationWindow {
                                       : r.meshes + " meshes, " + (r.textures + r.pages + r.shape_textures)
                                         + " textures, glyph atlas " + window.bytes(r.glyph_atlas_bytes)
                                         + ", " + window.bytes(r.bytes)
+                                        + (r.glyph_runs_incomplete > 0
+                                           ? ", " + r.glyph_runs_incomplete + " text runs missing glyphs" : "")
+                                        + (r.warnings > 0 ? ", " + r.warnings + " drawing warnings" : "")
                             })
                         }
                     }
@@ -4721,7 +4816,9 @@ ApplicationWindow {
                                 atMs: w.at_ms,
                                 at: (w.at_ms / 1000).toFixed(3) + " s",
                                 causes: w.causes.join(", "),
-                                tone: tone(w.causes),
+                                // As text: a colour the theme gives and one
+                                // written here would be two types to a role.
+                                tone: String(tone(w.causes)),
                                 own: w.requests_only,
                                 detailed: w.detailed === true,
                                 ledTo: w.led_to,
@@ -4852,7 +4949,12 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         spacing: 10
                         Text { text: "Wakes"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        // Takes what the buttons leave, so that a narrow
+                        // window cuts the summary, never a button.
                         Text {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            elide: Text.ElideRight
                             text: (wakes.recording ? "keeping" : "not keeping") + " · "
                                   + wakeRows.count + " wakes"
                                   + (wakes.hideOwn && wakes.ownCount > 0
@@ -4860,7 +4962,6 @@ ApplicationWindow {
                                   + (wakes.dropped > 0 ? " · " + wakes.dropped + " older gave way" : "")
                             color: wakes.recording ? theme.good : theme.subtle
                         }
-                        Item { Layout.fillWidth: true }
                         CheckBox {
                             text: "Hide this window's requests"
                             checked: wakes.hideOwn

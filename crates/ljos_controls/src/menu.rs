@@ -120,14 +120,6 @@ pub struct MenuSeparator {
     pub control: Control,
 }
 
-#[qml_impl]
-impl MenuSeparator {
-    #[qml(on_complete)]
-    fn completed(cx: &Cx) -> Result<(), EngineError> {
-        crate::a11y::defaults(cx.engine, cx.this, Role::Separator, None)
-    }
-}
-
 // ----------------------------------------------------------------- Menu
 
 /// An item of a menu and what the menu put on it.
@@ -887,6 +879,8 @@ fn take(
     // The item of an action or of a menu was the menu's own.
     if kind != Kind::Item && entry.is_some_and(|en| en.made_for.is_some()) {
         e.destroy(item);
+    } else if kind == Kind::Item {
+        crate::button::left_menu(e, item);
     }
     changed(e, menu)?;
     Ok(Value::Object(taken))

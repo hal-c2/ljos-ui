@@ -19,6 +19,11 @@ pub struct Context {
     /// The object whose properties are in scope unqualified (the
     /// component's root, or a context object set by the host).
     pub context_object: Option<ObjectId>,
+    /// The root of the instance the context is made for, or the object a
+    /// Loader makes its item in: a name a script in a file made here
+    /// cannot place is looked for among its members, after the ids and
+    /// before `context_object` (a delegate's own member hides its row's).
+    pub(crate) root: Option<ObjectId>,
     /// Names the host puts in scope (`setContextProperty`).
     pub props: FxHashMap<Atom, Value>,
     /// Grows with every context made, so siblings can be told apart by

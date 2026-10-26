@@ -19,8 +19,8 @@ use std::rc::{Rc, Weak};
 use ljos_a11y::accesskit::{Role as AkRole, Toggled};
 use ljos_a11y::{Bounds, Handled, NodeData, NodeKey, Politeness, Range, Role, RoleFlags, Tree};
 use ljos_engine::{
-    Atom, Cx, Engine, LogLevel, MetaRef, NodeId as GraphNode, ObjectId, PropIndex, QmlObject,
-    QmlType, QtObject, Value, qml_impl,
+    Atom, Cx, Engine, EngineError, LogLevel, MetaRef, NodeId as GraphNode, ObjectId, PropIndex,
+    QmlObject, QmlType, QtObject, Value, qml_impl,
 };
 use ljos_render::kurbo;
 use ljos_runtime::Time;
@@ -473,6 +473,58 @@ fn accessible_parts(engine: &Engine, obj: ObjectId) -> Option<AccessibleParts> {
         .map(|(_, h)| *h)
 }
 
+/// Gives an item of a registered type what its `Accessible` object says
+/// when its author said nothing: a role by the type, a name from what the
+/// item shows. It runs when the object is made, and may make it with
+/// [`Engine::attached_object`], which then returns the one being made.
+pub type AccessibleDefaults = fn(&Engine, ObjectId) -> Result<(), EngineError>;
+
+#[derive(Default)]
+struct DefaultTypes {
+    types: RefCell<Vec<(MetaRef, AccessibleDefaults)>>,
+}
+
+/// Gives items of type `meta` (and of the types derived from it) their
+/// `Accessible` defaults through `defaults`. The object is made only when
+/// something asks for it: QML that reads `item.Accessible`, or the pass
+/// while an assistive technology or a tool listens, so an item nobody
+/// asks about costs no object. Every registration that fits runs, in the
+/// order they were made: a base type's first, then a derived one's,
+/// which may write over it.
+pub fn register_accessible_defaults(engine: &Engine, meta: MetaRef, defaults: AccessibleDefaults) {
+    engine
+        .extension::<DefaultTypes>()
+        .types
+        .borrow_mut()
+        .push((meta, defaults));
+}
+
+/// Whether items of `obj`'s type have [`AccessibleDefaults`].
+fn has_defaults(engine: &Engine, obj: ObjectId) -> bool {
+    let reg = engine.extension::<DefaultTypes>();
+    let types = reg.types.borrow();
+    !types.is_empty()
+        && engine
+            .meta_of(obj)
+            .is_some_and(|meta| types.iter().any(|(m, _)| meta.inherits(m)))
+}
+
+fn apply_defaults(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let fits: Vec<AccessibleDefaults> = {
+        let reg = engine.extension::<DefaultTypes>();
+        let types = reg.types.borrow();
+        let Some(meta) = engine.meta_of(obj).filter(|_| !types.is_empty()) else {
+            return Ok(());
+        };
+        types
+            .iter()
+            .filter(|(m, _)| meta.inherits(m))
+            .map(|(_, f)| *f)
+            .collect()
+    };
+    fits.into_iter().try_for_each(|f| f(engine, obj))
+}
+
 /// The keys of the nodes of parts are counted up from here. An item's key
 /// has these bits only after its slot was reused three thousand million
 /// times; the tree's own nodes (text runs, announcements) have one of the
@@ -490,9 +542,10 @@ struct PlacedPart {
     at: (f64, f64),
 }
 
-/// Gives every new `Accessible` object its role-dependent `focusable`.
+/// Gives every new `Accessible` object its role-dependent `focusable`,
+/// and then its item's [`AccessibleDefaults`].
 pub(crate) fn register(engine: &Engine) {
-    engine.on_attached_created_of::<AccessibleAttached>(|e, _, att| {
+    engine.on_attached_created_of::<AccessibleAttached>(|e, item, att| {
         // A binding, so that it follows the role and an assignment
         // replaces it. It is in place before the creator applies the
         // item's own `Accessible.focusable`.
@@ -513,6 +566,9 @@ pub(crate) fn register(engine: &Engine) {
                 SCENE_CATEGORY,
                 format!("Accessible.focusable has no default: {err}"),
             );
+        }
+        if let Err(err) = apply_defaults(e, item) {
+            warn(e, format!("Accessible has no defaults: {err}"));
         }
         true
     });
@@ -624,6 +680,9 @@ struct Pending {
     /// Items that got their `Accessible` object after their effect looked
     /// for it.
     late: Vec<ObjectId>,
+    /// The pass itself is making an item's `Accessible` object, before its
+    /// effect looks: it is not late.
+    making: bool,
     /// What items announced since the last sync, in order.
     announced: Vec<(ObjectId, String, Politeness)>,
     /// The latest parts of an item ([`register_accessible_parts`]).
@@ -793,10 +852,10 @@ impl A11yPass {
             };
             let active = {
                 let mut p = pending.borrow_mut();
-                if p.active {
+                if p.active && !p.making {
                     p.late.push(obj);
                 }
-                p.active
+                p.active && !p.making
             };
             if active {
                 wake();
@@ -862,9 +921,23 @@ impl A11yPass {
         if st.describe.is_some() {
             return;
         }
+        let is_text = st.is_text;
+        // An item whose type says something by default has its object
+        // from now on, as if an assistive technology had always listened.
+        if has_defaults(engine, obj) && engine.existing_attached_object(obj, &attacher()).is_none()
+        {
+            self.pending.borrow_mut().making = true;
+            let made = engine.attached_object(obj, &attacher());
+            self.pending.borrow_mut().making = false;
+            if let Err(err) = made {
+                warn(engine, format!("cannot describe an item: {err}"));
+            }
+        }
+        let Some(st) = self.items.get_mut(&obj) else {
+            return;
+        };
         let pending = Rc::clone(&self.pending);
         let wake = Rc::clone(&self.wake);
-        let is_text = st.is_text;
         let effect = engine.effect_in(obj, move |e| {
             if !e.is_alive(obj) {
                 return;

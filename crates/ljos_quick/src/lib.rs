@@ -72,6 +72,7 @@ mod wheel_handler;
 
 pub use accessible::{Accessible, AccessibleAttached};
 pub use accessible::{AccessibleAction, AccessibleItem, register_accessible_item};
+pub use accessible::{AccessibleDefaults, register_accessible_defaults};
 pub use anchors::CATEGORY as ANCHORS_CATEGORY;
 pub use animation::SpringAnimation;
 pub use animation::{AnchorAnimation, ParentAnimation};
@@ -237,6 +238,7 @@ pub fn register(engine: &Engine) {
                 format!("cannot follow a reparent: {err}"),
             );
         }
+        scene::reparented(e, obj);
     });
     // An object made under an item goes in it only when it is an item
     // itself, as its visual child, and in no property of the item's own:

@@ -52,6 +52,12 @@ pub enum TypeTag {
     /// arrives as a [`Value::Map`] and its array as a [`Value::List`], all
     /// the way down, where a `var` keeps the script's own object.
     Data,
+    /// A `var` a native method takes by copy ([`Copied`]), as Qt's
+    /// `ListModel.append` takes its object: a script's object arrives as a
+    /// [`Value::Map`] of its fields and its array as a [`Value::List`], all
+    /// the way down, read as the method is called; a date in it is a new
+    /// date and a function `undefined`. Anything else as a `var` holds it.
+    Copied,
     Bool,
     Int,
     Real,
@@ -103,7 +109,7 @@ impl TypeTag {
     /// The name as QML writes it and the type dump records it.
     pub fn name(&self) -> String {
         match self {
-            TypeTag::Var | TypeTag::Data => "var".into(),
+            TypeTag::Var | TypeTag::Data | TypeTag::Copied => "var".into(),
             TypeTag::Bool => "bool".into(),
             TypeTag::Int => "int".into(),
             TypeTag::Real => "real".into(),
@@ -191,7 +197,9 @@ impl TypeTag {
     /// The value a property of this type has before anything is assigned.
     pub fn default_value(&self) -> Value {
         match self {
-            TypeTag::Var | TypeTag::Data | TypeTag::Group(_) | TypeTag::Void => Value::Undefined,
+            TypeTag::Var | TypeTag::Data | TypeTag::Copied | TypeTag::Group(_) | TypeTag::Void => {
+                Value::Undefined
+            }
             TypeTag::Bool => Value::Bool(false),
             TypeTag::Int => Value::Int(0),
             TypeTag::Real => Value::Real(0.0),
@@ -218,7 +226,9 @@ impl TypeTag {
     /// module docs for the rules. Object class checks are the engine's.
     pub fn coerce(&self, v: &Value) -> Result<Value, ConvertError> {
         let fail = || Err(ConvertError::new(describe(v), self.qt_name()));
-        if matches!(v, Value::Undefined) && !matches!(self, TypeTag::Var | TypeTag::Data) {
+        if matches!(v, Value::Undefined)
+            && !matches!(self, TypeTag::Var | TypeTag::Data | TypeTag::Copied)
+        {
             return fail();
         }
         let numeric = |v: &Value| match v {
@@ -231,7 +241,7 @@ impl TypeTag {
             _ => None,
         };
         Ok(match self {
-            TypeTag::Var | TypeTag::Data => v.clone(),
+            TypeTag::Var | TypeTag::Data | TypeTag::Copied => v.clone(),
             TypeTag::Bool => match v {
                 Value::Bool(_) => v.clone(),
                 _ => Value::Bool(v.to_boolean()),
@@ -751,6 +761,24 @@ impl QmlValue for Value {
     }
     fn from_value(v: &Value) -> Result<Self, ConvertError> {
         Ok(v.clone())
+    }
+}
+
+/// A value a native method takes by copy ([`TypeTag::Copied`]): nothing in
+/// it is the script's, so what the script does to its object afterwards
+/// does not reach it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Copied(pub Value);
+
+impl QmlValue for Copied {
+    fn type_tag() -> TypeTag {
+        TypeTag::Copied
+    }
+    fn to_value(&self) -> Value {
+        self.0.clone()
+    }
+    fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        Ok(Copied(v.clone()))
     }
 }
 

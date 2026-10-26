@@ -218,6 +218,8 @@ struct Origin {
     url: String,
     parent: Option<ObjectId>,
     props: Vec<(String, Value)>,
+    /// See [`Engine::create_from_url_in`].
+    scope: Option<ObjectId>,
 }
 
 #[derive(Clone)]
@@ -737,7 +739,12 @@ impl Engine {
             *st.forced.borrow_mut() = Some(path.clone());
             // The window keeps its singletons.
             self.singleton_scope_adopt(*old_root);
-            match self.create_from_url(&origin.url, origin.parent, origin.props.clone()) {
+            match self.create_from_url_in(
+                &origin.url,
+                origin.parent,
+                origin.props.clone(),
+                origin.scope,
+            ) {
                 Ok(new) => made.push((*old_root, new)),
                 Err(e) => {
                     failure = Some(e);
@@ -1355,6 +1362,7 @@ impl Engine {
         url: &str,
         parent: Option<ObjectId>,
         props: &[(String, Value)],
+        scope: Option<ObjectId>,
     ) {
         self.inner.reload.origins.borrow_mut().insert(
             root,
@@ -1362,6 +1370,7 @@ impl Engine {
                 url: url.to_owned(),
                 parent,
                 props: props.to_vec(),
+                scope,
             },
         );
     }

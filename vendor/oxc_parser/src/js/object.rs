@@ -48,7 +48,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     }
 
     /// `PropertyDefinition`[Yield, Await]
-    fn parse_object_literal_element(&mut self) -> ArenaBox<'a, ObjectProperty<'a>> {
+    pub(crate) fn parse_object_literal_element(&mut self) -> ArenaBox<'a, ObjectProperty<'a>> {
         let start = self.cur_start();
 
         let modifiers = self.parse_modifiers(

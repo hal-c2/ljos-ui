@@ -1,5 +1,6 @@
 //! What a new instance costs, counted exactly: graph nodes by kind, engine
-//! objects, lookups by name and heap allocations. The delegate track
+//! objects, lookups by name, heap allocations and the bytes they keep.
+//! The delegate track
 //! (docs/adr/0001, 0002) lowers these numbers step by step; each step
 //! updates the pin it lowers, so a step that raises one fails here first.
 //!
@@ -13,12 +14,35 @@ mod common;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::rc::Rc;
 
 use common::*;
 use ljos_engine::{Engine, Lookups, ObjectId, Value, lookups};
 use ljos_quick::{Item, QuickScene, child_items, reduced_motion};
 use ljos_reactive::Census;
-use ljos_runtime::Time;
+use ljos_runtime::{Time, VirtualClock};
+
+thread_local! {
+    // The clock of the engine made last, which the frames are for.
+    static CLOCK: std::cell::RefCell<Rc<VirtualClock>> = Default::default();
+}
+
+/// An engine on a clock only the frames move. On the machine's clock each
+/// frame's incubation budget is spent in its time, so how many rows a
+/// frame makes, and what they cost, would follow how busy the machine is.
+fn engine() -> Engine {
+    let e = common::engine();
+    let clock = Rc::new(VirtualClock::new());
+    CLOCK.with(|c| *c.borrow_mut() = Rc::clone(&clock));
+    e.set_clock(clock);
+    e
+}
+
+fn frame_at(s: &mut QuickScene, e: &Engine, ms: u64) {
+    let t = Time::from_millis(ms);
+    CLOCK.with(|c| c.borrow().set(t));
+    s.frame(e, t);
+}
 
 struct Counting;
 
@@ -26,34 +50,43 @@ thread_local! {
     // A const initialiser and no destructor: the allocator may run while
     // the thread's locals are being torn down.
     static ALLOCS: Cell<u64> = const { Cell::new(0) };
+    // Bytes allocated and not yet freed: what an instance keeps, where
+    // the count of calls cannot tell a small box from a large one.
+    static LIVE: Cell<i64> = const { Cell::new(0) };
 }
 
-fn bump() {
+fn bump(bytes: i64) {
     let _ = ALLOCS.try_with(|c| c.set(c.get() + 1));
+    keep(bytes);
+}
+
+fn keep(bytes: i64) {
+    let _ = LIVE.try_with(|c| c.set(c.get() + bytes));
 }
 
 // SAFETY: every call forwards to `System` unchanged; the count is a side
 // effect that neither allocates nor touches the memory.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        bump();
+        bump(l.size() as i64);
         // SAFETY: the caller's contract, passed on.
         unsafe { System.alloc(l) }
     }
 
     unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
-        bump();
+        bump(l.size() as i64);
         // SAFETY: the caller's contract, passed on.
         unsafe { System.alloc_zeroed(l) }
     }
 
     unsafe fn realloc(&self, p: *mut u8, l: Layout, size: usize) -> *mut u8 {
-        bump();
+        bump(size as i64 - l.size() as i64);
         // SAFETY: the caller's contract, passed on.
         unsafe { System.realloc(p, l, size) }
     }
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        keep(-(l.size() as i64));
         // SAFETY: the caller's contract, passed on.
         unsafe { System.dealloc(p, l) }
     }
@@ -77,6 +110,9 @@ struct Budget {
     graph: Census,
     lookups: Lookups,
     allocations: u64,
+    /// Heap bytes the step left allocated. A list that grew counts its
+    /// whole new capacity on the step that grew it.
+    bytes: i64,
 }
 
 fn now(e: &Engine) -> Budget {
@@ -85,6 +121,7 @@ fn now(e: &Engine) -> Budget {
         graph: e.graph().census(),
         lookups: lookups(),
         allocations: ALLOCS.with(Cell::get),
+        bytes: LIVE.with(Cell::get),
     }
 }
 
@@ -93,7 +130,7 @@ fn spent(e: &Engine, s: &mut QuickScene, from: u64, step: impl FnOnce()) -> Budg
     let a = now(e);
     step();
     for i in 0..FRAMES {
-        s.frame(e, Time::from_millis(from + i * 16));
+        frame_at(s, e, from + i * 16);
     }
     let b = now(e);
     Budget {
@@ -106,6 +143,7 @@ fn spent(e: &Engine, s: &mut QuickScene, from: u64, step: impl FnOnce()) -> Budg
         },
         lookups: b.lookups - a.lookups,
         allocations: b.allocations - a.allocations,
+        bytes: b.bytes - a.bytes,
     }
 }
 
@@ -118,7 +156,7 @@ fn settle(s: &mut QuickScene, e: &Engine, from: u64) {
     // counts would be lower than an application pays.
     assert!(!reduced_motion(e), "counted with reduced motion");
     for i in 0..40 {
-        s.frame(e, Time::from_millis(from + i * 16));
+        frame_at(s, e, from + i * 16);
     }
 }
 
@@ -147,6 +185,11 @@ const WRAPPED: &str = r##"Text {
       }"##;
 
 fn listview_delegates(text: &str) -> (Budget, usize) {
+    listview_delegates_to(text, 1000.0)
+}
+
+/// What growing the window to `height` made: the view's new rows.
+fn listview_delegates_to(text: &str, height: f64) -> (Budget, usize) {
     let e = engine();
     let root = load(
         &e,
@@ -182,18 +225,24 @@ Rectangle {{
     // By index: the step looks nothing up itself, so what is counted is
     // what the new delegates cost.
     let b = spent(&e, &mut s, 2000, || {
-        e.set(root, Item::HEIGHT, 1000.0).unwrap();
+        e.set(root, Item::HEIGHT, height).unwrap();
     });
     (b, shown(&e, view) - before)
 }
 
 /// An Item holding a Text, made by `Component.createObject` ten at a time.
 fn plain_items() -> (Budget, usize) {
+    plain_items_times(1)
+}
+
+fn plain_items_times(times: usize) -> (Budget, usize) {
     let (e, mut s, root, _) = plain_scene();
     let before = e.children(root).len();
     let make = e.method_index(root, "make").unwrap();
     let b = spent(&e, &mut s, 2000, || {
-        e.invoke(root, make, &[]).unwrap();
+        for _ in 0..times {
+            e.invoke(root, make, &[]).unwrap();
+        }
     });
     (b, e.children(root).len() - before)
 }
@@ -244,6 +293,8 @@ struct Teardown {
     scopes: usize,
     nodes: usize,
     allocations: u64,
+    /// Heap bytes destroying them gave back.
+    freed: i64,
 }
 
 fn plain_teardown() -> Teardown {
@@ -263,7 +314,7 @@ fn plain_teardown() -> Teardown {
         e.destroy_now(*c);
     }
     for i in 0..FRAMES {
-        s.frame(&e, Time::from_millis(4000 + i * 16));
+        frame_at(&mut s, &e, 4000 + i * 16);
     }
     let b = now(&e);
     let nodes = |c: Census| c.values + c.bindings + c.effects;
@@ -272,6 +323,7 @@ fn plain_teardown() -> Teardown {
         scopes: a.graph.scopes - b.graph.scopes,
         nodes: nodes(a.graph) - nodes(b.graph),
         allocations: b.allocations - a.allocations,
+        freed: a.bytes - b.bytes,
     }
 }
 
@@ -281,8 +333,8 @@ fn ten_listview_delegates() {
     let (b, made) = listview_delegates(ONE_LINE);
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
-    // attached or grouped), 9 values, 6 bindings, 11 effects, 2 scopes,
-    // no member or type lookups, 130.5 allocations. What the component
+    // attached or grouped), 8 values, 6 bindings, 9 effects, 2 scopes,
+    // no member or type lookups, 131.6 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -309,14 +361,22 @@ fn ten_listview_delegates() {
     // A text is shaped by harfrust as Parley drives it once its font is set
     // up, which sets up the font's lookups as texts first use them (17
     // more here, the rows' digits being new; none once they are, TEXT5).
+    // What an item inherits, `visible` and `enabled`, is passed down by
+    // its parent's change hooks, where each item had an effect that read
+    // its parent's: an effect, a value and two allocations fewer a
+    // delegate (B29). A text's inputs are shared between its marks and its
+    // paint, one box where both held a copy (one more a delegate), and the
+    // side maps of what marks carry grew (four more). 26.6 kB kept a
+    // delegate: the step that grew those maps pays for their room
+    // ([`bytes_a_thousand_instances_keep`]).
     assert_eq!(
         b,
         Budget {
             objects: 30,
             graph: Census {
-                values: 90,
+                values: 80,
                 bindings: 60,
-                effects: 110,
+                effects: 90,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -325,7 +385,8 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1322,
+            allocations: 1316,
+            bytes: 265864,
         }
     );
 }
@@ -335,8 +396,8 @@ fn ten_wrapped_listview_delegates() {
     let _alone = alone();
     let (b, made) = listview_delegates(WRAPPED);
     assert_eq!(made, 10);
-    // Per delegate: 3 objects, 8 values, 5 bindings, 10 effects, 2
-    // scopes; 135.4 allocations. The two enumerations its text names,
+    // Per delegate: 3 objects, 6 values, 5 bindings, 8 effects, 2
+    // scopes; 133.8 allocations. The two enumerations its text names,
     // `Text.WordWrap` and `Text.ElideRight`, are looked up as a type once
     // for the file, not once a delegate (twenty fewer lookups, TEXT5).
     // The text is broken into lines and its last line elided without
@@ -350,14 +411,18 @@ fn ten_wrapped_listview_delegates() {
     // set up, which sets the font's lookups up as texts first use them (56
     // more here, in the first rows; a fifth of an allocation a text once a
     // scroll has warmed the font, TEXT5).
+    // What it inherits passed down by its parent's change hooks, where it
+    // had an effect, makes 30 fewer, 20 fewer values and 20 fewer effects
+    // (B29), and a text's inputs in one box its marks and paint share, 14
+    // more. 31.8 kB kept a delegate.
     assert_eq!(
         b,
         Budget {
             objects: 30,
             graph: Census {
-                values: 80,
+                values: 60,
                 bindings: 50,
-                effects: 100,
+                effects: 80,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -366,7 +431,8 @@ fn ten_wrapped_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1354,
+            allocations: 1338,
+            bytes: 317937,
         }
     );
 }
@@ -386,15 +452,20 @@ fn ten_plain_items() {
     // item took twenty-eight off, and an anchors effect only for an item
     // with an anchor, which neither has, forty-nine more. B28's marks for
     // an item's place and geometry, where it had an effect each, took
-    // seventy-three more.
+    // seventy-three more. B29 passes down what an item inherits from its
+    // parent's change hooks, where each item had an effect reading it:
+    // twenty effects, twenty values and forty-seven allocations fewer,
+    // and shares a text's inputs between its marks and its paint in one
+    // box, thirteen more. A call keeps which of its arguments are data in
+    // bits, not a list (ten fewer, B12b). 19.5 kB kept an instance.
     assert_eq!(
         b,
         Budget {
             objects: 20,
             graph: Census {
-                values: 60,
+                values: 40,
                 bindings: 20,
-                effects: 90,
+                effects: 70,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -403,7 +474,8 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 833,
+            allocations: 789,
+            bytes: 194728,
         }
     );
 }
@@ -418,14 +490,113 @@ fn ten_plain_items_torn_down() {
     // it from 13.7 by holding the walks over the dead inline. Two nodes
     // fewer an instance since B27: neither item is anchored, and has no
     // anchors effect to let go of; four fewer since B28, which keeps an
-    // item's place and geometry as marks and not as two effects an item.
+    // item's place and geometry as marks and not as two effects an item,
+    // and four fewer since B29, which has no inherit effect an item. 8.3 kB
+    // given back an instance; the rest of what one kept is room the next
+    // ones use.
     assert_eq!(
         plain_teardown(),
         Teardown {
             objects: 20,
             scopes: 20,
-            nodes: 170,
+            nodes: 130,
             allocations: 57,
+            freed: 83374,
+        }
+    );
+}
+
+/// Heap bytes an instance keeps, over a thousand: the pins of ten see
+/// the step in which a list or a map grew, where a thousand spread it as
+/// an application that makes many pays it.
+#[derive(Debug, PartialEq, Eq)]
+struct Kept {
+    one_line: i64,
+    wrapped: i64,
+    plain: i64,
+}
+
+#[test]
+fn bytes_a_thousand_instances_keep() {
+    let _alone = alone();
+    let each = |(b, made): (Budget, usize)| {
+        assert_eq!(made, 1000);
+        b.bytes / made as i64
+    };
+    // A row is 40 high, and the window was 600.
+    let kept = Kept {
+        one_line: each(listview_delegates_to(ONE_LINE, 40600.0)),
+        wrapped: each(listview_delegates_to(WRAPPED, 40600.0)),
+        plain: each(plain_items_times(100)),
+    };
+    // B29 holds what is large and rare apart from the marks and record
+    // every item has (688 and 576 bytes, now 56 and 328): 27.3, 29.3
+    // and 17.1 kB before; B12b's call path keeps eight or nine more. The
+    // rest is mostly the graph's nodes, the objects and the text's runs.
+    assert_eq!(
+        kept,
+        Kept {
+            one_line: 25954,
+            wrapped: 28873,
+            plain: 15902,
+        }
+    );
+}
+
+/// A hundred rows a script gives a ListModel no view shows, each an object
+/// literal of one number: what `append` costs beyond the script's own loop.
+fn hundred_appends() -> Budget {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+Item {
+  width: 100; height: 100
+  ListModel { id: m }
+  function fill() { for (var i = 0; i < 100; i++) m.append({ n: i }) }
+}
+"##,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    settle(&mut s, &e, 0);
+    // Warm: the first rows make the role and what every later row shares.
+    let fill = e.method_index(root, "fill").unwrap();
+    e.invoke(root, fill, &[]).unwrap();
+    settle(&mut s, &e, 1000);
+    spent(&e, &mut s, 2000, || {
+        e.invoke(root, fill, &[]).unwrap();
+    })
+}
+
+#[test]
+fn hundred_list_model_appends() {
+    let _alone = alone();
+    // Per row: no lookup, and 7.02 allocations. A model nobody connected
+    // to sends no row signals without finding them by name (two member
+    // lookups fewer, B12), and one row is held without a list of its own
+    // on its way in (two fewer). Of the seven, the row's own are its
+    // entries, its role's name and its values; the rest is the call's
+    // (the script's object kept for it, its arguments) and the rows' list
+    // growing. B12b's call path, which takes the arguments it is given
+    // and not copies, took twelve off over the hundred.
+    assert_eq!(
+        hundred_appends(),
+        Budget {
+            objects: 0,
+            graph: Census {
+                values: 0,
+                bindings: 0,
+                effects: 0,
+                scopes: 0,
+            },
+            lookups: Lookups {
+                members: 0,
+                types: 0,
+                names: 0,
+                atoms: 0,
+            },
+            allocations: 702,
+            bytes: 7744,
         }
     );
 }

@@ -188,7 +188,7 @@ pub use timing::EngineTimes;
 pub use trace::{TraceSink, Traced};
 pub use tree::{ItemTree, TreeChange, TreeListener, TreeListeners, tree_model};
 pub use tree_model::{TableModelColumn, TreeModel};
-pub use types::{ConvertError, QmlValue, TypeTag, Url};
+pub use types::{ConvertError, Copied, QmlValue, TypeTag, Url};
 pub use value::{Color, EnumValue, Font, JsHandle, Point, Rect, Size, Unwritten, Value};
 pub use value_types::{
     IntPoint, Quaternion, Vector2d, Vector3d, Vector4d, general as number_to_general,

@@ -572,7 +572,6 @@ pub(crate) fn init_editor(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
     } else {
         TextInput::init(engine, obj, &st)?;
     }
-    super::a11y::default_role(engine, obj)?;
     let text = engine
         .untrack(|| engine.read(obj, TextEditor::TEXT.index))
         .to_js_string();

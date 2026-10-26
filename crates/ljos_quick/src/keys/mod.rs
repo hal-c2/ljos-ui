@@ -22,7 +22,7 @@ pub use dispatch::{KeyItem, deliver_key, register_key_item, tab_target};
 pub use event::KeyEventObject;
 pub use filter::{KeyFilter, KeyFilterId, add_key_filter, remove_key_filter};
 pub use sequence::{KeyChord, KeySequence, MAX_CHORDS, Platform};
-pub use shortcut::{Shortcut, shortcut_context};
+pub use shortcut::{Shortcut, queue_shortcut_at, shortcut_context, shortcut_ticket};
 pub use standard::{
     StandardKey, matches_standard_key, platform, set_platform, standard_key, standard_key_sequences,
 };

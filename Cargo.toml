@@ -150,6 +150,14 @@ constant_time_eq = "0.4"
 # _exit, for the inspector that ends its process on SIGINT or SIGTERM, and the
 # system calls `ljos bench`'s cgroup gate needs.
 libc = "0.2.190"
+# The threads, memory and CPU time of a process (`app_processes`), read by
+# the crates `procs` reads them with: procfs on Linux (MIT or Apache-2.0;
+# without chrono and flate2, which only boot times and the kernel's config
+# need), libproc on macOS (MIT), and mach2 for the Mach calls libproc does
+# not wrap, the version the audio stack already brings.
+procfs = { version = "0.18.0", default-features = false }
+libproc = "0.14.11"
+mach2 = "0.6.0"
 
 # The application's badge (ljos_shell). On Linux the launcher-entry signal
 # on the session bus, sent by zbus, pure Rust: the version accesskit_unix

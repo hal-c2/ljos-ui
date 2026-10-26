@@ -207,12 +207,23 @@ pub(crate) struct PendingOp {
     /// moved. Of a removal there are none left to key.
     pub target_keys: FxHashSet<RowKey>,
     /// Their indexes as `ViewTransition.targetIndexes` reads them: where
-    /// they are after an insertion or a move, where they were before a
-    /// removal.
+    /// they are after an insertion or a move; of a removal, where each was
+    /// once the rows gone before it in the model were, from the last.
     pub target_indexes: Vec<i32>,
+    /// The greatest of `target_indexes`, or above it (-1 with none): rows
+    /// added after it, as appended ones are, move none of them, and a run
+    /// of appends is not a walk over all the rows added before each.
+    pub highest: i32,
     /// Their delegates, when there are any: of a removal, the ones that
     /// are leaving; of the rest, the pass fills this in.
     pub target_items: Vec<ObjectId>,
+    /// Of a removal, the runs of rows gone (first, count), numbered as
+    /// the model had its rows before the first of them went: what the
+    /// indexes above are worked out from.
+    pub gone_runs: Vec<(usize, usize)>,
+    /// Of a removal, the delegates that left by the row they had then,
+    /// for the items above.
+    pub gone_items: Vec<(usize, ObjectId)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,6 +262,10 @@ pub(crate) struct ViewState {
     /// `count` was given the model's count without telling anyone: the
     /// pass that lays those rows out tells.
     pub count_untold: Cell<bool>,
+    /// Where `currentIndex` goes when the rows are next laid out: rows
+    /// came or went before the current one, and qml6 tells its new
+    /// number with the layout, not at the change.
+    pub current_due: Cell<Option<i32>>,
     /// The first row in sight after the last pass and where it starts:
     /// what stays put when rows come and go before it.
     pub anchor: Cell<(usize, f64)>,
@@ -430,6 +445,7 @@ impl Default for ViewState {
             due: Cell::new(false),
             slots_stale: Cell::new(false),
             count_untold: Cell::new(false),
+            current_due: Cell::new(None),
             last_places: RefCell::default(),
             moves_rows: Cell::default(),
             vt_places: RefCell::default(),

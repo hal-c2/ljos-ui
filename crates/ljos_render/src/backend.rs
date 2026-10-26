@@ -28,9 +28,9 @@ impl<'a> FrameView<'a> {
 pub use ljos_runtime::MemoryPressure;
 
 /// What a backend keeps from frame to frame, for a tool that shows where
-/// memory went. Counts are exact; bytes are estimates: a texture counts
-/// four bytes a texel, which is what it is given, whatever the driver
-/// makes of it.
+/// memory went, and a few counts of what it did. Counts are exact; bytes
+/// are estimates: a texture counts four bytes a texel, which is what it is
+/// given, whatever the driver makes of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BackendMemory {
     /// Meshes kept: display lists cut into triangles, and those placed on
@@ -50,6 +50,15 @@ pub struct BackendMemory {
     /// Shapes drawn into textures of their own.
     pub shape_textures: usize,
     pub shape_texture_bytes: usize,
+    /// Glyph runs kept with a mesh that leaves out glyphs the atlas had no
+    /// room for; they are built again in a later frame.
+    pub glyph_runs_incomplete: usize,
+    /// Meshes built for glyph runs since the backend was made: a count
+    /// that climbs while nothing changes says text is built every frame.
+    pub glyph_meshes_built: u64,
+    /// What the last frame could only approximate or left out
+    /// ([`EncodeStats::warnings`]).
+    pub warnings: u32,
 }
 
 impl BackendMemory {
@@ -76,6 +85,10 @@ pub struct EncodeStats {
     pub caches_reused: u32,
     /// Ops or clips the backend could only approximate or skip (each also logged at debug level).
     pub warnings: u32,
+    /// Something was drawn without all of it, which the next frame may
+    /// complete (glyphs a full atlas had no room for): the host draws one
+    /// more. It is said once, not every frame the shortage lasts.
+    pub again: bool,
 }
 
 /// Straight-alpha RGBA8 image, row-major, top row first.

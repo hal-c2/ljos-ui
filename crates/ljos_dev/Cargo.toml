@@ -25,6 +25,10 @@ mcp = [
     "dep:schemars",
     "dep:slotmap",
     "dep:libc",
+    "dep:procfs",
+    "dep:libproc",
+    "dep:mach2",
+    "dep:windows-sys",
 ]
 
 [dependencies]
@@ -61,6 +65,24 @@ slotmap = { workspace = true, optional = true }
 # `memory` cannot put to an owner.
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc = { workspace = true, optional = true }
+
+# The process's threads, memory and CPU time (`process.rs`).
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { workspace = true, optional = true }
+libproc = { workspace = true, optional = true }
+mach2 = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, optional = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_ProcessStatus",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 # The end-to-end test makes a scene of the right size.

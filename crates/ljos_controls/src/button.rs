@@ -113,6 +113,9 @@ enum Mnemonic {
     Later,
     /// Complete with a text that has none: a text given later may.
     None,
+    /// A row of a menu, whose letters are the menu's: it makes its
+    /// `Shortcut` if it leaves the menu ([`left_menu`]).
+    Menu,
     /// Its `Shortcut` is made.
     Made,
 }
@@ -321,7 +324,8 @@ fn text_written(cx: &Cx, text: Atom) -> Option<Atom> {
 /// `Shortcut` is made with the first text that has a mnemonic, and
 /// follows the text from then on, so that a text without one gives it no
 /// sequence. Most buttons never have one, and a `Shortcut` is an object
-/// and a few graph nodes. The rows of a menu are left to the menu.
+/// and a few graph nodes. The rows of a menu are left to the menu, and
+/// make none while they are its rows.
 fn make_mnemonic(engine: &Engine, obj: ObjectId, st: &ButtonState) -> Result<(), EngineError> {
     st.mnemonic.set(Mnemonic::Made);
     let s = engine.create_native_incomplete(Shortcut::default(), Some(obj))?;
@@ -350,7 +354,9 @@ fn make_mnemonic(engine: &Engine, obj: ObjectId, st: &ButtonState) -> Result<(),
 fn init_button(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     if let Some(st) = state_of(engine, obj) {
         let text = engine.untrack(|| engine.read(obj, AbstractButton::TEXT.index));
-        if mnemonic_of(&text.to_js_string()).is_some() {
+        if row_of_menu(engine, obj) {
+            st.mnemonic.set(Mnemonic::Menu);
+        } else if mnemonic_of(&text.to_js_string()).is_some() {
             make_mnemonic(engine, obj, &st)?;
         } else {
             st.mnemonic.set(Mnemonic::None);
@@ -419,10 +425,7 @@ fn init_button(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     if is_a::<Switch>(engine, obj) {
         init_switch(engine, obj)?;
     }
-    if let Some(role) = crate::value_controls::button_role(engine, obj) {
-        return crate::a11y::defaults(engine, obj, role, Some(AbstractButton::TEXT.index));
-    }
-    crate::a11y::button_defaults(engine, obj)
+    Ok(())
 }
 
 /// `checked` changed, by whatever means: a group, or the buttons beside
@@ -845,6 +848,34 @@ fn menu_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
 
 fn in_menu(engine: &Engine, obj: ObjectId) -> bool {
     menu_of(engine, obj).is_some()
+}
+
+/// A `MenuItem` in a menu, or made in one, which takes it in as it
+/// completes: its mnemonic's `Shortcut` would never be enabled.
+fn row_of_menu(engine: &Engine, obj: ObjectId) -> bool {
+    is_a::<crate::menu::MenuItem>(engine, obj)
+        && (in_menu(engine, obj)
+            || engine
+                .owner(obj)
+                .is_some_and(|o| is_a::<crate::menu::Menu>(engine, o)))
+}
+
+/// `item` is no longer a row of a menu: a mnemonic in its text works from
+/// anywhere in its window, as any button's does.
+pub(crate) fn left_menu(engine: &Engine, item: ObjectId) {
+    let Some(st) = state_of(engine, item) else {
+        return;
+    };
+    if st.mnemonic.get() != Mnemonic::Menu {
+        return;
+    }
+    st.mnemonic.set(Mnemonic::None);
+    let text = engine.untrack(|| engine.read(item, AbstractButton::TEXT.index));
+    if mnemonic_of(&text.to_js_string()).is_some()
+        && let Err(err) = make_mnemonic(engine, item, &st)
+    {
+        warn(engine, format!("a mnemonic was not made: {err}"));
+    }
 }
 
 /// The key down holds the button down, as a pointer's press does.

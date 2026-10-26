@@ -586,3 +586,64 @@ fn a_run_of_another_editor_names_no_place() {
     assert_eq!(text(&s.engine, s.one, "selectedText"), "");
     assert_eq!(h.state().view.stats().accessible_actions, 0);
 }
+
+/// A line, and a second one given later: lower case fits a 256² glyph
+/// atlas beside the first line alone; the first line's own letters fit
+/// in any case.
+const TWO_LINES: &str = r#"
+import QtQuick
+Item {
+    objectName: "root"
+    width: 500; height: 200
+    property string second
+    Text { font.pixelSize: 64; text: "ABCDEFGHIJ" }
+    Text { y: 100; font.pixelSize: 64; text: parent.second }
+}
+"#;
+
+/// The repaints a settled view asks for once its second line is
+/// `second`, on a GPU that takes textures no wider than 256, and whether
+/// it then stays idle.
+fn repaints_for_second_line(second: &str) -> (u64, bool) {
+    use ljos_compiler::{Project, compile_file};
+    let e = Rc::new(Engine::new());
+    ljos_quick::register(&e);
+    let mut project = Project::new(qml_front::QtTypeOracle);
+    project.add("Main", TWO_LINES);
+    let c = compile_file(&project, "Main").unwrap_or_else(|d| panic!("{d:?}"));
+    assert!(!c.has_errors(), "{:?}", c.diagnostics);
+    let mut files = ljos_engine::MapSource::new();
+    files.insert("Main", c.file);
+    e.set_component_source(files);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let view = QmlView::new(Rc::clone(&e), root).unwrap();
+    // Building the harness runs passes until egui asks for no more.
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(500.0, 200.0))
+        .build_ui_state(
+            |ui, view: &mut QmlView| {
+                ljos_render::b0::set_max_texture_side(ui.ctx(), 256);
+                view.show(ui);
+            },
+            view,
+        );
+    let before = h.state().stats().repaint_requests;
+    set(&e, root, "second", Value::string(second));
+    h.run();
+    let settled = h.state().stats().repaint_requests;
+    h.run_steps(3);
+    let idle = h.state().stats().repaint_requests == settled;
+    (settled - before, idle)
+}
+
+/// Text drawn without glyphs a full atlas had no room for asks for one
+/// more pass, in case it finds room; while the atlas stays full it asks
+/// no more, so the window goes idle.
+#[test]
+fn text_that_misses_glyphs_asks_for_one_more_pass() {
+    let (crowded, idle) = repaints_for_second_line("abcdefghij");
+    assert!(idle, "a full atlas keeps the view drawing");
+    let (roomy, idle) = repaints_for_second_line("ABCDEFGHIJ");
+    assert!(idle);
+    assert_eq!(crowded, roomy + 1);
+}

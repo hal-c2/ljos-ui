@@ -167,3 +167,99 @@ Feature: Names of the component around
         Item { Panel { } }
         """
       Then the property "total" of "panel" is 10
+
+  Rule: A file's root finds what its own file does not have where it is made
+
+    Scenario: A file whose root is not an item reads the members of the file it is made in
+      Given the file "Look.qml":
+        """qml
+        import QtQuick
+        QtObject {
+          objectName: "look"
+          property int seen: foo
+          property bool sameParent: parent === outer.parent
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: outer
+          objectName: "root"
+          property int foo: 7
+          Look { }
+        }
+        """
+      Then the property "seen" of "look" is 7
+      And the property "sameParent" of "look" is true
+      When the property "foo" of "root" is set to 8
+      Then the property "seen" of "look" is 8
+
+    Scenario: A Binding in a file of its own finds its target where it is made
+      Given the file "Hold.qml":
+        """qml
+        import QtQuick
+        Binding { target: panel; property: "width"; value: 42 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          property Item panel: box
+          Item { id: box; objectName: "panel" }
+          Hold { }
+        }
+        """
+      Then the property "width" of "panel" is 42
+
+    Scenario: The nearest file that has the name is the one read
+      Given the file "Look.qml":
+        """qml
+        import QtQuick
+        QtObject { objectName: "look"; property int seen: foo }
+        """
+      And the file "Middle.qml":
+        """qml
+        import QtQuick
+        Item { property int foo: 99; Look { } }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { property int foo: 7; Middle { } }
+        """
+      Then the property "seen" of "look" is 99
+
+    Scenario: A delegate's own member comes before the row's
+      Given the file "Look.qml":
+        """qml
+        import QtQuick
+        QtObject { objectName: "look"; property string seen: modelData }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Repeater { model: ["row"]; Item { property string modelData: "own"; Look { } } }
+        }
+        """
+      Then the property "seen" of "look" is "own"
+
+    Scenario: A Loader's item reads the Loader's members first
+      Given the file "Look.qml":
+        """qml
+        import QtQuick
+        QtObject { objectName: "look"; property string seen: foo + " " + bar }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int foo: 7
+          property int bar: 1
+          property string seen: loader.item ? loader.item.seen : ""
+          Loader { id: loader; property int foo: 3; source: "Look.qml" }
+        }
+        """
+      Then the property "seen" of "root" is "3 1"

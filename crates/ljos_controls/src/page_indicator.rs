@@ -13,7 +13,6 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ljos_a11y::Role;
 use ljos_engine::{
     Cx, Engine, EngineError, MetaRef, ObjectId, PropertyFlags, QmlObject, QmlType, Value,
     WriteKind, qml_impl,
@@ -86,7 +85,7 @@ impl PageIndicator {
                 }
             })?;
         }
-        crate::a11y::defaults(e, obj, Role::Indicator, None)
+        Ok(())
     }
 }
 

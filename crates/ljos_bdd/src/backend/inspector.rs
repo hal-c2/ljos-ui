@@ -29,10 +29,13 @@ pub enum Token {
 pub enum Ask {
     /// An agent connects. With `redact_all` the inspector was started to
     /// mask the value of every editable field. `caps` is what the agent was
-    /// granted, as `--mcp=` writes it (`None`: `inspect` alone).
+    /// granted, as `--mcp=` writes it (`None`: `inspect` alone). With
+    /// `unmeasured` the process is on a platform that measures none of its
+    /// threads, memory or CPU time.
     Connect {
         caps: Option<String>,
         redact_all: bool,
+        unmeasured: bool,
     },
     /// The files of the application are watched, so that it can be told to
     /// reload (a host that does not watch them cannot).

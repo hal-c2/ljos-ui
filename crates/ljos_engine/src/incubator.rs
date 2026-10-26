@@ -117,6 +117,16 @@ pub(crate) struct Template {
     pub(crate) context: Option<ContextId>,
 }
 
+/// The members of an attached block that are fields of a value-type
+/// property, by the path of that property, and where in the block those
+/// taken were written.
+#[derive(Default)]
+struct ValueFields {
+    by_path: Vec<(Vec<String>, Members)>,
+    assignments: Vec<usize>,
+    bindings: Vec<usize>,
+}
+
 /// One object to apply: object `obj` of `inst`.
 struct Unit {
     inst: Rc<Instance>,
@@ -382,15 +392,48 @@ impl Engine {
         parent: Option<ObjectId>,
         initial_props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
-        let template = self.file_template(url)?;
-        if !self.inner.reload.tracking.get() {
-            return self
-                .as_host_root(|| self.create_from_template(&template, parent, initial_props));
+        self.create_from_url_in(url, parent, initial_props, None)
+    }
+
+    /// [`Engine::create_from_url`] in a context of `scope`'s own, which a
+    /// name the file cannot place finds the members of `scope` in, and then
+    /// what `scope` finds: a Loader's item reads the Loader's members
+    /// first (checked on qml6).
+    pub fn create_from_url_in(
+        &self,
+        url: &str,
+        parent: Option<ObjectId>,
+        initial_props: Vec<(String, Value)>,
+        scope: Option<ObjectId>,
+    ) -> Result<ObjectId, EngineError> {
+        let mut template = self.file_template(url)?;
+        let ctx = scope.map(|s| self.scope_context(s));
+        template.context = ctx;
+        // Kept for a reload to make the file again with.
+        let (props, noted) = if self.inner.reload.tracking.get() {
+            (initial_props.clone(), Some(initial_props))
+        } else {
+            (initial_props, None)
+        };
+        let made = self.as_host_root(|| self.create_from_template(&template, parent, props));
+        match (&made, ctx) {
+            (Ok(root), Some(ctx)) => self.add_context(*root, ctx),
+            (Err(_), Some(ctx)) => self.destroy_context(ctx),
+            _ => {}
         }
-        let root = self
-            .as_host_root(|| self.create_from_template(&template, parent, initial_props.clone()))?;
-        self.reload_note_origin(root, url, parent, &initial_props);
+        let root = made?;
+        if let Some(props) = noted {
+            self.reload_note_origin(root, url, parent, &props, scope);
+        }
         Ok(root)
+    }
+
+    /// A context for what is made in `scope`; see
+    /// [`Engine::create_from_url_in`]. It goes with the object made in it.
+    fn scope_context(&self, scope: ObjectId) -> ContextId {
+        let ctx = self.create_context(self.context_of(scope));
+        self.set_context_root(ctx, scope);
+        ctx
     }
 
     /// A `Component` object for the file at `url` (`Qt.createComponent`).
@@ -1109,6 +1152,9 @@ impl Engine {
             if f.given.is_empty() {
                 self.set_context_slots(f.ctx, &inst);
             }
+            if let Some(&root) = inst.objects.first() {
+                self.set_context_root(f.ctx, root);
+            }
             f.closing = Some((inst, 0));
             return Ok(None);
         };
@@ -1448,14 +1494,16 @@ impl Engine {
         {
             self.inner.graph.reserve_scope(scope, n as usize);
         }
-        self.apply_members(inst, id, &od.members, &[], id, plan.map(|p| &p.members));
+        let plan_members = plan.map(|p| &p.members);
+        self.apply_members(inst, id, &od.members, &[], id, plan_members, None);
         for (k, g) in od.grouped.iter().enumerate() {
             let gp = plan.and_then(|p| p.grouped.get(k));
             // A group of the object's own (`anchors`) is no value: what
             // finds out whether it is need not be asked each time.
             let own = gp.is_some_and(|gp| self.own_group(id, &g.path, &gp.head));
             if own || !self.apply_value_members(inst, id, &g.members, &g.path) {
-                self.apply_members(inst, id, &g.members, &g.path, id, gp.map(|g| &g.members));
+                let gp = gp.map(|g| &g.members);
+                self.apply_members(inst, id, &g.members, &g.path, id, gp, None);
             }
         }
         // Children written here go to the default property of the type
@@ -1725,10 +1773,10 @@ impl Engine {
             .and_then(|m| self.attached_object(id, &m));
         match att {
             Ok(att) => {
-                let (rest, fields) = self.value_fields_of(att, &at.members);
-                self.apply_members(inst, att, &rest, &[], id, None);
-                for (path, m) in fields {
-                    self.apply_value_members(inst, att, &m, &path);
+                let fields = self.value_fields_of(att, &at.members);
+                self.apply_members(inst, att, &at.members, &[], id, None, Some(&fields));
+                for (path, m) in &fields.by_path {
+                    self.apply_value_members(inst, att, m, path);
                 }
             }
             Err(e) => self.warn(format!(
@@ -1740,7 +1788,9 @@ impl Engine {
     }
 
     /// Applies `m` to `obj` (under the group `path`); handlers die with
-    /// `scope`. `plan` links the names of `m` where it is given.
+    /// `scope`. `plan` links the names of `m` where it is given. What
+    /// `fields` took out of `m` is left to [`Self::apply_value_members`].
+    #[allow(clippy::too_many_arguments)]
     fn apply_members(
         &self,
         inst: &Rc<Instance>,
@@ -1749,6 +1799,7 @@ impl Engine {
         path: &[String],
         scope: ObjectId,
         plan: Option<&MembersPlan>,
+        fields: Option<&ValueFields>,
     ) {
         let slot =
             |slots: fn(&MembersPlan) -> &[Slot], k: usize| plan.and_then(|p| slots(p).get(k));
@@ -1758,6 +1809,9 @@ impl Engine {
         // string written there does not.
         let mut told: Vec<Target> = Vec::new();
         for (k, a) in m.assignments.iter().enumerate() {
+            if fields.is_some_and(|f| f.assignments.contains(&k)) {
+                continue;
+            }
             let at = slot(|p| &p.assignments, k);
             let t = match self.planned_target(obj, path, &a.name, at) {
                 Ok((t, _)) => t,
@@ -1863,6 +1917,9 @@ impl Engine {
             let _ = self.notify(t.obj, t.prop);
         }
         for (k, pb) in m.bindings.iter().enumerate() {
+            if fields.is_some_and(|f| f.bindings.contains(&k)) {
+                continue;
+            }
             let at = slot(|p| &p.bindings, k);
             let (t, planned) = match self.planned_target(obj, path, &pb.name, at) {
                 Ok(t) => t,
@@ -1886,17 +1943,10 @@ impl Engine {
 
     /// What is attached is written with its whole path (`hotSpot.x` of
     /// `Drag.hotSpot.x: 10`): the members that are fields of a value-type
-    /// property of `att`, by the path of that property, and the rest.
-    fn value_fields_of(
-        &self,
-        att: ObjectId,
-        m: &Members,
-    ) -> (Members, Vec<(Vec<String>, Members)>) {
-        let mut rest = Members {
-            handlers: m.handlers.clone(),
-            objects: m.objects.clone(),
-            ..Members::default()
-        };
+    /// property of `att`, by the path of that property. The rest are
+    /// applied from `m` itself, so a literal stays where the file keeps it
+    /// (an enum's number is kept by that place).
+    fn value_fields_of(&self, att: ObjectId, m: &Members) -> ValueFields {
         // The path of the value `name` is a field of, and the field.
         let field_of = |name: &str| -> Option<(Vec<String>, String)> {
             let (through, leaf) = name.rsplit_once('.')?;
@@ -1914,24 +1964,24 @@ impl Engine {
             };
             &mut fields[at].1
         }
-        let mut fields = Vec::new();
-        for a in &m.assignments {
-            match field_of(&a.name) {
-                Some((path, name)) => of(&mut fields, path)
+        let mut fields = ValueFields::default();
+        for (k, a) in m.assignments.iter().enumerate() {
+            if let Some((path, name)) = field_of(&a.name) {
+                of(&mut fields.by_path, path)
                     .assignments
-                    .push(ljos_ir::Assignment { name, ..a.clone() }),
-                None => rest.assignments.push(a.clone()),
+                    .push(ljos_ir::Assignment { name, ..a.clone() });
+                fields.assignments.push(k);
             }
         }
-        for pb in &m.bindings {
-            match field_of(&pb.name) {
-                Some((path, name)) => of(&mut fields, path)
+        for (k, pb) in m.bindings.iter().enumerate() {
+            if let Some((path, name)) = field_of(&pb.name) {
+                of(&mut fields.by_path, path)
                     .bindings
-                    .push(PropertyBinding { name, ..pb.clone() }),
-                None => rest.bindings.push(pb.clone()),
+                    .push(PropertyBinding { name, ..pb.clone() });
+                fields.bindings.push(k);
             }
         }
-        (rest, fields)
+        fields
     }
 
     /// The value-type property `path` leads to from `obj` (`font`, or
@@ -3300,6 +3350,10 @@ pub struct CreationJob {
     setup: Option<DelegateSetup>,
     /// What its bindings say, held from the first slice to the last.
     errors: Option<crate::delayed_errors::CreationErrors>,
+    /// See [`CreationJob::in_scope`].
+    scope: Option<ObjectId>,
+    /// The context made for `scope`, until the object made in it owns it.
+    scope_ctx: Option<ContextId>,
 }
 
 impl std::fmt::Debug for CreationJob {
@@ -3378,6 +3432,8 @@ impl CreationJob {
                 done: None,
                 setup: None,
                 errors: None,
+                scope: None,
+                scope_ctx: None,
             },
             handle,
         )
@@ -3429,9 +3485,19 @@ impl CreationJob {
                 done: None,
                 setup: None,
                 errors: None,
+                scope: None,
+                scope_ctx: None,
             },
             SharedCreation(inner),
         )
+    }
+
+    /// The job making a file in a context of `scope`'s own, as
+    /// [`Engine::create_from_url_in`] does.
+    #[must_use]
+    pub fn in_scope(mut self, scope: ObjectId) -> Self {
+        self.scope = Some(scope);
+        self
     }
 
     /// Calls `f` with the result when the job ends, unless it was
@@ -3447,6 +3513,10 @@ impl CreationJob {
 
     fn finish(&mut self, engine: Option<&Engine>, r: Result<ObjectId, EngineError>) -> JobPoll {
         self.phase = Phase::Done;
+        // Made for an object that was not made.
+        if let (Some(e), Some(ctx)) = (engine, self.scope_ctx.take()) {
+            e.destroy_context(ctx);
+        }
         self.handle.0.progress.set(1.0);
         *self.handle.0.result.borrow_mut() = Some(r.clone());
         if let (Some(e), Some(f)) = (engine, self.done.take())
@@ -3460,6 +3530,9 @@ impl CreationJob {
     /// Ends a job nobody waits for any more: what it made goes away.
     fn abandon(&mut self, engine: Option<&Engine>, why: EngineError) -> JobPoll {
         self.unmake(engine);
+        if let (Some(e), Some(ctx)) = (engine, self.scope_ctx.take()) {
+            e.destroy_context(ctx);
+        }
         // Not `finish`: the callback belongs to whoever called it off.
         self.done = None;
         self.finish(None, Err(why))
@@ -3530,7 +3603,14 @@ impl CreationJob {
             match std::mem::replace(&mut self.phase, Phase::Done) {
                 Phase::Load => {
                     let template = match &self.source {
-                        JobSource::Url(url) => e.file_template(url).map(Rc::new),
+                        JobSource::Url(url) => e.file_template(url).map(|mut t| {
+                            if let Some(scope) = self.scope {
+                                let ctx = e.scope_context(scope);
+                                self.scope_ctx = Some(ctx);
+                                t.context = Some(ctx);
+                            }
+                            Rc::new(t)
+                        }),
                         JobSource::Component(c) => e.component_template(*c),
                         // Stepped above, never here.
                         JobSource::Shared(_) => Err(EngineError::Load("a shared job".into())),
@@ -3568,6 +3648,9 @@ impl CreationJob {
                     let append = setup.is_none();
                     match e.allocated_template(&mut cr, inst, self.parent, append) {
                         Ok(root) => {
+                            if let Some(ctx) = self.scope_ctx.take() {
+                                e.add_context(root, ctx);
+                            }
                             if let (Some(setup), Some(top)) = (setup, &cr.top) {
                                 setup(&e, root, top.context);
                             }

@@ -6989,3 +6989,348 @@ Left:
 - Attached members are applied from a copy (`value_fields_of` clones every assignment).
   So an attached enum literal's address is not the IR's, and the per-file number is
   checked against type and key rather than trusted by address.
+
+### B29 (H2): inherited visible and enabled at the hook, and an item's marks and record split hot from cold (2026-10-26)
+
+B29 is phase b of the delegate track's dirty-bit seam. It made two changes:
+
+- **Inherited `visible` and `enabled`.** These used to be one effect per item, which read
+  the parent's value. Now the change hooks of `visible` and `enabled`, and the visual
+  parent listener, pass the value down when the change is told. A child whose value
+  changes tells its own children through its own hook. A `MouseArea` keeps its own
+  `enabled` and passes its parent's on to its children. A script that hides a parent
+  and then reads a child's `visible` reads false straight away, as on Qt. A pass at the
+  frame could not give that order (`features/items/inherited-at-once.feature`, checked
+  on qml6).
+- **Hot and cold fields.** Every item has marks and a record, each kept in a dense list,
+  so every item pays for whatever they hold inline. The large fields that few items
+  set are now held apart:
+  - A Text's inputs sit in one box that its marks and its paint share.
+  - The content and list map that a mark carries until the frame live in side maps.
+  - The map of a `transform` list and a text field's paint are boxed.
+
+  Marks shrink from 688 bytes to 56, the record from 576 to 328, and a paint from 288
+  to 104. `sizes::an_items_marks_and_record_stay_small` pins these.
+
+The budget's allocator now counts bytes as well as calls. `bytes_a_thousand_instances_keep`
+pins what a thousand instances keep. The pins of ten land on the step where a list or map
+grew, so they jump.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets):
+
+| | B28 | B29 inherit | B29 |
+|---|---:|---:|---:|
+| ListView delegate, heap allocations | 1305 (130.5) | 1285 (128.5) | 1299 (129.9); 1316 (131.6) with TEXT5 |
+| ListView delegate, effects | 110 (11) | 90 (9) | 90 (9) |
+| ListView delegate, values | 90 (9) | 80 (8) | 80 (8) |
+| Wrapped delegate, heap allocations | 1298 (129.8) | 1268 (126.8) | 1282 (128.2); 1338 (133.8) with TEXT5 |
+| Wrapped delegate, effects | 100 (10) | 80 (8) | 80 (8) |
+| `createObject` item, heap allocations | 833 (83.3) | 786 (78.6) | 799 (79.9) |
+| `createObject` item, effects | 90 (9) | 70 (7) | 70 (7) |
+| Ten `createObject` items destroyed, graph nodes | 170 | 130 | 130 |
+
+| Heap bytes kept per instance, over a thousand | B28 | B29 inherit | B29 |
+|---|---:|---:|---:|
+| ListView delegate, one-line text | 27 485 | 27 252 | 25 801; 25 946 with TEXT5 |
+| ListView delegate, wrapped text | 29 527 | 29 293 | 27 842; 28 865 with TEXT5 |
+| `createObject` item | 20 845 | 17 142 | 15 893 |
+
+The columns were measured before TEXT5 landed. "With TEXT5" is the series rebased onto it,
+counted on a clock only the frames move. On the machine's clock, a frame's incubation
+budget was spent in wall time: under load a frame made fewer rows and the counts drifted
+from run to run (bindings 50 to 54). The budget test now gives the same counts at a load
+of 79 on 32 cores as on an idle machine.
+
+The split adds one allocation per Text, for the shared box, and takes 1.45 kB off every
+delegate. A DHAT run of the thousand one-line delegates shows where the rest goes:
+- the reactive graph's node slot map: 6.8 kB per delegate;
+- the per-object node lists (`ObjectHeader::set_node`): 2.9 kB;
+- the marks and record lists: 1.4 kB and 1.2 kB, before the split;
+- the object slot map and the render tree's slot map: about 1.0 kB each.
+
+The graph's nodes are the next lever for memory.
+
+| listview under callgrind (main thread, 20 s after 40 s), per delegate | B28 | B29 inherit | B29 |
+|---|---:|---:|---:|
+| Total ÷ text layouts, three runs | 346.8 k, 358.7 k, 352.8 k | 291.7 k, 348.3 k, 345.2 k | 324.9 k, 351.0 k, 329.4 k |
+| Median | 352.8 k | 345.2 k | 329.4 k |
+| `QuickScene::adopt`, inclusive | 43.2 k | 38.2 k | 38.1 k |
+| `QuickScene::unadopt`, inclusive | 13.4 k | 12.5 k | 11.0 k |
+| `inherit_effect`, inclusive | 5.7 k | | |
+| `inherit` (adoption and hooks), inclusive | | | 4.0 k |
+| `text_polish`, inclusive | 0.68 k | 0.68 k | 0.77 k |
+| `Geom::read`, inclusive | 15.2 k | | 15.3 k |
+
+Totals are noisy between runs: other lanes' builds were running, and how many idle
+frames fall in the window varies. The inclusive costs are steady to within 1 %. qml6
+does a whole delegate in ~200 k.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós B28 | Ljós B29 | qml6 (same run) |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.05 | 18.73 | 15.22 |
+| listview | 180.86 | 176.10 | 102.87 |
+| listview with `reuseItems: true` | 70.85 | 70.17 | 60.51 |
+
+DECISIONs:
+
+- Inheritance is passed at the hook and the reparent, not at the frame, so that a script
+  sees it in Qt's order. An item takes what it inherits once, when it is adopted. Items
+  that no scene shows inherit nothing, as before.
+- The frame's geometry read stays as it is. `Geom::read` already batches seven numbers
+  and three values into two engine calls. Of its ~7.4 k per call, about 5.2 k is the
+  delegate's own `width: ListView.view.width` binding running on its first read, which
+  any read would run. The read itself (access checks, the values, `faces_away`) is about
+  1.5–2 k per item. A one-record read would save under 0.5 % of a delegate, so B28's
+  `adopt` savings went to that binding and not to the read.
+- The split is kept: bytes fall (1.45 kB per delegate, 1.25 kB per plain item) and
+  callgrind does not rise (`unadopt` −1.5 k, `text_polish` +0.09 k).
+- A Text's inputs are shared through one box between the marks and the paint. A pool
+  for them could save the one allocation per Text, but it would need the paint to read
+  the marks at the frame. That is for phase c.
+- The content and list a mark carries are held in side maps keyed by item. A box per
+  mark would allocate on every change, and a moving `Rotation` changes on every frame.
+- A rectangle's paint (104 bytes) stays inline in the record. It is the common paint,
+  and boxing it would allocate on every colour change.
+- Phase c (B30, structure and text polish) is next. TEXT4's measure-on-read branch in
+  `text_polish` is kept; B29 only changed how it stores the inputs.
+
+### B12 (ilang): ListModel.append, and a calqlatr press profiled (2026-10-26)
+
+**Method.** As in B11: instructions are user-space instructions of the whole process,
+from start to exit. Milliseconds are the scripts' own `Date.now()` around the append loop,
+taking the lowest of eight runs on a machine with a load of 40 to 100, so the instruction
+counts are the ones to compare. "No view" is a Timer appending N `{ n: i }` rows to a
+ListModel nothing shows. "Shown" is the same loop under a ListView of one-line Text rows.
+"Before" is origin/main (aa4f4e1c), built the same way.
+
+| | Before | After | qml6 |
+|---|---:|---:|---:|
+| append, no view (instructions a row, 0 → 10k) | 11.5k | 10.4k | ~3.5k |
+| 10k appends, shown (M instructions, whole run) | 509.8 | 264.5 | 474 |
+| 20k appends, shown (M instructions, whole run) | stopped at its slice | 389.8 | 553 |
+| 10k appends, shown (ms, lowest) | 23 | 12 | 5 |
+| 20k appends, shown (ms, lowest) | 61 | 22 | 10 |
+| 100 appends, no view (lookups, allocations) | 200, 914 | 0, 714 | |
+| calqlatr, 3000 presses (M instructions) | 955.9 | 953.2 | ~530 |
+
+qml6's whole-run counts include frames it renders while it waits for the layout, so its
+cost per row is the slope: 7.9k from 10k to 20k rows, against Ljós's 12.5k.
+
+**Appends to a shown model were quadratic.** Every row added before a layout shifted the
+indexes of all rows added since the last layout, in case it had landed before them. An
+append lands after all of them. The pending change now keeps its highest index, and a row
+added past that index visits none of them. The transitions are told the same indexes. qml6
+tells the indexes of added rows in row order, whatever order the rows came in, and Ljós now
+does too (`features/views/list-add-targets.feature`). A run of appends now costs the same
+for each row, and 20,000 appends no longer reach the script's time slice.
+
+**The append itself.** Of ~10k instructions an append, about 8k is the call from script:
+- turning the object literal into the engine's value (~1.5k);
+- reading its entries out of JS (~1.6k), a string for each key;
+- the row, its count and the change notice (~2.4k);
+- the host call around it.
+
+Two costs are gone:
+- A model nobody connected to no longer finds its row signals by name, two member lookups
+  an append.
+- A value of a kind the embedder defined, or a colour, is told from other objects by its
+  prototype's address. Before, each object was asked for a hidden mark property.
+
+One row is also held without a list of its own on its way in. The budget test
+`hundred_list_model_appends` pins the result: no lookups and 7.14 allocations a row.
+
+**calqlatr, one press.** Measured as 3000 presses minus none, with callgrind collecting from
+the timers on: ~280k instructions a press, against qml6's ~177k. ~200k of it is the
+ListView pass that `positionViewAtEnd()` runs after each press. Each pass lays all ~23
+shown rows out again:
+- `Fill::lay` reads every row's geometry back: `read_geo`, `read_sizes` and `read_inputs`
+  are ~19k a pass.
+- It writes every row's place: `item::write_placed`, ~11k a pass.
+- `flickable::bounds` is read three times a pass, ~14k.
+- One press in three makes a new row and lets an old one go: ~173k to make, of which the
+  row's Text completing and measuring is ~55k, and ~40k to destroy, mostly reparenting.
+
+Outside the pass, ~61k a press is the calculator's own script.
+
+**Left** (DECISIONs; geometry, placing and text are H2's B28–B30 area):
+
+- **A pass re-reads and re-places every shown row** when only the last row changed. A
+  dirty bit per row's geometry would let it skip the rest. This is the geometry seam.
+- **A new row's Text** costs ~55k to complete and measure. This is text polish.
+- **Destroying a row** costs ~40k: parent changes and the scene forgetting it. This is
+  structure.
+- **`current::sync`** costs ~11k a pass: it reads the highlight's settings and the current
+  item's geometry each time. Its geometry reads belong with the geometry seam.
+- **An append still costs ~3× qml6's.** Most of it is crossing from script: the literal's
+  keys are read as strings, and the object is kept for the call. Taking the entries during
+  the call, without keeping the object, is the next step. It needs a change to the host
+  interface.
+- **The `targetIndexes` of several removals** keep the order the rows left in. qml6 moves
+  the earlier ones' indexes and gives them in another order: "2,1,0" for `remove(4)`,
+  `remove(0)`, `remove(1)` out of six rows. This is not pinned yet.
+
+### B12b (ilang): what crossing from script to the host costs (2026-10-26)
+
+**Method.** As in B12: user-space instructions of the whole process, perf counters, the
+lowest of several runs. An append is (10,000 appends − none) / 10,000, `{ n: i }` rows to a
+ListModel nothing shows. A calqlatr press is (3000 presses − none) / 3000 at 320×480. The
+crossings were counted with callgrind over 300 presses and over 10k appends. "Before" is
+the tree after B12.
+
+| | Before | After | qml6 |
+|---|---:|---:|---:|
+| append, no view (instructions a row) | 10.32k | 6.98k | ~3.5k |
+| calqlatr press (instructions) | 310.4k | 307.8k | ~177k |
+| 100 appends, no view (allocations) | 714 | 702 | |
+
+**Crossings in an append** (callgrind, instructions an append, before this work's last step):
+
+| Crossing | Calls | Instructions |
+|---|---:|---:|
+| script calls a host method (`raw_method`, inclusive) | 1 | 5.19k |
+| ↳ the object literal copied out of JS (`copy_at`) | 1 | 1.27k |
+| ↳↳ its own property names, and each key as a string | 1, 1 | ~385, ~139 |
+| ↳ the engine's side of the call (`EngineHost::call`) | 1 | 3.34k |
+| ↳↳ the method itself (`invoke`, the row and the count) | 1 | 1.94k |
+| ↳↳ the copy turned into an engine value | 1 | ~780 |
+| the script's own loop, literal and frees (QuickJS) | | ~1.87k |
+
+**Crossings in a calqlatr press** (instructions a press, inclusive):
+
+| Crossing | Calls a press | Instructions |
+|---|---:|---:|
+| QML-declared functions run from script (`raw_direct`) | 0.6 | 153k |
+| host methods (`raw_method`) | 6.9 | 136k |
+| ↳ `positionViewAtEnd` | 0.5 | 128k |
+| ↳ `ListModel.append`, `ListModel.get` | 0.2, 0.8 | 1.3k, 1.0k |
+| property writes from script (`prop_set`) | 0.9 | 8.3k |
+| property reads from script (`prop_get`, both paths) | 2.7 | 2.5k |
+
+A press's crossings themselves are cheap. Its cost is in what `positionViewAtEnd` does:
+a ListView pass, which is H2's area (B12's list).
+
+**What changed.**
+- A host method takes its arguments by value. It does not clone them.
+- A call keeps which arguments are data, and which are copies, in two bitmasks. It used to
+  keep them in a list. It converts arguments only when one holds a script value.
+- An object given to `append`, `insert` or `set` is copied as it crosses. A date in it is
+  copied, and a function makes no role. A row's object is a new copy each time it is read,
+  as in qml6 (`features/models/listmodel-copies.feature`).
+- An ordinary object is told by its class and its prototype. Before, the host asked each
+  object for its prototype's kind. Keys that are valid UTF-8 are read without a lossy
+  pass.
+- Rows are built from an iterator of their entries. They no longer go through a list made
+  for them. Rows added at the end extend the list instead of splicing it.
+- The model's `count` is written internally: the owner check is skipped. A number written
+  internally to a plain property skips the general write path.
+- Model listeners with no one listening return at once.
+
+**Why not 6k** (DECISION). The task's target was 6k instructions an append or less. About
+1.9k of the 6.98k is QuickJS's own work: the loop, the literal and the call. Of what is
+left, most goes on representing the value three times:
+- the JS object;
+- the host's map with a string for each key;
+- the engine's map with an atom for each key.
+
+That is two allocations a key and one a map. Reading the JS object straight into engine
+values would remove them. It needs a visitor in `ljos_js` that the engine implements, and
+it changes the host interface for every call. Building the engine's map one entry at a
+time, instead of all at once, was tried. It was slower (7.12k), so it was reverted.
+
+### MEM2: what MEM1 left, against qml6 (2026-10-26)
+
+MEM1's "What is left", except the controls' own effects, which wait for the delegate track's
+B27–B30. Measured as MEM1 measured: `ljos bench --rounds 3 --load 60` (grid clicks), desktop
+profile, off-screen in the cua sandbox, "private" being `Pss_Anon + SwapPss` in MiB. "Base"
+is origin/main before this batch, "after" is the batch; qml6's columns come from the run
+beside each, so they differ between the two runs only by noise. The machine swapped through
+both runs.
+
+| App | Start | Round 1 | Round 2 | Round 3 |
+|---|---:|---:|---:|---:|
+| thermostat, base | 76.9 | 226.1 | 333.7 | 334.2 |
+| thermostat, qml6 (base run) | 139.0 | 176.4 | 176.4 | 176.4 |
+| thermostat, after | 73.1 | 224.3 | 222.2 | 222.2 |
+| thermostat, qml6 (after run) | 152.1 | 169.4 | 169.4 | 169.4 |
+| maroon, base | 53.8 | 58.9 | 63.8 | 64.8 |
+| maroon, after | 53.7 | 58.3 | 63.5 | 64.6 |
+| maroon, qml6 (after run) | 117.9 | 123.4 | 123.3 | 123.4 |
+
+Thermostat's plateau is now 222 MiB against qml6's 169, 31 % above it (MEM1: about 35 %).
+The base run's 334 is high against MEM1's 237 for nearly the same code: most of it was in
+swap in that run (329 MiB of SwapPss), and one run of three rounds says little about a
+plateau that close to the next. The start fell 3.8 MiB. Maroon stays at about half of qml6.
+
+**maroon's creep was a ReferenceError.** MEM1 said maroon's object and node counts stayed
+flat. They do not when the game is played: driven for 6 rounds with its inspector, the
+objects went from 179 to 8014 and the graph from 2134 to 55 099 nodes. A base type's
+`function die() { destroy(1000) }` called `destroy` by its bare name; no type lists
+`destroy`, so the compiler left the name to the running program, which has no global of
+that name and threw on every turn of the game's timer. The new piece was already made, the
+old one was never taken away. `qml_front`'s `Names::has` now finds `destroy` on every object
+(features/components/destroy-by-name.feature, on qml6 too).
+
+| maroon, 6 rounds | Counted by owners, start → end | Objects | Graph nodes | Private |
+|---|---:|---:|---:|---:|
+| before the fix | 20.0 → 50.7 | 179 → 8014 | 2134 → 55 099 | 60 → 104 |
+| after | 20.0 → 29.2 | 179 → 286 (213 to 722 between rounds) | 2134 → 2921 | 54 → 75 |
+
+After the fix what the owners count stays between 29 and 30.6 MiB from round 2 on, and the
+objects rise and fall with the pieces in play. What is left of the creep, about 1 MiB a round
+(69 → 75 private over rounds 2–6), is outside anything Ljós keeps: Rust allocations no owner
+counts stay under 0.6 MiB, while what the allocator keeps freed moves between 4.6 and
+11.8 MiB and the C libraries' (llvmpipe, fonts) between 1.1 and 7.7 MiB, round by round.
+The bench's grid clicks reach the game less than the creep's drive did, which is why its
+base and after columns for maroon hardly differ.
+
+**`Shortcut` objects only with a sequence.** An `Action` made its `Shortcut` as soon as
+`shortcut` was anything but undefined, so `shortcut: ""` or `null` cost a Shortcut and the
+nodes of its sequence, enablement and connection. It now makes one with the first sequence:
+a text that is not blank, or a standard key. A `MenuItem` in a menu (declared, a delegate's,
+an action's or a sub-menu's) makes no mnemonic Shortcut, since the menu takes the letters;
+one taken out with `takeItem` makes it then. features/controls/action-shortcut.feature has
+scenarios for a shortcut given later and a blank one given a sequence, and
+`an_action_without_a_sequence_has_no_shortcut`, `a_row_of_a_menu_has_no_mnemonic_shortcut`
+count the objects.
+
+Checking `activatedAmbiguously` against qml6 found an older difference. qml6 hands each
+press of a sequence several shortcuts share to the next of them in the order they
+registered: a declared Shortcut registers as it completes (the last declared first), one
+whose sequence changes registers again after all the others, and an action registers as it
+is given its sequence. Ljós stepped from the last made backwards, which agreed only for
+Shortcuts declared together, and an action told did nothing. Both now follow qml6
+(action-shortcut.feature, features/input/shortcut-ambiguous.feature: three scenarios).
+
+**Accessible objects when something asks.** Every control made its `Accessible` object as it
+completed, to give it the role and name of its type. The defaults are now registered by type
+(`register_accessible_defaults`) and given when the object is made: by QML that reads
+`item.Accessible`, by the author's `Accessible.` lines, or by the a11y pass as it first
+describes the item. The pass runs only while an assistive technology or a tool listens, and
+walks every item it reaches when it starts, so a screen reader that connects late finds the
+whole tree (`a_control_has_its_accessible_object_once_something_asks`,
+`qml_reads_the_default_role_of_a_control`). This needed nothing of the scene's per-item
+maps. Popups and a range slider's handles still make theirs as they are made; they are few.
+
+**mediaplayer.** qml6 cannot run it (the corpus marks it: it needs `io.qt.filenameprovider`,
+a C++ module), so there is no qml6 column. Ljós with its inspector over 3 rounds of grid
+clicks: objects 543 → 545 (base) and 541 → 543 (after), graph nodes about 14 530 in both,
+and what the owners count under 20 MiB. Its own memory is 540–640 MiB and moves with what
+plays; 385–470 MiB of it is Rust allocation that no owner tells of, the decoded media.
+Counting that is the media owner's next step, not this batch's.
+
+**A frame-on-time flake.** features/window/frame-on-time.feature failed about one run in
+three on a loaded machine: a message that found the window's frame due queued its Repaint
+and asked the platform only at the turn's end, so the frame came in a turn of its own. The
+Repaint now asks while the message is handled, as a deadline's wake does.
+
+DECISIONs:
+
+- A message wake that finds the frame due draws in that wake.
+- `destroy` is a member of every object to the name lookup; no type table is changed.
+- An action's Shortcut takes its place in the order of registration when the action gets
+  its sequence, not when the Shortcut object is made.
+- A11y defaults are given lazily for controls and text fields, not for popups and range
+  slider handles.
+- maroon's remaining creep is written down as the allocator's and the C libraries', not
+  chased into glibc.
+- mediaplayer is measured on Ljós alone.

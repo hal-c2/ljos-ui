@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use ljos_a11y::{NodeData, Range, Role};
+use ljos_a11y::{NodeData, Range};
 use ljos_engine::{
     Atom, Cx, Engine, EngineError, MetaObject, MetaRef, ObjectId, PropIndex, QmlObject, QmlType,
     Value, WriteKind, qml_impl,
@@ -1057,7 +1057,7 @@ fn init(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
         }
     })?;
 
-    crate::a11y::defaults(engine, obj, Role::SpinBox, None)
+    Ok(())
 }
 
 // --------------------------------------------------------------- pointer

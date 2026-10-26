@@ -87,7 +87,7 @@ impl HostObjects for Store {
         _scope: &Scope<'js>,
         obj: u64,
         method: u32,
-        args: &[JsArg],
+        args: Vec<JsArg>,
     ) -> Result<JsOut, HostError> {
         self.log
             .borrow_mut()
@@ -139,10 +139,12 @@ pub fn type_def() -> ljos_js::TypeDef {
             MethodDef {
                 name: "add".into(),
                 id: M_ADD,
+                copied: 0,
             },
             MethodDef {
                 name: "echo".into(),
                 id: M_ECHO,
+                copied: 0,
             },
         ],
         ..Default::default()

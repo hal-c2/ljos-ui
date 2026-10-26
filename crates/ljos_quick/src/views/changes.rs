@@ -199,7 +199,7 @@ impl ViewHost for Host {
         };
         // Before the first layout there is nothing to keep in place.
         let laid_out = st.seen_index.get().is_some();
-        let current = e.untrack(|| pass::rd(e, view, ItemView::CURRENT_INDEX.index)) as i64;
+        let current = pass::current_row(e, view, &st);
         let rows = d.count() as i64;
         let (line, top) = st.anchor.get();
         match *change {
@@ -220,8 +220,17 @@ impl ViewHost for Host {
                 if !st.grid.get() && first < line {
                     st.anchor.set((line + count, top));
                 }
-                if laid_out && current >= first as i64 {
-                    set_current(e, view, &st, current + count as i64);
+                // Rows that arrive in a model with none move no current
+                // row: there was none, whatever number it was given. One
+                // the view would choose itself is the first of them, and
+                // rows that come before it later move it (qml6).
+                if laid_out && rows == count as i64 {
+                    if current < 0 && !st.cleared.get() {
+                        st.auto_index.set(true);
+                        move_current_later(&st, 0);
+                    }
+                } else if laid_out && current >= first as i64 {
+                    move_current_later(&st, current + count as i64);
                 }
                 let mut keys = Vec::new();
                 let mut added = st.added.borrow_mut();
@@ -236,16 +245,21 @@ impl ViewHost for Host {
                 }
                 drop(added);
                 let indexes = (first..first.saturating_add(count)).map(|i| i as i32);
+                let last = first.saturating_add(count) as i32 - 1;
                 let mut pending = st.pending.borrow_mut();
                 match pending.as_mut().filter(|op| op.kind == OpKind::Add) {
                     // Rows added since the last pass are one change to it:
                     // those that came before are where the new ones put them.
                     Some(op) => {
-                        for i in &mut op.target_indexes {
-                            if *i >= first as i32 {
-                                *i += count as i32;
+                        if op.highest >= first as i32 {
+                            for i in &mut op.target_indexes {
+                                if *i >= first as i32 {
+                                    *i += count as i32;
+                                }
                             }
+                            op.highest += count as i32;
                         }
+                        op.highest = op.highest.max(last);
                         op.target_keys.extend(keys);
                         op.target_indexes.extend(indexes);
                     }
@@ -254,7 +268,10 @@ impl ViewHost for Host {
                             kind: OpKind::Add,
                             target_keys: keys.into_iter().collect(),
                             target_indexes: indexes.collect(),
+                            highest: last,
                             target_items: Vec::new(),
+                            gone_runs: Vec::new(),
+                            gone_items: Vec::new(),
                         });
                     }
                 }
@@ -275,26 +292,25 @@ impl ViewHost for Host {
                     }
                 }
                 if laid_out && current >= end as i64 {
-                    set_current(e, view, &st, current - count as i64);
+                    move_current_later(&st, current - count as i64);
                 } else if laid_out && current >= first as i64 {
-                    set_current(e, view, &st, (first as i64).min(rows - 1));
+                    move_current_later(&st, (first as i64).min(rows - 1));
                 }
-                let indexes = gone.iter().map(|(i, _)| *i as i32);
-                let items = gone.iter().map(|(_, o)| *o);
                 let mut pending = st.pending.borrow_mut();
-                match pending.as_mut().filter(|op| op.kind == OpKind::Remove) {
-                    Some(op) => {
-                        op.target_indexes.extend(indexes);
-                        op.target_items.extend(items);
-                    }
-                    None => {
-                        *pending = Some(PendingOp {
-                            kind: OpKind::Remove,
-                            target_keys: Default::default(),
-                            target_indexes: indexes.collect(),
-                            target_items: items.collect(),
-                        });
-                    }
+                if !pending.as_ref().is_some_and(|op| op.kind == OpKind::Remove) {
+                    *pending = Some(PendingOp {
+                        kind: OpKind::Remove,
+                        target_keys: Default::default(),
+                        target_indexes: Vec::new(),
+                        // Only added rows read it.
+                        highest: -1,
+                        target_items: Vec::new(),
+                        gone_runs: Vec::new(),
+                        gone_items: Vec::new(),
+                    });
+                }
+                if let Some(op) = pending.as_mut() {
+                    removed(op, first, count, gone);
                 }
                 drop(pending);
                 st.places.borrow_mut().clear();
@@ -326,7 +342,10 @@ impl ViewHost for Host {
                         .filter_map(|row| d.key_at(row))
                         .collect(),
                     target_indexes: (to..to + count).map(|i| i as i32).collect(),
+                    highest: (to + count) as i32 - 1,
                     target_items: Vec::new(),
+                    gone_runs: Vec::new(),
+                    gone_items: Vec::new(),
                 });
                 st.places.borrow_mut().clear();
                 st.slots_stale.set(true);
@@ -350,11 +369,80 @@ impl ViewHost for Host {
                 }
             }
         }
-        for &(_, object) in gone {
-            leave(e, view, &st, object);
+        for &(row, object) in gone {
+            leave(e, view, &st, object, row as i32);
         }
         lay_out_later(e, view, &st);
     }
+}
+
+/// Rows `first..first + count` left the model, `gone` their delegates,
+/// numbered as the model had them just before. Rows removed since the
+/// last pass are one change to it, as in qml6: each row is numbered as
+/// the model numbers it once the rows gone before it in the model are
+/// gone, a run of rows counting on from where it starts, and the last
+/// comes first.
+fn removed(op: &mut PendingOp, first: usize, count: usize, gone: &[(usize, ObjectId)]) {
+    let (runs, items) = (&mut op.gone_runs, &mut op.gone_items);
+    // The row the model numbers `row` now, as it numbered it before
+    // the first of these removals.
+    let before = |runs: &[(usize, usize)], row: usize| {
+        let mut at = row;
+        for &(start, n) in runs {
+            if start > at {
+                break;
+            }
+            at += n;
+        }
+        at
+    };
+    for &(row, object) in gone {
+        items.push((before(runs, row), object));
+    }
+    // The rows gone now lie between runs gone before.
+    let mut at = before(runs, first);
+    let mut left = count;
+    let mut more = Vec::new();
+    for &(start, n) in runs.iter() {
+        if left == 0 {
+            break;
+        }
+        if start < at {
+            continue;
+        }
+        let here = left.min(start - at);
+        more.push((at, here));
+        left -= here;
+        at = start + n;
+    }
+    if left > 0 {
+        more.push((at, left));
+    }
+    runs.extend(more);
+    runs.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(runs.len());
+    for &(start, n) in runs.iter() {
+        match merged.last_mut() {
+            Some(last) if last.0 + last.1 == start => last.1 += n,
+            _ => merged.push((start, n)),
+        }
+    }
+    *runs = merged;
+    // A model that loses a million rows has few of them in sight.
+    let mut indexes = Vec::new();
+    let mut earlier = 0;
+    for &(start, n) in runs.iter() {
+        let from = start - earlier;
+        indexes.extend((from..from + n).take(MAX_ADDED - indexes.len().min(MAX_ADDED)));
+        earlier += n;
+    }
+    op.target_indexes = indexes
+        .into_iter()
+        .rev()
+        .map(|i| i.min(i32::MAX as usize) as i32)
+        .collect();
+    items.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
+    op.target_items = items.iter().map(|(_, o)| *o).collect();
 }
 
 /// Rows of another kind are about to come or go while a change of rows
@@ -397,10 +485,18 @@ fn untold_count(e: &Engine, view: ObjectId, st: &ViewState, rows: i64) {
     }
 }
 
+/// The current row is `index` now, and `currentIndex` says so when the
+/// rows are next laid out.
+fn move_current_later(st: &ViewState, index: i64) {
+    st.current_due
+        .set(Some(index.clamp(-1, i64::from(i32::MAX)) as i32));
+}
+
 /// Writes `currentIndex` as the view's own doing: the row is the same,
 /// its number is another, and the view does not go anywhere for it.
 fn set_current(e: &Engine, view: ObjectId, st: &ViewState, index: i64) {
     let index = index.clamp(-1, i64::from(i32::MAX)) as i32;
+    st.current_due.set(None);
     st.seen_index.set(Some(index));
     put(e, view, ItemView::CURRENT_INDEX.index, Value::Int(index));
 }
@@ -415,7 +511,7 @@ pub(crate) fn forget(e: &Engine, view: ObjectId, st: &ViewState) {
 
 /// The row of `object` left the model: the delegate is told, and goes
 /// when nothing holds it back.
-fn leave(e: &Engine, view: ObjectId, st: &ViewState, object: ObjectId) {
+fn leave(e: &Engine, view: ObjectId, st: &ViewState, object: ObjectId, index: i32) {
     let att = attached_of(e, view, object);
     if let Some(att) = att {
         warn(e, "remove", e.emit_by_name(att, "remove", &[]));
@@ -432,20 +528,21 @@ fn leave(e: &Engine, view: ObjectId, st: &ViewState, object: ObjectId) {
             // `ListView.delayRemove`: the delegate stays until it is false.
             let watching = e.watch(att, ViewAttached::DELAY_REMOVE.index, move |e, v| {
                 if !v.to_boolean() {
-                    finish(e, view, object);
+                    finish(e, view, object, index);
                 }
             });
             if let Err(err) = watching {
                 warn(e, "delayRemove", Err(err));
-                finish(e, view, object);
+                finish(e, view, object, index);
             }
         }
-        None => finish(e, view, object),
+        None => finish(e, view, object, index),
     }
 }
 
 /// Shows a delegate out the way `remove` says, then gives it back.
-fn finish(e: &Engine, view: ObjectId, object: ObjectId) {
+/// `index` is the row it had, which the transition is told.
+fn finish(e: &Engine, view: ObjectId, object: ObjectId, index: i32) {
     let Some(st) = state_of(e, view) else {
         return;
     };
@@ -458,9 +555,14 @@ fn finish(e: &Engine, view: ObjectId, object: ObjectId) {
         leaving.swap_remove(i);
     }
     let transition = e.untrack(|| e.get(view, ItemView::REMOVE)).ok().flatten();
-    let animated = animate(e, view, transition, object, move |e| {
+    let animated = animate_at(e, view, transition, object, index, move |e| {
         discard(e, view, object);
-        pass::refresh(e, view);
+        // At the next polish, not now: a transition that ends at once
+        // ends while the model is still telling the view of its rows,
+        // and the rows that go together are one change to the pass.
+        if let Some(st) = state_of(e, view) {
+            lay_out_later(e, view, &st);
+        }
     });
     if !animated {
         discard(e, view, object);
@@ -484,6 +586,23 @@ pub(crate) fn animate(
     item: ObjectId,
     done: impl Fn(&Engine) + 'static,
 ) -> bool {
+    let index = state_of(e, view)
+        .and_then(|st| st.delegates())
+        .and_then(|d| d.index_of(item))
+        .map_or(-1, |i| i as i32);
+    animate_at(e, view, transition, item, index, done)
+}
+
+/// [`animate`] on an item the view numbers `index`, which a delegate
+/// whose row is gone no longer tells.
+fn animate_at(
+    e: &Engine,
+    view: ObjectId,
+    transition: Option<ObjectId>,
+    item: ObjectId,
+    index: i32,
+    done: impl Fn(&Engine) + 'static,
+) -> bool {
     let Some(t) = transition.filter(|t| e.is_alive(*t) && is_a::<Transition>(e, *t)) else {
         return false;
     };
@@ -498,10 +617,6 @@ pub(crate) fn animate(
     // `ViewTransition`. Rows that arrive or go together are told one at
     // a time here, which is as much as one run of a transition can hold.
     {
-        let index = st
-            .delegates()
-            .and_then(|d| d.index_of(item))
-            .map_or(-1, |i| i as i32);
         let at = [
             pass::rd(e, item, crate::item::Item::X.index),
             pass::rd(e, item, crate::item::Item::Y.index),

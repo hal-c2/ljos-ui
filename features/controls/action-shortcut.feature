@@ -6,7 +6,9 @@
 @qt-parity
 Feature: The shortcut of an Action
   An action's shortcut triggers it from anywhere in its window, as a
-  Shortcut would, with the action itself as the source.
+  Shortcut would, with the action itself as the source. Actions that
+  share a sequence are triggered in turn, one each press, in the order
+  they were given it.
 
   Background:
     Given the QML:
@@ -30,6 +32,9 @@ Feature: The shortcut of an Action
           objectName: "s"; shortcut: StandardKey.Copy
           onTriggered: root.log += "s "
         }
+        Action { objectName: "later"; onTriggered: root.log += "later " }
+        Action { objectName: "blank"; shortcut: ""; onTriggered: root.log += "blank " }
+        Shortcut { sequence: "Ctrl+P"; onActivatedAmbiguously: root.log += "told " }
       }
       """
 
@@ -58,3 +63,30 @@ Feature: The shortcut of an Action
   Scenario: A standard key is a shortcut
     When the user presses "Ctrl+C"
     Then the property "log" of "root" is "s "
+
+  Scenario: An action given a shortcut later is triggered by it
+    When the property "shortcut" of "later" is set to "Ctrl+M"
+    And the user presses "Ctrl+M"
+    Then the property "log" of "root" is "later "
+
+  Scenario: A blank shortcut is none until a sequence is given
+    When the property "shortcut" of "blank" is set to "Ctrl+B"
+    And the user presses "Ctrl+B"
+    Then the property "log" of "root" is "blank "
+
+  Scenario: Actions that share a shortcut are triggered in turn
+    When the property "shortcut" of "later" is set to "Ctrl+K"
+    And the user presses "Ctrl+K"
+    Then the property "log" of "root" is "self "
+    When the user presses "Ctrl+K"
+    Then the property "log" of "root" is "self later "
+    When the property "shortcut" of "later" is set to ""
+    And the user presses "Ctrl+K"
+    Then the property "log" of "root" is "self later self "
+
+  Scenario: An action given a Shortcut's sequence takes its turn after it
+    When the property "shortcut" of "later" is set to "Ctrl+P"
+    And the user presses "Ctrl+P"
+    And the user presses "Ctrl+P"
+    And the user presses "Ctrl+P"
+    Then the property "log" of "root" is "told later told "

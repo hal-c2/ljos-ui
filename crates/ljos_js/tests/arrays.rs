@@ -39,7 +39,7 @@ impl HostObjects for ByReference {
         _scope: &Scope<'js>,
         _obj: u64,
         _method: u32,
-        _args: &[JsArg],
+        _args: Vec<JsArg>,
     ) -> Result<JsOut, HostError> {
         Ok(JsValue::Undefined)
     }

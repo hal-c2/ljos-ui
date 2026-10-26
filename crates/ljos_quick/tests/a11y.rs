@@ -10,7 +10,7 @@ use common::*;
 use ljos_a11y::accesskit::Role as AkRole;
 use ljos_a11y::{Bounds, NodeKey, Role};
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Value};
-use ljos_quick::{Accessible, Item, QuickScene, Rectangle, set_parent_item};
+use ljos_quick::{Accessible, Item, Layout, QuickScene, Rectangle, set_parent_item};
 use ljos_runtime::Time;
 
 /// The item's `Accessible` object, made on first use as QML does.
@@ -989,4 +989,75 @@ fn an_accessible_object_costs_one_graph_node() {
         get(&e, accessible(&e, other), "labelFor"),
         Value::Object(item)
     );
+}
+
+const ATTACHED_ENUMS: &str = r#"
+import QtQuick
+import QtQuick.Layouts
+ColumnLayout {
+    Rectangle { objectName: "a"; Accessible.role: Accessible.Button }
+    Rectangle { objectName: "b"; Layout.alignment: Qt.AlignBottom }
+    Rectangle { objectName: "c"; Accessible.role: Accessible.CheckBox }
+    Rectangle { objectName: "d"; Layout.alignment: Qt.AlignRight }
+    Repeater {
+        model: 4
+        Rectangle {
+            objectName: "made"
+            Accessible.role: Accessible.Button
+            Layout.alignment: Qt.AlignBottom
+        }
+    }
+}
+"#;
+
+/// An enum a file is compiled without the number of (a type the compiler
+/// does not know) is looked up as the file is loaded and kept by where
+/// its literal is. Attached blocks of different types in one file each
+/// read their own numbers, however many times they are applied.
+#[test]
+fn attached_blocks_read_their_own_enum_numbers() {
+    use ljos_compiler::{Project, compile_file};
+    use ljos_ir::{Literal, Members};
+    fn forget(m: &mut Members) {
+        for a in &mut m.assignments {
+            if let Literal::Enum(e) = &mut a.value {
+                e.value = None;
+            }
+        }
+    }
+    let mut project = Project::new(qml_front::QtTypeOracle);
+    project.add("Main", ATTACHED_ENUMS);
+    let mut file = compile_file(&project, "Main").unwrap().file;
+    for o in file.components.iter_mut().flat_map(|c| &mut c.objects) {
+        forget(&mut o.members);
+        o.attached.iter_mut().for_each(|a| forget(&mut a.members));
+    }
+    let e = engine();
+    let mut source = ljos_engine::MapSource::new();
+    source.insert("Main", file);
+    e.set_component_source(source);
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    assert!(e.take_warnings().is_empty());
+
+    let layout = |o| {
+        let att = e
+            .attached_object(o, &MetaRef::Static(Layout::static_meta()))
+            .unwrap();
+        get(&e, att, "alignment")
+    };
+    let role_of = |o| get(&e, accessible(&e, o), "role");
+    let (bottom, right) = (Value::Int(0x40), Value::Int(0x02));
+    assert_eq!(role_of(find(&e, root, "a")), role(Role::Button));
+    assert_eq!(layout(find(&e, root, "b")), bottom);
+    assert_eq!(role_of(find(&e, root, "c")), role(Role::CheckBox));
+    assert_eq!(layout(find(&e, root, "d")), right);
+    let made: Vec<_> = list(&e, root, "children")
+        .into_iter()
+        .filter(|&o| e.read_by_name(o, "objectName").to_js_string().as_str() == "made")
+        .collect();
+    assert_eq!(made.len(), 4);
+    for o in made {
+        assert_eq!(role_of(o), role(Role::Button));
+        assert_eq!(layout(o), bottom);
+    }
 }

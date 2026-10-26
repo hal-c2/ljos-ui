@@ -2062,15 +2062,23 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             if named {
                 continue;
             }
-            let Some((module, name)) = self.attaching(&member.name) else {
+            // `item.L.Layout`: the type is named through a namespace, and
+            // what it attached to is `item`.
+            let through = member
+                .through
+                .as_ref()
+                .and_then(|(ns, object)| Some((self.attaching(&[ns, &member.name])?, *object)));
+            let Some(((module, name), object)) =
+                through.or_else(|| Some((self.attaching(&[&member.name])?, member.object)))
+            else {
                 continue;
             };
             edits.push(js::Edit {
-                span: Span::new(member.object.start, member.object.start),
+                span: Span::new(object.start, object.start),
                 text: format!("{ATTACHED}("),
             });
             edits.push(js::Edit {
-                span: Span::new(member.object.end, member.end),
+                span: Span::new(object.end, member.end),
                 text: format!(", {module:?}, {name:?})"),
             });
         }
@@ -2380,10 +2388,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         }
     }
 
-    /// The module and name of the type `name` is in this file, when it is
-    /// one that attaches an object to others.
-    fn attaching(&self, name: &str) -> Option<(String, String)> {
-        let found = self.types.find(&[name])?;
+    /// The module and name of the type `path` names in this file (`Layout`,
+    /// or `L.Layout` through a namespace), when it is one that attaches an
+    /// object to others.
+    fn attaching(&self, path: &[&str]) -> Option<(String, String)> {
+        let found = self.types.find(path)?;
         let base = self.types.base(&found.kind)?;
         self.types.oracle.attached(base)?;
         match self.type_ref(&found, None) {

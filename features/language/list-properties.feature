@@ -256,3 +256,37 @@ Feature: A list property declared in QML
       """
     When the method "clear" of "root" is called
     Then the property "changes" of "root" is 1
+
+  Scenario Outline: Objects in brackets are a list only for a property of a list type
+    Given the file "Bad.qml":
+      """qml
+      import QtQuick
+      Item {
+        property <type> p: [Item {}]
+      }
+      """
+    Then loading "Bad.qml" is rejected
+
+    # After any other type the brackets are a script's array, and an
+    # object is no value in it.
+    Examples:
+      | type    |
+      | var     |
+      | variant |
+      | int     |
+
+  Scenario: The error is at the object's brace
+    Given the file "Bad.qml":
+      """qml
+      import QtQuick
+      Item {
+        property var p: [Item {}];
+      }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      Item { Loader { objectName: "l"; source: "Bad.qml" } }
+      """
+    Then the property "status" of "l" is 3
+    And the log has a warning matching "Bad\.qml:3:31: Expected (token )?`,"

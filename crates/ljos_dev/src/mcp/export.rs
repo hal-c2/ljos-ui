@@ -42,8 +42,10 @@ pub enum TraceDir {
     /// `traces` in the application's per-user state directory, as
     /// `StandardPaths.StateLocation` names it: on Linux
     /// `$XDG_STATE_HOME/<organization>/<name>/traces`, by default below
-    /// `~/.local/state`. Found when a file is written, so that the name the
-    /// application gives itself (`Qt.application.name`) is the one used.
+    /// `~/.local/state`; on macOS
+    /// `~/Library/Preferences/<organization>/<name>/State/traces`. Found
+    /// when a file is written, so that the name the application gives
+    /// itself (`Qt.application.name`) is the one used.
     PerUser,
 }
 

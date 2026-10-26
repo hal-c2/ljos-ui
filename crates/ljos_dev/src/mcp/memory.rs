@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use super::mappings::{Group, Mappings};
 use super::objects::handle;
-use super::observe::Resident;
+use super::process::Resident;
 use super::room::{self, Room};
 use super::rust_heap::rust_heap_bytes;
 
@@ -79,6 +79,9 @@ fn render_json(r: &BackendMemory) -> Value {
         "page_bytes": r.page_bytes,
         "shape_textures": r.shape_textures,
         "shape_texture_bytes": r.shape_texture_bytes,
+        "glyph_runs_incomplete": r.glyph_runs_incomplete,
+        "glyph_meshes_built": r.glyph_meshes_built,
+        "warnings": r.warnings,
         "bytes": r.bytes(),
         "approximate": true,
     })
@@ -104,7 +107,7 @@ fn mib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }
 
-/// What glibc's allocator holds: in use by anyone, and freed but kept.
+/// What the C allocator holds: in use by anyone, and freed but kept.
 #[derive(Clone, Copy, Debug)]
 struct Heap {
     in_use: u64,
@@ -122,7 +125,22 @@ fn heap() -> Option<Heap> {
     })
 }
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[cfg(target_os = "macos")]
+fn heap() -> Option<Heap> {
+    let mut s = std::mem::MaybeUninit::<libc::malloc_statistics_t>::zeroed();
+    // SAFETY: a null zone sums every zone; `s` has room for the counts,
+    // which the allocator writes under its locks.
+    let s = unsafe {
+        libc::malloc_zone_statistics(std::ptr::null_mut(), s.as_mut_ptr());
+        s.assume_init()
+    };
+    Some(Heap {
+        in_use: s.size_in_use as u64,
+        free: s.size_allocated.saturating_sub(s.size_in_use) as u64,
+    })
+}
+
+#[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos")))]
 fn heap() -> Option<Heap> {
     None
 }
@@ -665,4 +683,25 @@ fn not_attributed_split(
             .cmp(&a["bytes"].as_u64().unwrap_or(0))
     });
     parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Text drawn without some of its glyphs shows in the renderer's
+    /// figures, so a blank label can be told from one never drawn.
+    #[test]
+    fn the_renderer_says_how_its_text_drawing_went() {
+        let r = BackendMemory {
+            glyph_runs_incomplete: 2,
+            glyph_meshes_built: 40,
+            warnings: 1,
+            ..BackendMemory::default()
+        };
+        let v = render_json(&r);
+        assert_eq!(v["glyph_runs_incomplete"], 2);
+        assert_eq!(v["glyph_meshes_built"], 40);
+        assert_eq!(v["warnings"], 1);
+    }
 }

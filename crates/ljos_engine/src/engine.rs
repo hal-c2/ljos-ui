@@ -1901,14 +1901,18 @@ impl Engine {
         how: WriteKind,
         internal: bool,
     ) -> Result<(), EngineError> {
-        // An animation step, every frame for each animated property: a
-        // number to a number property with a node and no setter of its
-        // own. One look says so, and nothing between would change it.
+        // An animation step, every frame for each animated property, or
+        // the toolkit keeping a number of its own (a model's count): a
+        // number to a number property with no setter of its own. One look
+        // says so, and nothing between would change it.
         if internal
-            && matches!(how, WriteKind::Animation)
-            && let Some(n) = self.plain_number_node(obj, prop, &v)
+            && matches!(how, WriteKind::Animation | WriteKind::Imperative)
+            && let Some(at) = self.plain_number(obj, prop, &v, how)
         {
-            return self.write_node(obj, prop, n, v, how);
+            return match at {
+                PlainNumber::Node(n) => self.write_node(obj, prop, n, v, how),
+                PlainNumber::Field => self.store_field(obj, prop, &v),
+            };
         }
         // Nearly every write is to a property that is no alias and has
         // nothing still to be made: one look says so.
@@ -2033,28 +2037,37 @@ impl Engine {
             }
             // Journaled, a change is the graph's to keep: it gets a node.
             (None, _) if self.is_journaled() => self.ensure_node(obj, prop)?,
-            (None, _) => {
-                // Nobody observes it: the field is the only copy.
-                let mut store = self.inner.store.borrow_mut();
-                let h = store
-                    .objects
-                    .get_mut(obj)
-                    .ok_or_else(|| EngineError::dead(obj))?;
-                store_in(h, prop, &v)?;
-                h.mark_assigned(prop);
-                let change = change_hook(h, prop);
-                drop(store);
-                self.tell_change(obj, prop, change);
-                return Ok(());
-            }
+            (None, _) => return self.store_field(obj, prop, &v),
         };
         self.write_node(obj, prop, n, v, how)
     }
 
-    /// The node of `prop` when a write of `v` to it needs no conversion,
-    /// alias, setter or value still to be made: `v` goes to the node as
-    /// it is.
-    fn plain_number_node(&self, obj: ObjectId, prop: PropIndex, v: &Value) -> Option<NodeId> {
+    /// A write to a property nobody observes: the field is the only copy.
+    fn store_field(&self, obj: ObjectId, prop: PropIndex, v: &Value) -> Result<(), EngineError> {
+        let mut store = self.inner.store.borrow_mut();
+        let h = store
+            .objects
+            .get_mut(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
+        store_in(h, prop, v)?;
+        h.mark_assigned(prop);
+        let change = change_hook(h, prop);
+        drop(store);
+        self.tell_change(obj, prop, change);
+        Ok(())
+    }
+
+    /// Where a write of `v` to `prop` goes when it needs no conversion,
+    /// alias, setter, author's hook or value still to be made: the node
+    /// as it is, or for a write that is no animation step, the field of
+    /// a property no node or reader follows while nothing is journaled.
+    fn plain_number(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        v: &Value,
+        how: WriteKind,
+    ) -> Option<PlainNumber> {
         let store = self.inner.store.borrow();
         let h = store.objects.get(obj)?;
         let p = h.meta.property(prop)?;
@@ -2066,13 +2079,23 @@ impl Engine {
             p.access,
             PropertyAccess::Field { write: None, .. } | PropertyAccess::Dynamic { .. }
         );
-        if !same || !unfiltered || p.is_alias() || p.flags.contains(PropertyFlags::GROUP) {
+        let animation = matches!(how, WriteKind::Animation);
+        if !same
+            || !unfiltered
+            || p.is_alias()
+            || p.flags.contains(PropertyFlags::GROUP)
+            || (!animation && p.given.is_some())
+        {
             return None;
         }
         if h.makes_on_read(prop) {
             return None;
         }
-        h.node(prop)
+        match h.node(prop) {
+            Some(n) => Some(PlainNumber::Node(n)),
+            None if animation || h.read_without_node(prop) || self.is_journaled() => None,
+            None => Some(PlainNumber::Field),
+        }
     }
 
     /// A script's write of `v` that needs nothing between: a number, a
@@ -3140,17 +3163,18 @@ impl Engine {
                     .map(|(_, f)| f.clone())
                     .ok_or_else(|| EngineError::NotNative(m.name.to_string()))?),
             };
-            // Which parameters take data, for a method with any.
-            let data = m
-                .params
-                .iter()
-                .any(|(_, t)| matches!(t, TypeTag::Data))
-                .then(|| {
-                    m.params
-                        .iter()
-                        .map(|(_, t)| matches!(t, TypeTag::Data))
-                        .collect::<Vec<_>>()
-                });
+            // Which parameters take data, and which of those a copy.
+            let mut data = (0u64, 0u64);
+            for (i, (_, t)) in m.params.iter().enumerate().take(64) {
+                match t {
+                    TypeTag::Data => data.0 |= 1 << i,
+                    TypeTag::Copied => {
+                        data.0 |= 1 << i;
+                        data.1 |= 1 << i;
+                    }
+                    _ => {}
+                }
+            }
             (thunk, slow_names, data)
         };
         let thunk = match thunk {
@@ -3164,17 +3188,26 @@ impl Engine {
         self.inner.faults.propagate.set(false);
         // Native code reads lists, not a script's arrays, and data where
         // it takes data, not a script's objects.
-        let args = match data {
-            Some(data) => std::borrow::Cow::Owned(
+        // What a script's call gave by copy has crossed as data already.
+        let (data, copied) = data;
+        let taken = |i: usize| i < 64 && data >> i & 1 == 1;
+        let args = if args
+            .iter()
+            .enumerate()
+            .any(|(i, a)| taken(i) && crate::js::holds_js(a))
+        {
+            std::borrow::Cow::Owned(
                 args.iter()
                     .enumerate()
-                    .map(|(i, a)| match data.get(i) {
-                        Some(true) => self.deep_copy(a),
-                        _ => self.plain(a),
+                    .map(|(i, a)| match taken(i) {
+                        true if copied >> i & 1 == 1 => self.copy_of(a),
+                        true => self.deep_copy(a),
+                        false => self.plain(a),
                     })
                     .collect(),
-            ),
-            None => self.plain_args(args),
+            )
+        } else {
+            self.plain_args(args)
         };
         // Only the thunk call below is timed, not the lookup or the
         // argument conversion above. This is `Instant`, not the engine
@@ -3444,6 +3477,13 @@ impl Engine {
         found.filter(|o| self.is_alive(*o))
     }
 
+    /// See [`Context::root`].
+    pub(crate) fn set_context_root(&self, ctx: ContextId, obj: ObjectId) {
+        if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
+            c.root = Some(obj);
+        }
+    }
+
     pub fn set_context_object(&self, ctx: ContextId, obj: Option<ObjectId>) {
         if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx) {
             c.context_object = obj;
@@ -3491,13 +3531,14 @@ impl Engine {
 
     /// A name the compiler could not place, looked up from `ctx` outwards
     /// as Qt does at run time: the ids of each context, then its context
-    /// properties. An inline component reads the ids of the file that
-    /// uses it this way.
+    /// properties, the members of its root and of its context object. An
+    /// inline component reads the ids of the file that uses it this way,
+    /// and a file the members of the file it is made in.
     pub(crate) fn context_name(&self, ctx: ContextId, name: &str) -> Option<Value> {
         crate::lookups::name();
         let mut cur = Some(ctx);
         let found = loop {
-            let object = {
+            let objects = {
                 let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(cur?)?;
                 if let Some(o) = c.id(name) {
@@ -3507,10 +3548,12 @@ impl Engine {
                     return Some(v.clone());
                 }
                 cur = c.parent;
-                c.context_object
+                [c.root, c.context_object]
             };
-            if let Some(v) = object.and_then(|o| self.context_object_property(o, name)) {
-                return Some(v);
+            for o in objects.into_iter().flatten() {
+                if let Some(v) = self.context_object_property(o, name) {
+                    return Some(v);
+                }
             }
         };
         Some(if self.is_alive(found) {
@@ -3522,8 +3565,9 @@ impl Engine {
 
     /// Where `name` is from `ctx` outwards: the context object that has a
     /// property of the name, or the value when it is a name a context was
-    /// given outright (or, with `ids`, an id). As
-    /// [`Engine::context_property`] and [`Engine::context_name`] look.
+    /// given outright (or, with `ids`, an id or a member of a context's
+    /// root). As [`Engine::context_property`] and, with `ids`,
+    /// [`Engine::context_name`] look.
     pub(crate) fn context_holder(
         &self,
         ctx: ContextId,
@@ -3533,7 +3577,7 @@ impl Engine {
         crate::lookups::name();
         let mut cur = Some(ctx);
         while let Some(id) = cur {
-            let object = {
+            let objects = {
                 let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(id)?;
                 if ids && let Some(o) = c.id(name) {
@@ -3547,10 +3591,12 @@ impl Engine {
                     return Some(Err(v.clone()));
                 }
                 cur = c.parent;
-                c.context_object
+                [c.root.filter(|_| ids), c.context_object]
             };
-            if let Some(o) = object
-                && self.property_index(o, name).is_ok()
+            if let Some(o) = objects
+                .into_iter()
+                .flatten()
+                .find(|o| self.property_index(*o, name).is_ok())
             {
                 return Some(Ok(o));
             }
@@ -3736,6 +3782,12 @@ pub(crate) fn read_access(
         PropertyAccess::GroupRoot => Value::Undefined,
         PropertyAccess::Dynamic { slot } => dynamic.get(slot as usize).cloned().unwrap_or_default(),
     }
+}
+
+/// Where [`Engine::plain_number`] puts a write.
+enum PlainNumber {
+    Node(NodeId),
+    Field,
 }
 
 /// What a native field's setter makes of a write.
