@@ -1730,6 +1730,17 @@ impl Engine {
         is_group(info).then(|| (obj, info.name.clone()))
     }
 
+    /// Whether the property, or what it is an alias of, is a list.
+    pub(crate) fn is_list_property(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let store = self.inner.store.borrow();
+        store
+            .objects
+            .get(obj)
+            .and_then(|h| h.meta.property(prop))
+            .is_some_and(|p| matches!(p.ty, TypeTag::List(_)))
+    }
+
     /// Follows aliases to the property that holds the value.
     pub(crate) fn redirect(&self, obj: ObjectId, prop: PropIndex) -> (ObjectId, PropIndex) {
         let mut cur = (obj, prop);

@@ -834,7 +834,7 @@ impl HostObjects for EngineHost {
         }
         let (id, prop) = forwarded_prop(&engine, id, prop);
         let p = PropIndex(prop);
-        let ty = {
+        let (ty, alias) = {
             let store = engine.inner.store.borrow();
             let h = store
                 .objects
@@ -842,8 +842,7 @@ impl HostObjects for EngineHost {
                 .ok_or_else(|| HostError::msg("object no longer exists"))?;
             h.meta
                 .property(p)
-                .map(|i| i.ty.clone())
-                .unwrap_or(TypeTag::Var)
+                .map_or((TypeTag::Var, false), |i| (i.ty.clone(), i.is_alias()))
         };
         // `x.palette = y.palette`: a copy of the group the proxy stands for.
         if let JsValue::Handle(r) = &value
@@ -899,29 +898,36 @@ impl HostObjects for EngineHost {
             // Tier 1 would write a list where the script wrote its array.
             engine.tier1_spy(id, p, &engine.plain(&v));
         }
-        engine
-            .write(id, p, v, crate::WriteKind::Imperative)
-            .map_err(|e| match e {
-                // What a script catches, as Qt's engine throws it.
-                EngineError::ReadOnly(name) => {
-                    HostError::type_error(format!("Cannot assign to read-only property \"{name}\""))
+        // A read-only list's entries are fixed, but a script may give it
+        // another list (Qt 6.11.2).
+        let list = (alias || matches!(ty, TypeTag::List(_))).then(|| v.clone());
+        let written = match (engine.write(id, p, v, crate::WriteKind::Imperative), list) {
+            (Err(EngineError::ReadOnly(_)), Some(v)) if engine.is_list_property(id, p) => {
+                engine.write_internal(id, p, v, crate::WriteKind::Imperative)
+            }
+            (done, _) => done,
+        };
+        written.map_err(|e| match e {
+            // What a script catches, as Qt's engine throws it.
+            EngineError::ReadOnly(name) => {
+                HostError::type_error(format!("Cannot assign to read-only property \"{name}\""))
+            }
+            // A binding's warning says "null" where a script is told
+            // std::nullptr_t (Qt 6.11.2).
+            EngineError::Convert(c) => HostError::msg(format!(
+                "Cannot assign {} to {}",
+                from.unwrap_or_else(|| match &held {
+                    Some(r) if scope.is_date(r) => "QDateTime",
+                    _ => &c.from,
+                }),
+                // An enum is named as its type declares it.
+                match ty {
+                    TypeTag::Enum(_) | TypeTag::Flags(_) => c.to,
+                    _ => engine.qt_type(&ty),
                 }
-                // A binding's warning says "null" where a script is told
-                // std::nullptr_t (Qt 6.11.2).
-                EngineError::Convert(c) => HostError::msg(format!(
-                    "Cannot assign {} to {}",
-                    from.unwrap_or_else(|| match &held {
-                        Some(r) if scope.is_date(r) => "QDateTime",
-                        _ => &c.from,
-                    }),
-                    // An enum is named as its type declares it.
-                    match ty {
-                        TypeTag::Enum(_) | TypeTag::Flags(_) => c.to,
-                        _ => engine.qt_type(&ty),
-                    }
-                )),
-                e => host_err(e),
-            })?;
+            )),
+            e => host_err(e),
+        })?;
         if engine.inner.reload.tracking.get() {
             engine.reload_note_assigned(id, p);
         }

@@ -12,7 +12,6 @@ Feature: A read-only list property
   is read-only. A script can still give the property another list, which is converted to the
   list's type as any list is.
 
-  @backlog
   Scenario: push on a read-only list is a TypeError and adds nothing
     Given the QML:
       """qml
@@ -30,7 +29,6 @@ Feature: A read-only list property
     Then the property "seen" of "root" is "TypeError"
     And the property "names" of "root" is []
 
-  @backlog
   Scenario Outline: A script gives a read-only <list> the list <given>
     Given the QML:
       """qml
@@ -54,7 +52,6 @@ Feature: A read-only list property
       | list<real> | ["", ""] | [0, 0] |
 
   # Found by ljos-fuzz (bindings), bucket value:list<real>:step-set(literal).
-  @backlog
   Scenario: A script gives a read-only list a list through an alias of it
     Given the QML:
       """qml

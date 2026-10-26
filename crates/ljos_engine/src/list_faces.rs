@@ -549,9 +549,18 @@ impl Engine {
             if let Some(js) = js
                 && let Some(face) = js.lists.by_prop.borrow_mut().get_mut(&(obj, prop))
             {
-                face.seen.clone_from(&now);
+                // A refused change is undone: the face is filled again from
+                // the property when next read.
+                face.seen = if done.is_ok() { now.clone() } else { None };
             }
-            done.map_err(|e| HostError::msg(e.to_string()))?;
+            done.map_err(|e| match e {
+                // As Qt's engine throws it (Qt 6.11.2).
+                EngineError::ReadOnly(_) if matches!(args.get(4), Some(JsValue::Bool(true))) => {
+                    HostError::type_error("Cannot insert into a readonly container")
+                }
+                EngineError::ReadOnly(_) => HostError::type_error("Type error"),
+                e => HostError::msg(e.to_string()),
+            })?;
             Ok(now.map_or(JsValue::Undefined, |v| engine.to_js(&v)))
         });
         // What `push` and its like put into a copy of a typed list
@@ -682,7 +691,7 @@ pub(crate) const LISTS: &str = r##"
       for (let i = 0; i < t.length; i++) if (!(i in t)) at.push(i);
       return at;
     };
-    const write = () => fill(store(object, prop, t, holes()));
+    const write = (at) => fill(store(object, prop, t, holes(), at));
     const methods = new Map();
     const method = (name, f) => {
       let m = methods.get(name);
@@ -709,7 +718,7 @@ pub(crate) const LISTS: &str = r##"
       set(_, key, value) {
         read();
         t[key] = value;
-        if (key === "length" || isIndex(key)) write();
+        if (key === "length" || isIndex(key)) write(isIndex(key));
         return true;
       },
       has(_, key) { read(); return key in t; },
