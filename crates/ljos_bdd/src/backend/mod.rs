@@ -975,6 +975,18 @@ pub trait Probes: Backend {
         })
     }
 
+    /// Runs the design audit (`ljos_audit`) on what the application shows
+    /// at the points of `matrix` (`current`, `full` or points such as
+    /// `font-scale=2 size=640x480`) and keeps its report, which it gives
+    /// as `app_audit` gives it. With no matrix, the kept report, or an
+    /// audit of the scene as it is when none ran. Qt has no such audit.
+    fn design_audit(&mut self, _matrix: Option<&str>) -> Result<Value> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "auditing the design",
+        })
+    }
+
     /// The times text was measured since [`Probes::count_text_measures`].
     fn text_measures_counted(&mut self) -> Result<u64> {
         Err(BackendError::Unsupported {

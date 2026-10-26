@@ -1,6 +1,7 @@
 //! The application as an assistive technology sees it and acts on it.
 
 use cucumber::{given, then, when};
+use serde_json::Value;
 
 use crate::backend::{A11yAction, A11yNode, A11yTextAction, BackendError};
 use crate::world::LjosWorld;
@@ -74,6 +75,77 @@ fn a11y_replaces(w: &mut LjosWorld, role: String, name: String, text: String) ->
 #[when(regex = r#"^an assistive technology sets the text of the "([^"]+)" named "([^"]*)" to "([^"]*)"$"#)]
 fn a11y_sets_text(w: &mut LjosWorld, role: String, name: String, text: String) -> StepResult {
     w.each(|b| b.assistive()?.a11y_text(&role, &name, A11yTextAction::SetValue(text.clone())))
+}
+
+#[when(
+    regex = r"^the design audit runs at font scale ([0-9]+(?:\.[0-9]+)?) and window size ([0-9]+)x([0-9]+)$"
+)]
+fn design_audit_at(w: &mut LjosWorld, scale: String, width: String, height: String) -> StepResult {
+    let matrix = format!("font-scale={scale} size={width}x{height}");
+    w.each(|b| b.probes()?.design_audit(Some(&matrix)).map(drop))
+}
+
+/// The findings of a design audit's report, one a line.
+fn audit_lines(report: &Value) -> Vec<String> {
+    let text = |f: &Value, k: &str| f[k].as_str().unwrap_or("").to_owned();
+    report["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| {
+            format!(
+                "{} [{}] on the {:?} named {:?}: {}",
+                text(f, "source"),
+                text(f, "code"),
+                text(f, "role"),
+                text(f, "name"),
+                text(f, "message")
+            )
+        })
+        .collect()
+}
+
+#[then("the design audit finds nothing")]
+fn design_audit_clean(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let lines = audit_lines(&b.probes()?.design_audit(None)?);
+        if lines.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the design audit found:\n  {}",
+                lines.join("\n  ")
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the design audit reports "([a-z0-9-]+)" on the "([^"]+)" named "([^"]*)"$"#)]
+fn design_audit_reports(w: &mut LjosWorld, code: String, role: String, name: String) -> StepResult {
+    w.each(|b| {
+        let report = b.probes()?.design_audit(None)?;
+        let hit = report["findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|f| {
+                f["code"] == code.as_str()
+                    && f["role"] == role.as_str()
+                    && f["name"].as_str().unwrap_or("") == name
+            });
+        if hit {
+            return Ok(());
+        }
+        let lines = audit_lines(&report);
+        Err(BackendError::Failed(format!(
+            "no {code:?} on the {role:?} named {name:?}; the design audit found:\n  {}",
+            if lines.is_empty() {
+                "nothing".to_owned()
+            } else {
+                lines.join("\n  ")
+            }
+        )))
+    })
 }
 
 #[then(regex = r#"^the accessibility tree has an? "([^"]+)" named "([^"]*)"$"#)]

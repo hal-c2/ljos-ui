@@ -178,6 +178,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the system setting "font scale" changes to 1.5` | the user changes a setting of the system while the application runs; the settings and values of `Given the system setting` (`@ljos-only`) |
 | `When the application sets the system setting "reduced motion" to true` | the application (or a test) sets a setting itself, with the settings and values of `Given the system setting`; it stays over what the system or the desktop says until it is set to the system's value again (`@ljos-only`) |
 | `When the desktop setting "org.gnome.desktop.interface" "enable-animations" changes to false` | the desktop's settings portal says a key changed (`SettingChanged`); a value is `true`/`false`, `uint32 1`, a double (`1.25`), an int32 (`48`) or a `"string"`. A key the shell does not read changes nothing (`@ljos-only`) |
+| `When the design audit runs at font scale 2 and window size 640x480` | runs the design audit (`ljos audit`, `app_audit`) with the text that much larger and the window that size, puts both back, and keeps the report for the `Then the design audit` steps (`@ljos-only`) |
 | `When the system's network changes to "disconnected"` | the system says its network changed while the application runs; the words of `Given the system's network is` (`@ljos-only`) |
 | `When the system's position moves to latitude 51.5074, longitude -0.1278` | the device moves while the application runs; the words of `Given the system's position is` (`@ljos-only`) |
 | `When the property "p" of "o" is set to V` | assign from JavaScript (breaks a binding) |
@@ -241,6 +242,8 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the pixel at X, Y of the window is "#rrggbb"` / `is within T of "#rrggbb"` | one pixel of the window's picture, laid over black; `T` is how far each of red, green and blue may be off (a blend is rounded differently by each painter) |
 | `Then the accessibility tree has a "role" named "name"` | role names are lower case: `button`, `checkbox`, `label` … |
 | `Then the accessibility tree has no "role" named "name"` | |
+| `Then the design audit finds nothing` | the design audit has no finding of any severity: the report of the last `When the design audit runs at …`, else an audit of the window as it is (`@ljos-only`) |
+| `Then the design audit reports "code" on the "role" named "name"` | the report has a finding of that `ljos_design` rule about that accessibility node (`"layout-offscreen"` on the `"button"` named `"Save"`); same report as above (`@ljos-only`) |
 | `Then the object "o" is exposed as a "role" named "name"` | the node whose `objectName` is `o` |
 | `Then the "role" named "name" is described as "text"` | its accessible description; `""` when it has none |
 | `Then the "role" named "name" has the value "text"` | what the node holds besides its name: the text of an editor; `""` when it has none |

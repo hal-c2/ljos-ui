@@ -3609,6 +3609,7 @@ dependencies = [
  "jpeg-encoder",
  "ljos",
  "ljos_a11y",
+ "ljos_audit",
  "ljos_bench",
  "ljos_compiler",
  "ljos_controls",

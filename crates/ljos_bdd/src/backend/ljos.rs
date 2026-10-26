@@ -122,6 +122,9 @@ struct Live {
 #[derive(Default)]
 pub struct LjosBackend {
     live: Option<Live>,
+    /// The report of the last design audit a step ran at a point of
+    /// its own, for the steps that read it.
+    audited: Option<Value>,
     /// Catalogues given before anything was loaded; the engine gets them
     /// when it is made.
     catalogs: Vec<ljos_i18n::Catalog>,
@@ -1827,6 +1830,31 @@ impl Probes for LjosBackend {
         let live = self.live()?;
         let obj = live.find(object)?;
         Ok(ljos_quick::kept_pixels(&live.engine, obj))
+    }
+
+    fn design_audit(&mut self, matrix: Option<&str>) -> Result<Value> {
+        if matrix.is_none()
+            && let Some(kept) = &self.audited
+        {
+            return Ok(kept.clone());
+        }
+        let options = ljos_audit::Options {
+            matrix: matrix
+                .unwrap_or("current")
+                .parse()
+                .map_err(|e| failed(format!("{e}")))?,
+            ..ljos_audit::Options::desktop()
+        };
+        let live = self.live()?;
+        live.settle()?;
+        let now = live.clock.now();
+        let report = ljos_audit::audit(&live.engine, &mut live.scene, now, &options);
+        live.settle()?;
+        let report = report.json();
+        if matrix.is_some() {
+            self.audited = Some(report.clone());
+        }
+        Ok(report)
     }
 
     fn count_text_measures(&mut self) -> Result<()> {
