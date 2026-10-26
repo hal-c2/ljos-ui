@@ -12,7 +12,11 @@ Feature: An agent audits the design of the running application
   QML it was made, its box in the window, what was measured, and at
   which settings it shows. It can look with the text larger, the window
   smaller, or in a dark or high contrast scheme, and puts every setting
-  back afterwards.
+  back afterwards. The checks that act (focus each stop, press Escape,
+  toggle controls, open popups) run the application's own handlers, whose
+  effects are real, so they run only when asked with `act`, which needs
+  the `input` capability; without it the answer names the codes they
+  would have checked.
 
   Background:
     Given the QML:
@@ -76,3 +80,23 @@ Feature: An agent audits the design of the running application
       {"rules": ["layout-nowhere"]}
       """
     Then the agent is refused with "invalid_argument"
+
+  Scenario: The checks that act are left out unless asked, and named
+    When the agent calls the tool "app_audit"
+    Then the answer's "/notChecked" has 12 entries
+    And the answer's "/notChecked/0" is "color-state-only"
+
+  Scenario: Acting on the application needs the input capability
+    When the agent calls the tool "app_audit" with:
+      """json
+      {"act": true}
+      """
+    Then the agent is refused with "capability_denied"
+
+  Scenario: Asked to act, with input granted, every rule is checked
+    Given the inspector is connected with the capabilities "inspect,input"
+    When the agent calls the tool "app_audit" with:
+      """json
+      {"act": true}
+      """
+    Then the answer's "/notChecked" has 0 entries

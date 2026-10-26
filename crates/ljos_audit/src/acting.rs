@@ -171,6 +171,9 @@ pub(crate) fn run(
     now: Time,
     options: &Options,
 ) -> (Vec<Finding>, Time) {
+    if !options.act {
+        return (Vec::new(), now);
+    }
     let mut act = Act {
         engine,
         scene,

@@ -191,6 +191,9 @@ fn run(source: &str, point: Option<MatrixPoint>) -> Result<Report, String> {
     let options = Options {
         matrix: point.map_or(Matrix::Current, |p| Matrix::Points(vec![p])),
         before: Some(Arc::new(before)),
+        // A fixture is the test's own scene; the acting checks have
+        // fixtures of their own.
+        act: true,
         ..Options::desktop()
     };
     Ok(audit(&e, &mut s, clock.now(), &options))

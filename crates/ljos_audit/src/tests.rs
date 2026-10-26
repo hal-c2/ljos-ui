@@ -1227,3 +1227,63 @@ fn what_a_later_point_starts_runs_on_from_where_the_checks_left_the_clock() {
         "the bar grew while the scheme was dark: {grown}"
     );
 }
+
+/// Not let act, the audit runs none of the application's handlers, and
+/// the report says which codes that left unchecked instead of finding
+/// nothing of them.
+#[test]
+fn an_audit_not_let_act_runs_no_handler_and_says_what_it_did_not_check() {
+    let e = engine();
+    let mut s = mount(
+        &e,
+        &page(
+            "    property int ran: 0\n    \
+             CheckBox { x: 20; y: 20; text: \"Sync\"; onCheckedChanged: root.ran++ }",
+        ),
+    );
+    let root = s.root().unwrap();
+    let ran = || e.read_by_name(root, "ran").to_number();
+    let options = Options {
+        act: false,
+        ..Options::desktop()
+    };
+    let report = audit(&e, &mut s, Time::ZERO, &options);
+    assert_eq!(ran(), 0.0, "a handler ran");
+    assert!(
+        report
+            .not_checked
+            .iter()
+            .all(|c| !report.codes().contains(c)),
+        "\n{report}"
+    );
+    let mut acting: Vec<&str> = crate::rules::ACTS
+        .iter()
+        .flat_map(|c| c.codes.iter().copied())
+        .collect();
+    acting.sort_unstable();
+    assert_eq!(report.not_checked, acting);
+    assert!(
+        report.by_rule("").contains("Not checked: "),
+        "{}",
+        report.by_rule("")
+    );
+    assert_eq!(
+        report.json()["notChecked"].as_array().map(Vec::len),
+        Some(acting.len())
+    );
+
+    let only = Options {
+        act: false,
+        ..Options::desktop()
+            .only(&["motion-duration", "a11y-unnamed-interactive"])
+            .unwrap()
+    };
+    assert_eq!(
+        audit(&e, &mut s, Time::ZERO, &only).not_checked,
+        ["motion-duration"]
+    );
+
+    let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    assert!(ran() > 0.0, "the acting checks toggled the box");
+    assert!(report.not_checked.is_empty());
+}

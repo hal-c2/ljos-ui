@@ -21,9 +21,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub const AUDIT: &str = "\
-The design audit on what the app shows: off-window, covered, cut or faint text, small targets, \
-popups that do not fit, unnamed controls. Each finding: rule, fix, guide, role, name, locator, \
-file:line, bounds, measure. `matrix`: `current`, `full` or points; all is put back.";
+The design audit of what the app shows: off-window, covered, cut or faint text, small targets, \
+popups that do not fit, unnamed controls. Each finding: rule, fix, role, locator, file:line, \
+bounds. `matrix`: current, full or points; all is put back. `act`: also press and toggle, \
+running app handlers.";
 
 /// The most findings an answer lists unless told otherwise.
 const DEFAULT_MAX: usize = 100;
@@ -57,6 +58,12 @@ pub struct AuditArgs {
     /// says how many more there were.
     #[serde(default)]
     pub max_findings: Option<usize>,
+    /// Also run the checks that act (focus each stop, press Escape,
+    /// toggle controls, open popups): they run the application's own
+    /// handlers, whose effects are real. Needs the `input` capability.
+    /// Off, the answer's `notChecked` names the codes left out.
+    #[serde(default)]
+    pub act: bool,
 }
 
 impl AuditArgs {
@@ -81,6 +88,9 @@ impl AuditArgs {
         let options = Options {
             matrix,
             max_findings: Some(max.min(MOST)),
+            // A running application's handlers do real things: acting is
+            // its user's to ask for.
+            act: self.act,
             ..base
         };
         options.only(&self.rules).map_err(|e| bad(format!("{e}")))

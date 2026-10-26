@@ -44,6 +44,16 @@ pub struct Audit {
     /// At most this many findings.
     #[arg(long, value_name = "N")]
     max_findings: Option<usize>,
+    /// Also run the checks that act: focus each stop, press Escape,
+    /// toggle controls and open popups, which runs the file's own
+    /// handlers. On by default, since the file runs in an engine and a
+    /// home of the audit's own; `--act=false` when its handlers reach
+    /// out (files, the network) and must not run.
+    // DECISION: on here, unlike `app_audit` on a running application,
+    // because nothing the handlers change outlives this run but what
+    // they send or write outside it.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set, value_name = "BOOL")]
+    act: bool,
     /// A gallery example id whose native backends to register, as for
     /// `ljos render --example`.
     #[arg(long, value_name = "ID")]
@@ -71,6 +81,7 @@ impl Audit {
         };
         options.matrix = self.matrix.clone();
         options.max_findings = self.max_findings;
+        options.act = self.act;
         let options = options.only(&self.rules)?;
 
         let file = self

@@ -938,10 +938,15 @@
     "read_only": true
   },
   {
-    "description": "The design audit on what the app shows: off-window, covered, cut or faint text, small targets, popups that do not fit, unnamed controls. Each finding: rule, fix, guide, role, name, locator, file:line, bounds, measure. `matrix`: `current`, `full` or points; all is put back.",
+    "description": "The design audit of what the app shows: off-window, covered, cut or faint text, small targets, popups that do not fit, unnamed controls. Each finding: rule, fix, role, locator, file:line, bounds. `matrix`: current, full or points; all is put back. `act`: also press and toggle, running app handlers.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
+        "act": {
+          "default": false,
+          "description": "Also run the checks that act (focus each stop, press Escape,\ntoggle controls, open popups): they run the application's own\nhandlers, whose effects are real. Needs the `input` capability.\nOff, the answer's `notChecked` names the codes left out.",
+          "type": "boolean"
+        },
         "matrix": {
           "default": null,
           "description": "The settings to audit under: `current` (the app as it is, the\ndefault), `full` (also light and dark at normal and high contrast,\nlarger text and the small window), or points separated by `;`,\neach `scheme=light|dark contrast=normal|high font-scale=<n>\nsize=<w>x<h>|small reduced-motion=true|false`.",

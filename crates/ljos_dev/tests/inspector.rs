@@ -2813,6 +2813,50 @@ Rectangle {
     );
 }
 
+/// A running application's handlers do real things: the audit acts on it
+/// only when asked, and only for a client that may give it input.
+#[test]
+fn app_audit_acts_only_when_asked_and_input_is_granted() {
+    const COUNTS: &str = r##"import QtQuick
+Rectangle {
+    id: root
+    width: 400; height: 400
+    property int ran: 0
+    Rectangle {
+        width: 80; height: 30
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button; Accessible.name: "Go"
+        onActiveFocusChanged: root.ran++
+    }
+}
+"##;
+    let ran = |app: &App| app.engine.read_by_name(app.root, "ran").to_number();
+
+    let mut app = app_with(COUNTS, InspectorConfig::default());
+    let reply = app.call("app_audit", json!({}));
+    assert_eq!(ran(&app), 0.0, "a handler ran");
+    let left = reply.structured["notChecked"].as_array().unwrap();
+    assert!(
+        left.iter().any(|c| c == "focus-indicator-missing"),
+        "{}",
+        reply.structured
+    );
+    assert!(reply.text.contains("Not checked: "), "{}", reply.text);
+    let (code, message, _) = app.refused("app_audit", json!({ "act": true }));
+    assert_eq!(code, "capability_denied", "{message}");
+    assert!(message.contains("`input`"), "{message}");
+    assert_eq!(ran(&app), 0.0);
+
+    let mut app = app_granted(
+        COUNTS,
+        InspectorConfig::default(),
+        CapSet::of([Cap::Inspect, Cap::Input]),
+    );
+    let reply = app.call("app_audit", json!({ "act": true }));
+    assert!(ran(&app) > 0.0, "the acting checks focused the button");
+    assert_eq!(reply.structured["notChecked"], json!([]));
+}
+
 #[test]
 fn app_audit_can_keep_to_one_item_and_refuses_an_unknown_rule() {
     let mut app = app();

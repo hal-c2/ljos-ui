@@ -2036,6 +2036,9 @@ impl Probes for LjosBackend {
                 .parse()
                 .map_err(|e| failed(format!("{e}")))?,
             before: live.rest.clone(),
+            // The scenario's application is the test's own: acting on it
+            // is what the acting checks' scenarios are about.
+            act: true,
             ..ljos_audit::Options::desktop()
         };
         live.settle()?;
