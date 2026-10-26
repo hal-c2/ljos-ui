@@ -26,7 +26,8 @@ use std::rc::Rc;
 
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, CreationHandle, CreationJob, Cx, Engine, EngineError,
-    FaultReport, LogLevel, ObjectId, PropIndex, QmlObject, Url, Value, WriteKind, qml_impl,
+    FaultReport, Interception, LogLevel, ObjectId, PropIndex, QmlObject, Url, Value, WriteKind,
+    qml_impl,
 };
 use ljos_runtime::{Fault, Intensity, Lane, Restart};
 
@@ -107,6 +108,9 @@ struct Run {
     generation: u64,
     /// The item whose `Component.onDestruction` is running.
     leaving: Option<ObjectId>,
+    /// The `active` the Loader last followed, which a written one is
+    /// followed before it is stored.
+    active: Option<bool>,
 }
 
 #[qml_impl]
@@ -137,7 +141,36 @@ impl Loader {
             }
             reload(e, me, false);
         })?;
-        e.watch(me, Loader::ACTIVE.index, move |e, _| reload(e, me, false))?;
+        // A written or bound `active` is loaded or unloaded before its
+        // change is told (qml6); the watch sees what else reaches it.
+        e.set_interceptor(
+            me,
+            Loader::ACTIVE.index,
+            Some(Rc::new(move |e, v, how| {
+                let on = v.to_boolean();
+                match how {
+                    Interception::Write => {
+                        turned(e, me, on);
+                        let _ = e.write_internal(
+                            me,
+                            Loader::ACTIVE.index,
+                            on.into(),
+                            WriteKind::Imperative,
+                        );
+                    }
+                    // The binding stays; what it gave goes in once it has.
+                    Interception::Binding => e.after_binding(move |e| {
+                        turned(e, me, on);
+                        let _ =
+                            e.write_internal(me, Loader::ACTIVE.index, on.into(), WriteKind::Host);
+                    }),
+                }
+                true
+            })),
+        );
+        e.watch(me, Loader::ACTIVE.index, move |e, v| {
+            turned(e, me, v.to_boolean())
+        })?;
         e.watch(me, Loader::ASYNCHRONOUS.index, move |e, v| {
             // As Qt documents: switching it off while loading finishes the
             // load at once.
@@ -153,7 +186,11 @@ impl Loader {
                 }
             }
         })?;
-        with_run(e, me, |r| r.completed = true);
+        let active = e.untrack(|| e.read(me, Loader::ACTIVE.index).to_boolean());
+        with_run(e, me, |r| {
+            r.completed = true;
+            r.active = Some(active);
+        });
         reload(e, me, false);
         Ok(())
     }
@@ -277,6 +314,26 @@ pub(crate) fn note_child(e: &Engine, parent: ObjectId, child: ObjectId) {
     }
 }
 
+/// Follows `active` turned `on`, once for each change.
+fn turned(e: &Engine, me: ObjectId, on: bool) {
+    let was = with_run(e, me, |r| r.active.replace(on)).flatten();
+    if was.is_none_or(|w| w == on) {
+        return;
+    }
+    reload(e, me, false);
+    // Turned on with nothing to load, it still tells that its progress
+    // and its item changed (qml6).
+    if on && with_run(e, me, |r| r.origin.is_none()) == Some(true) {
+        let progress = e.untrack(|| e.read(me, Loader::PROGRESS.index).to_number());
+        if progress == 0.0 {
+            let _ = e.notify(me, Loader::PROGRESS.index);
+        } else {
+            set(e, me, Loader::PROGRESS.index, 0.0.into());
+        }
+        let _ = e.notify(me, Loader::ITEM.index);
+    }
+}
+
 /// Brings the Loader in step with `active`, `source` and
 /// `sourceComponent`. `force` loads again even when the origin is the one
 /// already loaded.
@@ -286,7 +343,9 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
     }
     let (active, component, source, asynchronous) = e.untrack(|| {
         (
-            e.read(me, Loader::ACTIVE.index).to_boolean(),
+            with_run(e, me, |r| r.active)
+                .flatten()
+                .unwrap_or_else(|| e.read(me, Loader::ACTIVE.index).to_boolean()),
             e.read(me, Loader::SOURCE_COMPONENT.index).as_object(),
             e.read(me, Loader::SOURCE.index).to_js_string(),
             e.read(me, Loader::ASYNCHRONOUS.index).to_boolean(),
@@ -341,7 +400,13 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
         drop_old(e, me, old);
         return;
     };
-    clear_item_quietly(e, me);
+    // An asynchronous Loader tells the empty item while the next one is
+    // made; a synchronous one goes from the old item straight to the new.
+    if asynchronous {
+        set(e, me, Loader::ITEM.index, Value::Null);
+    } else {
+        clear_item_quietly(e, me);
+    }
     drop_old(e, me, old);
     if !is_current(e, me, generation) {
         return;
@@ -351,6 +416,8 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
         start_job(e, me, generation, &origin, props);
         return;
     }
+    // Made at once, the new item takes the old one's place with no empty
+    // item told between (qml6).
     let made = match &origin {
         Origin::Url(url) => e.create_from_url(&e.resolve_url(me, url), Some(me), props),
         Origin::Component(c) => e.component_create(*c, Some(me), props),
@@ -431,6 +498,7 @@ fn finish(e: &Engine, me: ObjectId, generation: u64, made: Result<ObjectId, Engi
         Err(err) => {
             warn(e, err.to_string());
             set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
+            set(e, me, Loader::ITEM.index, Value::Null);
             set(e, me, Loader::PROGRESS.index, 1.0.into());
         }
     }

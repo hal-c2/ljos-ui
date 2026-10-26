@@ -1,12 +1,12 @@
 # Buckets of ljos-fuzz loaders that are known: as known/bindings.txt, one per line, the
 # signature then why.
-# Triaged from seeds 101 and 202 (2000 cases each).
+# Triaged from seeds 101, 202 and 303 (2000 cases each).
 
-# The order a Loader tells of its object (features/components/loader-lifetime-order.feature).
-value:onCompleted:text      a Loader turned off tells of its item and status before it is inactive (loader-lifetime-order.feature)
-value:onChanged+onCompleted:text      a Loader turned off tells of its item and status before it is inactive (loader-lifetime-order.feature)
-value:log:empty-ljos      a Loader with nothing to load tells that its item changed when turned on (loader-lifetime-order.feature)
 throws:Error/none:call      a script writing a property an object does not have is thrown an Error (features/language/assign-non-existent-property.feature)
+
+# The handlers of the bindings made while the objects are made run once all are made, in the order
+# the handlers were made, not as each binding is (features/bindings/creation-order.feature, backlog).
+value:log:text      the change handlers of the first bindings run root first, not children first and the last child first (features/bindings/creation-order.feature)
 
 # Qt's own bug, which Ljós is not to copy: "".indexOf("") is -1 in Qt, where ECMAScript has 0
 # ("ab".indexOf("") and "".lastIndexOf("") are 0 in both).
