@@ -30,6 +30,8 @@ Feature: The shortcut of an Action
           objectName: "s"; shortcut: StandardKey.Copy
           onTriggered: root.log += "s "
         }
+        Action { objectName: "later"; onTriggered: root.log += "later " }
+        Action { objectName: "blank"; shortcut: ""; onTriggered: root.log += "blank " }
       }
       """
 
@@ -58,3 +60,21 @@ Feature: The shortcut of an Action
   Scenario: A standard key is a shortcut
     When the user presses "Ctrl+C"
     Then the property "log" of "root" is "s "
+
+  Scenario: An action given a shortcut later is triggered by it
+    When the property "shortcut" of "later" is set to "Ctrl+M"
+    And the user presses "Ctrl+M"
+    Then the property "log" of "root" is "later "
+
+  Scenario: A blank shortcut is none until a sequence is given
+    When the property "shortcut" of "blank" is set to "Ctrl+B"
+    And the user presses "Ctrl+B"
+    Then the property "log" of "root" is "blank "
+
+  Scenario: An action given another's shortcut later makes it ambiguous
+    When the property "shortcut" of "later" is set to "Ctrl+K"
+    And the user presses "Ctrl+K"
+    Then the property "log" of "root" is ""
+    When the property "shortcut" of "later" is set to ""
+    And the user presses "Ctrl+K"
+    Then the property "log" of "root" is "self "

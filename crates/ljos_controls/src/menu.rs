@@ -887,6 +887,8 @@ fn take(
     // The item of an action or of a menu was the menu's own.
     if kind != Kind::Item && entry.is_some_and(|en| en.made_for.is_some()) {
         e.destroy(item);
+    } else if kind == Kind::Item {
+        crate::button::left_menu(e, item);
     }
     changed(e, menu)?;
     Ok(Value::Object(taken))

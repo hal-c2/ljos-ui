@@ -6,7 +6,7 @@
 //! `action-group.feature`.
 //!
 //! A `shortcut` is a `Shortcut` (QtQuick) the action owns, made the first
-//! time the action has one, so that an action without a shortcut costs
+//! time the action has a sequence, so that an action without one costs
 //! the key handling nothing.
 
 use std::cell::Cell;
@@ -99,12 +99,8 @@ impl Action {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, this) = (cx.engine, cx.this);
         let made = Rc::new(Cell::new(false));
-        let wanted = move |e: &Engine| {
-            !matches!(
-                e.untrack(|| e.read(this, Action::SHORTCUT.index)),
-                Value::Undefined
-            )
-        };
+        let wanted =
+            move |e: &Engine| has_sequence(&e.untrack(|| e.read(this, Action::SHORTCUT.index)));
         if wanted(e) {
             made.set(true);
             make_shortcut(e, this)?;
@@ -130,6 +126,17 @@ impl Action {
         let on = e.untrack(|| cx.get(Action::CHECKED))?;
         cx.set(Action::CHECKED, !on)?;
         e.emit_by_name(cx.this, "toggled", &[source_of(&source)])
+    }
+}
+
+/// Whether `shortcut` names keys: a text that is not blank, or a standard
+/// key. An action declared with `shortcut: ""` or `null`, as a menu's or
+/// a toolbar's often is until it is given one, makes no `Shortcut` yet.
+fn has_sequence(shortcut: &Value) -> bool {
+    match shortcut {
+        Value::String(s) => !s.trim().is_empty(),
+        Value::Int(_) | Value::Real(_) | Value::Enum(_) => true,
+        _ => false,
     }
 }
 

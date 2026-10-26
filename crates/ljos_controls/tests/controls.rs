@@ -645,6 +645,46 @@ fn a_button_without_a_mnemonic_has_no_shortcut() {
     assert!(marked - plain >= 3.0, "plain {plain}, marked {marked}");
 }
 
+/// An action makes its `Shortcut` with the first sequence it is given
+/// (`features/controls/action-shortcut.feature`); a blank or null one is
+/// none.
+#[test]
+fn an_action_without_a_sequence_has_no_shortcut() {
+    let none = nodes_each("Item { Action {} }");
+    let keyed = nodes_each(r#"Item { Action { shortcut: "Ctrl+K" } }"#);
+    assert!(keyed - none >= 3.0, "none {none}, keyed {keyed}");
+    for decl in [
+        r#"Item { Action { shortcut: "" } }"#,
+        "Item { Action { shortcut: null } }",
+    ] {
+        let blank = nodes_each(decl);
+        assert!(blank - none < 1.0, "{decl}: {blank}, none {none}");
+    }
+}
+
+/// The letters of a menu's rows are the menu's: a row with a mnemonic
+/// makes no `Shortcut` of its own. Its marker costs what it costs a row
+/// outside a menu, less the `Shortcut` (2 nodes against 6).
+#[test]
+fn a_row_of_a_menu_has_no_mnemonic_shortcut() {
+    let mark = |menu: bool| {
+        let row = |text: &str| {
+            let item = format!(r#"MenuItem {{ text: "{text}" }}"#);
+            if menu {
+                nodes_each(&format!("Item {{ Menu {{ {item} }} }}"))
+            } else {
+                nodes_each(&format!("Item {{ {item} }}"))
+            }
+        };
+        row("&Open") - row("Open")
+    };
+    let (inside, outside) = (mark(true), mark(false));
+    assert!(
+        inside + 3.0 <= outside,
+        "in a menu {inside}, outside {outside}"
+    );
+}
+
 /// Makes `rows` buttons one at a time, each with a colour of its own, as
 /// a view does as it scrolls, and returns the effects that ran.
 fn coloured_rows(rows: usize) -> u64 {
