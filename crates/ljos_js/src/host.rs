@@ -225,8 +225,13 @@ struct Held {
 /// The JS side of one [`ValueKind`].
 struct KindFace {
     make: Persistent<Function<'static>>,
-    /// What tells a value of the kind from any other object.
+    /// The prototype of every value of the kind, held so that its address
+    /// stays its own.
+    #[allow(dead_code, reason = "held for `proto_at`")]
     proto: Persistent<Object<'static>>,
+    /// The address of `proto`: what tells a value of the kind from any
+    /// other object, without a lookup in JS.
+    proto_at: usize,
     /// Shared, so that reading a value does not copy the names.
     fields: Rc<[String]>,
     /// `Object.isFrozen`, as it was when the kind was defined.
@@ -242,10 +247,6 @@ struct KindFace {
 
 /// How many values of a kind [`KindFace::recent`] keeps.
 const RECENT_VALUES: usize = 4;
-
-/// The property of a kind's prototype that holds the kind's number. It only
-/// finds the candidate; the prototype itself is what is trusted.
-const KIND_MARK: &str = "__ljos_kind";
 
 /// Finds the wrapper of a script-owned object while a script still holds
 /// it, so the object is one object to the script however often it crosses.
@@ -280,6 +281,8 @@ struct ColorFace {
     make: Persistent<Function<'static>>,
     /// What tells a colour from any other object coming back from JS.
     proto: Persistent<Object<'static>>,
+    /// The address of `proto`, as [`KindFace::proto_at`].
+    proto_at: usize,
 }
 
 impl HostState {
@@ -746,8 +749,9 @@ impl<'js> Scope<'js> {
         let Some(o) = v.as_object() else {
             return Ok(Vec::new());
         };
-        let mut out = Vec::new();
-        for kv in o.props::<String, Value>() {
+        let props = o.props::<String, Value>();
+        let mut out = Vec::with_capacity(props.size_hint().0);
+        for kv in props {
             let (k, v) = kv?;
             out.push((k, self.from_value(&v)?));
         }
@@ -1098,28 +1102,25 @@ impl<'js> Scope<'js> {
         })
     }
 
-    /// The fields of `o` when it is a value of a defined kind.
-    fn read_typed(&self, o: &Object<'js>, depth: u32) -> rquickjs::Result<Option<JsValue>> {
-        if self.state.kinds.borrow().is_empty() {
-            return Ok(None);
-        }
-        let Some(proto) = o.get_prototype() else {
-            return Ok(None);
-        };
-        let Some(index) = proto.get::<_, Value<'js>>(KIND_MARK)?.as_int() else {
-            return Ok(None);
-        };
-        let known = usize::try_from(index).ok().and_then(|i| {
+    /// The fields of `o`, whose prototype is at `proto_at`, when it is a
+    /// value of a defined kind.
+    fn read_typed(
+        &self,
+        o: &Object<'js>,
+        proto_at: usize,
+        depth: u32,
+    ) -> rquickjs::Result<Option<JsValue>> {
+        let known = {
             let kinds = self.state.kinds.borrow();
-            kinds.get(i).map(|k| (k.proto.clone(), k.fields.clone()))
-        });
-        let Some((kind_proto, names)) = known else {
+            kinds
+                .iter()
+                .rposition(|k| k.proto_at == proto_at)
+                .map(|i| (i, kinds[i].fields.clone()))
+        };
+        let Some((index, names)) = known else {
             return Ok(None);
         };
-        if kind_proto.restore(&self.ctx)? != proto {
-            return Ok(None);
-        }
-        if let Some(fields) = self.recent_fields(index as usize, o)? {
+        if let Some(fields) = self.recent_fields(index, o)? {
             return Ok(Some(JsValue::Typed(ValueKind(index as u32), fields)));
         }
         let mut fields = Vec::with_capacity(names.len());
@@ -1132,7 +1133,7 @@ impl<'js> Scope<'js> {
             }
             fields.push(self.read_value_at(&v, depth + 1)?);
         }
-        self.keep_typed(index as usize, o, &fields)?;
+        self.keep_typed(index, o, &fields)?;
         Ok(Some(JsValue::Typed(ValueKind(index as u32), fields)))
     }
 
@@ -1229,17 +1230,14 @@ impl<'js> Scope<'js> {
         *self.state.color.borrow_mut() = Some(ColorFace {
             make: Persistent::save(&self.ctx, make.clone()),
             proto: Persistent::save(&self.ctx, proto.clone()),
+            proto_at: object_address(proto.as_value()).expect("an object"),
         });
         Ok((make, proto))
     }
 
-    /// `o` when it is a colour object.
-    fn read_color(&self, o: &Object<'js>) -> rquickjs::Result<Option<JsValue>> {
-        let proto = self.state.color.borrow().as_ref().map(|f| f.proto.clone());
-        let Some(proto) = proto else {
-            return Ok(None);
-        };
-        if o.get_prototype() != Some(proto.restore(&self.ctx)?) {
+    /// `o`, whose prototype is at `proto_at`, when it is a colour object.
+    fn read_color(&self, o: &Object<'js>, proto_at: usize) -> rquickjs::Result<Option<JsValue>> {
+        if self.state.color.borrow().as_ref().map(|f| f.proto_at) != Some(proto_at) {
             return Ok(None);
         }
         let mut out = [0u16; 4];
@@ -1257,6 +1255,19 @@ impl<'js> Scope<'js> {
         } else {
             JsValue::InvalidColor(out)
         }))
+    }
+
+    /// `o` when its prototype makes it a colour or a value of a defined
+    /// kind. The prototype is compared by address: an object made by a
+    /// literal is told from those without asking JS anything.
+    fn read_by_prototype(&self, o: &Object<'js>, depth: u32) -> rquickjs::Result<Option<JsValue>> {
+        let Some(proto_at) = o.get_prototype().and_then(|p| object_address(p.as_value())) else {
+            return Ok(None);
+        };
+        if let Some(c) = self.read_color(o, proto_at)? {
+            return Ok(Some(c));
+        }
+        self.read_typed(o, proto_at, depth)
     }
 
     /// A JS value for Rust. An array is copied, entry by entry.
@@ -1322,12 +1333,9 @@ impl<'js> Scope<'js> {
                     Some(id) => JsValue::Object(id),
                     None => match self.live_list_of(v) {
                         Some(list) => list,
-                        None => match self.read_color(o)? {
-                            Some(c) => c,
-                            None => match self.read_typed(o, depth)? {
-                                Some(typed) => typed,
-                                None => JsValue::Handle(self.keep(v.clone())),
-                            },
+                        None => match self.read_by_prototype(o, depth)? {
+                            Some(read) => read,
+                            None => JsValue::Handle(self.keep(v.clone())),
                         },
                     },
                 }
@@ -1835,10 +1843,11 @@ impl JsHost {
             let object: Object = scope.ctx.globals().get("Object")?;
             let is_frozen: Function = object.get("isFrozen")?;
             let index = scope.state.kinds.borrow().len() as u32;
-            proto.prop(KIND_MARK, Property::from(index as i32))?;
+            let proto_at = object_address(proto.as_value()).expect("an object");
             scope.state.kinds.borrow_mut().push(KindFace {
                 make: Persistent::save(&scope.ctx, make),
                 proto: Persistent::save(&scope.ctx, proto),
+                proto_at,
                 fields,
                 is_frozen: Persistent::save(&scope.ctx, is_frozen),
                 recent: RefCell::default(),
