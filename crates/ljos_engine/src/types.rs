@@ -402,7 +402,8 @@ impl TypeTag {
                 })),
                 Value::Font(_) => v.clone(),
                 // A text is the family of a font that is otherwise the
-                // default one.
+                // default one; an empty text is no font (qml6).
+                Value::String(s) if s.is_empty() => return fail(),
                 Value::String(s) => Value::Font(Arc::new(Font {
                     family: s.clone(),
                     ..Font::default()

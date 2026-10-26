@@ -280,6 +280,36 @@ Feature: A value a binding gives a property of another type
     Then the property "family" of "root" is "a"
     And the log has no warning matching "assign"
 
+  # Seed 202, bucket warning:assign(qt-only):Unable_to_assign_QString_to_QFont.
+  Scenario: A font bound to empty text keeps what it had, and says it cannot take it
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string t: "a"
+        property font f: t
+        function run() { t = "" }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "f.family" of "root" is "a"
+    And the log has 1 warning matching "Scenario.qml:5:\d+: Unable to assign QString to QFont$"
+
+  Scenario: A script that gives a font empty text is thrown an error, and the font is unchanged
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property font f: Qt.font({family: "Serif", pixelSize: 20})
+        property string seen
+        function run() { try { f = "" } catch (e) { seen = e.message }; seen += "/" + f.family + "/" + f.pixelSize }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "seen" of "root" is "Cannot assign QString to QFont/Serif/20"
+
   # Bucket warning:assign(ljos-only):Unable_to_assign_QColor_to_size.
   Scenario: A size given a colour is invalid and not warned about
     Given the QML:
