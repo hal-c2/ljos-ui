@@ -207,12 +207,19 @@ pub(crate) struct PendingOp {
     /// moved. Of a removal there are none left to key.
     pub target_keys: FxHashSet<RowKey>,
     /// Their indexes as `ViewTransition.targetIndexes` reads them: where
-    /// they are after an insertion or a move, where they were before a
-    /// removal.
+    /// they are after an insertion or a move; of a removal, where each was
+    /// once the rows gone before it in the model were, from the last.
     pub target_indexes: Vec<i32>,
     /// Their delegates, when there are any: of a removal, the ones that
     /// are leaving; of the rest, the pass fills this in.
     pub target_items: Vec<ObjectId>,
+    /// Of a removal, the runs of rows gone (first, count), numbered as
+    /// the model had its rows before the first of them went: what the
+    /// indexes above are worked out from.
+    pub gone_runs: Vec<(usize, usize)>,
+    /// Of a removal, the delegates that left by the row they had then,
+    /// for the items above.
+    pub gone_items: Vec<(usize, ObjectId)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
