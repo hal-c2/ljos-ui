@@ -541,7 +541,7 @@ impl DesktopBackend {
             .current_dir(&home)
             .arg("observe")
             .arg(&target)
-            .arg("--mcp=inspect")
+            .arg("--mcp=inspect,input")
             .env_remove("DISPLAY")
             .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
             .env_remove("AT_SPI_BUS_ADDRESS")
@@ -934,6 +934,18 @@ impl Probes for DesktopBackend {
         self.observer = None;
         self.observer = Some(self.start_observer()?);
         Ok(())
+    }
+
+    fn observer_call(&mut self, tool: &str, arguments: Value) -> Result<Value> {
+        let observer = self
+            .observer
+            .as_mut()
+            .ok_or_else(|| BackendError::Failed("the application is not observed".into()))?;
+        let answer = observer.ask(tool, arguments)?;
+        // What the call woke is done before the next step looks.
+        observer.settle()?;
+        self.running()?.settle()?;
+        Ok(answer)
     }
 
     fn count_work(&mut self) -> Result<()> {

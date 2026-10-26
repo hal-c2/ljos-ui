@@ -59,7 +59,7 @@ ApplicationWindow {
         readonly property color text: window.dark ? "#e4e7ec" : "#1b1e23"
         readonly property color subtle: window.dark ? "#8f97a4" : "#636a75"
         readonly property color rule: window.dark ? "#2e333c" : "#dfe2e7"
-        readonly property color accent: window.dark ? "#78a9ff" : "#2c6bd9"
+        readonly property color accent: window.dark ? "#78a9ff" : "#1f55b8"
         readonly property color accentSoft: Qt.rgba(accent.r, accent.g, accent.b, window.dark ? 0.22 : 0.12)
         readonly property color good: window.dark ? "#4cc27c" : "#2f9e5c"
         readonly property color warn: window.dark ? "#f0b44c" : "#c98a12"
@@ -166,6 +166,12 @@ ApplicationWindow {
             hot.show(s)
         else if (route === "growth" && ok)
             growth.show(s)
+        else if (route === "audit")
+            audit.show(ok, s, r)
+        else if (route === "audit-status" && ok)
+            audit.showStatus(s)
+        else if (route === "audit-shot")
+            audit.showPicture(ok, r)
         else if (route === "export")
             timeline.saved(ok, s)
         else if (route.indexOf("sample-") === 0 && ok)
@@ -194,7 +200,7 @@ ApplicationWindow {
             }
             // A picture that cannot be taken is said where the picture
             // would be.
-            if (route !== "watch" && route !== "picture")
+            if (route !== "watch" && route !== "picture" && route !== "audit-shot")
                 status.text = ok ? "" : tool + ": " + window.refusal(result)
             window.answered(route || "", ok, ok ? JSON.parse(result) : result)
         }
@@ -203,7 +209,7 @@ ApplicationWindow {
     // The page shown.
     readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace",
                                    "Supervision", "Frames", "Memory", "Models", "Wakes", "Components",
-                                   "Bindings", "Growth"]
+                                   "Bindings", "Growth", "Audit"]
     property int page: 0
     onPageChanged: watcher.start()
 
@@ -6142,6 +6148,476 @@ ApplicationWindow {
                             text: growth.recording ? "No component has instances yet"
                                                    : "Press Record, then repeat an action or let the application rest"
                             color: theme.subtle
+                        }
+                    }
+                }
+
+                // ----- Audit -------------------------------------------
+                // The design audit of what the application shows
+                // (`app_audit`), run when Run audit is pressed and never
+                // otherwise: it lays the scene out again at each point of
+                // the matrix, which is not work to do on every change. The
+                // findings are grouped by rule, the worst first. The
+                // inspector has no way to draw in the application, and
+                // this window adds none: the box that marks a finding is
+                // drawn here, on a picture of the window the inspector
+                // gave, from the bounds the finding has.
+                ColumnLayout {
+                    id: audit
+                    spacing: 10
+                    property bool running: false
+                    property bool asked: false
+                    property string matrix: "current"
+                    // The area whose rules are audited; empty is all.
+                    property string area: ""
+                    property bool touch: false
+                    property var report: null
+                    property var rows: []
+                    property int picked: -1
+                    property string note: ""
+                    property string picture: ""
+                    property string pictureNote: ""
+                    // The window's size in logical pixels, which the
+                    // finding's bounds are in.
+                    property real winWidth: 0
+                    property real winHeight: 0
+                    // From the rules' table, not a list kept here.
+                    readonly property var areaNames: ["All areas"].concat(client.auditAreas().split(","))
+                    readonly property var finding: report && picked >= 0 ? report.findings[picked] : null
+                    readonly property var order: ({ error: 0, warning: 1, hint: 2 })
+
+                    function run() {
+                        running = true
+                        asked = true
+                        note = ""
+                        picked = -1
+                        picture = ""
+                        pictureNote = ""
+                        var args = { matrix: matrix, touch: touch, max_findings: 500 }
+                        if (area !== "")
+                            args.rules = [area]
+                        window.ask("app_audit", args, "audit")
+                        window.ask("app_status", {}, "audit-status")
+                    }
+
+                    // The rules in the findings, the worst first, each
+                    // over its findings: a flat list for the view, a
+                    // header row and a row a finding.
+                    function group(findings) {
+                        var codes = []
+                        var byCode = {}
+                        for (var i = 0; i < findings.length; ++i) {
+                            var f = findings[i]
+                            if (!byCode[f.code]) {
+                                byCode[f.code] = []
+                                codes.push(f.code)
+                            }
+                            byCode[f.code].push(i)
+                        }
+                        codes.sort(function(a, b) {
+                            var d = order[findings[byCode[a][0]].severity] - order[findings[byCode[b][0]].severity]
+                            return d !== 0 ? d : (a < b ? -1 : a > b ? 1 : 0)
+                        })
+                        var out = []
+                        for (var c = 0; c < codes.length; ++c) {
+                            var first = findings[byCode[codes[c]][0]]
+                            out.push({ kind: "rule", code: codes[c], severity: first.severity,
+                                       area: first.area, count: byCode[codes[c]].length })
+                            for (var k = 0; k < byCode[codes[c]].length; ++k)
+                                out.push({ kind: "finding", code: codes[c], index: byCode[codes[c]][k] })
+                        }
+                        return out
+                    }
+
+                    function show(ok, s, r) {
+                        running = false
+                        if (!ok) {
+                            note = window.refusal(r)
+                            report = null
+                            rows = []
+                            return
+                        }
+                        report = s
+                        rows = group(s.findings)
+                    }
+
+                    function showStatus(s) {
+                        if (s.windows && s.windows.length > 0) {
+                            winWidth = s.windows[0].width
+                            winHeight = s.windows[0].height
+                        }
+                    }
+
+                    function select(i) {
+                        picked = i
+                        if (picture === "" && report && report.findings[i].bounds) {
+                            pictureNote = ""
+                            window.ask("app_screenshot", { max_size: 1280 }, "audit-shot")
+                        }
+                    }
+
+                    function showPicture(ok, r) {
+                        pictureNote = ok ? "" : window.refusal(r)
+                        if (!ok)
+                            return
+                        for (var i = 0; i < r.content.length; ++i)
+                            if (r.content[i].type === "image")
+                                picture = "data:" + r.content[i].mimeType + ";base64," + r.content[i].data
+                    }
+
+                    // What the report says in a line.
+                    function summary() {
+                        if (running)
+                            return "Auditing…"
+                        if (note !== "")
+                            return note
+                        if (report === null)
+                            return "Not run"
+                        var c = report.counts
+                        return c.error + (c.error === 1 ? " error" : " errors") + ", "
+                               + c.warning + (c.warning === 1 ? " warning" : " warnings") + ", "
+                               + c.hint + (c.hint === 1 ? " hint" : " hints")
+                               + " at " + report.points.join("; ")
+                               + (report.leftOut > 0 ? ", " + report.leftOut + " more left out" : "")
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Text { text: "Audit"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
+                            Accessible.role: Accessible.StaticText
+                            Accessible.name: text
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: audit.summary()
+                            color: audit.report && (audit.report.counts.error > 0) ? theme.bad : theme.subtle
+                        }
+                    }
+
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        ComboBox {
+                            model: ["Current settings", "Full matrix"]
+                            Accessible.name: "Settings to audit under"
+                            onActivated: function(index) { audit.matrix = index === 1 ? "full" : "current" }
+                        }
+                        ComboBox {
+                            model: audit.areaNames
+                            Accessible.name: "Rules to audit"
+                            onActivated: function(index) { audit.area = index === 0 ? "" : audit.areaNames[index] }
+                        }
+                        CheckBox {
+                            text: "Touch sizes"
+                            onToggled: audit.touch = checked
+                        }
+                        Button {
+                            text: audit.running ? "Auditing…" : "Run audit"
+                            enabled: !audit.running
+                            highlighted: true
+                            onClicked: audit.run()
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        spacing: 10
+
+                        // The findings, by rule.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.preferredWidth: 1
+                            Layout.minimumWidth: 0
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            clip: true
+                            ListView {
+                                id: auditView
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                spacing: 2
+                                model: window.page === 14 ? audit.rows : null
+                                ScrollBar.vertical: ScrollBar { Accessible.name: "Scroll the findings" }
+                                delegate: Item {
+                                    id: arow
+                                    required property int index
+                                    required property var modelData
+                                    readonly property bool isRule: modelData.kind === "rule"
+                                    readonly property var f: isRule ? null : audit.report.findings[modelData.index]
+                                    width: ListView.view.width
+                                    height: isRule ? 34 : 66
+                                    Row {
+                                        visible: arow.isRule
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: arow.isRule ? arow.modelData.code + ", " + arow.modelData.severity
+                                                         + ", " + arow.modelData.count + (arow.modelData.count === 1 ? " finding" : " findings") : ""
+                                        x: 8
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 8
+                                        Text {
+                                            text: arow.isRule ? arow.modelData.severity : ""
+                                            color: theme.text
+                                            font.bold: true
+                                            font.pixelSize: 13
+                                        }
+                                        Text {
+                                            text: arow.isRule ? arow.modelData.code : ""
+                                            color: theme.text
+                                            font.family: theme.mono
+                                            font.pixelSize: 13
+                                        }
+                                        Text {
+                                            text: arow.isRule ? "× " + arow.modelData.count : ""
+                                            color: theme.subtle
+                                            font.pixelSize: 13
+                                        }
+                                    }
+                                    ItemDelegate {
+                                        visible: !arow.isRule
+                                        anchors.fill: parent
+                                        highlighted: !arow.isRule && audit.picked === arow.modelData.index
+                                        Accessible.name: arow.isRule ? "" : (arow.f.name || arow.f.role || arow.f.locator || "item")
+                                                         + ". " + arow.f.message
+                                        onClicked: audit.select(arow.modelData.index)
+                                        background: Rectangle {
+                                            radius: 6
+                                            color: parent.highlighted ? theme.accentSoft : "transparent"
+                                            Rectangle {
+                                                visible: parent.parent.highlighted
+                                                width: 3; height: 24; radius: 2
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                color: theme.accent
+                                            }
+                                        }
+                                        contentItem: Column {
+                                            leftPadding: 10
+                                            spacing: 2
+                                            Text {
+                                                Accessible.role: Accessible.StaticText
+                                                Accessible.name: text
+                                                width: parent.width - 16
+                                                elide: Text.ElideRight
+                                                text: arow.isRule ? "" : (arow.f.name || arow.f.role || "item")
+                                                      + (arow.f.locator ? "  " + arow.f.locator : "")
+                                                color: theme.text
+                                                font.pixelSize: 13
+                                                font.bold: true
+                                            }
+                                            Text {
+                                                Accessible.role: Accessible.StaticText
+                                                Accessible.name: text
+                                                width: parent.width - 16
+                                                elide: Text.ElideRight
+                                                text: arow.isRule ? "" : arow.f.message
+                                                color: theme.text
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                Accessible.role: Accessible.StaticText
+                                                Accessible.name: text
+                                                width: parent.width - 16
+                                                elide: Text.ElideLeft
+                                                text: arow.isRule ? "" : (arow.f.measured ? arow.f.measured + " · " : "")
+                                                      + (arow.f.source || "")
+                                                color: theme.subtle
+                                                font.pixelSize: 12
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                Accessible.role: Accessible.StaticText
+                                Accessible.name: text
+                                anchors.centerIn: parent
+                                width: parent.width - 24
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.Wrap
+                                visible: audit.rows.length === 0
+                                text: audit.running ? "Auditing…"
+                                    : audit.note !== "" ? audit.note
+                                    : audit.report !== null ? "Nothing found at " + audit.report.points.join("; ")
+                                    : "Press Run audit to hold what the application shows to the design rules"
+                                color: theme.subtle
+                            }
+                        }
+
+                        // The finding picked: what is wrong, the fix, and where.
+                        Rectangle {
+                            Layout.fillHeight: true
+                            Layout.preferredWidth: 380
+                            Layout.minimumWidth: 0
+                            visible: window.width >= 900
+                            radius: 9
+                            color: theme.card
+                            border.color: theme.rule
+                            clip: true
+                            Flickable {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                contentWidth: width
+                                contentHeight: detail.implicitHeight
+                                clip: true
+                                ScrollBar.vertical: ScrollBar { Accessible.name: "Scroll the finding" }
+                                ColumnLayout {
+                                    id: detail
+                                    width: parent.width
+                                    spacing: 8
+                                    visible: audit.finding !== null
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        text: audit.finding ? audit.finding.code + "  (" + audit.finding.severity + ")" : ""
+                                        wrapMode: Text.Wrap
+                                        color: theme.text
+                                        font.bold: true
+                                        font.pixelSize: 15
+                                    }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        text: audit.finding ? audit.finding.message : ""
+                                        wrapMode: Text.Wrap
+                                        color: theme.text
+                                    }
+                                    Text { text: "Fix"; color: theme.subtle; font.pixelSize: 12 }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        text: audit.finding ? audit.finding.fix : ""
+                                        wrapMode: Text.Wrap
+                                        color: theme.text
+                                    }
+                                    Button {
+                                        text: "Open guide"
+                                        onClicked: Qt.openUrlExternally(client.guideUrl(audit.finding.guide))
+                                    }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        text: audit.finding ? audit.finding.guide : ""
+                                        elide: Text.ElideLeft
+                                        color: theme.subtle
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        visible: audit.finding !== null && !!audit.finding.measured
+                                        text: audit.finding && audit.finding.measured ? "Measured: " + audit.finding.measured : ""
+                                        wrapMode: Text.Wrap
+                                        color: theme.text
+                                    }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        visible: audit.finding !== null && !!audit.finding.source
+                                        text: audit.finding && audit.finding.source ? "Made at " + audit.finding.source : ""
+                                        wrapMode: Text.WrapAnywhere
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        visible: audit.finding !== null && !!audit.finding.locator
+                                        text: audit.finding && audit.finding.locator
+                                              ? "Locator " + audit.finding.locator
+                                                + (audit.finding.role ? " · " + audit.finding.role : "") : ""
+                                        wrapMode: Text.WrapAnywhere
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        visible: audit.finding !== null && !!audit.finding.bounds
+                                        text: audit.finding && audit.finding.bounds
+                                              ? "Bounds " + audit.finding.bounds.x + ", " + audit.finding.bounds.y
+                                                + "  " + audit.finding.bounds.width + " × " + audit.finding.bounds.height
+                                              : ""
+                                        wrapMode: Text.WrapAnywhere
+                                        color: theme.text
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        visible: audit.finding !== null && !!audit.finding.points
+                                        text: audit.finding && audit.finding.points ? "Shows at " + audit.finding.points.join("; ") : ""
+                                        wrapMode: Text.Wrap
+                                        color: theme.text
+                                    }
+                                    // The window as it is now, with the box
+                                    // where the finding's item was.
+                                    Item {
+                                        id: shot
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 200
+                                        visible: audit.finding !== null && !!audit.finding.bounds
+                                        clip: true
+                                        Image {
+                                            id: shotImage
+                                            anchors.fill: parent
+                                            fillMode: Image.PreserveAspectFit
+                                            source: audit.picture
+                                            Accessible.name: "The window as drawn now"
+                                        }
+                                        Rectangle {
+                                            readonly property real k: audit.winWidth > 0 ? shotImage.paintedWidth / audit.winWidth : 0
+                                            readonly property var b: audit.finding && audit.finding.bounds ? audit.finding.bounds : null
+                                            visible: b !== null && k > 0 && shotImage.status === Image.Ready
+                                            x: b ? (shotImage.width - shotImage.paintedWidth) / 2 + b.x * k : 0
+                                            y: b ? (shotImage.height - shotImage.paintedHeight) / 2 + b.y * k : 0
+                                            width: b ? Math.max(2, b.width * k) : 0
+                                            height: b ? Math.max(2, b.height * k) : 0
+                                            color: Qt.rgba(1, 0, 0, 0.14)
+                                            border.color: theme.bad
+                                            border.width: 2
+                                        }
+                                    }
+                                    Text {
+                                        Accessible.role: Accessible.StaticText
+                                        Accessible.name: text
+                                        Layout.fillWidth: true
+                                        visible: shot.visible
+                                        text: audit.pictureNote !== "" ? audit.pictureNote
+                                            : "The picture is the window as it is now; the box is where the finding put the item"
+                                              + (audit.finding && audit.finding.points && audit.finding.points[0] !== "current"
+                                                 ? " at " + audit.finding.points[0] : "")
+                                        wrapMode: Text.Wrap
+                                        color: theme.subtle
+                                        font.pixelSize: 12
+                                    }
+                                }
+                                Text {
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: text
+                                    width: parent.width
+                                    visible: audit.finding === null
+                                    text: "Pick a finding to see the fix and where it is"
+                                    wrapMode: Text.Wrap
+                                    color: theme.subtle
+                                }
+                            }
                         }
                     }
                 }
