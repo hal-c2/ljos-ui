@@ -9,6 +9,7 @@ use ljos_mcp_author::{AuthorServer, Project, QmlFrontEnd};
 use ljos_mcp_core::CapSet;
 
 mod attach;
+mod audit;
 mod bench;
 mod check;
 mod demand;
@@ -64,6 +65,10 @@ enum Command {
     /// Compile QML projects and report what the compiler says; with
     /// `--stats`, how many expressions run in the tier-1 binding VM.
     Check(check::Check),
+    /// Run the design audit on what a QML file shows, under a matrix of
+    /// settings (colour scheme, contrast, text size, window size); exits
+    /// with 1 when it finds an error.
+    Audit(audit::Audit),
     /// Open a window on a QML file; with `--watch`, apply every save to
     /// the running application.
     Run(run::Run),
@@ -163,6 +168,10 @@ fn run() -> anyhow::Result<()> {
         Command::I18n { command } => i18n::run(command),
         Command::Design { command } => design::run(command),
         Command::Check(check) => check.run(),
+        Command::Audit(audit) => match audit.run()? {
+            0 => Ok(()),
+            status => exit(status),
+        },
         Command::Run(run) => run.run(),
         Command::Observe(observe) => observe.run(),
         Command::Attach(attach) => attach.run(),

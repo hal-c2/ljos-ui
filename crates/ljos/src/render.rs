@@ -169,6 +169,26 @@ impl Picture {
     /// window that leaves its size unsaid is as large as the picture.
     /// `Err` when the scene does not come to rest or cannot be drawn.
     pub fn png(&self, engine: &Engine, root: ObjectId) -> Result<Vec<u8>, String> {
+        let mut scene = self.scene(engine, root)?;
+        let mut state = DriveState::default();
+        let mut run = Driver::new(engine, &mut scene, &*self.clock, &mut state);
+        let window = engine
+            .meta_of(root)
+            .is_some_and(|m| m.inherits(ljos_controls::Window::static_meta()));
+        if window && !self.window_colour {
+            // A window is a Rectangle underneath: its fill goes.
+            engine
+                .write_by_name(root, "color", Value::from("transparent"))
+                .map_err(|e| e.to_string())?;
+        }
+        picture(&mut run, window)
+    }
+
+    /// The scene [`png`](Self::png) draws: `root` laid out at the
+    /// picture's size with the settle time passed and at rest, for what
+    /// reads a scene rather than its pixels (the design audit). The
+    /// clock stands at [`now`](Self::now) afterwards.
+    pub fn scene(&self, engine: &Engine, root: ObjectId) -> Result<QuickScene, String> {
         let (mut width, mut height) = self.size;
         let mut scene = QuickScene::new(kurbo::Size::new(f64::from(width), f64::from(height)));
         if let Some(f) = &self.scene_messages {
@@ -203,20 +223,19 @@ impl Picture {
             let size = [f64::from(width), f64::from(height)];
             ljos_controls::WindowSystem::of(engine).resized(engine, root, size);
         }
-        let mut state = DriveState::default();
-        let mut run = Driver::new(engine, &mut scene, &*self.clock, &mut state);
-        run.settle().map_err(|e| e.to_string())?;
-        run.advance(self.settle_ms).map_err(|e| e.to_string())?;
-        let window = engine
-            .meta_of(root)
-            .is_some_and(|m| m.inherits(ljos_controls::Window::static_meta()));
-        if window && !self.window_colour {
-            // A window is a Rectangle underneath: its fill goes.
-            engine
-                .write_by_name(root, "color", Value::from("transparent"))
-                .map_err(|e| e.to_string())?;
+        {
+            let mut state = DriveState::default();
+            let mut run = Driver::new(engine, &mut scene, &*self.clock, &mut state);
+            run.settle().map_err(|e| e.to_string())?;
+            run.advance(self.settle_ms).map_err(|e| e.to_string())?;
+            run.settle().map_err(|e| e.to_string())?;
         }
-        picture(&mut run, window)
+        Ok(scene)
+    }
+
+    /// The time on the picture's clock.
+    pub fn now(&self) -> ljos_runtime::Time {
+        ljos_runtime::Clock::now(&*self.clock)
     }
 }
 

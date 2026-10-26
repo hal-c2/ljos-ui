@@ -24,7 +24,7 @@ use qml_front::TypeOracle;
 use serde_json::{Value, json};
 
 /// The size of a root that says none, in logical pixels.
-const DEFAULT_SIZE: (u32, u32) = (800, 600);
+pub(crate) const DEFAULT_SIZE: (u32, u32) = (800, 600);
 
 #[derive(Args)]
 pub struct Render {
@@ -80,7 +80,7 @@ fn parse_now(text: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("{text:?} is not an RFC 3339 time such as 2026-10-11T17:57:09Z"))
 }
 
-fn parse_size(text: &str) -> Result<(u32, u32), String> {
+pub(crate) fn parse_size(text: &str) -> Result<(u32, u32), String> {
     let wrong = || format!("{text:?} is not a size such as 800x600");
     let (w, h) = text.split_once(['x', 'X']).ok_or_else(wrong)?;
     let side = |s: &str| {
@@ -392,6 +392,15 @@ fn load_project<O: TypeOracle<Type = EngineType>>(
         out.source.insert(r.key, c.file);
     }
     Ok(out)
+}
+
+/// [`load_project`] for what needs only the source (`ljos audit`).
+pub(crate) fn load<O: TypeOracle<Type = EngineType>>(
+    dir: &Path,
+    entry: &str,
+    oracle: O,
+) -> anyhow::Result<MapSource> {
+    load_project(dir, entry, oracle)?.into_source(dir, entry)
 }
 
 /// [`load_project`], told in `notes`.

@@ -33,6 +33,8 @@ ljos_gallery_backends = { path = "../../examples/gallery_backends" }
 # The engine-backed type oracle for `--example` compiles.
 ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "render"] }
 ljos_controls = { path = "../ljos_controls" }
+# `ljos audit`: the design audit on the scene `ljos render` would draw.
+ljos_audit = { path = "../ljos_audit" }
 # The modules a shipped application registers only when it uses them;
 # `ljos run`, `render` and `test` offer them all, as `qml6` does.
 ljos_localstorage = { path = "../ljos_localstorage" }
