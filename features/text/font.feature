@@ -64,6 +64,35 @@ Feature: The font of a Text
       Then the property "bigIsWider" of "root" is false
       And the property "bigIsTaller" of "root" is false
 
+  # A point is 1/72 of a logical inch, and how many pixels make that inch
+  # is the platform's: 96 on Linux and Windows (and qml6's offscreen
+  # platform anywhere), 72 on macOS. 18 pt is a whole pixel size at both.
+  Rule: Points follow the screen's logical pixel density
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          readonly property real perPoint: Screen.logicalPixelDensity * 25.4 / 72
+          property bool hasDensity: perPoint > 0
+          property bool pointsArePlatformPixels: points.font.pixelSize === Math.round(18 * perPoint)
+          property bool pointsAreThosePixels: points.width === pixels.width && points.height === pixels.height
+          Text { id: points; text: "Hello world"; font.pointSize: 18 }
+          Text { id: pixels; text: "Hello world"; font.pixelSize: Math.round(18 * root.perPoint) }
+        }
+        """
+      When 100 milliseconds pass
+
+    Scenario: A point is as many pixels as the logical density makes it
+      Then the property "hasDensity" of "root" is true
+      And the property "pointsArePlatformPixels" of "root" is true
+
+    Scenario: Text set in points is as large as text set in those pixels
+      Then the property "pointsAreThosePixels" of "root" is true
+
   Rule: Weight, spacing and decoration
 
     Background:
