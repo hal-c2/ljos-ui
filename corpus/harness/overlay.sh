@@ -32,7 +32,8 @@ while IFS= read -r cm; do
       if (match(line, /URI[ \t]+"?[A-Za-z0-9_.]+"?/)) {
         u = substr(line, RSTART + 3, RLENGTH - 3); gsub(/[ \t"]/, "", u); uri = u
       }
-      m = split(line, toks, /[ \t()]+/)
+      # file names may be quoted
+      m = split(line, toks, /[ \t()"]+/)
       for (k = 1; k <= m; k++) if (toks[k] ~ /\.qml$/) files[++n] = toks[k]
       o = gsub(/\(/, "(", line); c = gsub(/\)/, ")", line)
       depth += o - c
