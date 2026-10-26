@@ -46,13 +46,13 @@ pub struct Item {
     pub implicit_width: f64,
     #[qml(notify)]
     pub implicit_height: f64,
-    #[qml(notify, change = crate::scene::reshaped)]
+    #[qml(notify, change = crate::scene::visibility)]
     pub visible: bool,
     #[qml(notify, write = Self::keep_opacity, change = crate::scene::reshaped)]
     pub opacity: f64,
     #[qml(notify, change = crate::scene::reshaped)]
     pub clip: bool,
-    #[qml(notify)]
+    #[qml(notify, change = crate::scene::enabling)]
     pub enabled: bool,
     #[qml(notify, change = crate::scene::reshaped)]
     pub rotation: f64,

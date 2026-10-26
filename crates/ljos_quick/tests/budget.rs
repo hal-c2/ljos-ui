@@ -1,5 +1,6 @@
 //! What a new instance costs, counted exactly: graph nodes by kind, engine
-//! objects, lookups by name and heap allocations. The delegate track
+//! objects, lookups by name, heap allocations and the bytes they keep.
+//! The delegate track
 //! (docs/adr/0001, 0002) lowers these numbers step by step; each step
 //! updates the pin it lowers, so a step that raises one fails here first.
 //!
@@ -26,34 +27,43 @@ thread_local! {
     // A const initialiser and no destructor: the allocator may run while
     // the thread's locals are being torn down.
     static ALLOCS: Cell<u64> = const { Cell::new(0) };
+    // Bytes allocated and not yet freed: what an instance keeps, where
+    // the count of calls cannot tell a small box from a large one.
+    static LIVE: Cell<i64> = const { Cell::new(0) };
 }
 
-fn bump() {
+fn bump(bytes: i64) {
     let _ = ALLOCS.try_with(|c| c.set(c.get() + 1));
+    keep(bytes);
+}
+
+fn keep(bytes: i64) {
+    let _ = LIVE.try_with(|c| c.set(c.get() + bytes));
 }
 
 // SAFETY: every call forwards to `System` unchanged; the count is a side
 // effect that neither allocates nor touches the memory.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        bump();
+        bump(l.size() as i64);
         // SAFETY: the caller's contract, passed on.
         unsafe { System.alloc(l) }
     }
 
     unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
-        bump();
+        bump(l.size() as i64);
         // SAFETY: the caller's contract, passed on.
         unsafe { System.alloc_zeroed(l) }
     }
 
     unsafe fn realloc(&self, p: *mut u8, l: Layout, size: usize) -> *mut u8 {
-        bump();
+        bump(size as i64 - l.size() as i64);
         // SAFETY: the caller's contract, passed on.
         unsafe { System.realloc(p, l, size) }
     }
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        keep(-(l.size() as i64));
         // SAFETY: the caller's contract, passed on.
         unsafe { System.dealloc(p, l) }
     }
@@ -77,6 +87,9 @@ struct Budget {
     graph: Census,
     lookups: Lookups,
     allocations: u64,
+    /// Heap bytes the step left allocated. A list that grew counts its
+    /// whole new capacity on the step that grew it.
+    bytes: i64,
 }
 
 fn now(e: &Engine) -> Budget {
@@ -85,6 +98,7 @@ fn now(e: &Engine) -> Budget {
         graph: e.graph().census(),
         lookups: lookups(),
         allocations: ALLOCS.with(Cell::get),
+        bytes: LIVE.with(Cell::get),
     }
 }
 
@@ -106,6 +120,7 @@ fn spent(e: &Engine, s: &mut QuickScene, from: u64, step: impl FnOnce()) -> Budg
         },
         lookups: b.lookups - a.lookups,
         allocations: b.allocations - a.allocations,
+        bytes: b.bytes - a.bytes,
     }
 }
 
@@ -244,6 +259,8 @@ struct Teardown {
     scopes: usize,
     nodes: usize,
     allocations: u64,
+    /// Heap bytes destroying them gave back.
+    freed: i64,
 }
 
 fn plain_teardown() -> Teardown {
@@ -272,6 +289,7 @@ fn plain_teardown() -> Teardown {
         scopes: a.graph.scopes - b.graph.scopes,
         nodes: nodes(a.graph) - nodes(b.graph),
         allocations: b.allocations - a.allocations,
+        freed: a.bytes - b.bytes,
     }
 }
 
@@ -309,14 +327,18 @@ fn ten_listview_delegates() {
     // A text is shaped by harfrust as Parley drives it once its font is set
     // up, which sets up the font's lookups as texts first use them (17
     // more here, the rows' digits being new; none once they are, TEXT5).
+    // What an item inherits, `visible` and `enabled`, is passed down by
+    // its parent's change hooks, where each item had an effect that read
+    // its parent's: an effect, a value and two allocations fewer a
+    // delegate (B29). 26.2 kB kept a delegate.
     assert_eq!(
         b,
         Budget {
             objects: 30,
             graph: Census {
-                values: 90,
+                values: 80,
                 bindings: 60,
-                effects: 110,
+                effects: 90,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -325,7 +347,8 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1322,
+            allocations: 1302,
+            bytes: 262295,
         }
     );
 }
@@ -350,14 +373,17 @@ fn ten_wrapped_listview_delegates() {
     // set up, which sets the font's lookups up as texts first use them (56
     // more here, in the first rows; a fifth of an allocation a text once a
     // scroll has warmed the font, TEXT5).
+    // What it inherits passed down by its parent's change hooks, where it
+    // had an effect, makes 30 fewer, 20 fewer values and 20 fewer effects
+    // (B29). 30.5 kB kept a delegate.
     assert_eq!(
         b,
         Budget {
             objects: 30,
             graph: Census {
-                values: 80,
+                values: 60,
                 bindings: 50,
-                effects: 100,
+                effects: 80,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -366,7 +392,8 @@ fn ten_wrapped_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1354,
+            allocations: 1324,
+            bytes: 305097,
         }
     );
 }
@@ -386,15 +413,18 @@ fn ten_plain_items() {
     // item took twenty-eight off, and an anchors effect only for an item
     // with an anchor, which neither has, forty-nine more. B28's marks for
     // an item's place and geometry, where it had an effect each, took
-    // seventy-three more.
+    // seventy-three more. B29 passes down what an item inherits from its
+    // parent's change hooks, where each item had an effect reading it:
+    // twenty effects, twenty values and forty-seven allocations fewer.
+    // 22.0 kB kept an instance.
     assert_eq!(
         b,
         Budget {
             objects: 20,
             graph: Census {
-                values: 60,
+                values: 40,
                 bindings: 20,
-                effects: 90,
+                effects: 70,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -403,7 +433,8 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 833,
+            allocations: 786,
+            bytes: 219800,
         }
     );
 }
@@ -418,14 +449,18 @@ fn ten_plain_items_torn_down() {
     // it from 13.7 by holding the walks over the dead inline. Two nodes
     // fewer an instance since B27: neither item is anchored, and has no
     // anchors effect to let go of; four fewer since B28, which keeps an
-    // item's place and geometry as marks and not as two effects an item.
+    // item's place and geometry as marks and not as two effects an item,
+    // and four fewer since B29, which has no inherit effect an item. 8.0 kB
+    // given back an instance; the rest of what one kept is room the next
+    // ones use.
     assert_eq!(
         plain_teardown(),
         Teardown {
             objects: 20,
             scopes: 20,
-            nodes: 170,
+            nodes: 130,
             allocations: 57,
+            freed: 80414,
         }
     );
 }

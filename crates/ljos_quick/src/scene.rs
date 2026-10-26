@@ -535,6 +535,61 @@ pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
     mark_shown(cx.engine, obj, |s| s.set(obj, Dirty::GEOM, |_| ()));
 }
 
+/// The change hook of an item's `visible`: its geometry is read again at
+/// the frame, and what it inherits is passed on at once. A script that
+/// hides an item and reads a child's `visible` next reads false, as on
+/// Qt, so this cannot wait for the frame.
+pub(crate) fn visibility(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
+    reshaped(cx, p);
+    inherited(cx.engine, cx.this, true);
+}
+
+/// The change hook of an item's `enabled`: passed on at once, as
+/// [`visibility`] is.
+pub(crate) fn enabling(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
+    inherited(cx.engine, cx.this, true);
+}
+
+/// `obj` was given another visual parent: it takes what the new one
+/// passes on, before whoever moved it reads it.
+pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
+    inherited(e, obj, false);
+}
+
+/// In each scene that shows `obj`, it takes again what its parent passes
+/// on: its own value may have changed under a hidden parent, or the parent
+/// may be another. With `down`, so do its children. A child whose value
+/// changes tells its own children through its hook, so this goes no
+/// deeper, but for a `MouseArea`, whose `enabled` its children skip.
+fn inherited(e: &Engine, obj: ObjectId, down: bool) {
+    let scenes = e.extension::<Scenes>();
+    let shown: SmallVec<[SharedRc; 2]> = scenes
+        .0
+        .borrow()
+        .iter()
+        .filter_map(std::rc::Weak::upgrade)
+        .filter(|s| s.borrow().marks.contains(obj))
+        .collect();
+    for s in shown {
+        inherit(e, obj, &s);
+        if down {
+            pass_down(e, obj, &s);
+        }
+    }
+}
+
+fn pass_down(e: &Engine, obj: ObjectId, shared: &SharedRc) {
+    for c in e.visual_children(obj) {
+        let Some(st) = shared.borrow().marks.get(c).map(|m| m.inherit) else {
+            continue;
+        };
+        inherit(e, c, shared);
+        if st.mouse_area {
+            pass_down(e, c, shared);
+        }
+    }
+}
+
 /// [`moved`] for what a place reads beside `x` and `y`: whether the
 /// Flickable `obj` is the content of moves.
 pub(crate) fn place_again(e: &Engine, obj: ObjectId) {
@@ -600,6 +655,8 @@ fn wake(shared: &SharedRc) {
 struct Inherit {
     visible: Option<OverrideId>,
     enabled: Option<OverrideId>,
+    /// A `MouseArea`, whose `enabled` is its own ([`inherit`]).
+    mouse_area: bool,
 }
 
 /// What the scene keeps of one item it shows ([`Records`]): one record in
@@ -1527,7 +1584,9 @@ impl QuickScene {
         // hooks tell.
         {
             let mut s = self.shared.borrow_mut();
-            s.marks.insert(obj, Marks::new());
+            let mut marks = Marks::new();
+            marks.inherit.mouse_area = class.mouse_area;
+            s.marks.insert(obj, marks);
             s.set(obj, Dirty::GEOM, |_| ());
             s.placed.push(obj);
         }
@@ -1539,9 +1598,9 @@ impl QuickScene {
         // Root-scoped: an effect scoped to `obj` dies with it silently, and
         // this one has to see the death to drop the render node.
         effects.push(engine.effect(move |e| structure_effect(e, obj, loader, &shared))?);
-        let lifted = Rc::clone(&self.shared);
-        let mouse_area = class.mouse_area;
-        effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, mouse_area, &lifted))?);
+        // What it inherits is passed on by the hooks of its parent's
+        // `visible` and `enabled` and by a reparent; here it takes it once.
+        engine.untrack(|| inherit(engine, obj, &self.shared));
         // Its anchors have an effect of their own only once one is given.
         anchors::follow(engine, obj)?;
         if kind == Kind::Text {
@@ -3310,8 +3369,10 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
 
 /// `visible` and `enabled` read false under a hidden or disabled parent
 /// (Qt documents both as inherited). The item's own value sits below an
-/// override layer and comes back when the parent turns on again.
-fn inherit_effect(e: &Engine, obj: ObjectId, mouse_area: bool, shared: &SharedRc) {
+/// override layer and comes back when the parent turns on again. Called
+/// at adoption and by [`inherited`], not as an effect: an effect an item
+/// cost a node and a run for what changes seldom.
+fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     if !e.is_alive(obj) {
         return;
     }
@@ -3320,6 +3381,7 @@ fn inherit_effect(e: &Engine, obj: ObjectId, mouse_area: bool, shared: &SharedRc
         return;
     };
     let covered = st.visible.is_some();
+    let mouse_area = st.mouse_area;
     let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
     for (p, slot) in [
         (Item::VISIBLE.index, &mut st.visible),

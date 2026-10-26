@@ -237,6 +237,7 @@ pub fn register(engine: &Engine) {
                 format!("cannot follow a reparent: {err}"),
             );
         }
+        scene::reparented(e, obj);
     });
     // An object made under an item goes in it only when it is an item
     // itself, as its visual child, and in no property of the item's own:
