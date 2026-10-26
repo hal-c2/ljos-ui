@@ -6013,6 +6013,7 @@ module QtQuick.Templates
 	CheckDelegate QtQuick.Templates.CheckDelegate
 	ComboBox QtQuick.Templates.ComboBox
 	Container QtQuick.Templates.Container
+	ContextMenu QtQuick.Controls.ContextMenu
 	Control QtQuick.Templates.Control
 	DelayButton QtQuick.Templates.DelayButton
 	Dial QtQuick.Templates.Dial
