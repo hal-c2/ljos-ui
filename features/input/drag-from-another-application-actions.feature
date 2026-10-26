@@ -107,3 +107,31 @@ Feature: What a drag from another application allows, and what it is told
     Then the drag from another application is taken as copy
     When the drag from another application is let go
     Then the drag from another application is taken as copy
+
+  # Each position is a new DragEvent whose action is the proposed one
+  # again, as in qml6. The other application hears the action of the last
+  # answer before the drop: a qml6 source reports that one in
+  # dragFinished, not the one the area takes the drop with.
+  @api-QtQuick.DragEvent.accept @api-QtQuick.DropArea.positionChanged
+  Scenario: An action chosen as the drag came in lasts until it moves
+    Given the drag from another application allows "copy, move" and proposes "move"
+    When the property "choose" of "root" is set to 1
+    And another application drags the text "hello" over 250, 50
+    Then the drag from another application is taken as copy
+    When the drag from another application moves to 260, 60
+    Then the drag from another application is taken as move
+
+  # Some window systems' sources (Qt's, on X11) give their data only to a
+  # target that answered in time, so the answer comes first, from the
+  # formats offered and the areas' keys; no handler runs until the data
+  # is read.
+  @api-QtQuick.DropArea.keys
+  Scenario: The other application is answered from the formats it offers before its data is read
+    Given the drag from another application allows "copy, move" and proposes "move"
+    When another application offers the formats "text/plain, text/html" over 50, 50
+    Then the drag from another application is taken as move
+    When another application offers the formats "text/plain" over 50, 50
+    Then the drag from another application is not taken
+    When another application offers the formats "UTF8_STRING" over 250, 50
+    Then the drag from another application is taken as move
+    And the property "log" of "root" is ""

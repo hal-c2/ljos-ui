@@ -179,6 +179,12 @@ pub enum OutsideDrag {
         formats: Vec<(String, String)>,
         at: (f64, f64),
     },
+    /// It comes over the window at this point, offering these MIME
+    /// types, before the window system has handed over what they hold.
+    Offer {
+        formats: Vec<String>,
+        at: (f64, f64),
+    },
     Move((f64, f64)),
     /// Where it is, the other application now proposes this action
     /// (`"copy"`, `"move"` or `"link"`).

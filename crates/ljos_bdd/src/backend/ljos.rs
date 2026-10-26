@@ -1587,6 +1587,11 @@ impl Platform for LjosBackend {
                     actions,
                 }
             }
+            OutsideDrag::Offer { formats, at } => ExternalDrag::Offered {
+                formats: formats.clone(),
+                at: *at,
+                actions,
+            },
             OutsideDrag::Move(at) => {
                 live.outside_at = *at;
                 ExternalDrag::moved(*at)

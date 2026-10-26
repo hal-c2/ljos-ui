@@ -1452,6 +1452,23 @@ impl QmlView {
         true
     }
 
+    /// What a drag from another application that offers `formats` would
+    /// be taken with at `at`, from the `DropArea`s' `keys` alone: the
+    /// answer a host gives the window system before it has read what the
+    /// drag carries and told the scene of it ([`WindowDrag::Entered`]).
+    /// The scene hears nothing of it.
+    pub fn window_drag_offered(
+        &self,
+        formats: &[String],
+        at: Pos2,
+        actions: ljos_quick::DragActions,
+    ) -> Option<ljos_quick::DropAction> {
+        let rect = self.shown_at.filter(|r| r.contains(at))?;
+        let at = kurbo::Point::new(f64::from(at.x - rect.min.x), f64::from(at.y - rect.min.y));
+        let over = self.scene.root();
+        ljos_quick::platform_drag_offered(&self.engine, over, formats, actions, at)
+    }
+
     /// Tells the scene of a step of a drag from another application, for
     /// a host that follows such drags itself rather than through egui,
     /// which knows only of files. Says which action a `DropArea` under the

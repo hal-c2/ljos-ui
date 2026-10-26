@@ -86,19 +86,42 @@ impl DragData {
         for (format, bytes) in formats {
             let (format, bytes) = (format.as_ref(), bytes.as_ref());
             let text = || decode(bytes);
-            match format.to_ascii_lowercase().as_str() {
-                "text/uri-list" => data.urls = uri_list(&text()),
-                "text/plain" | "text/plain;charset=utf-8" | "utf8_string" | "string" | "text" => {
+            match Kind::of(format) {
+                Kind::Urls => data.urls = uri_list(&text()),
+                Kind::Text => {
                     if data.text.is_none() {
                         data.text = Some(text());
                     }
                 }
-                "text/html" => data.html = Some(text()),
-                _ if data.other.iter().any(|(k, _)| k == format) => {}
-                _ => data.other.push((format.to_owned(), text())),
+                Kind::Html => data.html = Some(text()),
+                Kind::Other if data.other.iter().any(|(k, _)| k == format) => {}
+                Kind::Other => data.other.push((format.to_owned(), text())),
             }
         }
         data
+    }
+
+    /// The MIME types a window system's drag offering `names` has, as
+    /// [`formats`](Self::formats) tells them once it is read
+    /// ([`from_formats`](Self::from_formats)): what a target can answer
+    /// with before it reads the data.
+    pub fn formats_of<I, F>(names: I) -> Vec<String>
+    where
+        I: IntoIterator<Item = F>,
+        F: AsRef<str>,
+    {
+        let mut seen = Self::default();
+        for name in names {
+            let name = name.as_ref();
+            match Kind::of(name) {
+                Kind::Urls => seen.urls = vec![String::new()],
+                Kind::Text => seen.text = Some(String::new()),
+                Kind::Html => seen.html = Some(String::new()),
+                Kind::Other if seen.other.iter().any(|(k, _)| k == name) => {}
+                Kind::Other => seen.other.push((name.to_owned(), String::new())),
+            }
+        }
+        seen.formats()
     }
 
     /// The MIME types it has, as `DragEvent.formats` and `keys` tell
@@ -276,6 +299,27 @@ impl Default for DragActions {
     }
 }
 
+/// Which of a drag's fields a window system's format goes in.
+enum Kind {
+    Urls,
+    Text,
+    Html,
+    Other,
+}
+
+impl Kind {
+    fn of(format: &str) -> Self {
+        match format.to_ascii_lowercase().as_str() {
+            "text/uri-list" => Self::Urls,
+            "text/plain" | "text/plain;charset=utf-8" | "utf8_string" | "string" | "text" => {
+                Self::Text
+            }
+            "text/html" => Self::Html,
+            _ => Self::Other,
+        }
+    }
+}
+
 impl DragActions {
     /// What the source is told of a target that chose `chosen`. An action
     /// it does not allow is not one the target can take: as Qt's
@@ -296,6 +340,15 @@ impl DragActions {
 /// A drag from another application, as a host reports it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExternalDrag {
+    /// Something that offers `formats` (as [`DragData::formats_of`] names
+    /// them) is dragged over the window at `at`, and the host has not read
+    /// its data yet: it needs the answer for the window system first. No
+    /// area hears of it; `Entered` follows once the data is read.
+    Offered {
+        formats: Vec<String>,
+        at: (f64, f64),
+        actions: DragActions,
+    },
     /// Something is dragged over the window, at `at` in the window's
     /// logical coordinates when the host knows where.
     Entered {
@@ -566,6 +619,29 @@ mod tests {
             proposed: DropAction::Copy,
         };
         assert_eq!(odd.told(Some(DropAction::Link)), Some(DropAction::Move));
+    }
+
+    #[test]
+    fn the_formats_offered_are_known_before_the_data_is_read() {
+        let names = [
+            "UTF8_STRING",
+            "application/x-example",
+            "text/plain",
+            "text/uri-list",
+            "text/html",
+            "application/x-example",
+        ];
+        let read = DragData::from_formats(names.iter().map(|n| (n, b"file:///a".as_slice())));
+        assert_eq!(DragData::formats_of(names), read.formats());
+        assert_eq!(
+            DragData::formats_of(names),
+            [
+                "text/uri-list",
+                "text/plain",
+                "text/html",
+                "application/x-example"
+            ]
+        );
     }
 
     #[test]
