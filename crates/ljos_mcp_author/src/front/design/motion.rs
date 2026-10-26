@@ -6,7 +6,7 @@ use qml_syntax::{
     ast::{QmlBindingValue, QmlObject},
     js::{
         AssignmentExpression, AssignmentTarget, BinaryOperator, Expression, SimpleAssignmentTarget,
-        UpdateExpression,
+        UnaryOperator, UpdateExpression,
     },
 };
 
@@ -131,6 +131,18 @@ pub(super) fn object<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, '
     }
     if found.is(frame, class::TIMER) {
         timer_driven(found, frame);
+        timer_endless(found, chain);
+    }
+    if found.is(frame, class::ANIMATION)
+        && is_infinite(frame.object)
+        && !chain[..chain.len() - 1]
+            .iter()
+            .any(|f| found.is(f, class::ANIMATION) && is_infinite(f.object))
+    {
+        endless(found, chain);
+    }
+    if found.is(frame, class::POPUP) && !found.is(frame, class::DRAWER) {
+        origin(found, frame);
     }
     stagger(found, chain);
 }
@@ -697,6 +709,342 @@ fn timer_driven<'a>(found: &mut Found<'_, '_, '_, 'a>, frame: &Frame<'_, 'a>) {
             format!(
                 "this repeating `Timer` sets `{moved}` by hand, past reduced motion and the \
                  animation clock; use an animation or a `Behavior on {moved}`"
+            ),
+        );
+    }
+}
+
+/// What moves on screen, so that someone who asked for less motion is
+/// bothered by it: the members of a `Translate`, `Rotation` or `Scale`
+/// transform included.
+const MOVEMENT: &[&str] = &[
+    "x", "y", "width", "height", "scale", "rotation", "contentX", "contentY", "angle", "xScale",
+    "yScale",
+];
+
+/// What shows or hides something without moving it.
+const FADES: &[&str] = &["opacity", "visible", "color"];
+
+/// Animations that move by the kind of animation they are.
+const MOVING_TYPES: &[&str] = &[
+    "QQuickRotationAnimation",
+    "QQuickPathAnimation",
+    "QtQuick.RotationAnimation",
+    "QtQuick.PathAnimation",
+];
+
+const COLOR_NAMES: &[&str] = &["color", "visible", "source"];
+
+fn frame_of<'o, 'a>(found: &Found<'_, '_, '_, 'a>, object: &'o QmlObject<'a>) -> Frame<'o, 'a> {
+    Frame {
+        object,
+        index: found.cx.tree.index_of(object),
+        via: None,
+    }
+}
+
+fn subtree<'o, 'a>(object: &'o QmlObject<'a>, out: &mut Vec<&'o QmlObject<'a>>) {
+    out.push(object);
+    for (child, _) in children(object) {
+        subtree(child, out);
+    }
+}
+
+/// `loops: Animation.Infinite`, or the `-1` it is.
+fn is_infinite(object: &QmlObject<'_>) -> bool {
+    bound(object, &["loops"]).is_some_and(|b| {
+        b.enumeration() == Some(("Animation", "Infinite")) || b.number() == Some(-1.0)
+    })
+}
+
+fn last(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
+/// Whether the file can stop what runs: it stops it, pauses it or sets
+/// `running` to false by hand.
+fn stops_somewhere(found: &Found<'_, '_, '_, '_>) -> bool {
+    let source = found.cx.source;
+    [".stop(", ".pause(", "running = false", "running=false"]
+        .iter()
+        .any(|k| source.contains(k))
+}
+
+/// A file named for a busy indicator or a progress display.
+fn is_progress_file(found: &Found<'_, '_, '_, '_>) -> bool {
+    let stem = found
+        .cx
+        .path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    ["busy", "spinner", "loading", "progress"]
+        .iter()
+        .any(|k| stem.contains(k))
+}
+
+/// What the animations in `parts` animate, their kind included.
+struct Parts {
+    properties: Vec<String>,
+    moves_by_type: bool,
+    color_animation: bool,
+}
+
+fn describe_parts<'a>(found: &Found<'_, '_, '_, 'a>, parts: &[&QmlObject<'a>]) -> Parts {
+    let mut out = Parts {
+        properties: Vec::new(),
+        moves_by_type: false,
+        color_animation: false,
+    };
+    for object in parts {
+        let f = frame_of(found, object);
+        if let Some(p) = animated(found, &f) {
+            out.properties.extend(p);
+        }
+        out.moves_by_type |= found.is(&f, MOVING_TYPES);
+        out.color_animation |= found.is(&f, class::COLOR_ANIMATION);
+    }
+    out
+}
+
+/// The three rules about an animation that never ends. `chain` ends at the
+/// outermost animation that loops for ever.
+fn endless<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
+    let frame = chain.last().expect("the object itself");
+    // The motion of a busy indicator or a progress bar is the message, and a
+    // component of one that is named so is the same, built by hand.
+    if chain.iter().any(|f| found.is(f, class::PROGRESS)) || is_progress_file(found) {
+        return;
+    }
+    let mut parts = Vec::new();
+    subtree(frame.object, &mut parts);
+    let what = describe_parts(found, &parts);
+    let moves = what.moves_by_type || what.properties.iter().any(|p| MOVEMENT.contains(&last(p)));
+    let at = frame.object.type_name.span.start;
+    let name = found.name(frame);
+
+    if moves {
+        if !found.cx.source.contains("motionPreference")
+            && bound(frame.object, &["running"]).and_then(|b| b.boolean()) != Some(false)
+        {
+            found.report(
+                at,
+                "motion-reduced-ignored",
+                format!(
+                    "this `{name}` moves something for ever and nothing in the file reads \
+                     `Qt.styleHints.accessibility.motionPreference`, so it keeps moving for \
+                     someone who asked for less motion; read it (and stop, or animate `opacity` \
+                     instead), or leave it to a busy indicator"
+                ),
+            );
+        }
+        return;
+    }
+
+    let fades = what.color_animation || what.properties.iter().any(|p| FADES.contains(&last(p)));
+    if !fades {
+        return;
+    }
+    if flashes(found, &parts, &what) {
+        found.report(
+            at,
+            "motion-flash",
+            format!(
+                "this `{name}` changes {} on a pass shorter than {} ms, which is more than three \
+                 flashes a second and can trigger seizures; slow it down, fade rather than \
+                 toggle, or stop it",
+                if what.color_animation {
+                    "colour"
+                } else {
+                    "what is shown"
+                },
+                limits::FLASH_MIN_PASS_MS
+            ),
+        );
+        return;
+    }
+    // Endless on its own: it starts by itself and nothing stops it.
+    let running = bound(frame.object, &["running"]);
+    let starts = frame.object.on.is_some() || running.and_then(|b| b.boolean()) == Some(true);
+    let gated = chain
+        .iter()
+        .rev()
+        .take_while(|f| found.is(f, class::ANIMATION))
+        .any(|f| bound(f.object, &["running"]).is_some_and(|b| b.boolean() != Some(true)));
+    if starts && !gated && !stops_somewhere(found) {
+        found.report(
+            at,
+            "motion-endless",
+            format!(
+                "this `{name}` changes what is shown for ever from the moment it loads, and \
+                 nothing can pause or stop it; bind `running` to the state it shows, or stop it \
+                 within {} s",
+                limits::ENDLESS_MAX_MS / 1000
+            ),
+        );
+    }
+}
+
+/// Whether the endless animation of `parts` has a pass shorter than
+/// `FLASH_MIN_PASS_MS`, written out, and changes by enough to be a flash.
+fn flashes<'a>(found: &Found<'_, '_, '_, 'a>, parts: &[&QmlObject<'a>], what: &Parts) -> bool {
+    let root = parts[0];
+    let Some(pass) = length(found, root, found.cx.tree.index_of(root)) else {
+        return false;
+    };
+    if pass <= 0.0 || pass >= f64::from(limits::FLASH_MIN_PASS_MS) {
+        return false;
+    }
+    // An opacity that changes a little is a shimmer, not a flash: the
+    // values written out must span at least a quarter. A resting opacity
+    // of 1 stands for a `to` with no `from`.
+    if !what.color_animation && what.properties.iter().all(|p| last(p) == "opacity") {
+        let mut values = Vec::new();
+        for object in parts {
+            let from = bound(object, &["from"]).and_then(|b| b.number());
+            let to = bound(object, &["to"]).and_then(|b| b.number());
+            values.extend(from);
+            values.extend(to);
+            if to.is_some() && from.is_none() {
+                values.push(1.0);
+            }
+        }
+        if values.len() >= 2 {
+            let (lo, hi) = values
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+            if hi - lo < 0.25 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// What a script toggles: assigns the opposite or the other of two
+/// values to.
+#[derive(Default)]
+struct Toggles<'a> {
+    names: Vec<&'a str>,
+}
+
+fn toggles(e: &Expression<'_>) -> bool {
+    match e.without_parentheses() {
+        Expression::UnaryExpression(u) => u.operator == UnaryOperator::LogicalNot,
+        Expression::ConditionalExpression(_) => true,
+        Expression::BinaryExpression(b) => {
+            b.operator == BinaryOperator::Subtraction && number(&b.left) == Some(1.0)
+        }
+        _ => false,
+    }
+}
+
+impl<'a> Visit<'a> for Toggles<'a> {
+    fn visit_assignment_expression(&mut self, it: &AssignmentExpression<'a>) {
+        if toggles(&it.right) {
+            match it.left.as_simple_assignment_target() {
+                Some(SimpleAssignmentTarget::AssignmentTargetIdentifier(id)) => {
+                    self.names.push(id.name.as_str())
+                }
+                Some(SimpleAssignmentTarget::StaticMemberExpression(m)) => {
+                    self.names.push(m.property.name.as_str())
+                }
+                _ => {}
+            }
+        }
+        walk::walk_assignment_expression(self, it);
+    }
+}
+
+/// `motion-flash` and `motion-endless` of a repeating `Timer`.
+fn timer_endless<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
+    let frame = chain.last().expect("the object itself");
+    if bound(frame.object, &["repeat"]).and_then(|b| b.boolean()) != Some(true)
+        || chain.iter().any(|f| found.is(f, class::PROGRESS))
+        || is_progress_file(found)
+    {
+        return;
+    }
+    let Some(handler) = bound(frame.object, &["onTriggered"]) else {
+        return;
+    };
+    let mut toggled = Toggles::default();
+    let mut assigned = Assigned::default();
+    match handler.value {
+        QmlBindingValue::Expression(e) => {
+            toggled.visit_expression(e);
+            assigned.visit_expression(e);
+        }
+        QmlBindingValue::Statement(s) => {
+            toggled.visit_statement(s);
+            assigned.visit_statement(s);
+        }
+        _ => {}
+    }
+    let running = bound(frame.object, &["running"]).and_then(|b| b.boolean());
+    let at = frame.object.type_name.span.start;
+    // Every tick is half of a flash: out, then back.
+    if let Some(ms) = bound(frame.object, &["interval"]).and_then(|b| b.number())
+        && toggled.names.iter().any(|n| FADES.contains(n))
+        && running != Some(false)
+        && ms > 0.0
+        && 2.0 * ms < f64::from(limits::FLASH_MIN_PASS_MS)
+    {
+        found.report(
+            at,
+            "motion-flash",
+            format!(
+                "this `Timer` toggles what is shown every {ms} ms, which is more than three \
+                 flashes a second and can trigger seizures; use an interval of at least {} ms, \
+                 or fade",
+                limits::FLASH_MIN_PASS_MS.div_ceil(2)
+            ),
+        );
+        return;
+    }
+    // `motion-timer-driven` has what a timer moves; this has what it shows.
+    if running == Some(true)
+        && assigned.names.iter().any(|n| COLOR_NAMES.contains(n))
+        && !assigned.names.iter().any(|n| MOVES.contains(n))
+        && !stops_somewhere(found)
+    {
+        found.report(
+            at,
+            "motion-endless",
+            format!(
+                "this `Timer` changes what is shown for ever from the moment it loads, and \
+                 nothing can pause or stop it; bind `running` to the state it shows, or stop it \
+                 within {} s",
+                limits::ENDLESS_MAX_MS / 1000
+            ),
+        );
+    }
+}
+
+/// A popup that scales in from its centre.
+fn origin<'a>(found: &mut Found<'_, '_, '_, 'a>, frame: &Frame<'_, 'a>) {
+    let Some(enter) = bound(frame.object, &["enter"]) else {
+        return;
+    };
+    let QmlBindingValue::Object(transition) = enter.value else {
+        return;
+    };
+    if bound(frame.object, &["transformOrigin"])
+        .is_some_and(|b| b.enumeration() != Some(("Popup", "Center")))
+    {
+        return;
+    }
+    let mut parts = Vec::new();
+    subtree(transition, &mut parts);
+    let what = describe_parts(found, &parts);
+    if what.properties.iter().any(|p| last(p) == "scale") {
+        found.report(
+            enter.at,
+            "motion-origin",
+            format!(
+                "this `{}` scales in from its centre, so it seems to come from nowhere; set \
+                 `transformOrigin` toward the control that opened it, or fade instead",
+                found.name(frame)
             ),
         );
     }
