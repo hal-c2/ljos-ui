@@ -7168,3 +7168,71 @@ Outside the pass, ~61k a press is the calculator's own script.
 - **The `targetIndexes` of several removals** keep the order the rows left in. qml6 moves
   the earlier ones' indexes and gives them in another order: "2,1,0" for `remove(4)`,
   `remove(0)`, `remove(1)` out of six rows. This is not pinned yet.
+
+### B12b (ilang): what crossing from script to the host costs (2026-10-26)
+
+**Method.** As in B12: user-space instructions of the whole process, perf counters, the
+lowest of several runs. An append is (10,000 appends − none) / 10,000, `{ n: i }` rows to a
+ListModel nothing shows. A calqlatr press is (3000 presses − none) / 3000 at 320×480. The
+crossings were counted with callgrind over 300 presses and over 10k appends. "Before" is
+the tree after B12.
+
+| | Before | After | qml6 |
+|---|---:|---:|---:|
+| append, no view (instructions a row) | 10.32k | 6.98k | ~3.5k |
+| calqlatr press (instructions) | 310.4k | 307.8k | ~177k |
+| 100 appends, no view (allocations) | 714 | 702 | |
+
+**Crossings in an append** (callgrind, instructions an append, before this work's last step):
+
+| Crossing | Calls | Instructions |
+|---|---:|---:|
+| script calls a host method (`raw_method`, inclusive) | 1 | 5.19k |
+| ↳ the object literal copied out of JS (`copy_at`) | 1 | 1.27k |
+| ↳↳ its own property names, and each key as a string | 1, 1 | ~385, ~139 |
+| ↳ the engine's side of the call (`EngineHost::call`) | 1 | 3.34k |
+| ↳↳ the method itself (`invoke`, the row and the count) | 1 | 1.94k |
+| ↳↳ the copy turned into an engine value | 1 | ~780 |
+| the script's own loop, literal and frees (QuickJS) | | ~1.87k |
+
+**Crossings in a calqlatr press** (instructions a press, inclusive):
+
+| Crossing | Calls a press | Instructions |
+|---|---:|---:|
+| QML-declared functions run from script (`raw_direct`) | 0.6 | 153k |
+| host methods (`raw_method`) | 6.9 | 136k |
+| ↳ `positionViewAtEnd` | 0.5 | 128k |
+| ↳ `ListModel.append`, `ListModel.get` | 0.2, 0.8 | 1.3k, 1.0k |
+| property writes from script (`prop_set`) | 0.9 | 8.3k |
+| property reads from script (`prop_get`, both paths) | 2.7 | 2.5k |
+
+A press's crossings themselves are cheap. Its cost is in what `positionViewAtEnd` does:
+a ListView pass, which is H2's area (B12's list).
+
+**What changed.**
+- A host method takes its arguments by value. It does not clone them.
+- A call keeps which arguments are data, and which are copies, in two bitmasks. It used to
+  keep them in a list. It converts arguments only when one holds a script value.
+- An object given to `append`, `insert` or `set` is copied as it crosses. A date in it is
+  copied, and a function makes no role. A row's object is a new copy each time it is read,
+  as in qml6 (`features/models/listmodel-copies.feature`).
+- An ordinary object is told by its class and its prototype. Before, the host asked each
+  object for its prototype's kind. Keys that are valid UTF-8 are read without a lossy
+  pass.
+- Rows are built from an iterator of their entries. They no longer go through a list made
+  for them. Rows added at the end extend the list instead of splicing it.
+- The model's `count` is written internally: the owner check is skipped. A number written
+  internally to a plain property skips the general write path.
+- Model listeners with no one listening return at once.
+
+**Why not 6k** (DECISION). The task's target was 6k instructions an append or less. About
+1.9k of the 6.98k is QuickJS's own work: the loop, the literal and the call. Of what is
+left, most goes on representing the value three times:
+- the JS object;
+- the host's map with a string for each key;
+- the engine's map with an atom for each key.
+
+That is two allocations a key and one a map. Reading the JS object straight into engine
+values would remove them. It needs a visitor in `ljos_js` that the engine implements, and
+it changes the host interface for every call. Building the engine's map one entry at a
+time, instead of all at once, was tried. It was slower (7.12k), so it was reverted.
