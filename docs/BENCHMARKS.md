@@ -7497,3 +7497,55 @@ Left:
   descendant, each in its own propagation. This is what told the Column 400 times, and
   any other reader of the rows' `visible` still sees each change. Making that one
   propagation is in the inherited-state seam.
+
+### FRAMES2: a view laid out once a frame while a sibling's width animates (2026-10-26)
+
+**Cause.** While the panel slid open, the transcript ListView, which takes what the panel
+leaves, was laid out three or four times a frame:
+- once as the animation stepped the panel's width;
+- again as each text in its rows wrapped at the new width;
+- again as each row's Column took its new height.
+
+The tabs view and the sidebar were not laid out at all, because nothing about them
+changed. The 186 M under `start_driven` → `views::pass::bump` is the tabs model being
+swapped once per toggle, not once per frame; qml6 also makes those delegates again.
+
+**Fix.** While the scene steps its animations or polishes, a view that a change reaches
+now waits until the polish ends, then lays its rows out once. Three cases are still laid
+out at once:
+- a pass that something asked for, such as rows that came into sight or a new model;
+- a view's first pass;
+- a view that `positionViewAtEnd` or `positionViewAtBeginning` keeps at an edge while its
+  rows take their length. Bindings over `indexAt` read the rows at the view's new place,
+  so those rows must already be there (`list-settling-rows.feature`).
+
+In frame_profile, the transcript's passes over 80 animated frames fell from 147 to 81. The
+pin is `a_view_a_moving_width_reaches_lays_its_rows_out_once_a_frame` in
+`ljos_quick/tests/views.rs`, which records one pass per frame and none for the tabs. Before
+the fix, one frame took 28 passes.
+
+| Panel toggle, 8 clicks in 8 s, GPU sandbox | Ljós before | Ljós after | qml6 |
+|---|---:|---:|---:|
+| Instructions | 1,775–1,846 M | 1,700–1,809 M | 1,156–2,218 M |
+| Frame p50 | 2.1–2.4 ms | 1.9–2.7 ms | 0 ms gui |
+| Frame p95 | 6.8–7.4 ms | 5.25–5.26 ms | 1 ms render |
+| Longest | 20–42 ms (first open) | 18–22 ms (first open) | first open |
+
+The text still wraps again at each new width, as it does in qml6, so the instruction count
+moved less than the pass count did. The frames' tail is shorter.
+
+| Interaction (8 s) | Ljós FRAMES | Ljós FRAMES2 | qml6 (this run) |
+|---|---:|---:|---:|
+| Scroll the transcript | 793 M | 771 M | 545 M |
+| Scroll the sidebar | 852 M | 863 M | 643 M |
+| Hover sidebar rows | 139 M | 132 M | 94 M |
+| Type 50 characters | 34–67 M | 34 M | 19 M |
+| Stream updates | 526 M | 515 M | 348 M |
+
+qml6's counts move by up to 2× between runs in this sandbox (toggle 1,156 M and 2,218 M,
+typing 19 M and 102 M). Ljós stayed within its own run-to-run spread on every interaction.
+
+Left:
+- `flickable::put` and `views::current::normalise` still cost per row, not per changed
+  row.
+- Wrapped StyledText laid out again at each width, and encode.
