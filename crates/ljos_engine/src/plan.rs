@@ -9,7 +9,7 @@
 //! by expressions of objects of other types) links it again rather than
 //! taking an index that means something else there.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 
 use ljos_ir::{CompiledFile, Members};
 
@@ -104,6 +104,9 @@ pub(crate) struct ObjectPlan {
     /// The default property of the type the object is written as, which
     /// its children go to.
     pub(crate) children_default: Slot,
+    /// The most graph nodes an object made from this declaration held in
+    /// its scope once complete: the next one's scope is made that size.
+    pub(crate) nodes: Cell<u32>,
 }
 
 /// One parameter of an expression.
@@ -149,6 +152,7 @@ impl Plans {
                             })
                             .collect(),
                         children_default: Slot::default(),
+                        nodes: Cell::new(0),
                     }
                 })
                 .collect()

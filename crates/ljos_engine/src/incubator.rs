@@ -698,6 +698,28 @@ impl Engine {
         }
     }
 
+    /// Keeps in each declaration's plan how many nodes its object's scope
+    /// came to, which the next object made from it reserves.
+    fn note_scope_sizes(&self, cr: &Creation) {
+        for u in &cr.units {
+            let id = u.inst.objects[u.obj];
+            let scope = match self.inner.store.borrow().objects.get(id) {
+                Some(h) => h.scope,
+                None => continue,
+            };
+            let Some(scope) = scope else {
+                continue;
+            };
+            let plans = u.inst.file.plans();
+            if let Some(plan) = plans.object(&u.inst.file.ir, u.inst.comp.0, u.obj) {
+                let n = u32::try_from(self.inner.graph.scope_len(scope)).unwrap_or(u32::MAX);
+                if n > plan.nodes.get() {
+                    plan.nodes.set(n);
+                }
+            }
+        }
+    }
+
     fn finalize(
         &self,
         cr: Creation,
@@ -724,6 +746,7 @@ impl Engine {
                 self.warn(e.to_string());
             }
         }
+        self.note_scope_sizes(&cr);
         let mut stack = vec![root];
         while let Some(o) = stack.pop() {
             let Some(node) = cr.nodes.get(&o) else {
@@ -1420,6 +1443,11 @@ impl Engine {
         }
         let plans = inst.file.plans();
         let plan = plans.object(&inst.file.ir, inst.comp.0, u.obj);
+        if let Some(n) = plan.map(|p| p.nodes.get()).filter(|n| *n > 0)
+            && let Ok(scope) = self.ensure_scope(id)
+        {
+            self.inner.graph.reserve_scope(scope, n as usize);
+        }
         self.apply_members(inst, id, &od.members, &[], id, plan.map(|p| &p.members));
         for (k, g) in od.grouped.iter().enumerate() {
             let gp = plan.and_then(|p| p.grouped.get(k));
