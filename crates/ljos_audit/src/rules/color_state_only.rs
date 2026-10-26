@@ -21,9 +21,10 @@ use ljos_controls::AbstractButton;
 use ljos_design::color::{delta_e_ok, wcag_contrast};
 use ljos_design::limits::NONTEXT_CONTRAST;
 use ljos_design::limits::audit::{VISIBLE_CHANGE_MIN_PX, VISIBLE_DELTA_E};
-use ljos_engine::{ObjectId, Value, WriteKind};
+use ljos_engine::ObjectId;
 use ljos_render::kurbo::Rect;
 
+use super::controls::{checked, hold_checked, restore_checked, set_checked};
 use crate::acting::Act;
 use crate::cx::{is_a, place_of, scene_rect, shown_items, shown_opacity, takes_focus, within};
 use crate::pixels::{Painter, Picture, backdrop};
@@ -31,18 +32,6 @@ use crate::pixels::{Painter, Picture, backdrop};
 /// No audit flips more than this many buttons: a long list of check
 /// boxes says the same of each.
 const MOST: usize = 64;
-
-fn checked(act: &Act, b: ObjectId) -> bool {
-    let e = act.engine;
-    e.untrack(|| e.read_by_name(b, "checked")).to_boolean()
-}
-
-fn set_checked(act: &Act, b: ObjectId, on: bool) {
-    let e = act.engine;
-    if let Ok(p) = e.property_index(b, "checked") {
-        let _ = e.write(b, p, Value::Bool(on), WriteKind::Host);
-    }
-}
 
 /// How far a part moves or grows before the move counts as a change of
 /// shape: under that, a rounding of the layout.
@@ -106,21 +95,17 @@ pub(crate) fn check(act: &mut Act) {
         let Some(region) = scene_rect(e, b).map(|r| r.inflate(2.0, 2.0)) else {
             continue;
         };
-        let held: Vec<(ObjectId, bool)> = all.iter().map(|o| (*o, checked(act, *o))).collect();
+        let held = hold_checked(e, &all);
         let Some(before) = draw(act, &mut painter, region) else {
             continue;
         };
         let shape = places(act, b);
-        let was = checked(act, b);
-        set_checked(act, b, !was);
+        let was = checked(e, b);
+        set_checked(e, b, !was);
         act.finish();
         let after = draw(act, &mut painter, region);
         let moved = reshaped(&shape, &places(act, b));
-        for (o, c) in &held {
-            if e.is_alive(*o) && checked(act, *o) != *c {
-                set_checked(act, *o, *c);
-            }
-        }
+        restore_checked(e, &held);
         act.finish();
         let Some(after) = after
             .filter(|a| a.width == before.width && a.height == before.height)

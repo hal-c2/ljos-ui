@@ -1,7 +1,7 @@
 //! What the checks of names, layout and content read of the controls: what
 //! a button shows, what explains it, and the words of a label.
 
-use ljos_engine::{Engine, MetaRef, ObjectId, QmlType};
+use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Value, WriteKind};
 use ljos_quick::Text;
 
 use ljos_controls::{AbstractButton, ToolTip, ToolTipAttached, button_display};
@@ -37,6 +37,40 @@ pub(crate) fn button_look(engine: &Engine, item: ObjectId) -> Option<ButtonLook>
             })
         })
         .ok()
+}
+
+/// Whether a button is checked.
+pub(crate) fn checked(engine: &Engine, b: ObjectId) -> bool {
+    engine
+        .untrack(|| engine.read_by_name(b, "checked"))
+        .to_boolean()
+}
+
+/// Checks or unchecks a button as the toolkit does on its own account: a
+/// binding on `checked` stays, and is what it says once the audit is done.
+/// Runs `onCheckedChanged`, and an exclusive group unchecks the others.
+pub(crate) fn set_checked(engine: &Engine, b: ObjectId, on: bool) {
+    if let Ok(p) = engine.property_index(b, "checked") {
+        let _ = engine.write(b, p, Value::Bool(on), WriteKind::Host);
+    }
+}
+
+/// Whether each of `buttons` is checked, for [`restore_checked`]: flipping
+/// one of an exclusive group changes another.
+pub(crate) fn hold_checked(engine: &Engine, buttons: &[ObjectId]) -> Vec<(ObjectId, bool)> {
+    buttons.iter().map(|b| (*b, checked(engine, *b))).collect()
+}
+
+/// Puts back what [`hold_checked`] kept: what was unchecked first, so that
+/// checking a group's one choice last leaves no other checked.
+pub(crate) fn restore_checked(engine: &Engine, held: &[(ObjectId, bool)]) {
+    for want in [false, true] {
+        for (b, was) in held {
+            if *was == want && engine.is_alive(*b) && checked(engine, *b) != want {
+                set_checked(engine, *b, want);
+            }
+        }
+    }
 }
 
 /// `&Save` as it reads: `Save`; `&&` is an ampersand.

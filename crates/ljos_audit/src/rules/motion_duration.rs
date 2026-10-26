@@ -15,8 +15,9 @@
 
 use ljos_controls::AbstractButton;
 use ljos_design::limits::motion::{MICRO_MAX_MS, STANDARD_MAX_MS};
-use ljos_engine::{ObjectId, Value, WriteKind};
+use ljos_engine::ObjectId;
 
+use super::controls::{checked, hold_checked, restore_checked, set_checked};
 use crate::acting::Act;
 use crate::cx::{is_a, shown_items, takes_focus};
 use crate::motion_watch::{
@@ -25,13 +26,6 @@ use crate::motion_watch::{
 
 /// No audit flips more than this many controls.
 const MOST: usize = 32;
-
-fn set_checked(act: &Act, b: ObjectId, on: bool) {
-    let e = act.engine;
-    if let Ok(p) = e.property_index(b, "checked") {
-        let _ = e.write(b, p, Value::Bool(on), WriteKind::Host);
-    }
-}
 
 /// Whether `anim` animates something of `b`'s: the first item that owns
 /// it (a `Behavior`'s, a transition's) is `b` or inside it.
@@ -87,11 +81,17 @@ pub(crate) fn check(act: &mut Act) {
             &mut found,
         );
     }
-    let buttons: Vec<ObjectId> = shown_items(&act.cx())
+    // Every button, to put back: checking one of an exclusive group
+    // unchecks another.
+    let all: Vec<ObjectId> = shown_items(&act.cx())
         .into_iter()
+        .filter(|b| is_a::<AbstractButton>(e, *b))
+        .collect();
+    let buttons: Vec<ObjectId> = all
+        .iter()
+        .copied()
         .filter(|b| {
-            is_a::<AbstractButton>(e, *b)
-                && own(e, *b)
+            own(e, *b)
                 && takes_focus(e, *b)
                 && e.untrack(|| e.read_by_name(*b, "checkable")).to_boolean()
         })
@@ -100,9 +100,10 @@ pub(crate) fn check(act: &mut Act) {
     if !buttons.is_empty() {
         with_motion(act, false, |act| {
             for b in buttons {
-                let was = e.untrack(|| e.read_by_name(b, "checked")).to_boolean();
+                let held = hold_checked(e, &all);
+                let was = checked(e, b);
                 let words = crate::cx::words(&act.cx(), b);
-                let mut w = watch(act, |a| set_checked(a, b, !was), &no_probe);
+                let mut w = watch(act, |a| set_checked(a.engine, b, !was), &no_probe);
                 w.runs.retain(|r| feeds_back(act, r.anim, b));
                 let verb = if was { "unchecking" } else { "checking" };
                 too_long(
@@ -113,7 +114,7 @@ pub(crate) fn check(act: &mut Act) {
                     "feedback on a check",
                     &mut found,
                 );
-                set_checked(act, b, was);
+                restore_checked(e, &held);
                 act.finish();
             }
         });
