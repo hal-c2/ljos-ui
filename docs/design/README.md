@@ -111,7 +111,6 @@ Guidance below is in the pages, marked "not checked yet", with a proposed code f
 | `motion-flash` | motion.md | Something flashes more than three times a second (WCAG 2.3.1). |
 | `motion-endless` | motion.md | An infinite animation that is not a progress indicator runs past 5 s with no way to stop it (WCAG 2.2.2). |
 | `motion-origin` | motion.md | A popup grows from its centre instead of from the control that opened it. |
-| `motion-reduced-fade` | motion.md | Under reduced motion an opacity-only cross-fade should still run; Ljós today completes every finite animation at once. |
 | `motion-theme-switch` | motion.md | Colours animate while the theme switches. |
 | `content-vague-action` | content.md | A button says `OK` or `Continue` where a verb and its object fit (`Save draft`). |
 | `content-menu-ellipsis` | content.md | A menu item that opens a dialog for more input does not end with `…`. |

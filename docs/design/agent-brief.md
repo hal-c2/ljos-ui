@@ -80,6 +80,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Stagger ≤ 50 ms a step and ≤ 200 ms in all. [motion-stagger]
 - Make frequent actions instant, ≤ 100 ms. [motion-frequent]
 - Animate with animations or `Behavior`, never a repeating `Timer`. [motion-timer-driven]
+- Gate endless movement on `motionPreference`, or pulse opacity instead. [motion-reduced-ignored]
 - Keep every frame under 16.7 ms while animating. [motion-dropped-frames]
 - Grow popups from their trigger; under reduced motion cross-fade only.
 

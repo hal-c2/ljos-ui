@@ -617,6 +617,14 @@ pub const RULES: &[Rule] = &[
         "Use an animation or `Behavior`; they honour reduced motion and stop when done.",
     ),
     r(
+        "motion-reduced-ignored",
+        Motion,
+        Hint,
+        Static,
+        "An endless animation moves something and never reads `Qt.styleHints.accessibility.motionPreference`: on Qt it keeps moving for someone who asked for less motion.",
+        "Gate it, or animate opacity instead.",
+    ),
+    r(
         "motion-dropped-frames",
         Motion,
         Warning,

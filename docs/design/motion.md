@@ -69,15 +69,25 @@ Items of a list may enter one after another, by at most `limits::motion::STAGGER
 
 When the system asks for reduced motion (`Qt.styleHints.accessibility.motionPreference === Qt.MotionPreference.ReducedMotion`), drop movement, scaling, parallax and springs, and keep a short opacity cross-fade so a change is still visible. Opacity and colour changes are not motion for WCAG 2.3.3.
 
+On Ljós the runtime does this for every animation, whether the component asks or not:
+
+- What moves (a place, a size, a scale, a turn, a scroll, how far a Drawer is in) is at its end at once.
+- A fade or a change of colour keeps its curve and lasts at most `limits::motion::REDUCED_FADE_MAX_MS`; a shorter one keeps its own length.
+- A popup, menu, dialog or drawer, and a StackView page, whose way in or out would move it and does not fade it, fades instead: in where it ends, out where it is. A fade the transition has is kept, and capped. `opened`, `closed` and the page signals come in the same order, when the fade ends.
+- An endless animation keeps running at its own pace: a BusyIndicator still turns, as the platforms keep their spinners. Gate one that is decoration (`motion-reduced-ignored`).
+- A change of the setting while something runs goes on from where it is: nothing jumps back.
+
+Qt only tells the application and leaves the rest to it. A component that also targets Qt reads the setting itself, which is also right on Ljós:
+
 ```qml
 readonly property bool reduced: Qt.styleHints.accessibility.motionPreference === Qt.MotionPreference.ReducedMotion
 enter: Transition {
-    NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+    NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150; easing.type: Easing.OutCubic }
     NumberAnimation { property: "y"; from: reduced ? 0 : 12; to: 0; duration: reduced ? 0 : 200; easing.type: Easing.OutCubic }
 }
 ```
 
-Ljós today completes every finite animation on its first frame under reduced motion, fades included; see `motion-reduced-fade` below.
+Give each entrance and exit its own opacity fade so that the reduced path on Qt still shows the change, keep the fade within `limits::motion::REDUCED_FADE_MAX_MS`, and stop or hide endless decoration when `reduced` is true.
 
 ### Performance: animate what is cheap
 
@@ -244,6 +254,25 @@ SequentialAnimation on opacity { loops: Animation.Infinite; running: busy
 
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html , https://web.dev/articles/animations-guide
 
+<a id="motion-reduced-ignored"></a>
+### `motion-reduced-ignored`
+
+**Hint, static.** An endless animation (`loops: Animation.Infinite`) moves something (`x`, `y`, `scale`, `rotation`, a size) and nothing in it reads `Qt.styleHints.accessibility.motionPreference`. Ljós keeps an endless run going under reduced motion, as a busy indicator must; on Qt the application alone decides, so endless decoration keeps moving for someone who asked for less motion (WCAG 2.3.3). Gate it, or animate opacity instead.
+
+```qml
+// Bad: a badge that bobs for ever
+SequentialAnimation on y { loops: Animation.Infinite
+    NumberAnimation { to: 4; duration: 600; easing.type: Easing.InOutSine }
+    NumberAnimation { to: 0; duration: 600; easing.type: Easing.InOutSine } }
+// Good: still under reduced motion, or a pulse of opacity
+SequentialAnimation on y { loops: Animation.Infinite
+    running: Qt.styleHints.accessibility.motionPreference !== Qt.MotionPreference.ReducedMotion
+    NumberAnimation { to: 4; duration: 600; easing.type: Easing.InOutSine }
+    NumberAnimation { to: 0; duration: 600; easing.type: Easing.InOutSine } }
+```
+
+Sources: https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html , https://doc.qt.io/qt-6/qaccessibilityhints.html#motionPreference-prop , https://web.dev/articles/prefers-reduced-motion
+
 <a id="motion-dropped-frames"></a>
 ### `motion-dropped-frames`
 
@@ -263,7 +292,6 @@ Sources: https://web.dev/articles/rendering-performance , https://web.dev/articl
 - **Flashing** (proposed `motion-flash`): nothing flashes more than three times a second (WCAG 2.3.1).
 - **Endless motion** (proposed `motion-endless`): an infinite animation that is not a progress indicator stops after 5 s or has a pause (WCAG 2.2.2).
 - **Origin** (proposed `motion-origin`): a popup grows from its centre instead of from the control that opened it.
-- **Reduced motion keeps a fade** (proposed `motion-reduced-fade`): Ljós completes every finite animation at once under reduced motion; an opacity-only cross-fade should still run.
 - **No motion on a theme switch** (proposed `motion-theme-switch`): colours that animate while the theme changes make every surface pulse.
 
 ## Sources
