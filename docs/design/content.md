@@ -140,10 +140,33 @@ These no machine can check; review them by hand. Where feedback is placed on scr
 
 **One-word status suffixes must be unambiguous.** `Sync — Paused` can mean the user paused it or that it stopped on an error; `Backups — None` can mean none were made or none are wanted. Prefer a phrase that says what is true and who did it (`Sync paused by you`, `No backup yet`), or a word with only one reading in that place.
 
-## Not checked yet
+<a id="content-vague-action"></a>
+### `content-vague-action`
 
-- **Vague actions** (proposed `content-vague-action`): `OK`, `Yes`, `Continue` or `Submit` where a verb and object fit (`Save draft`, `Discard changes`).
-- **Ellipsis on menu items that ask for more** (proposed `content-menu-ellipsis`): an item that opens a dialog for more input ends with `…` (`Rename…`); one that acts at once does not.
+**Hint, static.** A `Button` (and its kin), or a `MenuItem`, has a literal `text` of `OK`, `Yes`, `No`, `Continue`, `Submit`, `Done`, `Go`, `Click here` or `Proceed` (case and `&` ignored, a `qsTr` of one too). The reader has to read the question above to know what the button does. Say the verb and its object: `Save draft`, `Delete 3 files`. A `Dialog`'s `standardButtons` are the style's own words and are not reported.
+
+```qml
+// Bad
+Button { text: qsTr("OK"); onClicked: save() }
+// Good
+Button { text: qsTr("Save draft"); onClicked: save() }
+```
+
+Sources: https://developer.apple.com/design/human-interface-guidelines/alerts , https://m3.material.io/components/dialogs/guidelines
+
+<a id="content-menu-ellipsis"></a>
+### `content-menu-ellipsis`
+
+**Hint, static.** A `MenuItem` or `Action` whose handler opens a `Dialog`, `FileDialog` or `Popup` of the file (`x.open()`) asks for more input, and its literal text should end with `…` (or `...`): `Rename…`. An item that acts at once has none. The ellipsis tells the user there is one more step before anything happens.
+
+```qml
+// Bad
+MenuItem { text: qsTr("Rename"); onTriggered: renameDialog.open() }
+// Good
+MenuItem { text: qsTr("Rename…"); onTriggered: renameDialog.open() }
+```
+
+Sources: https://developer.apple.com/design/human-interface-guidelines/menus , https://learn.microsoft.com/en-us/windows/apps/design/controls/menus-and-context-menus
 
 ## Sources
 

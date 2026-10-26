@@ -135,11 +135,24 @@ These no machine can check; review them by hand.
 
 **Say when a setting is overridden.** If a setting has no effect because something else decides it (a system setting, a policy, another option), say so next to it ("Set by your system theme") and, where you can, link to the place that decides. A control that silently does nothing looks broken.
 
+<a id="focus-destructive-undo"></a>
+### `focus-destructive-undo`
+
+**Hint, static.** A `Button`, `MenuItem` or `Action` whose literal text starts with `Delete`, `Remove`, `Discard`, `Erase` or `Clear` does it from its handler at once: the handler opens no dialog or popup (`x.open()`) and calls nothing named like `confirm` or `undo`. A mis-click then costs the user their work. Ask first, or do it and offer `Undo` for a while (better, when it can be undone). A button inside a `Dialog` or a popup is the confirmation and is not reported. Keep a deliberate one with `// ljos-allow(focus-destructive-undo): <why>`.
+
+```qml
+// Bad: gone on the first click
+Button { text: qsTr("Delete project"); onClicked: project.remove() }
+// Good: ask first
+Button { text: qsTr("Delete project"); onClicked: confirmDialog.open() }
+```
+
+Sources: https://www.nngroup.com/articles/ten-usability-heuristics/ (error prevention, user control and freedom) , https://alistapart.com/article/neveruseawarning/
+
 ## Not checked yet
 
 - **Arrows inside a composite** (proposed `focus-arrow-keys`): tabs, radio groups and lists take one Tab stop and arrows inside, as in the table above.
 - **Busy feedback** (proposed `focus-busy-feedback`): 0.1 s feels instant; up to 1 s keeps the flow but needs no indicator; beyond 1 s show that work is going on, and beyond 10 s show progress and a way to cancel (Nielsen). Do not flash a spinner for quick work: show it after 150–300 ms and keep it for at least 300–500 ms (Vercel).
-- **Destructive actions** (proposed `focus-destructive-undo`): a destructive action has a confirmation or, better, an undo.
 - **Press feedback within 100 ms**, and the target is at least `limits::TARGET_MIN_DESKTOP` (`a11y-target-size`).
 
 ## Sources

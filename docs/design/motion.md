@@ -287,11 +287,55 @@ NumberAnimation { target: blurredPanel; property: "x"; duration: 250; easing.typ
 
 Sources: https://web.dev/articles/rendering-performance , https://web.dev/articles/animations-guide
 
+<a id="motion-flash"></a>
+### `motion-flash`
+
+**Error, static.** Something flashes more than three times a second (WCAG 2.2 2.3.1): a `Timer` with `repeat: true` whose `interval` is under half of `limits::motion::FLASH_MIN_PASS_MS` and whose `onTriggered` toggles `visible`, `opacity` or `color` (each tick is half of a flash), or a looping animation of `opacity`, `visible` or `color` whose pass is shorter than `limits::motion::FLASH_MIN_PASS_MS`. Only literal numbers are read, so a computed interval is never reported. Flashing can trigger seizures; no taste or brand reason outweighs that.
+
+```qml
+// Bad: four flashes a second
+Timer { interval: 100; repeat: true; running: true; onTriggered: alert.visible = !alert.visible }
+// Good: a slow pulse, and one that stops
+SequentialAnimation on opacity { loops: Animation.Infinite; running: alert.pending
+    NumberAnimation { to: 0.4; duration: 800; easing.type: Easing.InOutSine }
+    NumberAnimation { to: 1; duration: 800; easing.type: Easing.InOutSine } }
+```
+
+Sources: https://www.w3.org/WAI/WCAG22/Understanding/three-flashes-or-below-threshold.html , https://www.w3.org/WAI/WCAG22/Understanding/pause-stop-hide.html
+
+<a id="motion-endless"></a>
+### `motion-endless`
+
+**Warning, static.** An animation with `loops: Animation.Infinite` or a `Timer` with `repeat: true` changes something visible (opacity, colour, visibility) from the moment it loads, and nothing can stop it: no `running:` binding, no `stop()` or `running = false` in the file. Motion that starts by itself and lasts longer than `limits::motion::ENDLESS_MAX_MS` needs a way to pause, stop or hide it (WCAG 2.2 2.2.2). A busy indicator or a progress bar is exempt, its motion is the message; moving animations are `motion-reduced-ignored`'s, not this rule's. Bind `running` to the state it shows.
+
+```qml
+// Bad: a pulse that never stops
+SequentialAnimation on opacity { loops: Animation.Infinite
+    NumberAnimation { to: 0.3; duration: 900 } NumberAnimation { to: 1; duration: 900 } }
+// Good: it runs only while there is something to say
+SequentialAnimation on opacity { loops: Animation.Infinite; running: syncing
+    NumberAnimation { to: 0.3; duration: 900 } NumberAnimation { to: 1; duration: 900 } }
+```
+
+Sources: https://www.w3.org/WAI/WCAG22/Understanding/pause-stop-hide.html , https://web.dev/articles/prefers-reduced-motion
+
+<a id="motion-origin"></a>
+### `motion-origin`
+
+**Hint, static.** A `Popup`, `Menu` or `ToolTip` has an `enter` transition that animates `scale` and keeps the default `transformOrigin`, the centre. A popup that grows from its middle seems to come from nowhere; it should grow from the control that opened it. Set `transformOrigin` toward that control, or fade instead of scaling. A `Drawer` slides from its edge and is not reported.
+
+```qml
+// Bad: a menu that grows from its middle
+Menu { enter: Transition { NumberAnimation { property: "scale"; from: 0.9; to: 1; duration: 150; easing.type: Easing.OutCubic } } }
+// Good: from the corner the button is at
+Menu { transformOrigin: Popup.TopLeft
+    enter: Transition { NumberAnimation { property: "scale"; from: 0.9; to: 1; duration: 150; easing.type: Easing.OutCubic } } }
+```
+
+Sources: https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#transformOrigin-prop , https://animations.dev/learn/animation-theory/the-easing-blueprint
+
 ## Not checked yet
 
-- **Flashing** (proposed `motion-flash`): nothing flashes more than three times a second (WCAG 2.3.1).
-- **Endless motion** (proposed `motion-endless`): an infinite animation that is not a progress indicator stops after 5 s or has a pause (WCAG 2.2.2).
-- **Origin** (proposed `motion-origin`): a popup grows from its centre instead of from the control that opened it.
 - **No motion on a theme switch** (proposed `motion-theme-switch`): colours that animate while the theme changes make every surface pulse.
 
 ## Sources

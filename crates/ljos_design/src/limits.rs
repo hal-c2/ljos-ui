@@ -92,6 +92,13 @@ pub mod motion {
     /// long enough to be seen (`MIN_VISIBLE_MS`) and quicker than any
     /// feedback (`MICRO_MAX_MS`).
     pub const REDUCED_FADE_MAX_MS: u32 = 150;
+    /// One flash of anything is a pass out and back; three a second is the
+    /// most WCAG 2.2 SC 2.3.1 allows, so a pass shorter than this flashes
+    /// more often.
+    pub const FLASH_MIN_PASS_MS: u32 = 333;
+    /// Moving or changing content that starts by itself may run this long
+    /// before it needs a way to pause or stop (WCAG 2.2 SC 2.2.2).
+    pub const ENDLESS_MAX_MS: u32 = 5000;
 }
 
 /// What the runtime audit looks at besides the window as it is.

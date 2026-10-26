@@ -19,6 +19,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Never put `Accessible.ignored` on something that takes focus or holds controls. [a11y-ignored-focusable]
 - Never nest a control inside another clickable item. [a11y-nested-interactive]
 - Give every dialog a `title` or accessible name. [a11y-unnamed-dialog]
+- Name every text field with `Accessible.name` or a `Label`, never the placeholder alone. [a11y-placeholder-label]
 
 ## Colour
 - Keep text at 4.5:1 (3:1 at 24 px, or 18.66 px bold) in light, dark and high contrast. [color-text-contrast]
@@ -55,6 +56,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Group menus of more than 10 items with `MenuSeparator` or submenus. [layout-menu-ungrouped]
 - Draw resize handles at 3:1 with a hover state. [layout-resize-handle]
 - Give frameless windows a close control at the top corner. [layout-window-controls]
+- Make a rectangle filling another have a radius no larger than the outer one's. [layout-nested-radius]
 
 ## Focus and input
 - Draw `visualFocus` on every focusable control. [focus-indicator-missing]
@@ -64,6 +66,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Show hover-revealed things on `hovered || visualFocus` too. [focus-hover-only]
 - Close every closable popup or overlay on Escape. [focus-escape-dismiss]
 - Disable shortcuts for the window behind an open modal. [focus-shortcut-under-modal]
+- Ask before, or offer undo after, delete, remove, discard and clear. [focus-destructive-undo]
 - Use arrows inside tabs, lists, radio groups and menus; one Tab stop each.
 - Show busy state after 1 s and progress after 10 s; offer undo for destructive actions.
 - Show what Enter does in a field; keep a visible way to reopen a collapsed panel.
@@ -82,6 +85,9 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Animate with animations or `Behavior`, never a repeating `Timer`. [motion-timer-driven]
 - Gate endless movement on `motionPreference`, or pulse opacity instead. [motion-reduced-ignored]
 - Keep every frame under 16.7 ms while animating. [motion-dropped-frames]
+- Never flash more than three times a second. [motion-flash]
+- Bind `running` on endless animations and timers that change what is shown. [motion-endless]
+- Set `transformOrigin` toward the trigger of a popup that scales in. [motion-origin]
 - Grow popups from their trigger; under reduced motion cross-fade only.
 
 ## Content
@@ -92,6 +98,8 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Label rows by what they are, not by their kind. [content-identical-rows]
 - Never put two controls for one property in one view. [content-duplicate-control]
 - Say why a control is disabled. [content-disabled-no-reason]
+- Name buttons by verb and object, never `OK`, `Yes` or `Continue`. [content-vague-action]
+- End a menu item that opens a dialog for more input with `…`. [content-menu-ellipsis]
 - Write toasts with what, how many and an undo; title settings pages one way.
 - Show a row's state on the row; never mention features the build lacks; avoid ambiguous one-word statuses.
 

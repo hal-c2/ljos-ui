@@ -251,6 +251,14 @@ pub const RULES: &[Rule] = &[
         "A dialog or modal popup has no title and no accessible name, so a screen reader announces only that a dialog opened.",
         "Set `title` on a `Dialog`, or `Accessible.name` on a `Popup`, saying what it is for.",
     ),
+    r(
+        "a11y-placeholder-label",
+        A11y,
+        Warning,
+        Static,
+        "A text field is told apart only by its placeholder, which is gone as soon as one types (WCAG 2.2 3.3.2).",
+        "Name it: `Accessible.name`, or a `Label` beside it with the same words.",
+    ),
     // Colour.
     r(
         "color-text-contrast",
@@ -478,6 +486,14 @@ pub const RULES: &[Rule] = &[
         "A frameless window shows no close control, or its window controls are not at the window's top corner.",
         "Put the window controls in the window's own title bar at its top corner, on every page.",
     ),
+    r(
+        "layout-nested-radius",
+        Layout,
+        Hint,
+        Static,
+        "A rectangle that fills another has a larger corner radius than the one it sits in, so the corners do not follow each other.",
+        "Make the inner radius the outer one less the gap between them (never below 0).",
+    ),
     // Focus and interaction.
     r(
         "focus-indicator-missing",
@@ -534,6 +550,14 @@ pub const RULES: &[Rule] = &[
         Runtime,
         "A shortcut acts on the window behind an open modal popup.",
         "Disable the shortcut while a modal popup is open, or move it into the popup.",
+    ),
+    r(
+        "focus-destructive-undo",
+        Focus,
+        Hint,
+        Static,
+        "A button or menu item that deletes, removes or discards does it at once, with neither a confirmation nor an undo.",
+        "Ask first in a dialog, or do it and offer `Undo` for a while.",
     ),
     // Motion.
     r(
@@ -632,6 +656,30 @@ pub const RULES: &[Rule] = &[
         "An animation dropped frames while it ran.",
         "Profile with `app_frames`; animate cheap properties and avoid relayout while it runs.",
     ),
+    r(
+        "motion-flash",
+        Motion,
+        Error,
+        Static,
+        "Something flashes more than three times a second (WCAG 2.2 2.3.1): a fast repeating `Timer` that toggles it, or a looping animation of opacity, visibility or colour with a short pass.",
+        "Slow it to at most three flashes a second, fade instead of toggling, or stop it.",
+    ),
+    r(
+        "motion-endless",
+        Motion,
+        Warning,
+        Static,
+        "An animation or `Timer` that never ends changes what is on screen and nothing can pause or stop it (WCAG 2.2 2.2.2).",
+        "Bind `running` to the state it shows (busy, visible, motion preference), or stop it after a few seconds.",
+    ),
+    r(
+        "motion-origin",
+        Motion,
+        Hint,
+        Static,
+        "A popup scales in from its centre, not from the control that opened it.",
+        "Set `transformOrigin` toward that control, or fade instead of scaling.",
+    ),
     // Content.
     r(
         "content-inconsistent-words",
@@ -688,6 +736,22 @@ pub const RULES: &[Rule] = &[
         Runtime,
         "A disabled control or menu item gives no reason.",
         "Say why in a tooltip or beside it, or leave out what cannot apply here.",
+    ),
+    r(
+        "content-vague-action",
+        Content,
+        Hint,
+        Static,
+        "A button says `OK`, `Yes`, `Continue` or the like where a verb and its object fit.",
+        "Say what it does: `Save draft`, `Delete 3 files`.",
+    ),
+    r(
+        "content-menu-ellipsis",
+        Content,
+        Hint,
+        Static,
+        "A menu item that opens a dialog to ask for more does not end with an ellipsis.",
+        "End its text with `…` (`Rename…`); an item that acts at once has none.",
     ), // The checks themselves.
     r(
         "lint-allow-without-reason",

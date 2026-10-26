@@ -278,9 +278,25 @@ Dialog { title: qsTr("Discard changes"); modal: true; standardButtons: Dialog.Ok
 
 Sources: axe `aria-dialog-name`: https://github.com/dequelabs/axe-core/blob/develop/doc/rule-descriptions.md , https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/
 
+<a id="a11y-placeholder-label"></a>
+### `a11y-placeholder-label`
+
+**Warning, static.** A `TextField` or `TextArea` has `placeholderText` and nothing else that names it: no `Accessible.name`, no `Accessible.labelledBy`, and no `Label` or `Text` beside it. `placeholderText` disappears as soon as one types, so the field loses its label when it is most needed, and it is drawn below text contrast by design (APCA puts it at Lc 30). A screen reader may read the placeholder, but a sighted user who has typed cannot check what the field asks for (WCAG 2.2 3.3.2).
+
+```qml
+// Bad: only the placeholder says what this is
+TextField { placeholderText: qsTr("Email address") }
+// Good: a label beside it, and the placeholder as an example
+ColumnLayout {
+    Label { text: qsTr("Email address") }
+    TextField { placeholderText: qsTr("name@example.org") }
+}
+```
+
+Sources: https://www.w3.org/WAI/WCAG22/Understanding/labels-or-instructions.html , https://www.w3.org/WAI/tutorials/forms/instructions/#placeholder-text
+
 ## Not checked yet
 
-- **A placeholder is not a label** (proposed `a11y-placeholder-label`). `placeholderText` disappears as soon as one types, and is drawn below text contrast by design (APCA puts it at Lc 30). Give a field a visible `Label` and name it from that. https://www.w3.org/WAI/WCAG22/Understanding/labels-or-instructions.html
 - **Say what changed** (proposed `a11y-live-status`). A status line or toast that changes needs `Accessible.role: Accessible.StatusBar` (polite) or `Accessible.AlertMessage` (at once), or `Accessible.announce`. https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html
 - **Every drag has another way** (proposed `a11y-drag-only`). Reorder by drag also gets "Move up/Move down" actions or keys. https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html
 - **Let text grow to 200 %.** Apple asks for at least 200 %; WCAG 1.4.4 the same. The audit runs at `limits::audit::FONT_SCALES`. https://www.w3.org/WAI/WCAG22/Understanding/resize-text.html

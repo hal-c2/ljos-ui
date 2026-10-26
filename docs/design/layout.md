@@ -249,9 +249,24 @@ ApplicationWindow {
 
 Sources: https://developer.apple.com/design/human-interface-guidelines/windows , https://learn.microsoft.com/en-us/windows/apps/design/basics/titlebar-design
 
+<a id="layout-nested-radius"></a>
+### `layout-nested-radius`
+
+**Hint, static.** A `Rectangle` with a literal `radius` fills (`anchors.fill: parent`) another `Rectangle` with a smaller literal `radius`. The inner corners then stick out of, or leave a wedge against, the outer ones. The inner radius is the outer radius less the gap between them, and never below 0. Only numbers written out are compared.
+
+```qml
+// Bad: an 8 px card in a 4 px frame
+Rectangle { radius: 4
+    Rectangle { anchors.fill: parent; anchors.margins: 2; radius: 8 } }
+// Good: 4 - 2 = 2
+Rectangle { radius: 4
+    Rectangle { anchors.fill: parent; anchors.margins: 2; radius: 2 } }
+```
+
+Sources: https://www.refactoringui.com/ , https://developer.apple.com/design/human-interface-guidelines/layout
+
 ## Not checked yet
 
-- **Nested radius** (proposed `layout-nested-radius`): a child's corner radius is larger than its parent's. Inner radius = outer radius − padding.
 - **Reflow** (proposed `layout-reflow`): at 320 logical px wide (or 256 high for horizontal content), reading needs scrolling in two directions (WCAG 1.4.10).
 - **Design every density**: empty, one row, a screenful and a thousand rows, and the error state. https://vercel.com/design/guidelines
 

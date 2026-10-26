@@ -95,7 +95,6 @@ Guidance below is in the pages, marked "not checked yet", with a proposed code f
 
 | Proposed code | Page | Guidance |
 |---|---|---|
-| `a11y-placeholder-label` | accessibility.md | A field labelled only by its placeholder loses its label as soon as one types (WCAG 3.3.2). |
 | `a11y-live-status` | accessibility.md | A status or toast text that changes has no `Accessible.role` of status bar or alert, so it is never announced. |
 | `a11y-drag-only` | accessibility.md | Something done by dragging has no single-pointer or keyboard way (WCAG 2.5.7). |
 | `color-complement-adjacent` | color.md | Two complementary hues at full chroma touch, and vibrate. |
@@ -103,17 +102,10 @@ Guidance below is in the pages, marked "not checked yet", with a proposed code f
 | `color-accent-weight` | color.md | The accent covers much more than a tenth of the window. |
 | `text-line-length` | typography.md | A paragraph runs wider than about 75 characters. |
 | `text-tabular-figures` | typography.md | A number that changes in place (a timer, a counter, a column) shifts as its digits change. |
-| `layout-nested-radius` | layout.md | A child's corner radius is larger than its parent's. |
 | `layout-reflow` | layout.md | At 320 logical px wide, reading needs scrolling in two directions (WCAG 1.4.10). |
 | `focus-arrow-keys` | interaction.md | A composite widget (tabs, a radio group, a list) takes one Tab stop per item instead of arrows inside it. |
 | `focus-busy-feedback` | interaction.md | An action that takes more than a second shows no busy state. |
-| `focus-destructive-undo` | interaction.md | A destructive action has neither a confirmation nor an undo. |
-| `motion-flash` | motion.md | Something flashes more than three times a second (WCAG 2.3.1). |
-| `motion-endless` | motion.md | An infinite animation that is not a progress indicator runs past 5 s with no way to stop it (WCAG 2.2.2). |
-| `motion-origin` | motion.md | A popup grows from its centre instead of from the control that opened it. |
 | `motion-theme-switch` | motion.md | Colours animate while the theme switches. |
-| `content-vague-action` | content.md | A button says `OK` or `Continue` where a verb and its object fit (`Save draft`). |
-| `content-menu-ellipsis` | content.md | A menu item that opens a dialog for more input does not end with `…`. |
 
 Guidance that no machine can check (what a toast says, how settings pages are titled, where status goes) is written without a code in content.md and interaction.md.
 
