@@ -932,6 +932,22 @@ impl Engine {
         self.inner.loader.borrow().used_modules.contains(uri)
     }
 
+    /// The modules the application imports that Ljós does not have, whose
+    /// types stand in as empty Items, by the first part of their name
+    /// (`QtQuick3D`), sorted: what they would show is not in the scene.
+    pub fn stood_in_modules(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .inner
+            .loader
+            .borrow()
+            .stood_in
+            .iter()
+            .cloned()
+            .collect();
+        out.sort();
+        out
+    }
+
     fn modules_changed(&self) {
         let node = self.inner.loader.borrow().modules_node;
         if let Some(n) = node {

@@ -8,7 +8,14 @@
 //! rather than pixels sampled: it needs no renderer, is the same on
 //! every machine, and keeps the glyphs themselves out of what is behind
 //! them. A picture under the text is a colour nobody knows, so a point
-//! on one is left out.
+//! on one is left out; and when a module stands in as empty Items (a 3D
+//! view), so is a point where nothing is painted but the window: what
+//! the stand-in would show may be there.
+//!
+//! A text with a `style` (an outline, raised or sunken) carries its
+//! `styleColor` about its glyphs: that copy is no text of its own, and
+//! the text is held against it, as WCAG counts an outline or a shadow
+//! that sets text off as what lies behind it.
 //!
 //! WCAG 2's ratio is the gate; APCA's Lc is given as advice.
 
@@ -46,9 +53,16 @@ fn contains(r: Rect, p: Point) -> bool {
 }
 
 /// The colour at `p` (world) behind what is painted next. `None` when a
-/// picture is the last thing there.
-fn behind(snapshot: &FrameSnapshot, fills: &[Fill], backdrop: Srgb, p: Point) -> Option<Srgb> {
+/// picture is the last thing there, or with `bare` false when nothing is.
+fn behind(
+    snapshot: &FrameSnapshot,
+    fills: &[Fill],
+    backdrop: Srgb,
+    bare: bool,
+    p: Point,
+) -> Option<Srgb> {
     let mut colour = Some(backdrop);
+    let mut painted = bare;
     for f in fills {
         let local = f.world.inverse() * p;
         if !contains(f.rect, local) || !snapshot.clip_chain_contains(f.clip, p) {
@@ -63,6 +77,7 @@ fn behind(snapshot: &FrameSnapshot, fills: &[Fill], backdrop: Srgb, p: Point) ->
             }
         };
         let top = opacity(straight(top), f.opacity);
+        painted = true;
         colour = match colour {
             Some(under) => Some(over(top, under)),
             // Opaque paint over a picture is a known colour again.
@@ -70,7 +85,7 @@ fn behind(snapshot: &FrameSnapshot, fills: &[Fill], backdrop: Srgb, p: Point) ->
             None => None,
         };
     }
-    colour
+    colour.filter(|_| painted)
 }
 
 /// The worst run of an item.
@@ -79,6 +94,24 @@ struct Worst {
     text: Srgb,
     behind: Srgb,
     least: f32,
+}
+
+/// The colour a styled text carries about its glyphs, or `None` for a
+/// text of `Text.Normal` style, or what is no text.
+fn halo(cx: &Cx, item: ObjectId) -> Option<Srgba> {
+    let (style, c) = cx
+        .engine
+        .with::<Text, _>(item, |t| (t.style, t.style_color))
+        .ok()?;
+    let ch = |v: u16| f32::from(v) / 65535.0;
+    (style != 0).then(|| Srgba::new(ch(c.r), ch(c.g), ch(c.b), ch(c.a)))
+}
+
+fn same(a: Srgba, b: Srgba) -> bool {
+    (a.r - b.r).abs() < 0.01
+        && (a.g - b.g).abs() < 0.01
+        && (a.b - b.b).abs() < 0.01
+        && (a.a - b.a).abs() < 0.01
 }
 
 /// The weight of an item's font, 400 when it has none.
@@ -101,6 +134,7 @@ pub(crate) fn check(cx: &mut Cx) {
             _ => Srgb::WHITE,
         },
     };
+    let bare = cx.engine.stood_in_modules().is_empty();
     let mut fills: Vec<Fill> = Vec::new();
     let mut worst: HashMap<ObjectId, Worst> = HashMap::new();
     let mut order: Vec<ObjectId> = Vec::new();
@@ -151,6 +185,10 @@ pub(crate) fn check(cx: &mut Cx) {
             } else {
                 TEXT_CONTRAST
             };
+            let halo = halo(cx, item);
+            if halo.is_some_and(|h| same(h, straight(colour))) {
+                continue;
+            }
             let text = opacity(straight(colour), paint.opacity);
             let y = b.center().y;
             for x in [0.25, 0.5, 0.75].map(|f| b.x0 + b.width() * f) {
@@ -158,8 +196,18 @@ pub(crate) fn check(cx: &mut Cx) {
                 if !contains(snapshot.viewport, p) || !snapshot.clip_chain_contains(paint.clip, p) {
                     continue;
                 }
-                let Some(under) = behind(&snapshot, &fills, backdrop, p) else {
-                    continue;
+                let under = behind(&snapshot, &fills, backdrop, bare, p);
+                let under = match (halo, under) {
+                    (None, Some(u)) => u,
+                    (Some(h), u) => {
+                        let h = opacity(h, paint.opacity);
+                        match u {
+                            Some(u) => over(h, u),
+                            None if h.a >= 0.999 => over(h, Srgb::BLACK),
+                            None => continue,
+                        }
+                    }
+                    (None, None) => continue,
                 };
                 let shown = over(text, under);
                 let r = wcag_contrast(shown, under);

@@ -887,3 +887,50 @@ Rectangle {
     let label = ljos_quick::child_items(&e, root)[0];
     assert_eq!(e.read_by_name(label, "width").to_number(), 200.0);
 }
+
+/// An outline sets text off from what is behind it: the text is held to
+/// the outline's colour, and the outline is no text of its own.
+#[test]
+fn a_styled_text_is_held_to_the_colour_about_its_glyphs() {
+    clean(
+        r##"
+    Text { text: "Set off"; color: "white"; style: Text.Outline; styleColor: "black" }"##,
+    );
+    let report = run(&page(
+        r##"
+    Text { text: "Faint"; color: "white"; style: Text.Raised; styleColor: "#eeeeee" }"##,
+    ));
+    assert_eq!(report.codes(), ["color-text-contrast"], "\n{report}");
+    assert!(
+        report.findings[0].message.contains("on #eeeeee"),
+        "{report}"
+    );
+}
+
+/// What a module Ljós does not have would show is not known, so text on
+/// nothing but the window is not held to the window's colour, and the
+/// report says what it did not see.
+#[test]
+fn text_over_a_view_ljos_does_not_have_is_left_alone() {
+    let e = engine();
+    let mut s = mount(
+        &e,
+        r##"
+import QtQuick
+import QtQuick3D
+Item {
+    width: 400; height: 300
+    View3D { anchors.fill: parent }
+    Text { text: "Tap to throw"; color: "white" }
+}
+"##,
+    );
+    let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    assert!(report.is_clean(), "\n{report}");
+    assert_eq!(report.unseen, ["QtQuick3D"]);
+    assert!(
+        report
+            .by_rule("")
+            .contains("Not audited: what the items of QtQuick3D show")
+    );
+}

@@ -262,5 +262,6 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
         findings,
         points: audited,
         left_out,
+        unseen: engine.stood_in_modules(),
     }
 }

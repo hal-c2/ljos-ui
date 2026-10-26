@@ -105,6 +105,9 @@ pub struct Report {
     pub points: Vec<MatrixPoint>,
     /// How many findings `max_findings` left out.
     pub left_out: usize,
+    /// The modules standing in as empty Items (`QtQuick3D`): what they
+    /// show is not audited, and nothing is held against what lies on it.
+    pub unseen: Vec<String>,
 }
 
 impl Report {
@@ -151,6 +154,7 @@ impl Report {
             },
             "points": self.points.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
             "leftOut": self.left_out,
+            "unseen": self.unseen,
         })
     }
 }
@@ -222,6 +226,13 @@ impl Report {
                     ));
                 }
             }
+        }
+        if !self.unseen.is_empty() {
+            out.push_str(&format!(
+                "Not audited: what the items of {} show; Ljós does not have the module, and \
+                 they stand in as empty Items.\n",
+                self.unseen.join(", ")
+            ));
         }
         if self.left_out > 0 {
             out.push_str(&format!(
