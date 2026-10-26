@@ -56,19 +56,21 @@ Feature: Linting QML with the authoring tools
       And the answer's "/diagnostics/<nth>/severity" is "<severity>"
 
       Examples:
-        | nth | code                     | line | column | severity |
-        | 0   | a11y-unnamed-interactive | 7    | 9      | warning  |
-        | 1   | a11y-unnamed-icon-button | 12   | 5      | warning  |
-        | 2   | a11y-unnamed-image       | 15   | 5      | warning  |
-        | 3   | i18n-qstr-non-literal    | 19   | 15     | warning  |
-        | 4   | i18n-untranslated-string | 22   | 9      | hint     |
+        | nth | code                        | line | column | severity |
+        | 0   | a11y-unnamed-interactive    | 7    | 9      | error    |
+        | 1   | focus-pointer-only          | 9    | 13     | warning  |
+        | 2   | a11y-unnamed-icon-button    | 12   | 5      | error    |
+        | 3   | a11y-icon-button-no-tooltip | 13   | 9      | warning  |
+        | 4   | a11y-unnamed-image          | 15   | 5      | warning  |
+        | 5   | i18n-qstr-non-literal       | 19   | 15     | warning  |
+        | 6   | i18n-untranslated-string    | 22   | 9      | hint     |
 
     Scenario: A finding says what to write
       When the agent calls the tool "qml_lint" with:
         """json
         {"paths": ["Main.qml"]}
         """
-      Then the answer's "/diagnostics/2/message" matches "Accessible\.ignored: true"
+      Then the answer's "/diagnostics/4/message" matches "Accessible\.ignored: true"
 
     Scenario: A file with nothing to find has no findings
       Given the file "Named.qml":
@@ -90,19 +92,19 @@ Feature: Linting QML with the authoring tools
 
     Scenario: The findings a reader pays for are reported in the same places
       When the author runs "ljos check ."
-      Then the command's output mentions "Main.qml:7:9: warning:"
+      Then the command's output mentions "Main.qml:7:9: error:"
       And the command's output mentions "[a11y-unnamed-interactive]"
-      And the command's output mentions "Main.qml:12:5: warning:"
+      And the command's output mentions "Main.qml:12:5: error:"
       And the command's output mentions "[a11y-unnamed-icon-button]"
       And the command's output mentions "Main.qml:15:5: warning:"
       And the command's output mentions "[a11y-unnamed-image]"
       And the command's output mentions "Main.qml:19:15: warning:"
       And the command's output mentions "[i18n-qstr-non-literal]"
 
-    Scenario: A finding is a warning and never a failure
+    Scenario: What has no name fails the check, and the rest is reported
       When the author runs "ljos check ."
-      Then the command exits with status 0
-      And the command's output mentions "1 files, 0 errors, 4 warnings"
+      Then the command exits with status 1
+      And the command's output mentions "1 files, 2 errors, 4 warnings"
 
     Scenario: A text that is not translated is a hint for the agent alone
       When the author runs "ljos check ."
