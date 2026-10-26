@@ -322,6 +322,14 @@ impl InspectorSurface {
             return Err(refusal(&format!("tool `{name}`"), needs, ctx.caps));
         }
         let kind = args::parse(name, args)?;
+        // An audit that acts presses and toggles as input does, and runs
+        // the application's handlers: inspecting alone does not allow it.
+        if let Kind::Audit(a) = &kind
+            && a.act
+            && !ctx.caps.contains(Cap::Input)
+        {
+            return Err(refusal("`app_audit` with `act`", Cap::Input, ctx.caps));
+        }
         if let Kind::Processes(a) = &kind
             && !a.wants_the_ui_thread()
         {

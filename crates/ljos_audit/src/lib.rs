@@ -79,6 +79,13 @@ pub struct Options {
     /// application time passed; what moved since is a layout shift.
     /// `None`: the scene is looked at as one moment.
     pub before: Option<std::sync::Arc<Placement>>,
+    /// Run the acting checks: they focus items, press keys, toggle
+    /// controls and open popups, so the application's own handlers run,
+    /// and what those do (save a file, send a message) is real. A host
+    /// that owns the scene it audits turns them on; one auditing a
+    /// running application turns them on only when its user asks. Off,
+    /// [`Report::not_checked`] names the codes they would have checked.
+    pub act: bool,
 }
 
 impl Options {
@@ -92,6 +99,10 @@ impl Options {
             max_findings: None,
             within: None,
             before: None,
+            // DECISION: on for the library, whose caller owns the scene
+            // (a test, a fixture, `ljos audit`'s own instance); a live
+            // host (app_audit, the observer) turns it off.
+            act: true,
         }
     }
 
@@ -291,5 +302,22 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
         left_out,
         unseen: engine.stood_in_modules(),
         until: at,
+        not_checked: not_checked(options),
     }
+}
+
+/// The codes only the acting checks look for that `options` asked for,
+/// when it did not let them act.
+fn not_checked(options: &Options) -> Vec<&'static str> {
+    if options.act {
+        return Vec::new();
+    }
+    let mut out: Vec<&'static str> = rules::ACTS
+        .iter()
+        .flat_map(|c| c.codes.iter().copied())
+        .filter(|c| options.wants(c))
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }

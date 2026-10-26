@@ -11,7 +11,10 @@ Feature: The observer audits what an application shows when asked
   observed application and lists what it found, grouped by rule. It audits
   only when Run audit is pressed: opening the page, or the application
   changing, asks nothing. The rules come from the audit's own answer, so a
-  rule added to it is listed without a change to the page.
+  rule added to it is listed without a change to the page. The checks that
+  act press keys and toggle controls in the application and run its
+  handlers, so they are behind a switch of their own, off until the user
+  turns it on, and the page says how many were not run.
 
   Background:
     Given the QML:
@@ -48,6 +51,13 @@ Feature: The observer audits what an application shows when asked
     And the observer's "role=listitem" is clicked
     Then the observer has "role=button[name=\"Open guide\"]"
     And the observer shows "docs/design/color.md#color-text-contrast"
+
+  Scenario: The checks that act are off until the user turns them on
+    When the application is observed
+    And the observer's "text=Audit" is clicked
+    Then the observer has "role=checkbox[name=\"Acting checks\"]"
+    When the observer's "role=button[name=\"Run audit\"]" is clicked
+    Then the observer shows "12 acting checks skipped"
 
   Scenario: The page offers the areas the rules have and passes its own audit
     When the application is observed

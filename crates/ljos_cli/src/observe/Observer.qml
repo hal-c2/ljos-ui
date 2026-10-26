@@ -6171,6 +6171,10 @@ ApplicationWindow {
                     // The area whose rules are audited; empty is all.
                     property string area: ""
                     property bool touch: false
+                    // The checks that act press keys and toggle controls
+                    // in the application, and so run its handlers: off
+                    // until the user turns them on.
+                    property bool act: false
                     property var report: null
                     property var rows: []
                     property int picked: -1
@@ -6193,7 +6197,7 @@ ApplicationWindow {
                         picked = -1
                         picture = ""
                         pictureNote = ""
-                        var args = { matrix: matrix, touch: touch, max_findings: 500 }
+                        var args = { matrix: matrix, touch: touch, act: act, max_findings: 500 }
                         if (area !== "")
                             args.rules = [area]
                         window.ask("app_audit", args, "audit")
@@ -6279,6 +6283,8 @@ ApplicationWindow {
                                + c.hint + (c.hint === 1 ? " hint" : " hints")
                                + " at " + report.points.join("; ")
                                + (report.leftOut > 0 ? ", " + report.leftOut + " more left out" : "")
+                               + (report.notChecked.length > 0
+                                  ? "; " + report.notChecked.length + " acting checks skipped" : "")
                     }
 
                     RowLayout {
@@ -6311,6 +6317,14 @@ ApplicationWindow {
                         CheckBox {
                             text: "Touch sizes"
                             onToggled: audit.touch = checked
+                        }
+                        CheckBox {
+                            text: "Acting checks"
+                            Accessible.description: "Presses keys and toggles controls in the application, "
+                                                    + "which runs its own handlers"
+                            ToolTip.text: Accessible.description
+                            ToolTip.visible: hovered
+                            onToggled: audit.act = checked
                         }
                         Button {
                             text: audit.running ? "Auditing…" : "Run audit"
