@@ -230,28 +230,28 @@ Item {
 #[test]
 fn no_part_of_the_style_is_made_where_the_application_gives_its_own() {
     let cases = [
-        ("CheckBox", "indicator: Item {}; contentItem: Item {}"),
-        ("RadioButton", "indicator: Item {}; contentItem: Item {}"),
-        ("Switch", "indicator: Item {}; contentItem: Item {}"),
-        ("ToolButton", "background: Item {}; contentItem: Item {}"),
+        ("CheckBox", "indicator: Item {} contentItem: Item {}"),
+        ("RadioButton", "indicator: Item {} contentItem: Item {}"),
+        ("Switch", "indicator: Item {} contentItem: Item {}"),
+        ("ToolButton", "background: Item {} contentItem: Item {}"),
         ("Pane", "background: Item {}"),
         ("Frame", "background: Item {}"),
-        ("GroupBox", "background: Item {}; label: Item {}"),
+        ("GroupBox", "background: Item {} label: Item {}"),
         ("ToolBar", "background: Item {}"),
         ("Page", "background: Item {}"),
         ("TextField", "background: Item {}"),
         ("TextArea", "background: Item {}"),
-        ("ItemDelegate", "background: Item {}; contentItem: Item {}"),
+        ("ItemDelegate", "background: Item {} contentItem: Item {}"),
         ("ScrollBar", "contentItem: Item {}"),
         ("ScrollIndicator", "contentItem: Item {}"),
         (
             "SpinBox",
-            "background: Item {}; contentItem: TextInput {}; up.indicator: Item {}; \
+            "background: Item {} contentItem: TextInput {} up.indicator: Item {} \
              down.indicator: Item {}",
         ),
         (
             "ComboBox",
-            "background: Item {}; contentItem: Item {}; indicator: Item {}; popup: Popup {}",
+            "background: Item {} contentItem: Item {} indicator: Item {} popup: Popup {}",
         ),
     ];
     for (ty, parts) in cases {

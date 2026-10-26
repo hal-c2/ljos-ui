@@ -232,6 +232,10 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let start = self.cur_start();
         match self.cur_kind() {
             Kind::Semicolon => {
+                // Qt's grammar has no empty member: `Item {};`, `f() {};`
+                // and `x: 1;;` do not load (checked on qml6).
+                let span = self.cur_token().span();
+                self.error(diagnostics::unexpected_token(span));
                 self.bump_any();
                 return None;
             }
@@ -401,7 +405,6 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             }
         }
         self.expect_closing(Kind::RCurly, opening_span);
-        self.bump(Kind::Semicolon);
         QmlEnumDeclaration { span: self.end_span(start), name, members }
     }
 
@@ -431,13 +434,13 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                         break;
                     }
                 }
+                // No `;` after it: a property declaration takes one, a
+                // binding does not (`delegate: Item {};` does not load).
                 self.expect(Kind::RBrack);
-                self.bump(Kind::Semicolon);
                 QmlBindingValue::Objects(objects)
             }
             _ if self.qml_at_object() => {
                 let object = self.parse_qml_object();
-                self.bump(Kind::Semicolon);
                 QmlBindingValue::Object(object)
             }
             _ => self.parse_qml_expression_value(),
