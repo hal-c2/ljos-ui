@@ -2,8 +2,11 @@
 #   https://doc.qt.io/qt-6/qtqml-syntax-propertybinding.html
 #   https://doc.qt.io/qt-6/qtqml-syntax-signals.html#property-change-signal-handlers
 # Verified on Qt 6.11.2 (qml6, offscreen).
-# Found by ljos-fuzz (states), bucket warning:binding-loop(qt-only):load: a state change of a
-# NaN that reads a binding of itself (see crates/ljos_fuzz/known/states.txt).
+# Found by ljos-fuzz (states), buckets warning:binding-loop(qt-only):load (a state change of a
+# NaN that reads a binding of itself) and value:onChanged:text, seed 101 (a NaN bound again
+# through Qt.binding) (see crates/ljos_fuzz/known/states.txt).
+# Backlog: Ljós's graph takes NaN for NaN when it asks whether a value changed
+# (Value::change_equals), which is bindings infrastructure.
 
 @qt-parity
 Feature: NaN given to a real that is NaN
@@ -43,3 +46,20 @@ Feature: NaN given to a real that is NaN
       """
     When the method "run" of "root" is called
     Then the log has a warning matching "Binding loop detected for property .a."
+
+  @backlog
+  Scenario: A NaN bound again through Qt.binding is told as a change
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property real p0: parseInt("", 16)
+        property real p1: root.p0
+        onP1Changed: log += "p1=" + p1 + ";"
+        function run() { log += "|"; p1 = Qt.binding(() => root.p0) }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "log" of "root" is "p1=NaN;|p1=NaN;"
