@@ -10,7 +10,8 @@ Feature: The application puts another root in its window
   switched layouts or a file of the user's appeared, makes a new root and
   puts it in the window of the old one. The new root takes the old one's
   window, at the size it has, and the old root goes. A window that is
-  never shown twice has nothing to put back.
+  never shown twice has nothing to put back. A root the window cannot
+  show is refused where it is asked for, and the old root stays.
 
   Background:
     Given the file "Next.qml":
@@ -59,3 +60,14 @@ Feature: The application puts another root in its window
   Scenario: An object that is not in a window of its own has no window to give
     Then the application cannot put an object of "Next.qml" in the window of "inner"
     And the object "inner" exists
+
+  Scenario: An object that is not an item cannot take a window, and the old root keeps it
+    Given the file "Plain.qml":
+      """qml
+      import QtQml
+      QtObject { objectName: "plain" }
+      """
+    Then the application cannot put an object of "Plain.qml" in the window of "first"
+    And the object "first" exists
+    And the property "width" of "first" is 300
+    And the object "plain" does not exist
