@@ -7236,3 +7236,101 @@ That is two allocations a key and one a map. Reading the JS object straight into
 values would remove them. It needs a visitor in `ljos_js` that the engine implements, and
 it changes the host interface for every call. Building the engine's map one entry at a
 time, instead of all at once, was tried. It was slower (7.12k), so it was reverted.
+
+### MEM2: what MEM1 left, against qml6 (2026-10-26)
+
+MEM1's "What is left", except the controls' own effects, which wait for the delegate track's
+B27–B30. Measured as MEM1 measured: `ljos bench --rounds 3 --load 60` (grid clicks), desktop
+profile, off-screen in the cua sandbox, "private" being `Pss_Anon + SwapPss` in MiB. "Base"
+is origin/main before this batch, "after" is the batch; qml6's columns come from the run
+beside each, so they differ between the two runs only by noise. The machine swapped through
+both runs.
+
+| App | Start | Round 1 | Round 2 | Round 3 |
+|---|---:|---:|---:|---:|
+| thermostat, base | 76.9 | 226.1 | 333.7 | 334.2 |
+| thermostat, qml6 (base run) | 139.0 | 176.4 | 176.4 | 176.4 |
+| thermostat, after | 73.1 | 224.3 | 222.2 | 222.2 |
+| thermostat, qml6 (after run) | 152.1 | 169.4 | 169.4 | 169.4 |
+| maroon, base | 53.8 | 58.9 | 63.8 | 64.8 |
+| maroon, after | 53.7 | 58.3 | 63.5 | 64.6 |
+| maroon, qml6 (after run) | 117.9 | 123.4 | 123.3 | 123.4 |
+
+Thermostat's plateau is now 222 MiB against qml6's 169, 31 % above it (MEM1: about 35 %).
+The base run's 334 is high against MEM1's 237 for nearly the same code: most of it was in
+swap in that run (329 MiB of SwapPss), and one run of three rounds says little about a
+plateau that close to the next. The start fell 3.8 MiB. Maroon stays at about half of qml6.
+
+**maroon's creep was a ReferenceError.** MEM1 said maroon's object and node counts stayed
+flat. They do not when the game is played: driven for 6 rounds with its inspector, the
+objects went from 179 to 8014 and the graph from 2134 to 55 099 nodes. A base type's
+`function die() { destroy(1000) }` called `destroy` by its bare name; no type lists
+`destroy`, so the compiler left the name to the running program, which has no global of
+that name and threw on every turn of the game's timer. The new piece was already made, the
+old one was never taken away. `qml_front`'s `Names::has` now finds `destroy` on every object
+(features/components/destroy-by-name.feature, on qml6 too).
+
+| maroon, 6 rounds | Counted by owners, start → end | Objects | Graph nodes | Private |
+|---|---:|---:|---:|---:|
+| before the fix | 20.0 → 50.7 | 179 → 8014 | 2134 → 55 099 | 60 → 104 |
+| after | 20.0 → 29.2 | 179 → 286 (213 to 722 between rounds) | 2134 → 2921 | 54 → 75 |
+
+After the fix what the owners count stays between 29 and 30.6 MiB from round 2 on, and the
+objects rise and fall with the pieces in play. What is left of the creep, about 1 MiB a round
+(69 → 75 private over rounds 2–6), is outside anything Ljós keeps: Rust allocations no owner
+counts stay under 0.6 MiB, while what the allocator keeps freed moves between 4.6 and
+11.8 MiB and the C libraries' (llvmpipe, fonts) between 1.1 and 7.7 MiB, round by round.
+The bench's grid clicks reach the game less than the creep's drive did, which is why its
+base and after columns for maroon hardly differ.
+
+**`Shortcut` objects only with a sequence.** An `Action` made its `Shortcut` as soon as
+`shortcut` was anything but undefined, so `shortcut: ""` or `null` cost a Shortcut and the
+nodes of its sequence, enablement and connection. It now makes one with the first sequence:
+a text that is not blank, or a standard key. A `MenuItem` in a menu (declared, a delegate's,
+an action's or a sub-menu's) makes no mnemonic Shortcut, since the menu takes the letters;
+one taken out with `takeItem` makes it then. features/controls/action-shortcut.feature has
+scenarios for a shortcut given later and a blank one given a sequence, and
+`an_action_without_a_sequence_has_no_shortcut`, `a_row_of_a_menu_has_no_mnemonic_shortcut`
+count the objects.
+
+Checking `activatedAmbiguously` against qml6 found an older difference. qml6 hands each
+press of a sequence several shortcuts share to the next of them in the order they
+registered: a declared Shortcut registers as it completes (the last declared first), one
+whose sequence changes registers again after all the others, and an action registers as it
+is given its sequence. Ljós stepped from the last made backwards, which agreed only for
+Shortcuts declared together, and an action told did nothing. Both now follow qml6
+(action-shortcut.feature, features/input/shortcut-ambiguous.feature: three scenarios).
+
+**Accessible objects when something asks.** Every control made its `Accessible` object as it
+completed, to give it the role and name of its type. The defaults are now registered by type
+(`register_accessible_defaults`) and given when the object is made: by QML that reads
+`item.Accessible`, by the author's `Accessible.` lines, or by the a11y pass as it first
+describes the item. The pass runs only while an assistive technology or a tool listens, and
+walks every item it reaches when it starts, so a screen reader that connects late finds the
+whole tree (`a_control_has_its_accessible_object_once_something_asks`,
+`qml_reads_the_default_role_of_a_control`). This needed nothing of the scene's per-item
+maps. Popups and a range slider's handles still make theirs as they are made; they are few.
+
+**mediaplayer.** qml6 cannot run it (the corpus marks it: it needs `io.qt.filenameprovider`,
+a C++ module), so there is no qml6 column. Ljós with its inspector over 3 rounds of grid
+clicks: objects 543 → 545 (base) and 541 → 543 (after), graph nodes about 14 530 in both,
+and what the owners count under 20 MiB. Its own memory is 540–640 MiB and moves with what
+plays; 385–470 MiB of it is Rust allocation that no owner tells of, the decoded media.
+Counting that is the media owner's next step, not this batch's.
+
+**A frame-on-time flake.** features/window/frame-on-time.feature failed about one run in
+three on a loaded machine: a message that found the window's frame due queued its Repaint
+and asked the platform only at the turn's end, so the frame came in a turn of its own. The
+Repaint now asks while the message is handled, as a deadline's wake does.
+
+DECISIONs:
+
+- A message wake that finds the frame due draws in that wake.
+- `destroy` is a member of every object to the name lookup; no type table is changed.
+- An action's Shortcut takes its place in the order of registration when the action gets
+  its sequence, not when the Shortcut object is made.
+- A11y defaults are given lazily for controls and text fields, not for popups and range
+  slider handles.
+- maroon's remaining creep is written down as the allocator's and the C libraries', not
+  chased into glibc.
+- mediaplayer is measured on Ljós alone.
