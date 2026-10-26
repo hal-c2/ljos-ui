@@ -1736,7 +1736,7 @@ impl Engine {
         let meta = self.type_meta(&inst.file, &a.ty).ok()?;
         // Made with its object; one made later is made by what reads it.
         let att = self.existing_attached_object(obj, &meta)?;
-        let (own, fields) = self.value_fields_of(att, &a.members);
+        let fields = self.value_fields_of(att, &a.members).by_path;
         let through = rest.rsplit_once('.').map(|(t, _)| t);
         if let Some((path, m)) = fields
             .into_iter()
@@ -1752,7 +1752,8 @@ impl Engine {
         }
         Some(Placed::Member {
             at: self.member_target(att, &[], rest).ok()?,
-            members: Cow::Owned(own),
+            // A field's name is not `rest`: that was found above.
+            members: Cow::Borrowed(&a.members),
             leaf: rest.to_owned(),
         })
     }

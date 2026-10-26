@@ -59,6 +59,8 @@ ljos_engine = { path = "../ljos_engine", features = ["lookup-counts"] }
 # Tests compile QML strings; the crate itself never links the parser.
 ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
+# A test takes the enum numbers out of a compiled file for the runtime to find.
+ljos_ir = { path = "../ljos_ir" }
 # Image tests make their JPEG fixtures in code.
 jpeg-encoder.workspace = true
 # Network pictures are fetched from a listener the test runs on loopback.

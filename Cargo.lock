@@ -4205,6 +4205,7 @@ dependencies = [
  "ljos_compiler",
  "ljos_design",
  "ljos_engine",
+ "ljos_ir",
  "ljos_platform",
  "ljos_reactive",
  "ljos_render",
