@@ -12,11 +12,12 @@
 //! leaves as it found them.
 //!
 //! An effect drawn a second time with nothing changed (the same
-//! [`ShaderPaint`], at the same place) is drawn once more into a picture
-//! of its own, which later frames copy: a program that is costly per pixel
-//! (a background drawn under everything) is then run once, not again for
-//! each frame something over it changes. One that changes each frame is
-//! never kept.
+//! [`ShaderPaint`], at the same place), or drawn first with a program
+//! just linked, is drawn into a picture of its own, which later frames
+//! copy: a program that is costly per pixel (a background drawn under
+//! everything) is then run once, not again for each frame something over
+//! it changes. One that changes each frame is run straight onto the window
+//! after its first.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -159,11 +160,13 @@ fn draw(
     if cache.failed.contains_key(&key) {
         return;
     }
+    let mut linked_now = false;
     if let std::collections::hash_map::Entry::Vacant(slot) = cache.linked.entry(key) {
         // SAFETY: the painter calls this while its context is current.
         match unsafe { link(gl, &paint.op.program) } {
             Ok(linked) => {
                 slot.insert(linked);
+                linked_now = true;
             }
             Err(log) => {
                 eprintln!("ShaderEffect: the program does not link: {log}");
@@ -188,25 +191,26 @@ fn draw(
         unsafe { run(cache, painter, key, paint, on_screen) };
         return;
     }
-    let picture = match cache.kept.get(&at) {
-        Some(k) if k.viewport == viewport => k.picture,
-        _ => {
-            if let Some(old) = cache.kept.insert(
-                at,
-                Kept {
-                    paint: Arc::clone(paint),
-                    viewport,
-                    picture: None,
-                },
-            ) {
-                // SAFETY: as above.
-                unsafe { delete_picture(gl, &old) };
-            }
-            // SAFETY: as above.
-            unsafe { run(cache, painter, key, paint, on_screen) };
-            return;
-        }
-    };
+    let seen = cache.kept.get(&at).map(|k| k.viewport);
+    if seen != Some(viewport)
+        && let Some(old) = cache.kept.insert(
+            at,
+            Kept {
+                paint: Arc::clone(paint),
+                viewport,
+                picture: None,
+            },
+        )
+    {
+        // SAFETY: as above.
+        unsafe { delete_picture(gl, &old) };
+    }
+    if !into_picture(seen, viewport, linked_now) {
+        // SAFETY: as above.
+        unsafe { run(cache, painter, key, paint, on_screen) };
+        return;
+    }
+    let picture = cache.kept.get(&at).and_then(|k| k.picture);
     // SAFETY: as above; the framebuffer, viewport and scissor test the
     // painter set are set back before the copy.
     unsafe {
@@ -259,6 +263,16 @@ fn keeps(paint: &ShaderPaint, viewport: [i32; 4], screen: [u32; 2]) -> bool {
     let fits = w > 0 && h > 0 && (w as i64 * h as i64) <= screen[0] as i64 * screen[1] as i64;
     let placed = (left == 0 && bottom == 0) || !reads_where(&paint.op.program);
     paint.op.blending && fits && placed
+}
+
+/// Whether a kept effect is drawn into its picture, or run straight onto
+/// the window. One seen before at the same place is drawn into it. So is
+/// one whose program was linked for this draw: that is the window's first
+/// frame with it, and an effect is mostly still then (a background), so
+/// its second frame copies rather than runs it again. One that changes
+/// each frame pays for the first picture only.
+fn into_picture(seen: Option<[i32; 4]>, viewport: [i32; 4], linked_now: bool) -> bool {
+    seen == Some(viewport) || linked_now
 }
 
 fn reads_where(program: &Program) -> bool {
@@ -686,6 +700,20 @@ mod tests {
     }
 
     const SCREEN: [u32; 2] = [200, 100];
+
+    #[test]
+    fn a_still_effect_goes_into_its_picture_from_its_first_draw() {
+        let v = [0, 0, 200, 100];
+        assert!(into_picture(None, v, true));
+        assert!(into_picture(Some(v), v, false));
+    }
+
+    #[test]
+    fn a_new_effect_of_a_linked_program_is_run_straight() {
+        let v = [0, 0, 200, 100];
+        assert!(!into_picture(None, v, false));
+        assert!(!into_picture(Some([0, 0, 100, 100]), v, false));
+    }
 
     #[test]
     fn a_blended_effect_on_the_window_is_kept() {
