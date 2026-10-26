@@ -763,12 +763,15 @@ fn the_demo_of_the_shell_has_nothing_of_the_styles() {
             place.contains("Main.qml:") && own.as_deref() == Some(place),
             "a finding of the style's:\n{report}"
         );
-        // The demo's icon-only "Add" button has no tooltip: the demo's
-        // too.
+        // The demo's icon-only "Add" button has no tooltip, and its "Go"
+        // menu is sixteen lines with no group: the demo's too.
         assert!(
             matches!(
                 f.code,
-                "a11y-unnamed-interactive" | "a11y-unnamed-image" | "a11y-icon-button-no-tooltip"
+                "a11y-unnamed-interactive"
+                    | "a11y-unnamed-image"
+                    | "a11y-icon-button-no-tooltip"
+                    | "layout-menu-ungrouped"
             ),
             "the demo is missing names and nothing else:\n{report}"
         );
@@ -830,6 +833,21 @@ fn what_shows_only_at_a_larger_font_shows_once_with_its_points() {
         "{points:?}"
     );
     assert_eq!(report.points.len(), crate::Matrix::full_points().len());
+}
+
+#[test]
+fn a_larger_font_is_not_a_shift() {
+    let e = engine();
+    let mut s = hosted(&e, ROW_OF_FOUR, 560.0, 420.0);
+    let options = Options {
+        matrix: crate::Matrix::Full,
+        before: Some(std::sync::Arc::new(crate::Placement::of(&e, &s))),
+        ..Options::desktop()
+    }
+    .only(&["layout-shift"])
+    .unwrap();
+    let report = audit(&e, &mut s, Time::ZERO, &options);
+    assert!(report.is_clean(), "\n{report}");
 }
 
 #[test]

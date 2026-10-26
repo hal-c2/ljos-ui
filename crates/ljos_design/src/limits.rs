@@ -124,3 +124,13 @@ pub const LAYOUT_SHIFT_MIN_PX: f32 = 4.0;
 pub const MENU_MAX_UNGROUPED: usize = 10;
 /// This many rows of one list with one label cannot be told apart.
 pub const IDENTICAL_ROWS_MIN: usize = 3;
+
+// Names, layout and content read off the live tree (runtime audit, batch 2b).
+
+/// A frameless window's own controls lie at most this far from its top
+/// corner: one desktop target (`TARGET_MIN_DESKTOP`), so the button a
+/// pointer flung into the corner meets is the window's own.
+pub const WINDOW_CONTROLS_MAX_INSET_PX: f32 = 24.0;
+/// The width WCAG 2.2 SC 1.4.10 asks content to reflow at without
+/// scrolling both ways: 320 CSS px, a logical pixel here.
+pub const REFLOW_WIDTH_PX: f32 = 320.0;

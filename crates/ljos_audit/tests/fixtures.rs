@@ -13,12 +13,15 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use ljos_audit::{Matrix, MatrixPoint, Options, Report, audit, rules};
+use std::rc::Rc;
+use std::sync::Arc;
+
+use ljos_audit::{Matrix, MatrixPoint, Options, Placement, Report, audit, rules};
 use ljos_design::{Check, fixture};
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::{Item, QuickScene};
 use ljos_render::kurbo;
-use ljos_runtime::Time;
+use ljos_runtime::{Clock, VirtualClock};
 
 /// Bad cases of implemented rules the audit does not catch, and why.
 const KNOWN_MISSES: &[(&str, &str)] = &[
@@ -41,6 +44,13 @@ const KNOWN_MISSES: &[(&str, &str)] = &[
 
 /// The window a fixture is shown in when its root has no size.
 const WINDOW: (f64, f64) = (640.0, 480.0);
+
+/// Application time a fixture is let run before the audit, as `ljos
+/// audit` lets it by default: a timer's load lands, and what it moved is
+/// a layout shift.
+const SETTLE_MS: u64 = 500;
+/// One frame of that time.
+const FRAME_MS: u64 = 16;
 
 fn engine() -> Engine {
     let e = Engine::new();
@@ -129,6 +139,8 @@ fn holder(source: &str, line: u32) -> Option<u32> {
 /// audits it.
 fn run(source: &str, point: Option<MatrixPoint>) -> Result<Report, String> {
     let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(Arc::clone(&clock)));
     let root = load(&e, source)?;
     let size = |p| e.read(root, p).to_number();
     let (mut w, mut h) = (size(Item::WIDTH.index), size(Item::HEIGHT.index));
@@ -140,12 +152,19 @@ fn run(source: &str, point: Option<MatrixPoint>) -> Result<Report, String> {
     }
     let mut s = QuickScene::new(kurbo::Size::new(w, h));
     s.set_root(&e, root).map_err(|err| format!("{err:?}"))?;
-    s.frame(&e, Time::ZERO);
+    s.frame(&e, clock.now());
+    let before = Placement::of(&e, &s);
+    for _ in 0..SETTLE_MS / FRAME_MS {
+        clock.advance_ms(FRAME_MS);
+        e.advance_timers(clock.now());
+        s.frame(&e, clock.now());
+    }
     let options = Options {
         matrix: point.map_or(Matrix::Current, |p| Matrix::Points(vec![p])),
+        before: Some(Arc::new(before)),
         ..Options::desktop()
     };
-    Ok(audit(&e, &mut s, Time::ZERO, &options))
+    Ok(audit(&e, &mut s, clock.now(), &options))
 }
 
 /// What is wrong with one fixture, or nothing.

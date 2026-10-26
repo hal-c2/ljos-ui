@@ -121,6 +121,42 @@ pub(crate) const CHECKS: &[Check] = &[
         codes: &["a11y-live-status"],
         run: live_status::check,
     },
+    Check {
+        codes: &["layout-overlap"],
+        run: overlap::check,
+    },
+    Check {
+        codes: &["layout-misaligned"],
+        run: misaligned::check,
+    },
+    Check {
+        codes: &["layout-stacked-scrims"],
+        run: stacked_scrims::check,
+    },
+    Check {
+        codes: &["layout-window-controls"],
+        run: window_controls::check,
+    },
+    Check {
+        codes: &["layout-wrap-separator"],
+        run: wrap_separator::check,
+    },
+    Check {
+        codes: &["layout-menu-ungrouped"],
+        run: menu_ungrouped::check,
+    },
+    Check {
+        codes: &["layout-reflow"],
+        run: reflow::check,
+    },
+    Check {
+        codes: &["layout-resize-handle"],
+        run: resize_handle::check,
+    },
+    Check {
+        codes: &["layout-shift"],
+        run: layout_shift::check,
+    },
 ];
 
 /// The codes the audit implements, each once, in the order they run.
@@ -144,3 +180,13 @@ mod live_status;
 mod name_mismatch;
 mod nested_interactive;
 mod unnamed_dialog;
+
+mod layout_shift;
+mod menu_ungrouped;
+mod misaligned;
+mod overlap;
+mod reflow;
+mod resize_handle;
+mod stacked_scrims;
+mod window_controls;
+mod wrap_separator;

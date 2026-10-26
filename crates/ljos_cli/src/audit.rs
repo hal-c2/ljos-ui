@@ -129,9 +129,15 @@ impl Audit {
                 render::example_properties(self.example.as_deref()),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        // Where the scene had its items before the settle time passed:
+        // what moved since is a layout shift.
+        let mut before = None;
         let mut scene = picture
-            .scene(&engine, root)
+            .scene_seen(&engine, root, |e, s| {
+                before = Some(std::sync::Arc::new(ljos_audit::Placement::of(e, s)));
+            })
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let options = Options { before, ..options };
         let report = ljos_audit::audit(&engine, &mut scene, picture.now(), &options);
         // The engine writes what `Settings` holds as it goes, before the
         // home it writes in goes.

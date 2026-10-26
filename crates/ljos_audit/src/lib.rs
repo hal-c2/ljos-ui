@@ -25,6 +25,7 @@ mod cx;
 mod finding;
 mod matrix;
 pub mod rules;
+mod shift;
 #[cfg(test)]
 mod tests;
 
@@ -36,6 +37,7 @@ use ljos_runtime::Time;
 pub use finding::{Bounds, Finding, Report, severity_word};
 pub use ljos_design::{Area, Rule, Severity};
 pub use matrix::{Matrix, MatrixPoint, PointError, PointSize};
+pub use shift::Placement;
 
 /// What an audit was asked that it cannot do.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -68,6 +70,10 @@ pub struct Options {
     /// the scene is still looked at (what covers the item may be outside
     /// it).
     pub within: Option<ObjectId>,
+    /// Where the scene had its items when it first came to rest, before
+    /// application time passed; what moved since is a layout shift.
+    /// `None`: the scene is looked at as one moment.
+    pub before: Option<std::sync::Arc<Placement>>,
 }
 
 impl Options {
@@ -80,6 +86,7 @@ impl Options {
             rules: Vec::new(),
             max_findings: None,
             within: None,
+            before: None,
         }
     }
 
@@ -204,6 +211,13 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
     let mut findings = Vec::new();
     let mut audited = Vec::new();
     let mut held = None;
+    // The earlier placement is of the scene as it is: at another font
+    // scale or window size everything is somewhere else, which is the
+    // other setting and not a shift.
+    let applied = Options {
+        before: None,
+        ..options.clone()
+    };
     // What a check that panics leaves is put back all the same, and the
     // panic goes on.
     let walked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -235,7 +249,7 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
             apply::apply(engine, scene, now, h, &to);
             merge(
                 &mut findings,
-                run_checks(engine, scene, options),
+                run_checks(engine, scene, &applied),
                 point,
                 many,
             );

@@ -60,6 +60,8 @@ Item { Label { text: model.title } Label { anchors.right: parent.right; text: mo
 RowLayout { Label { text: model.title; elide: Text.ElideRight; Layout.fillWidth: true } Label { text: model.date } }
 ```
 
+Checked by: the runtime audit, on two shown texts or two controls of the application whose drawn boxes cross by more than a pixel, neither inside the other. Scroll bars, which meet in a corner by design, are left out.
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/text-spacing.html
 
 <a id="layout-under-minimum"></a>
@@ -119,6 +121,8 @@ GridLayout { columns: 2
     Label { text: qsTr("Email") } TextField { Layout.fillWidth: true } }
 ```
 
+Checked by: the runtime audit, on controls stacked in one column whose left edges differ by 1 to `limits::MISALIGN_MAX_PX`, on fields of one kind stacked in one column where most share a width and some do not, and on a menu where some items have an icon and others not.
+
 Sources: https://www.refactoringui.com/ , https://m3.material.io/foundations/layout/understanding-layout/spacing
 
 <a id="layout-anchors-in-layout"></a>
@@ -161,6 +165,8 @@ ColumnLayout { Label { visible: error !== ""; text: error } TextField {} }
 ColumnLayout { TextField {} Label { text: error; opacity: error !== "" ? 1 : 0 } }
 ```
 
+Checked by: the runtime audit, which looks twice: when the scene first comes to rest, and after half a second more of application time. A control or a text that came, went, moved or changed size by `limits::LAYOUT_SHIFT_MIN_PX` or more is reported at what moved it (an earlier sibling in a row, column, flow, grid or layout that changed) or else at the outermost thing that moved with it. Popups, and what a view scrolled, are left out; so is every point of the matrix but the scene as it is, where the first look was taken.
+
 Sources: https://web.dev/articles/cls , https://vercel.com/design/guidelines
 
 <a id="layout-stacked-scrims"></a>
@@ -177,6 +183,8 @@ Drawer { id: drawer; modal: true; Button { onClicked: { drawer.close(); confirm.
 Dialog { id: confirm; modal: true }
 ```
 
+Checked by: the runtime audit, on two or more open popups that each dim the window (`dim`, which follows `modal`) at once; the second and later are reported.
+
 Sources: https://m3.material.io/components/dialogs/guidelines
 
 <a id="layout-wrap-separator"></a>
@@ -190,6 +198,8 @@ Flow { Label { text: "Draft" } Label { text: "·" } Label { text: "3 files" } }
 // Good: each group carries its separator, and the first carries none
 Flow { Repeater { model: parts; Label { text: (index > 0 ? "· " : "") + modelData } } }
 ```
+
+Checked by: the runtime audit, on a `Flow` that has wrapped onto more than one line and starts or ends a line with a `ToolSeparator`, a `MenuSeparator` or a thin line.
 
 Sources: https://www.refactoringui.com/
 
@@ -208,6 +218,8 @@ Menu {
     Menu { title: qsTr("Share") MenuItem { text: qsTr("Copy link") } }
 }
 ```
+
+Checked by: the runtime audit as well, on a menu built at run time (a `Repeater` or `Instantiator` of items) with more than `limits::MENU_MAX_UNGROUPED` items and no separator or submenu; it is reported on the menu.
 
 Sources: https://developer.apple.com/design/human-interface-guidelines/menus , https://www.nngroup.com/articles/menu-design/
 
@@ -228,6 +240,8 @@ SplitView {
 }
 ```
 
+Checked by: the runtime audit, on a `SplitView` handle that, at rest, draws nothing in itself or anything it holds. What it draws on hover is not looked at, and neither are the resize edges of a frameless window.
+
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html , https://developer.apple.com/design/human-interface-guidelines/split-views
 
 <a id="layout-window-controls"></a>
@@ -247,6 +261,8 @@ ApplicationWindow {
 }
 ```
 
+Checked by: the runtime audit, on a window with `Qt.FramelessWindowHint` that shows no close control (told by its name or icon: close, quit, exit), or whose close control is not the outermost control at the top right or top left within `limits::WINDOW_CONTROLS_MAX_INSET_PX`. What a popup holds is never the window's.
+
 Sources: https://developer.apple.com/design/human-interface-guidelines/windows , https://learn.microsoft.com/en-us/windows/apps/design/basics/titlebar-design
 
 <a id="layout-nested-radius"></a>
@@ -265,9 +281,24 @@ Rectangle { radius: 4
 
 Sources: https://www.refactoringui.com/ , https://developer.apple.com/design/human-interface-guidelines/layout
 
+<a id="layout-reflow"></a>
+### `layout-reflow`
+
+**Warning, runtime.** At `limits::REFLOW_WIDTH_PX` wide (320 logical px, WCAG's 320 CSS px), a view of text is wider and taller than itself, so every line is read by scrolling sideways and back. A table, a map, a picture or a canvas scrolls both ways by its nature and is not this.
+
+```qml
+// Bad: the text keeps its own width however narrow the window
+ScrollView { Label { text: article; width: 720; wrapMode: Text.Wrap } }
+// Good: the text takes the view's width and wraps; it scrolls one way
+ScrollView { id: view; Label { text: article; width: view.availableWidth; wrapMode: Text.Wrap } }
+```
+
+Checked by: the runtime audit, at a point of the matrix where the window is 320 px wide or narrower (its minimum width, or a size asked for): the outermost `Flickable` (a `ScrollView`'s too) that holds text and is no table, whose content is wider and taller than the view.
+
+Sources: https://www.w3.org/WAI/WCAG22/Understanding/reflow.html
+
 ## Not checked yet
 
-- **Reflow** (proposed `layout-reflow`): at 320 logical px wide (or 256 high for horizontal content), reading needs scrolling in two directions (WCAG 1.4.10).
 - **Design every density**: empty, one row, a screenful and a thousand rows, and the error state. https://vercel.com/design/guidelines
 
 ## Sources

@@ -100,7 +100,6 @@ Guidance below is in the pages, marked "not checked yet", with a proposed code f
 | `color-accent-weight` | color.md | The accent covers much more than a tenth of the window. |
 | `text-line-length` | typography.md | A paragraph runs wider than about 75 characters. |
 | `text-tabular-figures` | typography.md | A number that changes in place (a timer, a counter, a column) shifts as its digits change. |
-| `layout-reflow` | layout.md | At 320 logical px wide, reading needs scrolling in two directions (WCAG 1.4.10). |
 | `focus-arrow-keys` | interaction.md | A composite widget (tabs, a radio group, a list) takes one Tab stop per item instead of arrows inside it. |
 | `focus-busy-feedback` | interaction.md | An action that takes more than a second shows no busy state. |
 | `motion-theme-switch` | motion.md | Colours animate while the theme switches. |
