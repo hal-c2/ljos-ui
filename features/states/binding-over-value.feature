@@ -14,6 +14,8 @@
 # and the graph works the item's own binding out again in between; going from one change to the
 # next waits on the graph (bindings infrastructure). Buckets warning:QString_to_int,
 # warning:[undefined]_to_double (ljos-only) and warning:binding-loop(ljos-only):step-set.
+# Seed 303, bucket value:step:text: under a transition, what holds a property where the
+# transition starts it has the graph work a state's binding that reads the property out again.
 
 @qt-parity
 Feature: Which change of a property a state keeps
@@ -277,3 +279,29 @@ Feature: Which change of a property a state keeps
     When the method "run" of "root" is called
     Then the property "p0" of "root" is "*****"
     And the log has no warning matching "Binding loop"
+
+  @backlog
+  Scenario Outline: Under a transition, a state's binding that reads what it binds reads it once
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property string p0
+        states: [State { name: "s0"; PropertyChanges { target: root; p1: false }
+                                     PropertyChanges { target: root; p0: (root.p1 ? "y" : "-0") } },
+                 State { name: "s1"; extend: "s0"; PropertyChanges { target: root; p1: true }
+                                     PropertyChanges { target: root; p0: "x" + root.p0 } }]
+        transitions: [<transition>]
+        function run() { state = "s1" }
+      }
+      """
+    When the method "run" of "root" is called
+    And 100 milliseconds pass
+    Then the property "p0" of "root" is "x-0"
+
+    Examples:
+      | transition                                                              |
+      | Transition { to: "*"; PropertyAction { target: root; property: "p1" } } |
+      | Transition { to: "*"; ScriptAction { script: root.log += "t" } }        |
