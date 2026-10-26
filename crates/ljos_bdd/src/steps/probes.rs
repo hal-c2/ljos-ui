@@ -74,6 +74,20 @@ fn no_other_thread_woke(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+#[then(regex = r"^the window's thread woke at most (\d+) times? since the wakes were counted$")]
+fn window_woke_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
+    w.each(|b| {
+        let woke = b.probes()?.window_wakes_counted()?;
+        if woke <= most {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the window's thread woke {woke} times, not at most {most}"
+            )))
+        }
+    })
+}
+
 #[when("the application is observed")]
 fn application_observed(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.observe())

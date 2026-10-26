@@ -1078,6 +1078,15 @@ pub trait Probes: Backend {
         })
     }
 
+    /// How many times the window's own thread, the UI thread, woke since
+    /// [`Probes::count_wakes`].
+    fn window_wakes_counted(&mut self) -> Result<u64> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the wakes of the application's threads",
+        })
+    }
+
     /// Starts `ljos observe` on the running application. Only a shell is
     /// observed: the observer is a window of its own.
     fn observe(&mut self) -> Result<()> {

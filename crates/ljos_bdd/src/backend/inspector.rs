@@ -588,6 +588,16 @@ impl Seen {
 
     /// # Errors
     /// The answer has no number at `pointer` that is `least` or more.
+    pub fn answer_at_most_value(&self, pointer: &str, most: f64) -> Result<(), String> {
+        let actual = self.at(pointer)?;
+        match actual.as_f64() {
+            Some(n) if n <= most => Ok(()),
+            _ => Err(format!(
+                "the answer's {pointer} is {actual}, more than {most}"
+            )),
+        }
+    }
+
     pub fn answer_at_least(&self, pointer: &str, least: f64) -> Result<(), String> {
         let actual = self.at(pointer)?;
         match actual.as_f64() {

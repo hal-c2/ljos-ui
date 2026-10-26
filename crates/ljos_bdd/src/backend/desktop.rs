@@ -919,6 +919,17 @@ impl Probes for DesktopBackend {
             .collect())
     }
 
+    fn window_wakes_counted(&mut self) -> Result<u64> {
+        let pid = self.running()?.app.id();
+        let from = self
+            .wakes_from
+            .as_ref()
+            .ok_or_else(|| BackendError::Failed("the wakes were not being counted".into()))?;
+        let was = from.get(&pid).map_or(0, |(_, w)| *w);
+        let now = thread_wakes(pid)?.get(&pid).map_or(0, |(_, w)| *w);
+        Ok(now.saturating_sub(was))
+    }
+
     fn observe(&mut self) -> Result<()> {
         self.observer = None;
         self.observer = Some(self.start_observer()?);

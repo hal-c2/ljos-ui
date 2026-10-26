@@ -481,6 +481,11 @@ fn answer_at_least(w: &mut LjosWorld, pointer: String, least: f64) -> StepResult
     inspector_seen(w, |s| s.answer_at_least(&pointer, least))
 }
 
+#[then(regex = r#"^the answer's "(/[^"]*)" is at most (-?\d+(?:\.\d+)?)$"#)]
+fn answer_at_most_value(w: &mut LjosWorld, pointer: String, most: f64) -> StepResult {
+    inspector_seen(w, |s| s.answer_at_most_value(&pointer, most))
+}
+
 #[then(regex = r#"^the answer's "(/[^"]*)" matches "(.*)"$"#)]
 fn answer_matches(w: &mut LjosWorld, pointer: String, re: String) -> StepResult {
     inspector_seen(w, |s| s.answer_matches(&pointer, &unquoted(&re)))
