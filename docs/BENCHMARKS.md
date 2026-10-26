@@ -6457,3 +6457,67 @@ DECISIONs:
 - No Gherkin scenario: nothing a QML application can observe changes. The Rust tests in
   `crates/ljos_text/tests/cache.rs` cover reuse, identical layouts, bounds, ageing and
   font changes.
+
+### B27 (H2): the scene item record, and anchors only where a line is given (2026-10-26)
+
+B27 is step 3 of the delegate track. It made two changes:
+
+- What the scene asks of an item's type is an `ItemClass`, cached on the type's meta
+  (`MetaObject::class`, asked through `Engine::class_of`) and computed once per type: its
+  kind, whether it paints or polishes, and whether it is a Loader, a MouseArea or a
+  Flickable. The dozen `ObjectId`-keyed maps the scene kept per item are one dense record
+  (`scene::Records`: a slot index and a `Vec`), with the item's effects held inline. What
+  the effects mark is a `Marks` record beside it, and each kind of mark is queued when it
+  goes from clear to set, so a pass drains a list instead of hashing a set.
+- A property can carry a `given` hook (`#[qml(given = path)]`). It is told after an author
+  gives the property a value, a binding or an override. It is not told when a binding
+  re-runs, or when an animation, the host or a layout writes the property. The anchor
+  lines carry the hook, so an item gets an anchors effect only once one of its lines is
+  authored, at adoption or later. Before, every item the scene showed had one.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets):
+
+| | Before | One record | Anchors when given |
+|---|---:|---:|---:|
+| ListView delegate, heap allocations | 1437 (143.7) | 1412 (141.2) | 1393 (139.3) |
+| ListView delegate, effects | 160 (16) | 160 (16) | 150 (15) |
+| `createObject` item, heap allocations | 983 (98.3) | 955 (95.5) | 906 (90.6) |
+| `createObject` item, effects | 150 (15) | 150 (15) | 130 (13) |
+| Ten `createObject` items destroyed, graph nodes | 230 | 230 | 210 |
+
+| listview under callgrind (main thread, 20 s after 40 s), per delegate | Before B27 | B27 |
+|---|---:|---:|
+| Total ÷ text layouts | 379.3 k | 336.1 k, 352.2 k, 357.7 k |
+| `anchors::run`, inclusive | 20.6 k (2.03 runs) | 16.5 k (1.02 runs) |
+| `QuickScene::adopt`, inclusive | 73.6 k | 70.2 k |
+| `QuickScene::unadopt`, inclusive | 15.6 k | 16.4 k |
+
+The three B27 runs spread by 21 k; their median is 7 % under the baseline. Only the Text
+is anchored in this delegate, so the Rectangle's anchors effect, and its run, are gone.
+`unadopt` now also lets go of the anchors' entry for the item. qml6's figure is still
+~200 k on its main thread.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós | qml6 (same run) | Ljós, B26 |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 18.99 | 15.21 | 19.07 |
+| listview | 186.82 | 102.75 | 197.96 |
+| listview with `reuseItems: true` | 71.35 | 60.63 | 80.27 |
+
+The scroll runs were made with a load average of about 85 from other builds on the
+machine. qml6 in the same runs moved by under 0.3 %.
+
+DECISIONs:
+
+- The anchors are told through a general engine seam: a `given` hook on the property's
+  meta, filled by a macro attribute. The other way was a write filter on the lines. It
+  would run before the value is stored, so the effect would start and then run again,
+  and it would put a filter call on every binding evaluation.
+- The anchors module owns its own lifecycle (`anchors::follow` / `unfollow`), in the same
+  way as the text's. Its state is a per-engine extension, because the hook is told about
+  the object, not the scene. Showing is counted across scenes. At adoption the module
+  checks the lines with one `Engine::authored` mask, so an item authored with anchors
+  starts in the same order as before.
+- The five new scenarios in `layouts/anchors.feature` pin behaviour that already held: a
+  line or fill a script writes, a line a script binds, a line whose expression first
+  gives `undefined`, and a state's AnchorChanges on an item with no anchors. They pass on
+  Qt and on Ljós before and after the change.
