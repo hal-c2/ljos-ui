@@ -830,9 +830,15 @@ fn extract(
     known: Option<&Snapped>,
 ) -> Vec<RawLine> {
     let mut out = Vec::with_capacity(shape.len());
-    let mut known_runs = known.map(|k| k.runs()).into_iter().flatten();
-    let mut own = Snapped::default();
-    for line in shape.lines() {
+    let read;
+    let known = match known {
+        Some(known) => known,
+        None => {
+            read = Snapped::read(shape);
+            &read
+        }
+    };
+    for (line, items) in shape.lines().zip(known.lines()) {
         let m = *line.metrics();
         let reason = line.break_reason();
         let wrapped = matches!(reason, BreakReason::Regular | BreakReason::Emergency);
@@ -853,10 +859,10 @@ fn extract(
         let mut width = 0.0_f32;
         // The glyph that ends the line: its run and id, and its advance.
         let mut last: Option<(usize, u32, f32)> = None;
-        for item in line.items() {
-            let gr = match item {
-                PositionedLayoutItem::GlyphRun(gr) => gr,
-                PositionedLayoutItem::InlineBox(placed) => {
+        for item in items {
+            let run = match item {
+                Item::Run(run) => run,
+                Item::Box(placed) => {
                     let align = objects
                         .iter()
                         .find(|o| o.id == placed.id)
@@ -875,9 +881,8 @@ fn extract(
                     continue;
                 }
             };
-            let run = gr.run();
-            let fm = *run.font_metrics();
-            let chosen = face::vertical(run.font(), run.font_size(), shaped_vertical(&fm));
+            let fm = run.metrics;
+            let chosen = face::vertical(&run.font, run.font_size, shaped_vertical(&fm));
             let (ascent, descent) = (floor64(chosen.ascent), floor64(chosen.descent));
             let tall = |v: Option<Vertical>| {
                 Some(v.map_or(Vertical { ascent, descent }, |v| Vertical {
@@ -885,14 +890,7 @@ fn extract(
                     descent: v.descent.max(descent),
                 }))
             };
-            let (placed, advances) = match known_runs.next() {
-                Some(run) => run,
-                None => {
-                    own.clear();
-                    own.push(&gr);
-                    (&own.glyphs[..], &own.qt[..])
-                }
-            };
+            let (placed, advances) = known.glyphs(run);
             // A run that draws nothing (the character an editor keeps for
             // an image) is as tall as its font only on a line without
             // objects.
@@ -901,9 +899,9 @@ fn extract(
             } else {
                 vertical = tall(vertical);
             }
-            let baseline = gr.baseline();
-            let offset = gr.offset() - shift;
-            let mut pen = gr.offset();
+            let baseline = run.baseline;
+            let offset = run.offset - shift;
+            let mut pen = run.offset;
             let mut advance = 0.0_f32;
             let mut glyphs = Vec::with_capacity(placed.len());
             for (g, &qt) in placed.iter().zip(advances) {
@@ -929,30 +927,29 @@ fn extract(
             if glyphs.is_empty() {
                 continue;
             }
-            let style = gr.style();
-            let underline = style.underline.as_ref().map(|d| {
+            let underline = run.underline.map(|(offset, size)| {
                 (
-                    d.offset.unwrap_or(fm.underline_offset),
-                    d.size.unwrap_or(fm.underline_size),
+                    offset.unwrap_or(fm.underline_offset),
+                    size.unwrap_or(fm.underline_size),
                 )
             });
-            let strikeout = style.strikethrough.as_ref().map(|d| {
+            let strikeout = run.strikethrough.map(|(offset, size)| {
                 (
-                    d.offset.unwrap_or(fm.strikethrough_offset),
+                    offset.unwrap_or(fm.strikethrough_offset),
                     // Qt draws both bars with the underline's thickness.
-                    d.size.unwrap_or(fm.underline_size),
+                    size.unwrap_or(fm.underline_size),
                 )
             });
-            let synthesis = run.synthesis();
+            let synthesis = run.synthesis;
             runs.push(RawRun {
-                font: run.font().clone(),
-                font_size: run.font_size(),
+                font: run.font.clone(),
+                font_size: run.font_size,
                 glyphs,
                 offset,
                 advance,
                 ascent: chosen.ascent as f32,
                 descent: chosen.descent as f32,
-                coords: coords(run),
+                coords: run.coords.clone(),
                 embolden: synthesis.embolden(),
                 skew: synthesis
                     .skew()
@@ -960,7 +957,7 @@ fn extract(
                 underline,
                 strikeout,
                 line_size: fm.underline_size,
-                tag: style.brush,
+                tag: run.tag,
             });
         }
         if let Some((r, id, qt)) = last
@@ -1105,30 +1102,30 @@ fn line_widths(line: &parley::Line<'_, u32>) -> (f32, f32) {
     line_widths_kept(line, &mut Snapped::default())
 }
 
-/// [`line_widths`], putting every glyph and its advance in `keep`.
+/// [`line_widths`], reading the line into `keep`.
 fn line_widths_kept(line: &parley::Line<'_, u32>, keep: &mut Snapped) -> (f32, f32) {
+    let from = keep.items.len();
+    keep.read_line(line);
     let mut width = 0.0;
     let mut last = 0.0;
-    for item in line.items() {
+    for item in &keep.items[from..] {
         match item {
-            PositionedLayoutItem::GlyphRun(gr) => {
-                let (glyphs, qt) = keep.push(&gr);
+            Item::Run(run) => {
+                let (glyphs, qt) = keep.glyphs(run);
                 width += qt.iter().sum::<f32>();
                 if let (Some(g), Some(a)) = (glyphs.last(), qt.last()) {
-                    let run = gr.run();
-                    let synthesis = run.synthesis();
                     last = overhang(
-                        run.font(),
-                        run.font_size(),
-                        &coords(run),
-                        synthesis.embolden(),
-                        synthesis.skew().map_or(0.0, |d| d.to_radians().tan()),
+                        &run.font,
+                        run.font_size,
+                        &run.coords,
+                        run.synthesis.embolden(),
+                        run.synthesis.skew().map_or(0.0, |d| d.to_radians().tan()),
                         g.id,
                         *a,
                     );
                 }
             }
-            PositionedLayoutItem::InlineBox(placed) => {
+            Item::Box(placed) => {
                 width += placed.width;
                 last = 0.0;
             }
@@ -1137,46 +1134,104 @@ fn line_widths_kept(line: &parley::Line<'_, u32>, keep: &mut Snapped) -> (f32, f
     (width, last)
 }
 
-/// The glyphs of runs as shaped, and the advance Qt gives each (see
-/// [`snap`]), run after run. Reading a run's glyphs from Parley costs more
-/// than anything done with them, so a layout reads them once.
+/// A shape's lines as read from Parley: every run with its glyphs as
+/// shaped and the advance Qt gives each (see [`snap`]), and every inline
+/// object. Reading them from Parley costs more than anything done with
+/// them (a line's items are found anew each time they are asked for, its
+/// glyphs at about 110 instructions each), so a layout reads them once.
 #[derive(Default)]
 struct Snapped {
     glyphs: Vec<parley::Glyph>,
     qt: Vec<f32>,
-    /// Where each run's glyphs end.
-    ends: Vec<usize>,
+    items: Vec<Item>,
+    /// Where each line's items end.
+    lines: Vec<usize>,
+}
+
+enum Item {
+    Run(RunFacts),
+    Box(parley::PositionedInlineBox),
+}
+
+/// What a glyph run's glyphs are drawn with.
+struct RunFacts {
+    /// In [`Snapped::glyphs`].
+    glyphs: Range<usize>,
+    /// Along the line to the first glyph, and to the baseline.
+    offset: f32,
+    baseline: f32,
+    font: FontData,
+    font_size: f32,
+    metrics: parley::FontMetrics,
+    synthesis: parley::fontique::Synthesis,
+    coords: Vec<i16>,
+    /// Offset and size each, where the style asks for the line.
+    underline: Option<(Option<f32>, Option<f32>)>,
+    strikethrough: Option<(Option<f32>, Option<f32>)>,
+    tag: u32,
 }
 
 impl Snapped {
-    /// Reads `gr`'s glyphs and returns them with their advances.
-    fn push(&mut self, gr: &parley::GlyphRun<'_, u32>) -> (&[parley::Glyph], &[f32]) {
+    fn read(shape: &Shape) -> Self {
+        let mut s = Self::default();
+        for line in shape.lines() {
+            s.read_line(&line);
+        }
+        s
+    }
+
+    fn read_line(&mut self, line: &parley::Line<'_, u32>) {
+        for item in line.items() {
+            match item {
+                PositionedLayoutItem::GlyphRun(gr) => self.push(&gr),
+                PositionedLayoutItem::InlineBox(placed) => self.items.push(Item::Box(placed)),
+            }
+        }
+        self.lines.push(self.items.len());
+    }
+
+    fn push(&mut self, gr: &parley::GlyphRun<'_, u32>) {
         let start = self.glyphs.len();
         self.glyphs.extend(gr.glyphs());
         let run = gr.run();
+        let coords = coords(run);
         snap::advances(
             run.font(),
             run.font_size(),
-            &coords(run),
+            &coords,
             &self.glyphs[start..],
             &mut self.qt,
         );
-        self.ends.push(self.glyphs.len());
-        (&self.glyphs[start..], &self.qt[start..])
+        let style = gr.style();
+        self.items.push(Item::Run(RunFacts {
+            glyphs: start..self.glyphs.len(),
+            offset: gr.offset(),
+            baseline: gr.baseline(),
+            font: run.font().clone(),
+            font_size: run.font_size(),
+            metrics: *run.font_metrics(),
+            synthesis: run.synthesis(),
+            coords,
+            underline: style.underline.as_ref().map(|d| (d.offset, d.size)),
+            strikethrough: style.strikethrough.as_ref().map(|d| (d.offset, d.size)),
+            tag: style.brush,
+        }));
     }
 
-    fn clear(&mut self) {
-        self.glyphs.clear();
-        self.qt.clear();
-        self.ends.clear();
+    /// A run's glyphs and their advances.
+    fn glyphs(&self, run: &RunFacts) -> (&[parley::Glyph], &[f32]) {
+        (
+            &self.glyphs[run.glyphs.clone()],
+            &self.qt[run.glyphs.clone()],
+        )
     }
 
-    /// Every run's glyphs and advances, in the order they were pushed.
-    fn runs(&self) -> impl Iterator<Item = (&[parley::Glyph], &[f32])> {
-        let starts = std::iter::once(0).chain(self.ends.iter().copied());
+    /// Every line's items, in the order they were read.
+    fn lines(&self) -> impl Iterator<Item = &[Item]> {
+        let starts = std::iter::once(0).chain(self.lines.iter().copied());
         starts
-            .zip(&self.ends)
-            .map(|(start, &end)| (&self.glyphs[start..end], &self.qt[start..end]))
+            .zip(&self.lines)
+            .map(|(start, &end)| &self.items[start..end])
     }
 }
 
