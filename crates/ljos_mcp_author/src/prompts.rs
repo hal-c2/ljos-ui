@@ -8,6 +8,22 @@
 use ljos_mcp_core::{PromptArg, PromptDef, PromptText, SurfaceError};
 use serde_json::{Map, Value};
 
+/// The brief every design prompt carries, as the document has it, so that
+/// what an agent is told and what `docs/design/` says cannot drift apart.
+const AGENT_BRIEF: &str = include_str!("../../../docs/design/agent-brief.md");
+
+/// What ends every prompt that writes QML: the checks that read the design
+/// rules. The audit tools are the inspector's and the command line's, not
+/// this server's, so their names are written without backticks: a word in
+/// backticks must be a tool here.
+const DESIGN_CHECKS: &str = "Last, hold it to the design rules in docs/design/agent-brief.md: `design_rules` \
+    lists them. Run `qml_lint` again on every file you touched, then audit the running scene at \
+    the full matrix (light and dark, high contrast, 200 % text, the small window): `ljos audit \
+    <file.qml>` in a terminal, or the inspector's tool app_audit with `matrix` set to `full` on a \
+    running application. Fix every Error. Fix every Warning, or keep it with \
+    `// ljos-allow(<code>): <reason>`. Do not call the work done while either run reports an \
+    Error.";
+
 /// Said at the end of every prompt: an answer an agent must not read past.
 const UNAVAILABLE: &str = "A tool error with the code `unavailable`, or one that says a capability \
     is not granted, means that check did not happen: say so in your answer, do not call the work \
@@ -51,6 +67,15 @@ pub(crate) fn list() -> Vec<PromptDef> {
             arguments: vec![paths(
                 "The `.qml` files or directories to go through, for example `views`.",
             )],
+        },
+        PromptDef {
+            name: "design-review",
+            description: "Review QML for UX, visual accessibility and motion problems: lint, audit at the full matrix, read each rule's guide, fix, and justify what stays.",
+            arguments: vec![PromptArg {
+                name: "source",
+                description: "The path of the `.qml` file or directory to review, or the QML itself.",
+                required: true,
+            }],
         },
         PromptDef {
             name: "localise",
@@ -108,8 +133,10 @@ pub(crate) fn get(name: &str, args: &Map<String, Value>) -> Result<PromptText, S
                      3. The behaviour before the code. `features_list` shows the scenarios nearest to yours. \
                      Read `ljos://features/steps` for the steps a scenario may use, and write a `.feature` \
                      that says what `{component}` does before any QML exists.\n\
-                     4. The QML. Give every item the user acts on an accessible name, and put every text \
-                     the user reads in `qsTr`.\n\
+                     4. The QML. Before you write it, `design_rules` lists the design rules (colour, text, \
+                     layout, focus, motion, content, accessibility): docs/design/agent-brief.md has them as \
+                     one line each, and each rule's guide says why. Give every item the user acts on an \
+                     accessible name, and put every text the user reads in `qsTr`.\n\
                      5. `qml_format` on the new files, so that a later diff shows what changed and nothing \
                      else.\n\
                      6. `qml_check` on them, and fix every error it reports.\n\
@@ -117,7 +144,8 @@ pub(crate) fn get(name: &str, args: &Map<String, Value>) -> Result<PromptText, S
                      8. `binding_tier_explain` on each file. A binding that runs as JavaScript where a \
                      simpler one would do comes with a rewrite: take it.\n\
                      9. Run your scenarios with `features_run`, giving the path of your `.feature`, and read \
-                     how it went with `run_status`.\n\n\
+                     how it went with `run_status`.\n\
+                     10. {DESIGN_CHECKS}\n\n\
                      {UNAVAILABLE}"
                 ),
             })
@@ -152,7 +180,8 @@ pub(crate) fn get(name: &str, args: &Map<String, Value>) -> Result<PromptText, S
                 text: format!(
                     "Make the QML under {paths} usable by someone who cannot see it.\n\n\
                      1. `qml_lint` on {paths}. The findings whose code starts with `a11y-` are items a \
-                     screen reader cannot name; `ljos://lints` says what each rule wants.\n\
+                     screen reader cannot name; `ljos://lints` says what each rule wants. `design_rules` \
+                     with the area `a11y` gives each rule's fix and its guide in docs/design/accessibility.md.\n\
                      2. For each finding decide what the item is for. `type_lookup` on `QtQuick.Accessible` \
                      lists what can be set; the ones that matter are `Accessible.name`, \
                      `Accessible.role`, `Accessible.description` and, for an item that is only decoration, \
@@ -163,9 +192,50 @@ pub(crate) fn get(name: &str, args: &Map<String, Value>) -> Result<PromptText, S
                      5. Hold it fixed. `features_list` with the tag expression `@a11y` shows how \
                      accessibility is specified here; write a scenario that asks the accessibility tree \
                      for each thing you named.\n\
-                     6. Run it with `features_run` and read the result with `run_status`.\n\n\
+                     6. Run it with `features_run` and read the result with `run_status`.\n\
+                     7. {DESIGN_CHECKS}\n\n\
                      A lint that is quiet is not proof: it sees what is written in the file, not what \
                      a screen reader is told when the application runs. {UNAVAILABLE}"
+                ),
+            })
+        }
+        "design-review" => {
+            let source = required(args, name, "source")?;
+            Ok(PromptText {
+                description: "Review QML for design problems".to_owned(),
+                text: format!(
+                    "Review this QML for UX, visual accessibility and motion problems, and fix them:\n\n\
+                     {source}\n\n\
+                     Work in this order.\n\n\
+                     1. `design_rules` lists every rule with its severity, how it is checked and its fix. \
+                     Severity is confidence: an Error is certainly wrong for some user and fails the \
+                     checks, a Warning is very likely wrong, a Hint is advice. For colours \
+                     `design_palette` and `design_contrast`, for motion `design_motion`.\n\
+                     2. `qml_check`, then `qml_lint` on the file or on every file in the directory. Each \
+                     finding has a code.\n\
+                     3. Audit the scene as it is drawn, at the full matrix (light and dark, normal and \
+                     high contrast, 200 % text, the smallest window): `ljos audit <file.qml>` in a \
+                     terminal (its `--matrix` defaults to `full`), or the inspector's tool app_audit with \
+                     `matrix` set to `full` on a running application (`ljos run --mcp`). A finding \
+                     names the item by role, name and locator, its `file:line`, what was measured and \
+                     the point of the matrix where it shows. Findings only the audit can make \
+                     (contrast over the composited background, text cut off, a control off the window or \
+                     covered) are not found by `qml_lint`.\n\
+                     4. For each code you got, read its guide, `docs/design/<page>#<code>` (`docs_search` \
+                     finds the section; the page is the code's first word: `a11y-` is accessibility.md, \
+                     `text-` typography.md, `focus-` interaction.md), before you change anything.\n\
+                     5. Fix every Error. Fix every Warning too, or keep it with a reason written where \
+                     the finding is, `// ljos-allow(<code>): <reason>`; an allow with no reason is an \
+                     Error, and an allow that keeps nothing is a Hint to delete. Take Hints that cost \
+                     nothing.\n\
+                     6. `qml_format` on what you changed, then `qml_check`, `qml_lint` and the audit again. \
+                     Repeat until the lint and the audit report no Error and every Warning is fixed or \
+                     justified.\n\
+                     7. A scenario holds a fix in place: `features_list` shows how the design audit is \
+                     specified here, and `features_run` with `run_status` runs yours.\n\n\
+                     The brief, as docs/design/agent-brief.md has it; follow every line:\n\n\
+                     {AGENT_BRIEF}\n\
+                     {UNAVAILABLE}"
                 ),
             })
         }

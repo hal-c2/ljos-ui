@@ -63,6 +63,25 @@ Sources: https://eslint.org/docs/latest/use/command-line-interface#--report-unus
 
 ## The tools
 
+### Which tool catches what, and when
+
+Each layer sees what the one before cannot, so use them in this order; the command is the one to type.
+
+| When | Tool | Catches | Command |
+|---|---|---|---|
+| Choosing colours, motion, spacing | `design_palette`, `design_contrast`, `design_motion`, `design_rules` (authoring MCP) | Nothing: they give values and rules that already pass, so the checks below stay quiet | `ljos mcp` (the server's tools) |
+| Writing | `ljos check` | The source-visible mistakes: ease-in on an entrance, an animated width, a pointer-only action, a literal colour, an unnamed button; Errors exit non-zero | `ljos check app/Main.qml` |
+| Writing, from an agent | `qml_lint` (authoring MCP) | The same lints on a file or a snippet, each with its code and guide | `ljos mcp`, then the tool `qml_lint` |
+| Reviewing, from an agent | the `design-review` prompt (authoring MCP) | Runs the two above and the audit in order, reads each rule's guide, and fixes or justifies each finding | `ljos mcp`, then the prompt `design-review` |
+| Before a commit, off-screen | `ljos audit` | What only the drawn scene shows, over the matrix (light and dark, high contrast, 200 % text, the small window): faint or cut-off text, controls off the window or covered, targets too small; Errors exit non-zero | `ljos audit app/Main.qml` (`--matrix current` is the quick one) |
+| On a running application | `app_audit` (inspector) | The same audit on the live state, with data in it, after the clicks that got it there | `ljos run --mcp app/Main.qml`, then the tool `app_audit` with `{"matrix": "full"}` |
+| On a running application, by eye | the observer's Audit page | The same findings listed by rule, with the fix, the guide, the source line and a box on a picture of the window where the item is | `ljos observe`, then the Audit page and Run audit |
+| In a test | the BDD steps, and `ljos_test` | A defect that comes back: the audit's findings as a step, under a state the scenario sets up | `the design audit finds nothing` (features/README.md); `ljos_test::a11y::audit` in a Rust test |
+
+A Warning kept on purpose is written where it is, `// ljos-allow(<code>): <reason>`; `ljos check` reports an allow with no reason as an Error and an allow that keeps nothing as a Hint.
+
+### The surfaces
+
 These surfaces are being built in wave 11; this is how ARCHITECTURE.md §14 states them.
 
 | Tool | What it does |
