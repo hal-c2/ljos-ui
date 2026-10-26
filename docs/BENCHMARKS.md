@@ -6477,9 +6477,12 @@ B27 is step 3 of the delegate track. It made two changes:
 
 **Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets):
 
+H2 measured on top of B26 (1437, 1412, 1393). The delegate row here is on top of TEXT3's kept
+runs, which add 14; B27 saves the same 25 and 19.
+
 | | Before | One record | Anchors when given |
 |---|---:|---:|---:|
-| ListView delegate, heap allocations | 1437 (143.7) | 1412 (141.2) | 1393 (139.3) |
+| ListView delegate, heap allocations | 1451 (145.1) | 1426 (142.6) | 1407 (140.7) |
 | ListView delegate, effects | 160 (16) | 160 (16) | 150 (15) |
 | `createObject` item, heap allocations | 983 (98.3) | 955 (95.5) | 906 (90.6) |
 | `createObject` item, effects | 150 (15) | 150 (15) | 130 (13) |
