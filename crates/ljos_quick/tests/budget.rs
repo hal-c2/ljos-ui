@@ -281,8 +281,8 @@ fn ten_listview_delegates() {
     let (b, made) = listview_delegates(ONE_LINE);
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
-    // attached or grouped), 9 values, 6 bindings, 15 effects, 2 scopes,
-    // no member or type lookups, 140.7 allocations. What the component
+    // attached or grouped), 9 values, 6 bindings, 11 effects, 2 scopes,
+    // no member or type lookups, 130.5 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -302,7 +302,10 @@ fn ten_listview_delegates() {
     // kept a map per concern, a list of effects and a box for the inherited
     // layers (twenty-five fewer, B27);
     // only the Text is anchored, and only an anchored item has an anchors
-    // effect (the Rectangle's, and nineteen fewer).
+    // effect (the Rectangle's, and nineteen fewer). An item's place and
+    // geometry are marks its properties' change hooks set, read at the
+    // frame, where each was an effect (four effects and ten allocations
+    // fewer a delegate, B28).
     assert_eq!(
         b,
         Budget {
@@ -310,7 +313,7 @@ fn ten_listview_delegates() {
             graph: Census {
                 values: 90,
                 bindings: 60,
-                effects: 150,
+                effects: 110,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -319,7 +322,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1407,
+            allocations: 1305,
         }
     );
 }
@@ -363,15 +366,17 @@ fn ten_plain_items() {
     let _alone = alone();
     let (b, made) = plain_items();
     assert_eq!(made, 10);
-    // Per instance: 2 objects, 6 values, 2 bindings, 13 effects, 2 scopes,
+    // Per instance: 2 objects, 6 values, 2 bindings, 9 effects, 2 scopes,
     // 1 member lookup (the property `createObject` is given, by its name)
-    // and no type lookups, 90.6 allocations; the id (`item`) is found
+    // and no type lookups, 83.3 allocations; the id (`item`) is found
     // by slot. One of the ten grows what keeps a text's lines' items
     // between measuring and painting. A one-line plain text is laid out
     // without Parley's builder (fifteen fewer over the ten), and B26 put
     // each binding in one box (thirty fewer). B27's one scene record an
     // item took twenty-eight off, and an anchors effect only for an item
-    // with an anchor, which neither has, forty-nine more.
+    // with an anchor, which neither has, forty-nine more. B28's marks for
+    // an item's place and geometry, where it had an effect each, took
+    // seventy-three more.
     assert_eq!(
         b,
         Budget {
@@ -379,7 +384,7 @@ fn ten_plain_items() {
             graph: Census {
                 values: 60,
                 bindings: 20,
-                effects: 130,
+                effects: 90,
                 scopes: 20,
             },
             lookups: Lookups {
@@ -388,7 +393,7 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 906,
+            allocations: 833,
         }
     );
 }
@@ -402,13 +407,14 @@ fn ten_plain_items_torn_down() {
     // its items, the header list and a list edit of the holder. B26 took
     // it from 13.7 by holding the walks over the dead inline. Two nodes
     // fewer an instance since B27: neither item is anchored, and has no
-    // anchors effect to let go of.
+    // anchors effect to let go of; four fewer since B28, which keeps an
+    // item's place and geometry as marks and not as two effects an item.
     assert_eq!(
         plain_teardown(),
         Teardown {
             objects: 20,
             scopes: 20,
-            nodes: 210,
+            nodes: 170,
             allocations: 57,
         }
     );

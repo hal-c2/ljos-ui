@@ -169,7 +169,7 @@ pub struct Flickable {
     pub at_y_beginning: bool,
     #[qml(notify, readonly)]
     pub at_y_end: bool,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, change = moving_changed)]
     pub moving: bool,
     #[qml(notify, readonly)]
     pub moving_horizontally: bool,
@@ -580,6 +580,19 @@ pub(crate) fn sync_moving(e: &Engine, f: ObjectId, st: &FlickState) {
 pub(crate) fn set_drag_moving(e: &Engine, f: ObjectId, st: &FlickState, moving: [bool; 2]) {
     st.drag_moving.set(moving);
     sync_moving(e, f, st);
+}
+
+/// The content is placed on whole pixels while the Flickable moves
+/// ([`content_moving`]): its place is read again when that changes.
+fn moving_changed(cx: &Cx<'_>, _: PropIndex) {
+    let content = cx
+        .engine
+        .with(cx.this, |f: &Flickable| f.state.content_item.get())
+        .ok()
+        .flatten();
+    if let Some(c) = content {
+        crate::scene::place_again(cx.engine, c);
+    }
 }
 
 /// Whether `item` is the content of a Flickable that moves. It is drawn on

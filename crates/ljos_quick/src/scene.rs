@@ -280,14 +280,6 @@ fn local_transform(
     crate::transform::compose(x, y, g.w, g.h, g.rotation, g.scale, g.origin, list)
 }
 
-/// A property as the picture shows it: what an Animator on its way shows,
-/// else its value. The property is read either way, so that the reader
-/// follows it once the Animator is over.
-fn shown_num(e: &Engine, shown: &Shown, obj: ObjectId, p: PropIndex) -> f64 {
-    let v = num(e, obj, p);
-    shown.get(obj, p).unwrap_or(v)
-}
-
 impl Geom {
     fn read(e: &Engine, obj: ObjectId, shown: &Shown) -> Geom {
         // In two goes rather than eleven: each new item runs this.
@@ -344,19 +336,20 @@ bitflags::bitflags! {
     /// What of an item waits for the frame ([`Marks`]).
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     struct Dirty: u8 {
+        /// Its geometry ([`Geom`]), read at the frame: told by the change
+        /// hooks of what it reads ([`reshaped`]).
         const GEOM = 1;
-        const PLACE = 1 << 1;
         /// The map of its `transform` list.
-        const LIST = 1 << 2;
-        const CONTENT = 1 << 3;
+        const LIST = 1 << 1;
+        const CONTENT = 1 << 2;
         /// Its children.
-        const STRUCTURE = 1 << 4;
-        const POLISH = 1 << 5;
+        const STRUCTURE = 1 << 3;
+        const POLISH = 1 << 4;
     }
 }
 
 impl Dirty {
-    const KINDS: usize = 6;
+    const KINDS: usize = 5;
 
     /// The queue of a single mark.
     fn slot(self) -> usize {
@@ -364,12 +357,10 @@ impl Dirty {
     }
 }
 
-/// What the effects of one item tell the scene, until the frame takes
-/// it. A value is read only while its mark is set.
+/// What the effects and change hooks of one item tell the scene, until
+/// the frame takes it. A value is read only while its mark is set.
 struct Marks {
     dirty: Dirty,
-    geom: Geom,
-    place: Place,
     list: crate::transform::Projective,
     content: Option<Paint>,
     /// What a Text's polish effect last read of it: its paint and its
@@ -385,8 +376,6 @@ impl Marks {
     fn new() -> Marks {
         Marks {
             dirty: Dirty::empty(),
-            geom: Geom::default(),
-            place: (0.0, 0.0, false),
             list: crate::transform::Projective::IDENTITY,
             content: None,
             text: None,
@@ -406,11 +395,10 @@ struct Shared {
     /// the edge from clear to set, so it is in each queue once: a set per
     /// mark cost each item marked a hash insert.
     queued: [Vec<ObjectId>; Dirty::KINDS],
-    /// Items whose place may have changed, read at the frame: the place
-    /// effect is told rather than run (see [`QuickScene::adopt`]). An item
-    /// is here once for each flush that told it, read once
-    /// ([`Record::place_read`]): a set cost each item that moved a hash
-    /// insert every frame.
+    /// Items whose place may have changed, read at the frame: told by the
+    /// change hooks of `x` and `y` ([`moved`]). An item is here once for
+    /// each change told, read once ([`Record::place_read`]): a set cost
+    /// each item that moved a hash insert every frame.
     placed: Vec<ObjectId>,
     dead: Vec<ObjectId>,
     /// A ShaderEffectSource inside its own source took a picture that
@@ -494,6 +482,70 @@ impl Shared {
 }
 
 type SharedRc = Rc<RefCell<Shared>>;
+
+/// The scenes showing an engine's items, for the change hooks of what
+/// they read ([`moved`], [`reshaped`]). A scene that goes is let go.
+#[derive(Default)]
+struct Scenes(RefCell<Vec<std::rc::Weak<RefCell<Shared>>>>);
+
+impl Scenes {
+    fn add(&self, shared: &SharedRc) {
+        let mut all = self.0.borrow_mut();
+        if all
+            .iter()
+            .any(|w| std::ptr::eq(w.as_ptr(), Rc::as_ptr(shared)))
+        {
+            return;
+        }
+        all.retain(|w| w.strong_count() > 0);
+        all.push(Rc::downgrade(shared));
+    }
+}
+
+/// Marks `obj` with `f` in each scene that shows it.
+fn mark_shown(e: &Engine, obj: ObjectId, f: impl Fn(&mut Shared)) {
+    let scenes = e.extension::<Scenes>();
+    // Taken out of the list first: a mark wakes the host, which may make
+    // or drop a scene.
+    let shown: SmallVec<[SharedRc; 2]> = scenes
+        .0
+        .borrow()
+        .iter()
+        .filter_map(std::rc::Weak::upgrade)
+        .collect();
+    for s in shown {
+        if s.borrow().marks.contains(obj) {
+            mark(&s, &f);
+        }
+    }
+}
+
+/// The change hook of an item's `x` and `y`: its place is read at the
+/// frame. A mark where an effect each item cost a node and, as it moved,
+/// a run.
+pub(crate) fn moved(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
+    let obj = cx.this;
+    mark_shown(cx.engine, obj, |s| s.placed.push(obj));
+}
+
+/// The change hook of what an item's [`Geom`] reads: it is read again at
+/// the frame.
+pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
+    let obj = cx.this;
+    mark_shown(cx.engine, obj, |s| s.set(obj, Dirty::GEOM, |_| ()));
+}
+
+/// [`moved`] for what a place reads beside `x` and `y`: whether the
+/// Flickable `obj` is the content of moves.
+pub(crate) fn place_again(e: &Engine, obj: ObjectId) {
+    mark_shown(e, obj, |s| s.placed.push(obj));
+}
+
+/// [`reshaped`] for what a geometry reads beside the item's own
+/// properties: whether a Flipable shows the side `obj` is.
+pub(crate) fn reshape(e: &Engine, obj: ObjectId) {
+    mark_shown(e, obj, |s| s.set(obj, Dirty::GEOM, |_| ()));
+}
 
 /// What a `ShaderEffectSource` was last given of its source.
 struct SourcePicture {
@@ -1437,6 +1489,11 @@ impl QuickScene {
             return Ok(());
         }
         let class = ItemClass::of(engine, obj).ok_or_else(|| EngineError::dead(obj))?;
+        if parent.is_none() {
+            // A root or a layer: the engine's change hooks find the scene
+            // from now on.
+            engine.extension::<Scenes>().add(&self.shared);
+        }
         init_item(engine, obj)?;
         let node = self.tree.insert_child(parent_node, index);
         let kind = class.kind;
@@ -1465,8 +1522,15 @@ impl QuickScene {
                 may_scroll,
             },
         );
-        // Before the effects, whose first runs mark it.
-        self.shared.borrow_mut().marks.insert(obj, Marks::new());
+        // Before the effects, whose first runs mark it. Its place and
+        // geometry are read at the frame, and from then on as their change
+        // hooks tell.
+        {
+            let mut s = self.shared.borrow_mut();
+            s.marks.insert(obj, Marks::new());
+            s.set(obj, Dirty::GEOM, |_| ());
+            s.placed.push(obj);
+        }
         self.by_node.insert(node, obj);
 
         let mut effects = SmallVec::<[GraphNode; 8]>::new();
@@ -1480,24 +1544,6 @@ impl QuickScene {
         effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, mouse_area, &lifted))?);
         // Its anchors have an effect of their own only once one is given.
         anchors::follow(engine, obj)?;
-        // What an Animator shows is one table for the engine: looked up
-        // here, not on each of the runs that follow an animated value.
-        let shown = crate::animation::shown::shown(engine);
-        let (place, shared) = (Rc::clone(&shown), Rc::clone(&self.shared));
-        // Told, not run, on a change: an item that moves every frame then
-        // costs the graph no run, and its place is read once, at the frame.
-        let told = Rc::clone(&self.shared);
-        effects.push(engine.effect_told_in(
-            obj,
-            move |e| place_effect(e, obj, may_scroll, &place, &shared),
-            move || {
-                mark(&told, |s| {
-                    s.placed.push(obj);
-                })
-            },
-        )?);
-        let shared = Rc::clone(&self.shared);
-        effects.push(engine.effect_in(obj, move |e| geometry_effect(e, obj, &shown, &shared))?);
         if kind == Kind::Text {
             // What the text read as it was completed is handed over, not
             // read again; from now on each change is.
@@ -1624,6 +1670,9 @@ impl QuickScene {
                         if ce.parent != Some(p) {
                             ce.parent = Some(p);
                             self.items_gen += 1;
+                            // Whether it is a Flipable's side turned away
+                            // is its parent's to say.
+                            self.shared.borrow_mut().set(*c, Dirty::GEOM, |_| ());
                         }
                         let node = ce.node;
                         let at = self
@@ -1660,7 +1709,7 @@ impl QuickScene {
     }
 
     /// Step 8b.
-    /// Reads the place of each item the place effect was told about.
+    /// Reads the place of each item whose `x` or `y` was told changed.
     /// Unborrowed: a binding a read brings up to date may set off effects
     /// that mark the scene.
     fn read_places(&mut self, engine: &Engine) {
@@ -1680,11 +1729,14 @@ impl QuickScene {
                 continue;
             }
             // Both at one look at the object, which also says it lives.
-            if let Some([x, y]) = engine.read_numbers(obj, [Item::X.index, Item::Y.index]) {
+            // Untracked: the change hooks tell of the next change.
+            let xy = engine.untrack(|| engine.read_numbers(obj, [Item::X.index, Item::Y.index]));
+            if let Some([x, y]) = xy {
                 e.place = (
                     shown.get(obj, Item::X.index).unwrap_or(x),
                     shown.get(obj, Item::Y.index).unwrap_or(y),
-                    e.may_scroll && crate::flickable::content_moving(engine, obj),
+                    e.may_scroll
+                        && engine.untrack(|| crate::flickable::content_moving(engine, obj)),
                 );
                 // Moved here, while the entry is at hand: a new geometry or
                 // transform list this frame sets it again from this place.
@@ -1695,14 +1747,6 @@ impl QuickScene {
                     );
                 }
                 self.told_moved.push(obj);
-            }
-        }
-        // A place the effect's first run gave this frame is older than
-        // the one just read.
-        let mut s = self.shared.borrow_mut();
-        if s.any(Dirty::PLACE) {
-            for obj in &self.told_moved {
-                s.clear(*obj, Dirty::PLACE, |_| ());
             }
         }
     }
@@ -1718,14 +1762,6 @@ impl QuickScene {
             for (obj, list) in s.take(Dirty::LIST, |m| m.list) {
                 if let Some(e) = self.items.get_mut(obj) {
                     e.list = list;
-                    if !s.is_set(obj, Dirty::GEOM) && !s.is_set(obj, Dirty::PLACE) {
-                        moved.push(obj);
-                    }
-                }
-            }
-            for (obj, place) in s.take(Dirty::PLACE, |m| m.place) {
-                if let Some(e) = self.items.get_mut(obj) {
-                    e.place = place;
                     if !s.is_set(obj, Dirty::GEOM) {
                         moved.push(obj);
                     }
@@ -1734,11 +1770,22 @@ impl QuickScene {
             // Each was moved as its place was read.
             self.told_moved.clear();
             // With whether a hidden parent covers it, which is the
-            // inherit effect's to say.
-            let geoms: Vec<(ObjectId, (Geom, bool))> =
-                s.take(Dirty::GEOM, |m| (m.geom, m.inherit.visible.is_some()));
+            // inherit effect's to say; the geometry is read below.
+            let geoms: Vec<(ObjectId, (Geom, bool))> = s.take(Dirty::GEOM, |m| {
+                (Geom::default(), m.inherit.visible.is_some())
+            });
             (geoms, moved)
         };
+        // Read where it is put, unborrowed and untracked, as the places
+        // are: what a read brings up to date may mark the scene, and the
+        // change hooks tell of the next change.
+        let mut geoms = geoms;
+        let animated = crate::animation::shown::shown(engine);
+        engine.untrack(|| {
+            for (obj, (g, _)) in &mut geoms {
+                *g = Geom::read(engine, *obj, &animated);
+            }
+        });
         if engine.is_journaled() {
             for obj in geoms.iter().map(|g| g.0).chain(moved.iter().copied()) {
                 engine.journal_step(JournalKind::Placed, obj, None);
@@ -3092,22 +3139,6 @@ fn structure_effect(e: &Engine, obj: ObjectId, loader: bool, shared: &SharedRc) 
     mark(shared, |s| s.set(obj, Dirty::STRUCTURE, |_| ()));
 }
 
-/// Run where `obj` is alive: as its effect, or by [`shown_changed`].
-fn place_effect(e: &Engine, obj: ObjectId, may_scroll: bool, shown: &Shown, shared: &SharedRc) {
-    let place = (
-        shown_num(e, shown, obj, Item::X.index),
-        shown_num(e, shown, obj, Item::Y.index),
-        may_scroll && crate::flickable::content_moving(e, obj),
-    );
-    mark(shared, |s| s.set(obj, Dirty::PLACE, |m| m.place = place));
-}
-
-/// Run where `obj` is alive, as [`place_effect`] is.
-fn geometry_effect(e: &Engine, obj: ObjectId, shown: &Shown, shared: &SharedRc) {
-    let g = Geom::read(e, obj, shown);
-    mark(shared, |s| s.set(obj, Dirty::GEOM, |m| m.geom = g));
-}
-
 /// Follows the entries of a `transform` list. Made only for an item whose
 /// list has some (see [`QuickScene::follow_list`]).
 fn list_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
@@ -3227,15 +3258,13 @@ fn shown_changed(e: &Engine, obj: ObjectId, prop: PropIndex, shared: &SharedRc) 
     if !e.is_alive(obj) {
         return;
     }
-    let shown = crate::animation::shown::shown(e);
     if prop == Item::X.index || prop == Item::Y.index {
-        // Not told whether it may scroll: asked, which is only dearer.
-        place_effect(e, obj, true, &shown, shared);
+        mark(shared, |s| s.placed.push(obj));
     } else if [Item::OPACITY, Item::ROTATION, Item::SCALE]
         .iter()
         .any(|p| p.index == prop)
     {
-        geometry_effect(e, obj, &shown, shared);
+        mark(shared, |s| s.set(obj, Dirty::GEOM, |_| ()));
     } else if is_a::<crate::shader_effect::ShaderEffect>(e, obj) {
         content_effect(e, obj, Kind::Shader, shared);
     }
@@ -3319,8 +3348,7 @@ fn inherit_effect(e: &Engine, obj: ObjectId, mouse_area: bool, shared: &SharedRc
     // cover, which is no change, so the geometry is not read again by
     // itself.
     if covered && st.visible.is_none() {
-        let g = e.untrack(|| Geom::read(e, obj, &crate::animation::shown::shown(e)));
-        mark(shared, |s| s.set(obj, Dirty::GEOM, |m| m.geom = g));
+        mark(shared, |s| s.set(obj, Dirty::GEOM, |_| ()));
     }
 }
 
