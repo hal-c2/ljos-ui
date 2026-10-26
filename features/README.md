@@ -30,6 +30,7 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `hot-reload/`, `network/`, `mobile/` | dev loop, network, phones |
 | `runtime/` | faults (a script's exception, a panic in a native type, a script that is interrupted), `ErrorBoundary` and `Loader` as the boundaries that contain them, `Component.incubateObject` |
 | `tooling/` | MCP servers (`tooling/mcp/`), CLI |
+| `design/` | the module `Ljos.Design`: its colours, motion, spacing and type, and the transitions and behaviours made of them |
 | `parity/` | generated outlines (API ledger); never hand edited |
 
 ## Writing rules
@@ -124,6 +125,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 |---|---|
 | `Given the QML:` + doc string | write the source as `Scenario.qml` and create it |
 | `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet. The name may be a path (`kit/Badge.qml`), and a file named `qmldir` (`kit/qmldir`) describes the module of its directory |
+| `Given the files of the module Ljos.Design` | make the files `ljos design export` writes available in `Ljos/Design`, so that `import Ljos.Design` finds the module in the scenario's directory on either backend |
 | `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
 | `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |
 | `Given the application starts with the locale environment "LANG=en_US.UTF-8 LC_TIME=de_DE.UTF-8"` | the locale variables the application starts with (`LANG`, `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LC_NUMERIC`, `LC_TIME`, `LC_COLLATE`), each `NAME=value`, separated by spaces; the others are unset. Without it a scenario starts in `LANG=en_US.UTF-8`. Give it before the QML |

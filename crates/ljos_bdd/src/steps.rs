@@ -77,6 +77,17 @@ fn the_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     Ok(())
 }
 
+// What `ljos design export` writes: the module Ljos.Design as a directory
+// of plain QML, which Qt imports as well.
+#[given("the files of the module Ljos.Design")]
+fn the_design_module(w: &mut LjosWorld) -> StepResult {
+    use ljos_design::module::{DIRECTORY, Seeds, files};
+    for f in files(Seeds::Hues) {
+        w.stage(&format!("{DIRECTORY}/{}", f.name), &f.text);
+    }
+    Ok(())
+}
+
 // The tree is built once something reads it and then follows every change;
 // without this step a scenario's first `Then` would be that first reader,
 // and would only ever see a tree built in one go.
