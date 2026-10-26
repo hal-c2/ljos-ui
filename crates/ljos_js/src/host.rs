@@ -2376,17 +2376,26 @@ impl JsHost {
     /// Runs the cycle collector if the heap grew enough since the last
     /// collection. Meant for the Idle lane; returns whether it ran.
     pub fn collect_if_idle(&self) -> bool {
-        if self.state.entered.get() {
-            return false;
-        }
-        let last = self.last_collect.get();
-        if self.heap_bytes() < last.saturating_add(self.cfg.idle_collect_min_growth) {
+        if !self.wants_idle_collect() {
             return false;
         }
         self.rt.run_gc();
         self.last_collect.set(self.heap_bytes());
         self.flush_released();
         true
+    }
+
+    /// Whether [`JsHost::collect_if_idle`] would collect now: outside a
+    /// run, the heap grew by the configured growth since the collector
+    /// last ran. Walks nothing, so a host may ask it each time it is
+    /// about to rest, and wake later to collect only when it is true.
+    pub fn wants_idle_collect(&self) -> bool {
+        !self.state.entered.get()
+            && self.heap_bytes()
+                >= self
+                    .last_collect
+                    .get()
+                    .saturating_add(self.cfg.idle_collect_min_growth)
     }
 
     /// What the runtime holds from the system allocator: blocks QuickJS

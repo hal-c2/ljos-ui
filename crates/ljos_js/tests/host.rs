@@ -507,11 +507,38 @@ fn collect_if_idle_runs_only_after_growth() {
     })
     .unwrap();
     let before = host.memory_stats().unwrap().malloc_size;
+    assert!(host.wants_idle_collect());
     assert!(host.collect_if_idle());
     let after = host.memory_stats().unwrap().malloc_size;
     assert!(after < before, "{after} !< {before}");
-    // Nothing new allocated: the next call is a no-op.
+    // Nothing new allocated: the next call is a no-op, and a window at
+    // rest has no reason to wake for one.
+    assert!(!host.wants_idle_collect());
     assert!(!host.collect_if_idle());
+}
+
+// Inside a run the collector cannot run, so it is not wanted then.
+#[test]
+fn an_idle_collect_is_not_wanted_inside_a_run() {
+    let host = JsHost::new(JsConfig {
+        idle_collect_min_growth: 64 * 1024,
+        gc_threshold: usize::MAX / 2,
+        ..JsConfig::default()
+    })
+    .unwrap();
+    host.enter("alloc", host.config().slice, |s| {
+        s.eval::<(), _>("for (let i = 0; i < 2000; i++) { const a = {}; a.self = a; a.pad = new Array(50).fill(i); }")
+    })
+    .unwrap();
+    let inside = host
+        .enter(
+            "ask",
+            host.config().slice,
+            |_| Ok(host.wants_idle_collect()),
+        )
+        .unwrap();
+    assert!(!inside);
+    assert!(host.wants_idle_collect());
 }
 
 // Whether to collect is asked each time a window rests after a script ran,

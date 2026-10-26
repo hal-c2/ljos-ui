@@ -208,6 +208,12 @@ impl Engine {
         js.host.collect_if_idle()
     }
 
+    /// Whether [`Engine::collect_if_idle`] would collect now; a host that
+    /// is about to rest asks this to decide whether to wake for it.
+    pub fn wants_idle_collect(&self) -> bool {
+        self.js_started() && self.js().is_ok_and(|js| js.host.wants_idle_collect())
+    }
+
     /// What the script engine holds now, for a tool that watches memory;
     /// None before any script ran and while one runs.
     pub fn script_memory(&self) -> Option<ScriptMemory> {

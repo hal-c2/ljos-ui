@@ -786,10 +786,10 @@ struct Desktop<M> {
 }
 
 /// Something to do once the loop has rested for a while after it last
-/// settled, and once a rest. The wheel turning settles the loop at every
-/// notch, with a rest between each and the next that the loop cannot
-/// foresee: something done at the start of every rest is done at every
-/// notch.
+/// settled, and once a rest, when there is something to do. The wheel
+/// turning settles the loop at every notch, with a rest between each and
+/// the next that the loop cannot foresee: something done at the start of
+/// every rest is done at every notch.
 #[derive(Debug, Default)]
 struct AfterRest {
     due: Option<Instant>,
@@ -797,10 +797,16 @@ struct AfterRest {
 
 impl AfterRest {
     /// The loop settled at `now`, with more to do before `rest` is over
-    /// when `busy`. True when the rest it waited for is over.
-    fn settled(&mut self, busy: bool, now: Instant, rest: Duration) -> bool {
+    /// when `busy`, and something to do after it when `wanted`. True when
+    /// the rest it waited for is over.
+    ///
+    /// A wake that is not busy leaves the rest as it was: what woke the
+    /// loop (a question from an agent, a timer the system ran a little
+    /// early) was not work, and starting the rest over at each would wake
+    /// the loop a rest later, then again, for as long as it is asked.
+    fn settled(&mut self, busy: bool, wanted: bool, now: Instant, rest: Duration) -> bool {
         match self.due {
-            _ if busy => {
+            _ if busy || !wanted => {
                 self.due = None;
                 false
             }
@@ -808,8 +814,8 @@ impl AfterRest {
                 self.due = None;
                 true
             }
-            // Something came during the rest: it starts over.
-            _ => {
+            Some(_) => false,
+            None => {
                 self.due = Some(now + rest);
                 false
             }
@@ -2656,12 +2662,17 @@ impl<M: Send + 'static> Desktop<M> {
     /// QuickJS collects by itself only after the heap grew by megabytes,
     /// and an application that then rests keeps all of it. What a burst
     /// of work left behind is collected once the loop has rested a while
-    /// instead, and only once it grew. Telling whether it grew walks the
-    /// whole script heap, so it is not done at every rest of a scroll.
+    /// instead, and only once it grew: a collection walks the whole
+    /// script heap, so it is not done at every rest of a scroll, and a
+    /// loop whose scripts made nothing to collect is not woken for one.
     fn collect_scripts_when_resting(&mut self, engine: &Engine, now: Instant) {
         let soon = now + REST_BEFORE_COLLECTING;
         let busy = self.unsettled() || self.next_wake().is_some_and(|t| t < soon);
-        if self.collect.settled(busy, now, REST_BEFORE_COLLECTING) {
+        let wanted = engine.wants_idle_collect();
+        if self
+            .collect
+            .settled(busy, wanted, now, REST_BEFORE_COLLECTING)
+        {
             engine.collect_if_idle();
         }
     }
@@ -3010,15 +3021,49 @@ mod tests {
         let mut looked = 0;
         for notch in 0..20 {
             // The notch's scroll, and the rest after it.
-            assert!(!collect.settled(true, at(notch * 40), rest));
-            looked += u32::from(collect.settled(false, at(notch * 40 + 16), rest));
+            assert!(!collect.settled(true, true, at(notch * 40), rest));
+            looked += u32::from(collect.settled(false, true, at(notch * 40 + 16), rest));
             assert!(collect.next().is_some());
         }
         assert_eq!(looked, 0, "not during the scroll");
         let due = collect.next().unwrap();
         assert_eq!(due, at(19 * 40 + 16) + rest);
-        assert!(collect.settled(false, due, rest));
+        assert!(collect.settled(false, true, due, rest));
         assert_eq!(collect.next(), None, "and then the loop sleeps");
+    }
+
+    /// An agent asking every 50 ms, or a timer the system runs a little
+    /// before it was due, wakes the loop with nothing to do: the rest
+    /// goes on, and the scripts are looked at once, when it was due.
+    #[test]
+    fn wakes_that_are_not_work_leave_the_rest_as_it_was() {
+        let rest = Duration::from_millis(100);
+        let t = Instant::now();
+        let at = |ms| t + Duration::from_millis(ms);
+        let mut collect = AfterRest::default();
+        assert!(!collect.settled(false, true, at(0), rest));
+        assert!(!collect.settled(false, true, at(50), rest));
+        assert!(!collect.settled(false, true, at(99), rest));
+        assert_eq!(collect.next(), Some(at(100)));
+        assert!(collect.settled(false, true, at(100), rest));
+        assert_eq!(collect.next(), None);
+    }
+
+    /// Scripts that made nothing since the collector last ran leave
+    /// nothing to wake for, however often the loop rests.
+    #[test]
+    fn a_rest_with_nothing_to_collect_wakes_for_nothing() {
+        let rest = Duration::from_millis(100);
+        let t = Instant::now();
+        let mut collect = AfterRest::default();
+        for ms in [0, 100, 250, 1000] {
+            assert!(!collect.settled(false, false, t + Duration::from_millis(ms), rest));
+            assert_eq!(collect.next(), None);
+        }
+        // Collected by other means while a rest was under way.
+        assert!(!collect.settled(false, true, t, rest));
+        assert!(!collect.settled(false, false, t + Duration::from_millis(10), rest));
+        assert_eq!(collect.next(), None);
     }
 
     #[test]
