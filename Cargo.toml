@@ -150,6 +150,9 @@ constant_time_eq = "0.4"
 # _exit, for the inspector that ends its process on SIGINT or SIGTERM, and the
 # system calls `ljos bench`'s cgroup gate needs.
 libc = "0.2.190"
+# The threads, memory and CPU time of a process on macOS (`app_processes`):
+# the Mach calls libc leaves out. The version the audio stack already brings.
+mach2 = "0.6.0"
 
 # The application's badge (ljos_shell). On Linux the launcher-entry signal
 # on the session bus, sent by zbus, pure Rust: the version accesskit_unix

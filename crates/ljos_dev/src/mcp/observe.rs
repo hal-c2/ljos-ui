@@ -2,8 +2,10 @@
 //! (ARCHITECTURE.md 3.4), what does work and, as the observer shows each
 //! process's message queue with it, the mailboxes it is handed through.
 //!
-//! The threads are read from `/proc/self/task`, which the kernel keeps
-//! anyway, so listing them costs nothing until asked. The UI thread's
+//! The threads are read from what the kernel keeps anyway
+//! (`/proc/self/task` on Linux, the task's threads on macOS), so listing
+//! them costs nothing until asked. Where a platform does not tell a
+//! value, the answer says so instead of giving 0. The UI thread's
 //! own processes (Timers, animations, the owners the scheduler charges
 //! time to) are read where they live, on the UI thread. The mailboxes
 //! are read from [`ljos_runtime::observe`] on the server's thread, so a
@@ -23,6 +25,9 @@ use super::redact::SecretBook;
 use super::room::Room;
 use super::surface::DevReq;
 use crate::top::{FrameStats, owner_name};
+
+#[cfg(target_os = "macos")]
+pub(crate) mod mach;
 
 pub const PROCESSES: &str = "\
 What does work, like Erlang's observer: threads (state, CPU time, wakeups), Timers, animations, \
@@ -258,16 +263,45 @@ fn fit_rows(value: &mut Value, text: &mut String, per_copy: usize) {
     }
 }
 
-/// One OS thread as `/proc` shows it.
+/// One OS thread, in the letters `/proc` uses for its state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Thread {
-    tid: u32,
+    tid: u64,
     name: String,
     /// `R`, `S`, `D`, ...
     state: char,
     work_us: u64,
-    wakeups: u64,
-    preempted: u64,
+    /// Times it went to sleep of its own accord, and times it was made to
+    /// give way. None where the platform does not count them.
+    wakeups: Option<u64>,
+    preempted: Option<u64>,
+}
+
+/// The bytes of a thread's name the kernel keeps.
+#[cfg(target_os = "macos")]
+const NAME_KEPT: usize = 63;
+#[cfg(not(target_os = "macos"))]
+const NAME_KEPT: usize = 15;
+
+/// Where `app_processes` reads the process from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProcessSource {
+    /// What the platform tells: its threads, memory and CPU time.
+    #[default]
+    Platform,
+    /// Nothing, as on a platform Ljós cannot read them on: what the
+    /// answers say then can be seen on any.
+    Unmeasured,
+}
+
+/// What the process used, as far as the platform tells.
+#[derive(Clone, Copy, Debug, Default)]
+struct Usage {
+    resident: Option<Resident>,
+    cpu_us: Option<u64>,
+    /// Wakeups of the whole process, where the platform counts them for
+    /// it and not for each thread.
+    wakeups: Option<u64>,
 }
 
 /// The names the kernel cut to 15 bytes, whole again.
@@ -282,12 +316,12 @@ const WHOLE_NAMES: [(&str, &str); 7] = [
 ];
 
 /// The name a thread was given, as far as it can be told, and whether the
-/// kernel cut it: it keeps 15 bytes.
+/// kernel cut it: it keeps [`NAME_KEPT`] bytes.
 fn whole_name(name: &str) -> (String, bool) {
     if let Some((_, whole)) = WHOLE_NAMES.iter().find(|(cut, _)| *cut == name) {
         return ((*whole).to_owned(), false);
     }
-    (name.to_owned(), name.len() == 15)
+    (name.to_owned(), name.len() == NAME_KEPT)
 }
 
 /// What a thread is for, from the name it was given (cut to 15 bytes by
@@ -339,7 +373,7 @@ fn thread_state(state: char) -> &'static str {
 }
 
 #[cfg(target_os = "linux")]
-fn current_tid() -> Option<u32> {
+fn current_tid() -> Option<u64> {
     std::fs::read_link("/proc/thread-self")
         .ok()?
         .file_name()?
@@ -348,21 +382,20 @@ fn current_tid() -> Option<u32> {
         .ok()
 }
 
+/// The process's threads by id, or None where the platform lists none.
 #[cfg(target_os = "linux")]
-fn threads() -> Vec<Thread> {
-    let Ok(dir) = std::fs::read_dir("/proc/self/task") else {
-        return Vec::new();
-    };
+fn threads() -> Option<Vec<Thread>> {
+    let dir = std::fs::read_dir("/proc/self/task").ok()?;
     let mut all: Vec<Thread> = dir
-        .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<u32>().ok())
+        .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<u64>().ok())
         .filter_map(read_thread)
         .collect();
     all.sort_by_key(|t| t.tid);
-    all
+    Some(all)
 }
 
 #[cfg(target_os = "linux")]
-fn read_thread(tid: u32) -> Option<Thread> {
+fn read_thread(tid: u64) -> Option<Thread> {
     let base = format!("/proc/self/task/{tid}");
     let stat = std::fs::read_to_string(format!("{base}/stat")).ok()?;
     // The name is in parentheses and may hold either; it ends at the last.
@@ -390,19 +423,53 @@ fn read_thread(tid: u32) -> Option<Thread> {
         name,
         state,
         work_us,
-        wakeups: field("voluntary_ctxt_switches:"),
-        preempted: field("nonvoluntary_ctxt_switches:"),
+        wakeups: Some(field("voluntary_ctxt_switches:")),
+        preempted: Some(field("nonvoluntary_ctxt_switches:")),
     })
 }
 
-#[cfg(not(target_os = "linux"))]
-fn current_tid() -> Option<u32> {
+#[cfg(target_os = "linux")]
+fn usage() -> Usage {
+    // utime and stime of every thread there was, ended ones too, in
+    // clock ticks of 10 ms.
+    let cpu_us = std::fs::read_to_string("/proc/self/stat")
+        .ok()
+        .and_then(|stat| {
+            let rest: Vec<&str> = stat
+                .get(stat.rfind(')')? + 2..)?
+                .split_whitespace()
+                .collect();
+            let field = |i: usize| rest.get(i)?.parse::<u64>().ok();
+            Some((field(11)? + field(12)?) * 10_000)
+        });
+    Usage {
+        resident: Resident::now(),
+        cpu_us,
+        wakeups: None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+use mach::{current_tid, usage};
+
+#[cfg(target_os = "macos")]
+fn threads() -> Option<Vec<Thread>> {
+    Some(mach::threads())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn current_tid() -> Option<u64> {
     None
 }
 
-#[cfg(not(target_os = "linux"))]
-fn threads() -> Vec<Thread> {
-    Vec::new()
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn threads() -> Option<Vec<Thread>> {
+    None
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn usage() -> Usage {
+    Usage::default()
 }
 
 /// `Timer#tick`, `NumberAnimation "fade"`, `Timer (Clock.qml:42)`: what
@@ -426,20 +493,23 @@ pub(crate) fn label(engine: &Engine, obj: ObjectId) -> (String, Option<String>) 
     (name, Some(locator))
 }
 
-/// Bytes of the process: its address space, what is resident, and of
-/// that what is backed by files or shared (libraries, the binary, shared
-/// buffers), which other processes may hold too.
+/// Bytes of the process: its address space, what is resident, of that
+/// what is backed by files or shared (libraries, the binary, shared
+/// buffers), which other processes may hold too, and what is its own.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Resident {
     pub(crate) virt: u64,
     pub(crate) rss: u64,
     pub(crate) shared: u64,
+    own: u64,
 }
 
 impl Resident {
-    /// Resident and the process's own: heap, stacks, anonymous maps.
+    /// The process's own: heap, stacks, anonymous maps. On macOS the
+    /// footprint the system charges it, which counts what it holds
+    /// compressed too.
     pub(crate) fn own(&self) -> u64 {
-        self.rss.saturating_sub(self.shared)
+        self.own
     }
 
     #[cfg(target_os = "linux")]
@@ -452,47 +522,100 @@ impl Resident {
         let mut pages = statm
             .split_whitespace()
             .map(|f| f.parse::<u64>().unwrap_or(0));
+        let virt = pages.next()? * PAGE;
+        let rss = pages.next()? * PAGE;
+        let shared = pages.next()? * PAGE;
         Some(Resident {
-            virt: pages.next()? * PAGE,
-            rss: pages.next()? * PAGE,
-            shared: pages.next()? * PAGE,
+            virt,
+            rss,
+            shared,
+            own: rss.saturating_sub(shared),
         })
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    pub(crate) fn now() -> Option<Resident> {
+        mach::resident()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     pub(crate) fn now() -> Option<Resident> {
         None
     }
 }
 
 /// The process as a whole: its threads, its memory, the CPU it used.
-#[cfg(target_os = "linux")]
-fn process_block(threads: usize) -> Value {
-    let Resident { virt, rss, shared } = Resident::now().unwrap_or_default();
-    // utime and stime of every thread there was, ended ones too, in
-    // clock ticks of 10 ms.
-    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
-    let rest: Vec<&str> = stat
-        .rfind(')')
-        .and_then(|c| stat.get(c + 2..))
-        .unwrap_or("")
-        .split_whitespace()
-        .collect();
-    let field = |i: usize| rest.get(i).and_then(|f| f.parse::<u64>().ok()).unwrap_or(0);
-    let cpu_us = (field(11) + field(12)) * 10_000;
-    json!({
-        "pid": std::process::id(),
-        "threads": threads,
-        "rss_bytes": rss,
-        "shared_bytes": shared,
-        "virtual_bytes": virt,
-        "cpu_us": cpu_us,
-    })
+/// What the platform does not tell is named in `not_measured`.
+fn process_block(threads: Option<usize>, usage: &Usage) -> Value {
+    let mut block = json!({ "pid": std::process::id(), "threads": threads });
+    let mut unmeasured = Vec::new();
+    if threads.is_none() {
+        unmeasured.push("threads");
+    }
+    match usage.resident {
+        Some(r) => {
+            block["rss_bytes"] = json!(r.rss);
+            block["own_bytes"] = json!(r.own);
+            block["shared_bytes"] = json!(r.shared);
+            block["virtual_bytes"] = json!(r.virt);
+        }
+        None => unmeasured.push("rss_bytes"),
+    }
+    match usage.cpu_us {
+        Some(us) => block["cpu_us"] = json!(us),
+        None => unmeasured.push("cpu_us"),
+    }
+    if let Some(w) = usage.wakeups {
+        block["wakeups"] = json!(w);
+    }
+    if !unmeasured.is_empty() {
+        block["not_measured"] = json!(unmeasured);
+    }
+    block
 }
 
-#[cfg(not(target_os = "linux"))]
-fn process_block(threads: usize) -> Value {
-    json!({ "pid": std::process::id(), "threads": threads })
+/// The line `app_processes` ends with: the process, and what of it this
+/// platform does not tell.
+fn process_text(block: &Value, text: &mut String) {
+    let mut parts = Vec::new();
+    if let Some(n) = block["threads"].as_u64() {
+        parts.push(format!("{n} threads"));
+    }
+    if let Some(rss) = block["rss_bytes"].as_u64() {
+        parts.push(format!(
+            "{:.1} MiB resident",
+            rss as f64 / (1024.0 * 1024.0)
+        ));
+    }
+    if let Some(us) = block["cpu_us"].as_u64() {
+        parts.push(format!("cpu {:.1} ms", us as f64 / 1000.0));
+    }
+    if let Some(w) = block["wakeups"].as_u64() {
+        parts.push(format!("{w} wakeups"));
+    }
+    let _ = write!(text, "process {}", block["pid"]);
+    if !parts.is_empty() {
+        let _ = write!(text, ": {}", parts.join(", "));
+    }
+    text.push('\n');
+    let unmeasured: Vec<&str> = block["not_measured"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| match f.as_str()? {
+            "threads" => Some("threads"),
+            "rss_bytes" => Some("memory"),
+            "cpu_us" => Some("CPU time"),
+            _ => None,
+        })
+        .collect();
+    if !unmeasured.is_empty() {
+        let _ = writeln!(
+            text,
+            "{}: not measured on this platform",
+            unmeasured.join(", ")
+        );
+    }
 }
 
 /// Where `obj` is declared, `file:line:column`.
@@ -624,6 +747,7 @@ pub(crate) struct ProcessActivity {
     pub(crate) pending_requests: usize,
     pub(crate) queued_work: bool,
     pub(crate) watching: bool,
+    pub(crate) source: ProcessSource,
 }
 
 /// Answers `app_processes`, on the UI thread.
@@ -658,11 +782,13 @@ pub(crate) fn processes(
     let wants = |k: ProcessKind| args.kind.is_none_or(|w| w == k);
     let mut rows: Vec<Value> = Vec::new();
     let mut text = String::new();
-    let mut thread_count = 0;
+    let measured = activity.source == ProcessSource::Platform;
+    let mut thread_count = None;
     if wants(ProcessKind::Thread) {
-        let ui = current_tid();
-        let mut all = threads();
-        thread_count = all.len();
+        let ui = current_tid().filter(|_| measured);
+        let listed = if measured { threads() } else { None };
+        thread_count = listed.as_ref().map(Vec::len);
+        let mut all = listed.unwrap_or_default();
         // The UI thread first: it is the one the rest serve.
         all.sort_by_key(|t| Some(t.tid) != ui);
         for t in &all {
@@ -694,18 +820,21 @@ pub(crate) fn processes(
                 // The kernel kept 15 bytes of a longer name.
                 row["truncated"] = json!(true);
             }
-            let _ = writeln!(
+            let _ = write!(
                 text,
-                "thread {} [{kind}] tid {} {state}, cpu {:.1} ms, wakeups {}",
+                "thread {} [{kind}] tid {} {state}, cpu {:.1} ms",
                 if is_ui { "UI thread" } else { name.as_str() },
                 t.tid,
                 t.work_us as f64 / 1000.0,
-                t.wakeups
             );
+            if let Some(w) = t.wakeups {
+                let _ = write!(text, ", wakeups {w}");
+            }
+            text.push('\n');
             rows.push(row);
         }
-        if all.is_empty() {
-            text.push_str("threads: not listed on this platform\n");
+        if all.iter().any(|t| t.wakeups.is_none()) {
+            text.push_str("wakeups of each thread: not measured on this platform\n");
         }
     }
     if wants(ProcessKind::Timer) {
@@ -786,16 +915,9 @@ pub(crate) fn processes(
         value["faults"] = Value::Array(faults);
     }
     if wants(ProcessKind::Thread) {
-        let process = process_block(thread_count);
-        if let Some(rss) = process["rss_bytes"].as_u64() {
-            let _ = writeln!(
-                text,
-                "process {}: {} threads, {:.1} MiB resident",
-                process["pid"],
-                thread_count,
-                rss as f64 / (1024.0 * 1024.0)
-            );
-        }
+        let usage = if measured { usage() } else { Usage::default() };
+        let process = process_block(thread_count, &usage);
+        process_text(&process, &mut text);
         value["process"] = process;
     }
     fit_rows(&mut value, &mut text, per_copy);
@@ -939,6 +1061,52 @@ mod tests {
         assert_eq!(whole_name("tokio-rt"), ("tokio-rt".into(), false));
     }
 
+    #[test]
+    fn what_is_not_measured_is_said_and_not_given_as_zero() {
+        let block = process_block(None, &Usage::default());
+        assert_eq!(block["threads"], Value::Null);
+        assert!(block.get("rss_bytes").is_none());
+        assert!(block.get("cpu_us").is_none());
+        assert_eq!(
+            block["not_measured"],
+            json!(["threads", "rss_bytes", "cpu_us"])
+        );
+        let mut text = String::new();
+        process_text(&block, &mut text);
+        assert!(
+            text.ends_with("threads, memory, CPU time: not measured on this platform\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_platform_that_counts_wakeups_for_the_process_gives_them_there() {
+        let usage = Usage {
+            resident: None,
+            cpu_us: Some(2500),
+            wakeups: Some(40),
+        };
+        let block = process_block(Some(3), &usage);
+        assert_eq!(block["wakeups"], 40);
+        assert_eq!(block["not_measured"], json!(["rss_bytes"]));
+        let mut text = String::new();
+        process_text(&block, &mut text);
+        assert!(
+            text.contains(": 3 threads, cpu 2.5 ms, 40 wakeups\n"),
+            "{text}"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn the_process_is_measured() {
+        let block = process_block(threads().map(|t| t.len()), &usage());
+        assert!(block["threads"].as_u64().unwrap() >= 1);
+        assert!(block["rss_bytes"].as_u64().unwrap() > 0);
+        assert!(block["own_bytes"].as_u64().unwrap() > 0);
+        assert!(block.get("not_measured").is_none());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn this_thread_is_among_the_threads() {
@@ -947,7 +1115,7 @@ mod tests {
         // ends meanwhile (another test's) can make one listing skip a
         // living thread.
         let mine = (0..20)
-            .find_map(|_| threads().into_iter().find(|t| t.tid == me))
+            .find_map(|_| threads().unwrap().into_iter().find(|t| t.tid == me))
             .unwrap();
         assert_eq!(mine.state, 'R');
         assert!(!mine.name.is_empty());

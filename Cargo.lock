@@ -3805,6 +3805,7 @@ dependencies = [
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",
+ "mach2",
  "notify",
  "png",
  "qml_front",

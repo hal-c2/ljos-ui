@@ -107,7 +107,7 @@ fn mib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }
 
-/// What glibc's allocator holds: in use by anyone, and freed but kept.
+/// What the C allocator holds: in use by anyone, and freed but kept.
 #[derive(Clone, Copy, Debug)]
 struct Heap {
     in_use: u64,
@@ -125,7 +125,22 @@ fn heap() -> Option<Heap> {
     })
 }
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[cfg(target_os = "macos")]
+fn heap() -> Option<Heap> {
+    let mut s = std::mem::MaybeUninit::<libc::malloc_statistics_t>::zeroed();
+    // SAFETY: a null zone sums every zone; `s` has room for the counts,
+    // which the allocator writes under its locks.
+    let s = unsafe {
+        libc::malloc_zone_statistics(std::ptr::null_mut(), s.as_mut_ptr());
+        s.assume_init()
+    };
+    Some(Heap {
+        in_use: s.size_in_use as u64,
+        free: s.size_allocated.saturating_sub(s.size_in_use) as u64,
+    })
+}
+
+#[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos")))]
 fn heap() -> Option<Heap> {
     None
 }

@@ -1,5 +1,6 @@
 //! `app_metrics` `memory` with `mappings`: what is resident, split by the
-//! mapping it is in, as the kernel's `/proc/self/smaps` tells it.
+//! mapping it is in, as the kernel's `/proc/self/smaps` tells it, or on
+//! macOS the task's map as Mach walks it.
 //!
 //! The owners count what Ljós holds; the program's code, the libraries,
 //! the GPU driver and what they allocate are outside them. Each mapping
@@ -9,9 +10,11 @@
 //! time and the stack. Pages a library wrote into its own mapping (its
 //! data, its relocations) are anonymous too and are counted with it.
 //!
-//! The file is read only when a client asks: walking it takes a few
-//! milliseconds in a large program. Elsewhere than on Linux nothing is
-//! known, and nothing is guessed.
+//! The map is read only when a client asks: walking it takes a few
+//! milliseconds in a large program. Elsewhere than on Linux and macOS
+//! nothing is known, and nothing is guessed.
+
+use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
@@ -190,7 +193,11 @@ pub(crate) fn classify(path: &str, perms: &str, program: &str) -> Group {
         Group::Driver
     } else if is_font(name, path) {
         Group::Fonts
-    } else if name.contains(".so") {
+    } else if name.contains(".so")
+        || name.ends_with(".dylib")
+        || path.contains(".framework/")
+        || name.starts_with("dyld_shared_cache")
+    {
         Group::Libraries
     } else {
         Group::Files
@@ -217,28 +224,142 @@ pub(crate) struct Mappings {
 /// The most files listed in one group.
 const MAX_FILES: usize = 5;
 
+#[cfg(any(target_os = "macos", test))]
+/// One region of a macOS task's map. Mach names no anonymous region, but
+/// tags what the allocator and the stacks map.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Region {
+    /// The file mapped, or empty.
+    pub(crate) path: String,
+    pub(crate) exec: bool,
+    /// Who mapped it: `VM_MEMORY_*`.
+    pub(crate) tag: u32,
+    /// Shared with other processes rather than copied on write.
+    pub(crate) shared: bool,
+    pub(crate) resident: u64,
+    /// Of `resident`, what was written.
+    pub(crate) dirtied: u64,
+}
+
+#[cfg(any(target_os = "macos", test))]
+/// `VM_MEMORY_*` tags of `<mach/vm_statistics.h>`.
+mod tag {
+    pub(super) const MALLOC: std::ops::RangeInclusive<u32> = 1..=13;
+    pub(super) const IOKIT: u32 = 21;
+    pub(super) const STACK: u32 = 30;
+    pub(super) const IOSURFACE: u32 = 88;
+    pub(super) const IOACCELERATOR: u32 = 100;
+}
+
+#[cfg(any(target_os = "macos", test))]
+/// The group of a macOS region: its file's, as on Linux, or by its tag.
+pub(crate) fn region_group(region: &Region, program: &str) -> Group {
+    if !region.path.is_empty() {
+        let perms = if region.exec { "r-x" } else { "r--" };
+        return classify(&region.path, perms, program);
+    }
+    match region.tag {
+        t if tag::MALLOC.contains(&t) => Group::Heap,
+        tag::STACK => Group::Stack,
+        tag::IOKIT | tag::IOSURFACE | tag::IOACCELERATOR => Group::Device,
+        _ if region.shared => Group::Shared,
+        _ if region.exec => Group::Jit,
+        _ => Group::Anonymous,
+    }
+}
+
+/// Tallies mappings into groups.
+#[derive(Default)]
+struct Builder {
+    tallies: BTreeMap<Group, (Tally, BTreeMap<String, u64>)>,
+}
+
+impl Builder {
+    fn mapping(&mut self, group: Group) {
+        self.tallies.entry(group).or_default().0.mappings += 1;
+    }
+
+    /// Resident bytes of a mapping of `path` (empty when anonymous), and
+    /// how many of them are anonymous.
+    fn add(&mut self, group: Group, path: &str, resident: u64, anonymous: u64) {
+        let (tally, files) = self.tallies.entry(group).or_default();
+        tally.resident += resident;
+        tally.anonymous += anonymous;
+        if !path.is_empty() && resident > 0 {
+            *files.entry(path.to_owned()).or_default() += resident;
+        }
+    }
+
+    fn finish(self) -> Mappings {
+        let mut groups: Vec<(Group, Tally)> = self
+            .tallies
+            .into_iter()
+            .map(|(g, (mut t, files))| {
+                let mut files: Vec<(String, u64)> = files.into_iter().collect();
+                files.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+                files.truncate(MAX_FILES);
+                t.files = files;
+                (g, t)
+            })
+            .collect();
+        groups.sort_by(|a, b| b.1.resident.cmp(&a.1.resident).then(a.0.cmp(&b.0)));
+        Mappings { groups }
+    }
+}
+
+/// The program's own path, as its mappings name it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn program() -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|p| trimmed(&p.to_string_lossy()).to_owned())
+        .unwrap_or_default()
+}
+
 impl Mappings {
     /// Reads the process's own map; `None` where there is none to read.
     #[cfg(target_os = "linux")]
     pub(crate) fn now() -> Option<Mappings> {
         let smaps = std::fs::read_to_string("/proc/self/smaps").ok()?;
-        let program = std::env::current_exe()
-            .ok()
-            .map(|p| trimmed(&p.to_string_lossy()).to_owned())
-            .unwrap_or_default();
-        Some(Mappings::parse(&smaps, &program))
+        Some(Mappings::parse(&smaps, &program()))
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    pub(crate) fn now() -> Option<Mappings> {
+        let regions = super::observe::mach::regions()?;
+        Some(Mappings::of_regions(&regions, &program()))
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     pub(crate) fn now() -> Option<Mappings> {
         None
     }
 
+    /// A macOS task's map. A file's pages that were written are copies of
+    /// the process's own, as Linux counts them anonymous.
+    #[cfg(any(target_os = "macos", test))]
+    pub(crate) fn of_regions(regions: &[Region], program: &str) -> Mappings {
+        let mut builder = Builder::default();
+        for region in regions {
+            let group = region_group(region, program);
+            builder.mapping(group);
+            let anonymous = if region.path.is_empty() {
+                region.resident
+            } else if region.shared {
+                0
+            } else {
+                region.dirtied.min(region.resident)
+            };
+            builder.add(group, &region.path, region.resident, anonymous);
+        }
+        builder.finish()
+    }
+
     /// The map as `smaps` writes it: a header line for each mapping, then
     /// its counts in kB.
+    #[cfg(any(target_os = "linux", test))]
     pub(crate) fn parse(smaps: &str, program: &str) -> Mappings {
-        use std::collections::BTreeMap;
-        let mut tallies: BTreeMap<Group, (Tally, BTreeMap<String, u64>)> = BTreeMap::new();
+        let mut builder = Builder::default();
         let mut current: Option<(Group, String)> = None;
         let kb = |line: &str| -> u64 {
             line.split_whitespace()
@@ -254,16 +375,9 @@ impl Mappings {
                 let Some((group, path)) = &current else {
                     continue;
                 };
-                let (tally, files) = tallies.entry(*group).or_default();
                 match first {
-                    "Rss:" => {
-                        let b = kb(line);
-                        tally.resident += b;
-                        if !path.is_empty() && b > 0 {
-                            *files.entry(path.clone()).or_default() += b;
-                        }
-                    }
-                    "Anonymous:" => tally.anonymous += kb(line),
+                    "Rss:" => builder.add(*group, path, kb(line), 0),
+                    "Anonymous:" => builder.add(*group, "", 0, kb(line)),
                     _ => {}
                 }
                 continue;
@@ -279,7 +393,7 @@ impl Mappings {
                 .nth(5)
                 .map_or("", str::trim);
             let group = classify(path, perms, program);
-            tallies.entry(group).or_default().0.mappings += 1;
+            builder.mapping(group);
             let named = if path.starts_with('/') {
                 trimmed(path).to_owned()
             } else {
@@ -287,18 +401,7 @@ impl Mappings {
             };
             current = Some((group, named));
         }
-        let mut groups: Vec<(Group, Tally)> = tallies
-            .into_iter()
-            .map(|(g, (mut t, files))| {
-                let mut files: Vec<(String, u64)> = files.into_iter().collect();
-                files.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-                files.truncate(MAX_FILES);
-                t.files = files;
-                (g, t)
-            })
-            .collect();
-        groups.sort_by(|a, b| b.1.resident.cmp(&a.1.resident).then(a.0.cmp(&b.0)));
-        Mappings { groups }
+        builder.finish()
     }
 
     #[cfg(test)]
@@ -473,10 +576,66 @@ Anonymous:             0 kB
         assert_eq!(classify("[anon:js heap]", "rw-p", ""), Group::Anonymous);
     }
 
-    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_macos_region_is_grouped_by_its_file_or_its_tag() {
+        let region = |path: &str, tag, exec, shared| Region {
+            path: path.into(),
+            exec,
+            tag,
+            shared,
+            resident: 64 << 10,
+            dirtied: 16 << 10,
+        };
+        let m = Mappings::of_regions(
+            &[
+                region(
+                    "/Applications/Viewer.app/Contents/MacOS/viewer",
+                    0,
+                    true,
+                    false,
+                ),
+                region("/usr/lib/libz.1.dylib", 0, true, false),
+                region(
+                    "/System/Library/dyld/dyld_shared_cache_arm64e",
+                    0,
+                    true,
+                    true,
+                ),
+                region("/Library/Fonts/Arial.ttf", 0, false, true),
+                region("", tag::MALLOC.start() + 6, false, false),
+                region("", tag::STACK, false, false),
+                region("", tag::IOSURFACE, false, true),
+                region("", 0, false, true),
+                region("", 0, true, false),
+                region("", 0, false, false),
+            ],
+            "/Applications/Viewer.app/Contents/MacOS/viewer",
+        );
+        for group in [
+            Group::Program,
+            Group::Fonts,
+            Group::Heap,
+            Group::Stack,
+            Group::Device,
+            Group::Shared,
+            Group::Jit,
+            Group::Anonymous,
+        ] {
+            assert_eq!(m.get(group).resident, 64 << 10, "{group:?}");
+        }
+        let libraries = m.get(Group::Libraries);
+        assert_eq!((libraries.resident, libraries.mappings), (128 << 10, 2));
+        // What a private mapping of a file wrote is the process's own; a
+        // shared one's is the file's.
+        assert_eq!(m.get(Group::Program).anonymous, 16 << 10);
+        assert_eq!(libraries.anonymous, 16 << 10);
+        assert_eq!(m.get(Group::Heap).anonymous, 64 << 10);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn the_process_own_map_adds_up_to_about_what_is_resident() {
-        let m = Mappings::now().expect("Linux has /proc/self/smaps");
+        let m = Mappings::now().expect("the platform lists the process's map");
         assert!(m.get(Group::Program).resident > 0);
         assert!(m.resident() > 0);
     }

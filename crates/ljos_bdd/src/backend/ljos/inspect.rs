@@ -223,7 +223,7 @@ fn exchange_on(
 }
 
 impl Rig {
-    fn connect(caps: CapSet, redact_all: bool) -> Result<Rig> {
+    fn connect(caps: CapSet, redact_all: bool, unmeasured: bool) -> Result<Rig> {
         let local = LocalWake::new();
         let bell = Arc::new(Bell::default());
         let wake = {
@@ -238,6 +238,11 @@ impl Rig {
             virtual_clock: true,
             // Below the scenario's own home, which the platform makes.
             exports: ljos_dev::mcp::TraceDir::PerUser,
+            process_source: if unmeasured {
+                ljos_dev::mcp::ProcessSource::Unmeasured
+            } else {
+                ljos_dev::mcp::ProcessSource::Platform
+            },
             ..InspectorConfig::default()
         };
         let (inspector, surface) = Inspector::new(cfg, wake);
@@ -758,17 +763,22 @@ impl LjosBackend {
         | Ask::Stop = ask
         {
             if self.inspector.is_none() || matches!(ask, Ask::Connect { .. }) {
-                let (caps, redact_all) = match ask {
-                    Ask::Connect { caps, redact_all } => (
+                let (caps, redact_all, unmeasured) = match ask {
+                    Ask::Connect {
+                        caps,
+                        redact_all,
+                        unmeasured,
+                    } => (
                         match caps {
                             Some(list) => CapSet::parse_list(list).map_err(failed)?,
                             None => CapSet::of([Cap::Inspect]),
                         },
                         *redact_all,
+                        *unmeasured,
                     ),
-                    _ => (CapSet::of([Cap::Inspect]), false),
+                    _ => (CapSet::of([Cap::Inspect]), false, false),
                 };
-                let mut rig = Rig::connect(caps, redact_all)?;
+                let mut rig = Rig::connect(caps, redact_all, unmeasured)?;
                 // An application loaded later is attached by its load.
                 if let Some(live) = &self.live {
                     rig.attach(live);

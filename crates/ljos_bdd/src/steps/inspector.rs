@@ -80,6 +80,19 @@ fn inspector_connected(w: &mut LjosWorld) -> StepResult {
         Ask::Connect {
             caps: None,
             redact_all: false,
+            unmeasured: false,
+        },
+    )
+}
+
+#[given("the inspector is connected on a platform that measures no process")]
+fn inspector_connected_unmeasured(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(
+        w,
+        Ask::Connect {
+            caps: None,
+            redact_all: false,
+            unmeasured: true,
         },
     )
 }
@@ -91,6 +104,7 @@ fn inspector_connected_masking(w: &mut LjosWorld) -> StepResult {
         Ask::Connect {
             caps: None,
             redact_all: true,
+            unmeasured: false,
         },
     )
 }
@@ -103,6 +117,7 @@ fn inspector_connected_with(w: &mut LjosWorld, caps: String) -> StepResult {
         Ask::Connect {
             caps,
             redact_all: false,
+            unmeasured: false,
         },
     )
 }
@@ -116,6 +131,7 @@ fn inspector_connected_with_masking(w: &mut LjosWorld, caps: String) -> StepResu
         Ask::Connect {
             caps,
             redact_all: true,
+            unmeasured: false,
         },
     )
 }

@@ -110,6 +110,7 @@ pub use ljos_mcp_core::{
     Cap, CapSet, ParseCapError, SOCKET_PATH_MAX, SocketPathError, check_socket_path,
 };
 pub use memory::WindowMemory;
+pub use observe::ProcessSource;
 pub use paint::{Drawn, PaintReport, PainterInfo, StartupStep};
 pub use rust_heap::CountingAlloc;
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
@@ -157,6 +158,9 @@ pub struct InspectorConfig {
     pub background: [u8; 3],
     /// Where `app_frames`' `export` writes trace files.
     pub exports: TraceDir,
+    /// Where `app_processes` reads the threads, memory and CPU time of the
+    /// process from.
+    pub process_source: ProcessSource,
 }
 
 impl Default for InspectorConfig {
@@ -167,6 +171,7 @@ impl Default for InspectorConfig {
             virtual_clock: false,
             background: [0xff, 0xff, 0xff],
             exports: TraceDir::Nowhere,
+            process_source: ProcessSource::Platform,
         }
     }
 }
@@ -1136,6 +1141,7 @@ impl Inspector {
                     // Frames asked for by more requests or by motion.
                     queued_work: queued > 0 || ljos_quick::running_animation_count(engine) > 0,
                     watching: self.feed.state().watched,
+                    source: self.cfg.process_source,
                 },
                 args,
                 per_copy,

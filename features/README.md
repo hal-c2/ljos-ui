@@ -294,6 +294,7 @@ into the answer's structured content.
 | Step | Meaning |
 |---|---|
 | `Given the inspector is connected` | an agent with the `inspect` capability is connected; before or after the QML |
+| `Given the inspector is connected on a platform that measures no process` | the same, with the process's threads, memory and CPU time unmeasured, as on a platform the inspector cannot read them on |
 | `Given the inspector is connected and masks every editable value` | the same, started so that the value of every editable field is masked, not only passwords |
 | `Given the inspector is connected with the capabilities "inspect, input"` | the agent was granted those capabilities (`--mcp=` names them: `inspect`, `input`, `mutate`, `eval`); `… and masks every editable value` as above |
 | `Given the files are watched` | the host watches the files, so that `app_reload` can be answered and reloads are told; the scenario also notes what a reload needs from the first load on |

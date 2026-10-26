@@ -25,6 +25,7 @@ mcp = [
     "dep:schemars",
     "dep:slotmap",
     "dep:libc",
+    "dep:mach2",
 ]
 
 [dependencies]
@@ -61,6 +62,11 @@ slotmap = { workspace = true, optional = true }
 # `memory` cannot put to an owner.
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc = { workspace = true, optional = true }
+
+# The process's threads, memory and CPU time from Mach on macOS.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { workspace = true, optional = true }
+mach2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The end-to-end test makes a scene of the right size.
