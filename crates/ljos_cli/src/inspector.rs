@@ -321,13 +321,20 @@ impl Answer {
 /// A call turned away for asking too often (429) is asked again once, after
 /// the `Retry-After` the inspector gave, within `limit`: it was refused
 /// before anything ran, so asking again cannot do a thing twice. A second
-/// refusal is the answer.
+/// refusal is the answer, and so is the first when the wait it asks for is
+/// longer than `MAX_RETRY_AFTER` or would not end within `limit`: the call
+/// is never asked again before the inspector said it may be.
 pub async fn post(target: &Target, message: String, limit: Duration) -> Result<Answer, String> {
+    let deadline = tokio::time::Instant::now() + limit;
     let asked = async {
         let first = post_now(target, message.clone()).await?;
         match first.retry_after {
-            Some(wait) if first.status == 429 => {
-                tokio::time::sleep(wait.min(MAX_RETRY_AFTER)).await;
+            Some(wait)
+                if first.status == 429
+                    && wait <= MAX_RETRY_AFTER
+                    && tokio::time::Instant::now() + wait < deadline =>
+            {
+                tokio::time::sleep(wait).await;
                 post_now(target, message).await
             }
             _ => Ok(first),
@@ -535,6 +542,40 @@ mod tests {
             .unwrap();
         assert_eq!(answer.status, 200);
         assert_eq!(served.await.unwrap(), 2);
+    }
+
+    /// A refusal that asks for a longer wait than is waited for is the
+    /// answer at once: the call is not asked again early.
+    #[tokio::test]
+    async fn a_long_retry_after_is_answered_with_the_refusal() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let served = tokio::spawn(async move {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = conn.read(&mut buf).await.unwrap();
+            conn.write_all(
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            )
+            .await
+            .unwrap();
+            // A second call would be accepted here; none may come.
+            tokio::time::timeout(Duration::from_millis(200), listener.accept())
+                .await
+                .is_err()
+        });
+        let target = Target {
+            url: format!("http://127.0.0.1:{port}/mcp"),
+            token: "t".into(),
+            pid: None,
+        };
+        let answer = post(&target, "{}".into(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(answer.status, 429);
+        assert_eq!(answer.retry_after, Some(Duration::from_secs(60)));
+        assert!(served.await.unwrap(), "the call was asked again");
     }
 
     #[tokio::test]
