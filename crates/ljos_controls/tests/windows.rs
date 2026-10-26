@@ -403,6 +403,34 @@ fn the_host_says_which_screens_there_are() {
     assert_eq!(e.read_by_name(main, "screen").as_object(), Some(first));
 }
 
+/// An object in no window reads the primary display, and a binding on
+/// it is evaluated again while the host is still saying what changed.
+#[test]
+fn what_is_in_no_window_follows_the_primary_screen() {
+    let (e, _) = hosted();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+QtObject {
+    property int width: Screen.width
+    property bool portrait: Screen.width < Screen.height
+    property int turned: 0
+    onPortraitChanged: turned++
+}
+"#,
+    );
+    assert_eq!(int(&e, root, "width"), 800);
+    let tall = ScreenSpec {
+        size: [1080.0, 1920.0],
+        ..ScreenSpec::default()
+    };
+    WindowSystem::of(&e).set_screens(&e, &[tall]);
+    assert_eq!(int(&e, root, "width"), 1080);
+    assert!(flag(&e, root, "portrait"));
+    assert_eq!(int(&e, root, "turned"), 1);
+}
+
 #[test]
 fn a_binding_on_the_screen_follows_the_display_it_reads() {
     let (e, _) = hosted();
