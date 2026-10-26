@@ -1292,6 +1292,11 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
                 .map(|(_, o, ..)| *o)
                 .collect();
         }
+        // Rows added are told from the first row down, whatever order they
+        // came in, as qml6 tells them.
+        if op.kind == super::state::OpKind::Add {
+            targets.indexes.sort_unstable();
+        }
         let targets = std::rc::Rc::new(targets);
         for &(row, o, pos, size) in &items {
             let Some(key) = d.key_at(row) else { continue };
