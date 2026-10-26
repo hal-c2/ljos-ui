@@ -604,6 +604,15 @@ fn with_roles(open: u128) -> u128 {
     (0..4).fold(open, |w, s| w | open >> (s * ROLE_COUNT) & role)
 }
 
+/// Every slot of each role `open` has a slot of: a palette's own slot
+/// reads the colour of the group in force, which may be one the object
+/// gave itself and so is not open.
+fn whole_roles(open: u128) -> u128 {
+    let role = (1u128 << ROLE_COUNT) - 1;
+    let roles = (0..4).fold(0, |w, s| w | open >> (s * ROLE_COUNT) & role);
+    (0..4).fold(0, |w, s| w | roles << (s * ROLE_COUNT))
+}
+
 /// [`author_colour`], with what [`authored`] said of `obj`.
 fn given_colour(
     engine: &Engine,
@@ -1026,7 +1035,7 @@ fn resolve_palette(
         let open_slots = (0..SLOTS)
             .filter(|at| !mine[*at] && found[*at].is_none())
             .fold(0u128, |w, at| w | 1 << at);
-        let given = authored(engine, p, k, groups, with_roles(open_slots));
+        let given = authored(engine, p, k, groups, whole_roles(open_slots));
         if given == 0 {
             return;
         }
