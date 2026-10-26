@@ -1,6 +1,8 @@
 //! `StandardPaths` (QtCore): where the system keeps a user's documents,
 //! settings and caches. On Linux these follow the XDG base directories and
-//! user directories, with the fallbacks Qt uses when a variable is unset.
+//! user directories, with the fallbacks Qt uses when a variable is unset;
+//! on macOS they are the home's `Library` directories, as Qt's table for
+//! macOS names them, and no XDG variable is read.
 //!
 //! What is read from the process environment is a [`PathEnv`], which a
 //! test replaces with a home of its own; `root` then puts every file the
@@ -23,6 +25,9 @@ pub struct PathEnv {
     /// Set by tests: a path the application names, `/home/user/x`, is
     /// the file `root/home/user/x`. URLs keep the named path.
     pub root: Option<PathBuf>,
+    /// The user's directories are macOS's: `~/Library/Preferences`,
+    /// `Application Support` and `Caches`.
+    pub library: bool,
 }
 
 /// Names the user's real home in a run that moved its directories (a test
@@ -59,6 +64,7 @@ impl PathEnv {
             home,
             vars,
             root: None,
+            library: cfg!(target_os = "macos"),
         }
     }
 
@@ -88,15 +94,15 @@ impl PathEnv {
     /// variable, which falls back to them, is what leaked before.
     fn guarded(self, guard: Option<&Path>, test_binary: bool, temp: &Path) -> PathEnv {
         let reaches = guard.is_some_and(|home| {
-            let own = [".config", ".local/share", ".local/state", ".cache"].map(|d| home.join(d));
-            [
-                self.config_home(),
-                self.data_home(),
-                self.cache_home(),
-                self.state_home(),
-            ]
-            .iter()
-            .any(|dir| own.iter().any(|o| dir.starts_with(o)))
+            let own = PathEnv {
+                home: home.to_path_buf(),
+                library: self.library,
+                ..PathEnv::default()
+            }
+            .homes();
+            self.homes()
+                .iter()
+                .any(|dir| own.iter().any(|o| dir.starts_with(o)))
         });
         if !reaches && !test_binary {
             return self;
@@ -125,6 +131,7 @@ impl PathEnv {
                 .filter(|(k, _)| kept.contains(&k.as_str()))
                 .collect(),
             root: self.root,
+            library: self.library,
         }
     }
 
@@ -135,6 +142,7 @@ impl PathEnv {
             home: home.into(),
             vars: HashMap::new(),
             root: Some(root.into()),
+            library: false,
         }
     }
 
@@ -146,8 +154,11 @@ impl PathEnv {
     }
 
     /// An XDG directory: the variable if it holds an absolute path, else
-    /// `home/fallback`.
-    fn xdg(&self, key: &str, fallback: &str) -> PathBuf {
+    /// `home/fallback`. On macOS, `home/Library/<library>`.
+    fn xdg(&self, key: &str, fallback: &str, library: &str) -> PathBuf {
+        if self.library {
+            return self.home.join("Library").join(library);
+        }
         match self.var(key).map(PathBuf::from) {
             Some(p) if p.is_absolute() => p,
             _ => self.home.join(fallback),
@@ -218,19 +229,29 @@ impl PathEnv {
     }
 
     pub fn config_home(&self) -> PathBuf {
-        self.xdg("XDG_CONFIG_HOME", ".config")
+        self.xdg("XDG_CONFIG_HOME", ".config", "Preferences")
     }
 
     pub fn data_home(&self) -> PathBuf {
-        self.xdg("XDG_DATA_HOME", ".local/share")
+        self.xdg("XDG_DATA_HOME", ".local/share", "Application Support")
     }
 
     pub fn cache_home(&self) -> PathBuf {
-        self.xdg("XDG_CACHE_HOME", ".cache")
+        self.xdg("XDG_CACHE_HOME", ".cache", "Caches")
     }
 
     pub fn state_home(&self) -> PathBuf {
-        self.xdg("XDG_STATE_HOME", ".local/state")
+        self.xdg("XDG_STATE_HOME", ".local/state", "Preferences/State")
+    }
+
+    /// The directories the user's own files are written in.
+    fn homes(&self) -> [PathBuf; 4] {
+        [
+            self.config_home(),
+            self.data_home(),
+            self.cache_home(),
+            self.state_home(),
+        ]
     }
 }
 
@@ -330,6 +351,9 @@ impl Location {
     /// Where the application writes, given its organization and name.
     pub fn writable(self, env: &PathEnv, org: &str, app: &str) -> PathBuf {
         let own = |base: PathBuf| app_dir(base, org, app);
+        if env.library {
+            return self.in_library(env, org, app);
+        }
         match self {
             // Without a user-dirs file, Qt puts these in the home itself.
             Location::Desktop | Location::PublicShare | Location::Templates => {
@@ -361,9 +385,53 @@ impl Location {
         }
     }
 
+    /// macOS's: the home's folders by their English names, the rest in
+    /// `~/Library`. The state of an application is beside its settings.
+    fn in_library(self, env: &PathEnv, org: &str, app: &str) -> PathBuf {
+        let home = |name: &str| env.home.join(name);
+        let own = |base: PathBuf| app_dir(base, org, app);
+        match self {
+            Location::Desktop => home("Desktop"),
+            Location::Documents => home("Documents"),
+            Location::Music => home("Music"),
+            Location::Movies => home("Movies"),
+            Location::Pictures => home("Pictures"),
+            Location::Download => home("Downloads"),
+            Location::PublicShare => home("Public"),
+            Location::Templates => home("Templates"),
+            Location::Applications => home("Applications"),
+            Location::Fonts => home("Library/Fonts"),
+            Location::Temp => PathBuf::from(env.var("TMPDIR").unwrap_or("/tmp")),
+            Location::Home => env.home.clone(),
+            Location::AppLocalData | Location::AppData => own(env.data_home()),
+            Location::Cache => own(env.cache_home()),
+            Location::GenericData | Location::Runtime => env.data_home(),
+            Location::Config | Location::GenericConfig => env.config_home(),
+            Location::GenericCache => env.cache_home(),
+            Location::AppConfig => own(env.config_home()),
+            Location::State => own(env.config_home()).join("State"),
+            Location::GenericState => env.state_home(),
+        }
+    }
+
     /// Every directory looked in, the writable one first.
     pub fn all(self, env: &PathEnv, org: &str, app: &str) -> Vec<PathBuf> {
         let mut out = vec![self.writable(env, org, app)];
+        if env.library {
+            let system = |dir: &str| PathBuf::from("/Library").join(dir);
+            match self {
+                Location::GenericData => out.push(system("Application Support")),
+                Location::AppLocalData | Location::AppData => {
+                    out.push(app_dir(system("Application Support"), org, app));
+                }
+                Location::GenericCache => out.push(system("Caches")),
+                Location::Cache => out.push(app_dir(system("Caches"), org, app)),
+                Location::Fonts => out.extend([system("Fonts"), "/System/Library/Fonts".into()]),
+                Location::Applications => out.push("/Applications".into()),
+                _ => {}
+            }
+            return out;
+        }
         let data = || env.dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
         let config = || env.dirs("XDG_CONFIG_DIRS", "/etc/xdg");
         match self {
@@ -603,6 +671,42 @@ mod tests {
     }
 
     #[test]
+    fn on_macos_the_directories_are_in_the_library() {
+        let mut env = user();
+        env.library = true;
+        env.vars.insert("XDG_CONFIG_HOME".into(), "/ignored".into());
+        let w = |l: Location| l.writable(&env, "Org", "App");
+        assert_eq!(
+            w(Location::AppData),
+            Path::new("/home/user/Library/Application Support/Org/App")
+        );
+        assert_eq!(
+            w(Location::Cache),
+            Path::new("/home/user/Library/Caches/Org/App")
+        );
+        assert_eq!(
+            w(Location::AppConfig),
+            Path::new("/home/user/Library/Preferences/Org/App")
+        );
+        assert_eq!(
+            w(Location::State),
+            Path::new("/home/user/Library/Preferences/Org/App/State")
+        );
+        assert_eq!(
+            w(Location::GenericState),
+            Path::new("/home/user/Library/Preferences/State")
+        );
+        assert_eq!(w(Location::Movies), Path::new("/home/user/Movies"));
+        assert_eq!(
+            Location::Cache.all(&env, "", "App"),
+            vec![
+                PathBuf::from("/home/user/Library/Caches/App"),
+                "/Library/Caches/App".into()
+            ]
+        );
+    }
+
+    #[test]
     fn a_variable_moves_a_directory() {
         let mut env = user();
         env.vars.insert("XDG_CONFIG_HOME".into(), "/cfg".into());
@@ -704,6 +808,7 @@ mod tests {
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
                 .collect(),
             root: None,
+            library: false,
         }
     }
 
@@ -739,6 +844,14 @@ mod tests {
         // An application run by hand keeps the user's directories.
         let user = process("/home/user", &[]);
         assert_eq!(user.clone().guarded(None, false, temp), user);
+        // On macOS the home's Library is guarded.
+        let mut mac = process("/home/user", &[]);
+        mac.library = true;
+        let env = mac.guarded(guard, false, temp);
+        assert_eq!(
+            env.state_home(),
+            Path::new("/scratch/ljos-home/Library/Preferences/State")
+        );
     }
 
     #[test]
