@@ -274,7 +274,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         let name = self.parse_qml_qualified_name();
         if self.eat(Kind::Colon) {
-            let value = self.parse_qml_binding_value();
+            let value = self.parse_qml_binding_value(true);
             return Some(QmlMember::Binding(QmlBinding { span: self.end_span(start), name, value }));
         }
         Some(QmlMember::Object(self.parse_qml_object_rest(start, name, false)))
@@ -306,8 +306,12 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             None
         };
         let name = self.parse_qml_name();
+        // A declared property takes a list of objects only when its type is
+        // a list: after `property var p:` the `[` starts an array, and
+        // `[Item {}]` is an error at the `{`, as in Qt.
+        let objects = type_name.as_ref().is_none_or(|type_name| type_name.is_list);
         let value =
-            if self.eat(Kind::Colon) { Some(self.parse_qml_binding_value()) } else { None };
+            if self.eat(Kind::Colon) { Some(self.parse_qml_binding_value(objects)) } else { None };
         self.bump(Kind::Semicolon);
         QmlPropertyDeclaration {
             span: self.end_span(start),
@@ -417,7 +421,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         QmlInlineComponent { span: self.end_span(start), name, object }
     }
 
-    fn parse_qml_binding_value(&mut self) -> QmlBindingValue<'a> {
+    /// `objects`: whether `[` may start a list of objects.
+    fn parse_qml_binding_value(&mut self, objects: bool) -> QmlBindingValue<'a> {
         match self.cur_kind() {
             Kind::LCurly => self.parse_qml_braced_value(),
             Kind::If | Kind::Switch | Kind::Try | Kind::With => {
@@ -425,7 +430,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                     p.parse_statement_list_item(StatementContext::StatementList)
                 }))
             }
-            Kind::LBrack if self.qml_at_object_list() => {
+            Kind::LBrack if objects && self.qml_at_object_list() => {
                 self.bump_any();
                 let mut objects = ArenaVec::new_in(&self.ast);
                 while !self.at(Kind::RBrack) && !self.has_fatal_error() {
