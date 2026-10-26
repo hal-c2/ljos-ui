@@ -73,6 +73,7 @@ use ljos_engine::{Engine, MetaRef, QmlType, Version};
 pub use action::Action;
 pub use action_group::{ActionGroup, ActionGroupAttached};
 pub use bars::{BusyIndicator, ProgressBar, ToolSeparator};
+pub use button::display as button_display;
 pub use button::{AbstractButton, Button, CheckBox, Icon, RadioButton, Switch, ToolButton};
 pub use calendar::{Calendar, CalendarModel, DayOfWeekRow, MonthGrid, WeekNumberColumn};
 pub use combobox::{ComboBox, ItemDelegate};
