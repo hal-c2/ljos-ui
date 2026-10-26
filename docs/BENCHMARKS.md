@@ -7093,3 +7093,78 @@ DECISIONs:
   and boxing it would allocate on every colour change.
 - Phase c (B30, structure and text polish) is next. TEXT4's measure-on-read branch in
   `text_polish` is kept; B29 only changed how it stores the inputs.
+
+### B12 (ilang): ListModel.append, and a calqlatr press profiled (2026-10-26)
+
+**Method.** As in B11: instructions are user-space instructions of the whole process,
+from start to exit. Milliseconds are the scripts' own `Date.now()` around the append loop,
+taking the lowest of eight runs on a machine with a load of 40 to 100, so the instruction
+counts are the ones to compare. "No view" is a Timer appending N `{ n: i }` rows to a
+ListModel nothing shows. "Shown" is the same loop under a ListView of one-line Text rows.
+"Before" is origin/main (aa4f4e1c), built the same way.
+
+| | Before | After | qml6 |
+|---|---:|---:|---:|
+| append, no view (instructions a row, 0 → 10k) | 11.5k | 10.4k | ~3.5k |
+| 10k appends, shown (M instructions, whole run) | 509.8 | 264.5 | 474 |
+| 20k appends, shown (M instructions, whole run) | stopped at its slice | 389.8 | 553 |
+| 10k appends, shown (ms, lowest) | 23 | 12 | 5 |
+| 20k appends, shown (ms, lowest) | 61 | 22 | 10 |
+| 100 appends, no view (lookups, allocations) | 200, 914 | 0, 714 | |
+| calqlatr, 3000 presses (M instructions) | 955.9 | 953.2 | ~530 |
+
+qml6's whole-run counts include frames it renders while it waits for the layout, so its
+cost per row is the slope: 7.9k from 10k to 20k rows, against Ljós's 12.5k.
+
+**Appends to a shown model were quadratic.** Every row added before a layout shifted the
+indexes of all rows added since the last layout, in case it had landed before them. An
+append lands after all of them. The pending change now keeps its highest index, and a row
+added past that index visits none of them. The transitions are told the same indexes. qml6
+tells the indexes of added rows in row order, whatever order the rows came in, and Ljós now
+does too (`features/views/list-add-targets.feature`). A run of appends now costs the same
+for each row, and 20,000 appends no longer reach the script's time slice.
+
+**The append itself.** Of ~10k instructions an append, about 8k is the call from script:
+- turning the object literal into the engine's value (~1.5k);
+- reading its entries out of JS (~1.6k), a string for each key;
+- the row, its count and the change notice (~2.4k);
+- the host call around it.
+
+Two costs are gone:
+- A model nobody connected to no longer finds its row signals by name, two member lookups
+  an append.
+- A value of a kind the embedder defined, or a colour, is told from other objects by its
+  prototype's address. Before, each object was asked for a hidden mark property.
+
+One row is also held without a list of its own on its way in. The budget test
+`hundred_list_model_appends` pins the result: no lookups and 7.14 allocations a row.
+
+**calqlatr, one press.** Measured as 3000 presses minus none, with callgrind collecting from
+the timers on: ~280k instructions a press, against qml6's ~177k. ~200k of it is the
+ListView pass that `positionViewAtEnd()` runs after each press. Each pass lays all ~23
+shown rows out again:
+- `Fill::lay` reads every row's geometry back: `read_geo`, `read_sizes` and `read_inputs`
+  are ~19k a pass.
+- It writes every row's place: `item::write_placed`, ~11k a pass.
+- `flickable::bounds` is read three times a pass, ~14k.
+- One press in three makes a new row and lets an old one go: ~173k to make, of which the
+  row's Text completing and measuring is ~55k, and ~40k to destroy, mostly reparenting.
+
+Outside the pass, ~61k a press is the calculator's own script.
+
+**Left** (DECISIONs; geometry, placing and text are H2's B28–B30 area):
+
+- **A pass re-reads and re-places every shown row** when only the last row changed. A
+  dirty bit per row's geometry would let it skip the rest. This is the geometry seam.
+- **A new row's Text** costs ~55k to complete and measure. This is text polish.
+- **Destroying a row** costs ~40k: parent changes and the scene forgetting it. This is
+  structure.
+- **`current::sync`** costs ~11k a pass: it reads the highlight's settings and the current
+  item's geometry each time. Its geometry reads belong with the geometry seam.
+- **An append still costs ~3× qml6's.** Most of it is crossing from script: the literal's
+  keys are read as strings, and the object is kept for the call. Taking the entries during
+  the call, without keeping the object, is the next step. It needs a change to the host
+  interface.
+- **The `targetIndexes` of several removals** keep the order the rows left in. qml6 moves
+  the earlier ones' indexes and gives them in another order: "2,1,0" for `remove(4)`,
+  `remove(0)`, `remove(1)` out of six rows. This is not pinned yet.
