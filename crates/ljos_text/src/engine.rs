@@ -338,11 +338,57 @@ struct Families {
 type FirstFontEntry = (u32, bool, Option<FirstFont>);
 
 /// The font a query over a family stack tries first, and its family.
-#[derive(Clone)]
 struct FirstFont {
     family: Arc<str>,
     blob: Blob<u8>,
     charmap: CharmapIndex,
+    /// Of the characters below [`PINNED_BELOW`], a bit for each one looked
+    /// up in the character map, and one for each found there: a delegate's
+    /// text is checked on every layout, and a lookup costs some twenty
+    /// times a bit.
+    seen: Box<[u64; PINNED_BELOW / 64]>,
+    has: Box<[u64; PINNED_BELOW / 64]>,
+}
+
+/// Texts with characters from here up are never pinned.
+const PINNED_BELOW: usize = 0x2000;
+
+impl FirstFont {
+    fn new(family: Arc<str>, blob: Blob<u8>, charmap: CharmapIndex) -> Self {
+        Self {
+            family,
+            blob,
+            charmap,
+            seen: Box::new([0; PINNED_BELOW / 64]),
+            has: Box::new([0; PINNED_BELOW / 64]),
+        }
+    }
+
+    /// Whether the font has a glyph for every character of `text`, all
+    /// below [`PINNED_BELOW`].
+    fn covers(&mut self, text: &str) -> bool {
+        let mut charmap = None;
+        for c in text.chars() {
+            let at = c as usize;
+            let (word, bit) = (at / 64, 1_u64 << (at % 64));
+            if self.seen[word] & bit == 0 {
+                if charmap.is_none() {
+                    charmap = Some(self.charmap.charmap(self.blob.as_ref()));
+                }
+                let Some(Some(map)) = &charmap else {
+                    return false;
+                };
+                if map.map(c).is_some_and(|g| g != 0) {
+                    self.has[word] |= bit;
+                }
+                self.seen[word] |= bit;
+            }
+            if self.has[word] & bit == 0 {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// The optical size a platform's own text gives a font with an `opsz`
@@ -435,33 +481,32 @@ impl Families {
             || text.is_empty()
             || !text
                 .chars()
-                .all(|c| u32::from(c) < 0x2000 && c != '\u{a9}' && c != '\u{ae}')
+                .all(|c| (c as usize) < PINNED_BELOW && c != '\u{a9}' && c != '\u{ae}')
         {
             return None;
         }
-        let first = {
-            let mut fonts = self.first_fonts.borrow_mut();
-            if !fonts.contains_key(family) {
-                fonts.insert(family.into(), Vec::new());
+        let mut fonts = self.first_fonts.borrow_mut();
+        if !fonts.contains_key(family) {
+            fonts.insert(family.into(), Vec::new());
+        }
+        let entries = fonts.get_mut(family)?;
+        let bits = weight.value().to_bits();
+        let at = match entries
+            .iter()
+            .position(|(w, i, _)| *w == bits && *i == italic)
+        {
+            Some(at) => at,
+            None => {
+                let first = self.first_font(fcx, family, weight, italic);
+                entries.push((bits, italic, first));
+                entries.len() - 1
             }
-            let entries = fonts.get_mut(family)?;
-            let bits = weight.value().to_bits();
-            match entries.iter().find(|(w, i, _)| *w == bits && *i == italic) {
-                Some((_, _, first)) => first.clone(),
-                None => {
-                    let first = self.first_font(fcx, family, weight, italic);
-                    entries.push((bits, italic, first.clone()));
-                    first
-                }
-            }
-        }?;
-        let charmap = first.charmap.charmap(first.blob.as_ref())?;
-        text.chars()
-            .all(|c| charmap.map(c).is_some_and(|g| g != 0))
-            .then(|| {
-                self.pinned.set(self.pinned.get() + 1);
-                first.family
-            })
+        };
+        let first = entries[at].2.as_mut()?;
+        first.covers(text).then(|| {
+            self.pinned.set(self.pinned.get() + 1);
+            first.family.clone()
+        })
     }
 
     /// The font Fontique's query yields first for `family`'s stack: for each
@@ -525,11 +570,7 @@ impl Families {
                 if fcx.collection.family_by_name(name).map(|f| f.id()) != Some(id) {
                     return None;
                 }
-                return Some(FirstFont {
-                    family: Arc::from(name),
-                    blob,
-                    charmap,
-                });
+                return Some(FirstFont::new(Arc::from(name), blob, charmap));
             }
         }
         None
