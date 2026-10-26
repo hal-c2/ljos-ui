@@ -229,6 +229,10 @@ pub fn register(engine: &Engine) {
     animation::register(engine);
     states::register(engine);
     font_enums::register(engine);
+    // What a scene shows of an item goes with it, and a child made in
+    // slices is shown once it is whole.
+    engine.on_destroyed(scene::destroyed);
+    engine.on_incubated(scene::incubated);
     // Idempotent, so registering twice does no harm.
     engine.on_visual_parent_changed(|e, obj, parent| {
         if let Err(err) = tree::sync_parent(e, obj, parent) {

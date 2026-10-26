@@ -552,6 +552,41 @@ fn mark_shown(e: &Engine, obj: ObjectId, f: impl Fn(&mut Shared)) {
     }
 }
 
+/// The change hook of an item's `children`, and of a Loader's `item` and
+/// `status` (its item is shown only once it is made, `shown_children`):
+/// what it shows is matched to them at the frame. A mark where an effect
+/// cost each item a node and a run as it was made.
+pub(crate) fn restructured(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
+    let obj = cx.this;
+    mark_shown(cx.engine, obj, |s| s.set(obj, Dirty::STRUCTURE, |_| ()));
+}
+
+/// [`Engine::on_destroyed`]: a scene that showed one of `gone` sweeps its
+/// dead at the next frame.
+pub(crate) fn destroyed(e: &Engine, gone: &[ObjectId]) {
+    let scenes = e.extension::<Scenes>();
+    let shown: SmallVec<[SharedRc; 2]> = scenes
+        .0
+        .borrow()
+        .iter()
+        .filter_map(std::rc::Weak::upgrade)
+        .collect();
+    for s in shown {
+        let first = gone.iter().find(|o| s.borrow().marks.contains(**o));
+        if let Some(o) = first {
+            mark(&s, |s| s.dead.push(*o));
+        }
+    }
+}
+
+/// [`Engine::on_incubated`]: the item an incubation made, left out of its
+/// parent while it was half made, is shown now.
+pub(crate) fn incubated(e: &Engine, made: ObjectId) {
+    if let Some(p) = e.visual_parent(made) {
+        mark_shown(e, p, |s| s.set(p, Dirty::STRUCTURE, |_| ()));
+    }
+}
+
 /// The change hook of an item's `x` and `y`: its place is read at the
 /// frame. A mark where an effect each item cost a node and, as it moved,
 /// a run.
@@ -1733,11 +1768,6 @@ impl QuickScene {
         self.by_node.insert(node, obj);
 
         let mut effects = SmallVec::<[GraphNode; 8]>::new();
-        let shared = Rc::clone(&self.shared);
-        let loader = class.loader;
-        // Root-scoped: an effect scoped to `obj` dies with it silently, and
-        // this one has to see the death to drop the render node.
-        effects.push(engine.effect(move |e| structure_effect(e, obj, loader, &shared))?);
         // What it inherits is passed on by the hooks of its parent's
         // `visible` and `enabled` and by a reparent; here it takes it once.
         engine.untrack(|| inherit(engine, obj, &self.shared));
@@ -3383,27 +3413,6 @@ impl QuickScene {
 }
 
 // ---------------------------------------------------------------- effects
-
-fn structure_effect(e: &Engine, obj: ObjectId, loader: bool, shared: &SharedRc) {
-    if !e.is_alive(obj) {
-        mark(shared, |s| s.dead.push(obj));
-        return;
-    }
-    // Only for the subscription: the list is read when the structure is
-    // rebuilt, and copying it here made each child added cost as much as
-    // all the children before it.
-    let _ = e.read(obj, Item::CHILDREN.index);
-    if loader {
-        // A Loader's item is its child from the start but shown only once
-        // it is made (`shown_children`).
-        let _ = e.read(obj, Loader::ITEM.index);
-        let _ = e.read(obj, Loader::STATUS.index);
-    }
-    // A child that is being made in slices is left out until it is whole
-    // (`shown_children`); nothing of the item changes when it is.
-    e.watch_incubations();
-    mark(shared, |s| s.set(obj, Dirty::STRUCTURE, |_| ()));
-}
 
 /// Follows the entries of a `transform` list. Made only for an item whose
 /// list has some (see [`QuickScene::follow_list`]).

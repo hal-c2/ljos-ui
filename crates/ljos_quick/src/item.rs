@@ -83,7 +83,8 @@ pub struct Item {
         list,
         append = crate::tree::item_children_append,
         insert = crate::tree::item_children_insert,
-        remove = crate::tree::item_children_remove
+        remove = crate::tree::item_children_remove,
+        change = crate::scene::restructured
     )]
     pub children: QmlList,
     #[qml(notify, list)]

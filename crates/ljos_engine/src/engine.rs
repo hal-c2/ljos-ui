@@ -65,6 +65,13 @@ pub(crate) enum Free {
 
 pub type ParentListener = Rc<dyn Fn(&Engine, ObjectId, Option<ObjectId>)>;
 
+/// Called with the objects [`Engine::destroy_now`] took out of the store,
+/// owners after what they own.
+pub type DestroyListener = Rc<dyn Fn(&Engine, &[ObjectId])>;
+
+/// Called with the root an incubation made, once it is whole.
+pub type IncubatedListener = Rc<dyn Fn(&Engine, ObjectId)>;
+
 /// Called when an attached object is first made: (object, attached object).
 /// Returns whether it wants to be called again.
 pub(crate) type AttachedListener = Rc<dyn Fn(&Engine, ObjectId, ObjectId) -> bool>;
@@ -108,6 +115,8 @@ pub(crate) struct Inner {
     /// [`Engine::retranslate`].
     pub(crate) translation: Cell<Option<NodeId>>,
     pub(crate) parent_listeners: RefCell<Vec<ParentListener>>,
+    pub(crate) destroy_listeners: RefCell<Vec<DestroyListener>>,
+    pub(crate) incubated_listeners: RefCell<Vec<IncubatedListener>>,
     /// Each with the type of attached object it is for, if only one.
     pub(crate) attached_listeners: RefCell<Vec<(Option<&'static MetaObject>, AttachedListener)>>,
     /// Set by the first `Component.onDestruction` handler, so destroying
@@ -295,6 +304,8 @@ impl Engine {
             default_font: Default::default(),
             value_types: RefCell::new(Vec::new()),
             parent_listeners: RefCell::new(Vec::new()),
+            destroy_listeners: RefCell::new(Vec::new()),
+            incubated_listeners: RefCell::new(Vec::new()),
             attached_listeners: RefCell::new(Vec::new()),
             destruction_handlers: Cell::new(false),
             list_holders: RefCell::new(None),
@@ -913,6 +924,10 @@ impl Engine {
                 }
             }
         });
+        let listeners = self.inner.destroy_listeners.borrow().clone();
+        for l in listeners {
+            l(self, &order);
+        }
         for (_, h) in &headers {
             if let Some(ext) = &h.ext {
                 for c in &ext.contexts {
@@ -1139,6 +1154,13 @@ impl Engine {
         f: impl Fn(&Engine, ObjectId, Option<ObjectId>) + 'static,
     ) {
         self.inner.parent_listeners.borrow_mut().push(Rc::new(f));
+    }
+
+    /// Calls `f` each time [`Engine::destroy_now`] has taken objects out
+    /// of the store, with all of them: a scene drops what it showed of
+    /// them without a reactive node for each that it shows.
+    pub fn on_destroyed(&self, f: impl Fn(&Engine, &[ObjectId]) + 'static) {
+        self.inner.destroy_listeners.borrow_mut().push(Rc::new(f));
     }
 
     fn parent_changed(&self, obj: ObjectId, parent: Option<ObjectId>) {

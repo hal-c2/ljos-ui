@@ -19,7 +19,8 @@
 //! time, charged to the boundary the parent is in. Nothing is scheduled
 //! once it is done.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use ljos_js::JsRef;
 use ljos_runtime::Lane;
@@ -99,19 +100,6 @@ impl Incubator {
 #[derive(Default)]
 struct Running {
     handles: RefCell<Vec<CreationHandle>>,
-    /// Made when somebody first watches ([`Engine::watch_incubations`]).
-    ended: Cell<Option<ObjectId>>,
-}
-
-/// How many incubations have ended: something to read for an effect that
-/// has to look again when one does. In no module.
-#[derive(Debug, Default, QmlObject)]
-#[qml(name = "IncubationsEnded", extends = QtObject)]
-struct Ended {
-    #[qml(base)]
-    base: QtObject,
-    #[qml(notify, readonly)]
-    count: i32,
 }
 
 impl Engine {
@@ -178,14 +166,11 @@ impl Engine {
             .borrow_mut()
             .retain(|h| !h.is_done());
         // Whoever left the half-made object out looks again.
-        if let Some(ended) = self.extension::<Running>().ended.get() {
-            let n = self.untrack(|| self.read(ended, Ended::COUNT.index).to_number()) as i32;
-            let _ = self.write_internal(
-                ended,
-                Ended::COUNT.index,
-                n.wrapping_add(1).into(),
-                WriteKind::Imperative,
-            );
+        if let Ok(obj) = made {
+            let listeners = self.inner.incubated_listeners.borrow().clone();
+            for l in listeners {
+                l(self, *obj);
+            }
         }
         if !self.is_alive(inc) {
             // Nobody can reach what was made.
@@ -248,27 +233,11 @@ impl Engine {
         !handles.is_empty()
     }
 
-    /// A tracked read of nothing but the end of incubations: an effect
-    /// that left a half-made object out ([`Engine::is_half_made`]) calls
-    /// this and runs again when one ends. Nothing is read while none
-    /// runs, so nothing wakes then.
-    pub fn watch_incubations(&self) {
-        if !self.has_half_made() {
-            return;
-        }
-        let running = self.extension::<Running>();
-        let ended = match running.ended.get() {
-            Some(o) => o,
-            None => {
-                let Ok(o) = self.untrack(|| self.create_native_incomplete(Ended::default(), None))
-                else {
-                    return;
-                };
-                running.ended.set(Some(o));
-                o
-            }
-        };
-        let _ = self.read(ended, Ended::COUNT.index);
+    /// Calls `f` with the root of each incubation that ends whole: whoever
+    /// left it out while it was half made ([`Engine::is_half_made`]) looks
+    /// again.
+    pub fn on_incubated(&self, f: impl Fn(&Engine, ObjectId) + 'static) {
+        self.inner.incubated_listeners.borrow_mut().push(Rc::new(f));
     }
 
     /// Whether `obj` is the root of an incubation that is not done: it is

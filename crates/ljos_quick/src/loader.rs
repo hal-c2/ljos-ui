@@ -54,10 +54,10 @@ pub struct Loader {
     pub active: bool,
     #[qml(notify)]
     pub asynchronous: bool,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, change = crate::scene::restructured)]
     pub item: Option<ObjectId>,
     /// [`crate::enums::loader_status`].
-    #[qml(notify, readonly, enumeration = "Status")]
+    #[qml(notify, readonly, enumeration = "Status", change = crate::scene::restructured)]
     pub status: i32,
     /// 0 while there is nothing to load or the item is being made, 1 once
     /// it is made or has failed.
