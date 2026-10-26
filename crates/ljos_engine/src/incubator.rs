@@ -2371,7 +2371,15 @@ impl Engine {
                 // loaded; a component's may, with a reload of its file.
                 let native = matches!(e.ty, TypeRef::Native { .. });
                 let at = std::ptr::from_ref(e) as usize;
-                let kept = || inst.file.enum_numbers.borrow().get(&at).copied();
+                // The place alone is not enough: a literal that is not in
+                // the file's IR (a copy, or another file's) may be where a
+                // kept one was, so the kept number is the one for this
+                // type and key.
+                let kept = || {
+                    let kept = inst.file.enum_numbers.borrow();
+                    let (ty, key, n) = kept.get(&at)?;
+                    (*ty == e.ty && *key == e.key).then_some(*n)
+                };
                 let v = e.value.or_else(|| native.then(kept).flatten()).or_else(|| {
                     let meta = self.type_meta(&inst.file, &e.ty).ok();
                     // `Qt` is a namespace, not a registered type.
@@ -2389,7 +2397,8 @@ impl Engine {
                         .map(named)
                         .try_fold(0, |all, one| Some(all | one?));
                     if let (true, Some(n)) = (native, found) {
-                        inst.file.enum_numbers.borrow_mut().insert(at, n);
+                        let kept = (e.ty.clone(), e.key.clone(), n);
+                        inst.file.enum_numbers.borrow_mut().insert(at, kept);
                     }
                     found
                 });
