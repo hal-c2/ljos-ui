@@ -1,25 +1,31 @@
 # Buckets of ljos-fuzz states that are known: as known/bindings.txt, one per line, the
 # signature then why.
-# Triaged from seeds 101 and 202 (2000 cases each).
+# Triaged from seeds 101 and 202 (2000 cases each). What is left waits on the graph (bindings
+# infrastructure), each with a @backlog scenario.
 
-# The order of a state change (features/states/state-change-order.feature) is fixed; these
-# buckets still come up in seeds 101 and 202 for other differences, not yet triaged.
-value:onChanged:text      Qt tells more changes: NaN bound again through Qt.binding (features/language/nan-is-a-change.feature), and a PropertyAction with no value, told three times
-value:load:number      an int a state's change gives text that is no number, or a state that changes a property the item lacks
-value:step:invalid-ljos      a state's own change makes its when false, without a transition: Qt stays in it, Ljós goes to the default state
-value:step:invalid-qt      a when a set of another property makes true again: Qt enters its state anew
-value:step:text      a when that turns true again while a state given by name is in force: Qt goes to its state, Ljós stays
-warning:assign(ljos-only):QML_Case:_Unable_to_assign_*      a change of a real to undefined, or of a colour to an object, is warned of by Ljós only
-warning:assign(qt-only):Unable_to_assign_QJSValue_to_int      an int declared with an array, among states and transitions, is warned of by Qt only
-warning:binding-loop(ljos-only):*      a change that reads a property whose own binding reads the changed one is a loop to Ljós only
+# A transition's first actions run, and are told, inside the batch the state's changes are made
+# in (features/states/transition-start-actions.feature, backlog).
+value:step:empty-ljos      a when a transition's first action makes false: Qt refuses the state change it would make and keeps the state, Ljós leaves it (features/states/transition-start-actions.feature)
+value:step:empty-qt      a when a transition's first action makes false: the actions at the start are told one by one in Qt, at once in Ljós (features/states/transition-start-actions.feature)
+value:step:invalid-ljos      a when a transition's first action makes false: Qt stays in the state, Ljós goes to the default state (features/states/transition-start-actions.feature)
+value:log:text      a when a transition's first action makes false: Qt refuses the state change it would make, Ljós makes it and runs its script (features/states/transition-start-actions.feature)
+value:load:number      two PropertyActions of one property at a transition's start are both told in Qt, the last in Ljós (features/states/transition-start-actions.feature)
+warning:binding-loop(ljos-only):when      a when a transition's first action works out again is a loop to Ljós, a refused state change to Qt (features/states/transition-start-actions.feature)
+warning:other(qt-only):<Unknown_File>:_QML_StateGroup:_Can'      a when a transition's first action works out again: Qt cannot apply a state change within one (features/states/transition-start-actions.feature)
+warning:other(ljos-only):<Unknown_File>:_QML_StateGroup:_Can'      a when a transition's first action works out again, told at another time than in Qt (features/states/transition-start-actions.feature)
+
+# Going from one state's change of a property to another's, Ljós takes the first off before the
+# second is on, and the graph works the property's own binding out in between
+# (features/states/binding-over-value.feature, backlog).
+warning:assign(ljos-only):Unable_to_assign_QString_to_int      the item's own binding, worked out between one state's change and another's (features/states/binding-over-value.feature)
+warning:binding-loop(ljos-only):step-set      a state's binding that reads its property, worked out from the default between one state's change and another's (features/states/binding-over-value.feature)
+
+# NaN is not equal to itself (features/language/nan-is-a-change.feature, backlog).
+value:onChanged:text      Qt tells more changes: NaN bound again through Qt.binding (features/language/nan-is-a-change.feature)
 warning:binding-loop(qt-only):load      NaN given to a NaN is a change, so a change giving it NaN through a binding of it is a loop (features/language/nan-is-a-change.feature)
-warning:binding-loop(qt-only):step-set      a change of a property that reads it is a loop to Qt when it gives NaN or a colour
+warning:binding-loop(qt-only):step-set      a state's binding that gives its property NaN through itself is a loop to Qt (features/language/nan-is-a-change.feature)
 
 # Qt's own quirk, which Ljós is not to copy: a `when` that a change of its state makes false
-# again, while a transition runs, sends Qt back to the default state with a warning that it
-# cannot apply a state change within one; Ljós stays in the state, or stops the loop and says so.
-value:step:empty-ljos      a when its own state makes false: Qt leaves the state partway, Ljós settles
-value:step:empty-qt      a when its own state makes false, with a transition: Qt goes back to the default state
+# again sends Qt round the loop, and Ljós stops the loop and says so.
 warning:binding-loop(qt-only):when      a when its own state makes false is a loop to Qt
-warning:other(qt-only):<Unknown_File>:_QML_StateGroup:_Can'      Qt cannot apply a state change within one
 warning:other(ljos-only):QML_State:_property_"_"_handlers_re-ran_N_times_in_one_update      a when its own state toggles: Ljós stops the loop and says so
