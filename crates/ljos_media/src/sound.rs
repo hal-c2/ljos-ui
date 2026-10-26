@@ -23,7 +23,7 @@ use ljos_engine::{
 use ljos_runtime::TimerId;
 
 use crate::open::{self, OpenError, Opened};
-use crate::sink::{Audio, Voice};
+use crate::sink::{Audio, Clip, Voice};
 
 fn sound_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![
@@ -99,7 +99,7 @@ struct Run {
     generation: u64,
     /// The length of one time through, in milliseconds.
     length: f64,
-    samples: Option<Arc<[f32]>>,
+    samples: Option<Clip>,
     voice: Option<Arc<Voice>>,
     turn: Option<TimerId>,
     /// `play()` came while loading.
@@ -219,9 +219,13 @@ fn loaded(e: &Engine, me: ObjectId, generation: u64, outcome: Result<Opened, Ope
     }
     match outcome {
         Ok(o) if o.has_audio => {
+            let samples = o.samples.map(|s| {
+                let url = e.resolve_url(me, &get(e, me, SoundEffect::SOURCE).0);
+                Audio::of(e).share(&url, s)
+            });
             run(e, me, |r| {
                 r.length = o.duration_ms;
-                r.samples = o.samples;
+                r.samples = samples;
             });
             set_status(e, me, status::READY);
             if run(e, me, |r| std::mem::take(&mut r.want_play)).unwrap_or(false) {

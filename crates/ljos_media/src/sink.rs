@@ -8,10 +8,10 @@
 //! pauses it, so a silent application leaves the device alone.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak, mpsc};
 
 use ljos_engine::Engine;
 
@@ -21,6 +21,11 @@ pub(crate) struct Format {
     pub rate: u32,
     pub channels: u16,
 }
+
+/// A sound decoded whole for the device, interleaved. In a `Vec`, so that
+/// a `Weak` to it holds a few bytes, not the sound, once the last user
+/// has let it go.
+pub(crate) type Clip = Arc<Vec<f32>>;
 
 /// One sound playing.
 #[derive(Debug)]
@@ -39,7 +44,7 @@ enum VoiceData {
     /// A whole clip, played `loops` more times after this one (`-1`:
     /// for ever).
     Clip {
-        samples: Arc<[f32]>,
+        samples: Clip,
         at: usize,
         loops: i32,
     },
@@ -51,7 +56,7 @@ enum VoiceData {
 pub(crate) const STREAM_AHEAD: f64 = 0.4;
 
 impl Voice {
-    pub(crate) fn clip(samples: Arc<[f32]>, loops: i32, gain: f32) -> Arc<Voice> {
+    pub(crate) fn clip(samples: Clip, loops: i32, gain: f32) -> Arc<Voice> {
         Arc::new(Voice {
             gain: AtomicU32::new(gain.to_bits()),
             played: AtomicU64::new(0),
@@ -188,6 +193,9 @@ pub(crate) struct Audio {
     null: Cell<bool>,
     opener: Option<Opener>,
     device: RefCell<Device>,
+    /// The sounds decoded, by source: every instance of a component with
+    /// a `SoundEffect` in it would otherwise keep its own copy.
+    clips: RefCell<HashMap<String, Weak<Vec<f32>>>>,
 }
 
 impl Default for Audio {
@@ -200,6 +208,7 @@ impl Default for Audio {
             null: Cell::new(false),
             opener,
             device: RefCell::default(),
+            clips: RefCell::default(),
         }
     }
 }
@@ -278,6 +287,21 @@ pub(crate) struct Description {
 impl Audio {
     pub(crate) fn of(engine: &Engine) -> Rc<Audio> {
         engine.extension::<Audio>()
+    }
+
+    /// `samples`, decoded from `url`, or the same sound already held for
+    /// that source. Only an equal sound is shared, so a file changed
+    /// between loads is heard as it is now.
+    pub(crate) fn share(&self, url: &str, samples: Clip) -> Clip {
+        let mut clips = self.clips.borrow_mut();
+        clips.retain(|_, held| held.strong_count() > 0);
+        if let Some(held) = clips.get(url).and_then(Weak::upgrade)
+            && held == samples
+        {
+            return held;
+        }
+        clips.insert(url.to_owned(), Arc::downgrade(&samples));
+        samples
     }
 
     pub(crate) fn force_null(&self) {
@@ -518,12 +542,13 @@ mod tests {
             null: Cell::new(false),
             opener: Some(slow_device),
             device: RefCell::default(),
+            clips: RefCell::default(),
         };
         // The device cannot open yet, and asking for its format does not
         // wait for it.
         let soon = audio.soon().expect("a device is being opened");
         assert_eq!(audio.known(), None);
-        let voice = Voice::clip(Arc::from([0.0; 4]), 0, 1.0);
+        let voice = Voice::clip(Arc::new(vec![0.0; 4]), 0, 1.0);
         audio.play(&voice);
 
         *GATE.0.lock().unwrap() = true;
@@ -553,8 +578,28 @@ mod tests {
             null: Cell::new(true),
             opener: Some(|_| panic!("opened")),
             device: RefCell::default(),
+            clips: RefCell::default(),
         };
         assert!(audio.soon().is_none());
         assert_eq!(audio.format(), None);
+    }
+
+    #[test]
+    fn one_sound_decoded_twice_is_held_once() {
+        let audio = Audio::default();
+        let first = audio.share("file:///a.wav", Arc::new(vec![0.5; 4800]));
+        let again = audio.share("file:///a.wav", Arc::new(vec![0.5; 4800]));
+        assert!(Arc::ptr_eq(&first, &again));
+        // Another source, or the same one changed, is its own sound.
+        let other = audio.share("file:///b.wav", Arc::new(vec![0.5; 4800]));
+        assert!(!Arc::ptr_eq(&first, &other));
+        let changed = audio.share("file:///a.wav", Arc::new(vec![0.25; 4800]));
+        assert!(!Arc::ptr_eq(&first, &changed));
+        // The last user gone, nothing keeps the sound.
+        let held = Arc::downgrade(&other);
+        drop((first, again, other, changed));
+        audio.share("file:///c.wav", Arc::new(vec![0.0; 4]));
+        assert_eq!(held.strong_count(), 0);
+        assert_eq!(audio.clips.borrow().len(), 1);
     }
 }

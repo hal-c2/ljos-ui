@@ -25,7 +25,7 @@ pub(crate) struct Opened {
     pub audio_tracks: Vec<Vec<Entry>>,
     pub video_tracks: Vec<Vec<Entry>>,
     /// The sound decoded whole for a device of this format, when asked.
-    pub samples: Option<std::sync::Arc<[f32]>>,
+    pub samples: Option<crate::sink::Clip>,
     #[cfg(feature = "decode")]
     pub source: filmcraft_media::SharedSource,
     /// The video read in order for playback, when the file is one
@@ -356,7 +356,10 @@ fn from_reader(
             let buffer = source
                 .audio(0, frames, format.rate)
                 .map_err(|e| OpenError::Format(e.to_string()))?;
-            Some(crate::sink::interleave(&buffer.channels, format.channels).into())
+            Some(Arc::new(crate::sink::interleave(
+                &buffer.channels,
+                format.channels,
+            )))
         }
         _ => None,
     };
