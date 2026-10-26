@@ -13,6 +13,11 @@ fn drawn_on_processor(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.draw_on_processor())
 }
 
+#[given("the shell chooses how the window is drawn")]
+fn shell_chooses_painter(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.probes()?.let_shell_choose_painter())
+}
+
 #[when("the window's passes are counted")]
 fn passes_are_counted(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.count_passes())

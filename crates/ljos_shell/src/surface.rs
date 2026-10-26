@@ -44,17 +44,44 @@ pub(crate) enum Choice {
 impl Choice {
     /// From `LJOS_PAINTER` (`gl`, `wgpu` or `cpu`), else the processor
     /// where the application asked for it (`on_processor`), else GL where
-    /// the platform has EGL.
-    pub(crate) fn from_env(value: Option<&str>, on_processor: bool) -> Choice {
-        match value.map(str::trim) {
+    /// the platform has EGL. Where EGL would offer only a software
+    /// rasteriser (`only_software`, asked only then), the processor
+    /// instead, chosen by the shell: [`Chosen::automatic`].
+    pub(crate) fn from_env(
+        value: Option<&str>,
+        on_processor: bool,
+        only_software: impl FnOnce() -> bool,
+    ) -> Chosen {
+        let choice = match value.map(str::trim) {
             Some(v) if v.eq_ignore_ascii_case("wgpu") => Choice::Wgpu,
             Some(v) if v.eq_ignore_ascii_case("gl") => Choice::Gl,
             Some(v) if v.eq_ignore_ascii_case("cpu") => Choice::Cpu,
             _ if on_processor => Choice::Cpu,
+            _ if cfg!(gl_painter) && only_software() => {
+                return Chosen {
+                    choice: Choice::Cpu,
+                    automatic: true,
+                };
+            }
             _ if cfg!(gl_painter) => Choice::Gl,
             _ => Choice::Wgpu,
+        };
+        Chosen {
+            choice,
+            automatic: false,
         }
     }
+}
+
+/// What the windows are drawn with, and who chose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Chosen {
+    pub(crate) choice: Choice,
+    /// The shell chose the processor, as EGL would draw in software too:
+    /// the windows go to GL as soon as one shows what only GL draws (a
+    /// `ShaderEffect`'s program, what egui draws, a window that can be
+    /// seen through). Chosen by the user, the processor stays.
+    pub(crate) automatic: bool,
 }
 
 /// The device the first window was given. Every later window draws with
@@ -367,7 +394,7 @@ fn wgpu_presents(frame: &Frame) -> bool {
 /// backend. Drivers started side by side, each on a thread of its own,
 /// crashed and hung the process.
 pub(crate) struct Starting {
-    choice: Choice,
+    chosen: Chosen,
     started: Started,
     /// Waited for when the application ends before its first window: a
     /// process that ends while a driver is starting can hang in its exit.
@@ -407,8 +434,9 @@ impl std::fmt::Debug for Starting {
 }
 
 impl Starting {
-    /// Starts the drivers `choice` draws with.
-    pub(crate) fn start(display: OwnedDisplayHandle, choice: Choice) -> Self {
+    /// Starts the drivers `chosen` draws with.
+    pub(crate) fn start(display: OwnedDisplayHandle, chosen: Chosen) -> Self {
+        let choice = chosen.choice;
         let spawn = |run: Box<dyn FnOnce() + Send>| {
             std::thread::Builder::new()
                 .name("ljos-gpu".into())
@@ -417,7 +445,7 @@ impl Starting {
         };
         if choice == Choice::Cpu {
             return Self {
-                choice,
+                chosen,
                 started: Started::Nothing,
                 thread: None,
             };
@@ -430,7 +458,7 @@ impl Starting {
                 let _ = tx.send(crate::gl::Display::start(&display));
             }));
             return Self {
-                choice,
+                chosen,
                 started: Started::Gl(display_rx),
                 thread,
             };
@@ -442,7 +470,7 @@ impl Starting {
             let _ = tx.send(pollster::block_on(new.new_instance()));
         }));
         Self {
-            choice,
+            chosen,
             started: Started::Wgpu {
                 instance,
                 setup: Box::new(setup),
@@ -451,9 +479,9 @@ impl Starting {
         }
     }
 
-    /// What the windows are drawn with.
-    pub(crate) fn choice(&self) -> Choice {
-        self.choice
+    /// What the windows are drawn with, and who chose.
+    pub(crate) fn chosen(&self) -> Chosen {
+        self.chosen
     }
 
     /// The device for `window`: GL's context on the display started, or
@@ -772,6 +800,10 @@ mod tests {
 
     use super::*;
 
+    fn choice(value: Option<&str>, on_processor: bool) -> Choice {
+        Choice::from_env(value, on_processor, || false).choice
+    }
+
     #[test]
     fn the_painter_is_gl_where_there_is_egl_unless_asked_otherwise() {
         let default = if cfg!(gl_painter) {
@@ -779,21 +811,59 @@ mod tests {
         } else {
             Choice::Wgpu
         };
-        assert_eq!(Choice::from_env(None, false), default);
-        assert_eq!(Choice::from_env(Some(""), false), default);
-        assert_eq!(Choice::from_env(Some("vulkan"), false), default);
-        assert_eq!(Choice::from_env(Some("wgpu"), false), Choice::Wgpu);
-        assert_eq!(Choice::from_env(Some(" WGPU "), false), Choice::Wgpu);
-        assert_eq!(Choice::from_env(Some("gl"), false), Choice::Gl);
-        assert_eq!(Choice::from_env(Some("cpu"), false), Choice::Cpu);
+        assert_eq!(choice(None, false), default);
+        assert_eq!(choice(Some(""), false), default);
+        assert_eq!(choice(Some("vulkan"), false), default);
+        assert_eq!(choice(Some("wgpu"), false), Choice::Wgpu);
+        assert_eq!(choice(Some(" WGPU "), false), Choice::Wgpu);
+        assert_eq!(choice(Some("gl"), false), Choice::Gl);
+        assert_eq!(choice(Some("cpu"), false), Choice::Cpu);
     }
 
     #[test]
     fn an_application_drawn_on_the_processor_can_be_drawn_otherwise() {
-        assert_eq!(Choice::from_env(None, true), Choice::Cpu);
-        assert_eq!(Choice::from_env(Some("vulkan"), true), Choice::Cpu);
-        assert_eq!(Choice::from_env(Some("gl"), true), Choice::Gl);
-        assert_eq!(Choice::from_env(Some("wgpu"), true), Choice::Wgpu);
+        assert_eq!(choice(None, true), Choice::Cpu);
+        assert_eq!(choice(Some("vulkan"), true), Choice::Cpu);
+        assert_eq!(choice(Some("gl"), true), Choice::Gl);
+        assert_eq!(choice(Some("wgpu"), true), Choice::Wgpu);
+    }
+
+    #[test]
+    fn where_egl_draws_in_software_the_shell_chooses_the_processor() {
+        let software = |value, on_processor| {
+            let mut asked = false;
+            let chosen = Choice::from_env(value, on_processor, || {
+                asked = true;
+                true
+            });
+            (chosen, asked)
+        };
+        let (chosen, asked) = software(None, false);
+        if cfg!(gl_painter) {
+            assert_eq!(
+                chosen,
+                Chosen {
+                    choice: Choice::Cpu,
+                    automatic: true
+                }
+            );
+        } else {
+            assert_eq!(chosen.choice, Choice::Wgpu);
+        }
+        assert_eq!(asked, cfg!(gl_painter));
+        // The user's choice wins, and the system is not asked.
+        for (value, on_processor, want) in [
+            (Some("gl"), false, Choice::Gl),
+            (Some("wgpu"), false, Choice::Wgpu),
+            (Some("cpu"), false, Choice::Cpu),
+            (None, true, Choice::Cpu),
+        ] {
+            let (chosen, asked) = software(value, on_processor);
+            assert_eq!(
+                (chosen.choice, chosen.automatic, asked),
+                (want, false, false)
+            );
+        }
     }
 
     #[test]

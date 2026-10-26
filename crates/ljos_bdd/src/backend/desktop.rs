@@ -448,6 +448,10 @@ impl DesktopBackend {
             .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
             .env_remove("AT_SPI_BUS_ADDRESS")
             .envs(sandbox.env.iter().filter(|(k, _)| *k != "DISPLAY"))
+            // The sandbox's compositor composes in software, where the
+            // shell would draw on the processor of itself: the scenarios
+            // check GL's drawing unless one says otherwise.
+            .env("LJOS_PAINTER", "gl")
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -830,6 +834,12 @@ impl Files for DesktopBackend {
 impl Probes for DesktopBackend {
     fn draw_on_processor(&mut self) -> Result<()> {
         self.env.push(("LJOS_PAINTER".to_owned(), "cpu".to_owned()));
+        Ok(())
+    }
+
+    fn let_shell_choose_painter(&mut self) -> Result<()> {
+        // Set and empty: chosen by nobody, and not GL by default (`start`).
+        self.env.push(("LJOS_PAINTER".to_owned(), String::new()));
         Ok(())
     }
 

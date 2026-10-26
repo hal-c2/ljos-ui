@@ -10,8 +10,11 @@
 //! buffer's age says which earlier frames' changes it still lacks.
 //!
 //! What R cannot draw is left out and said once: a `ShaderEffect`'s own
-//! program (Qt's software scene graph leaves it out too) and what egui
-//! draws besides the scene, such as the inspector.
+//! program (Qt's software scene graph leaves it out too), what egui draws
+//! besides the scene, such as the inspector, and what is behind a window
+//! that can be seen through: the window's pixels have no alpha. Where the
+//! shell chose the processor itself, a window that shows any of these
+//! goes to GL instead ([`leaves_out`]).
 
 use std::collections::VecDeque;
 use std::num::NonZeroU32;
@@ -35,12 +38,16 @@ const BUFFERS: u8 = 2;
 
 static SAID_SHADER: AtomicBool = AtomicBool::new(false);
 static SAID_EGUI: AtomicBool = AtomicBool::new(false);
+static SAID_SEE_THROUGH: AtomicBool = AtomicBool::new(false);
 
 /// What the log says when a `ShaderEffect`'s own program is left out.
 const SHADER_LEFT_OUT: &str = "drawn on the processor: a ShaderEffect's program is left out";
 /// What the log says when egui draws something besides the scene.
 const EGUI_LEFT_OUT: &str =
     "drawn on the processor: what egui draws, such as the inspector, is left out";
+/// What the log says when a window that can be seen through is drawn.
+const SEE_THROUGH: &str =
+    "drawn on the processor: a window that can be seen through is drawn over black";
 
 type Surface = softbuffer::Surface<OwnedDisplayHandle, Arc<Window>>;
 
@@ -173,6 +180,9 @@ impl CpuPainter {
         if egui_draws && !SAID_EGUI.swap(true, Ordering::Relaxed) {
             warn(EGUI_LEFT_OUT.to_owned());
         }
+        if clear.a < 1.0 && !SAID_SEE_THROUGH.swap(true, Ordering::Relaxed) {
+            warn(SEE_THROUGH.to_owned());
+        }
         let mut buffer = match surface.buffer_mut() {
             Ok(buffer) => buffer,
             Err(e) => {
@@ -216,6 +226,13 @@ impl CpuPainter {
         self.last = Some((Arc::clone(snapshot), scale, clear));
         true
     }
+}
+
+/// Whether R leaves out some of what a window shows: a `ShaderEffect`'s
+/// program, what egui draws (`egui_draws`), or what is behind the window
+/// (`clear` is not opaque).
+pub(crate) fn leaves_out(snapshot: &FrameSnapshot, egui_draws: bool, clear: Rgba) -> bool {
+    egui_draws || clear.a < 1.0 || has_shader(snapshot)
 }
 
 /// Whether a `ShaderEffect` with a program of its own is in the frame.

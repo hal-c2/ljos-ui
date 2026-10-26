@@ -1109,6 +1109,16 @@ pub trait Probes: Backend {
         })
     }
 
+    /// Lets the shell choose what draws the windows the application opens
+    /// from now on, as it does for a user who did not choose: the
+    /// processor where a graphics driver would draw in software too.
+    fn let_shell_choose_painter(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "the shell's own choice of what draws the window",
+        })
+    }
+
     /// The window as the reference renderer (R) draws the scene it shows
     /// now, as a PNG the size of [`Backend::grab`]'s. Only a window drawn
     /// some other way has a second picture to compare.

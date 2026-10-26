@@ -722,6 +722,11 @@ struct Desktop<M> {
     starting: Option<Starting>,
     /// What draws the windows: GL, unless `LJOS_PAINTER` says wgpu.
     painter_choice: surface::Choice,
+    /// The shell chose the processor ([`surface::Chosen::automatic`]).
+    painter_automatic: bool,
+    /// A window drawn on the processor shows what only GL draws: every
+    /// window goes to GL once the pass ends.
+    to_gl: bool,
     /// Why the loop ended, when it was not asked to.
     failure: Rc<RefCell<Option<ShellError>>>,
     screens: Vec<Screen>,
@@ -850,7 +855,9 @@ impl<M: Send + 'static> Desktop<M> {
             proxy,
             dirty,
             gpu: None,
-            painter_choice: starting.choice(),
+            painter_choice: starting.chosen().choice,
+            painter_automatic: starting.chosen().automatic,
+            to_gl: false,
             starting: Some(starting),
             failure,
             screens: Vec::new(),
@@ -1298,6 +1305,11 @@ impl<M: Send + 'static> Desktop<M> {
         note_size(slot, engine, sys, false);
         self.repaints.request(slot.key, Instant::now());
         self.screens_stale = true;
+        self.tell_view(i);
+    }
+
+    /// Tells the view of slot `i` what its painter draws.
+    fn tell_view(&mut self, i: usize) {
         let painter = self.slots[i].painter.as_ref();
         let fills = painter.is_some_and(Painter::fills_rects);
         let shaders = painter.is_some_and(Painter::draws_shaders);
@@ -1310,6 +1322,70 @@ impl<M: Send + 'static> Desktop<M> {
         view.set_solid_rects(fills);
         view.set_draws_shaders(shaders);
         view.set_encodes(encodes);
+    }
+
+    /// Hands every window drawn on the processor to GL, which the shell
+    /// chose as EGL would draw in software too: a window shows what only
+    /// GL draws. Starting EGL here takes as long as it would have at
+    /// start-up, once.
+    fn leave_processor(&mut self, host: &mut Control<'_>) {
+        self.painter_automatic = false;
+        self.painter_choice = surface::Choice::Gl;
+        let engine = Rc::clone(self.app.engine());
+        engine.log(
+            LogLevel::Info,
+            CATEGORY,
+            "drawn with GL from now on: a window shows what the processor does not draw",
+        );
+        for i in 0..self.slots.len() {
+            let slot = &mut self.slots[i];
+            if !matches!(slot.painter, Some(Painter::Cpu(_))) {
+                continue;
+            }
+            slot.painter = None;
+            // A window not open gets its painter when it opens.
+            let Some(window) = slot.surface.as_ref().map(|s| Arc::clone(&s.window)) else {
+                continue;
+            };
+            let display = host.event_loop().owned_display_handle();
+            match surface::attach(
+                &mut slot.painter,
+                &slot.ctx,
+                &mut self.gpu,
+                display,
+                &window,
+                surface::Choice::Gl,
+            ) {
+                Ok(Some(why)) => engine.log(
+                    LogLevel::Warning,
+                    CATEGORY,
+                    format!("drawing with wgpu: GL could not be had ({why})"),
+                ),
+                Ok(None) => {}
+                Err(e) => {
+                    engine.log(
+                        LogLevel::Warning,
+                        CATEGORY,
+                        format!("a window cannot be drawn: {e}"),
+                    );
+                    continue;
+                }
+            }
+            if let Some(side) = slot.painter.as_ref().and_then(Painter::max_texture_side) {
+                ljos_render::b0::set_max_texture_side(&slot.ctx, side);
+            }
+            resend_font_atlas(&slot.ctx);
+            slot.shown.forget();
+            #[cfg(feature = "mcp")]
+            if slot.is_root()
+                && let Some(info) = slot.painter.as_ref().and_then(Painter::describe)
+            {
+                self.app.set_painter(info);
+            }
+            let key = slot.key;
+            self.repaints.request(key, Instant::now());
+            self.tell_view(i);
+        }
     }
 
     /// The platform refused a window. Without the root's there is no
@@ -1400,6 +1476,9 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
         self.run_pass(host, i, paint);
+        if std::mem::take(&mut self.to_gl) {
+            self.leave_processor(host);
+        }
         #[cfg(feature = "mcp")]
         if self.slots[i].is_root() && self.app.waits_for_resize() {
             // The pass that took the request has not asked the platform
@@ -1654,6 +1733,13 @@ impl<M: Send + 'static> Desktop<M> {
                 f32::from(b) / 255.0,
                 f32::from(a) / 255.0,
             );
+            if self.painter_automatic && crate::cpu::leaves_out(snapshot, !shapes.is_empty(), clear)
+            {
+                // Not drawn: the window is drawn by GL in the next pass.
+                self.to_gl = true;
+                repaints.request(slot.key, now);
+                return;
+            }
             let mut warn = |what: String| engine.log(LogLevel::Warning, CATEGORY, what);
             let drew = painter.draw(
                 snapshot,
@@ -2646,9 +2732,13 @@ pub(crate) fn run<M: Send + 'static>(
         std::env::var("LJOS_PREFER_X11").ok().as_deref(),
     ))?;
     // The drivers start while the application is built.
+    // A window that can be seen through is not chosen for the
+    // processor: its pixels have no alpha.
+    let opaque = config.background.to_rgba8()[3] == 255;
     let painter_choice = surface::Choice::from_env(
         std::env::var("LJOS_PAINTER").ok().as_deref(),
         config.drawn_on_processor,
+        || opaque && only_software(&host.display_handle()),
     );
     let starting = Starting::start(host.display_handle(), painter_choice);
     // Before `setup`: bindings may measure text while the root is being
@@ -2684,6 +2774,13 @@ pub(crate) fn run<M: Send + 'static>(
     };
     #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
     let mut app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
+    if painter_choice.automatic {
+        app.engine().log(
+            LogLevel::Info,
+            CATEGORY,
+            "drawn on the processor: EGL would draw in software",
+        );
+    }
     #[cfg(feature = "mcp")]
     app.record_startup(ljos_dev::mcp::StartupStep::Built, began.elapsed());
     let failure = Rc::new(RefCell::new(None));
@@ -2741,6 +2838,33 @@ fn resize_edge(edges: ResizeEdges) -> ResizeEdge {
         (_, _, true, _) => ResizeEdge::West,
         _ => ResizeEdge::East,
     }
+}
+
+/// Whether EGL would offer only a software rasteriser
+/// ([`crate::software`]); never where there is no EGL.
+fn only_software(display: &egui_winit::winit::event_loop::OwnedDisplayHandle) -> bool {
+    #[cfg(gl_painter)]
+    return crate::software::only_software(display);
+    #[cfg(not(gl_painter))]
+    {
+        let _ = display;
+        false
+    }
+}
+
+/// Makes egui's font atlas again, so that it is sent whole with the next
+/// pass: a painter that was not given it, as one that drew on the
+/// processor was not, has none. egui makes its fonts again when how a
+/// missing glyph is drawn changes; it is changed and changed back.
+fn resend_font_atlas(ctx: &egui::Context) {
+    use egui::epaint::text::MissingGlyphPolicy;
+    let policy = ctx.missing_glyph_policy();
+    let other = match policy {
+        MissingGlyphPolicy::Tofu => MissingGlyphPolicy::Panic,
+        _ => MissingGlyphPolicy::Tofu,
+    };
+    ctx.set_missing_glyph_policy(other);
+    ctx.set_missing_glyph_policy(policy);
 }
 
 #[cfg(test)]

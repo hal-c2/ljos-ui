@@ -51,6 +51,8 @@ mod repaint;
 mod roots;
 mod screen_reader;
 mod settings;
+#[cfg(gl_painter)]
+mod software;
 mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
@@ -116,8 +118,10 @@ pub struct ShellConfig {
     /// driver: the reference renderer draws what changed. A `ShaderEffect`'s
     /// own program and what egui draws (the inspector) are left out, and
     /// the log says so once. False draws with GL, or wgpu where there is
-    /// no GL. The environment's `LJOS_PAINTER` (`cpu`, `gl` or `wgpu`)
-    /// overrides it.
+    /// no GL; where EGL would offer only a software rasteriser and the
+    /// background is opaque, the shell draws on the processor itself, and
+    /// goes to GL as soon as a window shows what it leaves out. The
+    /// environment's `LJOS_PAINTER` (`cpu`, `gl` or `wgpu`) overrides it.
     pub drawn_on_processor: bool,
 }
 
