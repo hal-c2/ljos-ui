@@ -70,6 +70,7 @@ fn object_rules<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) 
     layout::object(found, chain);
     focus::object(found, chain);
     color::object(found, chain);
+    content::object(found, chain);
 }
 
 /// The rules about a file as a whole.
@@ -170,6 +171,8 @@ pub(super) mod class {
         "QtQuick.Templates.ItemDelegate",
     ];
     pub const MENU_SEPARATOR: &[&str] = &["QQuickMenuSeparator", "QtQuick.Templates.MenuSeparator"];
+    pub const BUTTON: &[&str] = &["QQuickButton", "QtQuick.Templates.Button"];
+    pub const MENU_ITEM: &[&str] = &["QQuickMenuItem", "QtQuick.Templates.MenuItem"];
     pub const ACTION: &[&str] = &["QQuickAction", "QtQuick.Templates.Action"];
     pub const CONTROL: &[&str] = &["QQuickControl", "QtQuick.Templates.Control"];
     pub const MOUSE_AREA: &[&str] = &["QQuickMouseArea", "QtQuick.MouseArea"];
@@ -264,6 +267,23 @@ impl<'o, 'a> Bound<'o, 'a> {
             Expression::StringLiteral(s) => Some(s.value.as_str()),
             Expression::TemplateLiteral(t) if t.expressions.is_empty() => {
                 t.quasis.first()?.value.cooked.as_ref().map(|c| c.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    /// A string written out, or the source text of a `qsTr` of one: what the
+    /// user reads, when it is known.
+    pub fn literal_text(&self) -> Option<&'o str> {
+        if let Some(s) = self.string() {
+            return Some(s);
+        }
+        match self.expression()?.without_parentheses() {
+            Expression::CallExpression(c) if matches!(&c.callee, Expression::Identifier(id) if id.name == "qsTr") => {
+                match c.arguments.first()?.as_expression()? {
+                    Expression::StringLiteral(s) => Some(s.value.as_str()),
+                    _ => None,
+                }
             }
             _ => None,
         }

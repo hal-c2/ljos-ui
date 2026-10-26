@@ -43,6 +43,9 @@ pub(super) fn object<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, '
         pointer_only(found, chain);
     }
     hover_only(found, chain);
+    if found.is(frame, class::TEXT_INPUT) {
+        placeholder_label(found, chain);
+    }
     if found.is(frame, class::ABSTRACT_BUTTON)
         && !found.is(frame, class::TEXT_ROW_BUTTON)
         && chain.len() > 1
@@ -239,6 +242,70 @@ fn icon_no_tooltip<'a>(found: &mut Found<'_, '_, '_, 'a>, frame: &Frame<'_, 'a>)
             "this `{}` shows only an icon and has no tooltip, so a sighted user cannot learn \
              what it does; set `ToolTip.text` (and `ToolTip.visible: hovered`) to the words of \
              its name",
+            found.name(frame)
+        ),
+    );
+}
+
+/// Whether a `Text` (a `Label`) sits beside the field, or beside what holds
+/// it when it is the first or last of that: the field is named by it.
+fn labelled<'a>(found: &Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) -> bool {
+    for level in (1..chain.len()).rev() {
+        let (parent, me) = (&chain[level - 1], &chain[level]);
+        let kids: Vec<&QmlObject<'a>> = children(parent.object)
+            .into_iter()
+            .filter(|(_, via)| via.is_none())
+            .map(|(c, _)| c)
+            .collect();
+        // A field some property holds is placed by that property.
+        let Some(at) = kids.iter().position(|c| std::ptr::eq(*c, me.object)) else {
+            return true;
+        };
+        let text = |i: usize| {
+            kids.get(i).is_some_and(|c| {
+                found.is(
+                    &Frame {
+                        object: c,
+                        index: found.cx.tree.index_of(c),
+                        via: None,
+                    },
+                    class::TEXT,
+                )
+            })
+        };
+        if at.checked_sub(1).is_some_and(text) || text(at + 1) {
+            return true;
+        }
+        if at != 0 && at + 1 != kids.len() {
+            break;
+        }
+    }
+    false
+}
+
+fn placeholder_label<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, 'a>]) {
+    let frame = chain.last().expect("the object itself");
+    let all = bindings(frame.object);
+    let Some((_, placeholder)) = all.iter().find(|(n, _)| n == "placeholderText") else {
+        return;
+    };
+    if all
+        .iter()
+        .any(|(n, _)| n == "Accessible.name" || n == "Accessible.labelledBy")
+    {
+        return;
+    }
+    // A field alone in its file is named where it is used.
+    if chain.len() < 2 || labelled(found, chain) {
+        return;
+    }
+    found.report(
+        placeholder.at,
+        "a11y-placeholder-label",
+        format!(
+            "this `{}` has only its placeholder to say what it is for, which disappears as soon \
+             as the user types and which a screen reader may not read; set `Accessible.name`, \
+             or put a `Label` beside it",
             found.name(frame)
         ),
     );
