@@ -8,12 +8,15 @@
 //!
 //! `cargo run --release -p ljos_shell --example frame_profile -- DIR ENTRY
 //! [--frames N] [--size WxH] [--click] [--warm N] [--slow MS] [--start EXPR]…
-//! [--eval EXPR]… [--wall] [--grow PX]`
+//! [--apart] [--eval EXPR]… [--wall] [--grow PX]`
 //!
 //! `--start` runs `EXPR` in the root after the warm frames and prints how
 //! long it took and how much of the graph it ran, to time one handler (a
 //! game's start, a page's build) on its own. `--slow` prints each frame
-//! that took longer than `MS`.
+//! that took longer than `MS`. With `--apart` each `--start` runs before a
+//! frame of its own, the way a script reaches a shown window, so it finds
+//! what that frame read up to date again; run back to back, a later one
+//! finds it still stale from the one before and costs less than it would.
 //!
 //! `--grow` makes the window `PX` wider and narrower again on alternate
 //! frames after the warm ones, to time what a resize costs.
@@ -43,6 +46,7 @@ struct Args {
     click: bool,
     eval: Vec<String>,
     start: Vec<String>,
+    apart: bool,
     slow: Option<Duration>,
     wall: bool,
     grow: f32,
@@ -61,6 +65,7 @@ fn args() -> anyhow::Result<Args> {
         click: false,
         eval: Vec::new(),
         start: Vec::new(),
+        apart: false,
         slow: None,
         wall: false,
         grow: 0.0,
@@ -70,6 +75,7 @@ fn args() -> anyhow::Result<Args> {
             "--frames" => a.frames = it.next().context("N")?.parse()?,
             "--warm" => a.warm = it.next().context("N")?.parse()?,
             "--click" => a.click = true,
+            "--apart" => a.apart = true,
             "--wall" => a.wall = true,
             "--grow" => a.grow = it.next().context("PX")?.parse()?,
             "--slow" => {
@@ -159,32 +165,37 @@ fn main() -> anyhow::Result<()> {
     let mut press: Option<egui::Pos2> = None;
     let mut before = None;
     for i in 0..total {
-        if i == a.warm {
-            if let Some(root) = root.get() {
-                for e in &a.start {
-                    let t = Instant::now();
-                    let s0 = app.engine().graph().stats();
-                    let said = app.engine().eval_js_in(
-                        Some(root),
-                        e,
-                        Duration::from_secs(600),
-                        [4, 32, 200, 1000, 4000],
-                    );
-                    let took = t.elapsed();
-                    let s1 = app.engine().graph().stats();
-                    match said {
-                        Ok(v) => println!("{e}: {v} in {took:.2?}"),
-                        Err(err) => println!("{e}: {err} in {took:.2?}"),
-                    }
-                    println!(
-                        "  {} evaluations, {} effect runs, {} propagations, {} flushes",
-                        s1.evaluations - s0.evaluations,
-                        s1.effect_runs - s0.effect_runs,
-                        s1.propagations - s0.propagations,
-                        s1.flushes - s0.flushes,
-                    );
+        let starts: &[String] = match i.checked_sub(a.warm) {
+            Some(k) if a.apart => a.start.get(k as usize..=k as usize).unwrap_or_default(),
+            Some(0) => &a.start,
+            _ => &[],
+        };
+        if let Some(root) = root.get() {
+            for e in starts {
+                let t = Instant::now();
+                let s0 = app.engine().graph().stats();
+                let said = app.engine().eval_js_in(
+                    Some(root),
+                    e,
+                    Duration::from_secs(600),
+                    [4, 32, 200, 1000, 4000],
+                );
+                let took = t.elapsed();
+                let s1 = app.engine().graph().stats();
+                match said {
+                    Ok(v) => println!("{e}: {v} in {took:.2?}"),
+                    Err(err) => println!("{e}: {err} in {took:.2?}"),
                 }
+                println!(
+                    "  {} evaluations, {} effect runs, {} propagations, {} flushes",
+                    s1.evaluations - s0.evaluations,
+                    s1.effect_runs - s0.effect_runs,
+                    s1.propagations - s0.propagations,
+                    s1.flushes - s0.flushes,
+                );
             }
+        }
+        if i == a.warm {
             before = Some(app.engine().graph().stats());
         }
         clock.advance(period);
