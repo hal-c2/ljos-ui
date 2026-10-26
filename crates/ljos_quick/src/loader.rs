@@ -341,7 +341,7 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
         drop_old(e, me, old);
         return;
     };
-    set(e, me, Loader::ITEM.index, Value::Null);
+    clear_item_quietly(e, me);
     drop_old(e, me, old);
     if !is_current(e, me, generation) {
         return;
@@ -356,6 +356,18 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
         Origin::Component(c) => e.component_create(*c, Some(me), props),
     };
     finish(e, me, generation, made);
+}
+
+/// Empties `item` while the next one is made, without a change: in Qt
+/// `itemChanged` goes from the old item straight to the new one, and what
+/// reads `item` in between reads null (checked on qml6).
+fn clear_item_quietly(e: &Engine, me: ObjectId) {
+    let quiet = e
+        .property_node(me, Loader::ITEM.index)
+        .is_ok_and(|n| e.graph().replace_quietly(n, Value::Null).unwrap_or(false));
+    if !quiet {
+        set(e, me, Loader::ITEM.index, Value::Null);
+    }
 }
 
 fn is_current(e: &Engine, me: ObjectId, generation: u64) -> bool {
