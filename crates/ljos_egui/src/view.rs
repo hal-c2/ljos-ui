@@ -219,6 +219,8 @@ pub struct QmlView {
     solid_rects: bool,
     /// See [`QmlView::set_draws_shaders`].
     draws_shaders: bool,
+    /// See [`QmlView::set_encodes`].
+    encodes: bool,
     emitted: a11y::Emitted,
     /// The text runs below the editors' nodes of the last pass.
     emitted_runs: a11y::TextRuns,
@@ -328,6 +330,7 @@ impl QmlView {
             backdrop: None,
             solid_rects: false,
             draws_shaders: false,
+            encodes: true,
             emitted: a11y::Emitted::new(),
             emitted_runs: a11y::TextRuns::new(),
             graft: None,
@@ -593,6 +596,14 @@ impl QmlView {
     /// default.
     pub fn set_draws_shaders(&mut self, on: bool) {
         self.draws_shaders = on;
+    }
+
+    /// Whether a pass hands the scene to egui to draw. Off for a host that
+    /// draws [`QmlView::scene`]'s snapshot itself, such as a window drawn
+    /// on the processor: the pass still runs the scene and its input. On
+    /// by default.
+    pub fn set_encodes(&mut self, on: bool) {
+        self.encodes = on;
     }
 
     /// The colour the last pass left for the host to clear its window to
@@ -989,7 +1000,11 @@ impl QmlView {
         // Paint. egui keeps no retained shapes, so every pass re-emits the
         // snapshot; B0 caches meshes per node, so this is mostly Arc clones.
         self.backdrop = None;
-        if self.drawn
+        if self.drawn && !self.encodes && self.scene.snapshot().is_some() {
+            if self.scripts == Scripts::Waiting {
+                self.scripts = Scripts::Due(ctx.cumulative_frame_nr());
+            }
+        } else if self.drawn
             && let Some(snap) = self.scene.snapshot().cloned()
         {
             let view = FrameView::new(&snap, ppp);
