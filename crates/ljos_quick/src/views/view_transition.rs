@@ -199,8 +199,7 @@ pub(crate) fn start(
     let changes = Changes {
         list,
         reversed: false,
-        scripts: Vec::new(),
-        values: Vec::new(),
+        ..Changes::default()
     };
     let timeline = Timed::of_transition(e, &anims, &changes);
     let mut moved: Vec<(ObjectId, PropIndex)> = Vec::new();

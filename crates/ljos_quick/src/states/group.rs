@@ -708,6 +708,7 @@ impl Group {
                 reversed: chosen.is_some_and(|(_, reversed)| reversed),
                 scripts: std::mem::take(&mut round.scripts),
                 values,
+                kept: Vec::new(),
             };
             let mut starts = Vec::new();
             for (obj, prop, before, kind) in std::mem::take(&mut round.before) {
@@ -723,6 +724,13 @@ impl Group {
                         kind,
                     });
                     starts.push(before);
+                } else if kind == ChangeKind::Property {
+                    changes.kept.push(Change {
+                        obj,
+                        prop,
+                        to: after,
+                        kind,
+                    });
                 }
             }
             match chosen {
