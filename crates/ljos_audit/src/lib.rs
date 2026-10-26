@@ -152,13 +152,14 @@ fn area_named(name: &str) -> bool {
     ljos_design::RULES.iter().any(|r| area_word(r.area) == name)
 }
 
-/// The findings at the scene as it is now.
+/// The findings at the scene as it is now, and the time the scene's
+/// clock reached while the acting checks looked.
 fn run_checks(
     engine: &Engine,
     scene: &mut QuickScene,
     now: Time,
     options: &Options,
-) -> Vec<Finding> {
+) -> (Vec<Finding>, Time) {
     let mut cx = cx::Cx::new(engine, scene, options);
     for check in rules::CHECKS {
         if check.codes.iter().any(|c| options.wants(c)) {
@@ -167,14 +168,15 @@ fn run_checks(
     }
     let mut out = cx.out;
     // What the scene does when acted on, after what it shows as it is.
-    out.extend(acting::run(engine, scene, now, options));
+    let (acted, now) = acting::run(engine, scene, now, options);
+    out.extend(acted);
     out.retain(|f| {
         options.wants(f.code)
             && options
                 .within
                 .is_none_or(|root| f.item.is_some_and(|i| cx::within(engine, i, root)))
     });
-    out
+    (out, now)
 }
 
 /// Adds what was found at `point` to `all`: a finding that showed at an
@@ -203,7 +205,9 @@ fn merge(all: &mut Vec<Finding>, found: Vec<Finding>, point: MatrixPoint, many: 
 }
 
 /// Audits the scene at `now` (the host's clock, as for
-/// [`QuickScene::frame`]) at each point of `options.matrix`.
+/// [`QuickScene::frame`]) at each point of `options.matrix`. The acting
+/// checks frame the scene later than `now`; each point after them goes on
+/// from the time they reached, and [`Report::until`] says the last.
 ///
 /// The accessibility tree is what the audit reads, so it is turned on for
 /// the length of the audit when it is off, and a frame is run when the
@@ -223,6 +227,9 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
     let mut findings = Vec::new();
     let mut audited = Vec::new();
     let mut held = None;
+    // The scene's clock only goes forwards: what a point starts after the
+    // acting checks let time pass runs from where they left it.
+    let mut at = now;
     // The earlier placement is of the scene as it is: at another font
     // scale or window size everything is somewhere else, which is the
     // other setting and not a shift.
@@ -237,12 +244,9 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
         for (i, point) in points.into_iter().enumerate() {
             // The scene as it is needs nothing put in or back.
             if i == 0 && point.is_current() {
-                merge(
-                    &mut findings,
-                    run_checks(engine, scene, now, options),
-                    point,
-                    many,
-                );
+                let (found, reached) = run_checks(engine, scene, at, options);
+                at = reached;
+                merge(&mut findings, found, point, many);
                 audited.push(point);
                 continue;
             }
@@ -258,18 +262,15 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
                 continue;
             }
             seen.push(to);
-            apply::apply(engine, scene, now, h, &to);
-            merge(
-                &mut findings,
-                run_checks(engine, scene, now, &applied),
-                point,
-                many,
-            );
+            apply::apply(engine, scene, at, h, &to);
+            let (found, reached) = run_checks(engine, scene, at, &applied);
+            at = reached;
+            merge(&mut findings, found, point, many);
             audited.push(point);
         }
     }));
     if let Some(h) = held {
-        apply::restore(engine, scene, now, h);
+        apply::restore(engine, scene, at, h);
     }
     if !was_active {
         scene.set_accessibility_active(engine, false);
@@ -289,5 +290,6 @@ pub fn audit(engine: &Engine, scene: &mut QuickScene, now: Time, options: &Optio
         points: audited,
         left_out,
         unseen: engine.stood_in_modules(),
+        until: at,
     }
 }

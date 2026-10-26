@@ -108,6 +108,11 @@ pub struct Report {
     /// The modules standing in as empty Items (`QtQuick3D`): what they
     /// show is not audited, and nothing is held against what lies on it.
     pub unseen: Vec<String>,
+    /// The scene's clock when the audit was done: `now`, or later when
+    /// the acting checks let animations run. The scene was last framed at
+    /// this time; a host that frames it with a clock of its own moves that
+    /// clock here first, so that time does not run backwards for it.
+    pub until: ljos_runtime::Time,
 }
 
 impl Report {

@@ -1080,7 +1080,13 @@ impl Inspector {
                     ),
                     _ => None,
                 };
-                Ok(audit::audit(engine, scene, clock.now(), options, root))
+                let (reply, until) = audit::audit(engine, scene, clock.now(), options, root);
+                // A clock a test moves goes on from where the acting checks
+                // left the scene; the system clock catches up by itself.
+                if let Some(v) = &self.vclock {
+                    v.set(until);
+                }
+                Ok(reply)
             });
             // A later request of this round sees the scene as the audit
             // left it, which is as it was, framed again.

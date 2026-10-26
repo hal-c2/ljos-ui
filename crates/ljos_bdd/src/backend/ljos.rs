@@ -2006,6 +2006,9 @@ impl Probes for LjosBackend {
         live.settle()?;
         let now = live.clock.now();
         let report = ljos_audit::audit(&live.engine, &mut live.scene, now, &options);
+        // The acting checks framed the scene later than `now`; the
+        // scenario's clock goes on from there rather than back.
+        live.clock.set(report.until);
         live.settle()?;
         let report = report.json();
         if matrix.is_some() {

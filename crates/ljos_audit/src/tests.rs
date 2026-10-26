@@ -1169,3 +1169,61 @@ fn an_item_whose_first_node_draws_nothing_has_its_fill_found() {
         [0x33, 0x66, 0x99, 0xff]
     );
 }
+
+/// A check box, so that the acting checks frame the scene later than the
+/// audit's `now`, and a bar that grows over a second once the scheme is
+/// dark. `grown` is how far it got while the scheme was dark.
+const GROWS_WHEN_DARK: &str = r#"
+import QtQuick
+import QtQuick.Controls
+Rectangle {
+    id: root
+    width: 640; height: 480
+    color: "white"
+    property bool dark: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
+    property real grown: 0
+    CheckBox { text: "Remember me" }
+    Rectangle {
+        y: 100
+        height: 20
+        color: "black"
+        width: root.dark ? 600 : 100
+        Behavior on width { NumberAnimation { duration: 1000 } }
+        onWidthChanged: if (root.dark) root.grown = Math.max(root.grown, width)
+    }
+}
+"#;
+
+#[test]
+fn what_a_later_point_starts_runs_on_from_where_the_checks_left_the_clock() {
+    use std::{cell::RefCell, rc::Rc};
+    let e = engine();
+    let mut s = mount(&e, GROWS_WHEN_DARK);
+    // Every time the scene is framed at, in order.
+    let times = Rc::new(RefCell::new(Vec::new()));
+    let seen = times.clone();
+    s.set_timer_hook(Box::new(move |_, now| {
+        seen.borrow_mut().push(now);
+        None
+    }));
+    let options = Options {
+        matrix: crate::Matrix::Points(vec![
+            crate::MatrixPoint::CURRENT,
+            "scheme=dark reduced-motion=false".parse().unwrap(),
+        ]),
+        ..Options::desktop()
+    };
+    let report = audit(&e, &mut s, Time::ZERO, &options);
+    let times = times.borrow();
+    assert!(report.until > Time::ZERO, "the acting checks let time pass");
+    assert!(
+        times.windows(2).all(|w| w[0] <= w[1]),
+        "the scene's clock never goes back: {times:?}"
+    );
+    assert_eq!(times.last(), Some(&report.until), "{times:?}");
+    let grown = e.read_by_name(s.root().unwrap(), "grown").to_number();
+    assert!(
+        grown > 100.0,
+        "the bar grew while the scheme was dark: {grown}"
+    );
+}
