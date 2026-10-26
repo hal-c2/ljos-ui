@@ -2,7 +2,8 @@
 //! keyboard focus and without it (WCAG 2.2 SC 2.4.7).
 //!
 //! Each stop Tab reaches is drawn without focus (focus on the window, or
-//! on the popup it is in), then given focus as Tab gives it, and drawn
+//! on the popup it is in, which lets go of the stop when it handed its
+//! focus on to it), then given focus as Tab gives it, and drawn
 //! again over its box and `limits::audit::FOCUS_MARGIN_PX` around it, for
 //! a ring drawn outside. A stop whose pixels barely change
 //! (`VISIBLE_CHANGE_MIN_PX` changed by `VISIBLE_DELTA_E`) shows nothing.
@@ -20,7 +21,8 @@
 
 use ljos_design::color::delta_e_ok;
 use ljos_design::limits::audit::{FOCUS_MARGIN_PX, VISIBLE_CHANGE_MIN_PX, VISIBLE_DELTA_E};
-use ljos_engine::ObjectId;
+use ljos_engine::{Engine, ObjectId, Value, WriteKind};
+use ljos_quick::Item;
 use ljos_quick::focus::{FocusReason, force_active_focus};
 use ljos_render::kurbo::Rect;
 
@@ -52,6 +54,11 @@ fn drawn_by_app(e: &ljos_engine::Engine, stop: ObjectId) -> bool {
 fn draw(act: &Act, painter: &mut Painter, region: Rect) -> Option<Picture> {
     let snapshot = act.scene.snapshot()?.clone();
     painter.draw(&snapshot, region, |_| true)
+}
+
+fn has_active_focus(e: &Engine, item: ObjectId) -> bool {
+    e.untrack(|| e.read(item, Item::ACTIVE_FOCUS.index))
+        .to_boolean()
 }
 
 fn changed(a: &Picture, b: &Picture) -> usize {
@@ -92,6 +99,13 @@ pub(crate) fn check(act: &mut Act) {
             continue;
         };
         force_active_focus(e, away, FocusReason::Other);
+        // A popup or scope hands its focus on to the child that asks for
+        // it (`focus: true`), which may be the stop: let go of the stop
+        // so it is drawn without focus, as the toolkit lets go of it.
+        // The flags are put back with the rest of focus at the end.
+        if has_active_focus(e, stop) {
+            let _ = e.write(stop, Item::FOCUS.index, Value::Bool(false), WriteKind::Host);
+        }
         act.rest();
         act.settle();
         let Some(before) = draw(act, &mut painter, region) else {
