@@ -34,6 +34,7 @@ const FORMATS: [TextFormat; 4] = [
 
 const OPTIONS: ParseOptions = ParseOptions {
     paragraph_spacing: 6.0,
+    link_color: Some([0, 0, 255, 255]),
 };
 
 /// What every document must be, whatever it was read from.

@@ -87,6 +87,11 @@ pub struct ParseOptions {
     /// takes two thirds of the font's point size, and nothing when the font
     /// was sized in pixels; the caller knows which.
     pub paragraph_spacing: f32,
+    /// The colour, as RGBA, an editor gives a link its document gives
+    /// none, as it reads the document: the application palette's link
+    /// colour, which the caller knows. `None` leaves it to the caller to
+    /// draw.
+    pub link_color: Option<[u8; 4]>,
 }
 
 /// How a part of a block differs from the document's own style.

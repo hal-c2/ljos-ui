@@ -11,6 +11,7 @@ mod accessible;
 mod anchors;
 mod animation;
 mod app_font;
+mod application_palette;
 pub use app_font::application_font_changed;
 mod canvas;
 mod context_menu;
@@ -85,6 +86,7 @@ pub use animation::{
 pub use animation::{
     Passage, Transition, run_passage, run_transition, run_transition_to, stop_transition,
 };
+pub use application_palette::{ApplicationPalette, application_palette, set_application_palette};
 pub use context_menu::{ContextMenuHook, ContextMenuReason, register_context_menu};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
 pub use drop_area::{

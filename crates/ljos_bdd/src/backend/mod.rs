@@ -602,6 +602,12 @@ pub trait Environment: Backend {
         Err(BackendError::NotImplemented("the system's network"))
     }
 
+    /// A host sets the application palette's link colour, which QML cannot
+    /// write: before anything is loaded, what it starts with.
+    fn link_colour(&mut self, _colour: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a host's application palette"))
+    }
+
     /// The wall clock a script's `Date` reads is `epoch_ms` (milliseconds
     /// since the UNIX epoch) when the application starts, and moves with
     /// application time.

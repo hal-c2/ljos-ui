@@ -204,6 +204,8 @@ enum Said {
     /// application font.
     Font(ljos_engine::Font),
     Network(ljos_platform::NetworkStatus),
+    /// The application palette's link colour, as a host sets it.
+    LinkColour(ljos_engine::Color),
     NoExternalDrops,
 }
 
@@ -225,6 +227,10 @@ fn apply(engine: &Engine, said: Said) {
         Said::Desktop(report) => ljos_quick::report_system_prefs(engine, report),
         Said::Font(font) => ljos_controls::set_application_font(engine, Some(&font)),
         Said::Network(status) => ljos_platform::report_network_status(engine, status),
+        Said::LinkColour(link) => {
+            let palette = ljos_quick::application_palette(engine).with_link(link);
+            ljos_quick::set_application_palette(engine, palette)
+        }
         Said::NoExternalDrops => ljos_platform::Platform::of(engine)
             .set_external_drops_unavailable(engine, "the window system has no drag-and-drop"),
     }
@@ -1494,6 +1500,12 @@ impl Environment for LjosBackend {
 
     fn network(&mut self, status: ljos_platform::NetworkStatus) -> Result<()> {
         self.said(Said::Network(status))
+    }
+
+    fn link_colour(&mut self, colour: &str) -> Result<()> {
+        let colour = ljos_engine::Color::parse(colour)
+            .ok_or_else(|| failed(format!("{colour:?} is not a colour")))?;
+        self.said(Said::LinkColour(colour))
     }
 
     // The `.ts` file is read as it is, the way a development build reads

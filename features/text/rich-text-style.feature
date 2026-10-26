@@ -11,7 +11,9 @@
 # top, and an overline runs along the top of the line. The text is spaces
 # that do not break, so no letter is in the way of a pixel.
 # The documentation of linkColor says it is for StyledText and not for
-# RichText; Qt 6.11.2 paints a link of RichText blue.
+# RichText; Qt 6.11.2 paints a link of RichText in the application
+# palette's link colour, which is blue unless the host sets another
+# (rich-text-link-colour.feature).
 
 @qt-parity
 Feature: Styles written in rich text

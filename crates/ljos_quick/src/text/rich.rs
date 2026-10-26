@@ -36,8 +36,11 @@ use crate::rectangle::to_rgba;
 /// every font size for the text a `Text` is created with (Qt works it out
 /// from the application's font, and from the item's own font only when the
 /// text is set again; here it does not depend on when the text was set).
+/// A link is given its colour as it is drawn ([`TextInputs::link_color`]),
+/// so that it follows the application's palette.
 const OPTIONS: ParseOptions = ParseOptions {
     paragraph_spacing: 7.0,
+    link_color: None,
 };
 
 /// A file larger than this is not read as an inline image: the document
@@ -547,7 +550,7 @@ fn run_look(t: &TextInputs, block: &Block, tag: u32, marker: bool) -> RunLook {
     let read = |c: &Option<Arc<str>>| c.as_deref().and_then(css_color);
     let color = match read(&style.color) {
         Some(color) => to_rgba(color),
-        None if style.link.is_some() => to_rgba(link_color(t)),
+        None if style.link.is_some() => to_rgba(t.link_color),
         None => base,
     };
     RunLook {
@@ -555,16 +558,6 @@ fn run_look(t: &TextInputs, block: &Block, tag: u32, marker: bool) -> RunLook {
         lines: read(&style.decoration_color).map_or(color, to_rgba),
         overline: style.overline,
         background: read(&style.background).filter(|c| c.a != 0).map(to_rgba),
-    }
-}
-
-/// The colour of a link no style gives one. Measured on Qt 6.11, and its
-/// documentation of `linkColor` says so: that property is for StyledText,
-/// and a link of RichText or of Markdown is blue.
-fn link_color(t: &TextInputs) -> Color {
-    match t.format {
-        TextFormat::Styled => t.link_color,
-        _ => Color::from_rgba8(0, 0, 255, 255),
     }
 }
 
@@ -771,7 +764,7 @@ pub(crate) fn paint(
     let on = s.key_link.map(|i| i.min(links.len().saturating_sub(1)));
     if let Some(link) = on.and_then(|i| links.get(i)) {
         // A frame of one pixel around the link the keyboard is on.
-        let color = to_rgba(link_color(t));
+        let color = to_rgba(t.link_color);
         for r in &link.rects {
             let r = (*r + down).inflate(1.0, 1.0);
             let edges = [

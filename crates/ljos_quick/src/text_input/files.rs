@@ -254,12 +254,12 @@ fn loaded(
         .or_else(|| Kind::of_suffix(path))
         .unwrap_or(Kind::Plain);
     let multi = st.borrow().multi;
-    let font = super::rich::font_of(engine, edit);
+    let options = super::rich::parse_options(engine, edit);
     {
         let mut s = st.borrow_mut();
         let s = &mut *s;
         let format = if multi { kind.format() } else { None };
-        super::rich::assign(s, format, &text, &font);
+        super::rich::assign(s, format, &text, &options);
         s.model.move_to(0, false);
         s.model.set_modified(false);
         s.preedit.clear();

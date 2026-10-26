@@ -12,6 +12,11 @@
 //! ([`report_network_status`]); [`network_status`] reads it, tracked, and
 //! [`on_network_change`] calls back when it changes.
 //!
+//! The application's palette (`QGuiApplication::palette()`), which QML
+//! cannot write: a host sets it for its theme ([`set_application_palette`]).
+//! A link of rich text or Markdown its document gives no colour is drawn
+//! in its link colour.
+//!
 //! ```
 //! use ljos::system::{NetworkStatus, Reachability, network_status, report_network_status};
 //!
@@ -29,6 +34,7 @@ use ljos_engine::{Engine, EngineError};
 pub use ljos_platform::{
     NetworkStatus, Reachability, TransportMedium, network_status, report_network_status,
 };
+pub use ljos_quick::{ApplicationPalette, application_palette, set_application_palette};
 pub use ljos_quick::{
     ColorScheme, Contrast, DesktopSettings, HostPrefs, SettingValue, SystemPrefs,
     report_system_prefs, set_system_prefs, system_prefs, update_system_prefs,

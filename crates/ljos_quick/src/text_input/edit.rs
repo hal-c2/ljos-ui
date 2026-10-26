@@ -194,11 +194,11 @@ impl TextEdit {
             let text = e
                 .untrack(|| e.read(obj, TextEditor::TEXT.index))
                 .to_js_string();
-            let (format, font) = super::rich::inputs(e, obj, true, text.as_str());
+            let (format, options) = super::rich::inputs(e, obj, true, text.as_str());
             {
                 let mut s = st.borrow_mut();
                 let s = &mut *s;
-                super::rich::assign(s, format, text.as_str(), &font);
+                super::rich::assign(s, format, text.as_str(), &options);
                 s.model.move_to(0, false);
                 s.run = None;
                 s.sticky = None;

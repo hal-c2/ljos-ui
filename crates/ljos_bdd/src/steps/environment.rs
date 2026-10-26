@@ -189,6 +189,16 @@ fn network_status(said: &str) -> Result<ljos_platform::NetworkStatus, String> {
     Ok(status)
 }
 
+#[given(regex = r#"^the host sets the application palette's link colour to "([^"]+)"$"#)]
+fn link_colour_is(w: &mut LjosWorld, colour: String) -> StepResult {
+    w.each(|b| b.environment()?.link_colour(&colour))
+}
+
+#[when(regex = r#"^the host changes the application palette's link colour to "([^"]+)"$"#)]
+fn link_colour_changes(w: &mut LjosWorld, colour: String) -> StepResult {
+    w.each(|b| b.environment()?.link_colour(&colour))
+}
+
 #[given(regex = r#"^the system's network is "([^"]+)"$"#)]
 fn network_is(w: &mut LjosWorld, said: String) -> StepResult {
     let status = network_status(&said)?;

@@ -575,10 +575,10 @@ pub(crate) fn init_editor(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
     let text = engine
         .untrack(|| engine.read(obj, TextEditor::TEXT.index))
         .to_js_string();
-    let (format, font) = super::rich::inputs(engine, obj, multi, text.as_str());
+    let (format, options) = super::rich::inputs(engine, obj, multi, text.as_str());
     {
         let mut s = st.borrow_mut();
-        super::rich::assign(&mut s, format, text.as_str(), &font);
+        super::rich::assign(&mut s, format, text.as_str(), &options);
         if multi {
             s.model.move_to(0, false);
         }
@@ -689,11 +689,11 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
     };
     let text = text.unwrap_or_default();
     let differs = !unwritten && super::rich::differs(&st.borrow(), text.as_str());
-    let (format, font) = if differs {
+    let (format, options) = if differs {
         let multi = st.borrow().multi;
         super::rich::inputs(engine, obj, multi, text.as_str())
     } else {
-        (None, std::sync::Arc::default())
+        (None, Default::default())
     };
     let changed = {
         let mut s = st.borrow_mut();
@@ -703,7 +703,7 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
         let cursor_written = usize::try_from(cursor) != Ok(s.model.cursor());
         let mut changed = false;
         if differs {
-            super::rich::assign(s, format, text.as_str(), &font);
+            super::rich::assign(s, format, text.as_str(), &options);
             if s.multi {
                 s.model.move_to(0, false);
             }

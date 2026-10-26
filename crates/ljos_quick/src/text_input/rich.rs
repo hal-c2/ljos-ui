@@ -122,11 +122,20 @@ pub(crate) fn color_of(f: &CharFormat) -> Option<Color> {
     f.inline.color.as_deref().and_then(editor_css_color)
 }
 
+/// How the editor `obj` reads a document (untracked): with the space its
+/// font puts between paragraphs of Markdown, and its links in the
+/// application palette's link colour as it is now. As in Qt, a link keeps
+/// the colour it was read with.
+pub(crate) fn parse_options(engine: &Engine, obj: ObjectId) -> ParseOptions {
+    let link = engine.untrack(|| crate::application_palette(engine).link);
+    options(&font_of(engine, obj), link)
+}
+
 /// Measured on Qt 6.11 (Linux): two thirds of the point size between
 /// paragraphs of Markdown, and nothing for a font sized in pixels. Taken
 /// as half the point size in pixels, which is the same at 96 dpi and
 /// follows a platform's own DPI.
-fn options(font: &Font) -> ParseOptions {
+fn options(font: &Font, link: Color) -> ParseOptions {
     let paragraph_spacing = if font.pixel_size > 0 {
         0.0
     } else if font.point_size > 0.0 {
@@ -134,7 +143,10 @@ fn options(font: &Font) -> ParseOptions {
     } else {
         7.0
     };
-    ParseOptions { paragraph_spacing }
+    ParseOptions {
+        paragraph_spacing,
+        link_color: Some(link.to_rgba8()),
+    }
 }
 
 /// The item's font (untracked).
@@ -146,20 +158,20 @@ pub(crate) fn font_of(engine: &Engine, obj: ObjectId) -> Arc<Font> {
 }
 
 /// What assigning `text` needs besides the text (untracked): how it is
-/// read and the font. A `TextInput` is always plain.
+/// read and with what. A `TextInput` is always plain.
 pub(crate) fn inputs(
     engine: &Engine,
     obj: ObjectId,
     multi: bool,
     text: &str,
-) -> (Option<TextFormat>, Arc<Font>) {
+) -> (Option<TextFormat>, ParseOptions) {
     if !multi {
-        return (None, Arc::default());
+        return (None, ParseOptions::default());
     }
     let f = engine
         .untrack(|| engine.read(obj, TextEdit::TEXT_FORMAT.index))
         .to_number() as i32;
-    (format_of(f, text), font_of(engine, obj))
+    (format_of(f, text), parse_options(engine, obj))
 }
 
 /// Whether `text`, as a program wrote it, is other than what the editor
@@ -173,13 +185,18 @@ pub(crate) fn differs(s: &State, text: &str) -> bool {
 
 /// Makes `source` the editor's text, read as `format`. The history goes,
 /// as for plain text.
-pub(crate) fn assign(s: &mut State, format: Option<TextFormat>, source: &str, font: &Font) {
+pub(crate) fn assign(
+    s: &mut State,
+    format: Option<TextFormat>,
+    source: &str,
+    options: &ParseOptions,
+) {
     let Some(format) = format else {
         s.rich = None;
         s.model.set_text(source);
         return;
     };
-    let options = options(font);
+    let options = *options;
     let doc = RichText::parse(format, source, &options, &resolve_color);
     if !s.model.set_text(doc.text()) {
         // The characters are the same and the formats may not be: it is a
@@ -637,15 +654,12 @@ pub(crate) fn image_size(
 pub(crate) fn run_colors(s: &mut State) -> Option<Arc<Vec<Option<Rgba>>>> {
     let r = s.rich.as_mut()?;
     if r.colors.is_none() {
-        let link = to_rgba(Color::from_rgba8(0, 0, 0xff, 0xff));
+        // A link was given the palette's colour as it was read
+        // ([`parse_options`]).
         let colors = r
             .doc
             .runs()
-            .map(|(_, f)| match color_of(f) {
-                Some(c) => Some(to_rgba(c)),
-                None if f.inline.link.is_some() => Some(link),
-                None => None,
-            })
+            .map(|(_, f)| color_of(f).map(to_rgba))
             .collect();
         r.colors = Some(Arc::new(colors));
     }
@@ -843,6 +857,7 @@ pub(crate) fn hover(engine: &Engine, obj: ObjectId, over: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ApplicationPalette;
     use ljos_text::TextModel;
 
     fn state(source: &str) -> State {
@@ -851,7 +866,12 @@ mod tests {
             model: TextModel::new(),
             ..State::default()
         };
-        assign(&mut s, Some(TextFormat::Rich), source, &Font::default());
+        assign(
+            &mut s,
+            Some(TextFormat::Rich),
+            source,
+            &options(&Font::default(), ApplicationPalette::default().link),
+        );
         s
     }
 

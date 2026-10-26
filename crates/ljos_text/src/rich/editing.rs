@@ -402,7 +402,7 @@ impl RichText {
         resolve: &dyn Fn(&str) -> Option<Arc<str>>,
     ) -> Self {
         let parsed = parse(format, source, options);
-        let mut out = Self::from_blocks(&parsed.blocks, resolve);
+        let mut out = Self::from_blocks(&parsed.blocks, options.link_color, resolve);
         // Measured: white space after the last paragraph of HTML is one
         // space at the end of it; between paragraphs it is nothing.
         if format == TextFormat::Rich && trailing_space(source) {
@@ -416,7 +416,11 @@ impl RichText {
         out
     }
 
-    fn from_blocks(blocks: &[Block], resolve: &dyn Fn(&str) -> Option<Arc<str>>) -> Self {
+    fn from_blocks(
+        blocks: &[Block],
+        link_color: Option<[u8; 4]>,
+        resolve: &dyn Fn(&str) -> Option<Arc<str>>,
+    ) -> Self {
         let mut out = Self::default();
         let mut formats: Vec<(Inline, Arc<CharFormat>)> = Vec::new();
         let mut format_of = |inline: &Inline| -> Arc<CharFormat> {
@@ -424,7 +428,7 @@ impl RichText {
                 return Arc::clone(f);
             }
             let f = Arc::new(CharFormat {
-                inline: resolved(inline, resolve),
+                inline: resolved(inline, link_color, resolve),
                 ..CharFormat::default()
             });
             formats.push((inline.clone(), Arc::clone(&f)));
@@ -1392,7 +1396,11 @@ fn same(a: &Arc<CharFormat>, b: &Arc<CharFormat>) -> bool {
     Arc::ptr_eq(a, b) || **a == **b
 }
 
-fn resolved(inline: &Inline, resolve: &dyn Fn(&str) -> Option<Arc<str>>) -> Inline {
+fn resolved(
+    inline: &Inline,
+    link_color: Option<[u8; 4]>,
+    resolve: &dyn Fn(&str) -> Option<Arc<str>>,
+) -> Inline {
     let colour = |c: &Option<Arc<str>>| c.as_deref().and_then(resolve);
     let mut out = Inline {
         color: colour(&inline.color),
@@ -1400,11 +1408,15 @@ fn resolved(inline: &Inline, resolve: &dyn Fn(&str) -> Option<Arc<str>>) -> Inli
         decoration_color: colour(&inline.decoration_color),
         ..inline.clone()
     };
-    // Measured: a link in a TextEdit is written blue and underlined, as Qt
-    // gives it its look when it reads it.
+    // Measured: a link in a TextEdit is written in the application
+    // palette's link colour and underlined, as Qt gives it its look when
+    // it reads it.
     if out.link.is_some() {
-        if out.color.is_none() {
-            out.color = Some(Arc::from("#0000ff"));
+        if out.color.is_none()
+            && let Some([r, g, b, a]) = link_color
+        {
+            let alpha = f64::from(a) / 255.0;
+            out.color = resolve(&format!("rgba({r}, {g}, {b}, {alpha})"));
         }
         if !out.undecorated {
             out.underline = true;
@@ -1549,17 +1561,24 @@ mod tests {
     fn hex(c: &str) -> Option<Arc<str>> {
         match c {
             "red" => Some(Arc::from("#ff0000")),
+            "rgba(0, 0, 255, 1)" => Some(Arc::from("#0000ff")),
             c if c.starts_with('#') => Some(Arc::from(c)),
             _ => None,
         }
     }
 
+    /// As an editor reads it in the default application palette.
+    const OPTIONS: ParseOptions = ParseOptions {
+        paragraph_spacing: 0.0,
+        link_color: Some([0, 0, 255, 255]),
+    };
+
     fn rich(source: &str) -> RichText {
-        RichText::parse(TextFormat::Rich, source, &ParseOptions::default(), &hex)
+        RichText::parse(TextFormat::Rich, source, &OPTIONS, &hex)
     }
 
     fn md(source: &str) -> RichText {
-        RichText::parse(TextFormat::Markdown, source, &ParseOptions::default(), &hex)
+        RichText::parse(TextFormat::Markdown, source, &OPTIONS, &hex)
     }
 
     /// The body of the HTML, as the scenarios compare it.

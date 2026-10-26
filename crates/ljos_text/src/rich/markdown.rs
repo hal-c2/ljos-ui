@@ -456,6 +456,7 @@ mod tests {
     fn paragraph_spacing_is_the_callers() {
         let options = ParseOptions {
             paragraph_spacing: 8.0,
+            link_color: None,
         };
         let b = parse("abc\n\n# abc\n\n- abc\n\n> abc\n\n    abc", 0, &options).blocks;
         let margins: Vec<_> = b.iter().map(|b| (b.margin_top, b.margin_bottom)).collect();

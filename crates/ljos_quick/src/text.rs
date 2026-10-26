@@ -608,6 +608,9 @@ pub struct TextInputs {
     pub align_height: f64,
     /// How the text is read, with `AutoText` resolved.
     pub format: TextFormat,
+    /// The colour of a link no style gives one: `linkColor` for
+    /// StyledText; for RichText and Markdown the application palette's
+    /// link colour, as in Qt (that property is for StyledText only).
     pub link_color: Color,
     /// The document, for text that is not plain or that a
     /// [`SelectionScope`] selects in.
@@ -828,7 +831,10 @@ impl TextInputs {
             overline: font.as_ref().is_some_and(|f| f.overline),
             text_style: int(&style_v),
             style_color: color(style_color_v, Color::BLACK),
-            link_color: color(link_color_v, Color::BLACK),
+            link_color: match format {
+                TextFormat::Rich | TextFormat::Markdown => crate::application_palette(engine).link,
+                _ => color(link_color_v, Color::BLACK),
+            },
             format,
             epoch: document.as_ref().map_or(0, |(_, epoch)| *epoch),
             rich: document.map(|(d, _)| d),
