@@ -7334,3 +7334,85 @@ DECISIONs:
 - maroon's remaining creep is written down as the allocator's and the C libraries', not
   chased into glibc.
 - mediaplayer is measured on Ljós alone.
+
+### FRAMES: a workspace window, and a positioner shown row by row (2026-10-26)
+
+A desktop app reported frames of 35–60 ms while typing, scrolling, hovering and sliding a
+clipped side panel open (p50 0.47 ms, p95 56 ms, longest 104 ms). `bench/workspace.qml`
+has the same shape:
+- a sectioned sidebar ListView with reused button delegates and a Timer each;
+- a transcript of wrapped StyledText;
+- a TextArea composer;
+- a side panel that animates 0→360 wide, with clip. It holds a tabs ListView whose model
+  is empty while closed, and a Repeater of Loaders that load on first show. One page is a
+  Column of 400 rows.
+
+It also has a "Stream" button: the last message grows a word at a time, the sidebar rows
+change, and a message is added now and then. `root.cycling = true` opens and closes the
+panel every 0.5 s without a pointer:
+
+```
+frame_profile bench workspace.qml --size 1200x800 --warm 30 --frames 300 \
+  --start 'root.cycling = true' --slow 2
+```
+
+Every interaction was driven by pointer and keys in the GPU sandbox (headless sway), with
+the same input sent to Ljós and to qml6. Instructions are for the whole process. qml6's
+frame times come from `qt.scenegraph.time.renderloop` and have whole-millisecond
+resolution.
+
+**Cause.** Opening the panel shows a hidden parent, so each of the Column's 400 rows
+changes its inherited `visible` in turn. The Column's polish effect read every child's
+`visible`, `width` and `height` again on each of those changes. That is 400 × 400 reads.
+Under callgrind, `positioners::track` ran 6,360 times for 1.5 G over ten toggles, while
+the layouts it led to cost 109 M.
+
+**Fix.** A Row's or Column's effect is now *told* of a change and only marks the
+positioner for polish. After the polish lays it out, the effect reads its inputs once
+more, which also picks up children added or removed. Layouts keep their effect, because
+their own dirty flag is set in `read_inputs`. In a Rust test, showing and hiding a Column
+records these reads:
+
+| Rows | Before | After |
+|---|---:|---:|
+| 100 | 22,504 | 1,444 |
+| 400 | 330,004 | 5,644 |
+
+The test is `showing_a_column_reads_its_rows_once_not_once_per_row` in
+`ljos_quick/tests/scene.rs`.
+
+| Panel toggle, 8 clicks in 8 s, GPU sandbox | Ljós before | Ljós after | qml6 |
+|---|---:|---:|---:|
+| Instructions | 3,153–3,190 M | 1,775–1,846 M | 1,703–2,224 M |
+| Frame p50 | 1.9–3.5 ms | 2.1–2.4 ms | 0 ms gui, 0 ms render |
+| Frame p95 | 17.4–19.3 ms | 6.8–7.4 ms | 1 ms gui, 2 ms render |
+| Longest | 23–38 ms | 20–42 ms (first open) | 698 ms gui, 1,067 ms render (first open) |
+
+The longest frame on both is the first open, which makes the 400-row page. In
+frame_profile, the extra cost of ten toggles fell from 2,648 M to 1,095 M, and a toggle's
+frames fell from about 16.5 ms to about 9 ms. The machine's load was 58–92, so
+wall-clock times are noisy and the instruction counts are the measure.
+
+| Interaction, after (8 s) | Ljós | qml6 | Ljós frames p50 / p95 / longest |
+|---|---:|---:|---|
+| Scroll the transcript | 793 M | 738 M | 0.44 / 1.47 / 1.87 ms |
+| Scroll the sidebar | 852 M | 659 M | 0.46 / 1.45 / 4.26 ms |
+| Hover sidebar rows | 139 M | 125 M | 0.54 / 2.81 / 9.07 ms |
+| Type 50 characters | 34–67 M | 102 M | 1.24 / 9.18 / 9.18 ms |
+| Stream updates | 526 M | 348 M | 0.10 / 1.24 / 6.10 ms (one 19.6 ms) |
+
+Left:
+- The bench has 1,600 objects and 24k graph nodes, against the app's 30k objects and 394k
+  nodes. It has no host message source, so the app's critical lane (the inbox drain) is not
+  reproduced here.
+- While the panel's width animates, each frame spends its time in these places:
+  - `views::pass::run`, 295 M over the run (the transcript and tabs views lay out again as
+    the width changes);
+  - the wrapped StyledText laid out again, 269 M;
+  - encode, 226 M;
+  - the Behavior's `start_driven` → `views::pass::bump`, 186 M;
+  - `flickable::put` and `views::current::normalise`, 174 M.
+- Inherited `visible` (B29's `inherit_effect`) pushes or removes one override per
+  descendant, each in its own propagation. This is what told the Column 400 times, and
+  any other reader of the rows' `visible` still sees each change. Making that one
+  propagation is in the inherited-state seam.
