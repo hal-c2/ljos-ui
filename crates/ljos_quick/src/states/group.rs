@@ -159,6 +159,17 @@ pub(crate) struct Group {
     /// the state) is made when this one is done.
     changing: Cell<bool>,
     again: Cell<bool>,
+    /// A state's changes are being put in place without a transition: a
+    /// `when` they make pick another state is refused (qml6).
+    applying: Cell<bool>,
+    /// The state whose `when` asked for the change to be made next.
+    asked_by: Cell<Option<ObjectId>>,
+    /// The state whose `when` asked for the change being made: that `when`
+    /// worked out again meanwhile is a binding loop (qml6).
+    going_for: Cell<Option<ObjectId>>,
+    /// That state's `when`, turned by the changes it put in place without
+    /// a transition: the change it asks for is refused, and the state kept.
+    looped: Cell<Option<ObjectId>>,
     running: RefCell<Option<Running>>,
     /// Counts the transitions, so that the end of one that was cut short
     /// is not taken for the end of the present one.
@@ -198,6 +209,10 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
         started: Cell::new(false),
         changing: Cell::new(false),
         again: Cell::new(false),
+        applying: Cell::new(false),
+        asked_by: Cell::new(None),
+        going_for: Cell::new(None),
+        looped: Cell::new(None),
         running: RefCell::new(None),
         serial: Cell::new(0),
     });
@@ -246,14 +261,16 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
     }
     for s in g.all_states(engine) {
         let on_when = Rc::clone(&g);
-        let _ = engine.watch(s, State::WHEN.index, move |e, _| on_when.follow_when(e));
+        let _ = engine.watch(s, State::WHEN.index, move |e, _| {
+            on_when.follow_when(e, Some(s));
+        });
     }
     // The `when`s are followed first, as in qml6: a state one picks runs
     // the transition to it, and a state given by name whose `when` is
     // false is left for the base state before it was ever entered.
     let given = text(engine, owner, state);
     g.started.set(true);
-    g.follow_when(engine);
+    g.follow_when(engine, None);
     if text(engine, owner, state) == given {
         // A `state` given where the object is made is told as a change,
         // also when no state has its name, before its state is entered,
@@ -266,6 +283,27 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
         g.started.set(false);
         g.sync(engine);
         g.started.set(true);
+    }
+    // A `when` that is worked out again picks its state again, though it
+    // was true before: one given by name meanwhile is left (qml6).
+    for s in g.all_states(engine) {
+        let on_when = Rc::clone(&g);
+        engine.set_interceptor(
+            s,
+            State::WHEN.index,
+            Some(Rc::new(move |e, v, how| {
+                // A new value is the watch's to follow.
+                let same = || e.peek(s, State::WHEN.index).to_boolean() == v.to_boolean();
+                if how != Interception::Binding {
+                } else if same() {
+                    let g = Rc::clone(&on_when);
+                    e.after_binding(move |e| g.follow_when(e, Some(s)));
+                } else if on_when.applying.get() && on_when.going_for.get() == Some(s) {
+                    on_when.looped.set(Some(s));
+                }
+                false
+            })),
+        );
     }
 }
 
@@ -465,7 +503,14 @@ impl Group {
     /// One `when` changed: the object is in the first state whose `when`
     /// is true, and in the base state when the one that held it there
     /// stopped being true.
-    fn follow_when(self: &Rc<Self>, engine: &Engine) {
+    fn follow_when(self: &Rc<Self>, engine: &Engine, by: Option<ObjectId>) {
+        if let Some(s) = by
+            && (self.going_for.get() == by || self.looped.get() == by)
+        {
+            self.looped.set(None);
+            engine.warn_binding_loop(s, State::WHEN.index);
+            return;
+        }
         let conditional = |s: ObjectId| !is_unset(engine, s, State::WHEN.index);
         let holds = |s: ObjectId| {
             engine
@@ -484,6 +529,14 @@ impl Group {
         if want == now {
             return;
         }
+        if self.applying.get() {
+            engine.log(
+                LogLevel::Warning,
+                "qml",
+                "<Unknown File>: QML StateGroup: Can't apply a state change as part of a state definition.",
+            );
+            return;
+        }
         let was = self.changing.replace(true);
         let _ = engine.write_internal(
             self.owner,
@@ -492,6 +545,7 @@ impl Group {
             WriteKind::Imperative,
         );
         self.changing.set(was);
+        self.asked_by.set(by);
         self.sync(engine);
     }
 
@@ -509,7 +563,11 @@ impl Group {
             let from = self.current.borrow().clone();
             if want != from {
                 *self.current.borrow_mut() = want.clone();
+                let by = self.asked_by.take();
+                let (applying, going_for) = (self.applying.get(), self.going_for.replace(by));
                 self.go(engine, &from, &want);
+                self.applying.set(applying);
+                self.going_for.set(going_for);
             }
             if !self.again.get() {
                 break;
@@ -613,6 +671,7 @@ impl Group {
             } else {
                 None
             };
+            self.applying.set(chosen.is_none());
             let anims = chosen.map_or_else(Vec::new, |(t, _)| transition::animations(engine, t));
             let deferred = script_names(engine, &anims);
             let values = action_values(engine, &anims);

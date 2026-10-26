@@ -435,6 +435,13 @@ impl Engine {
         self.warn(msg);
     }
 
+    /// Warns of a binding loop through `prop` of `obj`, in Qt's words: for
+    /// a loop a type finds itself, not one the graph does.
+    pub fn warn_binding_loop(&self, obj: ObjectId, prop: PropIndex) {
+        let msg = self.loop_message(obj, prop);
+        self.warn(msg);
+    }
+
     /// Qt's binding-loop message for `prop` of `obj`. Qt has two forms:
     /// most properties name the object and give the binding's place on a
     /// second line; the few that are bindable in Qt ([`QT_BINDABLE`]) have
