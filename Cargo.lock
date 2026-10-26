@@ -3581,6 +3581,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_audit"
+version = "0.0.0"
+dependencies = [
+ "ljos_a11y",
+ "ljos_compiler",
+ "ljos_controls",
+ "ljos_design",
+ "ljos_engine",
+ "ljos_quick",
+ "ljos_render",
+ "ljos_runtime",
+ "qml_front",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ljos_bdd"
 version = "0.0.0"
 dependencies = [
@@ -3592,6 +3609,7 @@ dependencies = [
  "jpeg-encoder",
  "ljos",
  "ljos_a11y",
+ "ljos_audit",
  "ljos_bench",
  "ljos_compiler",
  "ljos_controls",
@@ -3651,6 +3669,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "ljos",
+ "ljos_audit",
  "ljos_bench",
  "ljos_compiler",
  "ljos_controls",
@@ -3752,6 +3771,7 @@ dependencies = [
  "blake3",
  "libc",
  "ljos_a11y",
+ "ljos_audit",
  "ljos_compiler",
  "ljos_drive",
  "ljos_engine",
@@ -4294,6 +4314,7 @@ name = "ljos_test"
 version = "0.0.0"
 dependencies = [
  "ljos_a11y",
+ "ljos_audit",
  "ljos_compiler",
  "ljos_controls",
  "ljos_drive",

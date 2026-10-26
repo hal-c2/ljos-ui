@@ -7,7 +7,7 @@ use ljos_engine::{Engine, ObjectId};
 use ljos_quick::QuickScene;
 use ljos_render::kurbo;
 use ljos_runtime::Time;
-use ljos_test::a11y::{Code, Options, Report, audit};
+use ljos_test::a11y::{Options, Report, audit};
 
 fn engine(scheme: ColorScheme) -> Engine {
     let e = Engine::new();
@@ -182,7 +182,11 @@ const POPUPS: [(&str, &str); 4] = [
 #[track_caller]
 fn too_faint(scheme: ColorScheme, body: &str, colours: &str) {
     let report = run(scheme, body);
-    assert_eq!(report.codes(), [Code::Contrast], "{scheme:?}\n{report}");
+    assert_eq!(
+        report.codes(),
+        ["color-text-contrast"],
+        "{scheme:?}\n{report}"
+    );
     assert_eq!(report.findings.len(), 1, "{scheme:?}\n{report}");
     let f = &report.findings[0];
     assert!(f.message.contains(colours), "{scheme:?}: {f}");
@@ -257,7 +261,11 @@ fn the_demo_has_only_its_placeholder_against_it() {
         s.frame(&e, Time::ZERO);
         let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
         assert_eq!(report.findings.len(), 1, "{scheme:?}\n{report}");
-        assert_eq!(report.codes(), [Code::Contrast], "{scheme:?}\n{report}");
+        assert_eq!(
+            report.codes(),
+            ["color-text-contrast"],
+            "{scheme:?}\n{report}"
+        );
         let f = &report.findings[0];
         assert!(f.message.contains(colours), "{scheme:?}: {f}");
         let warnings = e.take_warnings();

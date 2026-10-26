@@ -2320,6 +2320,25 @@ impl QuickScene {
         crate::handlers::pinch_gesture(engine, g, &hits)
     }
 
+    /// The items under `pos` (scene coordinates), topmost first, as a
+    /// press there meets them: what an open modal popup shuts off is left
+    /// out. For tools that ask what covers what (the design audit).
+    pub fn items_at(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
+        self.hits(engine, pos)
+    }
+
+    /// The items drawn under `pos`, topmost first, those a modal popup
+    /// shuts off included.
+    pub fn items_drawn_at(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
+        let Some(snap) = &self.snapshot else {
+            return Vec::new();
+        };
+        hit_test(snap, pos)
+            .filter_map(|n| self.by_node.get(n).copied())
+            .filter(|o| engine.is_alive(*o))
+            .collect()
+    }
+
     /// Items under `pos`, topmost first.
     pub(crate) fn hits(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
         let Some(snap) = &self.snapshot else {

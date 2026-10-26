@@ -102,6 +102,12 @@ pub mod audit {
     /// share of its width and of its height.
     pub const NARROW_FRACTION: f32 = 0.6;
     pub const SHORT_FRACTION: f32 = 0.6;
+    /// What something reaches past, or comes short by, before it counts:
+    /// less is the rounding of a layout to whole pixels.
+    pub const SLACK_PX: f32 = 1.0;
+    /// Something to operate counts as covered when another item takes
+    /// this share of its visible area or more.
+    pub const OCCLUDED_SHARE: f32 = 0.5;
 }
 
 /// Content that moves this far or more after it was shown counts as a

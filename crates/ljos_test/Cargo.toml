@@ -10,12 +10,14 @@ publish.workspace = true
 
 [dependencies]
 ljos_a11y = { path = "../ljos_a11y" }
+# The design audit a test runs on its scene, as `ljos_test::a11y`.
+ljos_audit = { path = "../ljos_audit" }
 # Settles, lets time pass and draws as every other driver does; what a
 # test fetched has come by the time its virtual time passes.
 ljos_drive = { path = "../ljos_drive" }
 ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
-# The audit reads the last frame for the colours text is shown in. No egui.
+# Frames and pictures a test reads. No egui.
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
 # The QtTest runner's machine-readable report.

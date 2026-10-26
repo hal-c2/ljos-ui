@@ -6,7 +6,7 @@ use ljos_quick::QuickScene;
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
-use super::{Code, Options, Report, audit};
+use super::{Options, Report, audit};
 
 fn engine() -> Engine {
     let e = Engine::new();
@@ -67,7 +67,7 @@ fn clean(body: &str) {
 
 /// The one finding of a component that fails one check.
 #[track_caller]
-fn one(body: &str, code: Code) -> super::Finding {
+fn one(body: &str, code: &str) -> super::Finding {
     let report = run(&page(body));
     assert_eq!(report.codes(), [code], "\n{report}");
     assert_eq!(report.findings.len(), 1, "\n{report}");
@@ -75,25 +75,11 @@ fn one(body: &str, code: Code) -> super::Finding {
 }
 
 #[test]
-fn the_codes_are_stable_and_distinct() {
-    let names: Vec<&str> = Code::ALL.iter().map(|c| c.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "a11y-unnamed-interactive",
-            "a11y-unnamed-image",
-            "a11y-duplicate-name",
-            "a11y-target-size",
-            "a11y-tab-trap",
-            "a11y-tab-unreachable",
-            "a11y-contrast",
-            "a11y-set-size",
-        ]
-    );
-    for code in Code::ALL {
-        assert_eq!(Code::from_name(code.as_str()), Some(code));
+fn every_code_is_a_rule_of_ljos_design_checked_at_run_time() {
+    for code in crate::rules::implemented() {
+        let rule = ljos_design::rule(code).unwrap_or_else(|| panic!("{code} is no rule"));
+        assert_ne!(rule.check, ljos_design::Check::Static, "{code}");
     }
-    assert_eq!(Code::from_name("a11y-nothing"), None);
 }
 
 const BUTTON: &str = r##"
@@ -109,7 +95,7 @@ const BUTTON: &str = r##"
 #[test]
 fn something_to_act_on_has_a_name() {
     clean(&BUTTON.replace("NAME", "Accessible.name: \"Save\""));
-    let found = one(&BUTTON.replace("NAME", ""), Code::UnnamedInteractive);
+    let found = one(&BUTTON.replace("NAME", ""), "a11y-unnamed-interactive");
     assert!(
         found.message.starts_with("the button with no name"),
         "{found}"
@@ -155,7 +141,7 @@ fn a_picture_is_named_or_left_out() {
     ));
     clean(&image("Accessible.name: \"Ljós\""));
     clean(&image("Accessible.ignored: true"));
-    let found = one(&image(""), Code::UnnamedImage);
+    let found = one(&image(""), "a11y-unnamed-image");
     assert!(found.message.contains("\"logo\""), "{found}");
     assert!(
         found
@@ -166,7 +152,7 @@ fn a_picture_is_named_or_left_out() {
     // A role and no name is no better.
     one(
         &image("Accessible.role: Accessible.Graphic"),
-        Code::UnnamedImage,
+        "a11y-unnamed-image",
     );
 }
 
@@ -195,7 +181,7 @@ fn something_that_says_it_is_a_picture_needs_a_name_too() {
         )
     };
     clean(&chart("Accessible.name: \"Sales by month\""));
-    one(&chart(""), Code::UnnamedImage);
+    one(&chart(""), "a11y-unnamed-image");
 }
 
 #[test]
@@ -217,7 +203,7 @@ fn two_things_to_act_on_side_by_side_have_names_of_their_own() {
         )
     };
     clean(&two("Delete draft", "Delete all"));
-    let found = one(&two("Delete", "Delete"), Code::DuplicateName);
+    let found = one(&two("Delete", "Delete"), "a11y-duplicate-name");
     assert!(
         found.message.starts_with("the button \"Delete\""),
         "{found}"
@@ -251,16 +237,16 @@ fn sized(w: u32, h: u32) -> String {
 #[test]
 fn something_to_press_is_24_wide_and_high_on_a_desktop() {
     clean(&sized(24, 24));
-    let found = one(&sized(30, 20), Code::TargetSize);
+    let found = one(&sized(30, 20), "a11y-target-size");
     assert!(found.message.contains("is 30 by 20"), "{found}");
     assert!(found.message.contains("24 by 24"), "{found}");
-    one(&sized(16, 40), Code::TargetSize);
+    one(&sized(16, 40), "a11y-target-size");
 }
 
 #[test]
 fn something_to_press_is_44_wide_and_high_under_a_finger() {
     let report = audit_with(&page(&sized(30, 30)), &Options::mobile());
-    assert_eq!(report.codes(), [Code::TargetSize], "\n{report}");
+    assert_eq!(report.codes(), ["a11y-target-size"], "\n{report}");
     assert!(report.findings[0].message.contains("44 by 44"));
     let report = audit_with(&page(&sized(44, 44)), &Options::mobile());
     assert!(report.is_clean(), "\n{report}");
@@ -316,7 +302,7 @@ fn tab_goes_round_every_stop_once() {
 
 #[test]
 fn a_round_that_does_not_come_back_is_a_trap() {
-    let found = one(&stops("", "KeyNavigation.tab: b"), Code::TabTrap);
+    let found = one(&stops("", "KeyNavigation.tab: b"), "a11y-tab-trap");
     assert!(
         found
             .message
@@ -326,7 +312,7 @@ fn a_round_that_does_not_come_back_is_a_trap() {
     assert!(found.message.contains("the button \"One\""), "{found}");
     assert_eq!(found.place.as_deref(), Some("file:///Main.qml:20:9"));
 
-    let found = one(&stops("KeyNavigation.tab: b", ""), Code::TabTrap);
+    let found = one(&stops("KeyNavigation.tab: b", ""), "a11y-tab-trap");
     assert!(
         found
             .message
@@ -338,7 +324,7 @@ fn a_round_that_does_not_come_back_is_a_trap() {
 #[test]
 fn a_stop_that_tab_passes_by_is_never_reached() {
     // One, Two, and back to One: Three is in the order and not on the way.
-    let found = one(&stops("KeyNavigation.tab: a", ""), Code::TabUnreachable);
+    let found = one(&stops("KeyNavigation.tab: a", ""), "a11y-tab-unreachable");
     assert!(found.message.contains("the button \"Three\""), "{found}");
 }
 
@@ -355,7 +341,7 @@ fn what_takes_the_keyboard_is_a_stop() {
     };
     clean(&button("activeFocusOnTab: true"));
     clean(&button("Accessible.focusable: false"));
-    let found = one(&button(""), Code::TabUnreachable);
+    let found = one(&button(""), "a11y-tab-unreachable");
     assert!(
         found
             .message
@@ -383,7 +369,7 @@ fn what_is_inside_a_stop_is_reached_through_it() {
 fn a_stop_says_something_of_itself() {
     let found = one(
         "    Item { objectName: \"well\"; width: 60; height: 30; activeFocusOnTab: true }",
-        Code::UnnamedInteractive,
+        "a11y-unnamed-interactive",
     );
     assert!(
         found.message.starts_with("Tab stops at the Item \"well\""),
@@ -407,14 +393,17 @@ fn text_stands_out_from_what_is_behind_it() {
     clean(&text_on("white", "#1565c0", ""));
     // #767676 on white is the lightest grey that passes.
     clean(&text_on("#767676", "white", ""));
-    let found = one(&text_on("#999999", "white", ""), Code::Contrast);
+    let found = one(&text_on("#999999", "white", ""), "color-text-contrast");
     assert!(
         found
             .message
             .starts_with("the text \"Reading\" is #999999 on #ffffff, a contrast of 2.85:1"),
         "{found}"
     );
-    assert!(found.message.ends_with("4.5:1 is the least"), "{found}");
+    assert!(
+        found.message.contains("4.5:1 is the least (APCA Lc "),
+        "{found}"
+    );
     assert_eq!(found.place.as_deref(), Some("file:///Main.qml:10:9"));
 }
 
@@ -424,21 +413,24 @@ fn large_text_needs_less() {
     clean(&text_on("#888888", "white", "font.pixelSize: 24"));
     let found = one(
         &text_on("#888888", "white", "font.pixelSize: 23"),
-        Code::Contrast,
+        "color-text-contrast",
     );
     assert!(found.message.contains("3.54:1"), "{found}");
     let found = one(
         &text_on("#aaaaaa", "white", "font.pixelSize: 30"),
-        Code::Contrast,
+        "color-text-contrast",
     );
-    assert!(found.message.ends_with("3:1 is the least"), "{found}");
+    assert!(
+        found.message.contains("3:1 is the least (APCA Lc "),
+        "{found}"
+    );
 }
 
 #[test]
 fn colours_are_the_ones_shown() {
     // Half-clear black over white is a grey of 3.95:1; black behind it,
     // nearly nothing.
-    one(&text_on("#80000000", "white", ""), Code::Contrast);
+    one(&text_on("#80000000", "white", ""), "color-text-contrast");
     // What is painted last is what is behind.
     clean(
         r##"
@@ -455,7 +447,7 @@ fn colours_are_the_ones_shown() {
         width: 200; height: 60; opacity: 0.4
         Text { anchors.centerIn: parent; text: "Reading"; color: "black" }
     }"##,
-        Code::Contrast,
+        "color-text-contrast",
     );
 }
 
@@ -474,7 +466,7 @@ fn text_that_is_switched_off_is_not_held_to_it() {
 fn where_nothing_is_painted_the_window_shows() {
     let bare = "import QtQuick\nItem { width: 200; height: 60\n    Text { text: \"Reading\"; color: \"white\" }\n}\n";
     let report = run(bare);
-    assert_eq!(report.codes(), [Code::Contrast], "\n{report}");
+    assert_eq!(report.codes(), ["color-text-contrast"], "\n{report}");
     assert!(report.findings[0].message.contains("#ffffff on #ffffff"));
     let dark = Options {
         backdrop: Some([18, 18, 18]),
@@ -526,7 +518,7 @@ fn rows_say_which_row_they_are_or_none_does() {
             Accessible.focusable: false
         }"##,
         ),
-        Code::SetSize,
+        "a11y-set-size",
     );
     assert!(
         found
@@ -568,8 +560,8 @@ fn a_report_reads_one_finding_to_a_line() {
         ),
         "{text}"
     );
-    assert!(report.clone().without(&[Code::TargetSize]).is_clean());
-    assert_eq!(report.of(Code::TargetSize).count(), 1);
+    assert!(report.clone().without(&["a11y-target-size"]).is_clean());
+    assert_eq!(report.of("a11y-target-size").count(), 1);
 }
 
 /// Every control of the Basic style that there is, named as an author
@@ -634,7 +626,7 @@ fn the_placeholder_of_the_basic_style_is_fainter_than_the_audit_allows() {
         r##"
     TextField { Accessible.name: "Name"; placeholderText: "Given name" }"##,
     ));
-    assert_eq!(report.codes(), [Code::Contrast], "\n{report}");
+    assert_eq!(report.codes(), ["color-text-contrast"], "\n{report}");
     let f = &report.findings[0];
     assert!(
         f.place.as_deref().unwrap().contains("Basic/TextField.qml:"),
@@ -703,9 +695,9 @@ fn what_is_wrong_in_an_open_popup_is_found() {
     Dialog {
         title: "Discard the changes?"
         Component.onCompleted: open()
-        Button { width: 60 }
+        Button {}
     }"##,
-        Code::UnnamedInteractive,
+        "a11y-unnamed-interactive",
     );
     assert_eq!(f.place.as_deref(), Some("file:///Main.qml:11:9"));
 }
@@ -726,7 +718,7 @@ fn tab_goes_round_inside_an_open_popup() {
             Button { id: c; text: "Third" }
         }
     }"##,
-        Code::TabUnreachable,
+        "a11y-tab-unreachable",
     );
     assert!(f.message.contains("\"Second\""), "{f}");
 }
@@ -742,20 +734,146 @@ fn the_demo_of_the_shell_has_nothing_of_the_styles() {
         "/../ljos_shell/examples/qml/Main.qml"
     ));
     let root = load(&e, source);
+    // As a viewer has it: the root fills the window.
+    e.set(root, ljos_quick::Item::WIDTH, 900.0).unwrap();
+    e.set(root, ljos_quick::Item::HEIGHT, 600.0).unwrap();
     let mut s = QuickScene::new(kurbo::Size::new(900.0, 600.0));
     s.set_root(&e, root).unwrap();
     s.frame(&e, Time::ZERO);
     let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
     for f in &report.findings {
         let place = f.place.as_deref().unwrap_or_default();
+        // Known (ARCHITECTURE.md section 14): the Basic style's placeholder
+        // grey is Qt's palette value, 3.04:1 on white.
+        if f.code == "color-text-contrast" && place.contains("Basic/TextField.qml") {
+            assert!(f.message.contains("3.04:1"), "{f}");
+            continue;
+        }
         assert!(
             place.contains("Main.qml:"),
             "a finding of the style's:\n{report}"
         );
         assert!(
-            matches!(f.code, Code::UnnamedInteractive | Code::UnnamedImage),
+            matches!(f.code, "a11y-unnamed-interactive" | "a11y-unnamed-image"),
             "the demo is missing names and nothing else:\n{report}"
         );
     }
     eprintln!("the demo of the shell:\n{report}");
+}
+
+/// Mounted as a viewer mounts it: the root fills the window.
+fn hosted(e: &Engine, source: &str, w: f64, h: f64) -> QuickScene {
+    let root = load(e, source);
+    e.set(root, ljos_quick::Item::WIDTH, w).unwrap();
+    e.set(root, ljos_quick::Item::HEIGHT, h).unwrap();
+    let mut s = QuickScene::new(kurbo::Size::new(w, h));
+    s.set_root(e, root).unwrap();
+    s.frame(e, Time::ZERO);
+    s
+}
+
+const ROW_OF_FOUR: &str = r##"import QtQuick
+import QtQuick.Controls.Basic
+Rectangle {
+    color: "white"
+    Row {
+        objectName: "row"
+        spacing: 8
+        Button { text: "Open the file" }
+        Button { text: "Save the file" }
+        Button { text: "Print the file" }
+        Button { objectName: "last"; text: "Close the file" }
+    }
+}
+"##;
+
+#[test]
+fn what_shows_only_at_a_larger_font_shows_once_with_its_points() {
+    let e = engine();
+    // The row is 424 px wide, and 621 px at font scale 2.
+    let mut s = hosted(&e, ROW_OF_FOUR, 560.0, 420.0);
+    let now = audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    assert!(now.is_clean(), "\n{now}");
+    let options = Options {
+        matrix: crate::Matrix::Full,
+        ..Options::desktop()
+    }
+    .only(&["layout-offscreen"])
+    .unwrap();
+    let report = audit(&e, &mut s, Time::ZERO, &options);
+    let last: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.locator.as_deref() == Some("#last"))
+        .collect();
+    assert_eq!(last.len(), 1, "one finding however many points:\n{report}");
+    let points: Vec<String> = last[0].points.iter().map(ToString::to_string).collect();
+    assert!(!points.iter().any(|p| p == "current"), "{points:?}");
+    assert!(points.iter().any(|p| p == "font-scale=2"), "{points:?}");
+    assert!(
+        points.iter().any(|p| p.starts_with("size=small")),
+        "{points:?}"
+    );
+    assert_eq!(report.points.len(), crate::Matrix::full_points().len());
+}
+
+#[test]
+fn a_full_audit_leaves_the_scene_as_it_was() {
+    let e = engine();
+    let source = r##"import QtQuick
+import QtQuick.Controls.Basic
+Rectangle {
+    id: root
+    color: palette.window
+    property real wide: label.contentWidth
+    Label { id: label; text: "Settings"; width: root.width / 2 }
+    Rectangle {
+        objectName: "fading"
+        width: 40; height: 40
+        color: root.width > 600 ? "red" : "blue"
+        Behavior on color { ColorAnimation { duration: 400 } }
+    }
+}
+"##;
+    let mut s = hosted(&e, source, 640.0, 480.0);
+    // A setting the application made, which a later report of the host's
+    // does not undo.
+    ljos_quick::update_system_prefs(&e, |p| p.contrast = ljos_a11y::Contrast::High);
+    s.frame(&e, Time::ZERO);
+    let root = s.root().unwrap();
+    let read = |name: &str| e.read_by_name(root, name).to_number();
+    let before = (
+        ljos_quick::system_prefs(&e),
+        ljos_quick::hold_system_prefs(&e),
+        s.viewport(),
+        read("width"),
+        read("height"),
+        read("wide"),
+    );
+    let current = audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    let options = Options {
+        matrix: crate::Matrix::Full,
+        ..Options::desktop()
+    };
+    audit(&e, &mut s, Time::ZERO, &options);
+    let after = (
+        ljos_quick::system_prefs(&e),
+        ljos_quick::hold_system_prefs(&e),
+        s.viewport(),
+        read("width"),
+        read("height"),
+        read("wide"),
+    );
+    assert_eq!(before, after);
+    // Turning the accessibility tree back off asks for one frame; after it
+    // nothing is left animating.
+    s.frame(&e, Time::ZERO);
+    assert!(!s.needs_frame());
+    let again = audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    assert_eq!(current.to_string(), again.to_string());
+    // The label still follows the root: its binding was not broken.
+    e.set(root, ljos_quick::Item::WIDTH, 400.0).unwrap();
+    s.frame(&e, Time::ZERO);
+    let label = ljos_quick::child_items(&e, root)[0];
+    assert_eq!(e.read_by_name(label, "width").to_number(), 200.0);
 }

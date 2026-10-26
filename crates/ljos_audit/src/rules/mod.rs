@@ -1,0 +1,97 @@
+//! The checks, one file each, and the one table that says which rules
+//! the audit implements and in which order they run.
+
+mod color_text_contrast;
+mod duplicates;
+mod images;
+mod layout_occluded;
+mod layout_offscreen;
+mod layout_popup_fit;
+mod layout_under_minimum;
+mod names;
+mod sets;
+mod tab;
+mod target_size;
+mod text_clipped;
+mod text_elided_hidden;
+
+use crate::cx::Cx;
+
+/// A check: the rules it reports and what runs it.
+pub(crate) struct Check {
+    pub codes: &'static [&'static str],
+    pub run: fn(&mut Cx),
+}
+
+/// Every check, in the order a report lists them. The layout comes before
+/// the colours: text that is not on the screen has no contrast to speak of.
+pub(crate) const CHECKS: &[Check] = &[
+    Check {
+        codes: &["a11y-unnamed-interactive"],
+        run: names::check,
+    },
+    Check {
+        codes: &["a11y-unnamed-image"],
+        run: images::check,
+    },
+    Check {
+        codes: &["a11y-duplicate-name"],
+        run: duplicates::check,
+    },
+    Check {
+        codes: &["a11y-target-size"],
+        run: target_size::check,
+    },
+    // The Tab walk also finds a stop that says nothing of itself.
+    Check {
+        codes: &[
+            "a11y-tab-trap",
+            "a11y-tab-unreachable",
+            "a11y-unnamed-interactive",
+        ],
+        run: tab::check,
+    },
+    Check {
+        codes: &["layout-offscreen"],
+        run: layout_offscreen::check,
+    },
+    Check {
+        codes: &["layout-occluded"],
+        run: layout_occluded::check,
+    },
+    Check {
+        codes: &["layout-under-minimum"],
+        run: layout_under_minimum::check,
+    },
+    Check {
+        codes: &["layout-popup-fit"],
+        run: layout_popup_fit::check,
+    },
+    Check {
+        codes: &["text-clipped"],
+        run: text_clipped::check,
+    },
+    Check {
+        codes: &["text-elided-hidden"],
+        run: text_elided_hidden::check,
+    },
+    Check {
+        codes: &["color-text-contrast"],
+        run: color_text_contrast::check,
+    },
+    Check {
+        codes: &["a11y-set-size"],
+        run: sets::check,
+    },
+];
+
+/// The codes the audit implements, each once, in the order they run.
+pub fn implemented() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for code in CHECKS.iter().flat_map(|c| c.codes.iter().copied()) {
+        if !out.contains(&code) {
+            out.push(code);
+        }
+    }
+    out
+}

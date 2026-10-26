@@ -372,6 +372,35 @@ fn apply(engine: &Engine, s: &State, prefs: SystemPrefs) {
     engine.request_wake();
 }
 
+/// The settings in effect and which of them are held, kept by
+/// [`hold_system_prefs`] for [`restore_system_prefs`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeldPrefs {
+    system: SystemPrefs,
+    pinned: Pinned,
+}
+
+/// The settings as they are, to be put back exactly afterwards. A tool
+/// that tries the scene under other settings (the design audit) must not
+/// leave a setting held that followed the host before, which setting them
+/// back by value would.
+pub fn hold_system_prefs(engine: &Engine) -> HeldPrefs {
+    let s = state(engine);
+    HeldPrefs {
+        system: s.system.get(),
+        pinned: s.pinned.get(),
+    }
+}
+
+/// Puts back what [`hold_system_prefs`] kept. A setting that followed the
+/// host follows it again, with what the host reported meanwhile.
+pub fn restore_system_prefs(engine: &Engine, held: HeldPrefs) {
+    let s = state(engine);
+    s.pinned.set(held.pinned);
+    let prefs = held.pinned.over(held.system, s.host.get());
+    apply(engine, &s, prefs);
+}
+
 /// Changes some of the settings and leaves the others as they are.
 pub fn update_system_prefs(engine: &Engine, change: impl FnOnce(&mut SystemPrefs)) {
     let mut prefs = system_prefs(engine);

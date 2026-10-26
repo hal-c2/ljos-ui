@@ -1,0 +1,33 @@
+[package]
+name = "ljos_audit"
+description = "The design audit: the rules of ljos_design checked on a laid-out, drawn scene, under the settings a user may have"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos_a11y = { path = "../ljos_a11y" }
+# Windows are resized through their window system; popups are found as
+# the items that draw them.
+ljos_controls = { path = "../ljos_controls" }
+# The codes, thresholds and colour maths every check reads.
+ljos_design = { path = "../ljos_design" }
+ljos_engine = { path = "../ljos_engine" }
+ljos_quick = { path = "../ljos_quick" }
+# The last frame: what is painted where. No egui.
+ljos_render = { path = "../ljos_render", default-features = false }
+ljos_runtime = { path = "../ljos_runtime" }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Tests compile QML strings; the crate itself never links the compiler or
+# the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
+
+[lints]
+workspace = true

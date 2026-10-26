@@ -10,11 +10,7 @@ use ljos_engine::ObjectId;
 use ljos_quick::keys::tab_target;
 use ljos_quick::{Item, child_items, is_item, tab_scope};
 
-use super::checks::{shown_items, takes_focus};
-use super::{Code, Cx, item_words, node_words, place_of};
-
-/// A tree deeper than this is a cycle someone built by hand.
-const DEPTH: usize = 4096;
+use crate::cx::{Cx, DEPTH, at, item_words, node_words, shown_items, takes_focus, words};
 
 /// The items Tab stops at, in the order of the document.
 fn stops(cx: &Cx, item: ObjectId, depth: usize, out: &mut Vec<ObjectId>) {
@@ -28,21 +24,6 @@ fn stops(cx: &Cx, item: ObjectId, depth: usize, out: &mut Vec<ObjectId>) {
     for c in child_items(e, item) {
         stops(cx, c, depth + 1, out);
     }
-}
-
-/// An item as a message names it: by its node when it has one.
-fn words(cx: &Cx, item: ObjectId) -> String {
-    let tree = cx.scene.accessibility_tree();
-    match cx.scene.accessible_node(item).and_then(|k| tree.get(k)) {
-        Some(data) => node_words(data),
-        None => item_words(cx.engine, item),
-    }
-}
-
-fn at(cx: &Cx, item: ObjectId) -> String {
-    place_of(cx.engine, item)
-        .map(|p| format!(" ({p})"))
-        .unwrap_or_default()
 }
 
 /// The nearest item above `stop` that the tree shows and that takes the
@@ -90,12 +71,12 @@ fn round(
                          stop, {}{}; the stops after it cannot be left by keyboard",
                         words(cx, cur),
                         words(cx, next),
-                        at(cx, next),
+                        at(cx.engine, next),
                         words(cx, first),
-                        at(cx, first),
+                        at(cx.engine, first),
                     )
                 };
-                cx.report(Code::TabTrap, Some(cur), message);
+                cx.report("a11y-tab-trap", Some(cur), message);
                 return true;
             }
             Some(next) => {
@@ -123,7 +104,7 @@ fn scopes(cx: &Cx) -> Vec<ObjectId> {
 
 /// `a11y-tab-trap`, `a11y-tab-unreachable`, and `a11y-unnamed-interactive`
 /// for a stop that says nothing of itself.
-pub(super) fn walk(cx: &mut Cx) {
+pub(crate) fn check(cx: &mut Cx) {
     let Some(root) = cx.scene.root() else { return };
     let e = cx.engine;
     let mut expected = Vec::new();
@@ -154,7 +135,7 @@ pub(super) fn walk(cx: &mut Cx) {
                  sends Tab elsewhere (`KeyNavigation.tab`)",
                 words(cx, *stop)
             );
-            cx.report(Code::TabUnreachable, Some(*stop), message);
+            cx.report("a11y-tab-unreachable", Some(*stop), message);
         }
     }
 
@@ -183,7 +164,7 @@ pub(super) fn walk(cx: &mut Cx) {
              `Accessible.role` and `Accessible.name`",
             item_words(e, stop)
         );
-        cx.report(Code::UnnamedInteractive, Some(stop), message);
+        cx.report("a11y-unnamed-interactive", Some(stop), message);
     }
 
     // What says it takes the keyboard, and Tab does not get there. One of
@@ -221,7 +202,7 @@ pub(super) fn walk(cx: &mut Cx) {
     });
     for (item, words) in unreached {
         cx.report(
-            Code::TabUnreachable,
+            "a11y-tab-unreachable",
             Some(item),
             format!(
                 "{words} takes the keyboard (`Accessible.focusable`) and Tab never reaches it; \

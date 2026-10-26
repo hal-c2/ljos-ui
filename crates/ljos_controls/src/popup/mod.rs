@@ -462,6 +462,17 @@ pub(crate) fn is_shown(engine: &Engine, popup: ObjectId) -> bool {
     state_of(engine, popup).is_some_and(|s| s.shown.get())
 }
 
+/// The item that draws `popup`, for a tool that reads the scene (the
+/// design audit) and meets popups as items.
+pub fn popup_item(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
+    item_of(engine, popup)
+}
+
+/// The popup `item` draws, if it is a popup's item.
+pub fn item_popup(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+    popup_of(engine, item)
+}
+
 fn emit(engine: &Engine, popup: ObjectId, signal: &str) {
     if engine.is_alive(popup) {
         check(engine, signal, engine.emit_by_name(popup, signal, &[]));
