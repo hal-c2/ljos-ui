@@ -72,6 +72,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Close every closable popup or overlay on Escape. [focus-escape-dismiss]
 - Disable shortcuts for the window behind an open modal. [focus-shortcut-under-modal]
 - Ask before, or offer undo after, delete, remove, discard and clear. [focus-destructive-undo]
+- Give a tab bar, radio group or list one Tab stop and move inside it with arrows. [focus-arrow-keys]
 - Use arrows inside tabs, lists, radio groups and menus; one Tab stop each.
 - Show busy state after 1 s and progress after 10 s; offer undo for destructive actions.
 - Show what Enter does in a field; keep a visible way to reopen a collapsed panel.

@@ -15,13 +15,19 @@ mod tab;
 mod target_size;
 mod text_clipped;
 mod text_elided_hidden;
-// Colour, the second batch.
+// Colour, focus and motion, the second batch.
 mod color_accent_weight;
 mod color_nontext_contrast;
 mod color_semantic_hue;
 mod color_state_only;
 mod color_surface_merge;
 mod color_translucent_surface;
+mod focus_arrow_keys;
+mod focus_escape_dismiss;
+mod focus_indicator_missing;
+mod focus_order;
+mod focus_popup_stranded;
+mod focus_shortcut_under_modal;
 
 use crate::acting::Acting;
 use crate::cx::Cx;
@@ -201,7 +207,7 @@ pub(crate) const CHECKS: &[Check] = &[
         codes: &["text-line-length"],
         run: line_length::check,
     },
-    // Colour, the second batch.
+    // Colour, focus and motion, the second batch.
     Check {
         codes: &["color-nontext-contrast"],
         run: color_nontext_contrast::check,
@@ -213,6 +219,22 @@ pub(crate) const CHECKS: &[Check] = &[
     Check {
         codes: &["color-accent-weight"],
         run: color_accent_weight::check,
+    },
+    Check {
+        codes: &["focus-order"],
+        run: focus_order::check,
+    },
+    Check {
+        codes: &["focus-popup-stranded"],
+        run: focus_popup_stranded::check,
+    },
+    Check {
+        codes: &["focus-shortcut-under-modal"],
+        run: focus_shortcut_under_modal::check,
+    },
+    Check {
+        codes: &["focus-arrow-keys"],
+        run: focus_arrow_keys::check,
     },
 ];
 
@@ -231,6 +253,14 @@ pub(crate) const ACTS: &[Acting] = &[
     Acting {
         codes: &["color-surface-merge"],
         run: color_surface_merge::check,
+    },
+    Acting {
+        codes: &["focus-indicator-missing"],
+        run: focus_indicator_missing::check,
+    },
+    Acting {
+        codes: &["focus-escape-dismiss"],
+        run: focus_escape_dismiss::check,
     },
 ];
 

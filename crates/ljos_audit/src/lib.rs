@@ -24,6 +24,7 @@ mod acting;
 mod apply;
 mod cx;
 mod finding;
+mod focus_walk;
 mod matrix;
 mod pixels;
 pub mod rules;

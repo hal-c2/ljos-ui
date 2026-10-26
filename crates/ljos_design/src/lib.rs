@@ -600,6 +600,14 @@ pub const RULES: &[Rule] = &[
         "A button or menu item that deletes, removes or discards does it at once, with neither a confirmation nor an undo.",
         "Ask first in a dialog, or do it and offer `Undo` for a while.",
     ),
+    r(
+        "focus-arrow-keys",
+        Focus,
+        Hint,
+        Runtime,
+        "A list, grid, tab bar or radio group takes a Tab stop per item instead of one stop with the arrow keys inside it (WAI-ARIA composite widgets).",
+        "Make the group one Tab stop (`activeFocusOnTab: false` on its items) and move inside it with the arrow keys.",
+    ),
     // Motion.
     r(
         "motion-ease-in-enter",

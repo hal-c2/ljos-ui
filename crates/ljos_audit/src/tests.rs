@@ -37,10 +37,15 @@ fn mount(e: &Engine, source: &str) -> QuickScene {
     s
 }
 
+/// What the hand-made stops here leave out on purpose: they draw no
+/// focus, which `focus-indicator-missing` reports, and its own fixtures
+/// test.
+const BARE: [&str; 1] = ["focus-indicator-missing"];
+
 fn audit_with(source: &str, options: &Options) -> Report {
     let e = engine();
     let mut s = mount(&e, source);
-    let report = audit(&e, &mut s, Time::ZERO, options);
+    let report = audit(&e, &mut s, Time::ZERO, options).without(&BARE);
     let warnings = e.take_warnings();
     assert!(warnings.is_empty(), "{warnings:?}");
     report
@@ -535,7 +540,7 @@ fn the_audit_leaves_the_scene_as_it_was() {
     let mut s = mount(&e, &page(&stops("", "")));
     assert!(!s.accessibility_active());
     let focus = s.active_focus_item(&e);
-    let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    let report = audit(&e, &mut s, Time::ZERO, &Options::desktop()).without(&BARE);
     assert!(report.is_clean(), "\n{report}");
     assert!(!s.accessibility_active());
     assert_eq!(s.active_focus_item(&e), focus);
@@ -545,7 +550,11 @@ fn the_audit_leaves_the_scene_as_it_was() {
     s.set_accessibility_active(&e, true);
     s.frame(&e, Time::ZERO);
     let nodes = s.accessibility_tree().len();
-    assert!(audit(&e, &mut s, Time::ZERO, &Options::desktop()).is_clean());
+    assert!(
+        audit(&e, &mut s, Time::ZERO, &Options::desktop())
+            .without(&BARE)
+            .is_clean()
+    );
     assert!(s.accessibility_active());
     assert_eq!(s.accessibility_tree().len(), nodes);
 }
@@ -773,7 +782,9 @@ fn the_demo_of_the_shell_has_nothing_of_the_styles() {
                     | "a11y-unnamed-image"
                     | "a11y-icon-button-no-tooltip"
                     | "layout-menu-ungrouped"
-            ),
+            )
+                // The demo's button draws its own background, and no focus.
+                || (f.code == "focus-indicator-missing" && f.message.contains("Click me")),
             "the demo is missing names and nothing else:\n{report}"
         );
     }
@@ -949,7 +960,7 @@ Item {
 }
 "##,
     );
-    let report = audit(&e, &mut s, Time::ZERO, &Options::desktop());
+    let report = audit(&e, &mut s, Time::ZERO, &Options::desktop()).without(&BARE);
     assert!(report.is_clean(), "\n{report}");
     assert_eq!(report.unseen, ["QtQuick3D"]);
     assert!(

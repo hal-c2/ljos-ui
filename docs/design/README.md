@@ -96,7 +96,6 @@ Guidance below is in the pages, marked "not checked yet", with a proposed code f
 | Proposed code | Page | Guidance |
 |---|---|---|
 | `color-complement-adjacent` | color.md | Two complementary hues at full chroma touch, and vibrate. |
-| `focus-arrow-keys` | interaction.md | A composite widget (tabs, a radio group, a list) takes one Tab stop per item instead of arrows inside it. |
 | `focus-busy-feedback` | interaction.md | An action that takes more than a second shows no busy state. |
 | `motion-theme-switch` | motion.md | Colours animate while the theme switches. |
 
