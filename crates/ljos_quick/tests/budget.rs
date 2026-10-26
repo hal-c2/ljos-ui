@@ -5,7 +5,9 @@
 //!
 //! The counts are per thread (the allocator's and the lookups'), and every
 //! case warms the process-wide caches before it counts, so the numbers do
-//! not depend on which test ran first.
+//! not depend on which test ran first. The cases run one at a time: one
+//! filling a process-wide cache while another counts moved the other's
+//! census under load (B26: a binding or value more, now and then).
 
 mod common;
 
@@ -59,6 +61,14 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static COUNTING: Counting = Counting;
+
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Held for the whole case; a case that failed leaves it poisoned, which
+/// says nothing about the next one.
+fn alone() -> std::sync::MutexGuard<'static, ()> {
+    ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// The counts a test pins: what a step added.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +174,17 @@ Rectangle {
 
 /// An Item holding a Text, made by `Component.createObject` ten at a time.
 fn plain_items() -> (Budget, usize) {
+    let (e, mut s, root, _) = plain_scene();
+    let before = e.children(root).len();
+    let make = e.method_index(root, "make").unwrap();
+    let b = spent(&e, &mut s, 2000, || {
+        e.invoke(root, make, &[]).unwrap();
+    });
+    (b, e.children(root).len() - before)
+}
+
+/// The scene of [`plain_items`], warmed by a first ten, which are given.
+fn plain_scene() -> (Engine, QuickScene, ObjectId, Vec<ObjectId>) {
     let e = engine();
     let root = load(
         &e,
@@ -187,23 +208,66 @@ Item {
     let mut s = scene(&e, root, 400.0, 600.0);
     settle(&mut s, &e, 0);
     // Warm: the first instance links what every later one shares.
+    let before = e.children(root);
     e.invoke_by_name(root, "make", &[]).unwrap();
     settle(&mut s, &e, 1000);
-    let before = e.children(root).len();
-    let make = e.method_index(root, "make").unwrap();
-    let b = spent(&e, &mut s, 2000, || {
-        e.invoke(root, make, &[]).unwrap();
-    });
-    (b, e.children(root).len() - before)
+    let made = made_since(&e, root, &before);
+    (e, s, root, made)
+}
+
+fn made_since(e: &Engine, root: ObjectId, before: &[ObjectId]) -> Vec<ObjectId> {
+    let mut made = e.children(root);
+    made.retain(|c| !before.contains(c));
+    made
+}
+
+/// What ten instances of [`plain_items`] gave back when destroyed, and
+/// what destroying them allocated.
+#[derive(Debug, PartialEq, Eq)]
+struct Teardown {
+    objects: usize,
+    scopes: usize,
+    nodes: usize,
+    allocations: u64,
+}
+
+fn plain_teardown() -> Teardown {
+    let (e, mut s, root, warm) = plain_scene();
+    // The first ten destroyed warm what teardown keeps for the next.
+    for c in warm.iter().rev() {
+        e.destroy_now(*c);
+    }
+    settle(&mut s, &e, 2000);
+    let before = e.children(root);
+    e.invoke_by_name(root, "make", &[]).unwrap();
+    settle(&mut s, &e, 3000);
+    let made = made_since(&e, root, &before);
+    assert_eq!(made.len(), 10);
+    let a = now(&e);
+    for c in made.iter().rev() {
+        e.destroy_now(*c);
+    }
+    for i in 0..FRAMES {
+        s.frame(&e, Time::from_millis(4000 + i * 16));
+    }
+    let b = now(&e);
+    let nodes = |c: Census| c.values + c.bindings + c.effects;
+    Teardown {
+        objects: a.objects - b.objects,
+        scopes: a.graph.scopes - b.graph.scopes,
+        nodes: nodes(a.graph) - nodes(b.graph),
+        allocations: b.allocations - a.allocations,
+    }
 }
 
 #[test]
 fn ten_listview_delegates() {
+    let _alone = alone();
     let (b, made) = listview_delegates();
     assert_eq!(made, 10);
     // Per delegate: 3 objects (the Rectangle, the Text and what they hold
     // attached or grouped), 9 values, 6 bindings, 16 effects, 2 scopes,
-    // no member or type lookups, 150.7 allocations. What the component
+    // no member or type lookups, 143.7 allocations. What the component
     // writes and binds goes by index once its plan is linked, and its id
     // (`row`) is found by slot without being written down. The row plan
     // writes `index` on the delegate itself: no row object, and no
@@ -212,7 +276,10 @@ fn ten_listview_delegates() {
     // for, not grown as they come (two fewer), and its lines' items are
     // kept between measuring and painting (one more).
     // A one-line plain text is shaped without Parley's builder and the
-    // layout it makes (fifteen fewer).
+    // layout it makes (fifteen fewer). A binding is one allocation, the
+    // creator's closure inside the graph's box with the wrapper (seven
+    // fewer, B26), and a scope's node list is made the size the
+    // declaration's last one was.
     assert_eq!(
         b,
         Budget {
@@ -229,21 +296,23 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1507,
+            allocations: 1437,
         }
     );
 }
 
 #[test]
 fn ten_plain_items() {
+    let _alone = alone();
     let (b, made) = plain_items();
     assert_eq!(made, 10);
     // Per instance: 2 objects, 6 values, 2 bindings, 15 effects, 2 scopes,
     // 1 member lookup (the property `createObject` is given, by its name)
-    // and no type lookups, 101.3 allocations; the id (`item`) is found
+    // and no type lookups, 98.3 allocations; the id (`item`) is found
     // by slot. One of the ten grows what keeps a text's lines' items
     // between measuring and painting. A one-line plain text is laid out
-    // without Parley's builder (fifteen fewer over the ten).
+    // without Parley's builder (fifteen fewer over the ten), and B26 put
+    // each binding in one box (thirty fewer).
     assert_eq!(
         b,
         Budget {
@@ -260,7 +329,26 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1013,
+            allocations: 983,
+        }
+    );
+}
+
+#[test]
+fn ten_plain_items_torn_down() {
+    let _alone = alone();
+    // Every object, scope and node the ten made goes, each scope's nodes
+    // together; the scopes' node lists and the disposal's are kept for
+    // the next ones. 5.7 allocations an instance: the scene forgetting
+    // its items, the header list and a list edit of the holder. B26 took
+    // it from 13.7 by holding the walks over the dead inline.
+    assert_eq!(
+        plain_teardown(),
+        Teardown {
+            objects: 20,
+            scopes: 20,
+            nodes: 230,
+            allocations: 57,
         }
     );
 }
