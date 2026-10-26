@@ -364,8 +364,53 @@ mod b0 {
 
     use super::*;
 
+    /// The textures a GPU holds for a context: what each pass handed over,
+    /// coverage only, with what a pass frees gone before the next draws.
+    #[derive(Clone, Default)]
+    struct Gpu(Arc<std::sync::Mutex<GpuTextures>>);
+
+    #[derive(Default)]
+    struct GpuTextures {
+        /// Width and coverage of each texture.
+        held: std::collections::HashMap<TextureId, (usize, Vec<u8>)>,
+        freed: Vec<TextureId>,
+    }
+
+    fn gpu(ctx: &Context) -> Gpu {
+        ctx.data_mut(|d| d.get_temp_mut_or_default::<Gpu>(egui::Id::NULL).clone())
+    }
+
     fn pass(ctx: &Context, f: impl FnMut(&mut egui::Ui)) {
-        ctx.run_ui(Default::default(), f).textures_delta.clear();
+        let mut delta = ctx.run_ui(Default::default(), f).textures_delta;
+        let gpu = gpu(ctx);
+        let mut gpu = gpu.0.lock().unwrap();
+        // As egui-wgpu does: a texture freed by a frame is drawn by it, and
+        // gone by the next.
+        for id in std::mem::take(&mut gpu.freed) {
+            gpu.held.remove(&id);
+        }
+        for (id, deltas) in delta.set.drain() {
+            for d in deltas {
+                let egui::ImageData::Color(image) = &d.image;
+                let [w, h] = image.size;
+                match d.pos {
+                    None => {
+                        let alpha = image.pixels.iter().map(|p| p.a()).collect();
+                        gpu.held.insert(id, (w, alpha));
+                    }
+                    Some([x, y]) => {
+                        let (width, alpha) = gpu.held.get_mut(&id).expect("updated once made");
+                        for row in 0..h {
+                            for col in 0..w {
+                                alpha[(y + row) * *width + x + col] =
+                                    image.pixels[row * w + col].a();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        gpu.freed.extend(delta.free.drain());
     }
 
     fn encode(
@@ -396,44 +441,50 @@ mod b0 {
     }
 
     /// Draw B0's glyph quads the way a GPU would for upright text: every quad
-    /// copies a rectangle of the atlas, texel on pixel, inside its clip.
-    fn blit(shapes: &[ClippedShape], be: &EpaintBackend, w: u32, h: u32, scale: f32) -> RgbaImage {
-        let atlas = be.glyph_atlas();
-        let side = atlas.side as f32;
+    /// copies a rectangle of its mesh's texture as the GPU holds it, texel
+    /// on pixel, inside its clip. A mesh whose texture the GPU does not
+    /// hold draws nothing, as egui's painters do.
+    fn blit(shapes: &[ClippedShape], ctx: &Context, w: u32, h: u32, scale: f32) -> RgbaImage {
+        let gpu = gpu(ctx);
+        let gpu = gpu.0.lock().unwrap();
         let mut cover = vec![0u8; (w * h) as usize];
         for clipped in shapes {
             let Shape::Mesh(mesh) = &clipped.shape else {
                 panic!("glyphs are meshes")
             };
             assert_ne!(mesh.texture_id, TextureId::default(), "atlas texture");
+            let Some((width, alpha)) = gpu.held.get(&mesh.texture_id) else {
+                continue;
+            };
+            let (width, height) = (*width, alpha.len() / *width);
+            // Nearest texel, as a GPU samples; outside the texture is empty.
+            let texel = |u: f32, v: f32| {
+                let (x, y) = ((u * width as f32).floor(), (v * height as f32).floor());
+                if x < 0.0 || y < 0.0 || x as usize >= width || y as usize >= height {
+                    0
+                } else {
+                    alpha[y as usize * width + x as usize]
+                }
+            };
             let clip = clipped.clip_rect;
             for quad in mesh.vertices.as_chunks::<4>().0 {
                 let (tl, br) = (quad[0], quad[2]);
                 let px = |v: f32| (v * scale).round() as i64;
                 let (x0, y0, x1, y1) = (px(tl.pos.x), px(tl.pos.y), px(br.pos.x), px(br.pos.y));
-                let solid = tl.uv == br.uv;
-                let (u0, v0) = (
-                    (tl.uv.x * side).round() as i64,
-                    (tl.uv.y * side).round() as i64,
-                );
-                if !solid {
-                    // Texel on pixel: the quad is as large as its atlas slot.
-                    assert_eq!(((br.uv.x * side).round() as i64 - u0, x1 - x0).0, x1 - x0);
-                    assert_eq!((br.uv.y * side).round() as i64 - v0, y1 - y0);
-                }
                 for y in y0.max(0)..y1.min(i64::from(h)) {
                     for x in x0.max(0)..x1.min(i64::from(w)) {
                         let (cx, cy) = ((x as f32 + 0.5) / scale, (y as f32 + 0.5) / scale);
                         if !clip.contains(Pos2::new(cx, cy)) {
                             continue;
                         }
-                        let a = if solid {
-                            atlas.alpha
-                                [(tl.uv.y * side) as usize * atlas.side + (tl.uv.x * side) as usize]
-                        } else {
-                            atlas.alpha
-                                [(v0 + y - y0) as usize * atlas.side + (u0 + x - x0) as usize]
-                        };
+                        let (fx, fy) = (
+                            ((x - x0) as f32 + 0.5) / (x1 - x0) as f32,
+                            ((y - y0) as f32 + 0.5) / (y1 - y0) as f32,
+                        );
+                        let a = texel(
+                            tl.uv.x + (br.uv.x - tl.uv.x) * fx,
+                            tl.uv.y + (br.uv.y - tl.uv.y) * fy,
+                        );
                         let a = (u32::from(a) * u32::from(tl.color.a()) / 255) as u8;
                         let at = &mut cover[(y as u32 * w + x as u32) as usize];
                         *at = (*at).max(a);
@@ -494,7 +545,7 @@ mod b0 {
             let (shapes, stats) = frame(&mut s, &mut be, &ctx, scale);
             assert_eq!(stats.warnings, 0);
             assert_eq!(shapes.len(), 1, "one mesh for the run and its bar");
-            let img = blit(&shapes, &be, reference.width, reference.height, scale);
+            let img = blit(&shapes, &ctx, reference.width, reference.height, scale);
             let (max, mean) = difference(&img, &reference);
             // The atlas fills a glyph at one of four sub-pixel positions, so an
             // edge may sit an eighth of a pixel off: 32 of 255 on a sharp edge.
@@ -536,7 +587,7 @@ mod b0 {
         let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
         assert_eq!(stats.warnings, 0);
         assert_eq!(be.glyph_atlas().side, 512);
-        let img = blit(&shapes, &be, reference.width, reference.height, 1.0);
+        let img = blit(&shapes, &ctx, reference.width, reference.height, 1.0);
         let (max, mean) = difference(&img, &reference);
         assert!(max <= 40, "max {max}");
         assert!(mean < 2.0, "mean {mean}");
@@ -571,8 +622,8 @@ mod b0 {
                 let (again, _) = frame(&mut s, &mut fresh, &ctx, scale);
                 let (w, h) = ((200.0 * scale) as u32, (400.0 * scale) as u32);
                 let (a, b) = (
-                    blit(&moved, &be, w, h, scale),
-                    blit(&again, &fresh, w, h, scale),
+                    blit(&moved, &ctx, w, h, scale),
+                    blit(&again, &ctx, w, h, scale),
                 );
                 assert_eq!(difference(&a, &b).0, 0, "scale {scale}, y {y}");
                 assert!(total_ink(&a) > 0);
@@ -730,14 +781,14 @@ mod b0 {
         assert!(at_two > at_one);
         assert!(be.glyph_atlas().glyphs <= 12);
         let reference = s.render(2.0);
-        let img = blit(&shapes, &be, reference.width, reference.height, 2.0);
+        let img = blit(&shapes, &ctx, reference.width, reference.height, 2.0);
         assert!(difference(&img, &reference).0 <= 40);
 
         be.trim(MemoryPressure::Critical);
         assert_eq!(be.glyph_atlas().glyphs, 0);
         let (shapes, _) = frame(&mut s, &mut be, &ctx, 2.0);
         assert!(be.glyph_atlas().rasterised > at_two);
-        let img = blit(&shapes, &be, reference.width, reference.height, 2.0);
+        let img = blit(&shapes, &ctx, reference.width, reference.height, 2.0);
         assert!(difference(&img, &reference).0 <= 40);
     }
 
@@ -802,7 +853,7 @@ mod b0 {
         let mut fresh = EpaintBackend::new();
         let (shapes, stats) = frame(s, &mut fresh, ctx, 1.0);
         assert_eq!(stats.warnings, 0, "one line fits alone");
-        blit(&shapes, &fresh, 500, 200, 1.0)
+        blit(&shapes, &ctx, 500, 200, 1.0)
     }
 
     /// A run drawn without the glyphs a full atlas had no room for is not
@@ -813,13 +864,13 @@ mod b0 {
         let mut be = EpaintBackend::new();
         let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
         assert!(stats.warnings >= 1, "the atlas is full");
-        let crowded_img = blit(&shapes, &be, 500, 200, 1.0);
+        let crowded_img = blit(&shapes, &ctx, 500, 200, 1.0);
         assert_eq!(be.memory().glyph_runs_incomplete, 1);
 
         s.tree.set_content(upper, None);
         let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
         assert_eq!(stats.warnings, 0);
-        let img = blit(&shapes, &be, 500, 200, 1.0);
+        let img = blit(&shapes, &ctx, 500, 200, 1.0);
         let whole = drawn_fresh(&mut s, &ctx);
         assert!(
             ink_in(&crowded_img, 100, 200) < ink_in(&whole, 100, 200),
@@ -840,7 +891,7 @@ mod b0 {
         s.tree.set_content(upper, None);
         s.tree.set_pos(lower, 0.0, 87.0);
         let (shapes, _) = frame(&mut s, &mut be, &ctx, 1.0);
-        let img = blit(&shapes, &be, 500, 200, 1.0);
+        let img = blit(&shapes, &ctx, 500, 200, 1.0);
         let whole = drawn_fresh(&mut s, &ctx);
         assert!(total_ink(&whole) > 0);
         assert_eq!(difference(&img, &whole).0, 0);
@@ -875,11 +926,53 @@ mod b0 {
             assert_eq!(stats.warnings, 0);
             assert!(!stats.again);
             assert!(be.glyph_atlas().side > 256, "it grew");
-            let img = blit(&shapes, &be, 500, 200, 1.0);
+            let img = blit(&shapes, &ctx, 500, 200, 1.0);
             let (max, mean) = difference(&img, &reference);
             assert!(max <= 40, "max {max}");
             assert!(mean < 2.0, "mean {mean}");
             assert_eq!(be.memory().glyph_runs_incomplete, 0);
+        }
+    }
+
+    /// Runs first drawn in a frame whose atlas outgrows a texture the GPU
+    /// already holds are drawn from the texture that replaces it: a run met
+    /// after the growth is not kept as finished on the texture being freed,
+    /// though the atlas never filled.
+    #[test]
+    fn b0_draws_runs_met_after_the_atlas_grew_from_the_new_texture() {
+        let mut s = Scene::new(500.0, 300.0);
+        let rows = ["ABCDEFGHIJ", "abcdefghij", "KLMNOPQRST"]
+            .map(|text| (s.node(None, 0.0, 0.0, 500.0, 90.0), text));
+        for (i, (n, _)) in rows.iter().enumerate() {
+            s.tree.set_pos(*n, 0.0, 100.0 * i as f64);
+        }
+        let draw = |s: &mut Scene, (n, text): (NodeId, &str)| {
+            s.paint(n, |b| {
+                b.glyphs(
+                    Arc::new(run(text, 64.0, 0.0)),
+                    Vec2::new(4.0, 70.0),
+                    Rgba::BLACK,
+                    Decorations::default(),
+                );
+            });
+        };
+        draw(&mut s, rows[0]);
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        frame(&mut s, &mut be, &ctx, 1.0);
+        assert_eq!(be.glyph_atlas().side, 256, "one line fits the first page");
+
+        draw(&mut s, rows[1]);
+        draw(&mut s, rows[2]);
+        let reference = s.render(1.0);
+        for _ in 0..2 {
+            let (shapes, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+            assert_eq!(stats.warnings, 0, "the atlas never fills");
+            assert!(be.glyph_atlas().side > 256, "it grew");
+            let img = blit(&shapes, &ctx, 500, 300, 1.0);
+            let (max, mean) = difference(&img, &reference);
+            assert!(max <= 40, "max {max}");
+            assert!(mean < 2.0, "mean {mean}");
         }
     }
 }

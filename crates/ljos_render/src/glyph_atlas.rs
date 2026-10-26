@@ -187,7 +187,7 @@ impl GlyphAtlas {
         self.rasterised
     }
 
-    /// The texture, once [`Self::upload`] has run.
+    /// The texture, once [`Self::upload`] has run and until the atlas grows.
     pub(crate) fn texture_id(&self) -> Option<TextureId> {
         self.texture.as_ref().map(TextureHandle::id)
     }
@@ -266,6 +266,11 @@ impl GlyphAtlas {
         // Normalised texture coordinates depend on the side.
         self.generation += 1;
         self.dirty = vec![[0, 0, side, side]];
+        // The texture of the old side is replaced, and freed, by the next
+        // upload. Without it no mesh is made, at the new generation, on a
+        // texture that is going away: such a mesh would count as finished and
+        // draw nothing until its node changed.
+        self.texture = None;
         true
     }
 
