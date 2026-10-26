@@ -357,7 +357,6 @@ Feature: A value a binding gives a property of another type
     Then the property "seen" of "root" is "string:a,string:2,string:0,string:,string:,string:true 6 3 string 1 1,2,NaN 1,2,0 1"
 
   # Bucket result:none/none:call(number-plus-string).
-  @backlog
   Scenario: An int parameter of a function drops what is after the point
     Given the QML:
       """qml
@@ -369,6 +368,38 @@ Feature: A value a binding gives a property of another type
       }
       """
     Then the property "seen" of "root" is "1 -1"
+
+  Scenario Outline: A <type> parameter of a function given <given> reads <seen>
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        function read(first: int, v: <type>): string { return typeof v + ":" + v }
+        property string seen: read(<given>)
+      }
+      """
+    Then the property "seen" of "root" is "<seen>"
+
+    Examples:
+      | type   | given        | seen               |
+      | int    | 0, "3"       | number:3           |
+      | int    | 0, "x"       | number:0           |
+      | int    | 0, null      | number:0           |
+      | int    | 0, 3e9       | number:-1294967296 |
+      | int    | 0, true      | number:1           |
+      | int    | 0            | number:0           |
+      | real   | 0, "2"       | number:2           |
+      | real   | 0, undefined | number:NaN         |
+      | real   | 0, null      | number:0           |
+      | double | 0, "x"       | number:NaN         |
+      | string | 0, 5         | string:5           |
+      | string | 0, undefined | string:undefined   |
+      | string | 0, null      | string:null        |
+      | bool   | 0, 0         | boolean:false      |
+      | bool   | 0, "x"       | boolean:true       |
+      | bool   | 0            | boolean:false      |
+      | var    | 0, "2"       | string:2           |
 
   # Buckets value:string:pair and value:string:ref.
   Scenario: A string given a list of numbers is made of those character codes

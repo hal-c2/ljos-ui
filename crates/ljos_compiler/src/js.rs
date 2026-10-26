@@ -260,6 +260,25 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
             .iter()
             .filter_map(|param| param.pattern.get_identifier_name().map(|n| n.to_string()))
             .collect();
+        if let Some(body) = &function.body {
+            let coerced: String = function
+                .params
+                .items
+                .iter()
+                .filter_map(|param| {
+                    let name = param.pattern.get_identifier_name()?;
+                    let ty = param.type_annotation.as_ref()?.type_annotation.span();
+                    coercion(&wrapped[ty.start as usize..ty.end as usize], &name)
+                })
+                .collect();
+            if !coerced.is_empty() {
+                let at = body.span.start + 1;
+                analysis.edits.push(Edit {
+                    span: Span::new(at, at),
+                    text: coerced,
+                });
+            }
+        }
         let plain = !function.r#async
             && !function.generator
             && function.type_parameters.is_none()
@@ -290,6 +309,22 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
     }
     analysis.edits.sort_by_key(|edit| edit.span.start);
     Ok(analysis)
+}
+
+/// What a method makes of what it is given for a parameter of a type a
+/// script's value is one of: as qml6 does, a number as `Number()` does, an
+/// int that cut to 32 bits, a string as `String()` does, and a bool as
+/// `Boolean()` does. Each is made so before the body runs, a missing
+/// argument being made of `undefined`.
+fn coercion(ty: &str, name: &str) -> Option<String> {
+    let made = match ty.trim() {
+        "real" | "double" => format!("Number({name})"),
+        "int" => format!("Number({name}) | 0"),
+        "string" => format!("String({name})"),
+        "bool" => format!("!!{name}"),
+        _ => return None,
+    };
+    Some(format!(" {name} = {made};"))
 }
 
 /// The scope of the function the wrapper is, whose parameters are the
@@ -985,13 +1020,14 @@ mod tests {
 
     #[test]
     fn typescript_is_stripped() {
-        let text = "function f(a: int, b: string): bool { return (a as any)! + <int>b }";
+        let text = "function f(a: int, b: string, c: Item): bool { return (a as any)! + <int>b }";
         let analysis = analyze(text, Form::Function, &[]).unwrap();
+        // The parameters of types a script's value is one of are made so.
         assert_eq!(
             apply(text, &analysis.edits),
-            "function f(a, b) { return (a) + b }"
+            "function f(a, b, c) { a = Number(a) | 0; b = String(b); return (a) + b }"
         );
-        assert_eq!(analysis.function_params, ["a", "b"]);
+        assert_eq!(analysis.function_params, ["a", "b", "c"]);
     }
 
     #[test]
