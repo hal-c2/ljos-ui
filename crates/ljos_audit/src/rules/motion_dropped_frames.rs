@@ -15,7 +15,7 @@ use ljos_design::limits::motion::FRAME_BUDGET_MS;
 use ljos_engine::ObjectId;
 
 use crate::acting::Act;
-use crate::motion_watch::{anim_words, frames_for, no_probe, own, reopen_popups, with_motion};
+use crate::motion_watch::{anim_words, frames_for, no_probe, own, reopened, with_motion};
 
 /// How long what runs at rest is timed for, on the scene's clock.
 const RESTING_MS: u32 = 500;
@@ -54,11 +54,11 @@ pub(crate) fn check(act: &mut Act) {
             found.push((anim, "while it runs".into(), ms));
         }
     }
-    for r in reopen_popups(act) {
+    for r in reopened(act).iter() {
         let Some(anim) = r.enter.own_runs(e).next().map(|run| run.anim) else {
             continue;
         };
-        if let Some(ms) = median(r.enter.work_ms) {
+        if let Some(ms) = median(r.enter.work_ms.clone()) {
             let words = crate::cx::words(&act.cx(), r.popup);
             found.push((anim, format!("opening {words}"), ms));
         }

@@ -10,6 +10,7 @@
 //! clock, and only for `motion-dropped-frames`.
 
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use ljos_design::limits::audit::ANIMATION_WAIT_MS;
@@ -212,10 +213,24 @@ pub(crate) struct Reopened {
 /// What [`Reopened::enter`] reads, in order.
 pub(crate) const ENTER_PROBES: [&str; 4] = ["opacity", "scale", "x", "y"];
 
+/// Each open popup the application declared, closed and opened again
+/// with motion unreduced, both ways followed: done by the first rule that
+/// asks, and shared with the others, so that a popup's transitions run
+/// once an audit and not once a rule. The scene is as it was after the
+/// first time, so a second would see the same.
+pub(crate) fn reopened(act: &mut Act) -> Rc<Vec<Reopened>> {
+    if let Some(seen) = &act.reopened {
+        return Rc::clone(seen);
+    }
+    let seen = Rc::new(reopen_popups(act));
+    act.reopened = Some(Rc::clone(&seen));
+    seen
+}
+
 /// Closes each open popup the application declared and opens it again,
 /// with motion as the system has it unreduced, following both ways. Focus
 /// is put back afterwards.
-pub(crate) fn reopen_popups(act: &mut Act) -> Vec<Reopened> {
+fn reopen_popups(act: &mut Act) -> Vec<Reopened> {
     act.rest();
     let e = act.engine;
     let popups: Vec<(ObjectId, ObjectId)> = {

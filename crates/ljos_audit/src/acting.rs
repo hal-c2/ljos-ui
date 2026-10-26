@@ -33,6 +33,10 @@ pub(crate) struct Act<'a> {
     /// The scene's clock as the audit has moved it; only ever forwards.
     pub now: Time,
     pub out: Vec<Finding>,
+    /// Each open popup closed and opened again, once an audit: the rules
+    /// that read a popup's ways out and in share what was seen
+    /// ([`crate::motion_watch::reopened`]).
+    pub reopened: Option<std::rc::Rc<Vec<crate::motion_watch::Reopened>>>,
 }
 
 /// An acting check: the rules it reports and what runs it.
@@ -170,6 +174,7 @@ pub(crate) fn run(
         options,
         now,
         out: Vec::new(),
+        reopened: None,
     };
     for check in crate::rules::ACTS {
         if check.codes.iter().any(|c| options.wants(c)) {

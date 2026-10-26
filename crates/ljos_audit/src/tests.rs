@@ -1108,6 +1108,31 @@ fn a_binding_on_focus_outlives_the_audit() {
     }
 }
 
+/// The rules that time a popup's ways out and in share one closing and
+/// opening of it.
+#[test]
+fn an_audit_opens_each_popup_again_once() {
+    let e = engine();
+    let mut s = mount(
+        &e,
+        &page(
+            "    property int opens: 0\n    \
+             Popup {\n        x: 20; y: 20; width: 200; height: 100; visible: true\n        \
+             onOpened: root.opens += 1\n        \
+             enter: Transition { NumberAnimation { property: \"opacity\"; from: 0; to: 1; duration: 100 } }\n    \
+             }",
+        ),
+    );
+    let root = s.root().unwrap();
+    let opens = || e.read_by_name(root, "opens").to_number();
+    let options = Options::desktop().only(&["motion"]).unwrap();
+    audit(&e, &mut s, Time::ZERO, &options);
+    let first = opens();
+    assert!(first >= 1.0, "the popup opened when the scene began");
+    audit(&e, &mut s, Time::ZERO, &options);
+    assert_eq!(opens() - first, 1.0, "one audit opens the popup once more");
+}
+
 /// A node of an item's that draws nothing is passed by, and its fill is
 /// found on the next.
 #[test]

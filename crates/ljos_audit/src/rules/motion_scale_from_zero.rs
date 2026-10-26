@@ -11,7 +11,7 @@
 use ljos_design::limits::motion::{ENTER_SCALE_MIN, ENTER_SCALE_RECOMMENDED};
 
 use crate::acting::Act;
-use crate::motion_watch::{ENTER_PROBES, anim_words, reopen_popups};
+use crate::motion_watch::{ENTER_PROBES, anim_words, reopened};
 
 pub(crate) fn check(act: &mut Act) {
     let e = act.engine;
@@ -20,7 +20,7 @@ pub(crate) fn check(act: &mut Act) {
         .position(|p| *p == "scale")
         .expect("scale is read");
     let mut found = Vec::new();
-    for r in reopen_popups(act) {
+    for r in reopened(act).iter() {
         let Some(anim) = r.enter.own_runs(e).next().map(|run| run.anim) else {
             continue;
         };

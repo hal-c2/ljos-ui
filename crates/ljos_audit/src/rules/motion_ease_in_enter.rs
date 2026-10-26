@@ -14,7 +14,7 @@
 use ljos_design::limits::motion::EASE_IN_HALFWAY_MAX;
 
 use crate::acting::Act;
-use crate::motion_watch::{ENTER_PROBES, Watched, anim_words, period_ms, reopen_popups};
+use crate::motion_watch::{ENTER_PROBES, Watched, anim_words, period_ms, reopened};
 
 /// How far along `d` the probe is at half the time it took, with what it
 /// changed by, or `None` when it did not change or took too few frames to
@@ -60,7 +60,7 @@ pub(crate) fn halfway(w: &Watched, d: usize) -> Option<(f64, f64)> {
 pub(crate) fn check(act: &mut Act) {
     let e = act.engine;
     let mut found = Vec::new();
-    for r in reopen_popups(act) {
+    for r in reopened(act).iter() {
         let Some(anim) = r.enter.own_runs(e).next().map(|run| run.anim) else {
             continue;
         };
