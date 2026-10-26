@@ -88,6 +88,18 @@ pub enum TypeTag {
 }
 
 impl TypeTag {
+    /// What `v`, held as a variant (a `Binding`'s `value`, a state's plain
+    /// value), gives a property of this type before it converts as an
+    /// assignment does: a number given an `int` is rounded rather than
+    /// truncated (qml6). `None` for what gives nothing, so that the
+    /// property keeps what it has: NaN given an `int`.
+    pub fn from_variant(&self, v: Value) -> Option<Value> {
+        match v {
+            Value::Real(n) if *self == TypeTag::Int => variant_to_int(n).map(Value::Int),
+            v => Some(v),
+        }
+    }
+
     /// The name as QML writes it and the type dump records it.
     pub fn name(&self) -> String {
         match self {
@@ -573,6 +585,14 @@ impl std::fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
+/// What a number held as a variant gives an `int`, as qml6 converts one:
+/// rounded half away from 0, past the range of a 64-bit int the nearest
+/// one, and cut to its low 32 bits. NaN gives nothing.
+fn variant_to_int(n: f64) -> Option<i32> {
+    // `as` saturates a double past i64's range, and then wraps to i32.
+    (!n.is_nan()).then(|| n.round() as i64 as i32)
+}
+
 /// What an `int` makes of a text, as Qt does: a decimal number, rounded
 /// half away from 0, and past the range of an int the least one, as a
 /// double cast to one is. `nan` and `inf`, signed or not, are such
@@ -959,6 +979,28 @@ impl QmlValue for () {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_variant_number_gives_an_int_as_qml6_does() {
+        for (n, int) in [
+            (0.5, Some(1)),
+            (-0.5, Some(-1)),
+            (2.5, Some(3)),
+            (0.49999999999999994, Some(0)),
+            (2147483647.5, Some(i32::MIN)),
+            (-2147483648.5, Some(i32::MAX)),
+            (4294967296.5, Some(1)),
+            (1e10, Some(1410065408)),
+            (9.2e18, Some(-1650982912)),
+            (9.3e18, Some(-1)),
+            (f64::INFINITY, Some(-1)),
+            (-9.3e18, Some(0)),
+            (f64::NEG_INFINITY, Some(0)),
+            (f64::NAN, None),
+        ] {
+            assert_eq!(variant_to_int(n), int, "{n}");
+        }
+    }
 
     #[test]
     fn coercions() {

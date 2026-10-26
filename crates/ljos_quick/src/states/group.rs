@@ -1141,13 +1141,14 @@ impl Group {
                 ForeignValue::Value(Value::Undefined) => {
                     OverrideContent::Binding(Box::new(|_| Value::Undefined))
                 }
-                ForeignValue::Value(v) => match given_as(engine, &at, &ty, Some(v)) {
+                // A plain value, and one worked out once, is a variant.
+                ForeignValue::Value(v) => match given_as(engine, &at, &ty, ty.from_variant(v)) {
                     Some(v) => OverrideContent::Value(v),
                     None => continue,
                 },
                 ForeignValue::Binding(f) if explicit => {
                     let v = engine.untrack(|| f(engine, &asked(&ty)));
-                    match given_as(engine, &at, &ty, v) {
+                    match given_as(engine, &at, &ty, v.and_then(|v| ty.from_variant(v))) {
                         Some(v) => OverrideContent::Value(v),
                         None => continue,
                     }

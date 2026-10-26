@@ -167,9 +167,7 @@ fn sync(engine: &Engine, me: ObjectId) {
         },
         _ => None,
     };
-    let given = engine
-        .with::<Binding, _>(me, |b| b.given)
-        .unwrap_or(false);
+    let given = engine.with::<Binding, _>(me, |b| b.given).unwrap_or(false);
     let want = aim.filter(|_| given && read(Binding::WHEN.index).to_boolean());
     let has = held(engine, me);
     if has.map(|(t, p, _)| (t, p)) == want {
@@ -185,7 +183,8 @@ fn sync(engine: &Engine, me: ObjectId) {
                 let _ = init_item(engine, t);
             }
             // Taking the property is never delayed, only a later value.
-            let v = read(Binding::VALUE.index);
+            let v = as_variant(engine, t, p, read(Binding::VALUE.index))
+                .unwrap_or_else(|| engine.untrack(|| engine.read(t, p)));
             now = engine
                 .push_override(t, p, OverrideContent::Value(v))
                 .ok()
@@ -370,5 +369,19 @@ fn write(engine: &Engine, me: ObjectId) {
         return;
     };
     let v = engine.untrack(|| engine.read(me, Binding::VALUE.index));
-    let _ = engine.write_internal(t, p, v, WriteKind::Override(id));
+    if let Some(v) = as_variant(engine, t, p, v) {
+        let _ = engine.write_internal(t, p, v, WriteKind::Override(id));
+    }
+}
+
+/// What `value`, a variant, gives the property: a number given an int is
+/// rounded rather than truncated, and NaN gives nothing (qml6).
+fn as_variant(engine: &Engine, t: ObjectId, p: PropIndex, v: Value) -> Option<Value> {
+    match engine
+        .meta_of(t)
+        .and_then(|m| m.property(p).map(|p| p.ty.clone()))
+    {
+        Some(ty) => ty.from_variant(v),
+        None => Some(v),
+    }
 }
