@@ -168,6 +168,10 @@ pub(crate) fn check(cx: &mut Cx) {
         }
     }
     for stop in silent {
+        // An ignored stop has a rule of its own.
+        if cx.options.wants("a11y-ignored-focusable") && crate::cx::ignored(e, stop) {
+            continue;
+        }
         let message = format!(
             "Tab stops at {}, which tells an assistive technology nothing; set \
              `Accessible.role` and `Accessible.name`",

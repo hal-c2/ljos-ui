@@ -244,6 +244,8 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the accessibility tree has no "role" named "name"` | |
 | `Then the design audit finds nothing` | the design audit has no finding of any severity: the report of the last `When the design audit runs at …`, else an audit of the window as it is (`@ljos-only`) |
 | `Then the design audit reports "code" on the "role" named "name"` | the report has a finding of that `ljos_design` rule about that accessibility node (`"layout-offscreen"` on the `"button"` named `"Save"`); same report as above (`@ljos-only`) |
+| `Then the design audit reports "code" at line 8` | the report has a finding of that rule about the item the QML declares at that line, for what has no accessibility node to name it by; same report as above (`@ljos-only`) |
+| `Then the design audit does not report "code"` | the report has no finding of that rule, of any severity; same report as above (`@ljos-only`) |
 | `Then the object "o" is exposed as a "role" named "name"` | the node whose `objectName` is `o` |
 | `Then the "role" named "name" is described as "text"` | its accessible description; `""` when it has none |
 | `Then the "role" named "name" has the value "text"` | what the node holds besides its name: the text of an editor; `""` when it has none |

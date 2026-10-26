@@ -141,7 +141,9 @@ pub(crate) fn check(cx: &mut Cx) {
         if item.is_some_and(|i| is_a::<ljos_controls::Page>(cx.engine, i)) {
             continue;
         }
-        if acted_on(data) && !has_name(data) {
+        // An icon button with no name has a rule of its own.
+        if acted_on(data) && !has_name(data) && !super::icon_buttons::unnamed_icon_button(cx, item)
+        {
             cx.report(
                 "a11y-unnamed-interactive",
                 item,
