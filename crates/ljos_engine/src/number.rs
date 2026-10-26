@@ -63,6 +63,19 @@ pub fn number_to_string(x: f64) -> String {
 fn even_on_a_tie(x: f64, digits: String) -> String {
     let k = digits.len();
     // One digit more, rounded: halfway ends in 5 there, which most never do.
+    // It is looked at on the stack first, so that every other number, an
+    // index joined into a delegate's text among them, allocates nothing here.
+    let mut buf = [0u8; 40];
+    let mut w = &mut buf[..];
+    if std::io::Write::write_fmt(&mut w, format_args!("{x:.k$e}")).is_err() {
+        return digits;
+    }
+    let left = w.len();
+    let len = buf.len() - left;
+    let e_at = buf[..len].iter().position(|&b| b == b'e').unwrap_or(len);
+    if e_at == 0 || buf[e_at - 1] != b'5' {
+        return digits;
+    }
     let longer = format!("{x:.k$e}");
     let longer: String = longer
         .split_once('e')
