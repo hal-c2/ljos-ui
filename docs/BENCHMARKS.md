@@ -6080,3 +6080,66 @@ DECISIONs:
 - A wrapped text that turns out wider than its width is shaped twice: directly, then by
   Parley. Its width is only known once it is shaped. Delegates' texts fit, so the common
   case shapes once.
+
+### B26 (H2): per-instance graph scopes, teardown and one box per binding (2026-10-26)
+
+B26 targeted the ~18 k of graph disposal and the binding setup measured in B25. It made
+four changes:
+
+- A disposed node moves out only its kind and its value: those are the parts that can run
+  user code when dropped. Before, the whole 208-byte node was kept, and moved three times,
+  until the batch dropped.
+- A binding is one allocation. The creator's closure goes by value into the graph's box,
+  next to a wrapper state that is not generic (`Wrapped`). Before, the closure was boxed,
+  and that box was boxed again by the wrapper.
+- An object's scope is made the size its declaration's last scope reached once complete.
+- The teardown walks keep a delegate's handful of objects in inline arrays: `destroy_now`,
+  `tell_destroyed`, `forget_in_lists` and `tell_destruction_of`.
+
+**Budgets, pinned exactly in `budget.rs`** (ten instances; per instance in brackets). The
+"before" figures are main's, after the text commits:
+
+| | Before | B26 |
+|---|---:|---:|
+| ListView delegate, heap allocations | 1657 (165.7) | 1587 (158.7) |
+| `createObject` item, heap allocations | 1028 (102.8) | 998 (99.8) |
+| Ten `createObject` items destroyed (new pin), heap allocations | 137 (13.7) | 57 (5.7) |
+
+The census (objects, values, bindings, effects, scopes) and the lookups are unchanged.
+
+| listview under callgrind (main thread, 20 s after 40 s), per delegate | Before B26 | B26 |
+|---|---:|---:|
+| Total ÷ text layouts | 406.0 k (pre-rebase base) | 388.0 k, 380.6 k (on accaace0) |
+| `destroy_now`, inclusive | 25.9 k | 23.8 k |
+| `dispose_together`, inclusive | 16.6 k | 15.6 k |
+| `install_binding`, inclusive | 8.1 k | 7.6 k |
+
+B26's own share is about 3.6 k per delegate. These were the same-base runs before the
+rebase: 406.0 k before and 404.6 k after the first round, without the inline walks. Most of
+the drop in the total comes from main's text work, which landed in between. qml6's figure
+is still ~200 k on its main thread.
+
+| Scroll, M instructions/s (`scr.sh`, back to back) | Ljós | qml6 (same run) | Ljós, B25 |
+|---|---:|---:|---:|
+| `lvstill.qml` (in-buffer) | 19.07 | 15.24 | 19.47 |
+| listview | 197.96 | 103.00 | 203.81 |
+| listview with `reuseItems: true` | 80.27 | 60.50 | 87.22 |
+
+DECISIONs:
+
+- No single scope shared by all of an instance's objects. Scope bookkeeping is under 1 k
+  per delegate: `dispose_scope_inner`'s own overhead is ~0.7 k and the edge unlinking
+  ~0.3 k. Destroying, reparenting or freezing one object on its own needs per-object
+  membership, and disposal was already batched per scope. The cost was in freeing node
+  closures and moving nodes, which is what B26 cuts.
+- A scope's node list is sized from the plan, using the most nodes an object of that
+  declaration held once complete. Nodes the view adds afterwards (parent, position, scene
+  effects) still grow a list once on the first rows. A scrolling view takes recycled lists
+  from the graph's pool, so steady scrolling allocates none.
+- No teardown order a QML program can observe changed: within a batch, nodes still drop
+  newest first, kind before value. So no scenario was added. The teardown, destruction,
+  loader-lifetime, incubation, reuse and binding-creation feature files pass unchanged.
+- The budget cases now run one at a time behind a lock. Allocations were already counted
+  per thread. Under load, though, one case filling a process-wide cache while another was
+  counting now and then gave the second case a binding or a value more. Run alone, the
+  case passed 40 of 40 under the same load.
