@@ -240,8 +240,7 @@ impl Pane {
         })?;
         e.bind_initial(obj, Control::IMPLICIT_CONTENT_HEIGHT.index, move |e| {
             Value::Real(num(e, obj, Pane::CONTENT_HEIGHT.index))
-        })?;
-        crate::a11y::pane_defaults(e, obj)
+        })
     }
 }
 

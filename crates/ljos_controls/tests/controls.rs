@@ -316,6 +316,55 @@ fn the_default_role_is_on_the_attached_object_and_the_author_can_replace_it() {
     );
 }
 
+/// A control's `Accessible` object is made when something first asks for
+/// it, with its defaults: here a screen reader that connects after the
+/// window is up, which finds the whole tree.
+#[test]
+fn a_control_has_its_accessible_object_once_something_asks() {
+    use ljos_a11y::accesskit::Role as AkRole;
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+import QtQuick.Controls.Basic
+Item { width: 200; height: 100; Button { objectName: "go"; text: "&Go" } }"#,
+    );
+    let go = find(&e, root, "go");
+    let attacher = MetaRef::Static(Accessible::static_meta());
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    assert!(e.existing_attached_object(go, &attacher).is_none());
+    s.set_accessibility_active(&e, true);
+    s.frame(&e, Time::ZERO);
+    assert!(s.accessibility_tree().find(AkRole::Button, "Go").is_some());
+    assert!(e.existing_attached_object(go, &attacher).is_some());
+}
+
+/// QML that reads a control's `Accessible` object makes it, and reads
+/// the defaults of the control's type.
+#[test]
+fn qml_reads_the_default_role_of_a_control() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    property int role: box.Accessible.role
+    property string name: box.Accessible.name
+    CheckBox { id: box; text: "Check" }
+}"#,
+    );
+    assert_eq!(
+        e.read_by_name(root, "role"),
+        Value::Int(Role::CheckBox.qt_value())
+    );
+    assert_eq!(
+        e.read_by_name(root, "name").to_js_string().as_str(),
+        "Check"
+    );
+}
+
 #[test]
 fn destroying_a_pressed_button_leaves_nothing_behind() {
     let e = engine();

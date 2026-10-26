@@ -20,7 +20,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use ljos_a11y::{NodeData, Range, Role};
+use ljos_a11y::{NodeData, Range};
 use ljos_engine::{
     Cx, Engine, EngineError, MetaRef, ObjectId, OverrideContent, OverrideId, PropIndex, QmlObject,
     QmlType, RestoreMode, Value, WriteKind, qml_impl,
@@ -215,7 +215,7 @@ impl Dial {
                 }
             })?;
         }
-        crate::a11y::defaults(e, obj, Role::Dial, None)
+        Ok(())
     }
 
     /// One step towards `to`. Not a move by the user, and not snapped.

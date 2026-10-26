@@ -81,8 +81,7 @@ impl Label {
             ])),
         )?;
         inherit::attach(e, obj, Kind::Label, false)?;
-        crate::focus::link_policy(e, obj, Label::FOCUS_POLICY.index, false)?;
-        crate::a11y::label_defaults(e, obj)
+        crate::focus::link_policy(e, obj, Label::FOCUS_POLICY.index, false)
     }
 }
 

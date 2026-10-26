@@ -8,7 +8,7 @@
 //! indeterminate bar's sweep) is the style's, in QML, and runs only while
 //! it is shown.
 
-use ljos_a11y::{NodeData, Range, Role};
+use ljos_a11y::{NodeData, Range};
 use ljos_engine::{
     Cx, Engine, EngineError, MetaRef, ObjectId, QmlObject, QmlType, Value, qml_impl,
 };
@@ -95,7 +95,7 @@ impl ProgressBar {
                 p
             })
         })?;
-        crate::a11y::defaults(e, obj, Role::ProgressBar, None)
+        Ok(())
     }
 }
 
@@ -115,14 +115,6 @@ impl Default for BusyIndicator {
             control: Control::default(),
             running: true,
         }
-    }
-}
-
-#[qml_impl]
-impl BusyIndicator {
-    #[qml(on_complete)]
-    fn completed(cx: &Cx) -> Result<(), EngineError> {
-        crate::a11y::defaults(cx.engine, cx.this, Role::Indicator, None)
     }
 }
 
@@ -165,7 +157,7 @@ impl ToolSeparator {
         e.bind_initial(obj, ToolSeparator::VERTICAL.index, move |e| {
             Value::Bool(!along(e))
         })?;
-        crate::a11y::defaults(e, obj, Role::Separator, None)
+        Ok(())
     }
 }
 

@@ -675,7 +675,7 @@ impl MonthGrid {
                 }
             })?;
         }
-        crate::a11y::defaults(e, obj, ljos_a11y::Role::Table, None)
+        Ok(())
     }
 }
 
@@ -700,8 +700,7 @@ impl DayOfWeekRow {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, obj) = (cx.engine, cx.this);
-        start(e, obj, Kind::Days)?;
-        crate::a11y::defaults(e, obj, ljos_a11y::Role::Row, None)
+        start(e, obj, Kind::Days)
     }
 }
 
@@ -751,8 +750,7 @@ impl WeekNumberColumn {
             WeekNumberColumn::MONTH.index,
             WeekNumberColumn::YEAR.index,
         );
-        start(e, obj, Kind::Weeks)?;
-        crate::a11y::defaults(e, obj, ljos_a11y::Role::Column, None)
+        start(e, obj, Kind::Weeks)
     }
 }
 

@@ -1468,12 +1468,7 @@ fn init_combo(engine: &Engine, combo: ObjectId) -> Result<(), EngineError> {
             }
         })?;
     }
-    crate::a11y::defaults(
-        engine,
-        combo,
-        Role::ComboBox,
-        Some(ComboBox::DISPLAY_TEXT.index),
-    )
+    Ok(())
 }
 
 // ---------------------------------------------------------------- input

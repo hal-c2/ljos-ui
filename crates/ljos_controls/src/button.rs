@@ -425,10 +425,7 @@ fn init_button(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     if is_a::<Switch>(engine, obj) {
         init_switch(engine, obj)?;
     }
-    if let Some(role) = crate::value_controls::button_role(engine, obj) {
-        return crate::a11y::defaults(engine, obj, role, Some(AbstractButton::TEXT.index));
-    }
-    crate::a11y::button_defaults(engine, obj)
+    Ok(())
 }
 
 /// `checked` changed, by whatever means: a group, or the buttons beside

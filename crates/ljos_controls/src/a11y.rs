@@ -15,11 +15,28 @@ use ljos_a11y::accesskit::Toggled;
 use ljos_a11y::{NodeData, Role};
 use ljos_engine::{Atom, Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlType, Value};
 use ljos_quick::{
-    Accessible, AccessibleAction, AccessibleAttached, AccessibleItem, register_accessible_item,
+    Accessible, AccessibleAction, AccessibleAttached, AccessibleDefaults, AccessibleItem,
+    register_accessible_defaults, register_accessible_item,
 };
 
+use crate::bars::{BusyIndicator, ProgressBar, ToolSeparator};
 use crate::button::{AbstractButton, Button, CheckBox, RadioButton, Switch};
+use crate::calendar::{DayOfWeekRow, MonthGrid, WeekNumberColumn};
+use crate::combobox::ComboBox;
 use crate::containers::{Frame, GroupBox, Page, Pane, ToolBar};
+use crate::dial::Dial;
+use crate::label::Label;
+use crate::menu::MenuSeparator;
+use crate::menu_bar::MenuBar;
+use crate::page_indicator::PageIndicator;
+use crate::scroll_bar::{ScrollBar, ScrollIndicator};
+use crate::slider::{RangeSlider, Slider};
+use crate::spin_box::{DoubleSpinBox, SpinBox};
+use crate::swipe_view::SwipeView;
+use crate::tab_bar::{TabBar, TabButton};
+use crate::text_area::TextArea;
+use crate::text_field::TextField;
+use crate::tumbler::Tumbler;
 use crate::util::{bind_default, flag, is_a, is_unset, spoken_without_mnemonic};
 
 /// `Qt.PartiallyChecked`.
@@ -83,6 +100,15 @@ pub(crate) fn button_defaults(engine: &Engine, obj: ObjectId) -> Result<(), Engi
             Value::String(text)
         }
     })
+}
+
+/// A button, or a delegate that is a check box, a radio button or a
+/// switch and is named by its text as it is.
+fn abstract_button_defaults(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    match crate::value_controls::button_role(engine, obj) {
+        Some(role) => defaults(engine, obj, role, Some(AbstractButton::TEXT.index)),
+        None => button_defaults(engine, obj),
+    }
 }
 
 /// A container is named by its title when it has one.
@@ -166,7 +192,91 @@ fn no_action(_: &Engine, _: ObjectId, _: AccessibleAction) -> bool {
     false
 }
 
+/// A type, by its meta-object.
+type Meta = fn() -> &'static ljos_engine::MetaObject;
+
+/// The defaults of each type, a base type's before a derived one's, which
+/// writes over them. They are given when the `Accessible` object is made,
+/// which is when something first asks for it.
+const DEFAULTS: &[(Meta, AccessibleDefaults)] = &[
+    (AbstractButton::static_meta, abstract_button_defaults),
+    (TabButton::static_meta, |e, o| {
+        defaults(e, o, Role::PageTab, None)
+    }),
+    (TabBar::static_meta, |e, o| {
+        defaults(e, o, Role::PageTabList, None)
+    }),
+    (SwipeView::static_meta, |e, o| {
+        defaults(e, o, Role::PageTabList, None)
+    }),
+    (ScrollBar::static_meta, |e, o| {
+        defaults(e, o, Role::ScrollBar, None)
+    }),
+    (ScrollIndicator::static_meta, |e, o| {
+        defaults(e, o, Role::Indicator, None)
+    }),
+    (PageIndicator::static_meta, |e, o| {
+        defaults(e, o, Role::Indicator, None)
+    }),
+    (BusyIndicator::static_meta, |e, o| {
+        defaults(e, o, Role::Indicator, None)
+    }),
+    (ProgressBar::static_meta, |e, o| {
+        defaults(e, o, Role::ProgressBar, None)
+    }),
+    (ToolSeparator::static_meta, |e, o| {
+        defaults(e, o, Role::Separator, None)
+    }),
+    (MenuSeparator::static_meta, |e, o| {
+        defaults(e, o, Role::Separator, None)
+    }),
+    (MenuBar::static_meta, |e, o| {
+        defaults(e, o, Role::MenuBar, None)
+    }),
+    (Dial::static_meta, |e, o| defaults(e, o, Role::Dial, None)),
+    (Slider::static_meta, |e, o| {
+        defaults(e, o, Role::Slider, None)
+    }),
+    (RangeSlider::static_meta, |e, o| {
+        defaults(e, o, Role::Slider, None)
+    }),
+    (SpinBox::static_meta, |e, o| {
+        defaults(e, o, Role::SpinBox, None)
+    }),
+    (DoubleSpinBox::static_meta, |e, o| {
+        defaults(e, o, Role::SpinBox, None)
+    }),
+    (Tumbler::static_meta, |e, o| {
+        defaults(e, o, Role::SpinBox, None)
+    }),
+    (ComboBox::static_meta, |e, o| {
+        defaults(e, o, Role::ComboBox, Some(ComboBox::DISPLAY_TEXT.index))
+    }),
+    (MonthGrid::static_meta, |e, o| {
+        defaults(e, o, Role::Table, None)
+    }),
+    (DayOfWeekRow::static_meta, |e, o| {
+        defaults(e, o, Role::Row, None)
+    }),
+    (WeekNumberColumn::static_meta, |e, o| {
+        defaults(e, o, Role::Column, None)
+    }),
+    (Label::static_meta, label_defaults),
+    (Pane::static_meta, pane_defaults),
+    (
+        TextField::static_meta,
+        crate::text_control::placeholder_description,
+    ),
+    (
+        TextArea::static_meta,
+        crate::text_control::placeholder_description,
+    ),
+];
+
 pub(crate) fn register(engine: &Engine) {
+    for (meta, f) in DEFAULTS {
+        register_accessible_defaults(engine, MetaRef::Static(meta()), *f);
+    }
     register_accessible_item(
         engine,
         MetaRef::Static(AbstractButton::static_meta()),

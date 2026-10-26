@@ -120,14 +120,6 @@ pub struct MenuSeparator {
     pub control: Control,
 }
 
-#[qml_impl]
-impl MenuSeparator {
-    #[qml(on_complete)]
-    fn completed(cx: &Cx) -> Result<(), EngineError> {
-        crate::a11y::defaults(cx.engine, cx.this, Role::Separator, None)
-    }
-}
-
 // ----------------------------------------------------------------- Menu
 
 /// An item of a menu and what the menu put on it.

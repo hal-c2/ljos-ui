@@ -15,7 +15,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use ljos_a11y::Role;
 use ljos_engine::{
     ConnectionId, Cx, Engine, EngineError, MetaRef, ObjectId, OverrideContent, OverrideId,
     PropIndex, QmlObject, QmlType, RestoreMode, Value, WriteKind, qml_impl,
@@ -143,7 +142,7 @@ impl SwipeView {
         follow(e, me);
         items_changed(e, me);
         current_changed(e, me);
-        crate::a11y::defaults(e, me, Role::PageTabList, None)
+        Ok(())
     }
 }
 

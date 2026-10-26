@@ -20,7 +20,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ljos_a11y::{NodeData, Range, Role};
+use ljos_a11y::{NodeData, Range};
 use ljos_engine::{
     Cx, Engine, EngineError, MetaRef, ObjectId, OverrideContent, OverrideId, PropIndex, QmlObject,
     QmlType, RestoreMode, Value, qml_impl,
@@ -341,7 +341,7 @@ pub(crate) fn handle_rect(engine: &Engine, obj: ObjectId) -> Option<[f64; 4]> {
     })
 }
 
-fn init_bar(engine: &Engine, obj: ObjectId, bar: Bar, role: Role) -> Result<(), EngineError> {
+fn init_bar(engine: &Engine, obj: ObjectId, bar: Bar) -> Result<(), EngineError> {
     engine.bind_initial(obj, bar.horizontal, move |e| {
         Value::Bool(is_horizontal(e, obj, bar))
     })?;
@@ -380,7 +380,7 @@ fn init_bar(engine: &Engine, obj: ObjectId, bar: Bar, role: Role) -> Result<(), 
     };
     bring_in(engine);
     engine.watch(obj, bar.size, move |e, _| bring_in(e))?;
-    crate::a11y::defaults(engine, obj, role, None)
+    Ok(())
 }
 
 #[qml_impl]
@@ -388,7 +388,7 @@ impl ScrollBar {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, obj) = (cx.engine, cx.this);
-        init_bar(e, obj, SCROLL_BAR, Role::ScrollBar)?;
+        init_bar(e, obj, SCROLL_BAR)?;
         // A press does not outlive the bar's being usable.
         for p in [Item::ENABLED.index, Item::VISIBLE.index] {
             e.watch(obj, p, move |e, v| {
@@ -417,7 +417,7 @@ impl ScrollBar {
 impl ScrollIndicator {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
-        init_bar(cx.engine, cx.this, INDICATOR, Role::Indicator)
+        init_bar(cx.engine, cx.this, INDICATOR)
     }
 }
 

@@ -583,12 +583,7 @@ fn init(engine: &Engine, obj: ObjectId, kind: Kind) -> Result<(), EngineError> {
             }
         })?;
     }
-    let role = if is_a::<Slider>(engine, obj) || is_a::<RangeSlider>(engine, obj) {
-        Role::Slider
-    } else {
-        return Ok(());
-    };
-    crate::a11y::defaults(engine, obj, role, None)
+    Ok(())
 }
 
 #[qml_impl]

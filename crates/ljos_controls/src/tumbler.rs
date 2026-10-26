@@ -27,7 +27,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use ljos_a11y::{NodeData, Range, Role};
+use ljos_a11y::{NodeData, Range};
 use ljos_engine::{
     Cx, Engine, EngineError, ItemModel, MetaRef, ModelChange, ObjectId, OverrideContent,
     OverrideId, PropIndex, QmlObject, QmlType, RestoreMode, Value, WriteKind, qml_impl,
@@ -273,7 +273,7 @@ impl Tumbler {
                 ljos_quick::flickable::set_wheel_enabled(e, view, false);
             }
         })?;
-        crate::a11y::defaults(e, me, Role::SpinBox, None)
+        Ok(())
     }
 
     /// Brings the row at `index` to `mode` of the view; the middle makes

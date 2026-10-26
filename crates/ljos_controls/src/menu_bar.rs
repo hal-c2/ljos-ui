@@ -19,7 +19,6 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ljos_a11y::Role;
 use ljos_engine::{
     ConnectionId, Cx, Engine, EngineError, MetaRef, ObjectFlags, ObjectId, QmlList, QmlObject,
     QmlType, Value, WriteKind, qml_impl,
@@ -468,7 +467,7 @@ fn init_bar(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
     e.bind_initial(bar, Control::IMPLICIT_CONTENT_HEIGHT.index, move |e| {
         Value::Real(num(e, bar, MenuBar::CONTENT_HEIGHT.index))
     })?;
-    crate::a11y::defaults(e, bar, Role::MenuBar, None)
+    Ok(())
 }
 
 /// Makes `obj` an item of the bar, the `at`-th or the last: a

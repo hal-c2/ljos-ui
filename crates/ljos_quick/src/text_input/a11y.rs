@@ -16,7 +16,8 @@ use super::echo_mode;
 use super::input::TextInput;
 use super::ops::{self, How};
 use crate::accessible::{
-    Accessible, AccessibleAction, AccessibleAttached, AccessibleItem, register_accessible_item,
+    Accessible, AccessibleAction, AccessibleAttached, AccessibleItem, register_accessible_defaults,
+    register_accessible_item,
 };
 use crate::item::is_unset;
 use crate::scene::QuickScene;
@@ -35,7 +36,7 @@ pub enum AccessibleTextAction {
 }
 
 /// An editor is editable text unless its author says what else it is.
-pub(super) fn default_role(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+fn default_role(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     let att = engine.attached_object(obj, &MetaRef::Static(Accessible::static_meta()))?;
     let role = AccessibleAttached::ROLE.index;
     if is_unset(engine, att, role) {
@@ -180,6 +181,11 @@ pub(super) fn register(engine: &Engine) {
             describe,
             act: |_: &Engine, _: ObjectId, _: AccessibleAction| false,
         },
+    );
+    register_accessible_defaults(
+        engine,
+        MetaRef::Static(TextEditor::static_meta()),
+        default_role,
     );
 }
 
