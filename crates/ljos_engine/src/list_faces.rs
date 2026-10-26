@@ -147,7 +147,7 @@ fn entry(e: &Engine, kind: Entry, ty: &TypeTag, from: Origin, v: &Value) -> Valu
         (Entry::Real, Origin::Array) => Value::Real(v.to_number()),
         (Entry::Real, Origin::Put) => Value::Real(match v {
             Value::Int(i) => f64::from(*i),
-            Value::Enum(e) => f64::from(e.number()),
+            Value::Enum(e) => f64::from(e.value),
             Value::Real(r) => *r,
             Value::Bool(b) => f64::from(u8::from(*b)),
             Value::String(s) => s.trim().parse().unwrap_or(f64::NAN),

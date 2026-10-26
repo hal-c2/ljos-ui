@@ -2,6 +2,7 @@
 #   https://doc.qt.io/qt-6/qml-enumeration.html
 #   https://doc.qt.io/qt-6/qtqml-syntax-objectattributes.html
 #   https://doc.qt.io/qt-6/qml-qtquick-item.html#transformOrigin-prop
+#   https://doc.qt.io/qt-6/qml-qtquick-controls-dialogbuttonbox.html#buttonRole-attached-prop
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
 @qt-parity
@@ -228,7 +229,7 @@ Feature: Properties that hold an enumeration
         | null        |
         | [1, 2]      |
 
-  Rule: A number out of an enumeration's range is read as unsigned
+  Rule: A number out of an enumeration's range is read as unsigned, unless a key is negative
 
     Background:
       Given the QML:
@@ -269,3 +270,37 @@ Feature: Properties that hold an enumeration
       When the method "bind" of "plain" is called
       Then the property "wrapMode" of "plain" is 0
       And the log has a warning matching "Unable to assign double to \S*WrapMode$"
+
+  Rule: An enumeration with a negative key reads signed
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"
+          property string given: "0"
+          property int key: DialogButtonBox.InvalidRole
+          Button { objectName: "spare"; property var role: DialogButtonBox.buttonRole }
+          Button {
+            objectName: "given"; property var role: DialogButtonBox.buttonRole
+            DialogButtonBox.buttonRole: Number(root.given)
+          }
+        }
+        """
+
+    Scenario: A role nobody gave is the negative key's number
+      Then the property "role" of "spare" is -1
+      And the property "key" of "root" is -1
+
+    Scenario Outline: A binding that gives <given> reads <read>
+      When the property "given" of "root" is set to <given>
+      Then the property "role" of "given" is <read>
+
+      Examples:
+        | given        | read |
+        | "-1"         | -1   |
+        | "-2"         | -2   |
+        | "1e21"       | -1   |
+        | "4294967295" | -1   |

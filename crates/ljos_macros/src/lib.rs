@@ -651,9 +651,21 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         let get = format_ident!("__qml_get_{}", ident);
         let set = format_ident!("__qml_set_{}", ident);
         let notify = a.notify;
-        // An enum's number reads as Qt's does: unsigned.
-        let read = if a.enumeration.is_some() && !a.flags {
-            quote!(#e::Value::of_enum_field(#p::downcast::<#ty>(o).#ident))
+        // An enum's number reads as Qt's does: unsigned unless a key is
+        // negative. Reads are many, so the enum is asked once, and only
+        // when the number is negative.
+        let read = if let Some(enumeration) = a.enumeration.as_ref().filter(|_| !a.flags) {
+            quote! {{
+                static SIGNED: ::std::sync::OnceLock<bool> = ::std::sync::OnceLock::new();
+                let n: i32 = #p::downcast::<#ty>(o).#ident;
+                #e::Value::of_enum_field(
+                    n,
+                    n >= 0
+                        || *SIGNED.get_or_init(|| {
+                            <#ty as #e::QmlType>::static_meta().enum_signed(#enumeration)
+                        }),
+                )
+            }}
         } else {
             quote!(#e::QmlValue::to_value(&#p::downcast::<#ty>(o).#ident))
         };

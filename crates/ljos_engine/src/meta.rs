@@ -311,6 +311,9 @@ impl PropertyInfo {
 pub struct EnumInfo {
     pub name: Atom,
     pub keys: Vec<(Atom, i64)>,
+    /// A key is negative, so a number the enum holds reads signed (see
+    /// [`Value::of_enum_field`]).
+    pub signed: bool,
 }
 
 /// One signal.
@@ -668,14 +671,22 @@ impl MetaObject {
             _ => None,
         };
         // A mask of flags may set the sign bit; it stays the number Rust
-        // code combines.
+        // code combines. Only a negative number asks what the enum is.
         whole
-            .map(if flags {
-                Value::Int
-            } else {
-                Value::of_enum_field
-            })
+            .map(|n| Value::of_enum_field(n, flags || n >= 0 || self.enum_signed(name)))
             .ok_or_else(|| ConvertError::new(crate::types::describe(v), self.enum_name(name)))
+    }
+
+    /// Whether the enum `name` a property is declared with has a negative
+    /// key, so that what it holds reads signed. An enum that is not found
+    /// reads unsigned, as Qt's own do.
+    pub fn enum_signed(&self, name: &str) -> bool {
+        match name.strip_prefix("Qt.") {
+            Some(of_qt) => {
+                crate::qt_enums::qt_enum(of_qt).is_some_and(|e| e.keys.iter().any(|(_, n)| *n < 0))
+            }
+            None => self.held_enumeration(name).is_some_and(|e| e.signed),
+        }
     }
 
     /// The number of `key` in the enum `name`.
@@ -1284,6 +1295,7 @@ impl MetaBuilder {
         self.meta.enums.push(EnumInfo {
             name: Atom::intern(name),
             keys: keys.iter().map(|(k, v)| (Atom::intern(k), *v)).collect(),
+            signed: keys.iter().any(|(_, v)| *v < 0),
         });
         self
     }
