@@ -5,7 +5,7 @@
 //! the sequences of the enabled ones whose context covers the window;
 //! nothing is matched, parsed or looked at until a key arrives.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -26,9 +26,25 @@ pub mod shortcut_context {
     pub const APPLICATION: i32 = 2;
 }
 
-/// Shortcuts are told apart by the order they were made in, which is the
-/// order they are written in a document.
-static SERIAL: AtomicU64 = AtomicU64::new(0);
+/// The order Shortcuts registered in, which is the order a press of a
+/// sequence several have goes round them in (measured on qml6): a
+/// declared Shortcut registers as it completes, so the last declared
+/// first, and again whenever its sequence changes, after all the others.
+/// Zero is not a place.
+static SERIAL: AtomicU64 = AtomicU64::new(1);
+
+/// A place in the order Shortcuts register in, after every place taken so
+/// far: for an owner that registers its Shortcut before the Shortcut is
+/// made ([`queue_shortcut_at`]).
+pub fn shortcut_ticket() -> u64 {
+    SERIAL.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Gives `shortcut`, not yet complete, the place `ticket` instead of the
+/// one it would take as it completes.
+pub fn queue_shortcut_at(engine: &Engine, shortcut: ObjectId, ticket: u64) {
+    let _ = engine.with(shortcut, |n: &Shortcut| n.queued.set(ticket));
+}
 
 /// `Shortcut` (QtQuick).
 #[derive(Debug, QmlObject)]
@@ -54,8 +70,9 @@ pub struct Shortcut {
     pub native_text: String,
     #[qml(notify, readonly)]
     pub portable_text: String,
+    /// Its place among the Shortcuts that share a sequence ([`SERIAL`]).
     #[qml(skip)]
-    serial: u64,
+    queued: Cell<u64>,
 }
 
 impl Default for Shortcut {
@@ -69,7 +86,7 @@ impl Default for Shortcut {
             context: shortcut_context::WINDOW,
             native_text: String::new(),
             portable_text: String::new(),
-            serial: SERIAL.fetch_add(1, Ordering::Relaxed),
+            queued: Cell::new(0),
         }
     }
 }
@@ -85,6 +102,16 @@ impl Shortcut {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, this) = (cx.engine, cx.this);
         e.extension::<Shortcuts>().all.borrow_mut().push(this);
+        let _ = e.with(this, |n: &Shortcut| {
+            if n.queued.get() == 0 {
+                n.queued.set(shortcut_ticket());
+            }
+        });
+        for p in [Shortcut::SEQUENCE.index, Shortcut::SEQUENCES.index] {
+            e.watch(this, p, move |e, _| {
+                let _ = e.with(this, |n: &Shortcut| n.queued.set(shortcut_ticket()));
+            })?;
+        }
         e.bind_initial(this, Shortcut::PORTABLE_TEXT.index, move |e| {
             let first = sequences(e, this).into_iter().next().unwrap_or_default();
             Value::from(first.portable_text().as_str())
@@ -253,7 +280,7 @@ pub(crate) fn press(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
                 engine.read(**s, Shortcut::ENABLED.index).to_boolean()
                     && in_context(engine, **s, root)
             })
-            .filter_map(|s| engine.with(*s, |n: &Shortcut| (n.serial, *s)).ok())
+            .filter_map(|s| engine.with(*s, |n: &Shortcut| (n.queued.get(), *s)).ok())
             .collect();
         list.sort_unstable();
         list
@@ -299,8 +326,9 @@ pub(crate) fn press(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
             let _ = engine.emit_by_name(*one, "activated", &[]);
         }
         several => {
-            // None acts; one is told, the last declared first and another
-            // each time, so that the application can step through them.
+            // None acts; one is told, each time the next in the order
+            // they registered in, so that the application can step
+            // through them.
             let round = {
                 let mut rounds = reg.rounds.borrow_mut();
                 let n = rounds.entry(matched.unwrap_or_default()).or_insert(0);
@@ -308,7 +336,7 @@ pub(crate) fn press(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
                 *n = n.wrapping_add(1);
                 round
             };
-            let told = several[several.len() - 1 - round % several.len()];
+            let told = several[round % several.len()];
             let _ = engine.emit_by_name(told, "activatedAmbiguously", &[]);
         }
     }

@@ -6,7 +6,9 @@
 @qt-parity
 Feature: The shortcut of an Action
   An action's shortcut triggers it from anywhere in its window, as a
-  Shortcut would, with the action itself as the source.
+  Shortcut would, with the action itself as the source. Actions that
+  share a sequence are triggered in turn, one each press, in the order
+  they were given it.
 
   Background:
     Given the QML:
@@ -32,6 +34,7 @@ Feature: The shortcut of an Action
         }
         Action { objectName: "later"; onTriggered: root.log += "later " }
         Action { objectName: "blank"; shortcut: ""; onTriggered: root.log += "blank " }
+        Shortcut { sequence: "Ctrl+P"; onActivatedAmbiguously: root.log += "told " }
       }
       """
 
@@ -71,10 +74,19 @@ Feature: The shortcut of an Action
     And the user presses "Ctrl+B"
     Then the property "log" of "root" is "blank "
 
-  Scenario: An action given another's shortcut later makes it ambiguous
+  Scenario: Actions that share a shortcut are triggered in turn
     When the property "shortcut" of "later" is set to "Ctrl+K"
     And the user presses "Ctrl+K"
-    Then the property "log" of "root" is ""
+    Then the property "log" of "root" is "self "
+    When the user presses "Ctrl+K"
+    Then the property "log" of "root" is "self later "
     When the property "shortcut" of "later" is set to ""
     And the user presses "Ctrl+K"
-    Then the property "log" of "root" is "self "
+    Then the property "log" of "root" is "self later self "
+
+  Scenario: An action given a Shortcut's sequence takes its turn after it
+    When the property "shortcut" of "later" is set to "Ctrl+P"
+    And the user presses "Ctrl+P"
+    And the user presses "Ctrl+P"
+    And the user presses "Ctrl+P"
+    Then the property "log" of "root" is "told later told "

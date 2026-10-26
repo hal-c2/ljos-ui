@@ -13,7 +13,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use ljos_engine::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, QtObject, Value, qml_impl};
-use ljos_quick::keys::Shortcut;
+use ljos_quick::keys::{Shortcut, queue_shortcut_at, shortcut_ticket};
 
 use crate::button::Icon;
 use crate::util::check;
@@ -36,6 +36,11 @@ pub struct Action {
     pub enabled: bool,
     #[qml(notify)]
     pub shortcut: Value,
+    /// Where its `Shortcut` is among those that share its sequence: a
+    /// declared action registers its sequence as it is made, before any
+    /// declared `Shortcut`, which registers as it completes.
+    #[qml(skip)]
+    queued: u64,
 }
 
 impl Default for Action {
@@ -48,6 +53,7 @@ impl Default for Action {
             checked: false,
             enabled: true,
             shortcut: Value::Undefined,
+            queued: shortcut_ticket(),
         }
     }
 }
@@ -103,12 +109,13 @@ impl Action {
             move |e: &Engine| has_sequence(&e.untrack(|| e.read(this, Action::SHORTCUT.index)));
         if wanted(e) {
             made.set(true);
-            make_shortcut(e, this)?;
+            let queued = e.with(this, |a: &Action| a.queued)?;
+            make_shortcut(e, this, queued)?;
         }
         e.watch(this, Action::SHORTCUT.index, move |e, _| {
             if !made.get() && wanted(e) {
                 made.set(true);
-                check(e, "shortcut", make_shortcut(e, this));
+                check(e, "shortcut", make_shortcut(e, this, shortcut_ticket()));
             }
         })?;
         Ok(())
@@ -140,22 +147,27 @@ fn has_sequence(shortcut: &Value) -> bool {
     }
 }
 
-/// The `Shortcut` that stands for the action's `shortcut`: it follows the
-/// action's sequence and `enabled`, and triggers the action, which is its
-/// own source (as on qml6).
-fn make_shortcut(e: &Engine, action: ObjectId) -> Result<(), EngineError> {
+/// The `Shortcut` that stands for the action's `shortcut`, at place
+/// `queued` among those of the same sequence: it follows the action's
+/// sequence and `enabled`, and triggers the action, which is its own
+/// source (as on qml6). Told of a press that several have, it triggers
+/// too: on qml6 an action is not told it shares its sequence.
+fn make_shortcut(e: &Engine, action: ObjectId, queued: u64) -> Result<(), EngineError> {
     let s = e.create_native_incomplete(Shortcut::default(), Some(action))?;
+    queue_shortcut_at(e, s, queued);
     e.bind(s, Shortcut::SEQUENCE.index, move |e| {
         e.read(action, Action::SHORTCUT.index)
     })?;
     e.bind(s, Shortcut::ENABLED.index, move |e| {
         e.read(action, Action::ENABLED.index)
     })?;
-    e.connect_by_name(s, "activated", move |e, _| {
-        if e.is_alive(action) {
-            let r = e.invoke_by_name(action, "trigger", &[Value::Object(action)]);
-            check(e, "shortcut", r.map(|_| ()));
-        }
-    })?;
+    for signal in ["activated", "activatedAmbiguously"] {
+        e.connect_by_name(s, signal, move |e, _| {
+            if e.is_alive(action) {
+                let r = e.invoke_by_name(action, "trigger", &[Value::Object(action)]);
+                check(e, "shortcut", r.map(|_| ()));
+            }
+        })?;
+    }
     e.complete(s)
 }
