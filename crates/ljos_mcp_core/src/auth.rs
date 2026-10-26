@@ -94,10 +94,17 @@ impl TokenFile {
         {
             std::fs::create_dir_all(dir).map_err(fail)?;
         }
-        // A process that died may have left a file with this name. It is
-        // removed, not written over: what is there may be a link to a file
-        // somebody wants overwritten, and `create_new` follows none.
-        match std::fs::remove_file(path) {
+        // A client waits for the file to appear and reads it at once, so
+        // it must appear whole: it is written beside its name and renamed
+        // into place. The rename replaces whatever a dead process left
+        // there, a link included, without following it.
+        let mut staged = path.as_os_str().to_owned();
+        staged.push(format!(".{}.part", std::process::id()));
+        let staged = PathBuf::from(staged);
+        // A part of an earlier process with this id is removed, not written
+        // over: it may be a link to a file somebody wants overwritten, and
+        // `create_new` follows none.
+        match std::fs::remove_file(&staged) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(fail(e)),
@@ -111,7 +118,6 @@ impl TokenFile {
             // even for the moment before a `chmod`.
             options.mode(0o600);
         }
-        let mut file = options.open(path).map_err(fail)?;
         let body = serde_json::json!({
             "url": url,
             "token": token.as_str(),
@@ -120,7 +126,14 @@ impl TokenFile {
         });
         let mut text = serde_json::to_string_pretty(&body).unwrap_or_default();
         text.push('\n');
-        file.write_all(text.as_bytes()).map_err(fail)?;
+        let written = options
+            .open(&staged)
+            .and_then(|mut file| file.write_all(text.as_bytes()))
+            .and_then(|()| std::fs::rename(&staged, path));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&staged);
+            return Err(fail(e));
+        }
         Ok(TokenFile {
             path: path.to_path_buf(),
         })
@@ -400,7 +413,30 @@ mod tests {
         assert_eq!(body["token"], token.as_str());
         assert_eq!(body["pid"], std::process::id());
         assert_eq!(body["capabilities"], serde_json::json!(["inspect"]));
+        // Only the file itself is left: the part it was written as is gone.
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [path.file_name().unwrap()]);
         drop(file);
         assert!(!path.exists());
+    }
+
+    /// A link a dead process left at the name is replaced, and what it
+    /// pointed at is not written through it.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_way_is_replaced_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, "keep").unwrap();
+        let path = dir.path().join("mcp-test.json");
+        std::os::unix::fs::symlink(&victim, &path).unwrap();
+        let token = Token::generate().unwrap();
+        let _file =
+            TokenFile::write(&path, "http://127.0.0.1:4000/mcp", &token, CapSet::EMPTY).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(!std::fs::symlink_metadata(&path).unwrap().is_symlink());
     }
 }
