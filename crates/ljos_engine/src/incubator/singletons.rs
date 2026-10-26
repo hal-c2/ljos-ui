@@ -299,6 +299,16 @@ impl Engine {
         natives.contains_key(&(uri.to_owned(), name.to_owned()))
     }
 
+    /// Whether the type `name` of module `uri` is one object: a native
+    /// singleton, or a library file that says `pragma Singleton`.
+    pub fn is_singleton_type(&self, uri: &str, name: &str) -> bool {
+        self.is_native_singleton(uri, name)
+            || self.qml_type_key(uri, name).is_some_and(|key| {
+                self.load_file(&key)
+                    .is_ok_and(|file| file.ir.pragmas.iter().any(|p| p.name == "Singleton"))
+            })
+    }
+
     /// The engine's one `T`, made on first use. A `T` that is one for
     /// each window has none: ask [`Engine::singleton_in`].
     pub fn singleton<T: QmlSingleton>(&self) -> Result<ObjectId, EngineError> {

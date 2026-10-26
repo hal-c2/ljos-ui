@@ -386,7 +386,7 @@ impl<'a, 'c> Module<'a, 'c> {
         if let Some(name) = &meta.default_property {
             let _ = writeln!(out, "\t\tdefault {name}");
         }
-        if exported && engine.is_native_singleton(self.uri, &meta.name) {
+        if exported && engine.is_singleton_type(self.uri, &meta.name) {
             let _ = writeln!(out, "\t\tis singleton");
         } else if !exported || meta.create.is_none() {
             let _ = writeln!(out, "\t\tis uncreatable");
@@ -656,7 +656,7 @@ fn the_compiler_sees_every_member_the_types_declare() {
             );
             assert_eq!(
                 oracle.is_singleton(ty),
-                engine.is_native_singleton(uri, name),
+                engine.is_singleton_type(uri, name),
                 "{what}"
             );
             assert_eq!(
@@ -938,7 +938,7 @@ fn what_qt_says_of_a_type_ljos_has() {
                 continue;
             };
             let meta = &registered.meta;
-            let singleton = engine.is_native_singleton(uri, name);
+            let singleton = engine.is_singleton_type(uri, name);
             let ljos = Facts {
                 creatable: meta.create.is_some() && !singleton,
                 singleton,
