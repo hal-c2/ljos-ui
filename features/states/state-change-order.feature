@@ -8,6 +8,9 @@
 # onChanged:empty-ljos, value:load:empty-ljos, value:load:number, value:step:color,
 # binding-loop(ljos-only), warning:assign(ljos-only) and the restoreEntryValues ones (see
 # crates/ljos_fuzz/known/states.txt); after B26, value:step:invalid-qt, a colour given a list.
+# Backlog: a state's changes are made in one batch and the handlers they set off run after it,
+# where qml6 runs each as its change is made; that is the graph's batching (bindings
+# infrastructure). Seed 303, connections bucket value:step:bool-vs-record.
 
 @qt-parity
 Feature: The order of a state change
@@ -373,3 +376,27 @@ Feature: The order of a state change
       """
     When the method "run" of "root" is called
     Then the log has a warning matching "Binding loop detected for property .a."
+
+  @backlog
+  Scenario Outline: A handler a state's change sets off runs as the change is made
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string log: ""
+        property int p0
+        property var p1
+        states: [State { name: "s0"; PropertyChanges { target: root; p1: <v> } },
+                 State { name: "s1"; extend: "s0"; PropertyChanges { root.p0: 42 } }]
+        onP0Changed: { log += "p0;"; root.p1 = ({k0: 1}); }
+        onP1Changed: log += "p1=" + JSON.stringify(p1).replace(/"/g, "") + ";"
+      }
+      """
+    When the property "state" of "root" is set to "s1"
+    Then the property "log" of "root" is "<log>"
+
+    Examples:
+      | v               | log                    |
+      | (true && false) | p0;p1={k0:1};p1=false; |
+      | false           | p1=false;p0;p1={k0:1}; |
