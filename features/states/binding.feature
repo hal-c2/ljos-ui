@@ -1,6 +1,10 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtqml-binding.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
+# Backlog: what is written to a property, or bound to it, after the Binding last gave it a value
+# is kept when the Binding lets go, and a binding given so goes on; moving the held layer's own
+# binding down when it is taken off is the graph's (bindings infrastructure). Found by ljos-fuzz
+# (connections), seed 303, bucket warning:assign(ljos-only):Unable_to_assign_QPointF_to_int.
 
 @qt-parity
 Feature: The Binding element
@@ -263,3 +267,40 @@ Feature: The Binding element
     Scenario: A Binding without a value leaves what is written to the property when it is turned off
       When the method "write" of "root" is called
       Then the property "seen" of "root" is "2/undefined/3/0;"
+
+  @backlog
+  Rule: What is given a property after the Binding last gave it a value stays when it lets go
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int k: 3
+          property int v: 0
+          property int bound: k * 10
+          property int plain: 7
+          property int rebound: k * 10
+          property string seen
+          Binding { id: b1; target: root; property: "bound"; value: root.v }
+          Binding { id: b2; target: root; property: "plain"; value: root.v }
+          Binding { id: b3; target: root; property: "rebound"; value: root.v }
+          function look() { seen += [bound, plain, rebound].join(",") + ";" }
+          function run(again) {
+            bound = 55; plain = 55; rebound = Qt.binding(function () { return k + 100 })
+            if (again) v = 1
+            look(); b1.when = false; b2.when = false; b3.when = false
+            look(); k = 4
+            look()
+          }
+        }
+        """
+
+    Scenario: A value written and a binding given while it holds stay, and the binding goes on
+      When the method "run" of "root" is called with false
+      Then the property "seen" of "root" is "55,55,103;55,55,103;55,55,104;"
+
+    Scenario: Once its value changes after them, what it holds comes back as before
+      When the method "run" of "root" is called with true
+      Then the property "seen" of "root" is "1,1,1;30,7,30;40,7,40;"
