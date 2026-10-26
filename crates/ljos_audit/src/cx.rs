@@ -242,7 +242,8 @@ pub(crate) fn ignored(engine: &Engine, item: ObjectId) -> bool {
         })
 }
 
-/// Every item the scene shows, popups and all, parents first.
+/// Every item the scene shows, popups and all, parents first; not the
+/// rows a view keeps and does not show.
 pub(crate) fn shown_items(cx: &Cx) -> Vec<ObjectId> {
     let tree = cx.scene.render_tree();
     let mut out = Vec::new();
@@ -253,6 +254,11 @@ pub(crate) fn shown_items(cx: &Cx) -> Vec<ObjectId> {
             continue;
         }
         if let Some(item) = cx.scene.item_of(id).filter(|i| cx.engine.is_alive(*i)) {
+            // A row its view does not show is not laid out either: what
+            // it holds would be measured as it was, or never was.
+            if cx.scene.is_culled(item) {
+                continue;
+            }
             out.push(item);
         }
         stack.extend(node.children().iter().rev().copied());
@@ -305,6 +311,25 @@ pub(crate) fn scene_rect(engine: &Engine, item: ObjectId) -> Option<Rect> {
         r = r.union_pt(c);
     }
     Some(r)
+}
+
+/// Whether nothing of the item is on screen: it lies wholly outside the
+/// window or the clip of something above it (a page of a swipe view that
+/// is not the current one). Ljós does not describe such an item to an
+/// assistive technology until it is shown.
+pub(crate) fn clipped_away(cx: &Cx, item: ObjectId) -> bool {
+    let e = cx.engine;
+    let Some(r) = scene_rect(e, item) else {
+        return false;
+    };
+    let apart = |o: Rect| r.x1 <= o.x0 || r.x0 >= o.x1 || r.y1 <= o.y0 || r.y0 >= o.y1;
+    if r.area() > 0.0 && apart(cx.scene.viewport()) {
+        return true;
+    }
+    ancestors(e, item)
+        .filter(|a| e.untrack(|| e.read(*a, Item::CLIP.index)).to_boolean())
+        .filter_map(|a| scene_rect(e, a))
+        .any(|o| r.area() > 0.0 && apart(o))
 }
 
 /// The opacity the item is shown with: its own times its ancestors'.

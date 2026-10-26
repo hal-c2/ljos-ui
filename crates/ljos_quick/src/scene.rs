@@ -2327,6 +2327,14 @@ impl QuickScene {
         self.hits(engine, pos)
     }
 
+    /// Whether `obj` is a row a view made and does not show (or keeps in
+    /// its pool): it and what is inside it are neither painted nor laid
+    /// out until the view shows it. For tools that ask what is shown (the
+    /// design audit).
+    pub fn is_culled(&self, obj: ObjectId) -> bool {
+        self.culled.0.contains(&obj) || self.pooled.contains(&obj)
+    }
+
     /// The items drawn under `pos`, topmost first, those a modal popup
     /// shuts off included.
     pub fn items_drawn_at(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {

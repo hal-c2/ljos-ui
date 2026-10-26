@@ -10,7 +10,9 @@ use ljos_engine::ObjectId;
 use ljos_quick::keys::tab_target;
 use ljos_quick::{Item, child_items, is_item, tab_scope};
 
-use crate::cx::{Cx, DEPTH, at, item_words, node_words, shown_items, takes_focus, words};
+use crate::cx::{
+    Cx, DEPTH, at, clipped_away, item_words, node_words, shown_items, takes_focus, words,
+};
 
 /// The items Tab stops at, in the order of the document.
 fn stops(cx: &Cx, item: ObjectId, depth: usize, out: &mut Vec<ObjectId>) {
@@ -146,7 +148,14 @@ pub(crate) fn check(cx: &mut Cx) {
     let mut silent = Vec::new();
     // What Tab reaches, as an assistive technology hears it.
     let mut reached = seen.clone();
+    // A stop that is not on screen (a page of a swipe view that is not
+    // the current one) is neither laid out nor described until it is
+    // shown, so whether it would say anything is not known.
+    let drawn: std::collections::HashSet<ObjectId> = shown_items(cx).into_iter().collect();
     for stop in &seen {
+        if !drawn.contains(stop) || clipped_away(cx, *stop) {
+            continue;
+        }
         if cx.scene.accessible_node(*stop).is_some() {
             // Tab that lands inside something that takes the keyboard is
             // in it too: the number of a spin box is its box's.

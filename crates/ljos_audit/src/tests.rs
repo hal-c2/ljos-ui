@@ -934,3 +934,36 @@ Item {
             .contains("Not audited: what the items of QtQuick3D show")
     );
 }
+
+#[test]
+fn a_page_of_a_swipe_view_that_is_not_shown_is_not_judged() {
+    // The buttons of the pages past the current one are on the Tab round
+    // and outside the view's clip, where Ljós describes nothing.
+    let report = run(
+        "import QtQuick\nimport QtQuick.Controls.Basic\nimport QtQuick.Layouts\n\
+         Rectangle {\n    width: 400; height: 300\n    color: \"white\"\n    \
+         SwipeView {\n        anchors.fill: parent\n        clip: true\n        \
+         Repeater {\n            model: 3\n            Pane {\n                \
+         RowLayout {\n                    anchors.fill: parent\n                    \
+         Repeater {\n                        model: [\"Heat\", \"Cool\"]\n                        \
+         Button { text: modelData; Layout.fillWidth: true }\n                    }\n                \
+         }\n            }\n        }\n    }\n}\n",
+    );
+    assert!(report.is_clean(), "{report}");
+}
+
+#[test]
+fn a_page_is_a_pane_and_a_tab_button_a_tab() {
+    // Both have the role of a tab; only the button is pressed.
+    let report = run(
+        "import QtQuick\nimport QtQuick.Controls.Basic\n\
+         Page {\n    width: 400; height: 300\n    \
+         Button { x: 20; y: 20; text: \"Save\" }\n}\n",
+    );
+    assert!(report.is_clean(), "{report}");
+    let f = one(
+        "    TabBar { x: 20; y: 20; width: 200\n        TabButton { icon.source: \"\" }\n    }",
+        "a11y-unnamed-interactive",
+    );
+    assert!(f.message.contains("tab"), "{}", f.message);
+}

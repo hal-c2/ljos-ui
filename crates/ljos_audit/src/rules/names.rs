@@ -91,8 +91,14 @@ pub(crate) fn check(cx: &mut Cx) {
         if data.qt_role == Role::ScrollBar || boxes.contains(parent) {
             continue;
         }
+        let item = cx.item(*key);
+        // A `Page` has the role of a tab, as Qt gives it, and is a pane
+        // that is shown, not a tab that is pressed: its title is a name it
+        // may go without.
+        if item.is_some_and(|i| is_a::<ljos_controls::Page>(cx.engine, i)) {
+            continue;
+        }
         if acted_on(data) && !has_name(data) {
-            let item = cx.item(*key);
             cx.report(
                 "a11y-unnamed-interactive",
                 item,
