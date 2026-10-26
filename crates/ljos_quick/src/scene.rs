@@ -51,7 +51,7 @@ use slotmap::SecondaryMap;
 use smallvec::SmallVec;
 
 use crate::accessible::A11yPass;
-use crate::anchors::{self, AnchorState};
+use crate::anchors;
 use crate::animation::shown::Shown;
 use crate::enums::gesture_policy;
 use crate::handlers::{grab_transition, point_state};
@@ -565,7 +565,6 @@ struct Record {
     painting: bool,
     content_effect: Option<GraphNode>,
     paint: Option<Paint>,
-    anchors: Rc<RefCell<AnchorState>>,
     size: kurbo::Size,
     /// The last geometry and place applied; the node's transform takes
     /// both, and either may change alone.
@@ -1446,7 +1445,6 @@ impl QuickScene {
         if kind == Kind::Editor {
             crate::text_input::init(engine, obj)?;
         }
-        let anchors = Rc::new(RefCell::new(AnchorState::default()));
         self.items_gen += 1;
         self.items.insert(
             obj,
@@ -1458,7 +1456,6 @@ impl QuickScene {
                 painting: false,
                 content_effect: None,
                 paint: None,
-                anchors: Rc::clone(&anchors),
                 size: kurbo::Size::ZERO,
                 geom: None,
                 place: (0.0, 0.0, false),
@@ -1481,7 +1478,8 @@ impl QuickScene {
         let lifted = Rc::clone(&self.shared);
         let mouse_area = class.mouse_area;
         effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, mouse_area, &lifted))?);
-        effects.push(engine.effect_in(obj, move |e| anchors::run(e, obj, &anchors))?);
+        // Its anchors have an effect of their own only once one is given.
+        anchors::follow(engine, obj)?;
         // What an Animator shows is one table for the engine: looked up
         // here, not on each of the runs that follow an animated value.
         let shown = crate::animation::shown::shown(engine);
@@ -1542,12 +1540,12 @@ impl QuickScene {
         let mut effects = record.effects;
         effects.extend(record.content_effect.into_iter().chain(record.list_effect));
         engine.graph().dispose_all(&effects);
+        anchors::unfollow(engine, obj);
         self.a11y.forget(engine, obj);
         if !engine.is_alive(obj) {
             crate::focus::tree::forget(engine, obj);
         }
         if engine.is_alive(obj) {
-            record.anchors.borrow_mut().release(engine, obj);
             let mut inh = marks.map(|m| m.inherit).unwrap_or_default();
             let restore = RestoreMode::BindingOrValue;
             let mut going = None;

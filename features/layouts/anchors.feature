@@ -243,3 +243,60 @@ Feature: Anchors
       When the property "anchors.margins" of "plain" is set to 5
       Then the property "anchors.leftMargin" of "plain" is 5
       And the property "x" of "plain" is 5
+
+  # Most items are anchored by nothing, so an item's anchors are followed
+  # from the first line it is given (B27); one given after the item is
+  # shown is followed from then on, however it is given.
+  Rule: An item given its first anchor after it is shown is laid out by it
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          width: 200; height: 100
+          property bool on: false
+          function byValue() { box.anchors.right = root.right }
+          function byBinding() { box.anchors.right = Qt.binding(function() { return root.right }) }
+          function fill() { box.anchors.fill = root }
+          states: State {
+            name: "anchored"
+            AnchorChanges { target: box; anchors.right: root.right }
+          }
+          Item {
+            id: box
+            objectName: "box"
+            x: 5; width: 20; height: 20
+          }
+          Item {
+            objectName: "late"
+            x: 5; width: 20; height: 20
+            anchors.right: root.on ? root.right : undefined
+          }
+        }
+        """
+
+    Scenario: A line a script writes
+      When the method "byValue" of "root" is called
+      Then the property "x" of "box" is 180
+
+    Scenario: A line a script binds follows what it is bound to
+      When the method "byBinding" of "root" is called
+      And the property "width" of "root" is set to 300
+      Then the property "x" of "box" is 280
+
+    Scenario: fill a script writes
+      When the method "fill" of "root" is called
+      Then the property "width" of "box" is 200
+      And the property "height" of "box" is 100
+
+    Scenario: A line whose expression first gives no anchor
+      Then the property "x" of "late" is 5
+      When the property "on" of "root" is set to true
+      Then the property "x" of "late" is 180
+
+    Scenario: A state's AnchorChanges anchors an item that had none
+      When the property "state" of "root" is set to "anchored"
+      Then the property "x" of "box" is 180

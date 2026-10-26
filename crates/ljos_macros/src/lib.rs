@@ -79,7 +79,11 @@
 //! to depend on it. QML assignments, bindings, animation steps and
 //! `Engine::write_by_name`/`Engine::set` all go through it; `undefined`
 //! taking the property back does not. `Self::name` names a method of the
-//! //! struct). Field names are exposed in camelCase unless renamed.
+//! struct) and `given = path` (a `fn(cx: &Cx, PropIndex)` told each time
+//! an author gives the property a value, a binding or an override, once it
+//! is in place; what bindings, animations and layouts write as they run is
+//! not told. A type that follows what few of its objects set follows just
+//! those). Field names are exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -299,6 +303,9 @@ struct FieldAttrs {
     holds: Option<String>,
     /// `write = path`: what every write goes through before it is stored.
     write: Option<syn::Path>,
+    /// `given = path`: told when the property is given a value, a binding
+    /// or an override.
+    given: Option<syn::Path>,
 }
 
 fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
@@ -398,6 +405,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.holds = Some(m.value()?.parse::<LitStr>()?.value());
             } else if p.is_ident("write") {
                 f.write = Some(m.value()?.parse::<syn::Path>()?);
+            } else if p.is_ident("given") {
+                f.given = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("reset") {
                 f.reset = Some(if m.input.peek(syn::Token![=]) {
                     Some(m.value()?.parse::<syn::Expr>()?)
@@ -406,7 +415,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write",
+                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, given",
                 ));
             }
             Ok(())
@@ -574,6 +583,12 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                     "a group is not written whole; put `write` on the group type's fields",
                 ));
             }
+            if a.given.is_some() {
+                return Err(Error::new(
+                    ident.span(),
+                    "a group is not given whole; put `given` on the group type's fields",
+                ));
+            }
             let get = format_ident!("__qml_group_{}", ident);
             let get_mut = format_ident!("__qml_group_mut_{}", ident);
             let fty = if a.lazy {
@@ -739,6 +754,10 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             builder.push(
                 quote!(.write(#p::WriteFn::<#ty, #fty, _>::filter(&#path, #write, #write_cx))),
             );
+        }
+        if let Some(path) = &a.given {
+            let path = self_to(path, ty);
+            builder.push(quote!(.given(#path)));
         }
         match &a.reset {
             Some(Some(reset)) => builder.push(quote!(.reset(#reset))),

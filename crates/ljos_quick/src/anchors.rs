@@ -1,18 +1,23 @@
 //! Anchor layout: eager geometry effects (ARCHITECTURE §7.4).
 //!
-//! Each item in a scene has one anchors effect. It reads the item's
-//! `anchors.*` and, when any are set, the geometry of the items it is
-//! anchored to; it writes the anchored `x`/`y`/`width`/`height` through
-//! an override layer. The layer sits above whatever the item was given,
-//! so removing an anchor leaves the item where it is (Qt keeps the
+//! An item a scene shows is followed ([`follow`]) and, from the first
+//! anchor line it is given, has one anchors effect. Most items are
+//! anchored by nothing: they cost the scene no effect, and the line that
+//! is given late is told ([`line_given`]) and starts one then. The effect
+//! reads the item's `anchors.*` and, when any are set, the geometry of the
+//! items it is anchored to; it writes the anchored `x`/`y`/`width`/`height`
+//! through an override layer. The layer sits above whatever the item was
+//! given, so removing an anchor leaves the item where it is (Qt keeps the
 //! geometry too) and the item's own binding is not destroyed.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use ljos_engine::{
-    Engine, EngineError, LogLevel, ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode,
-    Value, WriteKind,
+    Cx, Engine, EngineError, LogLevel, NodeId, ObjectId, OverrideContent, OverrideId, PropIndex,
+    RestoreMode, Value, WriteKind,
 };
+use slotmap::SecondaryMap;
 
 use crate::item::{AnchorLine, AnchorProps, Edge, Item, effective_margin, num};
 use crate::mirroring::mirrored;
@@ -44,6 +49,123 @@ impl AnchorState {
                 let _ = engine.remove_override(obj, p, id, RestoreMode::None);
             }
         }
+    }
+}
+
+/// The items scenes show, each with the effect that follows its anchors
+/// once it has one. Per engine: a line is told of on its object, which
+/// does not say which scene shows it.
+#[derive(Default)]
+struct Followed {
+    items: RefCell<SecondaryMap<ObjectId, Shown>>,
+}
+
+struct Shown {
+    /// How many scenes show it: the last to stop showing it stops it.
+    scenes: u32,
+    following: Option<Following>,
+}
+
+struct Following {
+    effect: NodeId,
+    state: Rc<RefCell<AnchorState>>,
+}
+
+/// Follows the anchors of `obj`, which a scene has started to show: now if
+/// it has a line, otherwise from when it is given one.
+pub(crate) fn follow(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let followed = engine.extension::<Followed>();
+    {
+        let mut items = followed.items.borrow_mut();
+        if let Some(shown) = items.get_mut(obj) {
+            shown.scenes += 1;
+            return Ok(());
+        }
+        items.insert(
+            obj,
+            Shown {
+                scenes: 1,
+                following: None,
+            },
+        );
+    }
+    let a = AnchorProps::get();
+    let lines = [
+        a.fill,
+        a.center_in,
+        a.left,
+        a.right,
+        a.horizontal_center,
+        a.top,
+        a.bottom,
+        a.vertical_center,
+        a.baseline,
+    ];
+    if engine.authored(obj, &lines, (1 << lines.len()) - 1) != 0 {
+        start(engine, obj, &followed)?;
+    }
+    Ok(())
+}
+
+/// Stops following `obj`'s anchors for a scene that no longer shows it;
+/// the geometry they gave it stays.
+pub(crate) fn unfollow(engine: &Engine, obj: ObjectId) {
+    let followed = engine.extension::<Followed>();
+    let following = {
+        let mut items = followed.items.borrow_mut();
+        let Some(shown) = items.get_mut(obj) else {
+            return;
+        };
+        shown.scenes -= 1;
+        if shown.scenes > 0 {
+            return;
+        }
+        items.remove(obj).and_then(|s| s.following)
+    };
+    let Some(f) = following else {
+        return;
+    };
+    engine.stop_effect(f.effect);
+    if engine.is_alive(obj) {
+        f.state.borrow_mut().release(engine, obj);
+    }
+}
+
+fn start(engine: &Engine, obj: ObjectId, followed: &Followed) -> Result<(), EngineError> {
+    let state = Rc::new(RefCell::new(AnchorState::default()));
+    let runs = Rc::clone(&state);
+    // Made with nothing borrowed: its first run may be now, and what it
+    // writes may tell of more.
+    let effect = engine.effect_in(obj, move |e| run(e, obj, &runs))?;
+    let kept = match followed.items.borrow_mut().get_mut(obj) {
+        Some(shown) => {
+            shown.following = Some(Following { effect, state });
+            true
+        }
+        None => false,
+    };
+    if !kept {
+        // Let go of while it was being made.
+        engine.stop_effect(effect);
+    }
+    Ok(())
+}
+
+/// An anchor line of `cx.this` was given: an item shown and not yet
+/// followed starts to be.
+pub(crate) fn line_given(cx: &Cx<'_>, _line: PropIndex) {
+    let (engine, obj) = (cx.engine, cx.this);
+    let followed = engine.extension::<Followed>();
+    let waits = followed
+        .items
+        .borrow()
+        .get(obj)
+        .is_some_and(|s| s.following.is_none());
+    if !waits {
+        return;
+    }
+    if let Err(e) = start(engine, obj, &followed) {
+        engine.log(LogLevel::Warning, CATEGORY, format!("anchors: {e}"));
     }
 }
 

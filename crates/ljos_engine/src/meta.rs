@@ -136,6 +136,10 @@ pub enum WriteFilter {
 }
 /// A [`WriteFilter::Cx`] setter.
 pub type CxWrite = fn(&Cx<'_>, &Value) -> Result<Option<Value>, ConvertError>;
+/// Told that the property (its index on `cx.this`) was just given a value,
+/// a binding or an override ([`MetaBuilder::given`]). It runs with nothing
+/// borrowed and its reads are not tracked.
+pub type GivenHook = fn(&Cx<'_>, PropIndex);
 /// Gets the group struct (`Border`) from the struct that holds it.
 pub type GroupGet = fn(&dyn QmlObject) -> &dyn QmlObject;
 /// Mutable [`GroupGet`].
@@ -283,6 +287,9 @@ pub struct PropertyInfo {
     /// description of the type says it holds: a control's part holds an
     /// `Item` once made, though a style gives it as a `Component` first.
     pub holds: Option<Atom>,
+    /// What is told when the property is given a value, a binding or an
+    /// override.
+    pub given: Option<GivenHook>,
 }
 
 impl PropertyInfo {
@@ -1001,6 +1008,7 @@ impl MetaBuilder {
             list_field: None,
             reset: None,
             holds: None,
+            given: None,
         }));
     }
 
@@ -1090,6 +1098,7 @@ impl MetaBuilder {
             // holds the group and the member's index there.
             if let Some(p) = self.last_property() {
                 p.reset = leaf.reset;
+                p.given = leaf.given;
             }
         }
         self
@@ -1191,6 +1200,21 @@ impl MetaBuilder {
             self.last_property().map(|p| &mut p.access)
         {
             *write = Some(f);
+        }
+        self
+    }
+
+    /// Tells `f` each time the property just added is given a value, a
+    /// binding or an override, once it is in place: what an author gives
+    /// it, from QML, a script or Rust, and the states that override it.
+    /// What a binding gives it as it runs is not told, nor what animations,
+    /// layouts and the toolkit itself write. A type that follows what few
+    /// of its objects set (an item's anchors) then follows just those,
+    /// where an effect on each object would read it on all of them.
+    #[inline(never)]
+    pub fn given(mut self, f: GivenHook) -> Self {
+        if let Some(p) = self.last_property() {
+            p.given = Some(f);
         }
         self
     }

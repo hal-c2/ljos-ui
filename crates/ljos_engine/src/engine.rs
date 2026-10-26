@@ -1926,7 +1926,7 @@ impl Engine {
         // An array is the script's own in a `var`, a list anywhere else
         // (script_arrays.rs).
         let v = self.for_slot(obj, prop, v);
-        let (filtered, node, hook) = {
+        let (filtered, node, hook, given) = {
             let store = self.inner.store.borrow();
             let h = store
                 .objects
@@ -1934,10 +1934,18 @@ impl Engine {
                 .ok_or_else(|| EngineError::dead(obj))?;
             let ty = self.check_writable(h, prop, internal)?;
             let (node, hook) = node_and_hook(h, prop, internal);
+            // What an author gives: an animation, a layout or the toolkit
+            // writing is not the property being given.
+            let given = h.meta.property(prop).and_then(|p| p.given).filter(|_| {
+                matches!(
+                    how,
+                    WriteKind::Imperative | WriteKind::Initial | WriteKind::Override(_)
+                )
+            });
             let v = coerce_for(&store, Some(obj), ty, &v)?;
             // The type's own say comes before anything hears of it, as a
             // setter's does in Qt.
-            (filter_in(h, prop, v)?, node, hook)
+            (filter_in(h, prop, v)?, node, hook, given)
         };
         let (v, node, hook) = match filtered {
             Filtered::Done(None) => return Ok(()),
@@ -1957,6 +1965,27 @@ impl Engine {
                 (v, node, hook)
             }
         };
+        let r = self.write_filtered(obj, prop, v, (node, hook), how, internal);
+        if r.is_ok()
+            && let Some(given) = given
+        {
+            self.untrack(|| given(&Cx::new(self, obj), prop));
+        }
+        r
+    }
+
+    /// The rest of [`write_impl`](Self::write_impl), once the type has had
+    /// its say: the value goes to a model row, a Behavior, the node or the
+    /// field.
+    fn write_filtered(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        v: Value,
+        (node, hook): (Result<Option<NodeId>, ()>, Option<crate::object::WriteHook>),
+        how: WriteKind,
+        internal: bool,
+    ) -> Result<(), EngineError> {
         let node = match node {
             Ok(n) => n,
             // A reader follows it: the node, made with the old value,
@@ -2057,6 +2086,7 @@ impl Engine {
                 || p.is_readonly()
                 || p.flags
                     .intersects(PropertyFlags::GROUP | PropertyFlags::CONSTANT)
+                || p.given.is_some()
                 || h.makes_on_read(prop)
                 || h.ext.as_ref().is_some_and(|x| x.write_hook.is_some())
                 || h.flags.contains(ObjectFlags::INTERCEPTED)
@@ -2464,7 +2494,26 @@ impl Engine {
         let (n, ty, last) = self.binding_target(obj, prop, internal)?;
         let wrapper = self.binding_wrapper(obj, prop, ty, last, f, free);
         self.inner.graph.bind(n, wrapper)?;
-        self.binding_installed(n, obj, prop)
+        self.binding_installed(n, obj, prop)?;
+        self.tell_given(obj, prop);
+        Ok(())
+    }
+
+    /// Runs the type's [`GivenHook`](crate::meta::GivenHook) for `prop`,
+    /// if it has one, now that a binding or an override is in place (a
+    /// value written is told in [`write_impl`](Self::write_impl)).
+    fn tell_given(&self, obj: ObjectId, prop: PropIndex) {
+        let hook = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .get(obj)
+                .and_then(|h| h.meta.property(prop))
+                .and_then(|p| p.given)
+        };
+        if let Some(hook) = hook {
+            self.untrack(|| hook(&Cx::new(self, obj), prop));
+        }
     }
 
     /// The node a binding of `prop` goes on, the type it gives and what it
@@ -2791,6 +2840,7 @@ impl Engine {
             self.sync_field(obj, prop, n);
             Ok::<_, EngineError>(id)
         })?;
+        self.tell_given(obj, prop);
         Ok(id)
     }
 

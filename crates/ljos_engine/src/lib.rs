@@ -154,10 +154,10 @@ pub use lookups::Lookups;
 pub use lookups::lookups;
 pub use memory::{CompiledMemory, TypeMemory};
 pub use meta::{
-    AttachedTypeId, CompleteThunk, Declared, EnumInfo, Getter, GroupGet, GroupGetMut, ImplInfo,
-    ListAppend, ListField, ListInsert, ListRemove, MetaBuilder, MetaObject, MetaRef, MethodDecl,
-    MethodInfo, MethodThunk, Prop, PropertyAccess, PropertyFlags, PropertyInfo, QmlImplInfo, Reset,
-    ResetApply, ResetValue, Setter, SignalDecl, SignalInfo, WriteFilter,
+    AttachedTypeId, CompleteThunk, Declared, EnumInfo, Getter, GivenHook, GroupGet, GroupGetMut,
+    ImplInfo, ListAppend, ListField, ListInsert, ListRemove, MetaBuilder, MetaObject, MetaRef,
+    MethodDecl, MethodInfo, MethodThunk, Prop, PropertyAccess, PropertyFlags, PropertyInfo,
+    QmlImplInfo, Reset, ResetApply, ResetValue, Setter, SignalDecl, SignalInfo, WriteFilter,
 };
 pub use model::{DelegateGone, DelegateMade, DelegateRows, DelegateSource, ObjectRows};
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};

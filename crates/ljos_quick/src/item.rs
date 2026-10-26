@@ -289,27 +289,28 @@ impl Default for ItemLayer {
     }
 }
 
-/// The `anchors` group of [`Item`].
+/// The `anchors` group of [`Item`]. Each line tells the anchors when it is
+/// given: an item is followed from its first (`anchors::follow`).
 #[derive(Debug, QmlObject)]
 #[qml(name = "Anchors", uncreatable)]
 pub struct Anchors {
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub left: Value,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub right: Value,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub top: Value,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub bottom: Value,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub horizontal_center: Value,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub vertical_center: Value,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub baseline: Value,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub fill: Option<ObjectId>,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, given = crate::anchors::line_given)]
     pub center_in: Option<ObjectId>,
     #[qml(notify, write = margins_written)]
     pub margins: f64,
