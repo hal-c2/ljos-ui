@@ -1365,7 +1365,7 @@ pub(crate) fn metrics(
 /// Where the memory is: what the process holds, and the parts of it the
 /// engine can count without walking anything.
 struct Memory {
-    process: Option<super::observe::Resident>,
+    process: Option<super::process::Resident>,
     script: Option<ljos_engine::ScriptMemory>,
     nodes: usize,
     objects: usize,
@@ -1374,7 +1374,7 @@ struct Memory {
 impl Memory {
     fn of(engine: &Engine) -> Memory {
         Memory {
-            process: super::observe::Resident::now(),
+            process: super::process::Resident::now(),
             script: engine.script_memory(),
             nodes: engine.node_count(),
             objects: engine.object_count(),

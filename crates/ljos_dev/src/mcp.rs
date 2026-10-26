@@ -67,6 +67,7 @@ mod objects;
 mod observe;
 mod one_wake;
 mod paint;
+mod process;
 mod redact;
 mod reload;
 mod room;

@@ -326,7 +326,7 @@ impl Mappings {
 
     #[cfg(target_os = "macos")]
     pub(crate) fn now() -> Option<Mappings> {
-        let regions = super::observe::mach::regions()?;
+        let regions = super::process::regions()?;
         Some(Mappings::of_regions(&regions, &program()))
     }
 

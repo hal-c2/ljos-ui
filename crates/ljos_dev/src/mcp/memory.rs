@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use super::mappings::{Group, Mappings};
 use super::objects::handle;
-use super::observe::Resident;
+use super::process::Resident;
 use super::room::{self, Room};
 use super::rust_heap::rust_heap_bytes;
 
