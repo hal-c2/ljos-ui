@@ -54,6 +54,26 @@ pub struct Color {
     pub b: u16,
     pub a: u16,
     invalid: bool,
+    unwritten: Unwritten,
+}
+
+/// Whether a declared `color` or `font` property still holds what it
+/// started with: qml6 tells any write to it as a change, even of a value
+/// equal to it ([`Value::change_equals`]). No part of the value: it equals,
+/// and hashes, as if it were not there.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Unwritten(bool);
+
+impl PartialEq for Unwritten {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Unwritten {}
+
+impl std::hash::Hash for Unwritten {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
 }
 
 impl Color {
@@ -62,6 +82,12 @@ impl Color {
     pub const INVALID: Color = Color {
         invalid: true,
         ..Color::rgba16(0, 0, 0, 65535)
+    };
+    /// What a declared `property color` starts as: [`Color::INVALID`], and
+    /// equal to it, but any colour written to it is a change.
+    pub const UNWRITTEN: Color = Color {
+        unwritten: Unwritten(true),
+        ..Color::INVALID
     };
     pub const BLACK: Color = Color::from_rgba8(0, 0, 0, 255);
     pub const WHITE: Color = Color::from_rgba8(255, 255, 255, 255);
@@ -74,12 +100,21 @@ impl Color {
             b,
             a,
             invalid: false,
+            unwritten: Unwritten(false),
         }
     }
 
     /// False for a colour that was not given ([`Color::INVALID`]).
     pub const fn is_valid(self) -> bool {
         !self.invalid
+    }
+
+    /// This colour as one written to a property ([`Color::UNWRITTEN`]).
+    pub const fn written(self) -> Self {
+        Color {
+            unwritten: Unwritten(false),
+            ..self
+        }
     }
 
     /// The same channels, invalid: what Qt makes of an invalid colour
@@ -344,6 +379,8 @@ pub struct Font {
     /// (`Undefined` when never), kept and read back.
     pub features: Value,
     pub variable_axes: Value,
+    /// Set on what a declared `property font` starts as ([`Color::UNWRITTEN`]).
+    pub unwritten: Unwritten,
 }
 
 /// What a host set with [`Font::set_application_font`]: the part of a font
@@ -476,7 +513,22 @@ impl Font {
             prefer_typo_line_metrics: false,
             features: Value::Undefined,
             variable_axes: Value::Undefined,
+            unwritten: Unwritten(false),
         }
+    }
+
+    /// What a declared `property font` starts as: the default font, but any
+    /// font written to it is a change.
+    pub(crate) fn unwritten() -> Self {
+        Font {
+            unwritten: Unwritten(true),
+            ..Font::default()
+        }
+    }
+
+    /// Whether this is what a declared property started as.
+    pub(crate) fn is_unwritten(&self) -> bool {
+        self.unwritten.0
     }
 
     /// Makes the family, sizes, weight, italics and style name of `font`
@@ -1129,7 +1181,18 @@ impl Value {
         if let (Some(a), Some(b)) = (self.as_number(), other.as_number()) {
             return a == b || (a.is_nan() && b.is_nan());
         }
+        if self.unwritten() != other.unwritten() {
+            return false;
+        }
         self.same_kind_equals(other)
+    }
+
+    fn unwritten(&self) -> bool {
+        match self {
+            Value::Color(c) => c.unwritten.0,
+            Value::Font(f) => f.unwritten.0,
+            _ => false,
+        }
     }
 
     fn same_kind_equals(&self, other: &Value) -> bool {

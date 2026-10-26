@@ -184,11 +184,11 @@ impl TypeTag {
             TypeTag::Real => Value::Real(0.0),
             TypeTag::String => Value::String(Atom::EMPTY),
             // QML's default colour is invalid; it reads as opaque black.
-            TypeTag::Color => Value::Color(Color::INVALID),
+            TypeTag::Color => Value::Color(Color::UNWRITTEN),
             TypeTag::Point => Value::Point(Arc::default()),
             TypeTag::Size => Value::size(-1.0, -1.0),
             TypeTag::Rect => Value::Rect(Arc::default()),
-            TypeTag::Font => Value::Font(Arc::default()),
+            TypeTag::Font => Value::Font(Arc::new(Font::unwritten())),
             TypeTag::Vector2d => Value::Vector2d(Vector2d::default()),
             TypeTag::Vector3d => Value::Vector3d(Vector3d::default()),
             TypeTag::Vector4d => Value::Vector4d(Arc::default()),
@@ -286,7 +286,7 @@ impl TypeTag {
                 _ => Value::String(v.to_js_string()),
             },
             TypeTag::Color => match v {
-                Value::Color(_) => v.clone(),
+                Value::Color(c) => Value::Color(c.written()),
                 // Text that names no colour, `""` too, and anything else makes
                 // an invalid colour without a word, as in qml6. A literal one
                 // is refused when the file is compiled, before this.
@@ -379,6 +379,10 @@ impl TypeTag {
                 _ => return fail(),
             },
             TypeTag::Font => match v {
+                Value::Font(f) if f.is_unwritten() => Value::Font(Arc::new(Font {
+                    unwritten: Default::default(),
+                    ..(**f).clone()
+                })),
                 Value::Font(_) => v.clone(),
                 // A text is the family of a font that is otherwise the
                 // default one.
@@ -387,7 +391,7 @@ impl TypeTag {
                     ..Font::default()
                 })),
                 _ if refused_as_value(v) => return fail(),
-                _ => self.default_value(),
+                _ => Value::Font(Arc::default()),
             },
             TypeTag::Object(_) => match v {
                 Value::Object(_) | Value::Null => v.clone(),

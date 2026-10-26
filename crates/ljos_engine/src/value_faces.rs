@@ -197,6 +197,7 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
             prefer_typo_line_metrics: b(17),
             features: kept(fields.get(18)),
             variable_axes: kept(fields.get(19)),
+            unwritten: Default::default(),
         })),
         _ => Value::Undefined,
     }

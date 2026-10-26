@@ -199,7 +199,6 @@ Feature: A value a binding gives a property of another type
     Then the property "seen" of "root" is "1 NaN 0 NaN 0 5; 1 NaN 0 NaN 0 5 0 0"
 
   # Bucket value:url:default.
-  @backlog
   Scenario: A font given an array is unchanged and told as a change
     Given the QML:
       """qml
@@ -215,6 +214,31 @@ Feature: A value a binding gives a property of another type
       """
     Then the property "changes" of "root" is 1
     And the property "same" of "root" is true
+
+  Scenario: A declared colour or font tells its first write as a change, even of what it held
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property color c
+        property font f
+        property font plain
+        property int cs: 0
+        property int fs: 0
+        onCChanged: cs++
+        onFChanged: fs++
+        property string seen
+        function write() {
+          f = plain; f = {}; c = []; c = [1]
+          seen = [cs, fs, c === Qt.color("#00000000") || !c.valid, f == plain].join(" ")
+          c = "transparent"
+          seen += "; " + cs
+        }
+      }
+      """
+    When the method "write" of "root" is called
+    Then the property "seen" of "root" is "1 1 true true; 2"
 
   # Bucket warning:assign(qt-only):Unable_to_assign_[undefined]_to_int.
   Scenario: An int bound to undefined is zero and warned about
