@@ -63,6 +63,11 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
     let Some(row) = usize::try_from(index).ok().filter(|r| *r < d.count()) else {
         return;
     };
+    // A change waiting for the next polish is laid out first, as a script
+    // that asks for a row expects the rows the model has now.
+    if st.due.get() {
+        pass::refresh(e, view);
+    }
     let mut moved = st.passes.get();
     // Whether the rows were laid out where the view already was, as the
     // layout effect last laid them out.

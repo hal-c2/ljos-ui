@@ -242,6 +242,15 @@ pub(crate) struct ViewState {
     pub dirty: Cell<bool>,
     /// How many times the rows were laid out.
     pub passes: Cell<u64>,
+    /// The model changed since the last pass: the rows are laid out when
+    /// the scene is next polished, once for every change until then.
+    pub due: Cell<bool>,
+    /// A change waiting for that pass moved rows the last pass placed, so
+    /// what it left in `slots` is not where those rows are now.
+    pub slots_stale: Cell<bool>,
+    /// `count` was given the model's count without telling anyone: the
+    /// pass that lays those rows out tells.
+    pub count_untold: Cell<bool>,
     /// The first row in sight after the last pass and where it starts:
     /// what stays put when rows come and go before it.
     pub anchor: Cell<(usize, f64)>,
@@ -418,6 +427,9 @@ impl Default for ViewState {
             hidden: RefCell::default(),
             running: RefCell::default(),
             pending: RefCell::default(),
+            due: Cell::new(false),
+            slots_stale: Cell::new(false),
+            count_untold: Cell::new(false),
             last_places: RefCell::default(),
             moves_rows: Cell::default(),
             vt_places: RefCell::default(),

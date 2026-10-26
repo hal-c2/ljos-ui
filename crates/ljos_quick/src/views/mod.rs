@@ -707,8 +707,8 @@ impl ItemView {
             .map_or(Value::Null, Value::Object)
     }
 
-    /// `forceLayout()`: the rows are laid out when the model changes
-    /// already; this lays them out once more.
+    /// `forceLayout()`: the rows a change of the model gave are laid out
+    /// now rather than when the scene is next polished.
     #[qml(invokable, name = "forceLayout")]
     fn force_layout(cx: &Cx) {
         pass::refresh(cx.engine, cx.this);
