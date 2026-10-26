@@ -349,14 +349,24 @@ fn text(engine: &Engine, obj: ObjectId, prop: PropIndex) -> String {
 
 /// How a state's change gives `v` to a property of type `ty` where Qt
 /// converts it otherwise than an assignment does (measured on qml6): a
-/// colour given a bool or a number is an invalid colour, without a
-/// warning, and an int given an array or an object is refused, with one.
-/// `None` for what converts as an assignment does.
-fn converted(ty: &TypeTag, v: &Value) -> Option<Result<Value, &'static str>> {
+/// colour given a bool, a number, an array or an object is an invalid
+/// colour, without a warning, but one given a function is refused; and an
+/// int given an array or an object is refused, with a warning. `None` for
+/// what converts as an assignment does.
+fn converted(engine: &Engine, ty: &TypeTag, v: &Value) -> Option<Result<Value, &'static str>> {
     match (ty, v) {
-        (TypeTag::Color, Value::Bool(_) | Value::Int(_) | Value::Real(_)) => {
-            Some(Ok(Value::Color(Color::INVALID)))
-        }
+        (TypeTag::Color, Value::Js(_)) if engine.is_callable(v) => Some(Err(
+            "Unable to assign a function to a property of any type other than var.",
+        )),
+        (
+            TypeTag::Color,
+            Value::Bool(_)
+            | Value::Int(_)
+            | Value::Real(_)
+            | Value::List(_)
+            | Value::Map(_)
+            | Value::Js(_),
+        ) => Some(Ok(Value::Color(Color::INVALID))),
         (TypeTag::Int, Value::List(_) | Value::Map(_) | Value::Js(_)) => {
             Some(Err("Unable to assign QJSValue to int"))
         }
@@ -377,7 +387,7 @@ fn asked(ty: &TypeTag) -> TypeTag {
 /// the property has, for what fails or is refused.
 fn given_as(engine: &Engine, at: &str, ty: &TypeTag, v: Option<Value>) -> Option<Value> {
     let v = v?;
-    match converted(ty, &v) {
+    match converted(engine, ty, &v) {
         Some(Ok(v)) => Some(v),
         Some(Err(why)) => {
             engine.warn(format!("{at}: {why}"));

@@ -7,7 +7,7 @@
 # Found by ljos-fuzz (states), seeds 101 and 202: buckets value:onChanged:text,
 # onChanged:empty-ljos, value:load:empty-ljos, value:load:number, value:step:color,
 # binding-loop(ljos-only), warning:assign(ljos-only) and the restoreEntryValues ones (see
-# crates/ljos_fuzz/known/states.txt).
+# crates/ljos_fuzz/known/states.txt); after B26, value:step:invalid-qt, a colour given a list.
 
 @qt-parity
 Feature: The order of a state change
@@ -237,6 +237,42 @@ Feature: The order of a state change
     When the method "run" of "root" is called
     Then the property "seen" of "root" is "#000000 false 4 4"
     And the log has 2 warnings matching "Unable to assign"
+
+  Scenario Outline: A change of a colour to <what> makes it invalid, unwarned
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property color c: Qt.rgba(0, 0, 1, 1)
+        states: [State { name: "s0"; PropertyChanges { target: root; c: <value> } }]
+      }
+      """
+    When the property "state" of "root" is set to "s0"
+    Then the property "c" of "root" is "#000000"
+    And the log has no warnings
+
+    Examples:
+      | what              | value                |
+      | a worked-out list | "".split(",")        |
+      | an empty list     | []                   |
+      | an object's keys  | Object.keys({k0: 1}) |
+      | an object         | ({a: 1})             |
+      | a date            | new Date(0)          |
+
+  Scenario: A change of a colour to a function is refused, and warned of
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property color c: "blue"
+        states: [State { name: "s0"; PropertyChanges { target: root; c: (function () { return 1 }) } }]
+      }
+      """
+    When the property "state" of "root" is set to "s0"
+    Then the property "c" of "root" is "#0000ff"
+    And the log has 1 warning matching "Scenario.qml:5:70: Unable to assign a function to a property of any type other than var."
 
   Scenario: A change an extended state keeps is restored when the default state is set
     Given the QML:
