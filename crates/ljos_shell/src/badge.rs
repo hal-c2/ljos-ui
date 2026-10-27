@@ -44,6 +44,8 @@ pub(crate) mod launcher {
     use zbus::blocking::Connection;
     use zbus::zvariant::Value;
 
+    use crate::lock;
+
     type Properties = HashMap<String, Value<'static>>;
 
     const INTERFACE: &str = "com.canonical.Unity.LauncherEntry";
@@ -108,7 +110,7 @@ pub(crate) mod launcher {
             };
             let name = platform.desktop_file_name();
             let latest = self.sender.get_or_init(|| self.start());
-            let mut state = latest.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = lock(&latest.state);
             state.next = Some((name, count));
             latest.ready.notify_one();
         }
@@ -117,7 +119,7 @@ pub(crate) mod launcher {
     impl Drop for LauncherEntry {
         fn drop(&mut self) {
             if let Some(latest) = self.sender.get() {
-                let mut state = latest.state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut state = lock(&latest.state);
                 state.closed = true;
                 latest.ready.notify_one();
             }
@@ -147,7 +149,7 @@ pub(crate) mod launcher {
         let mut served: Option<String> = None;
         loop {
             let next = {
-                let mut state = latest.state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut state = lock(&latest.state);
                 loop {
                     if let Some(next) = state.next.take() {
                         break next;
