@@ -187,6 +187,8 @@ pub mod item;
 pub mod locale;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+#[cfg(any(feature = "dev-qml", feature = "build"))]
+mod oracle;
 /// Hot reload in a development build (the `dev` feature): what
 /// [`Setup::watch`](crate::Setup) and its kin tell
 /// [`Setup::on_reload`](crate::Setup), and the type oracles
