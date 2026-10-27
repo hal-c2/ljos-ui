@@ -138,7 +138,7 @@ Column {
 
 ## Differences from Qt
 
-- A `ComboBox` popup with more rows than fit in the window is limited to the window's height and scrolls, and popups run their `enter` and `exit` transitions as Qt's do.
+- A `ComboBox` popup that does not fit below its field opens above it; one with more rows than fit in the window is limited to the window's height and scrolls. Popups run their `enter` and `exit` transitions as Qt's do.
 - In the Basic style, `palette.placeholderText` has a `3.04:1` contrast ratio on white, which is below the `4.5:1` threshold for normal text; set `palette.placeholderText` when you need higher contrast.
 
 ## See also

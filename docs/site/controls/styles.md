@@ -38,7 +38,7 @@ When you use the Material or Universal style, you can configure themes and colou
 
 For `Material`:
 
-- `Material.theme`: `Material.Light` (`0`), `Material.Dark` (`1`), or `Material.System` (`2`)
+- `Material.theme`: `Material.Light` (`0`), `Material.Dark` (`1`), or `Material.System` (`2`), which follows the platform's colour scheme
 - `Material.accent`, `Material.primary`, and `Material.foreground`: inherited down the item tree (including named colours such as `Material.Teal` `8` or hex colour strings)
 - `Material.elevation`: stays local to the control it is set on and is not inherited by child controls
 
@@ -92,7 +92,7 @@ Item {
 }
 ```
 
-For `Universal`, `Universal.theme` accepts `Universal.Light`, `Universal.Dark` (`1`), or `Universal.System`, and `Universal.accent` sets the accent colour:
+For `Universal`, `Universal.theme` accepts `Universal.Light`, `Universal.Dark` (`1`), or `Universal.System` (the platform's colour scheme), and `Universal.accent` sets the accent colour:
 
 ```qml
 import QtQuick
