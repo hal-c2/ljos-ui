@@ -17,6 +17,7 @@ use std::{
 };
 
 use ljos_bdd::backend::{Backend, LogLevel, QmlFile, ljos::LjosBackend, qt};
+use ljos_child::Reaped;
 use serde_json::Value;
 
 use crate::outcome::{Outcome, Phase, Rendered};
@@ -229,13 +230,14 @@ impl QtSide {
         qt::oracle_env(&mut command, &self.work, "offscreen").map_err(io)?;
         // Every case is loaded once: caching its compiled form is only writing.
         command.env("QML_DISABLE_DISK_CACHE", "1");
-        let mut child = command
-            .arg(&path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("cannot start {}: {e}", self.qml))?;
+        let mut child = Reaped::spawn(
+            command
+                .arg(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped()),
+        )
+        .map_err(|e| format!("cannot start {}: {e}", self.qml))?;
         let mut pipe = child.stderr.take().expect("stderr is piped");
         let (tx, rx) = mpsc::channel();
         // Read on a thread so the wait below can give up on a hung qml6.
@@ -251,7 +253,7 @@ impl QtSide {
                 (rx.recv().unwrap_or_default(), true)
             }
         };
-        let status = child.wait().map_err(|e| e.to_string())?;
+        let status = child.finish().map_err(|e| e.to_string())?;
         let (done, at, ended) = parse(&text);
         let failure = if !ended || hung {
             let why = if hung {

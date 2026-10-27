@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ljos_child::Reaped;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -780,8 +781,8 @@ fn run_once(
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
-    let mut child = command
-        .spawn()
+    // Killed on every way out of here, a `?` as much as the end.
+    let mut child = Reaped::spawn(&mut command)
         .map_err(|e| Error::Launch(format!("{}: {e}", setup.launcher.display())))?;
     let pid = child.id();
     let gate_exe = std::fs::canonicalize(&setup.gate).unwrap_or_else(|_| setup.gate.clone());
@@ -810,8 +811,7 @@ fn run_once(
         match check_isolated(&cg, pid, profile) {
             Ok(()) => break cg,
             Err(reason) if handed || Instant::now() > deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = child.stop();
                 return Err(Error::Refused(format!(
                     "{what} is not inside the limit of {} {} ms after its launch{}: {reason}",
                     profile.name,

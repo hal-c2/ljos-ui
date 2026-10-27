@@ -12,11 +12,12 @@ use std::{
     fs,
     io::{BufRead, BufReader, Write},
     path::{Component, Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{ChildStdin, Command, Stdio},
     sync::mpsc::{Receiver, RecvTimeoutError, channel},
     time::Duration,
 };
 
+use ljos_child::Reaped;
 use serde_json::{Value, json};
 
 mod desktop;
@@ -128,7 +129,7 @@ pub fn tools_named(text: &str) -> Vec<String> {
 
 /// `ljos mcp`, running, and the pipe it answers on.
 struct Server {
-    child: Child,
+    child: Reaped,
     /// `None` once the pipe is closed, which is how the server is told to
     /// leave.
     stdin: Option<ChildStdin>,
@@ -147,14 +148,15 @@ impl Server {
         if let Some(runner) = runner {
             command.arg("--features-runner").arg(runner);
         }
-        let mut child = command
-            .current_dir(dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            // The log is the server's own; what an agent sees is the answers.
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("cannot start `ljos mcp`: {e}"))?;
+        let mut child = Reaped::spawn(
+            command
+                .current_dir(dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                // The log is the server's own; what an agent sees is the answers.
+                .stderr(Stdio::null()),
+        )
+        .map_err(|e| format!("cannot start `ljos mcp`: {e}"))?;
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().ok_or("`ljos mcp` has no output")?;
         let (send, lines) = channel();

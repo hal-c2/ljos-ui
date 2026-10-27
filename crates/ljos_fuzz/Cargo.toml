@@ -19,6 +19,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 ljos_bdd = { path = "../ljos_bdd" }
+ljos_child = { path = "../ljos_child" }
 qt_types = { path = "../qt_types" }
 regex.workspace = true
 serde_json.workspace = true

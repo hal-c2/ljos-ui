@@ -3637,6 +3637,7 @@ dependencies = [
  "ljos_a11y",
  "ljos_audit",
  "ljos_bench",
+ "ljos_child",
  "ljos_compiler",
  "ljos_controls",
  "ljos_design",
@@ -3673,6 +3674,7 @@ version = "0.0.0"
 dependencies = [
  "libc",
  "ljos_a11y",
+ "ljos_child",
  "serde",
  "serde_json",
  "tempfile",
@@ -3681,6 +3683,10 @@ dependencies = [
  "wayland-protocols-wlr",
  "zbus",
 ]
+
+[[package]]
+name = "ljos_child"
+version = "0.0.0"
 
 [[package]]
 name = "ljos_cli"
@@ -3957,6 +3963,7 @@ dependencies = [
  "anyhow",
  "clap",
  "ljos_bdd",
+ "ljos_child",
  "qt_types",
  "regex",
  "serde_json",

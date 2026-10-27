@@ -35,6 +35,8 @@ gif.workspace = true
 # The Ljós backend. This is a test tool, so it may link the compiler (and so
 # the parser); shipped runtimes never do (ARCHITECTURE.md principle 5).
 ljos_a11y = { path = "../ljos_a11y" }
+# Every process a backend or the author starts ends with it.
+ljos_child = { path = "../ljos_child" }
 # The @desktop surface: the sandbox compositor's virtual pointer and its
 # windows (src/backend/desktop.rs).
 ljos_bench = { path = "../ljos_bench" }

@@ -22,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ljos_child::Reaped;
 use serde_json::{Value, json};
 
 use super::{
@@ -417,12 +418,14 @@ impl QtBackend {
         if let Some(name) = &self.command_line_style {
             command.arg("-style").arg(name);
         }
-        let mut child = command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| BackendError::Failed(format!("cannot start {}: {e}", self.qml)))?;
+        // Killed on every way out, a failed `try_wait` as much as a timeout.
+        let mut child = Reaped::spawn(
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped()),
+        )
+        .map_err(|e| BackendError::Failed(format!("cannot start {}: {e}", self.qml)))?;
         let pipe = child.stderr.take().expect("stderr is piped");
         // Read on a thread so a chatty app cannot fill the pipe while we wait.
         // The driver's requests for input come out of the same pipe; they are
@@ -479,9 +482,9 @@ impl QtBackend {
                 }
             }
         };
+        // Ended before the reader is joined: its pipe closes only then.
         if outcome.is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.stop();
         }
         let text = reader.join().unwrap_or_default();
         outcome.map(|()| text)

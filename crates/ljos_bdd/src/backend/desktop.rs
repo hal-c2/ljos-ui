@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use ljos_bench::sway::Sway;
 use ljos_bench::wayland::Pointer;
+use ljos_child::Reaped;
 use serde_json::{Value, json};
 
 use super::inspector::{Answer, Ask, Refusal, Seen};
@@ -110,8 +111,8 @@ impl Sandbox {
 /// The running application and the ways in to it.
 #[derive(Debug)]
 struct Running {
-    app: Child,
-    attach: Child,
+    app: Reaped,
+    attach: Reaped,
     /// The last of what `ljos attach` wrote to its stderr, kept so that
     /// its end can say why.
     attach_stderr: Arc<Mutex<Vec<u8>>>,
@@ -126,13 +127,14 @@ struct Running {
 
 impl Running {
     /// Talks to the inspector of `app` through `ljos attach`.
-    fn attach(ljos: &Path, token: &Path, app: Child, rect: (i32, i32, i32, i32)) -> Result<Self> {
-        let mut attach = Command::new(ljos)
-            .args(["attach".as_ref(), token.as_os_str()])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+    fn attach(ljos: &Path, token: &Path, app: Reaped, rect: (i32, i32, i32, i32)) -> Result<Self> {
+        let mut attach = Reaped::spawn(
+            Command::new(ljos)
+                .args(["attach".as_ref(), token.as_os_str()])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )?;
         let attach_stderr = Arc::new(Mutex::new(Vec::new()));
         // Drained as it comes, so the pipe never fills, and bounded.
         if let Some(mut stderr) = attach.stderr.take() {
@@ -383,10 +385,9 @@ impl Running {
 impl Drop for Running {
     fn drop(&mut self) {
         // Only the two processes this backend started.
-        for child in [&mut self.attach, &mut self.app] {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        // The way in before what it leads to.
+        let _ = self.attach.stop();
+        let _ = self.app.stop();
     }
 }
 
@@ -523,7 +524,8 @@ impl DesktopBackend {
             .stderr(std::fs::File::create(
                 crate::runner::target_dir().join("features/desktop.log"),
             )?);
-        let mut app = command.spawn()?;
+        // Killed on every way out, until the backend holds it.
+        let mut app = Reaped::spawn(&mut command)?;
         let pid = app.id();
         let token = dir.join(format!("target/ljos/mcp-{pid}.json"));
         let sway = Sway::new(&sandbox.path("SWAYSOCK")?);
@@ -545,8 +547,6 @@ impl DesktopBackend {
                 break rect;
             }
             if Instant::now() > deadline {
-                let _ = app.kill();
-                let _ = app.wait();
                 return Err(BackendError::Failed(format!(
                     "ljos run showed no window in {} s",
                     STARTUP.as_secs()
@@ -588,21 +588,22 @@ impl DesktopBackend {
         let home = dir.join("observer");
         std::fs::create_dir_all(&home)?;
         let ljos = Self::ljos()?;
-        let mut observer = Command::new(&ljos)
-            .current_dir(&home)
-            .arg("observe")
-            .arg(&target)
-            .arg("--mcp=inspect,input")
-            .env_remove("DISPLAY")
-            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
-            .env_remove("AT_SPI_BUS_ADDRESS")
-            .envs(sandbox.env.iter().filter(|(k, _)| *k != "DISPLAY"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(std::fs::File::create(
-                crate::runner::target_dir().join("features/observer.log"),
-            )?)
-            .spawn()?;
+        let mut observer = Reaped::spawn(
+            Command::new(&ljos)
+                .current_dir(&home)
+                .arg("observe")
+                .arg(&target)
+                .arg("--mcp=inspect,input")
+                .env_remove("DISPLAY")
+                .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+                .env_remove("AT_SPI_BUS_ADDRESS")
+                .envs(sandbox.env.iter().filter(|(k, _)| *k != "DISPLAY"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(std::fs::File::create(
+                    crate::runner::target_dir().join("features/observer.log"),
+                )?),
+        )?;
         let token = home.join(format!("target/ljos/mcp-{}.json", observer.id()));
         let deadline = Instant::now() + STARTUP;
         while !token.is_file() {
@@ -616,8 +617,6 @@ impl DesktopBackend {
                 )));
             }
             if Instant::now() > deadline {
-                let _ = observer.kill();
-                let _ = observer.wait();
                 return Err(BackendError::Failed(format!(
                     "ljos observe served no inspector in {} s",
                     STARTUP.as_secs()
