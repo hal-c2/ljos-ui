@@ -1,0 +1,44 @@
+{
+  "profile_format": 2,
+  "name": "aot_cases",
+  "entry": "cases.ts",
+  "emission": "llvm",
+  "abi": {
+    "prefix": "aot_",
+    "init_symbol": "aot_init",
+    "sink_register_symbol": "aot_set_panic_sink",
+    "callback_register_symbol": "aot_set_callback",
+    "collect_symbol": "aot_collect"
+  },
+  "callbacks": [
+    { "name": "readNum", "params": ["f64"], "returns": "f64" },
+    { "name": "readBool", "params": ["f64"], "returns": "bool" },
+    { "name": "writeNum", "params": ["f64", "f64"], "returns": "void" },
+    { "name": "writeBool", "params": ["f64", "bool"], "returns": "void" },
+    { "name": "writeStr", "params": ["f64", "string"], "returns": "void" },
+    { "name": "writeStrList", "params": ["f64", "string"], "returns": "void" },
+    { "name": "emitStr", "params": ["f64", "string"], "returns": "void" },
+    { "name": "listLen", "params": ["f64"], "returns": "f64" },
+    { "name": "listNum", "params": ["f64", "f64"], "returns": "f64" },
+    { "name": "listBool", "params": ["f64", "f64"], "returns": "bool" },
+    { "name": "modelCount", "params": [], "returns": "f64" },
+    { "name": "modelRowNum", "params": ["f64"], "returns": "f64" },
+    { "name": "modelRemove", "params": ["f64"], "returns": "void" },
+    { "name": "modelInsertNum", "params": ["f64", "f64"], "returns": "void" },
+    { "name": "modelMove", "params": ["f64", "f64", "f64"], "returns": "void" }
+  ],
+  "exports": [
+    { "export": "progress", "symbol": "aot_progress", "params": [], "returns": "f64" },
+    { "export": "onClicked", "symbol": "aot_on_clicked", "params": [], "returns": "f64" },
+    { "export": "onSubmitted", "symbol": "aot_on_submitted", "params": ["string"], "returns": "f64" },
+    { "export": "statusText", "symbol": "aot_status_text", "params": ["string"], "returns": "string" },
+    { "export": "runText", "symbol": "aot_run_text", "params": ["string"], "returns": "string" },
+    { "export": "onPicked", "symbol": "aot_on_picked", "params": ["string", "string"], "returns": "f64" },
+    { "export": "onKeyPressed", "symbol": "aot_on_key_pressed", "params": ["f64", "f64", "string"], "returns": "f64" },
+    { "export": "onItemsChanged", "symbol": "aot_on_items_changed", "params": [], "returns": "f64" },
+    { "export": "readMany", "symbol": "aot_read_many", "params": ["f64"], "returns": "f64" },
+    { "export": "writeMany", "symbol": "aot_write_many", "params": ["f64"], "returns": "f64" },
+    { "export": "emitMany", "symbol": "aot_emit_many", "params": ["f64"], "returns": "f64" },
+    { "export": "nothing", "symbol": "aot_nothing", "params": [], "returns": "f64" }
+  ]
+}
