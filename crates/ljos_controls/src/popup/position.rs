@@ -34,6 +34,40 @@ fn clamp(mut pos: f64, size: f64, bound: f64, near: f64, far: f64) -> f64 {
     pos
 }
 
+/// Where a popup that flips goes along the vertical, given where it was
+/// put (`y`) and where it would be mirrored around its parent
+/// (`flipped`), in the overlay. Read off qml6: a popup that runs past the
+/// window, or past a margin it has, goes to the mirrored place when less
+/// of it runs past there (a tie stays), and then, when it is no taller
+/// than the room, is pushed inside; one taller than the room stays.
+fn flipped_y(
+    engine: &Engine,
+    popup: ObjectId,
+    overlay: ObjectId,
+    y: f64,
+    flipped: f64,
+    h: f64,
+) -> f64 {
+    let bound = num(engine, overlay, Item::HEIGHT.index);
+    if bound <= 0.0 {
+        return y;
+    }
+    let top = num(engine, popup, Popup::TOP_MARGIN.index).max(0.0);
+    let bottom = bound - num(engine, popup, Popup::BOTTOM_MARGIN.index).max(0.0);
+    let over = |p: f64| (top - p).max(0.0) + (p + h - bottom).max(0.0);
+    let mut y = y;
+    if over(y) <= 0.0 {
+        return y;
+    }
+    if over(flipped) < over(y) {
+        y = flipped;
+    }
+    if over(y) > 0.0 && h <= bottom - top {
+        y = y.min(bottom - h).max(top);
+    }
+    y
+}
+
 /// How large an open popup that was given no size of its own is along
 /// one axis: as large as it `wanted`, and no larger than the room between
 /// its margins when it has one at both ends (read off qml6: a margin at
@@ -123,7 +157,13 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
                 state.requested.set((x, y));
             }
             let (x, y) = state.requested.get();
-            to_scene * kurbo::Point::new(x, y)
+            let mut pos = to_scene * kurbo::Point::new(x, y);
+            if state.flips.get() {
+                let above = num(engine, parent, Item::HEIGHT.index) - y - h;
+                let flipped = (to_scene * kurbo::Point::new(x, above)).y;
+                pos.y = flipped_y(engine, popup, overlay, pos.y, flipped, h);
+            }
+            pos
         }
     };
     let (bw, bh) = (

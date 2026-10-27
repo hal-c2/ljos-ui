@@ -987,3 +987,81 @@ Feature: ComboBox
       And the user touches 50, 100
       Then the property "currentIndex" of "c" is 23
       And the property "popup.visible" of "c" is false
+
+  Rule: A popup that does not fit below the combo box opens above it
+
+    Issue #152. The popup is mirrored around the combo box when less of
+    it runs past the window, or past a margin it has, there; then, when
+    it is no taller than the room, it is pushed inside.
+
+    @api-QtQuick.Controls.ComboBox.popup
+    Scenario Outline: A popup <h> high under a combo box at <cy>, margins <m>, is at <y>
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Window {
+          width: 400; height: 400; visible: true
+          ComboBox {
+            id: c; objectName: "c"
+            x: 20; y: <cy>; width: 160; height: 40
+            model: ["One", "Two"]
+            popup: Popup { y: c.height + 4; width: 160; height: <h>; margins: <m> }
+            Component.onCompleted: popup.open()
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "popup.y" of "c" is <y>
+
+      Examples:
+        | cy  | h   | m  | y    |
+        | 340 | 204 | -1 | -208 |
+        | 180 | 304 | -1 | -84  |
+        | 190 | 304 | -1 | -190 |
+        | 300 | 56  | -1 | 44   |
+        | 300 | 57  | -1 | -61  |
+        | 10  | 204 | -1 | 44   |
+        | 10  | 390 | -1 | 0    |
+        | 225 | 204 | 20 | -205 |
+        | 180 | 304 | 20 | -104 |
+        | 300 | 370 | 20 | -280 |
+
+    Scenario: A popup above a combo box near the top opens below it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Window {
+          width: 400; height: 400; visible: true
+          ComboBox {
+            id: c; objectName: "c"
+            x: 20; y: 10; width: 160; height: 40
+            model: ["One", "Two"]
+            popup: Popup { y: -64; width: 160; height: 60 }
+            Component.onCompleted: popup.open()
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "popup.y" of "c" is 44
+
+    Scenario: A plain popup that does not fit stays where it was put
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Window {
+          width: 400; height: 400; visible: true
+          Item {
+            objectName: "i"
+            x: 20; y: 340; width: 160; height: 40
+            Popup {
+              objectName: "p"; y: 44; width: 160; height: 204
+              Component.onCompleted: open()
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "y" of "p" is 44

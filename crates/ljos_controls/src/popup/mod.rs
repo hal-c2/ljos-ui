@@ -129,6 +129,9 @@ pub(crate) struct PopupState {
     pub placed: Cell<Option<(f64, f64)>>,
     /// The press that is down began outside the popup.
     pub pressed_outside: Cell<bool>,
+    /// It opens on the other side of its parent when that has more room,
+    /// as a combo box's popup does.
+    pub flips: Cell<bool>,
     /// What the control the popup belongs to does each time the popup is
     /// shown, once it has its size and its place.
     when_shown: WhenShown,
@@ -168,6 +171,14 @@ impl std::fmt::Debug for WhenShown {
 pub(crate) fn when_shown(engine: &Engine, popup: ObjectId, f: Option<Shown>) {
     if let Some(state) = state_of(engine, popup) {
         *state.when_shown.0.borrow_mut() = f;
+    }
+}
+
+/// Lets `popup` open above its parent when it does not fit below it, and
+/// below when it does not fit above (`popup/position.rs`).
+pub(crate) fn set_flips(engine: &Engine, popup: ObjectId, flips: bool) {
+    if let Some(state) = state_of(engine, popup) {
+        state.flips.set(flips);
     }
 }
 
