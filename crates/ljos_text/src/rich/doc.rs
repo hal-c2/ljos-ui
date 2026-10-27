@@ -550,8 +550,12 @@ impl RichDoc {
             if range.end <= start || range.start > end {
                 continue;
             }
-            let from = floor_boundary(&block.text, range.start.saturating_sub(start));
-            let to = ceil_boundary(&block.text, (range.end - start).min(block.text.len()));
+            let from = block
+                .text
+                .floor_char_boundary(range.start.saturating_sub(start));
+            let to = block
+                .text
+                .ceil_char_boundary((range.end - start).min(block.text.len()));
             if let Some(s) = block.text.get(from..to.max(from)) {
                 out.push_str(s);
             }
@@ -853,22 +857,6 @@ fn follows_an_empty_line(source: &str, start: usize) -> bool {
         .rfind(['\n', '\r'])
         .map_or(before, |i| &before[i + 1..]);
     line.bytes().all(|b| b == b' ' || b == b'\t')
-}
-
-fn floor_boundary(s: &str, mut i: usize) -> usize {
-    i = i.min(s.len());
-    while !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
-fn ceil_boundary(s: &str, mut i: usize) -> usize {
-    i = i.min(s.len());
-    while !s.is_char_boundary(i) {
-        i += 1;
-    }
-    i
 }
 
 /// Lay out `range` of a block's text with the spans and images in it.

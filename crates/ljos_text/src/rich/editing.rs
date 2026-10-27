@@ -754,13 +754,7 @@ impl RichText {
     }
 
     fn clamp(&self, range: Range<usize>) -> Range<usize> {
-        let floor = |mut i: usize| {
-            i = i.min(self.text.len());
-            while !self.text.is_char_boundary(i) {
-                i -= 1;
-            }
-            i
-        };
+        let floor = |i| self.text.floor_char_boundary(i);
         let (a, b) = (floor(range.start), floor(range.end));
         a.min(b)..a.max(b)
     }
