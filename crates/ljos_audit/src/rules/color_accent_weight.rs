@@ -38,7 +38,8 @@ fn surface_of(cx: &Cx, item: ObjectId) -> Option<ObjectId> {
 }
 
 pub(crate) fn check(cx: &mut Cx) {
-    let Some(snapshot) = cx.scene.snapshot().cloned() else {
+    let scene = cx.scene;
+    let Some(snapshot) = scene.snapshot() else {
         return;
     };
     let e = cx.engine;
@@ -86,7 +87,7 @@ pub(crate) fn check(cx: &mut Cx) {
         return;
     };
     let mut painter = Painter::new(backdrop(e, cx.options));
-    let Some(picture) = painter.draw(&snapshot, snapshot.viewport, |_| true) else {
+    let Some(picture) = painter.draw(snapshot, snapshot.viewport, |_| true) else {
         return;
     };
     let total = (picture.width * picture.height) as f32;

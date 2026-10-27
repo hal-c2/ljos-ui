@@ -119,7 +119,8 @@ fn contrast(
 }
 
 pub(crate) fn check(cx: &mut Cx) {
-    let Some(snapshot) = cx.scene.snapshot().cloned() else {
+    let scene = cx.scene;
+    let Some(snapshot) = scene.snapshot() else {
         return;
     };
     let e = cx.engine;
@@ -134,7 +135,7 @@ pub(crate) fn check(cx: &mut Cx) {
             if !own || !e.untrack(|| e.read(part, Item::VISIBLE.index)).to_boolean() {
                 continue;
             }
-            let Some((r, shown, behind)) = contrast(cx, &mut painter, &snapshot, part) else {
+            let Some((r, shown, behind)) = contrast(cx, &mut painter, snapshot, part) else {
                 continue;
             };
             if r + 0.005 < NONTEXT_CONTRAST {

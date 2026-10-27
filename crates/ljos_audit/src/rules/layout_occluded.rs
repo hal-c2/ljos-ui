@@ -78,7 +78,8 @@ fn takes_press(engine: &Engine, item: ObjectId) -> bool {
 }
 
 pub(crate) fn check(cx: &mut Cx) {
-    let Some(snapshot) = cx.scene.snapshot().cloned() else {
+    let scene = cx.scene;
+    let Some(snapshot) = scene.snapshot() else {
         return;
     };
     let paints: HashMap<NodeId, &PaintItem> = snapshot.items.iter().map(|p| (p.node, p)).collect();
@@ -118,7 +119,7 @@ pub(crate) fn check(cx: &mut Cx) {
                     .scene
                     .node_of(h)
                     .and_then(|n| paints.get(&n))
-                    .is_some_and(|paint| paints_opaque(&snapshot, paint, p));
+                    .is_some_and(|paint| paints_opaque(snapshot, paint, p));
                 if (opaque || takes_press(cx.engine, h)) && !transient(cx.engine, h) {
                     covered += 1;
                     match by.iter_mut().find(|(o, _)| *o == h) {

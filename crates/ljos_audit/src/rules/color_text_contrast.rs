@@ -117,7 +117,8 @@ fn weight(cx: &Cx, item: ObjectId) -> u16 {
 }
 
 pub(crate) fn check(cx: &mut Cx) {
-    let Some(snapshot) = cx.scene.snapshot().cloned() else {
+    let scene = cx.scene;
+    let Some(snapshot) = scene.snapshot() else {
         return;
     };
     let backdrop = backdrop(cx.engine, cx.options);
@@ -183,7 +184,7 @@ pub(crate) fn check(cx: &mut Cx) {
                 if !contains(snapshot.viewport, p) || !snapshot.clip_chain_contains(paint.clip, p) {
                     continue;
                 }
-                let under = behind(&snapshot, &fills, backdrop, bare, p);
+                let under = behind(snapshot, &fills, backdrop, bare, p);
                 let under = match (halo, under) {
                     (None, Some(u)) => u,
                     (Some(h), u) => {

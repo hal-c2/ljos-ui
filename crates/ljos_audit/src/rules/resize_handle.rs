@@ -69,7 +69,8 @@ fn subtree(e: &Engine, root: ObjectId) -> Vec<ObjectId> {
 }
 
 pub(crate) fn check(cx: &mut Cx) {
-    let Some(snapshot) = cx.scene.snapshot().cloned() else {
+    let scene = cx.scene;
+    let Some(snapshot) = scene.snapshot() else {
         return;
     };
     let paints: HashMap<NodeId, &PaintItem> = snapshot.items.iter().map(|p| (p.node, p)).collect();

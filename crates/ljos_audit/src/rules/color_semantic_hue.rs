@@ -95,7 +95,8 @@ fn meaning(cx: &Cx, item: ObjectId) -> Option<Meaning> {
 }
 
 pub(crate) fn check(cx: &mut Cx) {
-    let Some(snapshot) = cx.scene.snapshot().cloned() else {
+    let scene = cx.scene;
+    let Some(snapshot) = scene.snapshot() else {
         return;
     };
     let e = cx.engine;
@@ -108,7 +109,7 @@ pub(crate) fn check(cx: &mut Cx) {
         let Some(region) = scene_rect(e, item) else {
             continue;
         };
-        let Some(picture) = painter.draw(&snapshot, region, |_| true) else {
+        let Some(picture) = painter.draw(snapshot, region, |_| true) else {
             continue;
         };
         let coloured: Vec<Srgb> = picture
