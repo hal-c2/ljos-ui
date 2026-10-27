@@ -512,6 +512,23 @@ impl Slot {
     }
 }
 
+/// The view a window shows: its own, or the application's in the root's
+/// window. Of the slot's view alone, so that the rest of the slot stays
+/// free to borrow.
+fn view_of<'a, M: Send + 'static>(view: &'a Option<QmlView>, app: &'a ShellApp<M>) -> &'a QmlView {
+    view.as_ref().unwrap_or_else(|| app.view())
+}
+
+fn view_of_mut<'a, M: Send + 'static>(
+    view: &'a mut Option<QmlView>,
+    app: &'a mut ShellApp<M>,
+) -> &'a mut QmlView {
+    match view {
+        Some(view) => view,
+        None => app.view_mut(),
+    }
+}
+
 /// Shows a window once there is a picture in it.
 fn show_when_drawn(
     host: &mut Control<'_>,
@@ -1261,10 +1278,7 @@ impl<M: Send + 'static> Desktop<M> {
                 let ppp = window.scale_factor() as f32 * self.slots[i].ctx.zoom_factor();
                 let px = window.inner_size();
                 let size = egui::vec2(px.width as f32, px.height as f32) / ppp;
-                match self.slots[i].view.as_mut() {
-                    Some(view) => view.lay_out_ahead(size, ppp),
-                    None => self.app.view_mut().lay_out_ahead(size, ppp),
-                }
+                view_of_mut(&mut self.slots[i].view, &mut self.app).lay_out_ahead(size, ppp);
             }
             // Without a device from them, the painter makes its own and
             // says why there is none.
@@ -1352,10 +1366,7 @@ impl<M: Send + 'static> Desktop<M> {
         let fills = painter.is_some_and(Painter::fills_rects);
         let shaders = painter.is_some_and(Painter::draws_shaders);
         let encodes = !painter.is_some_and(Painter::draws_scene);
-        let view = match self.slots[i].view.as_mut() {
-            Some(view) => view,
-            None => self.app.view_mut(),
-        };
+        let view = view_of_mut(&mut self.slots[i].view, &mut self.app);
         view.set_drawn(true);
         view.set_solid_rects(fills);
         view.set_draws_shaders(shaders);
@@ -1464,10 +1475,7 @@ impl<M: Send + 'static> Desktop<M> {
         self.screens_stale = true;
         // What only drawing needs is built again when it is shown
         // (ARCHITECTURE §8.5); its scene keeps running meanwhile.
-        let view = match self.slots[i].view.as_mut() {
-            Some(view) => view,
-            None => self.app.view_mut(),
-        };
+        let view = view_of_mut(&mut self.slots[i].view, &mut self.app);
         view.set_drawn(false);
         view.trim(MemoryPressure::Critical);
         crate::give_back_freed_heap();
@@ -1482,10 +1490,7 @@ impl<M: Send + 'static> Desktop<M> {
             } else {
                 MemoryPressure::Critical
             };
-            let view = match self.slots[i].view.as_mut() {
-                Some(view) => view,
-                None => self.app.view_mut(),
-            };
+            let view = view_of_mut(&mut self.slots[i].view, &mut self.app);
             view.trim(level);
         }
         crate::give_back_freed_heap();
@@ -1532,10 +1537,7 @@ impl<M: Send + 'static> Desktop<M> {
             self.serve_memory();
         }
         let slot = &mut self.slots[i];
-        let view = match slot.view.as_mut() {
-            Some(view) => view,
-            None => self.app.view_mut(),
-        };
+        let view = view_of_mut(&mut slot.view, &mut self.app);
         if let Some(after) = view.take_asked() {
             let key = slot.key;
             self.asked(key, Instant::now() + after, after.is_zero());
@@ -1564,10 +1566,7 @@ impl<M: Send + 'static> Desktop<M> {
             })
         });
         let period = slot.frame_interval();
-        let view = match slot.view.as_ref() {
-            Some(view) => view,
-            None => self.app.view(),
-        };
+        let view = view_of(&slot.view, &self.app);
         input || view.wakes_in().is_some_and(|wake| wake <= period)
     }
 
@@ -1678,10 +1677,7 @@ impl<M: Send + 'static> Desktop<M> {
             {
                 node.set_label(title);
             }
-            let view = match slot.view.as_mut() {
-                Some(view) => view,
-                None => app.view_mut(),
-            };
+            let view = view_of_mut(&mut slot.view, app);
             let updates = view.graft_updates(root, &mut slot.tree_told);
             if let Some(adapter) = surface.state.accesskit.as_mut()
                 && (updates.grafted.is_some() || slot.sent_root.as_ref() != Some(&updates.root))
@@ -1748,10 +1744,7 @@ impl<M: Send + 'static> Desktop<M> {
             surface::forget_freed(&mut slot.pending);
             return;
         };
-        let view = match slot.view.as_ref() {
-            Some(view) => view,
-            None => app.view(),
-        };
+        let view = view_of(&slot.view, app);
         let clear = view.backdrop().unwrap_or(slot.clear);
         let wake = view.wakes_in();
         let now = Instant::now();
@@ -1966,10 +1959,7 @@ impl<M: Send + 'static> Desktop<M> {
             // where it is. An adapter that was not told the
             // trees has no focus to release, and must not hear of one
             // before it hears of them.
-            let view = match slot.view.as_mut() {
-                Some(view) => view,
-                None => self.app.view_mut(),
-            };
+            let view = view_of_mut(&mut slot.view, &mut self.app);
             if let Some(release) = view.release_graft_focus()
                 && let Some(adapter) = surface.state.accesskit.as_mut()
             {
@@ -2104,10 +2094,7 @@ impl<M: Send + 'static> Desktop<M> {
             };
             egui::pos2(x as f32 / zoom, y as f32 / zoom)
         };
-        let view = match slot.view.as_mut() {
-            Some(view) => view,
-            None => self.app.view_mut(),
-        };
+        let view = view_of_mut(&mut slot.view, &mut self.app);
         match step {
             DragStep::Offered {
                 at,
@@ -2168,10 +2155,7 @@ impl<M: Send + 'static> Desktop<M> {
         if out.took_pointer() {
             for i in 0..self.slots.len() {
                 let key = self.slots[i].key;
-                let taken = match self.slots[i].view.as_mut() {
-                    Some(view) => view.pointer_taken(),
-                    None => self.app.view_mut().pointer_taken(),
-                };
+                let taken = view_of_mut(&mut self.slots[i].view, &mut self.app).pointer_taken();
                 if taken {
                     self.repaints.request(key, Instant::now());
                 }
@@ -2297,10 +2281,7 @@ impl<M: Send + 'static> Desktop<M> {
                 if slot.is_root() {
                     app.set_frame_budget(slot.frame_interval());
                 }
-                let view = match slot.view.as_mut() {
-                    Some(view) => view,
-                    None => app.view_mut(),
-                };
+                let view = view_of_mut(&mut slot.view, app);
                 view.set_refresh_rate(hz);
             }
         }
@@ -2316,7 +2297,7 @@ impl<M: Send + 'static> Desktop<M> {
             .slots
             .iter()
             .map(|slot| {
-                let view = slot.view.as_ref().unwrap_or_else(|| self.app.view());
+                let view = view_of(&slot.view, &self.app);
                 ljos_dev::mcp::WindowMemory {
                     window: slot.window,
                     scene: view.scene().memory(),
