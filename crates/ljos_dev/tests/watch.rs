@@ -52,8 +52,15 @@ fn app(files: &[(&str, &str)]) -> App {
 
 /// As [`app`], with the root given `properties` when it is made.
 fn app_with(files: &[(&str, &str)], properties: Vec<(String, Value)>) -> App {
+    app_in("", files, properties)
+}
+
+/// As [`app_with`], with the project in the directory `sub` of the
+/// temporary one.
+fn app_in(sub: &str, files: &[(&str, &str)], properties: Vec<(String, Value)>) -> App {
     let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().canonicalize().unwrap();
+    let dir = tmp.path().canonicalize().unwrap().join(sub);
+    fs::create_dir_all(&dir).unwrap();
     for (name, text) in files {
         write(&dir, name, text);
     }
@@ -862,4 +869,38 @@ fn a_watcher_that_has_stopped_says_so_when_asked_to_build() {
         "the thread ended"
     );
     assert!(!watcher.flush(), "a stopped watcher says it takes nothing");
+}
+
+/// A project in a directory whose name holds what a URL gives a meaning
+/// to (`#`, `?`, `%`) runs, and its files are named by URLs that mean
+/// that directory.
+#[test]
+fn a_project_whose_directory_name_holds_url_characters_runs() {
+    const MAIN: &str = r#"import QtQuick
+Item {
+  objectName: "root"
+  property url picture: Qt.resolvedUrl("pic.png")
+  Panel { objectName: "panel" }
+}
+"#;
+    const PANEL: &str = "import QtQuick\nRectangle { width: 7; height: 7 }\n";
+    let mut app = app_in(
+        "a #1 ?50% b",
+        &[("Main.qml", MAIN), ("Panel.qml", PANEL)],
+        Vec::new(),
+    );
+    assert_eq!(app.engine.last_reload_error(), None);
+    assert_eq!(app.num("panel", "width"), 7.0);
+    let picture = app
+        .engine
+        .read_by_name(app.find("root"), "picture")
+        .to_js_string()
+        .to_string();
+    assert_eq!(
+        picture,
+        format!("{}/pic.png", ljos_engine::file_url(&app.dir))
+    );
+    app.save("Panel.qml", &PANEL.replace('7', "9"));
+    reloaded(&app.wait());
+    assert_eq!(app.num("panel", "width"), 9.0);
 }

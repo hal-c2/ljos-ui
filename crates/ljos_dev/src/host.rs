@@ -168,8 +168,10 @@ fn key_of(file: &str) -> Option<&str> {
     file.strip_suffix(".qml")
 }
 
+/// The URL of the directory `dir`, escaped as every file URL the engine
+/// makes is: a `#`, `?` or `%` in a directory's name is part of it.
 fn base_url(dir: &Path) -> String {
-    format!("file://{}", dir.to_string_lossy().replace('\\', "/"))
+    ljos_engine::file_url(dir)
 }
 
 /// Applies `patch` to `roots` as [`Engine::reload`] does, and puts the
