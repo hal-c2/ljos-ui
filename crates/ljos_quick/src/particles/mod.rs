@@ -1377,7 +1377,8 @@ fn restale(e: &Engine, pa: ObjectId) {
 }
 
 fn bump(e: &Engine, n: NodeId) {
-    let next = e.graph().get_untracked(n).to_number() as i32 + 1;
+    // Only a change is followed, so it goes round rather than over.
+    let next = (e.graph().get_untracked(n).to_number() as i32).wrapping_add(1);
     e.graph().set(n, Value::Int(next));
 }
 
@@ -1589,4 +1590,21 @@ pub(crate) fn register(engine: &Engine) {
         MetaRef::Static(ImageParticle::static_meta()),
         read_pictures,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use ljos_engine::{Engine, Value};
+
+    use super::bump;
+
+    /// A painter's serial only has to change: it goes round, not over.
+    #[test]
+    fn a_serial_at_its_largest_goes_round() {
+        let e = Engine::new();
+        let root = e.graph().root();
+        let n = e.graph().property(root, Value::Int(i32::MAX)).unwrap();
+        bump(&e, n);
+        assert_eq!(e.graph().get_untracked(n), Value::Int(i32::MIN));
+    }
 }
