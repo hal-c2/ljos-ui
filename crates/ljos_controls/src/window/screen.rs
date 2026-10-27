@@ -9,13 +9,10 @@
 
 use ljos_engine::{Atom, Cx, Engine, ObjectId, PropIndex, QmlObject, Value, qml_impl};
 
-use super::Window;
 use super::app::ScreenInfo;
 use super::system::WindowSystem;
+use super::{DEPTH, Window};
 use crate::util::is_a;
-
-/// How far up a tree is searched for a window.
-const DEPTH: usize = 256;
 
 /// `Screen` (QtQuick), attached only.
 #[derive(Debug, Default, QmlObject)]
