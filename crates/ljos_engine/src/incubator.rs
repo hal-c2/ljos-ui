@@ -46,6 +46,7 @@ use crate::types::{TypeTag, Url};
 use crate::value::{Color, Value};
 use crate::{Provenance, WriteKind};
 
+pub(crate) mod aot;
 pub(crate) mod direct_methods;
 pub(crate) mod dynamic;
 pub(crate) mod reload;
@@ -1715,7 +1716,7 @@ impl Engine {
         let Ok(m) = self.method_index(id, &f.name) else {
             return;
         };
-        let noted = tier1::Noted::of(inst, f.expr);
+        let noted = tier1::Noted::of(inst, f.expr).or_else(|| self.aot_noted(inst, f.expr));
         let code = self.reload_code(inst, f.expr);
         if let reload::in_place::Code::Fixed(i, e) = &code {
             self.set_direct_method(id, m, i.clone(), *e);
@@ -2777,6 +2778,9 @@ impl Engine {
             && let Some(Some(t0)) = file.tier0.get(b.js_fn.index())
             && let Some(v) = self.tier0_eval(inst, b, t0, planned)
         {
+            return v;
+        }
+        if let Some(v) = self.aot_eval(inst, expr, hint, args, kept) {
             return v;
         }
         if let Some(v) = self.tier1_eval(inst, expr, hint, args, kept) {

@@ -1108,6 +1108,7 @@ impl HostObjects for EngineHost {
                 }
             })
             .collect();
+        engine.aot_spy_emit(id, SignalIndex(signal), &vals);
         engine
             .emit(id, SignalIndex(signal), &vals)
             .map_err(host_err)

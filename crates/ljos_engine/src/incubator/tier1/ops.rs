@@ -86,7 +86,7 @@ pub(super) fn string(s: String) -> Value {
 
 /// `a ** b`, and `Math.pow`: C's `pow` but for the two cases ECMAScript
 /// decided otherwise (1 to the power of infinity or NaN is NaN).
-pub(super) fn pow(a: f64, b: f64) -> f64 {
+pub(crate) fn pow(a: f64, b: f64) -> f64 {
     if !b.is_finite() && a.abs() == 1.0 {
         f64::NAN
     } else {
@@ -97,7 +97,7 @@ pub(super) fn pow(a: f64, b: f64) -> f64 {
 /// Whether two strings are in that order by UTF-16 code unit, which is how
 /// JavaScript compares them. It differs from the order of the bytes only
 /// past the basic plane.
-fn compare(a: &str, b: &str) -> Ordering {
+pub(crate) fn compare(a: &str, b: &str) -> Ordering {
     if a.is_ascii() && b.is_ascii() {
         a.as_bytes().cmp(b.as_bytes())
     } else {
@@ -106,7 +106,7 @@ fn compare(a: &str, b: &str) -> Ordering {
 }
 
 /// The length of a string as JavaScript counts it.
-pub(super) fn utf16_len(s: &str) -> usize {
+pub(crate) fn utf16_len(s: &str) -> usize {
     if s.is_ascii() {
         s.len()
     } else {

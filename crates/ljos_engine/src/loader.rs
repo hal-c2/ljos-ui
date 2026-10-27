@@ -524,6 +524,9 @@ pub(crate) struct LoadedFile {
     pub(crate) enum_numbers: RefCell<rustc_hash::FxHashMap<usize, (ljos_ir::TypeRef, String, i64)>>,
     /// What [`LoadedFile::bytes`] found: a file does not change once loaded.
     size: OnceCell<usize>,
+    /// The compiled code the file was matched to, when it first ran an
+    /// expression ([`crate::aot`]).
+    pub(crate) aot: crate::incubator::aot::LinkedCell,
 }
 
 impl LoadedFile {
@@ -551,6 +554,7 @@ impl LoadedFile {
             injected_warned: RefCell::default(),
             enum_numbers: RefCell::default(),
             size: OnceCell::new(),
+            aot: OnceCell::new(),
         }
     }
 

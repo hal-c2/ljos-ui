@@ -579,7 +579,7 @@ fn writable_of(meta: &MetaObject, name: &str) -> Option<PropIndex> {
 
 /// The method of a script that objects of the type `meta` describes have
 /// by `name`: not a property's name, nor a native method.
-fn script_method_of(meta: &MetaObject, name: &str) -> Option<MethodIndex> {
+pub(super) fn script_method_of(meta: &MetaObject, name: &str) -> Option<MethodIndex> {
     if meta.property_index(name).is_some() {
         return None;
     }

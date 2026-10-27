@@ -100,6 +100,7 @@ pub(crate) struct Inner {
     /// The JS host, made on first use.
     pub(crate) js: RefCell<Option<Rc<crate::js::JsState>>>,
     pub(crate) loader: RefCell<crate::loader::LoaderState>,
+    pub(crate) aot: crate::incubator::aot::State,
     pub(crate) timers: RefCell<crate::qtqml::TimerState>,
     /// Evaluate bindings at creation instead of on first read.
     pub(crate) eager_bindings: Cell<bool>,
@@ -297,6 +298,7 @@ impl Engine {
             log: RefCell::new(LogState::default()),
             js: RefCell::new(None),
             loader: RefCell::new(crate::loader::LoaderState::default()),
+            aot: crate::incubator::aot::State::default(),
             timers: RefCell::new(crate::qtqml::TimerState::default()),
             eager_bindings: Cell::new(false),
             eager_hold: RefCell::new(None),
