@@ -7,8 +7,11 @@
 //! clip held 382 MiB of frames it had shown, and the pool their planes
 //! went back to another 40 MiB. Here a player's decode thread runs the
 //! decoder itself and keeps the pictures it put out ahead of the one
-//! asked for (the codec's reordering) and the last one handed out; the
-//! rest are dropped as the clock passes them.
+//! asked for and the last one handed out; the rest are dropped as the
+//! clock passes them. Ahead are the codec's reordering and, as a
+//! frame-threaded decoder hands over every picture that has finished, up
+//! to its threads and two more bumped while the one asked for was in
+//! flight; how many of those come follows the threads' timing.
 //!
 //! Which picture a time shows follows FilmCraft's MP4 source, so a frame
 //! is the one the source would have given: the sample presented at the
@@ -591,20 +594,67 @@ mod tests {
         }
     }
 
+    /// The pictures an H.264 decoder may keep waiting for output before it
+    /// bumps one: the stream's `max_num_reorder_frames`, at most its DPB.
+    fn reordering(reader: &super::Mp4Video) -> usize {
+        let t = &reader.file.tracks[reader.track];
+        let Some(super::CodecConfig::Avc(c)) = t.codec() else {
+            panic!("bframes.mp4 is H.264");
+        };
+        let nal = c.sps.first().expect("an SPS");
+        let sps =
+            filmcraft_h264::params::Sps::parse(&filmcraft_bitstream::unescape_rbsp(&nal[1..]))
+                .expect("the SPS reads");
+        sps.max_num_reorder_frames().min(sps.max_dpb_frames())
+    }
+
+    /// The worker threads of the reader's decoder: playback's (one a core,
+    /// at most 16) once it is `full`, else the two FilmCraft gives a
+    /// decoder for background work (`BACKGROUND_H264_THREADS`, which it
+    /// keeps to itself), no more than playback's.
+    fn decoder_threads(reader: &super::Mp4Video) -> usize {
+        const BACKGROUND: usize = 2;
+        let playback = filmcraft_codecs::video::h264_threads();
+        let threads = if reader.full {
+            playback
+        } else {
+            BACKGROUND.min(playback)
+        };
+        assert_eq!(
+            reader.decoder.thread_limited(),
+            threads < playback,
+            "FilmCraft's decoder for background work no longer has {BACKGROUND} threads"
+        );
+        threads
+    }
+
     #[test]
     fn a_reader_playing_holds_a_few_pictures() {
         let mut o = open("bframes.mp4");
         let mut reader = o.video_reader.take().expect("an MP4 is read in order");
         let fps = o.video.expect("a video").fps;
-        let mut most = 0;
+        let reorder = reordering(&reader);
         for k in 0..(o.duration_ms * fps / 1000.0) as u32 {
             reader
                 .frame(Tick::from_seconds_f64(f64::from(k) / fps))
                 .expect("a frame");
-            most = most.max(reader.bytes_held().1);
+            // A frame-threaded decoder hands a picture over once it is
+            // decoded, and those after it in output order that are too, so
+            // how many come at once follows its threads' timing. What it
+            // promises: the one shown, the `reorder` waiting before it was
+            // bumped, and the pictures bumped while it was still in flight,
+            // which is at most `threads + 2` feeds.
+            let threads = decoder_threads(&reader);
+            let bound = 1 + reorder + threads + 2;
+            let held = reader.bytes_held().1;
+            assert!(
+                held <= bound,
+                "at frame {k} held {held} pictures (ahead {:?}, last {:?}), more than \
+                 1 shown + {reorder} reordered + {threads} threads + 2 in flight",
+                reader.ahead.keys().collect::<Vec<_>>(),
+                reader.last.as_ref().map(|(pts, _)| pts),
+            );
         }
-        // the one shown and the codec's reordering (three B-frames)
-        assert!(most <= 5, "held {most} pictures");
         drop(reader);
     }
 
