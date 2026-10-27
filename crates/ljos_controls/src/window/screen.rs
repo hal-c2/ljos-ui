@@ -104,7 +104,7 @@ impl ScreenAttached {
 
 /// The window `obj` is shown in, itself included. Tracked, so that a
 /// binding follows an item to another window.
-fn window_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
+fn window_containing(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
     let walk = |next: &dyn Fn(ObjectId) -> Option<ObjectId>| {
         let mut cur = Some(obj);
         for _ in 0..DEPTH {
@@ -121,7 +121,7 @@ fn window_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
 
 /// The display object `obj` is on.
 fn screen_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
-    window_of(engine, obj)
+    window_containing(engine, obj)
         .and_then(|w| engine.read(w, Window::SCREEN.index).as_object())
         .or_else(|| engine.untrack(|| WindowSystem::of(engine).screen(engine, 0)))
 }
