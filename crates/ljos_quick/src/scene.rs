@@ -1639,8 +1639,8 @@ impl QuickScene {
                     Kind::Column => positioners::polish(engine, obj, Which::Column),
                     Kind::Managed => crate::layouts::polish(engine, obj),
                     Kind::Text => {
-                        let read = (self.shared.borrow().marks.get(obj))
-                            .and_then(|m| m.text.as_deref().cloned());
+                        let read =
+                            (self.shared.borrow().marks.get(obj)).and_then(|m| m.text.clone());
                         text::polish(engine, obj, &self.text, read)
                     }
                     // Only after the fonts changed (`refresh_text`).
