@@ -296,6 +296,11 @@ impl LocalClient {
 
 /// Runs `work` to its end, running `pump` each time the surface's wake
 /// fires.
+///
+/// Assumes rmcp's `call_tool` and `read_resource` futures are lazy: they
+/// are built before `block_on`, outside the runtime's context, so one that
+/// spawned or sent its request as it was built would find no runtime to
+/// do it on.
 fn pumped<F: std::future::Future>(
     runtime: &tokio::runtime::Runtime,
     wake: &Notify,
