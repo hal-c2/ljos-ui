@@ -10,6 +10,7 @@
 use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
+use crate::PainterError;
 use crate::cpu::CpuPainter;
 use crate::present::{Change, Frame, Steps};
 use egui::ViewportId;
@@ -136,15 +137,15 @@ pub(crate) enum Painter {
 }
 
 impl Painter {
-    async fn set_window(&mut self, window: &Arc<Window>) -> Result<(), String> {
+    async fn set_window(&mut self, window: &Arc<Window>) -> Result<(), PainterError> {
         match self {
             Painter::Wgpu(painter) => painter
                 .set_window(ViewportId::ROOT, Some(Arc::clone(window)))
                 .await
-                .map_err(|e| e.to_string()),
+                .map_err(|e| PainterError::Gpu(e.to_string())),
             #[cfg(gl_painter)]
-            Painter::Gl(painter) => painter.set_window(window),
-            Painter::Cpu(painter) => painter.set_window(window),
+            Painter::Gl(painter) => painter.set_window(window).map_err(PainterError::Gpu),
+            Painter::Cpu(painter) => painter.set_window(window).map_err(PainterError::Cpu),
         }
     }
 
@@ -550,7 +551,7 @@ pub(crate) fn attach(
     display: OwnedDisplayHandle,
     window: &Arc<Window>,
     choice: Choice,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, PainterError> {
     if let Some(painter) = painter {
         return pollster::block_on(painter.set_window(window)).map(|()| None);
     }

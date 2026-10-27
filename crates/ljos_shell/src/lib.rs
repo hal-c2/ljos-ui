@@ -195,11 +195,25 @@ pub enum ShellError {
     Window(#[from] ljos_host::HostError),
     /// No surface to draw the first window into.
     #[error("graphics: {0}")]
-    Gpu(String),
+    Painter(#[from] PainterError),
     #[error("setup: {0}")]
     Setup(SetupError),
     #[error(transparent)]
     View(#[from] ViewError),
+}
+
+/// Why a window has no painter: what its painter said when it was given
+/// the window.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum PainterError {
+    /// A GPU painter (wgpu, or GL where the platform has EGL) cannot draw
+    /// into the window.
+    #[error("{0}")]
+    Gpu(String),
+    /// The CPU painter cannot reach the window's pixel buffer.
+    #[error("{0}")]
+    Cpu(String),
 }
 
 type MessageHandler<M> = Box<dyn FnMut(&Engine, M)>;

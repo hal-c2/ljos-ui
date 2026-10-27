@@ -907,7 +907,7 @@ impl<M: Send + 'static> Desktop<M> {
             (Err(e), _) => {
                 drop(window);
                 host.destroy_window(id);
-                return self.fail(host, i, ShellError::Gpu(e), engine);
+                return self.fail(host, i, ShellError::Painter(e), engine);
             }
             (Ok(_), None) => return,
         };

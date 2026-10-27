@@ -280,3 +280,17 @@ fn the_application_puts_another_root_in_its_window() {
     h.step();
     assert!(!h.ctx.has_requested_repaint());
 }
+
+#[test]
+fn a_window_without_a_painter_says_which_painter_failed() {
+    use ljos_shell::{PainterError, ShellError};
+    use std::error::Error as _;
+    let e = ShellError::from(PainterError::Cpu("no buffer".to_owned()));
+    assert_eq!(e.to_string(), "graphics: no buffer");
+    assert!(matches!(
+        e.source().and_then(|s| s.downcast_ref::<PainterError>()),
+        Some(PainterError::Cpu(_))
+    ));
+    let e = ShellError::from(PainterError::Gpu("no adapter".to_owned()));
+    assert_eq!(e.to_string(), "graphics: no adapter");
+}

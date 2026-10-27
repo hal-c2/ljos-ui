@@ -360,4 +360,4 @@ pub fn run<M: Send + 'static>(
 #[cfg(feature = "shell")]
 pub use ljos_runtime::{CoalesceKey, SendAsync, SendError, UiHandle};
 #[cfg(feature = "shell")]
-pub use ljos_shell::{Setup, SetupError, ShellConfig, ShellError};
+pub use ljos_shell::{PainterError, Setup, SetupError, ShellConfig, ShellError};
