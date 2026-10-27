@@ -293,7 +293,7 @@ impl Engine {
     /// Whether the type `name` of module `uri` is a native singleton
     /// ([`Engine::register_singleton`]): one object, not a type to make
     /// objects of.
-    pub fn is_native_singleton(&self, uri: &str, name: &str) -> bool {
+    pub(crate) fn is_native_singleton(&self, uri: &str, name: &str) -> bool {
         let all = self.extension::<Singletons>();
         let natives = all.natives.borrow();
         natives.contains_key(&(uri.to_owned(), name.to_owned()))

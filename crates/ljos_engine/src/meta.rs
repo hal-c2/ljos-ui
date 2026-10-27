@@ -515,7 +515,7 @@ impl MetaObject {
 
     /// Whether the signal was declared in QML (`signal sent(var list)`)
     /// and not by a native type.
-    pub fn signal_is_script(&self, i: SignalIndex) -> bool {
+    pub(crate) fn signal_is_script(&self, i: SignalIndex) -> bool {
         let mut m = self;
         loop {
             if m.native.is_some() {
@@ -557,7 +557,7 @@ impl MetaObject {
     }
 
     /// [`MetaObject::default_property`] as an index, found once per type.
-    pub fn default_property_index(&self) -> Option<PropIndex> {
+    pub(crate) fn default_property_index(&self) -> Option<PropIndex> {
         self.lookup().default
     }
 
@@ -614,7 +614,7 @@ impl MetaObject {
     /// Whether QML calls this type `name`. A type written in `Name.ui.qml`
     /// keeps `Name.ui` as its class name, as Qt's does, and is `Name` to
     /// the files that use it.
-    pub fn is_called(&self, name: &str) -> bool {
+    pub(crate) fn is_called(&self, name: &str) -> bool {
         *self.name == *name || self.name.strip_suffix(".ui") == Some(name)
     }
 

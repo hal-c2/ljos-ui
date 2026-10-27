@@ -222,7 +222,7 @@ impl Engine {
 
     /// Whether [`Engine::list_insert`] can put an item of the list property
     /// `prop` of `obj` before another.
-    pub fn list_takes_insert(&self, obj: ObjectId, prop: PropIndex) -> bool {
+    pub(crate) fn list_takes_insert(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
         let store = self.inner.store.borrow();
         store
@@ -383,7 +383,11 @@ impl Engine {
     }
 
     /// Appends to the type's default property.
-    pub fn list_append_default(&self, obj: ObjectId, item: ObjectId) -> Result<(), EngineError> {
+    pub(crate) fn list_append_default(
+        &self,
+        obj: ObjectId,
+        item: ObjectId,
+    ) -> Result<(), EngineError> {
         let prop = self.default_property(obj)?;
         self.list_append(obj, prop, item)
     }
