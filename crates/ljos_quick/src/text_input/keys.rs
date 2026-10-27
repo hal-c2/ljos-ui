@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_text::reads_right_to_left;
 
-use super::base::{EditKind, SharedState, State, check, publish};
+use super::base::{EditKind, SharedState, State, check, flag, publish};
 use super::echo_mode;
 use super::edit::TextEdit;
 use super::input::TextInput;
@@ -220,10 +220,6 @@ enum Plan {
     Type(String),
     /// Return in a field: it says `accepted` and the key goes on.
     Accept,
-}
-
-fn flag(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> bool {
-    engine.untrack(|| engine.read(obj, p)).to_boolean()
 }
 
 /// Whether the text at the cursor reads right to left.

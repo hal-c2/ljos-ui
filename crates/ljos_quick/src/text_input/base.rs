@@ -511,7 +511,8 @@ pub(crate) fn check(engine: &Engine, what: &str, r: Result<(), EngineError>) {
     }
 }
 
-fn flag(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> bool {
+/// Reads a boolean property without making the caller depend on it.
+pub(super) fn flag(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> bool {
     engine.untrack(|| engine.read(obj, p)).to_boolean()
 }
 

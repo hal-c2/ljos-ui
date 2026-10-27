@@ -7,7 +7,7 @@ use ljos_engine::{Engine, ObjectId, Value};
 use ljos_text::{TextModel, utf16_len};
 
 use super::base::{
-    EditKind, Run, SharedState, TextEditor, check, init_editor, publish, publish_unshown,
+    EditKind, Run, SharedState, TextEditor, check, flag, init_editor, publish, publish_unshown,
     reconcile, state_of,
 };
 use super::clipboard::Clipboard;
@@ -26,10 +26,6 @@ pub(crate) fn ready(engine: &Engine, obj: ObjectId) -> Option<SharedState> {
     }
     reconcile(engine, obj, &st);
     Some(st)
-}
-
-fn flag(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> bool {
-    engine.untrack(|| engine.read(obj, p)).to_boolean()
 }
 
 pub(crate) fn read_only(engine: &Engine, obj: ObjectId) -> bool {

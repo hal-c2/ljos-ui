@@ -7,7 +7,7 @@ use ljos_engine::{Engine, ObjectId, Value};
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
-use super::base::{SharedState, TextEditor};
+use super::base::{SharedState, TextEditor, flag};
 use super::layout::{character_at, position_at};
 use super::ops;
 use super::{cursor_position, selection_mode};
@@ -41,10 +41,6 @@ enum Drag {
     /// From a double click in a multi-line editor: out to the word of the
     /// character under the pointer, and nowhere while it is over no word.
     WordsUnder,
-}
-
-fn flag(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> bool {
-    engine.untrack(|| engine.read(obj, p)).to_boolean()
 }
 
 fn at_point(st: &SharedState, at: kurbo::Point) -> usize {
