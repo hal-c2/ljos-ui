@@ -21,12 +21,10 @@ pub struct Diagnostic {
     pub severity: Severity,
     pub code: String,
     pub message: String,
-    /// For a design or declarative rule: what to write instead, in the
-    /// rule's words.
+    /// For a design or declarative rule: what to write instead, in the rule's words.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
-    /// For a design or declarative rule: its guideline,
-    /// `docs/design/<page>#<code>` or `docs/declarative.md#<code>`.
+    /// For a design or declarative rule: its guideline, `docs/design/<page>#<code>` or `docs/declarative.md#<code>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guide: Option<String>,
 }

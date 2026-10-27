@@ -53,14 +53,14 @@ expression: value
             "type": "string"
           },
           "fix": {
-            "description": "For a design rule: what to write instead, in the rule's words.",
+            "description": "For a design or declarative rule: what to write instead, in the rule's words.",
             "type": [
               "string",
               "null"
             ]
           },
           "guide": {
-            "description": "For a design rule: its guideline, `docs/design/<page>#<code>`.",
+            "description": "For a design or declarative rule: its guideline, `docs/design/<page>#<code>` or `docs/declarative.md#<code>`.",
             "type": [
               "string",
               "null"
