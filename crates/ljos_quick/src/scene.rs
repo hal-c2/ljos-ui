@@ -1,10 +1,10 @@
 //! `QuickScene`: an item tree mirrored into a [`RenderTree`].
 //!
-//! The scene adopts a root item and everything under it. For each item it
-//! installs a few small effects that record what changed (structure,
-//! geometry, anchors, inherited visibility, polish inputs, paint inputs)
-//! as marks on the item's record and wake the host on the clean-to-dirty
-//! edge.
+//! The scene adopts a root item and everything under it. Change hooks
+//! mark what changed of an item (structure, place, geometry, what it
+//! inherits) on its record, and a few small effects do so for what they
+//! follow (polish inputs, paint inputs, a `transform` list); either wakes
+//! the host on the clean-to-dirty edge.
 //! Nothing polls: [`QuickScene::frame`] only drains those marks
 //! (ARCHITECTURE §6, steps 3-9), and an idle frame returns the previous
 //! snapshot with `next_wake: None`.
@@ -374,16 +374,17 @@ impl Dirty {
 /// the frame takes it. A value is read only while its mark is set.
 struct Marks {
     dirty: Dirty,
-    /// What a Text's polish effect last read of it: its paint and its
+    /// What a Text's follow effect last read of it: its paint and its
     /// polish take it from here, so a text's inputs are read once a change
     /// and not by each. Shared with its paint, and only a Text has one, so
     /// the marks of every other item do not hold room for it.
     text: Option<Rc<TextInputs>>,
-    /// A Text with a content effect: its polish effect gives it its paint.
+    /// A Text with a content effect: its follow effect gives it its paint.
     text_shown: bool,
     inherit: Inherit,
-    /// The polish effect runs again only to read the inputs once more
-    /// after a polish, and marks nothing (`QuickScene::polish`).
+    /// A Row's or Column's polish effect runs again only to read the
+    /// inputs once more after a polish, and marks nothing
+    /// (`QuickScene::polish`).
     retrack: bool,
 }
 
@@ -399,7 +400,7 @@ impl Marks {
     }
 }
 
-/// Dirty state written by effects and drained by `frame`.
+/// Dirty state written by change hooks and effects and drained by `frame`.
 #[derive(Default)]
 struct Shared {
     /// One for each item the scene shows, made before its effects are, so
@@ -773,7 +774,7 @@ struct Record {
     /// later too, so letting go of them all takes no allocation.
     effects: SmallVec<[GraphNode; 8]>,
     /// It is on screen and its paint is followed: by `content_effect`, or
-    /// for a Text by its polish effect, which reads all its paint does.
+    /// for a Text by its follow effect, which reads all its paint does.
     painting: bool,
     content_effect: Option<GraphNode>,
     paint: Option<Paint>,
@@ -1638,8 +1639,8 @@ impl QuickScene {
             }
             POLISHING.set(true);
             // Deepest first, so a positioner sees its children's final size.
-            // Items of one depth go in creation order: the set's own order
-            // changes from run to run, and two layouts that share an item
+            // Items of one depth go in creation order: the order they were
+            // marked in changes from run to run, and two layouts that share an item
             // (LayoutItemProxy) give it the size of whichever runs last.
             set.sort_by_key(|a| (std::cmp::Reverse(a.0), a.1));
             for (_, obj) in set {
@@ -2032,8 +2033,8 @@ impl QuickScene {
             }
             // Each was moved as its place was read.
             self.told_moved.clear();
-            // With whether a hidden parent covers it, which is the
-            // inherit effect's to say; the geometry is read below.
+            // With whether a hidden parent covers it, which `inherit` keeps
+            // in the marks; the geometry is read below.
             let geoms: Vec<(ObjectId, (Geom, bool))> = s.take(Dirty::GEOM, |m| {
                 (Geom::default(), m.inherit.visible.is_some())
             });
@@ -2626,7 +2627,7 @@ impl QuickScene {
             match (shown, e.painting) {
                 (true, false) if kind == Kind::Text => {
                     // An effect here would read nothing: what the text
-                    // paints is what its polish effect read, and that
+                    // paints is what its follow effect read, and that
                     // effect tells of each change from now on.
                     e.painting = true;
                     engine.untrack(|| content_effect(engine, obj, Kind::Text, &self.shared));
@@ -3423,7 +3424,7 @@ impl QuickScene {
     }
 }
 
-// ---------------------------------------------------------------- effects
+// ------------------------------------------- what effects and hooks call
 
 /// Follows the entries of a `transform` list. Made only for an item whose
 /// list has some (see [`QuickScene::follow_list`]).
@@ -3567,7 +3568,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
     let p = match kind {
         Kind::Rectangle => Paint::Rect(RectanglePaint::read(e, obj)),
         Kind::Text => {
-            // Painted from what the polish effect read, which tells it of
+            // Painted from what the follow effect read, which tells it of
             // every change from now on; called untracked, not as an effect.
             // Read here only where that effect has not run yet: when it
             // does, it sees the text shown and paints it again.
@@ -3978,7 +3979,6 @@ pub(crate) fn emit_mouse_event(
     accepted
 }
 
-/// What a composed subtree shows, to tell whether it must be drawn again.
 /// Whether `node` and the nodes it is in are shown, or one of them is
 /// `sampled`.
 fn in_view(tree: &RenderTree, node: NodeId, sampled: &FxHashSet<NodeId>) -> bool {
@@ -3998,6 +3998,7 @@ fn in_view(tree: &RenderTree, node: NodeId, sampled: &FxHashSet<NodeId>) -> bool
     true
 }
 
+/// What a composed subtree shows, to tell whether it must be drawn again.
 fn fingerprint(snap: &FrameSnapshot) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -4023,7 +4024,6 @@ fn fingerprint(snap: &FrameSnapshot) -> u64 {
     h.finish()
 }
 
-/// Whether `root` is `obj` or owns it, however deep.
 /// Whether `obj` is `root` or shown under it.
 fn shown_within(engine: &Engine, obj: ObjectId, root: ObjectId) -> bool {
     let mut at = Some(obj);
@@ -4036,6 +4036,7 @@ fn shown_within(engine: &Engine, obj: ObjectId, root: ObjectId) -> bool {
     false
 }
 
+/// Whether `root` is `obj` or owns it, however deep.
 fn owned_by(engine: &Engine, obj: ObjectId, root: ObjectId) -> bool {
     let mut at = Some(obj);
     while let Some(o) = at {

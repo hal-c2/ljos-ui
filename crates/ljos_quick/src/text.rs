@@ -1097,7 +1097,7 @@ pub(crate) fn polish(
 ) -> Result<(), EngineError> {
     let fresh = !engine.untrack(|| engine.with(obj, |t: &Text| t.initialised))?;
     init_text(engine, obj)?;
-    // What the scene's polish effect read is what the text is now: it runs
+    // What the follow effect read is what the text is now: it runs
     // again on every change. A text first set up just now may read
     // otherwise.
     let t = match read {
