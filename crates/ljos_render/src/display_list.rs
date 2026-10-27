@@ -98,6 +98,9 @@ impl Paint {
     pub fn with_opacity(&self, opacity: f32) -> Self {
         match self {
             Self::Solid(c) => Self::Solid(c.with_opacity(opacity)),
+            // Full opacity leaves every stop as it is: the gradient is
+            // shared, not copied, in every frame that draws it.
+            Self::LinearGradient(_) if opacity >= 1.0 => self.clone(),
             Self::LinearGradient(g) => {
                 let mut g = (**g).clone();
                 for s in &mut g.stops {
@@ -458,6 +461,7 @@ impl Brush {
     pub fn with_opacity(&self, opacity: f32) -> Self {
         match self {
             Self::Solid(c) => Self::Solid(c.with_opacity(opacity)),
+            Self::Gradient(_) if opacity >= 1.0 => self.clone(),
             Self::Gradient(g) => {
                 Self::Gradient(Arc::new(g.map_colors(|c| c.with_opacity(opacity))))
             }
