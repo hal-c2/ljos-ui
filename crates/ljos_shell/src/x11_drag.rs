@@ -286,15 +286,17 @@ mod imp {
 
         pub(crate) fn stop(self) {
             let stop = ClientMessageEvent::new(32, self.proxy, self.atoms.LJOS_XDND_STOP, [0; 5]);
-            let sent = self
-                .out
-                .send_event(false, self.proxy, EventMask::NO_EVENT, stop)
-                .is_ok()
-                && self.out.flush().is_ok();
-            // Without the server the thread's wait has ended already.
-            if sent {
-                let _ = self.thread.join();
-            }
+            let send = |conn: &RustConnection| {
+                conn.send_event(false, self.proxy, EventMask::NO_EVENT, stop)
+                    .is_ok()
+                    && conn.flush().is_ok()
+            };
+            // The loop's connection may be gone while the thread's is not:
+            // then the thread's own tells it. When neither can, the
+            // thread's connection is gone, and its wait has ended with it;
+            // so the join always returns.
+            let _ = send(&self.out) || send(&self.conn);
+            let _ = self.thread.join();
         }
     }
 
@@ -414,6 +416,10 @@ mod imp {
                 }
                 let ungrab = libc::dlsym(lib, c"XUngrabPointer".as_ptr());
                 let sync = libc::dlsym(lib, c"XSync".as_ptr());
+                // RTLD_NOLOAD still counted a reference. Given back at
+                // once: winit's keeps the library, and the symbols, loaded
+                // for as long as its display is open.
+                libc::dlclose(lib);
                 if ungrab.is_null() || sync.is_null() {
                     return None;
                 }
