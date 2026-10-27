@@ -71,8 +71,13 @@ fn listen(e: &Engine, me: ObjectId) {
                     .ok()
             });
         let valid = connection.is_some();
-        let _ = e.with_mut::<SignalSpy, _>(me, |s| s.connection = connection);
-        let _ = e.set_internal(me, SignalSpy::VALID, valid);
+        let stored = e.with_mut::<SignalSpy, _>(me, |s| s.connection = connection);
+        // A connection no spy holds would never be let go.
+        if let (Err(_), Some(id)) = (&stored, connection) {
+            e.disconnect(id);
+        }
+        kept(e, "its connection", stored);
+        kept(e, "valid", e.set_internal(me, SignalSpy::VALID, valid));
     });
 }
 
@@ -87,8 +92,22 @@ fn heard(e: &Engine, me: ObjectId, args: &[Value]) {
         return;
     };
     all.push(Value::list(args.to_vec()));
-    let _ = e.set_internal(me, SignalSpy::SIGNAL_ARGUMENTS, Value::list(all));
-    let _ = e.set_internal(me, SignalSpy::COUNT, count + 1);
+    kept(
+        e,
+        "signalArguments",
+        e.set_internal(me, SignalSpy::SIGNAL_ARGUMENTS, Value::list(all)),
+    );
+    kept(e, "count", e.set_internal(me, SignalSpy::COUNT, count + 1));
+}
+
+/// What the spy could not keep of itself. A spy destroyed meanwhile has
+/// nothing to keep; anything else is said, so that a test reading the
+/// spy is not left with a count that quietly stopped.
+fn kept(e: &Engine, what: &str, result: Result<(), EngineError>) {
+    match result {
+        Ok(()) | Err(EngineError::DeadObject(_)) => {}
+        Err(err) => e.warn(format!("SignalSpy could not keep {what}: {err}")),
+    }
 }
 
 #[qml_impl]
