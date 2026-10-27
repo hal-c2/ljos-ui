@@ -584,14 +584,12 @@ fn steps_between(from: Point, to: Point) -> impl Iterator<Item = Point> {
 pub fn find(engine: &Engine, roots: &[ObjectId], path: &str) -> Result<ObjectId, DriveError> {
     let mut found: Option<ObjectId> = None;
     for part in path.split('/') {
-        let starts = match found {
-            Some(c) => vec![c],
-            None => roots.to_vec(),
+        let starts = match &found {
+            Some(c) => std::slice::from_ref(c),
+            None => roots,
         };
-        found = starts.iter().find_map(|r| find_below(engine, *r, part));
-        if found.is_none() {
-            return Err(DriveError::NotFound(part.to_owned()));
-        }
+        let below = starts.iter().find_map(|r| find_below(engine, *r, part));
+        found = Some(below.ok_or_else(|| DriveError::NotFound(part.to_owned()))?);
     }
     found.ok_or_else(|| DriveError::NotFound(path.to_owned()))
 }
