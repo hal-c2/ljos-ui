@@ -316,12 +316,11 @@ impl Events {
     }
 }
 
-/// The reloader, whoever had it last: a panic while it was held leaves
-/// it as a build that did not finish, which the next one starts over.
-pub(crate) fn lock<O>(reloader: &Mutex<Reloader<O>>) -> MutexGuard<'_, Reloader<O>> {
-    reloader
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+/// What `m` holds, whoever had it last: a panic while the reloader was
+/// held leaves it as a build that did not finish, which the next one
+/// starts over, and the lists the host keeps are whole after any push.
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 struct Run<O> {

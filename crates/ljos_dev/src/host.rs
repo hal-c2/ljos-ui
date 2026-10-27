@@ -121,10 +121,7 @@ struct DevSource<O> {
 impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
     fn load(&self, key: &str) -> Option<Arc<CompiledFile>> {
         let file = lock(&self.reloader).provide(key)?.ok()?;
-        self.loaded
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(key.to_owned());
+        lock(&self.loaded).push(key.to_owned());
         Some(file)
     }
 
@@ -532,10 +529,7 @@ impl DevSession {
             let (key, msg) = match msg {
                 DevMsg::Idle => (IDLE_KEY, msg),
                 DevMsg::Pictures(paths) => {
-                    saved
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .extend(paths);
+                    lock(&saved).extend(paths);
                     (PICTURES_KEY, DevMsg::Pictures(Vec::new()))
                 }
                 _ => (DEV_KEY, msg),
@@ -630,12 +624,7 @@ impl DevSession {
             match message {
                 DevMsg::Idle => self.flushed = true,
                 DevMsg::Pictures(_) => {
-                    let mut paths = std::mem::take(
-                        &mut *self
-                            .pictures
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner),
-                    );
+                    let mut paths = std::mem::take(&mut *lock(&self.pictures));
                     paths.sort();
                     paths.dedup();
                     let shown = ljos_quick::ImageStore::of(engine).files_changed(engine, &paths);
@@ -689,12 +678,7 @@ impl DevSession {
     /// The warnings of the files loaded since the last pump that were not
     /// told yet.
     fn tell_loaded(&mut self) -> Option<Report> {
-        let keys = std::mem::take(
-            &mut *self
-                .loaded
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+        let keys = std::mem::take(&mut *lock(&self.loaded));
         if keys.is_empty() {
             return None;
         }
