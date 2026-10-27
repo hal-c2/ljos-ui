@@ -627,7 +627,7 @@ impl Engine {
     /// Adds an object whose description is `meta` (a QML type, say) and
     /// whose native part is `native`, which must be the native type `meta`
     /// is built on.
-    pub fn create_with(
+    pub(crate) fn create_with(
         &self,
         meta: MetaRef,
         native: Box<dyn QmlObject>,
@@ -1549,7 +1549,7 @@ impl Engine {
     }
 
     /// [`Engine::read`] that reports why there is no value.
-    pub fn try_read(&self, obj: ObjectId, prop: PropIndex) -> Result<Value, EngineError> {
+    pub(crate) fn try_read(&self, obj: ObjectId, prop: PropIndex) -> Result<Value, EngineError> {
         enum Got {
             Node(NodeId),
             Value(Value),
@@ -1717,7 +1717,7 @@ impl Engine {
 
     /// Points the alias property `prop` of `obj` at `target`'s property
     /// `target_prop`, or at `target` itself.
-    pub fn set_alias(
+    pub(crate) fn set_alias(
         &self,
         obj: ObjectId,
         prop: PropIndex,
@@ -2549,7 +2549,7 @@ impl Engine {
 
     /// [`Engine::bind_initial`] for a binding that can fail (a JS
     /// exception): `None` keeps the property's last value, as Qt does.
-    pub fn bind_fallible(
+    pub(crate) fn bind_fallible(
         &self,
         obj: ObjectId,
         prop: PropIndex,
@@ -2560,7 +2560,7 @@ impl Engine {
 
     /// [`Engine::bind_fallible`] that checks the property is writable
     /// (`Qt.binding` from JS).
-    pub fn bind_fallible_checked(
+    pub(crate) fn bind_fallible_checked(
         &self,
         obj: ObjectId,
         prop: PropIndex,
@@ -2733,10 +2733,6 @@ impl Engine {
     /// turn it on.
     pub fn set_eager_bindings(&self, eager: bool) {
         self.inner.eager_bindings.set(eager);
-    }
-
-    pub fn eager_bindings(&self) -> bool {
-        self.inner.eager_bindings.get()
     }
 
     /// Wraps a user binding for the graph: runs it tracked, coerces the
@@ -3272,7 +3268,7 @@ impl Engine {
     }
 
     /// Gives the QML-declared method `method` of `obj` its body.
-    pub fn set_script_method(
+    pub(crate) fn set_script_method(
         &self,
         obj: ObjectId,
         method: MethodIndex,
@@ -3461,7 +3457,7 @@ impl Engine {
         contexts.get(ctx).map(|c| (c.parent, c.serial))
     }
 
-    pub fn destroy_context(&self, ctx: ContextId) {
+    pub(crate) fn destroy_context(&self, ctx: ContextId) {
         if ctx != self.inner.root_context {
             self.inner.contexts.borrow_mut().remove(ctx);
             self.release_scripts(ctx);
@@ -3649,10 +3645,6 @@ impl Engine {
             }
         }
         None
-    }
-
-    pub fn context_object(&self, ctx: ContextId) -> Option<ObjectId> {
-        self.inner.contexts.borrow().get(ctx)?.context_object
     }
 
     pub fn context_parent(&self, ctx: ContextId) -> Option<ContextId> {
