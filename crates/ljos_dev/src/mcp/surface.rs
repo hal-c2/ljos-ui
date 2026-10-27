@@ -170,33 +170,21 @@ impl InspectorSurface {
                 holder: Some(holder.clone()),
                 ..Default::default()
             });
-            let frames = Kind::Frames(super::timeline::FramesArgs {
-                record: Some(false),
-                holder: Some(holder.clone()),
-                max: Some(1),
-                ..Default::default()
-            });
-            let wakes = Kind::Frames(super::timeline::FramesArgs {
-                record: Some(false),
-                holder: Some(holder.clone()),
-                max: Some(1),
-                wakes: true,
-                ..Default::default()
-            });
-            let bindings = Kind::Frames(super::timeline::FramesArgs {
-                record: Some(false),
-                holder: Some(holder.clone()),
-                max: Some(1),
-                bindings: true,
-                ..Default::default()
-            });
-            let growth = Kind::Frames(super::timeline::FramesArgs {
-                record: Some(false),
-                holder: Some(holder.clone()),
-                max: Some(1),
-                growth: true,
-                ..Default::default()
-            });
+            // Each recording of `app_frames` is let go of on its own.
+            let stop = |mode: fn(&mut super::timeline::FramesArgs)| {
+                let mut a = super::timeline::FramesArgs {
+                    record: Some(false),
+                    holder: Some(holder.clone()),
+                    max: Some(1),
+                    ..Default::default()
+                };
+                mode(&mut a);
+                Kind::Frames(a)
+            };
+            let frames = stop(|_| {});
+            let wakes = stop(|a| a.wakes = true);
+            let bindings = stop(|a| a.bindings = true);
+            let growth = stop(|a| a.growth = true);
             let models = Kind::Objects(super::objects::ObjectsArgs {
                 release: true,
                 holder: Some(holder),
