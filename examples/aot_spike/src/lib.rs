@@ -158,7 +158,8 @@ pub fn load(mode: Mode, check: bool) -> Run {
     e.set_tier1(mode != Mode::QuickJs);
     e.set_tier1_check(check);
     if mode == Mode::Shipped {
-        e.register_compiled(&shipped::COMPILED[..1]);
+        e.register_compiled(&shipped::COMPILED[..1])
+            .expect("a new engine has run no file");
         e.set_aot_check(check);
     }
     let file = match mode {

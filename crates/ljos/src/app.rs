@@ -303,7 +303,11 @@ impl<M> App<M> {
     /// from, and dynamically once it is not (a reload, another build).
     #[must_use]
     pub fn compiled(self, files: &'static [&'static crate::aot::File]) -> Self {
-        self.register(move |engine| engine.register_compiled(files))
+        self.register(move |engine| {
+            if let Err(e) = engine.register_compiled(files) {
+                engine.warn(e.to_string());
+            }
+        })
     }
 
     /// The component to make as the root: the key [`App::source`]

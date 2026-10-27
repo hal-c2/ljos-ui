@@ -2479,6 +2479,7 @@ impl Engine {
                 .field_reads
                 .get_or_insert_with(|| Box::new(FieldReads::new(len)));
             for prop in props {
+                self.aot_spy_field_read(r, obj, prop);
                 reads.add(prop, r, |e| g.is_current(e));
             }
         }

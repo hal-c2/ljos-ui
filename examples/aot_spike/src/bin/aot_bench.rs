@@ -134,7 +134,7 @@ fn dynamic_boundary(mode: Mode) -> Result<(f64, f64, f64, f64)> {
     let e = engine();
     e.set_tier1(mode != Mode::QuickJs);
     if mode == Mode::Shipped {
-        e.register_compiled(&ljos_example_aot_spike::shipped::COMPILED[1..]);
+        e.register_compiled(&ljos_example_aot_spike::shipped::COMPILED[1..])?;
     }
     e.set_component_source(compile(&[("Bench", BENCH)]));
     let o = e.create_from_url("Bench", None, Vec::new())?;

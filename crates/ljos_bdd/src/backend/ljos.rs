@@ -482,7 +482,9 @@ impl LjosBackend {
             live.engine.set_tier1_check(on);
         }
         if self.ahead {
-            live.engine.register_compiled(compiled::COMPILED);
+            live.engine
+                .register_compiled(compiled::COMPILED)
+                .map_err(|e| failed(e.to_string()))?;
             live.ahead = true;
         }
         if let Some(on) = self.aot_check {

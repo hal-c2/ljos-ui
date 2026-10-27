@@ -914,6 +914,7 @@ impl HostObjects for EngineHost {
             // Tier 1 would write a list where the script wrote its array.
             engine.tier1_spy(id, p, &engine.plain(&v));
         }
+        let _nested = engine.aot_nested();
         // A read-only list's entries are fixed, but a script may give it
         // another list (Qt 6.11.2).
         let list = (alias || matches!(ty, TypeTag::List(_))).then(|| v.clone());
@@ -1042,11 +1043,15 @@ impl HostObjects for EngineHost {
         // the function (see `Engine::eval_expr`).
         let faults = &engine.inner.faults;
         faults.thrown.set(false);
+        faults.thrown_message.take();
         faults.propagate.set(true);
         let out = engine.invoke(id, MethodIndex(method), &vals);
         faults.propagate.set(false);
         if faults.thrown.take() {
-            return Err(HostError::Js(rquickjs::Error::Exception));
+            return Err(match faults.thrown_message.take() {
+                Some(msg) => HostError::msg(msg),
+                None => HostError::Js(rquickjs::Error::Exception),
+            });
         }
         Ok(engine.to_js(&out.map_err(host_err)?))
     }
@@ -1109,6 +1114,7 @@ impl HostObjects for EngineHost {
             })
             .collect();
         engine.aot_spy_emit(id, SignalIndex(signal), &vals);
+        let _nested = engine.aot_nested();
         engine
             .emit(id, SignalIndex(signal), &vals)
             .map_err(host_err)
@@ -1194,7 +1200,7 @@ impl HostObjects for EngineHost {
 /// A script that holds an object a dev reload replaced (a closure an
 /// `onCompleted` handed to a singleton) reaches the object that went on
 /// for it, its members named as the old type named them.
-fn forwarded_prop(engine: &Engine, id: ObjectId, prop: u32) -> (ObjectId, u32) {
+pub(crate) fn forwarded_prop(engine: &Engine, id: ObjectId, prop: u32) -> (ObjectId, u32) {
     let Some((new, names)) = engine.reload_forwarded(id) else {
         return (id, prop);
     };
