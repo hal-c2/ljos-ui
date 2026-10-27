@@ -24,9 +24,9 @@ mod signal_fn;
 pub use direct::{DirectCall, DirectParam};
 
 use crate::{
-    Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
-    MethodDef, MethodFace, PlainValue, PropDef, SignalDef, Slice, SourceMapper, SourceText,
-    TypeDef, ValueKind,
+    Bytecode, HostError, HostObjects, HostTypeId, JsConfig, JsFault, JsRef, JsValue, MethodDef,
+    MethodFace, PlainValue, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef,
+    ValueKind,
     heap::{Counted, HeapCount},
     objects::{HostWrapper, new_wrapper, register_wrapper_class, wrapper_id},
     value::{Pending, WeakRef},
@@ -376,7 +376,7 @@ impl<'js> Scope<'js> {
 
     /// Calls an exported function. Safe to use from inside a [`HostObjects`]
     /// callback (re-entrancy): it runs on the context that is already entered.
-    pub fn call(&self, f: FnId, args: &[JsArg]) -> rquickjs::Result<JsOut> {
+    pub fn call(&self, f: FnId, args: &[JsValue]) -> rquickjs::Result<JsValue> {
         let func = {
             let fns = self.state.fns.borrow();
             fns.get(f).map(|e| e.func.clone())
@@ -399,8 +399,8 @@ impl<'js> Scope<'js> {
         &self,
         f: FnId,
         this: &JsValue,
-        args: &[JsArg],
-    ) -> rquickjs::Result<JsOut> {
+        args: &[JsValue],
+    ) -> rquickjs::Result<JsValue> {
         let func = {
             let fns = self.state.fns.borrow();
             fns.get(f).map(|e| e.func.clone())
@@ -414,7 +414,12 @@ impl<'js> Scope<'js> {
 
     /// Calls a function held through a [`JsRef`] (a handler given to
     /// `connect`, a `Qt.binding` function, a `callLater` target).
-    pub fn call_ref(&self, f: &JsRef, this: &JsValue, args: &[JsArg]) -> rquickjs::Result<JsOut> {
+    pub fn call_ref(
+        &self,
+        f: &JsRef,
+        this: &JsValue,
+        args: &[JsValue],
+    ) -> rquickjs::Result<JsValue> {
         let value = self.restore(f)?;
         let Some(func) = value.into_function() else {
             return Err(Exception::throw_type(&self.ctx, "not a function"));
@@ -440,7 +445,7 @@ impl<'js> Scope<'js> {
         export: &str,
         params: &[&str],
         takes: &[&str],
-        args: &[JsArg],
+        args: &[JsValue],
     ) -> rquickjs::Error {
         let thrown = self.ctx.catch();
         let _ = self.retell(&thrown, file, export, params, takes, args);
@@ -456,7 +461,7 @@ impl<'js> Scope<'js> {
         export: &str,
         params: &[&str],
         takes: &[&str],
-        args: &[JsArg],
+        args: &[JsValue],
     ) -> Option<()> {
         let e = Exception::from_object(thrown.as_object()?.clone())?;
         if e.message()? != "not a function" {
@@ -542,8 +547,8 @@ impl<'js> Scope<'js> {
         &self,
         func: &Function<'js>,
         this: &JsValue,
-        args: &[JsArg],
-    ) -> rquickjs::Result<JsOut> {
+        args: &[JsValue],
+    ) -> rquickjs::Result<JsValue> {
         let mut a = Args::new(self.ctx.clone(), args.len());
         a.this(self.to_value(this)?)?;
         for arg in args {
@@ -1949,14 +1954,19 @@ impl JsHost {
     }
 
     /// Calls a function held through a [`JsRef`] under the default slice.
-    pub fn call_ref(&self, f: &JsRef, this: &JsValue, args: &[JsArg]) -> Result<JsOut, JsFault> {
+    pub fn call_ref(
+        &self,
+        f: &JsRef,
+        this: &JsValue,
+        args: &[JsValue],
+    ) -> Result<JsValue, JsFault> {
         self.enter("call_ref", self.cfg.slice, |scope| {
             scope.call_ref(f, this, args)
         })
     }
 
     /// Evaluates a classic script (the Engine's global prelude).
-    pub fn eval_script(&self, name: &str, source: &str) -> Result<JsOut, JsFault> {
+    pub fn eval_script(&self, name: &str, source: &str) -> Result<JsValue, JsFault> {
         let ahead = crate::ahead::script(name, source);
         self.enter(&format!("eval {name}"), self.cfg.load_slice, |scope| {
             let v: Value = match &ahead {
@@ -2008,7 +2018,7 @@ impl JsHost {
     }
 
     /// Calls an exported function under the default slice.
-    pub fn call(&self, f: FnId, args: &[JsArg]) -> Result<JsOut, JsFault> {
+    pub fn call(&self, f: FnId, args: &[JsValue]) -> Result<JsValue, JsFault> {
         let label = self
             .state
             .fns

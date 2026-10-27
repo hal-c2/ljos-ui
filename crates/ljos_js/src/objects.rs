@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use rquickjs::{Ctx, Exception, qjs};
 
-use crate::{JsArg, JsOut, JsValue, Scope};
+use crate::{JsValue, Scope};
 
 /// Identifies a registered host type (a prototype with accessors).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -127,7 +127,7 @@ pub trait HostObjects {
     /// it. `None` for dead objects.
     fn type_of(&self, obj: u64) -> Option<HostTypeId>;
 
-    fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsOut, HostError>;
+    fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsValue, HostError>;
 
     /// [`get`](Self::get) for a property that holds a number, a bool or a
     /// text, when the host can tell without the script's scope; `None`
@@ -142,7 +142,7 @@ pub trait HostObjects {
         scope: &Scope<'js>,
         obj: u64,
         prop: u32,
-        value: JsArg,
+        value: JsValue,
     ) -> Result<(), HostError>;
 
     /// [`set`](Self::set) of a number or a bool, when the host can do it
@@ -175,7 +175,7 @@ pub trait HostObjects {
         _scope: &Scope<'js>,
         _obj: u64,
         _prop: u32,
-        _item: JsArg,
+        _item: JsValue,
     ) -> Result<(), HostError> {
         Ok(())
     }
@@ -197,8 +197,8 @@ pub trait HostObjects {
         scope: &Scope<'js>,
         obj: u64,
         method: u32,
-        args: Vec<JsArg>,
-    ) -> Result<JsOut, HostError>;
+        args: Vec<JsValue>,
+    ) -> Result<JsValue, HostError>;
 
     /// What a script reads for `obj.method`, the first time it reads it.
     fn method_face<'js>(&self, _scope: &Scope<'js>, _obj: u64, _method: u32) -> MethodFace<'js> {
@@ -211,7 +211,7 @@ pub trait HostObjects {
         _scope: &Scope<'js>,
         _obj: u64,
         _signal: u32,
-        _args: &[JsArg],
+        _args: &[JsValue],
     ) -> Result<(), HostError> {
         Err(HostError::msg("this host does not support signals"))
     }
@@ -223,7 +223,7 @@ pub trait HostObjects {
         _scope: &Scope<'js>,
         _obj: u64,
         _signal: u32,
-        _args: &[JsArg],
+        _args: &[JsValue],
     ) -> Result<(), HostError> {
         Err(HostError::msg("this host does not support signals"))
     }
@@ -234,7 +234,7 @@ pub trait HostObjects {
         _scope: &Scope<'js>,
         _obj: u64,
         _signal: u32,
-        _args: &[JsArg],
+        _args: &[JsValue],
     ) -> Result<(), HostError> {
         Err(HostError::msg("this host does not support signals"))
     }

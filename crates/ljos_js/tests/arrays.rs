@@ -4,8 +4,7 @@
 use std::rc::Rc;
 
 use ljos_js::{
-    HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsHost, JsOut, JsRef, JsValue,
-    ModuleHandle, Scope,
+    HostError, HostObjects, HostTypeId, JsConfig, JsHost, JsRef, JsValue, ModuleHandle, Scope,
 };
 
 /// A host with no objects, whose scripts give their arrays by reference.
@@ -20,7 +19,7 @@ impl HostObjects for ByReference {
         None
     }
 
-    fn get<'js>(&self, _scope: &Scope<'js>, _obj: u64, _prop: u32) -> Result<JsOut, HostError> {
+    fn get<'js>(&self, _scope: &Scope<'js>, _obj: u64, _prop: u32) -> Result<JsValue, HostError> {
         Ok(JsValue::Undefined)
     }
 
@@ -29,7 +28,7 @@ impl HostObjects for ByReference {
         _scope: &Scope<'js>,
         _obj: u64,
         _prop: u32,
-        _value: JsArg,
+        _value: JsValue,
     ) -> Result<(), HostError> {
         Ok(())
     }
@@ -39,8 +38,8 @@ impl HostObjects for ByReference {
         _scope: &Scope<'js>,
         _obj: u64,
         _method: u32,
-        _args: Vec<JsArg>,
-    ) -> Result<JsOut, HostError> {
+        _args: Vec<JsValue>,
+    ) -> Result<JsValue, HostError> {
         Ok(JsValue::Undefined)
     }
 }

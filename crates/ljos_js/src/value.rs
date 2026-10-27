@@ -263,11 +263,6 @@ impl std::fmt::Debug for JsRef {
     }
 }
 
-/// A value passed into JS.
-pub type JsArg = JsValue;
-/// A value coming out of JS.
-pub type JsOut = JsValue;
-
 impl From<bool> for JsValue {
     fn from(v: bool) -> Self {
         Self::Bool(v)

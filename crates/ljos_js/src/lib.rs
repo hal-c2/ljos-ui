@@ -48,7 +48,7 @@ pub use objects::{
     HostError, HostObjects, HostTypeId, MethodDef, MethodFace, PlainValue, PropDef, SignalDef,
     TypeDef,
 };
-pub use value::{JsArg, JsOut, JsRef, JsValue, ValueKind};
+pub use value::{JsRef, JsValue, ValueKind};
 
 /// Re-export so callers write closures against the exact rquickjs we link.
 pub use rquickjs;

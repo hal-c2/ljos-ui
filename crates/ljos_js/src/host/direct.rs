@@ -7,7 +7,7 @@ use rquickjs::{Array, Function, Value, qjs};
 use smallvec::SmallVec;
 
 use super::Scope;
-use crate::{FnId, JsArg, JsValue};
+use crate::{FnId, JsValue};
 
 /// One value a [`DirectCall`] passes before the caller's arguments.
 #[derive(Debug, Clone)]
@@ -221,7 +221,7 @@ impl<'js> Scope<'js> {
                     ctx: ctx.clone(),
                     state,
                 };
-                let args: Vec<JsArg> = given
+                let args: Vec<JsValue> = given
                     .iter::<Value<'js>>()
                     .filter_map(|v| v.ok().and_then(|v| scope.from_value(&v).ok()))
                     .collect();

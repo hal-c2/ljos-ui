@@ -3,7 +3,7 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use ljos_js::{FnId, HostError, HostObjects, HostTypeId, JsArg, JsHost, JsOut, JsValue, Scope};
+use ljos_js::{FnId, HostError, HostObjects, HostTypeId, JsHost, JsValue, Scope};
 
 #[derive(Default)]
 pub struct Obj {
@@ -47,7 +47,7 @@ impl HostObjects for Store {
         *self.ty.borrow()
     }
 
-    fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsOut, HostError> {
+    fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsValue, HostError> {
         self.gets.set(self.gets.get() + 1);
         match prop {
             DERIVED => {
@@ -71,7 +71,7 @@ impl HostObjects for Store {
         _scope: &Scope<'js>,
         obj: u64,
         prop: u32,
-        value: JsArg,
+        value: JsValue,
     ) -> Result<(), HostError> {
         self.log
             .borrow_mut()
@@ -87,8 +87,8 @@ impl HostObjects for Store {
         _scope: &Scope<'js>,
         obj: u64,
         method: u32,
-        args: Vec<JsArg>,
-    ) -> Result<JsOut, HostError> {
+        args: Vec<JsValue>,
+    ) -> Result<JsValue, HostError> {
         self.log
             .borrow_mut()
             .push(format!("call {obj}.{method}({args:?})"));
