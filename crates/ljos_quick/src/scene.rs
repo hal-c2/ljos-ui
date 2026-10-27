@@ -1832,8 +1832,7 @@ impl QuickScene {
         self.a11y.forget(engine, obj);
         if !engine.is_alive(obj) {
             crate::focus::tree::forget(engine, obj);
-        }
-        if engine.is_alive(obj) {
+        } else {
             let mut inh = marks.map(|m| m.inherit).unwrap_or_default();
             let restore = RestoreMode::BindingOrValue;
             let mut going = None;
