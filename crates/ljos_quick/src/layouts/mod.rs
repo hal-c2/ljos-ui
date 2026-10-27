@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Cx, Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Value,
+    Cx, Engine, EngineError, MetaRef, ObjectId, PropIndex, Provenance, QmlObject, QmlType, Value,
 };
 
 use crate::enums::{EnumTable, align, layout_direction};
@@ -363,6 +363,12 @@ fn read_attached(e: &Engine, child: ObjectId) -> Attached {
         (!is_unset_tracked(e, a, p)).then_some(v)
     };
     let size = |p: PropIndex| set(p).map(|v| v.to_number()).filter(|v| *v >= 0.0);
+    let least = |p: PropIndex| {
+        let v = e.read(a, p);
+        given_tracked(e, a, p)
+            .then(|| v.to_number())
+            .filter(|v| *v >= 0.0)
+    };
     let flag = |p: PropIndex| set(p).map(|v| v.to_boolean());
     let cell = |p: PropIndex| size(p).map(|v| v.min(MAX_CELLS) as usize);
     let span = |p: PropIndex| num(e, a, p).clamp(1.0, MAX_CELLS) as usize;
@@ -378,8 +384,8 @@ fn read_attached(e: &Engine, child: ObjectId) -> Attached {
             size(LayoutAttached::PREFERRED_HEIGHT.index),
         ],
         min: [
-            size(LayoutAttached::MINIMUM_WIDTH.index),
-            size(LayoutAttached::MINIMUM_HEIGHT.index),
+            least(LayoutAttached::MINIMUM_WIDTH.index),
+            least(LayoutAttached::MINIMUM_HEIGHT.index),
         ],
         max: [
             size(LayoutAttached::MAXIMUM_WIDTH.index),
@@ -401,6 +407,36 @@ fn read_attached(e: &Engine, child: ObjectId) -> Attached {
             side(LayoutAttached::BOTTOM_MARGIN.index),
         ],
     }
+}
+
+/// Whether the author gave `p` of the attached object `a` a value. A
+/// layout's `minimumWidth` and `minimumHeight` hold what its children
+/// need until then ([`show_own_minimum`]): the toolkit's, not given.
+fn given_tracked(e: &Engine, a: ObjectId, p: PropIndex) -> bool {
+    matches!(
+        e.provenance_tracked(a, p),
+        Some(Provenance::Assigned | Provenance::Bound | Provenance::Animated)
+    )
+}
+
+/// A layout that was given no `Layout.minimumWidth` or `minimumHeight`
+/// reads the least its children take, as in Qt: a sibling sized from it
+/// fits.
+fn show_own_minimum(e: &Engine, obj: ObjectId, hints: &[Total; 2]) -> Result<(), EngineError> {
+    let Some(a) = e.existing_attached_object(obj, &attacher()) else {
+        return Ok(());
+    };
+    for (p, axis) in [
+        (LayoutAttached::MINIMUM_WIDTH.index, H),
+        (LayoutAttached::MINIMUM_HEIGHT.index, V),
+    ] {
+        let v = Value::Real(hints[axis].min);
+        let shown = e.untrack(|| given_tracked(e, a, p) || e.read(a, p).change_equals(&v));
+        if !shown {
+            e.write_derived(a, p, v)?;
+        }
+    }
+    Ok(())
 }
 
 /// The four layouts.
@@ -530,6 +566,11 @@ pub(crate) fn managed_type(m: &ljos_engine::MetaObject) -> bool {
 pub(crate) fn register(engine: &Engine) {
     engine.on_attached_created_of::<LayoutAttached>(|e, item, att| {
         proxy::setup_proxy_attached(e, item, att);
+        if kind(e, item).is_some()
+            && let Ok(hints) = state(e, item, |s| s.hints)
+        {
+            let _ = show_own_minimum(e, item, &hints);
+        }
         if let Some(parent) = e.untrack(|| e.visual_parent(item))
             && kind(e, parent).is_some()
         {
@@ -920,6 +961,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         Item::IMPLICIT_HEIGHT.index,
         Value::Real(hints[V].pref),
     )?;
+    show_own_minimum(e, obj, &hints)?;
     Ok(changed)
 }
 
