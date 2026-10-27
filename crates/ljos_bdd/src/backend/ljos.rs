@@ -432,6 +432,94 @@ impl LjosBackend {
         live.settle()?;
         Ok(live)
     }
+
+    /// Gives a new engine what the scenario said before anything was
+    /// loaded: settings, locale, style, platform, clocks and the data
+    /// and resources its program will find.
+    fn configure(&mut self, live: &mut Live) -> Result<()> {
+        for catalog in self.catalogs.drain(..) {
+            live.engine.install_catalog(Box::new(catalog));
+        }
+        for said in self.settings.drain(..) {
+            apply(&live.engine, said);
+        }
+        if let Some(vars) = self.locale_env.take() {
+            let system = ljos_i18n::SystemLocale::from_vars(|k| {
+                vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
+            });
+            live.engine.use_system_locale_from(&system);
+        }
+        let conf = self.controls_conf.take();
+        let mut vars = std::mem::take(&mut self.controls_vars);
+        // `-style` comes before the variable; `ljos run` gives it as one.
+        if let Some(name) = self.command_line_style.take() {
+            vars.push(("QT_QUICK_CONTROLS_STYLE".to_owned(), name));
+        }
+        let var = |name: &str| match name {
+            "QT_QUICK_CONTROLS_CONF" => conf.as_ref().map(|_| "qtquickcontrols2.conf".into()),
+            _ => vars
+                .iter()
+                .rev()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone()),
+        };
+        let read = |_: &str| conf.clone();
+        if conf.is_some() || !vars.is_empty() {
+            ljos_controls::set_material_defaults(
+                &live.engine,
+                ljos_controls::MaterialDefaults::from_vars(var, read),
+            );
+        }
+        // With nothing chosen, the platform's style, as a program has.
+        if self.controls_style.is_none() {
+            self.controls_style = ljos_compiler::controls_style(var, read);
+        }
+        self.platform.install(&live.engine)?;
+        live.engine.set_wall_clock_origin(self.wall_clock);
+        if let Some(on) = self.tier1_check {
+            live.engine.set_tier1_check(on);
+        }
+        if let Some(native) = self.js_native {
+            set_js_clock(&live.engine, native)?;
+        }
+        // A scenario is not told which desktop ran it: with none asked
+        // for, the build's platform, and on Linux no desktop's own keys.
+        let platform = self.key_bindings.unwrap_or_else(|| {
+            use ljos_quick::keys::Platform;
+            match Platform::current() {
+                Platform::Gnome | Platform::Kde => Platform::Linux,
+                p => p,
+            }
+        });
+        ljos_quick::keys::set_platform(&live.engine, platform);
+        for (name, tree) in self.lazy_trees.drain(..) {
+            let e = &live.engine;
+            let obj = e
+                .create_by_name("QtQml", "QtObject", None)
+                .map_err(failed)?;
+            e.set_object_tree(obj, Rc::new(tree)).map_err(failed)?;
+            e.set_context_property(e.root_context(), &name, QmlValue::Object(obj));
+        }
+        for (name, model) in self.paged_models.drain(..) {
+            let e = &live.engine;
+            let obj = e
+                .create_by_name("QtQml", "QtObject", None)
+                .map_err(failed)?;
+            e.set_object_model(obj, Some(Rc::new(model)))
+                .map_err(failed)?;
+            e.set_context_property(e.root_context(), &name, QmlValue::Object(obj));
+        }
+        let images = ljos_quick::ImageStore::of(&live.engine);
+        for (url, bytes) in self.resources.drain(..) {
+            ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.clone());
+            images.register_resource(url, bytes);
+        }
+        for (url, bytes) in self.image_texts.drain(..) {
+            images.register_resource(url, bytes);
+        }
+        live.controls_style = self.controls_style.take();
+        Ok(())
+    }
 }
 
 fn level(l: ljos_engine::LogLevel) -> LogLevel {
@@ -967,87 +1055,7 @@ impl Backend for LjosBackend {
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
         if self.live.is_none() {
             let mut live = Self::start()?;
-            for catalog in self.catalogs.drain(..) {
-                live.engine.install_catalog(Box::new(catalog));
-            }
-            for said in self.settings.drain(..) {
-                apply(&live.engine, said);
-            }
-            if let Some(vars) = self.locale_env.take() {
-                let system = ljos_i18n::SystemLocale::from_vars(|k| {
-                    vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
-                });
-                live.engine.use_system_locale_from(&system);
-            }
-            let conf = self.controls_conf.take();
-            let mut vars = std::mem::take(&mut self.controls_vars);
-            // `-style` comes before the variable; `ljos run` gives it as one.
-            if let Some(name) = self.command_line_style.take() {
-                vars.push(("QT_QUICK_CONTROLS_STYLE".to_owned(), name));
-            }
-            let var = |name: &str| match name {
-                "QT_QUICK_CONTROLS_CONF" => conf.as_ref().map(|_| "qtquickcontrols2.conf".into()),
-                _ => vars
-                    .iter()
-                    .rev()
-                    .find(|(k, _)| k == name)
-                    .map(|(_, v)| v.clone()),
-            };
-            let read = |_: &str| conf.clone();
-            if conf.is_some() || !vars.is_empty() {
-                ljos_controls::set_material_defaults(
-                    &live.engine,
-                    ljos_controls::MaterialDefaults::from_vars(var, read),
-                );
-            }
-            // With nothing chosen, the platform's style, as a program has.
-            if self.controls_style.is_none() {
-                self.controls_style = ljos_compiler::controls_style(var, read);
-            }
-            self.platform.install(&live.engine)?;
-            live.engine.set_wall_clock_origin(self.wall_clock);
-            if let Some(on) = self.tier1_check {
-                live.engine.set_tier1_check(on);
-            }
-            if let Some(native) = self.js_native {
-                set_js_clock(&live.engine, native)?;
-            }
-            // A scenario is not told which desktop ran it: with none asked
-            // for, the build's platform, and on Linux no desktop's own keys.
-            let platform = self.key_bindings.unwrap_or_else(|| {
-                use ljos_quick::keys::Platform;
-                match Platform::current() {
-                    Platform::Gnome | Platform::Kde => Platform::Linux,
-                    p => p,
-                }
-            });
-            ljos_quick::keys::set_platform(&live.engine, platform);
-            for (name, tree) in self.lazy_trees.drain(..) {
-                let e = &live.engine;
-                let obj = e
-                    .create_by_name("QtQml", "QtObject", None)
-                    .map_err(failed)?;
-                e.set_object_tree(obj, Rc::new(tree)).map_err(failed)?;
-                e.set_context_property(e.root_context(), &name, QmlValue::Object(obj));
-            }
-            for (name, model) in self.paged_models.drain(..) {
-                let e = &live.engine;
-                let obj = e
-                    .create_by_name("QtQml", "QtObject", None)
-                    .map_err(failed)?;
-                e.set_object_model(obj, Some(Rc::new(model)))
-                    .map_err(failed)?;
-                e.set_context_property(e.root_context(), &name, QmlValue::Object(obj));
-            }
-            let images = ljos_quick::ImageStore::of(&live.engine);
-            for (url, bytes) in self.resources.drain(..) {
-                ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.clone());
-                images.register_resource(url, bytes);
-            }
-            for (url, bytes) in self.image_texts.drain(..) {
-                images.register_resource(url, bytes);
-            }
-            live.controls_style = self.controls_style.take();
+            self.configure(&mut live)?;
             self.live = Some(live);
             // An inspector connected before anything was loaded reads
             // this application's log from its first message.
