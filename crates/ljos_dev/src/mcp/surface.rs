@@ -106,6 +106,17 @@ impl fmt::Debug for InspectorSurface {
     }
 }
 
+/// The capabilities of `caps` for a person to read, `none` for none.
+pub(crate) fn caps_listed(caps: CapSet) -> String {
+    if caps.iter().next().is_none() {
+        return "none".to_string();
+    }
+    caps.iter()
+        .map(|c| c.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The refusal of a tool whose capability the connection does not hold. It
 /// names the capability and says how to be given it: a client cannot ask
 /// for more than it was started with, so the person who starts the
@@ -117,14 +128,7 @@ fn refusal(what: &str, needs: Cap, held: CapSet) -> SurfaceError {
         .map(|c| c.as_str())
         .collect::<Vec<_>>()
         .join(",");
-    let have = if held.iter().next().is_none() {
-        "none".to_string()
-    } else {
-        held.iter()
-            .map(|c| c.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    let have = caps_listed(held);
     let never = if needs == Cap::Eval {
         " (`eval` is never implied by another capability; it has to be named)"
     } else {
@@ -139,7 +143,7 @@ fn refusal(what: &str, needs: Cap, held: CapSet) -> SurfaceError {
     )
     .with_details(json!({
         "required": needs.as_str(),
-        "granted": held.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
+        "granted": held,
     }))
 }
 

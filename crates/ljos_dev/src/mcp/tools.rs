@@ -25,7 +25,7 @@ use super::args::{
 use super::capture::{Capture, REDACTED, all_objects};
 use super::frames::ms;
 use super::redact::{mask_json, mask_text};
-use super::surface::Answer;
+use super::surface::{Answer, caps_listed};
 use crate::top::{FrameStats, LANE_NAMES, owner_name};
 
 /// The most bytes a picture may have (§19.6).
@@ -1032,7 +1032,7 @@ impl Look<'_> {
             "objects": engine.object_count(),
             "outline_nodes": nodes,
             "animations": animations,
-            "capabilities": caps.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
+            "capabilities": caps,
             "reload": reload,
         });
         value["painter"] = painter;
@@ -1085,14 +1085,7 @@ impl Look<'_> {
              capabilities: {}",
             engine.object_count(),
             engine.reload_generation(),
-            if caps.iter().next().is_none() {
-                "none".to_string()
-            } else {
-                caps.iter()
-                    .map(|c| c.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
+            caps_listed(caps)
         );
         let last = &reload["last"];
         if !last.is_null() {
