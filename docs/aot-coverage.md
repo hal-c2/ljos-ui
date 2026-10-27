@@ -96,6 +96,20 @@ The ten most common reasons an expression is refused, with the most common detai
 Widening the subset to cover more of these comes after A1. `parent` as an object and
 objects as values together would cover about 3,600 more expressions.
 
+### What the cross-check leaves unchecked
+
+The cross-check runs compiled code dry first, holding its writes and emits. A read after
+a held effect cannot see what the effect would have done, so that run is counted
+`inconclusive` and not compared. Of the 2,174 compiled expressions, 126 write or emit,
+and 11 of those (in 4 files: `MapLayersDrawer`, `photosurface`, `CalendarControl`,
+`CustomizationCard`) read a property after their first effect. That is an upper bound:
+it counts a read in one branch after a write in another. It holds because compiled code
+has no loops. The other 2,163 can be checked whenever they run.
+
+The 11 are left unchecked rather than given held values. A held write's handlers and
+dependent bindings do not run in a dry run, so any read after it could differ from what
+the script reads, including a read of the property it wrote.
+
 ## What it costs the build
 
 `LJOS_AOT_OUT=corpus.rs ljos-compile aot-coverage …` writes the Rust for all 495 files as an
