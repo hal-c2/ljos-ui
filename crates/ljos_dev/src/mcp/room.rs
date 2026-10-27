@@ -50,11 +50,7 @@ impl Room {
         let mut line = line.to_owned();
         let most = self.text.saturating_sub(1).max(64);
         if line.len() > most {
-            let mut cut = most.saturating_sub(1);
-            while !line.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            line.truncate(cut);
+            line.truncate(line.floor_char_boundary(most.saturating_sub(1)));
             line.push('…');
         }
         self.json = self.json.saturating_sub(size_of(&row) + 1);

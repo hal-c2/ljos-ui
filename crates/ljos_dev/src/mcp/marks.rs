@@ -144,9 +144,7 @@ impl Marks {
                 p.bytes += b;
                 if p.handles.len() < MAX_HANDLES {
                     p.handles.push(handle(obj));
-                    if let Some(n) =
-                        text_property(engine, obj, "objectName").filter(|n| !n.is_empty())
-                    {
+                    if let Some(n) = text_property(engine, obj, "objectName") {
                         p.names.push(n);
                     }
                 }

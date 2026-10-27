@@ -11,6 +11,7 @@
 //! Every act answers once the frame has settled, with what changed: the
 //! difference between the outline before the act and the one after it.
 
+use std::fmt::Write as _;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -1091,24 +1092,20 @@ impl Inspector {
             text.push('\n');
             text.push_str(&changes.text);
         }
-        let _ = std::fmt::Write::write_fmt(
-            &mut text,
-            format_args!(
-                "\n(snapshot {epoch}: {} changed, {} added, {} removed{}; {} ms)",
-                changes.changed,
-                changes.added,
-                changes.removed,
-                if unsettled {
-                    "; the scene had not settled"
-                } else {
-                    ""
-                },
-                started.elapsed().as_millis()
-            ),
+        let _ = write!(
+            text,
+            "\n(snapshot {epoch}: {} changed, {} added, {} removed{}; {} ms)",
+            changes.changed,
+            changes.added,
+            changes.removed,
+            if unsettled {
+                "; the scene had not settled"
+            } else {
+                ""
+            },
+            started.elapsed().as_millis()
         );
-        let mut reply = ToolReply::from(value);
-        reply = reply.with_text(text);
-        (Ok(reply), after)
+        (Ok(ToolReply::from(value).with_text(text)), after)
     }
 }
 

@@ -265,8 +265,7 @@ impl Look<'_> {
         self.refs.assign(&self.capture.tree, index)
     }
 
-    /// The one item `what` names, for `tool`.
-    /// The object `what` names, listed or not.
+    /// The object `what` names for `tool`, listed or not.
     pub(crate) fn object(&mut self, what: &str, tool: &str) -> Result<ObjectId, SurfaceError> {
         match self.resolve(what, tool)? {
             Target::Node(index) => self.capture.items[index].ok_or_else(|| {

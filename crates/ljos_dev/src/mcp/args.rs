@@ -499,9 +499,10 @@ pub struct BatchArgs {
 /// The most steps one batch holds.
 pub const MAX_STEPS: usize = 32;
 
-// Unlike `ljos_mcp_core::NoArgs`, a misspelt argument is refused instead
-// of ignored. (A doc comment here would be sent to every client as the
-// schema's description.)
+// Not `ljos_mcp_core::NoArgs`, which refuses a misspelt argument too:
+// its doc comment is the schema's description every client is sent, and
+// these tools have always said this one's. (A doc comment here would be
+// sent as well.)
 /// No arguments.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
