@@ -1470,6 +1470,50 @@ impl<V: Clone + 'static> Graph<V> {
         })
     }
 
+    /// How many sources the running binding or effect has read so far:
+    /// `None` where [`Graph::is_tracking`] is false.
+    pub fn reads_len(&self) -> Option<usize> {
+        let i = self.inner.borrow();
+        let f = i.frames.last()?;
+        f.node?;
+        Some(f.reads.len())
+    }
+
+    /// Takes back the sources the running binding or effect read after its
+    /// first `at`, as if it had not read them: a read of one again records
+    /// it. For a caller that runs the same code two ways in one run and
+    /// keeps the reads of one of them.
+    pub fn take_reads_since(&self, at: usize) -> Vec<NodeId> {
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        let Some(f) = i.frames.last_mut() else {
+            return Vec::new();
+        };
+        if f.node.is_none() || at >= f.reads.len() {
+            return Vec::new();
+        }
+        let taken = f.reads.split_off(at);
+        for &n in &taken {
+            if let Some(node) = i.nodes.get_mut(n) {
+                // No run has stamp 0: the next read records it again.
+                node.read_stamp = 0;
+            }
+        }
+        taken
+    }
+
+    /// The sources the running binding or effect read after its first
+    /// `at`.
+    pub fn reads_since(&self, at: usize) -> Vec<NodeId> {
+        let i = self.inner.borrow();
+        i.frames
+            .last()
+            .filter(|f| f.node.is_some())
+            .and_then(|f| f.reads.get(at..))
+            .map(<[NodeId]>::to_vec)
+            .unwrap_or_default()
+    }
+
     /// Whether what `r` read still counts: the run is in progress, or it
     /// is the reader's last one and its reads are the reader's sources.
     pub fn is_current(&self, r: Reader) -> bool {

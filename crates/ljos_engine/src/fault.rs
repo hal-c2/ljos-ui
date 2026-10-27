@@ -163,8 +163,11 @@ pub(crate) struct FaultState {
     /// exception in it is the calling script's to catch.
     pub(crate) propagate: Cell<bool>,
     /// The function called with `propagate` threw; the exception is still
-    /// pending in the JS context.
+    /// pending in the JS context, unless `thrown_message` has one to throw.
     pub(crate) thrown: Cell<bool>,
+    /// What to throw for code that stopped as a script throws but is not
+    /// one (compiled code): no exception is pending.
+    pub(crate) thrown_message: RefCell<Option<String>>,
     pub(crate) boundaries: crate::boundary::Boundaries,
 }
 

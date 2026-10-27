@@ -2780,7 +2780,7 @@ impl Engine {
         {
             return v;
         }
-        if let Some(v) = self.aot_eval(inst, expr, hint, args, kept) {
+        if let Some(v) = self.aot_eval(inst, expr, hint, args, propagate, kept) {
             return v;
         }
         if let Some(v) = self.tier1_eval(inst, expr, hint, args, kept) {

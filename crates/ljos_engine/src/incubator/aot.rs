@@ -33,6 +33,8 @@ use ljos_ir::{BindingKind, CompIdx, ExprId, ObjIdx, ObjRef};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+use ljos_reactive::{NodeId, Reader};
+
 use crate::WriteKind;
 use crate::aot::{File, Kind, Stop};
 use crate::atom::Atom;
@@ -104,6 +106,13 @@ pub(crate) struct State {
     stats: Cell<AotStats>,
     spy: RefCell<Option<Vec<Effect>>>,
     spying: Cell<bool>,
+    /// How deep in a recorded write or emit the dynamic run is: the
+    /// effects of the handlers those wake are theirs, not the run's.
+    nest: Cell<u32>,
+    /// The tracked reads of properties without a node by the run of a
+    /// binding the cross-check looks at.
+    field_reads: RefCell<Vec<(ObjectId, PropIndex)>>,
+    reading: Cell<Option<Reader>>,
 }
 
 impl Default for State {
@@ -118,6 +127,9 @@ impl Default for State {
             stats: Cell::default(),
             spy: RefCell::default(),
             spying: Cell::new(false),
+            nest: Cell::new(0),
+            field_reads: RefCell::default(),
+            reading: Cell::new(None),
         }
     }
 }
@@ -353,6 +365,7 @@ impl Frame<'_> {
             return Ok(());
         }
         self.e.tier1_spy(o.0, p.0, &v);
+        let _nested = self.e.aot_nested();
         let plain = self.e.plain_script_write(o.0, p.0, &v);
         if !matches!(plain, Ok(true))
             && (plain.is_err() || self.e.write(o.0, p.0, v, WriteKind::Imperative).is_err())
@@ -375,7 +388,9 @@ impl Frame<'_> {
             return Ok(());
         }
         self.e.aot_spy_emit(o.0, s.0, args);
+        let nested = self.e.aot_nested();
         let done = self.e.emit(o.0, s.0, args);
+        drop(nested);
         // The handlers may have run, and that is an effect, also when
         // one of them failed.
         let stop = self.stop();
@@ -403,18 +418,60 @@ fn number(v: &Value) -> Option<f64> {
     }
 }
 
-/// Whether the compiled effects are among the dynamic ones, in order.
-fn among(e: &Engine, compiled: &[Effect], dynamic: &[Effect]) -> bool {
-    let like = |a: &Value, b: &Value| same(&normal(e, a.clone()), &normal(e, b.clone()));
+/// [`Engine::aot_nested`]'s guard.
+pub(crate) struct Nested<'a>(&'a State);
+
+impl Drop for Nested<'_> {
+    fn drop(&mut self) {
+        self.0.nest.set(self.0.nest.get() - 1);
+    }
+}
+
+/// `v` as a script observes it: a number keeps its sign, so `-0` is not
+/// `0`, and `NaN` is itself.
+fn observed(e: &Engine, v: Value) -> Value {
+    match v {
+        Value::Real(_) => v,
+        v => normal(e, v),
+    }
+}
+
+/// Whether two values are the same as a script tells them apart.
+fn exact(e: &Engine, a: &Value, b: &Value) -> bool {
+    same(&observed(e, a.clone()), &observed(e, b.clone()))
+}
+
+/// Whether the compiled effects are the dynamic run's own, one for one and
+/// in order, once both are [`Engine::settled`].
+fn alike(e: &Engine, compiled: &[Effect], dynamic: &[Effect]) -> bool {
     let matches = |c: &Effect, d: &Effect| match (c, d) {
-        (Effect::Write(o, p, v), Effect::Write(q, r, w)) => o == q && p == r && like(v, w),
+        (Effect::Write(o, p, v), Effect::Write(q, r, w)) => o == q && p == r && exact(e, v, w),
         (Effect::Emit(o, s, a), Effect::Emit(q, t, b)) => {
-            o == q && s == t && a.len() == b.len() && a.iter().zip(b).all(|(x, y)| like(x, y))
+            o == q && s == t && a.len() == b.len() && a.iter().zip(b).all(|(x, y)| exact(e, x, y))
         }
         _ => false,
     };
-    let mut rest = dynamic.iter();
-    compiled.iter().all(|c| rest.any(|d| matches(c, d)))
+    compiled.len() == dynamic.len() && compiled.iter().zip(dynamic).all(|(c, d)| matches(c, d))
+}
+
+/// What one run of an expression read: the nodes, and the properties
+/// without one.
+#[derive(Default)]
+struct Reads {
+    nodes: Vec<NodeId>,
+    fields: Vec<(ObjectId, PropIndex)>,
+}
+
+impl Reads {
+    fn same_as(&self, other: &Reads) -> bool {
+        fn set<T: Ord + Copy>(v: &[T]) -> Vec<T> {
+            let mut v = v.to_vec();
+            v.sort_unstable();
+            v.dedup();
+            v
+        }
+        set(&self.nodes) == set(&other.nodes) && set(&self.fields) == set(&other.fields)
+    }
 }
 
 impl Engine {
@@ -422,7 +479,34 @@ impl Engine {
     /// table its build generated. Files loaded after this whose content is
     /// one the code was made from run it; a file is matched once, when it
     /// first runs an expression.
-    pub fn register_compiled(&self, files: &'static [&'static File]) {
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Load`], with nothing registered, when a file the
+    /// code is for has already run an expression without it: the match is
+    /// made once, so the code would never run there.
+    pub fn register_compiled(&self, files: &'static [&'static File]) -> Result<(), EngineError> {
+        {
+            let loader = self.inner.loader.borrow();
+            for loaded in loader.files.values() {
+                let Some(matched) = loaded.aot.get() else {
+                    continue;
+                };
+                let key = ljos_ir::aot::content_key(&loaded.ir);
+                let Some(new) = files.iter().find(|f| f.content == key) else {
+                    continue;
+                };
+                if matched.as_ref().is_some_and(|l| std::ptr::eq(l.file, *new)) {
+                    continue;
+                }
+                return Err(EngineError::Load(format!(
+                    "compiled code for {} is given after {} already ran without it, and \
+                     a file is matched to its code once, when it first runs: register \
+                     compiled code before loading the file",
+                    new.name, loaded.url
+                )));
+            }
+        }
         let st = &self.inner.aot;
         let mut table = st.table.borrow_mut();
         for f in files {
@@ -430,6 +514,7 @@ impl Engine {
         }
         drop(table);
         st.update_active();
+        Ok(())
     }
 
     /// Turns compiled code on or off. On unless `LJOS_AOT=0`.
@@ -498,6 +583,7 @@ impl Engine {
     pub(crate) fn aot_spy_write(&self, o: ObjectId, p: PropIndex, v: &Value) {
         let st = &self.inner.aot;
         if st.spying.get()
+            && st.nest.get() == 0
             && let Some(list) = st.spy.borrow_mut().as_mut()
         {
             list.push(Effect::Write(o, p, v.clone()));
@@ -508,20 +594,58 @@ impl Engine {
     pub(crate) fn aot_spy_emit(&self, o: ObjectId, s: SignalIndex, args: &[Value]) {
         let st = &self.inner.aot;
         if st.spying.get()
+            && st.nest.get() == 0
             && let Some(list) = st.spy.borrow_mut().as_mut()
         {
             list.push(Effect::Emit(o, s, args.to_vec()));
         }
     }
 
+    /// Takes back the write [`Engine::aot_spy_write`] was told of last:
+    /// it was not made, and the tier that makes it tells of it again.
+    pub(crate) fn aot_unspy_write(&self) {
+        let st = &self.inner.aot;
+        if st.spying.get()
+            && st.nest.get() == 0
+            && let Some(list) = st.spy.borrow_mut().as_mut()
+            && matches!(list.last(), Some(Effect::Write(..)))
+        {
+            list.pop();
+        }
+    }
+
+    /// Held over a write or an emit [`Engine::aot_spy_write`] or
+    /// [`Engine::aot_spy_emit`] was told of: what the handlers it wakes do
+    /// is not the run's own.
+    #[inline]
+    pub(crate) fn aot_nested(&self) -> Option<Nested<'_>> {
+        let st = &self.inner.aot;
+        st.spying.get().then(|| {
+            st.nest.set(st.nest.get() + 1);
+            Nested(st)
+        })
+    }
+
+    /// A read by `r` of `prop` of `obj`, which has no node.
+    #[inline]
+    pub(crate) fn aot_spy_field_read(&self, r: Reader, obj: ObjectId, prop: PropIndex) {
+        let st = &self.inner.aot;
+        if st.reading.get() == Some(r) {
+            st.field_reads.borrow_mut().push((obj, prop));
+        }
+    }
+
     /// Runs `expr` as compiled code. `None`: it has none, or the code
     /// stopped with nothing done; the dynamic tiers are to run it.
+    /// `propagate`: code that stops as a script throws throws to the
+    /// script that called it ([`crate::fault`]).
     pub(super) fn aot_eval(
         &self,
         inst: &Instance,
         expr: ExprId,
         hint: &TypeTag,
         args: &[Value],
+        propagate: bool,
         kept: bool,
     ) -> Option<Option<Value>> {
         let st = &self.inner.aot;
@@ -532,12 +656,10 @@ impl Engine {
         let code = (*linked.file.exprs.get(expr.index())?)?;
         let check = st.check.get();
         let key = (std::ptr::from_ref(inst) as usize, expr.0);
-        if check {
-            let mut skip = st.skip.borrow_mut();
-            if skip.last() == Some(&key) {
-                skip.pop();
-                return None;
-            }
+        // The cross-check's own dynamic run, all the way down: tier 1's
+        // cross-check runs it once more below this one.
+        if check && st.skip.borrow().contains(&key) {
+            return None;
         }
         let b = inst.file.ir.expr(expr);
         let handler = b.kind == BindingKind::Handler;
@@ -549,9 +671,8 @@ impl Engine {
             effects: Cell::new(false),
             held: check.then(RefCell::default),
         };
-        let done = code(&frame);
         if !check {
-            return match done {
+            return match code(&frame) {
                 Ok(v) => {
                     st.count(|s| s.runs += 1);
                     Some(Some(if handler { Value::Undefined } else { v }))
@@ -562,16 +683,44 @@ impl Engine {
                 }
                 Err(Stop::Thrown) => {
                     st.count(|s| s.thrown += 1);
-                    self.warn(format!(
+                    let msg = format!(
                         "{}:{}:{}: compiled code stopped after a write or an emit",
                         inst.url(),
                         b.span.line,
                         b.span.column
-                    ));
+                    );
+                    if propagate {
+                        // As a script that throws: the caller's to catch.
+                        let faults = &self.inner.faults;
+                        faults.thrown.set(true);
+                        faults.thrown_message.replace(Some(msg));
+                    } else {
+                        self.warn(msg);
+                    }
                     Some(None)
                 }
             };
         }
+
+        // What a binding reads is what it depends on: the two runs read
+        // alike, and the dynamic run's reads are the ones it keeps.
+        let g = &self.inner.graph;
+        let tracked = if handler {
+            None
+        } else {
+            g.reader().zip(g.reads_len())
+        };
+        let outer_reading = st.reading.replace(tracked.map(|(r, _)| r));
+        let outer_fields = st.field_reads.take();
+        let done = code(&frame);
+        let compiled_reads = tracked.map(|(_, at)| Reads {
+            nodes: g.take_reads_since(at),
+            fields: st.field_reads.take(),
+        });
+        let restore = || {
+            st.reading.set(outer_reading);
+            *st.field_reads.borrow_mut() = outer_fields.clone();
+        };
         let held = frame
             .held
             .take()
@@ -580,10 +729,12 @@ impl Engine {
         let value = match done {
             Ok(v) => v,
             Err(Stop::Fallback) => {
+                restore();
                 st.count(|s| s.fallbacks += 1);
                 return None;
             }
             Err(Stop::Thrown | Stop::Inconclusive) => {
+                restore();
                 st.count(|s| s.inconclusive += 1);
                 return None;
             }
@@ -596,25 +747,44 @@ impl Engine {
             skip.len() - 1
         };
         let outer = st.spy.replace(Some(Vec::new()));
+        let outer_nest = st.nest.replace(0);
         st.spying.set(true);
-        let js = self.eval_expr_as(inst, expr, hint, args, false, kept);
+        let js = self.eval_expr_as(inst, expr, hint, args, propagate, kept);
         let js_plain = js.as_ref().map(|v| self.plain(v));
         st.skip.borrow_mut().truncate(depth);
+        let dynamic_reads = tracked.map(|(_, at)| Reads {
+            nodes: g.reads_since(at),
+            fields: st.field_reads.take(),
+        });
+        restore();
+        st.nest.set(outer_nest);
         let seen = st.spy.replace(outer).unwrap_or_default();
         {
             let mut spy = st.spy.borrow_mut();
             match spy.as_mut() {
-                Some(list) => list.extend(seen.iter().cloned()),
+                // Of an outer check's run only when this one is not in an
+                // effect of that run's.
+                Some(list) if outer_nest == 0 => list.extend(seen.iter().cloned()),
+                Some(_) => {}
                 None => st.spying.set(false),
             }
         }
+        let held: Vec<Effect> = held.iter().map(|h| self.settled(h)).collect();
+        let seen: Vec<Effect> = seen.iter().map(|s| self.settled(s)).collect();
+        let reads_agree = match (&compiled_reads, &dynamic_reads) {
+            (Some(c), Some(d)) => c.same_as(d),
+            _ => true,
+        };
+        let as_held = |v: &Value| hint.coerce(v).unwrap_or_else(|_| v.clone());
         let agree = match &js_plain {
             Some(v) => {
-                (handler || same(&normal(self, value.clone()), &normal(self, v.clone())))
-                    && among(self, &held, &seen)
+                (handler || exact(self, &as_held(&value), &as_held(v)))
+                    && alike(self, &held, &seen)
+                    && reads_agree
             }
-            // A script that threw at an effect has made those before it.
-            None => self.js_interrupted() || (!held.is_empty() && among(self, &held, &seen)),
+            // A script that threw at an effect has made those before it,
+            // and the one it threw at.
+            None => self.js_interrupted() || (!held.is_empty() && alike(self, &held, &seen)),
         };
         st.count(|s| {
             s.runs += 1;
@@ -643,9 +813,64 @@ impl Engine {
             for s in &seen {
                 let _ = write!(msg, " and made {}", self.effect_text(s));
             }
+            if !reads_agree && let (Some(c), Some(d)) = (&compiled_reads, &dynamic_reads) {
+                let _ = write!(
+                    msg,
+                    "; compiled read {} and dynamic read {}",
+                    self.reads_text(c),
+                    self.reads_text(d)
+                );
+            }
             self.warn(msg);
         }
         Some(js)
+    }
+
+    /// `effect` as the engine makes it: a write is to what an alias stands
+    /// for, of the value the property takes, and an emit's arguments are
+    /// what the signal declares. A script's write and compiled code's are
+    /// told of at different points of making them.
+    fn settled(&self, effect: &Effect) -> Effect {
+        match effect {
+            Effect::Write(o, p, v) => {
+                let (o, p) = crate::js::forwarded_prop(self, *o, p.0);
+                let (o, p) = self.redirect(o, PropIndex(p));
+                let ty = self
+                    .meta_of(o)
+                    .and_then(|m| m.property(p).map(|i| i.ty.clone()));
+                let v = ty
+                    .and_then(|t| t.coerce(v).ok())
+                    .unwrap_or_else(|| v.clone());
+                Effect::Write(o, p, self.plain(&v))
+            }
+            Effect::Emit(o, s, args) => {
+                let params = self
+                    .meta_of(*o)
+                    .and_then(|m| m.signal(*s).map(|i| i.params.clone()))
+                    .unwrap_or_default();
+                let args = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| {
+                        let v = params
+                            .get(i)
+                            .and_then(|(_, t)| t.coerce(a).ok())
+                            .unwrap_or_else(|| a.clone());
+                        self.plain(&v)
+                    })
+                    .collect();
+                Effect::Emit(*o, *s, args)
+            }
+        }
+    }
+
+    fn reads_text(&self, reads: &Reads) -> String {
+        let mut out = format!("{} nodes", reads.nodes.len());
+        for (o, p) in &reads.fields {
+            let (ty, name) = self.describe(*o, *p);
+            let _ = write!(out, ", {ty}.{name}");
+        }
+        out
     }
 
     fn effect_text(&self, effect: &Effect) -> String {

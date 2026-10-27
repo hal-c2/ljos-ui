@@ -845,14 +845,18 @@ impl Engine {
         if !check {
             if let Some((o, prop, v)) = done.write {
                 self.aot_spy_write(o, prop, &v);
+                let nested = self.aot_nested();
                 // Most handlers write a number to a plain property, which
                 // needs none of the looks the long way makes.
                 let plain = self.plain_script_write(o, prop, &v);
-                if !matches!(plain, Ok(true))
-                    && (plain.is_err() || self.write(o, prop, v, WriteKind::Imperative).is_err())
-                {
+                let refused = !matches!(plain, Ok(true))
+                    && (plain.is_err() || self.write(o, prop, v, WriteKind::Imperative).is_err());
+                drop(nested);
+                if refused {
                     // Refused (read-only, the wrong type): JavaScript
-                    // throws for it, with the message tier 2 logs.
+                    // throws for it, with the message tier 2 logs, and
+                    // tells of the write itself.
+                    self.aot_unspy_write();
                     p.bailed();
                     st.count(|s| s.bails += 1);
                     return None;
