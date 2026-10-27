@@ -1547,14 +1547,13 @@ impl<M: Send + 'static> Desktop<M> {
     /// Whether what slot `i` shows changes frame after frame: the pointer
     /// is held or wheeled, a finger is down, or the scene asks for the
     /// next frame within one, as a flick or an animation does.
-    fn moving(&mut self, i: usize) -> bool {
-        let Self { app, slots, .. } = self;
-        let slot = &mut slots[i];
+    fn moving(&self, i: usize) -> bool {
+        let slot = &self.slots[i];
         if slot.ctx.input(|input| input.pointer.any_down()) {
             return true;
         }
-        let input = slot.surface.as_mut().is_some_and(|surface| {
-            surface.state.egui_input_mut().events.iter().any(|event| {
+        let input = slot.surface.as_ref().is_some_and(|surface| {
+            surface.state.egui_input().events.iter().any(|event| {
                 matches!(
                     event,
                     egui::Event::MouseWheel { .. }
@@ -1567,7 +1566,7 @@ impl<M: Send + 'static> Desktop<M> {
         let period = slot.frame_interval();
         let view = match slot.view.as_ref() {
             Some(view) => view,
-            None => app.view(),
+            None => self.app.view(),
         };
         input || view.wakes_in().is_some_and(|wake| wake <= period)
     }
