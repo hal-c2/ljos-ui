@@ -20,10 +20,16 @@ use crate::{
     counters,
     gate::Gate,
     procfs,
-    profile::{Profile, cpu_set},
+    profile::Profile,
     sway::{Mapped, Sway},
     wayland::{self, FrameCounter, Pointer},
 };
+
+mod frames;
+mod process;
+
+use frames::frames;
+use process::{check_isolated, describe, stop, systemd_oom, unit};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -296,109 +302,6 @@ pub fn load_average() -> Option<f64> {
         .ok()
 }
 
-/// Checks that `cg` is a cgroup of its own with the profile's limits. A
-/// launcher that only starts the command leaves it in the bench's cgroup,
-/// which holds the bench too.
-fn check_isolated(cg: &Path, pid: u32, profile: &Profile) -> Result<(), String> {
-    if !cg.is_dir() {
-        return Err(format!("its cgroup {} does not exist", cg.display()));
-    }
-    let c = Cgroup { dir: cg.to_owned() };
-    let unreadable = |file: &str| format!("{}/{file} cannot be read", cg.display());
-    let procs = c.procs().ok_or_else(|| unreadable("cgroup.procs"))?;
-    if procs != [pid] {
-        return Err(format!("its cgroup holds {procs:?}, not only {pid}"));
-    }
-    let l = &profile.limits;
-    if let Some(bytes) = l.memory_max {
-        let have = c.memory_max().ok_or_else(|| unreadable("memory.max"))?;
-        if have != bytes.to_string() {
-            return Err(format!("memory.max is {have}, not {bytes}"));
-        }
-    }
-    if l.no_swap {
-        let have = c.swap_max().ok_or_else(|| unreadable("memory.swap.max"))?;
-        if have != "0" {
-            return Err(format!("memory.swap.max is {have}, not 0"));
-        }
-    }
-    if let Some((quota, period)) = profile.cpu_max() {
-        let have = c.cpu_max().ok_or_else(|| unreadable("cpu.max"))?;
-        if have != format!("{quota} {period}") {
-            return Err(format!("cpu.max is {have}, not {quota} {period}"));
-        }
-    }
-    if let Some(want) = &l.cpus {
-        let have = c
-            .cpus()
-            .ok_or_else(|| unreadable("cpuset.cpus.effective"))?;
-        if cpu_set(&have) != cpu_set(want) {
-            return Err(format!("cpuset.cpus.effective is {have}, not {want}"));
-        }
-    }
-    Ok(())
-}
-
-fn signal(pid: u32, sig: i32) {
-    if let Ok(pid) = i32::try_from(pid) {
-        // SAFETY: kill(2) on our own child's pid; it cannot be reused while
-        // the child is not waited for.
-        unsafe {
-            libc::kill(pid, sig);
-        }
-    }
-}
-
-/// Ends the child: asked first, then made.
-fn stop(child: &mut Child) -> Option<ExitStatus> {
-    if let Ok(Some(status)) = child.try_wait() {
-        return Some(status);
-    }
-    signal(child.id(), libc::SIGTERM);
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < deadline {
-        if let Ok(Some(_)) = child.try_wait() {
-            return None;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    None
-}
-
-fn describe(status: ExitStatus) -> String {
-    use std::os::unix::process::ExitStatusExt;
-    match (status.code(), status.signal()) {
-        (Some(code), _) => format!("status {code}"),
-        (None, Some(sig)) => format!("signal {sig}"),
-        _ => "unknown".to_owned(),
-    }
-}
-
-/// The systemd unit a scope's cgroup is, when the launcher is systemd's.
-fn unit(setup: &Setup, cg: &Path) -> Option<String> {
-    let name = setup.launcher.file_name()?.to_str()?;
-    (name == "systemd-run")
-        .then(|| cg.file_name()?.to_str().map(str::to_owned))
-        .flatten()
-}
-
-/// Whether systemd says the unit's process was killed for want of memory.
-/// The kernel's count goes with the cgroup once its last process is gone.
-fn systemd_oom(unit: &str) -> bool {
-    let out = Command::new("systemctl")
-        .args(["--user", "show", unit, "-p", "Result", "--value"])
-        .stderr(Stdio::null())
-        .output();
-    let oom = out.is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "oom-kill");
-    let _ = Command::new("systemctl")
-        .args(["--user", "reset-failed", unit])
-        .stderr(Stdio::null())
-        .status();
-    oom
-}
-
 /// What the run has seen while waiting.
 struct Watch<'a> {
     child: &'a mut Child,
@@ -437,66 +340,6 @@ impl Watch<'_> {
             }
             thread::sleep(left.min(Duration::from_millis(50)));
         }
-    }
-}
-
-/// The value at quantile `q` of sorted `values`.
-fn quantile(values: &[f64], q: f64) -> Option<f64> {
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
-    let i = ((values.len().checked_sub(1)?) as f64 * q).round() as usize;
-    values.get(i).copied()
-}
-
-fn frames(times: &[u64], start: u64, seconds: f64, inputs: &[u64]) -> Frames {
-    #[allow(clippy::cast_precision_loss)]
-    let ms = |ns: u64| ns as f64 / 1e6;
-    let mut long: Vec<[f64; 2]> = times
-        .windows(2)
-        .map(|w| {
-            [
-                ms(w[1].saturating_sub(start)),
-                ms(w[1].saturating_sub(w[0])),
-            ]
-        })
-        .collect();
-    let mut gaps: Vec<f64> = long.iter().map(|l| l[1]).collect();
-    gaps.sort_by(f64::total_cmp);
-    long.sort_by(|a, b| b[1].total_cmp(&a[1]));
-    long.truncate(LONG_KEPT);
-    long.sort_by(|a, b| a[0].total_cmp(&b[0]));
-    // An input after the last frame was never answered while counting.
-    #[allow(clippy::cast_precision_loss)]
-    let waits_ms: Vec<Option<f64>> = inputs
-        .iter()
-        .map(|&sent| {
-            let i = times.partition_point(|&t| t <= sent);
-            times.get(i).map(|&t| (t - sent) as f64 / 1e6)
-        })
-        .collect();
-    let mut waits: Vec<f64> = waits_ms.iter().flatten().copied().collect();
-    waits.sort_by(f64::total_cmp);
-    #[allow(clippy::cast_precision_loss)]
-    let fps = if seconds > 0.0 {
-        times.len() as f64 / seconds
-    } else {
-        0.0
-    };
-    Frames {
-        count: times.len(),
-        fps,
-        p50_ms: quantile(&gaps, 0.5),
-        p95_ms: quantile(&gaps, 0.95),
-        max_ms: gaps.last().copied(),
-        latency_p50_ms: quantile(&waits, 0.5),
-        latency_p95_ms: quantile(&waits, 0.95),
-        latency_max_ms: waits.last().copied(),
-        committed: None,
-        long,
-        waits_ms,
     }
 }
 
@@ -1228,33 +1071,6 @@ pub fn min_memory(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn frame_intervals() {
-        let f = frames(&[0, 16_000_000, 33_000_000, 100_000_000], 0, 1.0, &[]);
-        assert_eq!(f.long[2], [100.0, 67.0]);
-        assert_eq!(f.count, 4);
-        assert_eq!(f.max_ms, Some(67.0));
-        assert_eq!(f.p50_ms, Some(17.0));
-        assert_eq!(f.latency_p50_ms, None);
-        let none = frames(&[], 0, 1.0, &[]);
-        assert_eq!((none.count, none.p50_ms), (0, None));
-    }
-
-    #[test]
-    fn input_to_frame() {
-        // Inputs at 5, 20 and 40 ms; frames at 16, 33 and 100 ms; one
-        // input after the last frame is not answered.
-        let ms = 1_000_000;
-        let f = frames(
-            &[16 * ms, 33 * ms, 100 * ms],
-            0,
-            1.0,
-            &[5 * ms, 20 * ms, 40 * ms, 120 * ms],
-        );
-        assert_eq!(f.latency_p50_ms, Some(13.0));
-        assert_eq!(f.latency_max_ms, Some(60.0));
-    }
 
     #[test]
     fn a_click_point_is_a_fraction_of_the_window_where_it_stands() {
