@@ -96,6 +96,20 @@ RowLayout { anchors.fill: parent
 
 Sources: https://doc.qt.io/qt-6/qml-qtquick-layouts-layout.html, https://developer.apple.com/design/human-interface-guidelines/layout
 
+<a id="layout-content-overflow"></a>
+### `layout-content-overflow`
+
+**Warning, runtime.** A control's content runs past the box its padding leaves, so it hangs off-centre on the control's own background. A control sizes its `contentItem` to `availableWidth` by `availableHeight`; a layout there keeps its children at their own size from its top. The common cause is a row given a fixed height that keeps the style's vertical padding (an `ItemDelegate` in Basic keeps 12 px at each end, so a 28 px row leaves 4). Only a `contentItem` the application wrote is checked: a control the layout squeezes below its implicit size is `layout-under-minimum`.
+
+```qml
+// Bad
+ItemDelegate { height: 28; contentItem: RowLayout { Label { text: qsTr("Medium") } } }
+// Good
+ItemDelegate { height: 28; verticalPadding: 4; contentItem: RowLayout { Label { text: qsTr("Medium") } } }
+```
+
+Sources: https://doc.qt.io/qt-6/qtquickcontrols-customize.html, https://m3.material.io/foundations/layout/understanding-layout/spacing
+
 <a id="layout-popup-fit"></a>
 ### `layout-popup-fit`
 

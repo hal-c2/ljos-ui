@@ -344,6 +344,45 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit does not report "layout-fill-crushed"
 
+    Scenario: A row too short for its content and the style's padding
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 400; height: 200
+          color: "white"
+          ItemDelegate {
+            x: 10; y: 10; width: 300; height: 28
+            contentItem: RowLayout {
+              Label { text: "Medium"; Layout.fillWidth: true }
+            }
+          }
+        }
+        """
+      Then the design audit reports "layout-content-overflow" at line 7
+
+    Scenario: A row whose padding leaves its content room
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 400; height: 200
+          color: "white"
+          ItemDelegate {
+            x: 10; y: 10; width: 300; height: 28
+            verticalPadding: 4
+            contentItem: RowLayout {
+              Label { text: "Medium"; Layout.fillWidth: true }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "layout-content-overflow"
+
   Rule: Content, as the window says it
 
     Scenario: An identifier shown as it is stored

@@ -440,6 +440,14 @@ pub const RULES: &[Rule] = &[
         "Give the filling item a `Layout.minimumWidth` (or height), or cap the sibling with `Layout.maximumWidth` (or height).",
     ),
     r(
+        "layout-content-overflow",
+        Layout,
+        Warning,
+        Runtime,
+        "A control's content runs past the box its padding leaves, so it is drawn off-centre on the control's background.",
+        "Set the control's padding so the content fits, or let its size follow its implicit size.",
+    ),
+    r(
         "layout-popup-fit",
         Layout,
         Warning,

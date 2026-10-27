@@ -1609,3 +1609,62 @@ fn a_fill_body_crushed_by_a_header_that_keeps_its_height_is_found() {
         "\n{report}"
     );
 }
+
+/// An item delegate `height` tall whose content is `content`, with the
+/// style's 12 px of padding at each end.
+fn delegate(height: u32, content: &str) -> String {
+    with_layouts(&format!(
+        r##"    ItemDelegate {{
+        x: 10; y: 10; width: 300; height: {height}
+        background: Rectangle {{ color: "#dde" }}
+        contentItem: RowLayout {{
+            {content}
+        }}
+    }}"##
+    ))
+}
+
+#[test]
+fn content_taller_than_a_delegate_s_padding_leaves_overflows() {
+    // Issue #154: a 28 px row with 12 px padding at each end leaves 4 px
+    // for a label that is 19 tall.
+    let options = Options::desktop()
+        .only(&["layout-content-overflow"])
+        .unwrap();
+    let source = delegate(
+        28,
+        r##"Text { text: "Medium"; font.pixelSize: 14; Layout.fillWidth: true }"##,
+    );
+    let report = audit_with(&source, &options);
+    assert_eq!(report.findings.len(), 1, "\n{report}");
+    let f = &report.findings[0];
+    assert!(f.message.contains("bottom edge"), "{}", f.message);
+    assert!(f.message.contains("padding"), "{}", f.message);
+}
+
+#[test]
+fn content_that_fits_a_delegate_s_padding_does_not_overflow() {
+    let options = Options::desktop()
+        .only(&["layout-content-overflow"])
+        .unwrap();
+    let source = delegate(
+        48,
+        r##"Text { text: "Medium"; font.pixelSize: 14; Layout.fillWidth: true }"##,
+    );
+    let report = audit_with(&source, &options);
+    assert!(report.is_clean(), "\n{report}");
+}
+
+#[test]
+fn a_squeezed_control_of_the_style_is_not_an_overflow_of_its_content() {
+    // What the style puts in a control is the style's to fit; a control
+    // squeezed below its implicit size is layout-under-minimum's.
+    let options = Options::desktop()
+        .only(&["layout-content-overflow"])
+        .unwrap();
+    let report = audit_with(
+        &page(r##"    Button { width: 40; height: 12; text: "A long label" }"##),
+        &options,
+    );
+    assert!(report.is_clean(), "\n{report}");
+}
