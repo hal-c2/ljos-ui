@@ -857,7 +857,14 @@ fn give_row(
     if plan.direct && model.row_object(index).is_none() {
         for r in &plan.required {
             if let Some(f) = r.feed {
-                let v = plan.value(engine, model, index, f);
+                let v = match plan.value(engine, model, index, f) {
+                    // A row without the role gives the property its own
+                    // default, as Qt does, and still sets it: a typed
+                    // property refuses undefined, and left unset a
+                    // required one would stop the delegate.
+                    Value::Undefined => engine.default_value(root, r.prop),
+                    v => v,
+                };
                 let _ = engine.write_internal(root, r.prop, v, WriteKind::Host);
             }
         }
