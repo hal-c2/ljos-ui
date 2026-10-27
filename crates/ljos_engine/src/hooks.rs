@@ -24,7 +24,7 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
-use crate::engine::{Engine, Tracking};
+use crate::engine::Engine;
 use crate::ids::{ObjectId, PropIndex};
 use crate::meta::MetaObject;
 use crate::object::ObjectFlags;
@@ -219,12 +219,7 @@ impl Engine {
         v: &Value,
     ) -> Option<Value> {
         let f = self.interceptor(obj, prop)?;
-        let taken = {
-            let _t = Tracking::pause(&self.inner.tracking);
-            self.inner
-                .graph
-                .untrack(|| f(self, v, Interception::Binding))
-        };
+        let taken = self.untrack(|| f(self, v, Interception::Binding));
         taken.then(|| self.peek(obj, prop))
     }
 
