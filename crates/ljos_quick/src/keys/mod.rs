@@ -28,5 +28,5 @@ pub use standard::{
 };
 pub use text_input::{Surrounding, TextInputClient, register_text_input_client, text_input_client};
 
-pub(crate) use dispatch::register;
+pub(crate) use dispatch::{register, tab_direction};
 pub(crate) use shortcut::reset as reset_shortcuts;

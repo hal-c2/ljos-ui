@@ -21,7 +21,7 @@ use crate::accessible::{AccessiblePart, register_accessible_parts};
 use crate::focus::{FocusReason, focus_reason};
 use crate::input::{KeyEvent, Modifiers, MouseButtons, PointerEvent};
 use crate::item::write_computed;
-use crate::keys::{KeyItem, key, register_key_item};
+use crate::keys::{KeyItem, key, register_key_item, tab_direction};
 use crate::pointer_item::{
     PointerItem, register_hover_move, register_pointer_condition, register_pointer_item,
 };
@@ -163,19 +163,6 @@ fn takes_pointer(engine: &Engine, obj: ObjectId) -> bool {
         return true;
     }
     rich::state(engine, obj).is_some_and(|s| s.borrow().has_links)
-}
-
-/// Which way Tab goes, as key delivery reads it.
-fn tab_direction(ev: &KeyEvent) -> Option<bool> {
-    let other = Modifiers::CONTROL | Modifiers::ALT | Modifiers::META;
-    if ev.modifiers.intersects(other) {
-        return None;
-    }
-    match ev.key {
-        key::TAB => Some(!ev.modifiers.contains(Modifiers::SHIFT)),
-        key::BACKTAB => Some(false),
-        _ => None,
-    }
 }
 
 /// The link the keyboard starts on when it comes to a `Text` with links:

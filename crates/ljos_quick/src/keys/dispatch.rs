@@ -79,7 +79,7 @@ fn key_item(engine: &Engine, obj: ObjectId) -> Option<KeyItem> {
 /// and for Tab with Shift. `None` for any other key, and with Ctrl, Alt
 /// or Meta held, which make it another command (the next tab of a tab
 /// bar, the window switcher).
-fn tab_direction(ev: &KeyEvent) -> Option<bool> {
+pub(crate) fn tab_direction(ev: &KeyEvent) -> Option<bool> {
     let other = Modifiers::CONTROL | Modifiers::ALT | Modifiers::META;
     if ev.modifiers.intersects(other) {
         return None;
