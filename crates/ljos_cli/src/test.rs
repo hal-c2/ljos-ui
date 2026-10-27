@@ -343,7 +343,58 @@ fn project(root: &Path, imports: &[PathBuf]) -> anyhow::Result<Project<QtTypeOra
     for dir in imports {
         add_import(&mut project, root, dir);
     }
+    add_directories_above(&mut project, root);
     Ok(project)
+}
+
+/// Adds the directories the files import by a path that leads out of the
+/// root (`import "../qml"` from a directory of tests), as Qt's runner
+/// finds them, and then the ones those import, until no new one turns up.
+/// The files of such a directory are its types; its `qmldir`, if it has
+/// one, says which.
+fn add_directories_above(project: &mut Project<QtTypeOracle>, root: &Path) {
+    let mut read = std::collections::HashSet::new();
+    loop {
+        let above: Vec<String> = project
+            .front()
+            .directories()
+            .into_iter()
+            .filter(|dir| dir == ".." || dir.starts_with("../"))
+            .filter(|dir| !read.contains(dir))
+            .collect();
+        if above.is_empty() {
+            return;
+        }
+        for dir in above {
+            let at = dir_of(root, &dir);
+            read.insert(dir);
+            let Ok(entries) = std::fs::read_dir(&at) else {
+                continue;
+            };
+            let mut paths: Vec<PathBuf> = entries
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .map(|e| e.path())
+                .collect();
+            paths.sort();
+            for path in &paths {
+                let is_qml = path.extension().is_some_and(|e| e == "qml");
+                if !is_qml {
+                    continue;
+                }
+                let key = key(root, path);
+                if project.source(&key).is_none()
+                    && let Ok(text) = std::fs::read_to_string(path)
+                {
+                    project.add(&key, text);
+                }
+            }
+            let qmldir = at.join("qmldir");
+            if let Ok(text) = std::fs::read_to_string(&qmldir) {
+                project.add_qmldir(&key(root, &at), &text);
+            }
+        }
+    }
 }
 
 /// Adds the modules of an import directory, and its files where they are
@@ -426,6 +477,13 @@ fn key(root: &Path, path: &Path) -> String {
 
 /// The file of a key, without the `..` a key may have.
 fn path_of(root: &Path, key: &str) -> PathBuf {
+    let mut path = dir_of(root, key);
+    path.as_mut_os_string().push(".qml");
+    path
+}
+
+/// The directory of a key that names one, without the `..` it may have.
+fn dir_of(root: &Path, key: &str) -> PathBuf {
     let mut path = root.to_owned();
     for part in key.split('/') {
         match part {
@@ -436,7 +494,6 @@ fn path_of(root: &Path, key: &str) -> PathBuf {
             part => path.push(part),
         }
     }
-    path.as_mut_os_string().push(".qml");
     path
 }
 

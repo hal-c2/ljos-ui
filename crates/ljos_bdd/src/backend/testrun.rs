@@ -28,6 +28,9 @@ use super::{BackendError, QmlFile, Result};
 /// What `When the tests … are run` asks for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TestRun {
+    /// The directory the runner is given, relative to the scenario's
+    /// files; all of them when `None`.
+    pub dir: Option<String>,
     /// Directories of test-only modules, relative to the scenario's files.
     pub import_paths: Vec<String>,
     /// `Case::function` or `Case::function:tag`; all tests when empty.
@@ -42,6 +45,12 @@ pub struct TestRun {
 }
 
 impl TestRun {
+    fn input(&self, suite: &Path) -> PathBuf {
+        self.dir
+            .as_ref()
+            .map_or_else(|| suite.to_owned(), |d| suite.join(d))
+    }
+
     fn time_zone(&self) -> &str {
         self.time_zone.as_deref().unwrap_or("UTC")
     }
@@ -258,7 +267,7 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     let staged = Staged::new(files)?;
     let json = staged.root.join("report.json");
     let mut command = Command::new(ljos_bin()?);
-    command.arg("test").arg(&staged.suite);
+    command.arg("test").arg(run.input(&staged.suite));
     for dir in &run.import_paths {
         command.arg("-import").arg(staged.suite.join(dir));
     }
@@ -329,7 +338,7 @@ pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     let mut command = Command::new("timeout");
     command
         .args(["60", runner.as_str(), "-input"])
-        .arg(&staged.suite);
+        .arg(run.input(&staged.suite));
     for dir in &run.import_paths {
         command.arg("-import").arg(staged.suite.join(dir));
     }
