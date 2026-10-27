@@ -25,6 +25,7 @@ pub use service::{
     NoSystemDialogs, OK, STANDARD_BUTTONS, YES, button_named, button_role, role, system_buttons,
 };
 
+use crate::is_a;
 use crate::paths::{file_url, url_path};
 use crate::platform::{CATEGORY, Platform};
 
@@ -550,12 +551,6 @@ impl Dialogs {
     }
 }
 
-fn is<T: ljos_engine::QmlType>(engine: &Engine, obj: ObjectId) -> bool {
-    engine
-        .meta_of(obj)
-        .is_some_and(|m| m.inherits(T::static_meta()))
-}
-
 fn int(engine: &Engine, obj: ObjectId, name: &str) -> i32 {
     engine
         .untrack(|| engine.read_by_name(obj, name))
@@ -577,7 +572,7 @@ fn request(engine: &Engine, obj: ObjectId) -> DialogRequest {
         ..DialogRequest::default()
     };
     let options = int(engine, obj, "options");
-    if is::<FileDialog>(engine, obj) {
+    if is_a::<FileDialog>(engine, obj) {
         req.kind = (options & FILE_NO_NATIVE == 0).then_some(match int(engine, obj, "fileMode") {
             1 => DialogKind::OpenFiles,
             2 => DialogKind::SaveFile,
@@ -594,15 +589,15 @@ fn request(engine: &Engine, obj: ObjectId) -> DialogRequest {
                 .collect();
         }
         req.accept_label = text(engine, obj, "acceptLabel");
-    } else if is::<FolderDialog>(engine, obj) {
+    } else if is_a::<FolderDialog>(engine, obj) {
         req.kind = (options & FILE_NO_NATIVE == 0).then_some(DialogKind::Folder);
         req.folder = url_path(&text(engine, obj, "currentFolder"));
         req.accept_label = text(engine, obj, "acceptLabel");
-    } else if is::<ColorDialog>(engine, obj) {
+    } else if is_a::<ColorDialog>(engine, obj) {
         req.kind = (options & COLOR_NO_NATIVE == 0).then_some(DialogKind::Color);
-    } else if is::<FontDialog>(engine, obj) {
+    } else if is_a::<FontDialog>(engine, obj) {
         req.kind = (options & FONT_NO_NATIVE == 0).then_some(DialogKind::Font);
-    } else if is::<MessageDialog>(engine, obj) {
+    } else if is_a::<MessageDialog>(engine, obj) {
         req.kind = Some(DialogKind::Message);
         req.text = text(engine, obj, "text");
         req.informative_text = text(engine, obj, "informativeText");
@@ -722,10 +717,10 @@ pub(crate) fn chose(engine: &Engine, obj: ObjectId, files: &[PathBuf]) -> Result
             .unwrap_or_default()
             .as_str(),
     ));
-    if is::<FolderDialog>(engine, obj) {
+    if is_a::<FolderDialog>(engine, obj) {
         engine.set(obj, FolderDialog::SELECTED_FOLDER, first.clone())?;
         engine.set(obj, FolderDialog::CURRENT_FOLDER, first)?;
-    } else if is::<FileDialog>(engine, obj) {
+    } else if is_a::<FileDialog>(engine, obj) {
         // Read-only to QML; the dialog itself writes it.
         engine.write_internal(
             obj,
@@ -771,7 +766,7 @@ pub(crate) fn drawn_answered(engine: &Engine, obj: ObjectId, accepted: bool, but
     if !open {
         return;
     }
-    if is::<MessageDialog>(engine, obj) && button != 0 {
+    if is_a::<MessageDialog>(engine, obj) && button != 0 {
         clicked(engine, obj, button);
         return;
     }

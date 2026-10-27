@@ -192,5 +192,13 @@ const INSTALL_PLATFORM: &str = r#"((os, pluginName) => {
   }
 })"#;
 
+/// Whether `obj` is a `T` or a type derived from it.
+pub(crate) fn is_a<T: ljos_engine::QmlType>(
+    engine: &ljos_engine::Engine,
+    obj: ljos_engine::ObjectId,
+) -> bool {
+    engine.inherits(obj, T::static_meta())
+}
+
 #[cfg(test)]
 mod tests;

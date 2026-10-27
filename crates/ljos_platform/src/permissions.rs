@@ -22,6 +22,7 @@ use ljos_engine::{
     Cx, Engine, EngineError, LogLevel, ObjectId, QmlObject, QtObject, Value, qml_impl,
 };
 
+use crate::is_a;
 use crate::platform::{CATEGORY, Platform, Reply};
 
 /// `Qt.PermissionStatus`.
@@ -460,12 +461,6 @@ impl BluetoothPermission {
 
 // ---------------------------------------------------------------- behaviour
 
-fn is<T: ljos_engine::QmlType>(engine: &Engine, obj: ObjectId) -> bool {
-    engine
-        .meta_of(obj)
-        .is_some_and(|m| m.inherits(T::static_meta()))
-}
-
 fn int(engine: &Engine, obj: ObjectId, name: &str) -> i32 {
     engine
         .untrack(|| engine.read_by_name(obj, name))
@@ -474,24 +469,24 @@ fn int(engine: &Engine, obj: ObjectId, name: &str) -> i32 {
 
 /// What `obj` asks for, as its properties say now.
 fn permission_of(engine: &Engine, obj: ObjectId) -> Option<Permission> {
-    Some(if is::<CameraPermission>(engine, obj) {
+    Some(if is_a::<CameraPermission>(engine, obj) {
         Permission::Camera
-    } else if is::<MicrophonePermission>(engine, obj) {
+    } else if is_a::<MicrophonePermission>(engine, obj) {
         Permission::Microphone
-    } else if is::<LocationPermission>(engine, obj) {
+    } else if is_a::<LocationPermission>(engine, obj) {
         Permission::Location {
             precise: int(engine, obj, "accuracy") == 1,
             always: int(engine, obj, "availability") == 1,
         }
-    } else if is::<CalendarPermission>(engine, obj) {
+    } else if is_a::<CalendarPermission>(engine, obj) {
         Permission::Calendar {
             read_write: int(engine, obj, "accessMode") == 1,
         }
-    } else if is::<ContactsPermission>(engine, obj) {
+    } else if is_a::<ContactsPermission>(engine, obj) {
         Permission::Contacts {
             read_write: int(engine, obj, "accessMode") == 1,
         }
-    } else if is::<BluetoothPermission>(engine, obj) {
+    } else if is_a::<BluetoothPermission>(engine, obj) {
         Permission::Bluetooth {
             modes: int(engine, obj, "communicationModes"),
         }

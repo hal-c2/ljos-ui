@@ -14,7 +14,8 @@ use std::path::PathBuf;
 
 use ljos_engine::{Color, Engine, EngineError, LogLevel, ObjectId, Value};
 
-use super::{ColorDialog, FileDialog, FolderDialog, FontDialog, MessageDialog, is};
+use super::{ColorDialog, FileDialog, FolderDialog, FontDialog, MessageDialog};
+use crate::is_a;
 use crate::paths::url_path;
 use crate::platform::{CATEGORY, item_of};
 
@@ -23,13 +24,13 @@ use crate::platform::{CATEGORY, item_of};
 struct Popups(RefCell<HashMap<ObjectId, ObjectId>>);
 
 fn key(engine: &Engine, obj: ObjectId) -> Option<&'static str> {
-    if is::<ColorDialog>(engine, obj) {
+    if is_a::<ColorDialog>(engine, obj) {
         Some("QtQuick/Dialogs/Ljos/ColorDialog")
-    } else if is::<FontDialog>(engine, obj) {
+    } else if is_a::<FontDialog>(engine, obj) {
         Some("QtQuick/Dialogs/Ljos/FontDialog")
-    } else if is::<MessageDialog>(engine, obj) {
+    } else if is_a::<MessageDialog>(engine, obj) {
         Some("QtQuick/Dialogs/Ljos/MessageDialog")
-    } else if is::<FileDialog>(engine, obj) || is::<FolderDialog>(engine, obj) {
+    } else if is_a::<FileDialog>(engine, obj) || is_a::<FolderDialog>(engine, obj) {
         Some("QtQuick/Dialogs/Ljos/FileDialog")
     } else {
         None
@@ -100,7 +101,7 @@ pub(super) fn take_values(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
     let Some(popup) = popup.filter(|p| engine.is_alive(*p)) else {
         return Ok(());
     };
-    if is::<ColorDialog>(engine, obj) {
+    if is_a::<ColorDialog>(engine, obj) {
         let typed = read(engine, popup, "colorText").to_js_string();
         match Color::parse(typed.trim()) {
             Some(c) => engine.set(obj, ColorDialog::SELECTED_COLOR, c)?,
@@ -110,7 +111,7 @@ pub(super) fn take_values(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
                 format!("{typed:?} is not a colour; the colour stays as it was"),
             ),
         }
-    } else if is::<FontDialog>(engine, obj) {
+    } else if is_a::<FontDialog>(engine, obj) {
         let mut font = engine.get(obj, FontDialog::SELECTED_FONT)?;
         let family = read(engine, popup, "family").to_js_string();
         if !family.trim().is_empty() {
@@ -124,7 +125,7 @@ pub(super) fn take_values(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
         font.italic = read(engine, popup, "italic").to_boolean();
         engine.set(obj, FontDialog::CURRENT_FONT, font.clone())?;
         engine.set(obj, FontDialog::SELECTED_FONT, font)?;
-    } else if is::<FileDialog>(engine, obj) || is::<FolderDialog>(engine, obj) {
+    } else if is_a::<FileDialog>(engine, obj) || is_a::<FolderDialog>(engine, obj) {
         let typed = read(engine, popup, "path").to_js_string();
         let path = url_path(typed.trim()).map(|p| absolute(engine, obj, p));
         if let Some(p) = path {

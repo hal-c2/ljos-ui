@@ -26,11 +26,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex, QmlObject, QmlType, QtObject,
-    Value, qml_impl,
+    Atom, Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex, QmlObject, QtObject, Value,
+    qml_impl,
 };
 use ljos_runtime::Time;
 
+use crate::is_a;
 use crate::platform::{CATEGORY, Platform, Post};
 
 /// What a sensor measures; one per QML sensor type.
@@ -716,26 +717,20 @@ pub(crate) fn register(engine: &Engine) {
 
 // ---------------------------------------------------------------- behaviour
 
-fn is<T: QmlType>(engine: &Engine, obj: ObjectId) -> bool {
-    engine
-        .meta_of(obj)
-        .is_some_and(|m| m.inherits(T::static_meta()))
-}
-
 fn kind_of(engine: &Engine, obj: ObjectId) -> Option<SensorKind> {
-    Some(if is::<Accelerometer>(engine, obj) {
+    Some(if is_a::<Accelerometer>(engine, obj) {
         SensorKind::Accelerometer
-    } else if is::<Gyroscope>(engine, obj) {
+    } else if is_a::<Gyroscope>(engine, obj) {
         SensorKind::Gyroscope
-    } else if is::<Magnetometer>(engine, obj) {
+    } else if is_a::<Magnetometer>(engine, obj) {
         SensorKind::Magnetometer
-    } else if is::<Compass>(engine, obj) {
+    } else if is_a::<Compass>(engine, obj) {
         SensorKind::Compass
-    } else if is::<PressureSensor>(engine, obj) {
+    } else if is_a::<PressureSensor>(engine, obj) {
         SensorKind::Pressure
-    } else if is::<AmbientLightSensor>(engine, obj) {
+    } else if is_a::<AmbientLightSensor>(engine, obj) {
         SensorKind::AmbientLight
-    } else if is::<OrientationSensor>(engine, obj) {
+    } else if is_a::<OrientationSensor>(engine, obj) {
         SensorKind::Orientation
     } else {
         return None;
