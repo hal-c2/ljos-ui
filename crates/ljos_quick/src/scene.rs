@@ -740,6 +740,10 @@ struct Inherit {
     /// [`inherit`] is changing the item's stack, whose change hook asks
     /// for it again.
     busy: bool,
+    /// It was asked for while busy: a change to the stack flushes the
+    /// graph, and what ran in it (an ancestor shown) may have changed
+    /// what the item inherits.
+    again: bool,
 }
 
 /// What the scene keeps of one item it shows ([`Records`]): one record in
@@ -3571,38 +3575,50 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
         return;
     }
     // Each change to the stack tells the item's own hook, which asks for
-    // this again: what it would do is what is being done.
+    // this again, and flushes the graph, where an ancestor's hook may ask
+    // too. Asked while busy, it goes round once more when done, with the
+    // stack as it is then.
     let Some((covered, mouse_area)) = shared.borrow_mut().marks.get_mut(obj).and_then(|m| {
         let i = &mut m.inherit;
-        (!std::mem::replace(&mut i.busy, true)).then_some((i.visible.is_some(), i.mouse_area))
+        if std::mem::replace(&mut i.busy, true) {
+            i.again = true;
+            return None;
+        }
+        Some((i.visible.is_some(), i.mouse_area))
     }) else {
         return;
     };
-    let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
-    for p in [Item::VISIBLE.index, Item::ENABLED.index] {
-        let parent_on = if p == Item::ENABLED.index {
-            // `MouseArea.enabled` is the area's own switch: it neither
-            // follows a disabled ancestor nor disables what is inside.
-            mouse_area || parent.is_none_or(|q| item_enabled(e, q))
-        } else {
-            parent.is_none_or(|q| e.read(q, p).to_boolean())
-        };
-        if let Err(err) = inherit_one(e, obj, p, shared, parent_on) {
-            e.log(
-                LogLevel::Warning,
-                SCENE_CATEGORY,
-                format!("inherit failed: {err}"),
-            );
+    let uncovered = loop {
+        let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
+        for p in [Item::VISIBLE.index, Item::ENABLED.index] {
+            let parent_on = if p == Item::ENABLED.index {
+                // `MouseArea.enabled` is the area's own switch: it neither
+                // follows a disabled ancestor nor disables what is inside.
+                mouse_area || parent.is_none_or(|q| item_enabled(e, q))
+            } else {
+                parent.is_none_or(|q| e.read(q, p).to_boolean())
+            };
+            if let Err(err) = inherit_one(e, obj, p, shared, parent_on) {
+                e.log(
+                    LogLevel::Warning,
+                    SCENE_CATEGORY,
+                    format!("inherit failed: {err}"),
+                );
+            }
         }
-    }
+        let mut s = shared.borrow_mut();
+        let Some(m) = s.marks.get_mut(obj) else {
+            break false;
+        };
+        if !std::mem::take(&mut m.inherit.again) || !e.is_alive(obj) {
+            m.inherit.busy = false;
+            break m.inherit.visible.is_none();
+        }
+    };
     // A covered item is kept shown in the tree (see `apply_geometry`).
     // Uncovered, its own `visible` may be the false it read under the
     // cover, which is no change, so the geometry is not read again by
     // itself.
-    let uncovered = shared.borrow_mut().marks.get_mut(obj).is_some_and(|m| {
-        m.inherit.busy = false;
-        m.inherit.visible.is_none()
-    });
     if covered && uncovered {
         mark(shared, |s| s.set(obj, Dirty::GEOM, |_| ()));
     }

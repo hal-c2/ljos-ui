@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use ljos_engine::{
-    Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex, QmlObject, Value, qml_impl,
+    Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex, QmlObject, Value, WriteKind, qml_impl,
 };
 
 use super::{Attached, H, LayoutAttached, MAX_CELLS, V, attacher};
@@ -407,7 +407,7 @@ fn update_proxy(
                     // Unparenting runs the other proxies' effects; one
                     // that took the target meanwhile has shown it.
                     if e.visual_parent(t).is_none() {
-                        write_placed(e, t, Item::VISIBLE.index, Value::Bool(false))?;
+                        hide_own(e, t)?;
                     }
                 }
             }
@@ -419,6 +419,24 @@ fn update_proxy(
         place_target(e, t, w, h)?;
     }
     Ok(())
+}
+
+/// Hides `target`, which no proxy shows, in its own `visible`. Taken out
+/// from under a hidden proxy it may still read the false the proxy
+/// passed down, until the scene has it inherit again: an assignment is
+/// then its own value (scene.rs, `inherit_one`), where a placing write
+/// would go under what it reads and be lost.
+fn hide_own(e: &Engine, target: ObjectId) -> Result<(), EngineError> {
+    if e.untrack(|| e.read(target, Item::VISIBLE.index).to_boolean()) {
+        write_placed(e, target, Item::VISIBLE.index, Value::Bool(false))
+    } else {
+        e.write_internal(
+            target,
+            Item::VISIBLE.index,
+            Value::Bool(false),
+            WriteKind::Imperative,
+        )
+    }
 }
 
 /// The visible proxy that currently holds `target`, if any.
