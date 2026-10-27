@@ -166,8 +166,8 @@ pub fn compile_dirs(
 #[cfg(feature = "dev-qml")]
 pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled, String> {
     match engine {
-        Some(engine) => compile_found(dirs, EngineOracle::from_engine(engine)),
-        None => compile_found(dirs, QtTypeOracle),
+        Some(engine) => compile_quiet_with_oracle(dirs, EngineOracle::from_engine(engine)),
+        None => compile_quiet_with_oracle(dirs, QtTypeOracle),
     }
 }
 
@@ -201,13 +201,16 @@ pub fn install_text_compiler(engine: &Engine, dirs: &[&Path]) {
 #[must_use]
 pub fn text_compiler(dirs: &[&Path], engine: Option<&Engine>) -> QmlTextCompiler {
     match engine {
-        Some(engine) => texts(dirs, EngineOracle::from_engine(engine)),
-        None => texts(dirs, QtTypeOracle),
+        Some(engine) => text_compiler_with_oracle(dirs, EngineOracle::from_engine(engine)),
+        None => text_compiler_with_oracle(dirs, QtTypeOracle),
     }
 }
 
 #[cfg(feature = "dev-qml")]
-pub(crate) fn texts<O: TypeOracle + Clone + 'static>(dirs: &[&Path], oracle: O) -> QmlTextCompiler {
+pub(crate) fn text_compiler_with_oracle<O: TypeOracle + Clone + 'static>(
+    dirs: &[&Path],
+    oracle: O,
+) -> QmlTextCompiler {
     use std::cell::RefCell;
 
     use ljos_compiler::{Project, compile_text};
@@ -251,7 +254,10 @@ pub(crate) fn texts<O: TypeOracle + Clone + 'static>(dirs: &[&Path], oracle: O) 
     })
 }
 
-pub(crate) fn compile_found<O: TypeOracle>(dirs: &[&Path], oracle: O) -> Result<Compiled, String> {
+pub(crate) fn compile_quiet_with_oracle<O: TypeOracle>(
+    dirs: &[&Path],
+    oracle: O,
+) -> Result<Compiled, String> {
     let mut source = MapSource::new();
     let mut found = Vec::new();
     let files = ljos_compiler::compile_roots_with(dirs, oracle).map_err(|e| e.to_string())?;
@@ -288,23 +294,23 @@ pub(crate) fn compile_found<O: TypeOracle>(dirs: &[&Path], oracle: O) -> Result<
     })
 }
 
-/// [`compile_found`], printing each diagnostic, and with
+/// [`compile_quiet_with_oracle`], printing each diagnostic, and with
 /// [`OnError::Fail`] failing on any error.
 pub(crate) fn compile_with_oracle<O: TypeOracle>(
     dirs: &[&Path],
     oracle: O,
     on_error: OnError,
 ) -> Result<MapSource, String> {
-    let compiled = compile_found(dirs, oracle)?;
+    let compiled = compile_quiet_with_oracle(dirs, oracle)?;
     for d in &compiled.diagnostics {
         eprintln!("{d}");
     }
-    checked(dirs, compiled, on_error)
+    checked_source(dirs, compiled, on_error)
 }
 
 /// `compiled`'s source, or with [`OnError::Fail`] and an error, every
 /// error a line.
-pub(crate) fn checked(
+pub(crate) fn checked_source(
     dirs: &[&Path],
     compiled: Compiled,
     on_error: OnError,

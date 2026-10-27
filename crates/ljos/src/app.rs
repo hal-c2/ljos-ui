@@ -45,8 +45,9 @@
 
 use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value};
 
-/// Puts one context property in scope on the Engine being built.
-type PutContext = Box<dyn FnOnce(&Engine)>;
+/// Runs once on the Engine being built, before the root is made: a
+/// context property put in scope, or a window hook installed.
+type BuildStep = Box<dyn FnOnce(&Engine)>;
 /// Registers one native module on an Engine; may run more than once.
 type Module = Box<dyn Fn(&Engine)>;
 /// Handles one message from a worker thread, on the Engine thread.
@@ -77,14 +78,14 @@ pub struct App<M = ()> {
     /// The directories `qml_dirs` compiled, earlier ones first: what hot
     /// reload follows.
     #[cfg(feature = "dev-qml")]
-    qml_roots: Vec<std::path::PathBuf>,
+    qml_dirs: Vec<std::path::PathBuf>,
     #[cfg(feature = "mcp")]
     inspector: Option<crate::mcp::CapSet>,
     modules: Vec<Module>,
     source: Option<MapSource>,
     root: Option<String>,
-    context: Vec<PutContext>,
-    on_window: Vec<PutContext>,
+    context: Vec<BuildStep>,
+    on_window: Vec<BuildStep>,
     on_message: Option<MessageHandler<M>>,
 }
 
@@ -123,7 +124,7 @@ impl App<()> {
             #[cfg(feature = "dev-qml")]
             texts: None,
             #[cfg(feature = "dev-qml")]
-            qml_roots: Vec::new(),
+            qml_dirs: Vec::new(),
             #[cfg(feature = "mcp")]
             inspector: None,
             modules: Vec::new(),
@@ -387,12 +388,16 @@ impl<M> App<M> {
                 }
             }
         }
-        self.source = Some(crate::compile::checked(&dirs, compiled, self.qml_errors)?);
+        self.source = Some(crate::compile::checked_source(
+            &dirs,
+            compiled,
+            self.qml_errors,
+        )?);
         self.texts = Some(crate::texts::DiskTexts::new(
             &dirs,
             crate::dev::EngineOracle::from_engine(&snapshot),
         ));
-        self.qml_roots = dirs.iter().map(|d| d.to_path_buf()).collect();
+        self.qml_dirs = dirs.iter().map(|d| d.to_path_buf()).collect();
         self.root = Some(root.into());
         Ok(self)
     }
@@ -493,7 +498,7 @@ impl<M> App<M> {
             #[cfg(feature = "dev-qml")]
             texts,
             #[cfg(feature = "dev-qml")]
-            qml_roots,
+            qml_dirs,
             #[cfg(feature = "mcp")]
             inspector,
             modules,
@@ -515,7 +520,7 @@ impl<M> App<M> {
             #[cfg(feature = "dev-qml")]
             texts,
             #[cfg(feature = "dev-qml")]
-            qml_roots,
+            qml_dirs,
             #[cfg(feature = "mcp")]
             inspector,
             modules,
@@ -630,7 +635,7 @@ impl<M> App<M> {
             #[cfg(feature = "dev-qml")]
             texts,
             #[cfg(feature = "dev-qml")]
-            qml_roots,
+            qml_dirs,
             ..
         } = self;
         #[cfg(feature = "mcp")]
@@ -654,9 +659,9 @@ impl<M> App<M> {
             let source = Source { source, texts };
             prepare(s.engine(), modules, source, context, on_window);
             #[cfg(all(feature = "dev", feature = "dev-qml"))]
-            s.set_qml_dirs(qml_roots);
+            s.set_qml_dirs(qml_dirs);
             #[cfg(all(feature = "dev-qml", not(feature = "dev")))]
-            drop(qml_roots);
+            drop(qml_dirs);
             if let Some(handler) = on_message.take() {
                 s.on_message(handler);
             }
@@ -723,8 +728,8 @@ fn prepare(
     engine: &Engine,
     modules: Vec<Module>,
     source: Source,
-    context: Vec<PutContext>,
-    on_window: Vec<PutContext>,
+    context: Vec<BuildStep>,
+    on_window: Vec<BuildStep>,
 ) {
     for module in modules {
         module(engine);
