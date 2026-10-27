@@ -134,3 +134,10 @@ fn decoded_media() -> ljos_engine::OwnerMemory {
 pub fn use_null_audio(engine: &Engine) {
     sink::Audio::of(engine).force_null();
 }
+
+/// A lock that a thread which panicked holding it does not poison: what
+/// it guards is kept whole by every holder, and a player outlives the
+/// thread that panicked.
+fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}

@@ -20,6 +20,7 @@ use ljos_engine::Engine;
 use ljos_platform::Reply;
 use ljos_render::ImageHandle;
 
+use crate::lock;
 use crate::mp4_video::Mp4Video;
 use crate::sink::{Format, STREAM_AHEAD, Voice, interleave};
 
@@ -88,11 +89,7 @@ impl Decoder {
     }
 
     fn with(&self, f: impl FnOnce(&mut Job)) {
-        f(&mut self
-            .shared
-            .job
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner));
+        f(&mut lock(&self.shared.job));
         self.shared.wake.notify_one();
     }
 
@@ -168,7 +165,7 @@ struct Chunk {
 fn work(shared: &Shared, source: &SharedSource, mut video: Option<Mp4Video>) {
     loop {
         let (frame, chunk) = {
-            let mut job = shared.job.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut job = lock(&shared.job);
             loop {
                 if job.quit {
                     return;
@@ -226,14 +223,14 @@ fn work(shared: &Shared, source: &SharedSource, mut video: Option<Mp4Video>) {
         }
         if let Some(c) = chunk {
             let Ok(buffer) = source.audio(c.start, c.frames, c.decode_rate) else {
-                let mut job = shared.job.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut job = lock(&shared.job);
                 if job.feed_serial == c.serial {
                     job.feed = None;
                 }
                 continue;
             };
             let samples = interleave(&buffer.channels, c.channels);
-            let job = shared.job.lock().unwrap_or_else(PoisonError::into_inner);
+            let job = lock(&shared.job);
             if job.feed_serial == c.serial {
                 c.voice.push(&samples);
             }

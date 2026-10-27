@@ -9,12 +9,13 @@
 //! than the frames costs the UI one job a frame, and nothing wakes the
 //! Engine while nothing is sent.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use ljos_engine::{Engine, ObjectId};
 use ljos_platform::{Platform, Post};
 use ljos_render::ImageHandle;
 
+use crate::lock;
 use crate::video_sink;
 
 /// A picture to show: straight-alpha RGBA, or Y'CbCr as a program or a
@@ -342,7 +343,7 @@ impl VideoFrameInput {
 
     fn put(&self, next: Next) {
         let first = {
-            let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut slot = lock(&self.slot);
             slot.latest = Some(next);
             !std::mem::replace(&mut slot.posted, true)
         };
@@ -352,7 +353,7 @@ impl VideoFrameInput {
         let (sink, slot) = (self.sink, Arc::clone(&self.slot));
         self.post.send(move |e: &Engine| {
             let next = {
-                let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut slot = lock(&slot);
                 slot.posted = false;
                 slot.latest.take()
             };

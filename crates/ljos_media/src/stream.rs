@@ -28,7 +28,7 @@ use ljos_engine::{Engine, ObjectId};
 use ljos_platform::{Platform, Post, Reply};
 use ljos_render::ImageHandle;
 
-use crate::player;
+use crate::{lock, player};
 
 /// What the bytes are.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,10 +190,6 @@ impl Drop for MediaStream {
     fn drop(&mut self) {
         self.finish();
     }
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// What the decode thread and the player share.

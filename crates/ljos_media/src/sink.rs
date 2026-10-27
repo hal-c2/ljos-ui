@@ -15,6 +15,8 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak, mpsc};
 
 use ljos_engine::Engine;
 
+use crate::lock;
+
 /// What the device plays, in its own rate and channel count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Format {
@@ -99,16 +101,14 @@ impl Voice {
 
     /// Samples (not frames) waiting in a stream voice.
     pub(crate) fn queued(&self) -> usize {
-        match &*self.data.lock().unwrap_or_else(PoisonError::into_inner) {
+        match &*lock(&self.data) {
             VoiceData::Stream { ring } => ring.len(),
             VoiceData::Clip { .. } => 0,
         }
     }
 
     pub(crate) fn push(&self, interleaved: &[f32]) {
-        if let VoiceData::Stream { ring } =
-            &mut *self.data.lock().unwrap_or_else(PoisonError::into_inner)
-        {
+        if let VoiceData::Stream { ring } = &mut *lock(&self.data) {
             ring.extend(interleaved.iter().copied());
         }
     }
@@ -252,14 +252,14 @@ pub(crate) struct Soon(Arc<(Mutex<Option<Option<Format>>>, Condvar)>);
 impl Soon {
     fn tell(&self, format: Option<Format>) {
         let (slot, ready) = &*self.0;
-        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(format);
+        *lock(slot) = Some(format);
         ready.notify_all();
     }
 
     /// The format, waiting for the device to be tried.
     pub(crate) fn wait(&self) -> Option<Format> {
         let (slot, ready) = &*self.0;
-        let mut told = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut told = lock(slot);
         loop {
             if let Some(format) = *told {
                 return format;
@@ -271,9 +271,7 @@ impl Soon {
     /// The format if the device has been tried.
     fn known(&self) -> Option<Format> {
         let (slot, _) = &*self.0;
-        slot.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .flatten()
+        lock(slot).flatten()
     }
 }
 
@@ -352,11 +350,7 @@ impl Audio {
     /// the caller's clock is the engine's.
     pub(crate) fn play(&self, voice: &Arc<Voice>) {
         if let Device::Output(out) = &*self.device.borrow() {
-            out.mixer
-                .voices
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(Arc::clone(voice));
+            lock(&out.mixer.voices).push(Arc::clone(voice));
             if !out.running.get() && out.commands.send(Command::Play).is_ok() {
                 out.running.set(true);
             }
@@ -368,11 +362,7 @@ impl Audio {
         voice.stop();
         if let Device::Output(out) = &*self.device.borrow() {
             let empty = {
-                let mut voices = out
-                    .mixer
-                    .voices
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
+                let mut voices = lock(&out.mixer.voices);
                 voices.retain(|v| !v.is_done());
                 voices.is_empty()
             };
