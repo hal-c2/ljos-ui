@@ -11,6 +11,7 @@
 //! windows of the application want is compared with what the platform
 //! has, due passes are asked for, and the host is told when to wake.
 
+mod input;
 #[cfg(feature = "mcp")]
 mod inspect;
 mod slot;
@@ -32,11 +33,12 @@ use ljos_controls::{
 use ljos_egui::{QmlView, ResizeMode, WindowDrag};
 use ljos_engine::{Engine, LogLevel, ObjectId};
 use ljos_host::{
-    AppState, ButtonState, Event, HostApp, HostControl, PlatformHost, PointerKind, ResizeEdge,
-    Screen, Wake, WindowChange, WindowEvent, WindowId, WinitControl, WinitHost,
+    AppState, Event, HostApp, HostControl, PlatformHost, ResizeEdge, Screen, Wake, WindowChange,
+    WindowEvent, WindowId, WinitControl, WinitHost,
 };
 use ljos_runtime::{MemoryPressure, SystemClock};
 
+use self::input::{asks_paste, follow_modifiers, starts_input};
 #[cfg(feature = "mcp")]
 use self::inspect::{Meter, is_an_act};
 use self::slot::Slot;
@@ -307,63 +309,6 @@ fn note_state(slot: &mut Slot, engine: &Engine, sys: &WindowSystem) {
         if let Some(win) = slot.window {
             sys.shown_as(engine, win, window_spec::show(state));
         }
-    }
-}
-
-/// What a modal window keeps from the windows behind it: everything a
-/// user starts. Releases and the pointer leaving still arrive, so that
-/// nothing stays held.
-fn starts_input(event: &WindowEvent) -> bool {
-    match event {
-        WindowEvent::Text(_) | WindowEvent::Touch(_) => true,
-        WindowEvent::Key(key) => key.state == ButtonState::Pressed,
-        WindowEvent::Pointer(pointer) => matches!(
-            pointer.kind,
-            PointerKind::Moved
-                | PointerKind::Entered
-                | PointerKind::Wheel(_)
-                | PointerKind::Button(_, ButtonState::Pressed)
-        ),
-        _ => false,
-    }
-}
-
-/// Whether a press asks for a paste, by the chords of Qt's
-/// `QKeySequence::Paste` that egui-winit knows too: Command+V (Control+V
-/// off macOS), with Shift or without, Shift+Insert, and the Paste key. The
-/// V is the key that types it, or the V's place on a keyboard that types
-/// no Latin letter there.
-fn asks_paste(key: &ljos_host::KeyEvent, held: ljos_host::Modifiers, mac: bool) -> bool {
-    if key.state != ButtonState::Pressed {
-        return false;
-    }
-    let command = if mac { held.meta } else { held.control };
-    let other = if mac { held.control } else { held.meta };
-    match &key.key {
-        ljos_host::Key::Named(name) => {
-            name == "Paste"
-                || (!mac
-                    && name == "Insert"
-                    && held.shift
-                    && !held.control
-                    && !held.alt
-                    && !held.meta)
-        }
-        ljos_host::Key::Character(c) if command && !held.alt && !other => {
-            let latin = c.chars().all(|c| c.is_ascii_alphabetic());
-            c.eq_ignore_ascii_case("v") || (!latin && key.code.as_deref() == Some("KeyV"))
-        }
-        _ => false,
-    }
-}
-
-/// Keeps the modifiers a window's keyboard holds. One that lost the
-/// keyboard holds none: the release goes to the window that has it.
-fn follow_modifiers(held: &mut ljos_host::Modifiers, event: &WindowEvent) {
-    match event {
-        WindowEvent::Modifiers(m) => *held = *m,
-        WindowEvent::Focus(false) => *held = ljos_host::Modifiers::default(),
-        _ => {}
     }
 }
 
@@ -2489,6 +2434,8 @@ fn resend_font_atlas(ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+    use ljos_host::{ButtonState, PointerKind};
+
     use super::*;
 
     fn press(key: ljos_host::Key, code: &str) -> ljos_host::KeyEvent {

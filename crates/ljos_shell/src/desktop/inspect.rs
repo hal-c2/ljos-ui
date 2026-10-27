@@ -7,8 +7,9 @@ use ljos_controls::WindowSystem;
 use ljos_engine::Engine;
 use ljos_host::{ButtonState, HostControl, PointerKind, WindowChange, WindowEvent};
 
+use super::input::starts_input;
 use super::slot::Slot;
-use super::{Control, Desktop, RESIZE_WAIT, note_size, scaled, starts_input, view_of};
+use super::{Control, Desktop, RESIZE_WAIT, note_size, scaled, view_of};
 use crate::present::{self, Frame};
 use crate::window_spec;
 
