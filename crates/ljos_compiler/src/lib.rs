@@ -14,6 +14,7 @@ use std::{
 use ljos_ir::{CompiledFile, SourceSpan};
 use qml_front::{QtTypeOracle, TypeOracle};
 
+pub mod aot;
 pub mod baseline;
 mod compile;
 mod dump;
