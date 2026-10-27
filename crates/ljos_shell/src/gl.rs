@@ -666,10 +666,7 @@ impl GlPainter {
         if !self.gl.make_current(surface) {
             return;
         }
-        for id in std::mem::take(&mut pending.free) {
-            self.sizes.remove(&id);
-            self.painter.free_texture(id);
-        }
+        free_pending(&mut self.painter, &mut self.sizes, pending);
     }
 }
 

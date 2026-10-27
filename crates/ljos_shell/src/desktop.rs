@@ -399,7 +399,7 @@ impl Slot {
         let at = self
             .undrawn_pass_at
             .map_or(now, |last| (last + gap).max(now));
-        self.undrawn_pass_due = Some(self.undrawn_pass_due.map_or(at, |due| due.min(at)));
+        self.undrawn_pass_due = earlier(self.undrawn_pass_due, Some(at));
     }
 
     /// The platform's window is gone, or another one: nothing that was
@@ -1564,8 +1564,7 @@ impl<M: Send + 'static> Desktop<M> {
                 )
             })
         });
-        let period =
-            Duration::from_secs_f64(1.0 / slot.refresh.filter(|hz| *hz > 0.0).unwrap_or(60.0));
+        let period = slot.frame_interval();
         let view = match slot.view.as_ref() {
             Some(view) => view,
             None => app.view(),
@@ -2253,7 +2252,7 @@ impl<M: Send + 'static> Desktop<M> {
         }
         #[cfg(feature = "mcp")]
         {
-            slot.asked = Some(slot.asked.map_or(when, |asked| asked.min(when)));
+            slot.asked = earlier(slot.asked, Some(when));
         }
         self.repaints.request(key, when);
     }
