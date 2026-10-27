@@ -246,7 +246,7 @@ struct Slot {
     /// What the platform's window was last made to be.
     applied: Option<WindowSpec>,
     /// The accessibility adapter was sent the scene's tree.
-    told: bool,
+    tree_told: bool,
     /// The modifiers the window's keyboard holds, as the platform last
     /// said; egui-winit keeps its own to itself.
     modifiers: ljos_host::Modifiers,
@@ -263,14 +263,14 @@ struct Slot {
     /// The platform let the window draw after the last frame it showed:
     /// the display has taken that frame, and the next can be drawn at
     /// once. Asking again would cost a turn of the loop to hear yes.
-    free: bool,
+    redraw_granted: bool,
     /// The platform did not let it draw in time: it is out of sight.
     stalled: bool,
     /// The platform said that nothing of the window can be seen.
     occluded: bool,
     /// When a pass that is not drawn last ran, and when the next is due.
-    headless_at: Option<Instant>,
-    headless_due: Option<Instant>,
+    undrawn_pass_at: Option<Instant>,
+    undrawn_pass_due: Option<Instant>,
     /// When to see whether the platform gave the size that was asked for.
     size_check: Option<Instant>,
     /// What the QML window was last told of its platform window.
@@ -340,17 +340,17 @@ impl Slot {
             surface: None,
             painter: None,
             applied: None,
-            told: false,
+            tree_told: false,
             modifiers: ljos_host::Modifiers::default(),
             sent_root: None,
             pending: egui::TexturesDelta::default(),
             actions: Vec::new(),
             redraw_asked: None,
-            free: false,
+            redraw_granted: false,
             stalled: false,
             occluded: false,
-            headless_at: None,
-            headless_due: None,
+            undrawn_pass_at: None,
+            undrawn_pass_due: None,
             size_check: None,
             told_size: None,
             told_pos: None,
@@ -390,26 +390,28 @@ impl Slot {
 
     /// A pass that is not drawn is due at `now`, or as soon after it as
     /// such passes may follow each other.
-    fn want_headless(&mut self, now: Instant) {
+    fn want_undrawn_pass(&mut self, now: Instant) {
         let gap = if self.is_root() {
             HEARTBEAT
         } else {
             BACKGROUND
         };
-        let at = self.headless_at.map_or(now, |last| (last + gap).max(now));
-        self.headless_due = Some(self.headless_due.map_or(at, |due| due.min(at)));
+        let at = self
+            .undrawn_pass_at
+            .map_or(now, |last| (last + gap).max(now));
+        self.undrawn_pass_due = Some(self.undrawn_pass_due.map_or(at, |due| due.min(at)));
     }
 
     /// The platform's window is gone, or another one: nothing that was
     /// known of it holds.
     fn forget_platform(&mut self) {
-        self.told = false;
+        self.tree_told = false;
         self.sent_root = None;
         self.redraw_asked = None;
-        self.free = false;
+        self.redraw_granted = false;
         self.stalled = false;
         self.occluded = false;
-        self.headless_due = None;
+        self.undrawn_pass_due = None;
         self.size_check = None;
         self.told_size = None;
         self.told_pos = None;
@@ -478,7 +480,7 @@ impl Slot {
     /// draws every frame, and one in fifty missed its refresh.
     fn drawn(&mut self, began: Instant, now: Instant) {
         self.undrawn = 0;
-        self.free = false;
+        self.redraw_granted = false;
         let interval = self.frame_hold();
         let from = match self.beat {
             Some(beat) if began >= beat && began < beat + interval / 2 => beat,
@@ -1599,7 +1601,7 @@ impl<M: Send + 'static> Desktop<M> {
             slot.redraw_asked = None;
             slot.stalled = false;
         } else {
-            slot.headless_at = Some(Instant::now());
+            slot.undrawn_pass_at = Some(Instant::now());
         }
         note_size(slot, &engine, &sys, false);
 
@@ -1680,7 +1682,7 @@ impl<M: Send + 'static> Desktop<M> {
                 Some(view) => view,
                 None => app.view_mut(),
             };
-            let updates = view.graft_updates(root, &mut slot.told);
+            let updates = view.graft_updates(root, &mut slot.tree_told);
             if let Some(adapter) = surface.state.accesskit.as_mut()
                 && (updates.grafted.is_some() || slot.sent_root.as_ref() != Some(&updates.root))
             {
@@ -1935,7 +1937,7 @@ impl<M: Send + 'static> Desktop<M> {
         let sys = WindowSystem::of(&engine);
         match event {
             WindowEvent::RedrawRequested => {
-                self.slots[i].free = true;
+                self.slots[i].redraw_granted = true;
                 return self.pass(host, i, true);
             }
             WindowEvent::CloseRequested => return self.close_requested(i, &engine, &sys),
@@ -1955,7 +1957,7 @@ impl<M: Send + 'static> Desktop<M> {
         let Some(surface) = slot.surface.as_mut() else {
             return;
         };
-        if slot.told && matches!(event, WindowEvent::Focus(_)) {
+        if slot.tree_told && matches!(event, WindowEvent::Focus(_)) {
             // The adapters before egui 0.37 could not take the window's
             // focus changing while the focus is in the scene's tree
             // (`QmlView::release_graft_focus`); those of 0.37 can, and the
@@ -2208,7 +2210,7 @@ impl<M: Send + 'static> Desktop<M> {
         match event.window_event {
             accesskit_winit::WindowEvent::InitialTreeRequested => {
                 slot.ctx.enable_accesskit();
-                slot.told = false;
+                slot.tree_told = false;
                 slot.sent_root = None;
             }
             accesskit_winit::WindowEvent::ActionRequested(request) => {
@@ -2218,7 +2220,7 @@ impl<M: Send + 'static> Desktop<M> {
             }
             accesskit_winit::WindowEvent::AccessibilityDeactivated => {
                 slot.ctx.disable_accesskit();
-                slot.told = false;
+                slot.tree_told = false;
                 slot.sent_root = None;
                 return;
             }
@@ -2440,11 +2442,11 @@ impl<M: Send + 'static> Desktop<M> {
             match (slot.surface.as_ref(), held) {
                 // The display would have held a drawn frame this long.
                 (Some(_), Some(until)) if !slot.out_of_sight() => self.repaints.request(key, until),
-                (Some(_), _) if early && !slot.out_of_sight() && slot.free => {
+                (Some(_), _) if early && !slot.out_of_sight() && slot.redraw_granted => {
                     self.repaints.request(key, now);
                 }
                 // The platform would answer at once: it is not asked.
-                (Some(_), _) if !slot.out_of_sight() && slot.free => {
+                (Some(_), _) if !slot.out_of_sight() && slot.redraw_granted => {
                     slot.redraw_asked.get_or_insert(now);
                     draw.push(i);
                 }
@@ -2456,10 +2458,10 @@ impl<M: Send + 'static> Desktop<M> {
                         w.redraws_asked += 1;
                     }
                 }
-                (Some(_), _) => slot.want_headless(now),
+                (Some(_), _) => slot.want_undrawn_pass(now),
                 // The root's scene runs without a window: it is where
                 // the timers and the messages are.
-                (None, _) if slot.is_root() => slot.want_headless(now),
+                (None, _) if slot.is_root() => slot.want_undrawn_pass(now),
                 // Another window's scene waits until it is shown.
                 (None, _) => {}
             }
@@ -2473,10 +2475,10 @@ impl<M: Send + 'static> Desktop<M> {
                 // The request stays with the platform: when the window
                 // can be seen again it is drawn, and no longer stalled.
                 slot.stalled = true;
-                slot.want_headless(now);
+                slot.want_undrawn_pass(now);
             }
-            if slot.headless_due.is_some_and(|t| t <= now) {
-                slot.headless_due = None;
+            if slot.undrawn_pass_due.is_some_and(|t| t <= now) {
+                slot.undrawn_pass_due = None;
                 due.push(i);
             }
         }
@@ -2496,7 +2498,7 @@ impl<M: Send + 'static> Desktop<M> {
                 .redraw_asked
                 .filter(|_| !slot.stalled)
                 .map(|t| t + STALL);
-            for t in [slot.size_check, slot.headless_due, stall] {
+            for t in [slot.size_check, slot.undrawn_pass_due, stall] {
                 next = earlier(next, t);
             }
         }
@@ -3159,15 +3161,15 @@ mod tests {
     fn a_window_out_of_sight_is_not_run_more_often_than_its_kind_allows() {
         let t = Instant::now();
         let mut root = Slot::new(0, None, egui::Context::default(), None);
-        root.want_headless(t);
-        assert_eq!(root.headless_due, Some(t), "nothing ran before: now");
-        root.headless_at = Some(t);
-        root.headless_due = None;
-        root.want_headless(t + Duration::from_millis(1));
-        assert_eq!(root.headless_due, Some(t + HEARTBEAT));
+        root.want_undrawn_pass(t);
+        assert_eq!(root.undrawn_pass_due, Some(t), "nothing ran before: now");
+        root.undrawn_pass_at = Some(t);
+        root.undrawn_pass_due = None;
+        root.want_undrawn_pass(t + Duration::from_millis(1));
+        assert_eq!(root.undrawn_pass_due, Some(t + HEARTBEAT));
         // A later request does not push an earlier one back.
-        root.want_headless(t + Duration::from_millis(500));
-        assert_eq!(root.headless_due, Some(t + HEARTBEAT));
+        root.want_undrawn_pass(t + Duration::from_millis(500));
+        assert_eq!(root.undrawn_pass_due, Some(t + HEARTBEAT));
     }
 
     #[test]
