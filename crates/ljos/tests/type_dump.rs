@@ -137,7 +137,7 @@ fn the_dump_holds_the_applications_types_and_not_the_toolkits() {
     let settings = &dump.modules[0].types[1];
     assert!(settings.singleton);
     let text = dump.to_json();
-    assert_eq!(ljos::types::TypeDump::from_json(&text), Ok(dump));
+    assert_eq!(ljos::types::TypeDump::from_json(&text).unwrap(), dump);
 }
 
 #[test]

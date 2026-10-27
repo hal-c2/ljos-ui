@@ -469,17 +469,29 @@ impl TypeDump {
 
     /// Reads what [`to_json`](Self::to_json) wrote. `Err` for text that is
     /// not a dump, or one of a format this engine does not read.
-    pub fn from_json(text: &str) -> Result<TypeDump, String> {
-        let dump: TypeDump = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    pub fn from_json(text: &str) -> Result<TypeDump, TypeDumpError> {
+        let dump: TypeDump = serde_json::from_str(text)?;
         if dump.format != Self::FORMAT {
-            return Err(format!(
-                "type dump format {} where {} is read; write it again",
-                dump.format,
-                Self::FORMAT
-            ));
+            return Err(TypeDumpError::Format { found: dump.format });
         }
         Ok(dump)
     }
+}
+
+/// Why [`TypeDump::from_json`] read no dump.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum TypeDumpError {
+    /// The text is not a type dump.
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    /// A dump of another format: written by another version, to be
+    /// written again.
+    #[error(
+        "type dump format {found} where {} is read; write it again",
+        TypeDump::FORMAT
+    )]
+    Format { found: u32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -590,5 +602,18 @@ mod tests {
         assert_eq!(Version::parse("6"), Some(Version::new(6, 0)));
         assert_eq!(Version::parse("x"), None);
         assert!(Version::new(2, 9) < Version::new(2, 15));
+    }
+
+    #[test]
+    fn a_dump_of_another_format_says_to_write_it_again() {
+        let text = r#"{"format": 1, "modules": []}"#;
+        let e = TypeDump::from_json(text).unwrap_err();
+        assert!(matches!(e, TypeDumpError::Format { found: 1 }), "{e:?}");
+        assert_eq!(
+            e.to_string(),
+            "type dump format 1 where 2 is read; write it again"
+        );
+        let e = TypeDump::from_json("{").unwrap_err();
+        assert!(matches!(e, TypeDumpError::Json(_)), "{e:?}");
     }
 }

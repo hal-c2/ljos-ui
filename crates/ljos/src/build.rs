@@ -98,7 +98,7 @@ pub fn compile_dirs_with_types(dirs: &[&Path], types: &Path, out: &Path) -> Resu
     let writing = crate::types::writing();
     let read = std::fs::read_to_string(types)
         .map_err(|e| e.to_string())
-        .and_then(|text| TypeDump::from_json(&text));
+        .and_then(|text| TypeDump::from_json(&text).map_err(|e| e.to_string()));
     let dump = match read {
         Ok(dump) => dump,
         Err(_) if writing => TypeDump {

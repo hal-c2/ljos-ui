@@ -175,7 +175,7 @@ pub use property_map::PropertyMap;
 pub use qtqml::{Component, ComponentAttached, Connections, RunningTimer, Timer, handler_name};
 pub use registry::{
     EnumEntry, MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry, PropertyKind,
-    Registry, SignalEntry, TypeDump, TypeEntry, Version,
+    Registry, SignalEntry, TypeDump, TypeDumpError, TypeEntry, Version,
 };
 pub use script_owned::ScriptMemory;
 pub use signal::Handler;
