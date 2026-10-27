@@ -1193,27 +1193,33 @@ impl ViewDelegates {
         engine.note_shown_model(s.owner, model.as_ref());
         let model =
             model.filter(|m| component.is_some() || m.delegate_source() != DelegateSource::View);
-        s.destroy_all(engine);
-        let old = {
-            let mut st = s.state.borrow_mut();
-            st.component = component;
-            st.model.take().map(|m| (m, st.subscription))
-        };
-        if let Some((m, id)) = old {
-            m.unsubscribe(id);
-        }
-        s.plans.clear();
-        if let Some(m) = &model {
-            let weak = Rc::downgrade(s);
-            let id = m.subscribe(Rc::new(move |e: &Engine, c: &ModelChange| {
-                if let Some(s) = weak.upgrade() {
-                    ViewShared::on_change(&s, e, c);
-                }
-            }));
-            let mut st = s.state.borrow_mut();
-            st.subscription = id;
-            st.model = Some(m.clone());
-        }
+        // Unparenting a delegate flushes the graph; a layout the same
+        // change dirtied (the view's height) would run in the middle and
+        // build rows of the model on its way out. It runs once the new
+        // model is in.
+        engine.batch(|| {
+            s.destroy_all(engine);
+            let old = {
+                let mut st = s.state.borrow_mut();
+                st.component = component;
+                st.model.take().map(|m| (m, st.subscription))
+            };
+            if let Some((m, id)) = old {
+                m.unsubscribe(id);
+            }
+            s.plans.clear();
+            if let Some(m) = &model {
+                let weak = Rc::downgrade(s);
+                let id = m.subscribe(Rc::new(move |e: &Engine, c: &ModelChange| {
+                    if let Some(s) = weak.upgrade() {
+                        ViewShared::on_change(&s, e, c);
+                    }
+                }));
+                let mut st = s.state.borrow_mut();
+                st.subscription = id;
+                st.model = Some(m.clone());
+            }
+        });
     }
 
     /// The number of rows. None while nothing can make their delegates.
