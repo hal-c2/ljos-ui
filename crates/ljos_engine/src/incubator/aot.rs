@@ -158,7 +158,7 @@ pub(crate) struct Linked {
     file: &'static File,
     /// [`File::singletons`], as the engine names types.
     singletons: Box<[TypeRef]>,
-    props: Box<[RefCell<Looks<PropIndex>>]>,
+    props: Box<[RefCell<Looks<Found>>]>,
     signals: Box<[RefCell<Looks<SignalIndex>>]>,
 }
 
@@ -192,6 +192,14 @@ impl Linked {
     }
 }
 
+/// What a property site is on one type.
+#[derive(Clone, Copy, Debug)]
+enum Found {
+    Prop(PropIndex),
+    /// `parent` where the type has no property of the name.
+    Parent,
+}
+
 /// Where loaded files keep what they were matched to.
 pub(crate) type LinkedCell = OnceCell<Option<Linked>>;
 
@@ -215,6 +223,13 @@ fn cached<T: Copy>(
 /// An object of the file, found for the code.
 #[derive(Clone, Copy, Debug)]
 pub struct Obj(ObjectId);
+
+impl Obj {
+    /// The object as the code gives it back.
+    pub fn value(self) -> Value {
+        Value::Object(self.0)
+    }
+}
 
 /// A property of an object, checked to be of the kind the code takes it
 /// to be.
@@ -289,8 +304,8 @@ impl Frame<'_> {
         }
     }
 
-    /// The property site `site` on `o`.
-    pub fn prop(&self, o: Obj, site: usize) -> Result<Prop, Stop> {
+    /// What the property site `site` is on `o`.
+    fn found(&self, o: Obj, site: usize) -> Result<Found, Stop> {
         let s = self.linked.file.props.get(site).ok_or(Stop::Fallback)?;
         let meta = self.meta(o.0)?;
         let found = cached(&self.linked.props[site], &meta, || {
@@ -298,20 +313,51 @@ impl Frame<'_> {
             if meta.method_index(s.name).is_some() {
                 return None;
             }
-            let p = meta.property_index(s.name)?;
+            let Some(p) = meta.property_index(s.name) else {
+                return (s.kind == Kind::Object && s.name == "parent").then_some(Found::Parent);
+            };
             let info = meta.property(p)?;
             let kind = match info.ty {
                 TypeTag::Real | TypeTag::Int => Kind::Number,
                 TypeTag::Bool => Kind::Bool,
                 TypeTag::String => Kind::String,
+                TypeTag::Object(_) => Kind::Object,
                 _ => return None,
             };
             let usable = kind == s.kind
                 && !info.flags.contains(PropertyFlags::GROUP)
                 && !(s.write && info.flags.contains(PropertyFlags::READONLY));
-            usable.then_some(p)
+            usable.then_some(Found::Prop(p))
         });
-        found.map(Prop).ok_or_else(|| self.stop())
+        found.ok_or_else(|| self.stop())
+    }
+
+    /// The property site `site` on `o`.
+    pub fn prop(&self, o: Obj, site: usize) -> Result<Prop, Stop> {
+        match self.found(o, site)? {
+            Found::Prop(p) => Ok(Prop(p)),
+            Found::Parent => Err(self.stop()),
+        }
+    }
+
+    /// The object the property site `site` of `o` refers to, tracked as a
+    /// read is. `null`, or anything but a live object, stops the code: a
+    /// script reading a member of it would throw, or find something the
+    /// code is not typed for.
+    pub fn via(&self, o: Obj, site: usize) -> Result<Obj, Stop> {
+        let value = match self.found(o, site)? {
+            Found::Prop(p) => self.read(o, Prop(p))?,
+            Found::Parent => {
+                if self.held.is_some() && self.effects.get() {
+                    return Err(Stop::Inconclusive);
+                }
+                self.e.visual_parent(o.0).map_or(Value::Null, Value::Object)
+            }
+        };
+        match value {
+            Value::Object(id) if self.e.is_alive(id) => Ok(Obj(id)),
+            _ => Err(self.stop()),
+        }
     }
 
     /// The signal site `site` on `o`.

@@ -91,6 +91,13 @@ pub trait TypeOracle {
         None
     }
 
+    /// Whether the type is a value (`font`, `point`) a property holds as
+    /// a copy, not an object it refers to. An oracle that cannot tell says
+    /// it is not.
+    fn is_value(&self, _ty: Self::Type) -> bool {
+        false
+    }
+
     /// Whether the oracle lists every member of the type. A name it does not
     /// have is then not a member; where this is false (a type the runtime
     /// writes in QML and describes only in part, a type that reads its body
@@ -405,6 +412,10 @@ impl TypeOracle for QtTypeOracle {
             None => ty.0.enum_value(key),
         }
         .and_then(|value| value.number)
+    }
+
+    fn is_value(&self, ty: QtType) -> bool {
+        ty.0.is_value
     }
 
     fn module(&self, ty: QtType) -> Option<String> {

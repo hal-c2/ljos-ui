@@ -255,6 +255,63 @@ Feature: Files compiled ahead of time
       compiled ahead of time  1 of 1 (100.0%)
       """
 
+  Scenario: What an item reads of its parent, and its parent itself, are compiled
+    Given the files are compiled ahead of time
+    And the compiled code cross-check is on
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+          id: root
+          objectName: "root"
+          width: 40
+          Item {
+              objectName: "child"
+              width: parent.width / 2
+              property bool wide: parent.width > 50
+              Item {
+                  objectName: "grandchild"
+                  width: parent.parent.width - parent.width
+              }
+          }
+          Item {
+              objectName: "filler"
+              anchors.fill: parent
+              property var held: parent
+              property Item item: parent
+              property real heldWidth: held.width + item.width
+          }
+      }
+      """
+    When the property "width" of "root" is set to 120
+    Then the property "width" of "child" is 60
+    And the property "wide" of "child" is true
+    And the property "width" of "grandchild" is 60
+    And the property "width" of "filler" is 120
+    And the property "heldWidth" of "filler" is 240
+    And the file "Scenario.qml" ran compiled code
+    And the log has no warning matching "compiled code and the dynamic tiers differ"
+
+  Scenario: The check compiles what an item reads of its parent, and its parent as a value
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+          width: 40
+          Item {
+              width: parent.width / 2
+          }
+          Item {
+              anchors.fill: parent
+          }
+      }
+      """
+    When the files are checked with statistics
+    Then the check reports the lines:
+      """
+      compiled ahead of time  2 of 2 (100.0%)
+      """
+
   Scenario: The check says a variable declared in a switch case runs dynamically
     Given the file "Main.qml":
       """qml

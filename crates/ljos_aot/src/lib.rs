@@ -68,6 +68,9 @@ pub trait Types {
 pub struct PropertyType {
     pub ty: String,
     pub readonly: bool,
+    /// The type of the object the property refers to (`parent`): what the
+    /// code reads of that object is typed by it.
+    pub object: Option<TypeRef>,
 }
 
 /// What became of one expression.
@@ -116,6 +119,7 @@ pub fn generate(
             types,
             sites: &mut sites,
             objects: Vec::new(),
+            vias: Vec::new(),
             props: Vec::new(),
             signals: Vec::new(),
             guards: Vec::new(),
@@ -231,6 +235,8 @@ enum Kind {
     Number,
     Bool,
     String,
+    /// An object the code reads members of; never a value of its own.
+    Object,
 }
 
 impl Kind {
@@ -239,6 +245,7 @@ impl Kind {
             Kind::Number => "Number",
             Kind::Bool => "Bool",
             Kind::String => "String",
+            Kind::Object => "Object",
         }
     }
 
@@ -247,6 +254,7 @@ impl Kind {
             Kind::Number => Ty::Num,
             Kind::Bool => Ty::Bool,
             Kind::String => Ty::Str,
+            Kind::Object => Ty::Void,
         }
     }
 
@@ -319,6 +327,17 @@ enum Src {
     Here(ObjRef),
     /// A singleton type's object, by the type's site in the file's table.
     Single(usize),
+    /// The object a property of another refers to (`parent`), by
+    /// [`Gen::vias`].
+    Via(usize),
+}
+
+/// What a member of an object is to the code.
+enum Member {
+    /// A value of the kind, and whether it can be written.
+    Value(Kind, bool),
+    /// An object of the type.
+    Object(TypeRef),
 }
 
 /// Generated code and its type.
@@ -386,6 +405,9 @@ struct Gen<'p> {
     sites: &'p mut Sites,
     /// The objects the code uses: `o<index>`.
     objects: Vec<Src>,
+    /// The objects read through a property: the object it is of (by
+    /// `objects`), the property's site, and the type the table gives it.
+    vias: Vec<(usize, usize, TypeRef)>,
     /// Properties: the object, the site, and so `p<index>`.
     props: Vec<(usize, usize)>,
     signals: Vec<(usize, usize)>,
@@ -464,6 +486,14 @@ impl<'p> Gen<'p> {
         if kind == BindingKind::Property && self.effects {
             return Err(no("a binding with an effect", ""));
         }
+        // The object is found before the code runs, which is when a
+        // script finds it only if nothing the code does moves it.
+        if self.effects && !self.vias.is_empty() {
+            return Err(no(
+                "object read through a property",
+                "in code that writes or emits",
+            ));
+        }
 
         // Everything the code uses, looked up before it does anything.
         let mut out = String::new();
@@ -480,6 +510,10 @@ impl<'p> Gen<'p> {
                     r.component.0, r.object.0
                 ),
                 Src::Single(at) => writeln!(out, "let o{index} = f.singleton({at})?;"),
+                Src::Via(at) => {
+                    let (of, site, _) = &self.vias[*at];
+                    writeln!(out, "let o{index} = f.via(o{of}, {site})?;")
+                }
             };
         }
         for (index, (object, at)) in self.props.iter().enumerate() {
@@ -730,6 +764,17 @@ impl<'p> Gen<'p> {
         let want = match &self.frame().ret {
             Ret::Out { value } | Ret::Inline { value, .. } => *value,
         };
+        // An object is a value only as what the code gives back: the
+        // engine writes it to the property as it does a script's.
+        let out_value = matches!(self.frame().ret, Ret::Out { value: true });
+        if let Some(e) = value
+            && out_value
+            && let Some(src) = self.object_of(e)?
+        {
+            let object = self.object(src);
+            let _ = writeln!(out, "return Ok(o{object}.value());");
+            return Ok(());
+        }
         let got = match value {
             Some(e) => self.expr(e, if want { Want::Value } else { Want::Effect })?,
             None => v("()", Ty::Void),
@@ -887,28 +932,39 @@ impl<'p> Gen<'p> {
         {
             return Ok(Some(src));
         }
+        if let Expr::Member(inner, name) = base
+            && self.enum_key(inner, name).is_none()
+            && let Some(src) = self.object_of(inner)?
+            && let Member::Object(ty) = self.property_of(src, name)?
+        {
+            let of = self.object(src);
+            let at = site(&mut self.sites.props, (name.clone(), Kind::Object, false));
+            let via = site(&mut self.vias, (of, at, ty));
+            return Ok(Some(Src::Via(via)));
+        }
         Ok(None)
     }
 
     /// The kind of `name` on the object `src`, and whether it can be
     /// written.
-    fn property_of(&self, src: Src, name: &str) -> Result<(Kind, bool), Refused> {
+    fn property_of(&self, src: Src, name: &str) -> Result<Member, Refused> {
         match src {
             Src::Here(r) => {
                 let def = self.file.object(r);
                 match declared_on(def, name)? {
-                    Some(found) => Ok(found),
+                    Some((kind, writable)) => Ok(Member::Value(kind, writable)),
                     None => self.property_of_type(&def.ty, name),
                 }
             }
-            Src::Single(at) => self.property_of_type(&self.sites.singletons[at].clone(), name),
+            Src::Single(at) => self.property_of_type(&self.sites.singletons[at], name),
+            Src::Via(at) => self.property_of_type(&self.vias[at].2, name),
         }
     }
 
     /// The kind of `name` on objects of `ty`: declared by the file the
     /// type is written in, by one it is based on, or by the native type
     /// under them.
-    fn property_of_type(&self, ty: &TypeRef, name: &str) -> Result<(Kind, bool), Refused> {
+    fn property_of_type(&self, ty: &TypeRef, name: &str) -> Result<Member, Refused> {
         let mut ty = ty;
         for _ in 0..MAX_TYPE_DEPTH {
             let (file, inline) = match ty {
@@ -935,8 +991,8 @@ impl<'p> Gen<'p> {
                 return Err(no("unresolved type", format!("{file}.{inline:?}")));
             };
             let root = component.root();
-            if let Some(found) = declared_on(root, name)? {
-                return Ok(found);
+            if let Some((kind, writable)) = declared_on(root, name)? {
+                return Ok(Member::Value(kind, writable));
             }
             ty = &root.ty;
         }
@@ -949,9 +1005,10 @@ impl<'p> Gen<'p> {
         let Some(found) = self.types.property(ty, name) else {
             return Err(no("member the type table does not have", name));
         };
-        match Kind::of(&found.ty) {
-            Some(kind) => Ok((kind, !found.readonly)),
-            None => Err(no("type", format!("{} property {name}", found.ty))),
+        match (Kind::of(&found.ty), found.object) {
+            (Some(kind), _) => Ok(Member::Value(kind, !found.readonly)),
+            (None, Some(ty)) => Ok(Member::Object(ty)),
+            (None, None) => Err(no("type", format!("{} property {name}", found.ty))),
         }
     }
 
@@ -961,7 +1018,9 @@ impl<'p> Gen<'p> {
         name: &str,
         write: bool,
     ) -> Result<(String, String, Kind), Refused> {
-        let (kind, writable) = self.property_of(src, name)?;
+        let Member::Value(kind, writable) = self.property_of(src, name)? else {
+            return Err(no("object as a value", name));
+        };
         if write && !writable {
             return Err(no("write to a read-only property", name));
         }
@@ -977,6 +1036,7 @@ impl<'p> Gen<'p> {
             Kind::Number => "num",
             Kind::Bool => "bool",
             Kind::String => "str",
+            Kind::Object => return Err(no("object as a value", name)),
         };
         Ok(v(format!("f.{read}({o}, {p})?"), kind.ty()))
     }
@@ -1309,6 +1369,12 @@ impl<'p> Gen<'p> {
                 }
                 if self.single(base).is_some() {
                     return Err(no("method call of a singleton", format!(".{method}()")));
+                }
+                if let Some(Src::Via(_)) = self.object_of(base)? {
+                    return Err(no(
+                        "method call of an object read through a property",
+                        format!(".{method}()"),
+                    ));
                 }
                 Err(no("method call", format!(".{method}()")))
             }

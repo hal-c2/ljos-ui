@@ -81,6 +81,9 @@ pub enum Kind {
     Number,
     Bool,
     String,
+    /// An object the code reads members of ([`Frame::via`]); `parent` of
+    /// an item that has no property of that name is its Item parent.
+    Object,
 }
 
 /// A singleton type the code reads the object of.

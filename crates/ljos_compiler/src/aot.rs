@@ -385,7 +385,15 @@ impl<O: qml_front::TypeOracle> ljos_aot::Types for OracleTypes<'_, O> {
         let oracle = self.oracle;
         let ty = oracle.module_type(module, ty)?;
         let property = oracle.property(ty, name)?;
+        let object = property
+            .value
+            .filter(|v| !property.is_list && !oracle.is_value(*v))
+            .map(|v| ljos_ir::TypeRef::Native {
+                module: oracle.module(v).unwrap_or_else(|| module.clone()),
+                name: oracle.name(v).to_string(),
+            });
         Some(ljos_aot::PropertyType {
+            object,
             // A property whose type the oracle does not name is refused by
             // the generator as untyped.
             ty: oracle
