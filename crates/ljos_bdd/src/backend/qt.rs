@@ -534,10 +534,10 @@ fn lrelease() -> String {
 
 /// The `language` attribute of the `TS` element.
 fn ts_language(ts: &str) -> Option<String> {
-    let start = ts.find("<TS")?;
-    let tag = &ts[start..start + ts[start..].find('>')?];
-    let rest = &tag[tag.find("language=\"")? + "language=\"".len()..];
-    let language = &rest[..rest.find('"')?];
+    let (_, after) = ts.split_once("<TS")?;
+    let (tag, _) = after.split_once('>')?;
+    let (_, rest) = tag.split_once("language=\"")?;
+    let (language, _) = rest.split_once('"')?;
     (!language.is_empty()).then(|| language.to_owned())
 }
 

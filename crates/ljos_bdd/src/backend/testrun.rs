@@ -136,8 +136,8 @@ pub fn normalise(text: &str, suite: &Path) -> Vec<String> {
         .map(|l| {
             let l = l.replace("qmltestrunner::", "").replace(&dir, "");
             let l = match l.strip_prefix("Totals: ") {
-                Some(rest) => match rest.find(" skipped") {
-                    Some(end) => format!("Totals: {}", &rest[..end + " skipped".len()]),
+                Some(rest) => match rest.split_once(" skipped") {
+                    Some((head, _)) => format!("Totals: {head} skipped"),
                     None => l,
                 },
                 None => l,
