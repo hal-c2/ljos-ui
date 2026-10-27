@@ -486,12 +486,7 @@ async fn answer<S: McpSurface>(state: &State<S>, request: Request<Incoming>) -> 
         );
         return response;
     }
-    let allowed = state
-        .rate
-        .lock()
-        .map(|mut r| r.allow(Instant::now()))
-        .unwrap_or(true);
-    if !allowed {
+    if !within_rate(&state.rate, Instant::now()) {
         let mut response = refuse(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
@@ -603,5 +598,36 @@ impl Ends {
 
     async fn wait(&mut self) -> i32 {
         std::future::pending().await
+    }
+}
+
+/// Counts a call at `now` against the rate. A lock poisoned by a panic
+/// still holds the calls counted so far, which are as good as ever: the
+/// limit goes on rather than letting every call through.
+fn within_rate(rate: &Mutex<RateLimit>, now: Instant) -> bool {
+    rate.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .allow(now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_poisoned_rate_still_limits() {
+        let rate = Mutex::new(RateLimit::per_second(2));
+        let _ = std::panic::catch_unwind(|| {
+            let _held = rate.lock().unwrap();
+            panic!("poisons the lock");
+        });
+        assert!(rate.is_poisoned());
+        let now = Instant::now();
+        assert!(within_rate(&rate, now));
+        assert!(within_rate(&rate, now));
+        assert!(
+            !within_rate(&rate, now),
+            "the third call in a second is refused"
+        );
     }
 }
