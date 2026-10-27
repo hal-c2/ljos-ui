@@ -1615,7 +1615,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// carries the context), not the global one a look-up at run time finds.
     fn lookup(&self, name: &str, offset: u32) -> Option<Resolution<O::Type>> {
         let mut resolution = self.names.lookup(name, offset)?;
-        if marks_translation(name)
+        if crate::js::TRANSLATIONS.contains(&name)
             && resolution.aimed.is_none()
             && matches!(resolution.target, Some(Target::Context { .. }))
             && let Some(global) = names::global(name)
@@ -2906,22 +2906,6 @@ fn is_key_name(name: &str) -> bool {
 }
 
 /// `Main` of `app/Main`: `qsTr`'s context and the file component's name.
-/// The global functions that translate a text or mark one for translation.
-fn marks_translation(name: &str) -> bool {
-    matches!(
-        name,
-        "qsTr"
-            | "qsTranslate"
-            | "qsTrId"
-            | "qsTrNoOp"
-            | "qsTranslateNoOp"
-            | "qsTrIdNoOp"
-            | "QT_TR_NOOP"
-            | "QT_TRANSLATE_NOOP"
-            | "QT_TRID_NOOP"
-    )
-}
-
 fn stem(key: &str) -> &str {
     key.rsplit('/').next().unwrap_or(key)
 }
