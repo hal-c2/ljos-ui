@@ -21,7 +21,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_example_aot_spike::{
-    BENCH, CASES, Mode, compile, drive, engine, load, prepare, snapshot, trigger,
+    BENCH, CASES, Mode, compile, drive, engine, load, prepare, snapshot, trigger, turn,
 };
 
 const SAMPLES: usize = 2000;
@@ -37,7 +37,14 @@ fn main() -> Result<()> {
         Some("cases") => cases(mode(1)?, false, &args[2..]),
         Some("steps") => cases(mode(1)?, true, &args[2..]),
         Some("boundary") => boundary(mode(1)?),
-        Some("rss") => rss(mode(1)?),
+        Some("rss") => rss(
+            mode(1)?,
+            match args.get(2) {
+                Some(n) => n.parse().context("a number of steps")?,
+                None => SAMPLES,
+            },
+            args.get(3).map(String::as_str),
+        ),
         Some("snapshot") => {
             let run = load(mode(1)?, false);
             drive(&run, 0..SAMPLES);
@@ -48,7 +55,9 @@ fn main() -> Result<()> {
         }
         #[cfg(feature = "scriptc")]
         Some("pauses") => pauses(),
-        _ => bail!("usage: aot_bench cases|steps|boundary|rss|snapshot <mode> | pauses"),
+        _ => bail!(
+            "usage: aot_bench cases|steps|boundary|snapshot <mode> | rss <mode> [steps] [case] | pauses"
+        ),
     }
 }
 
@@ -69,6 +78,7 @@ fn cases(mode: Mode, step: bool, only: &[String]) -> Result<()> {
         for k in 0..WARM {
             prepare(&run, case, k);
             trigger(&run, case, k);
+            turn(&run);
         }
         let mut ns = Vec::with_capacity(SAMPLES);
         let mut tier1 = 0;
@@ -87,6 +97,7 @@ fn cases(mode: Mode, step: bool, only: &[String]) -> Result<()> {
             ns.push(t.elapsed().as_nanos() as u64);
             tier1 += run.engine.tier1_stats().runs - before;
             aot += run.engine.aot_stats().runs - aot_before;
+            turn(&run);
         }
         ns.sort_unstable();
         println!(
@@ -309,17 +320,35 @@ fn status(field: &str) -> Result<u64> {
         .parse()?)
 }
 
-fn rss(mode: Mode) -> Result<()> {
+fn rss(mode: Mode, steps: usize, only: Option<&str>) -> Result<()> {
     let before = status("VmRSS:")?;
     let run = load(mode, false);
     let loaded = status("VmRSS:")?;
-    drive(&run, 0..SAMPLES);
-    println!("mode\tstart_kb\tloaded_kb\tafter_kb\thwm_kb");
+    // What the script engine holds of the growth, as its allocator counts.
+    let heap = || run.engine.script_heap_bytes().unwrap_or(0) / 1024;
+    let objects = || run.engine.script_memory().map_or(0, |m| m.objects);
+    let (heap_loaded, objects_loaded) = (heap(), objects());
+    match only {
+        // One case alone, to say which of them the growth belongs to.
+        Some(case) => {
+            for k in 0..steps {
+                prepare(&run, case, k);
+                trigger(&run, case, k);
+                turn(&run);
+            }
+        }
+        None => drive(&run, 0..steps),
+    }
     println!(
-        "{}\t{before}\t{loaded}\t{}\t{}",
+        "mode\tstart_kb\tloaded_kb\tafter_kb\thwm_kb\tjs_loaded_kb\tjs_after_kb\tjs_objects_loaded\tjs_objects_after"
+    );
+    println!(
+        "{}\t{before}\t{loaded}\t{}\t{}\t{heap_loaded}\t{}\t{objects_loaded}\t{}",
         mode.name(),
         status("VmRSS:")?,
-        status("VmHWM:")?
+        status("VmHWM:")?,
+        heap(),
+        objects()
     );
     Ok(())
 }
@@ -339,6 +368,7 @@ fn pauses() -> Result<()> {
             let t = Instant::now();
             trigger(&run, case, k);
             let ns = t.elapsed().as_nanos() as u64;
+            turn(&run);
             all.push(ns);
             if ns > worst.0 {
                 worst = (ns, case);

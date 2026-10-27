@@ -476,12 +476,20 @@ pub fn trigger(run: &Run, case: &str, k: usize) {
     }
 }
 
+/// What the host does after a step's work, outside the clock: the objects
+/// the step let go of (rows a model removed) are deleted, as a frame's
+/// turn deletes them. Without it the queue only grows, which no app does.
+pub fn turn(run: &Run) {
+    run.engine.process_deferred_deletes();
+}
+
 /// Every case in turn for `steps` steps.
 pub fn drive(run: &Run, steps: std::ops::Range<usize>) {
     for k in steps {
         for c in CASES {
             prepare(run, c, k);
             trigger(run, c, k);
+            turn(run);
         }
     }
 }

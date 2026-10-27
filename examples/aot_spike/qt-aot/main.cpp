@@ -4,7 +4,7 @@
 // emits the handler's signal by name), and the result is read back outside
 // the clock.
 //
-//   qt_aot_bench cases|steps|rss|snapshot <source>
+//   qt_aot_bench cases|steps|snapshot <source> | rss <source> [steps]
 //
 // <source> is `module:World` or `module:WorldTyped`, the files
 // qt_add_qml_module compiled, or a path to a .qml file, which is loaded
@@ -178,6 +178,13 @@ long percentile(const std::vector<long> &sorted, double p)
     return sorted[size_t(double(sorted.size() - 1) * p + 0.5)];
 }
 
+// What the event loop does after a step's work, outside the clock: the
+// objects the step let go of are deleted, as aot_bench's turn() does.
+void turn()
+{
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
 void cases(const QString &source, bool step)
 {
     using Clock = std::chrono::steady_clock;
@@ -188,6 +195,7 @@ void cases(const QString &source, bool step)
         for (int k = 0; k < Warm; ++k) {
             w.prepare(c, k);
             w.trigger(c, k);
+            turn();
         }
         std::vector<long> ns;
         ns.reserve(Samples);
@@ -200,18 +208,20 @@ void cases(const QString &source, bool step)
             w.trigger(c, k);
             ns.push_back(long(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t).count()));
             w.readBack();
+            turn();
         }
         std::sort(ns.begin(), ns.end());
         std::printf("%s\t%ld\t%ld\n", name, percentile(ns, 0.5), percentile(ns, 0.99));
     }
 }
 
-void drive(const World &w)
+void drive(const World &w, int steps = Samples)
 {
-    for (int k = 0; k < Samples; ++k) {
+    for (int k = 0; k < steps; ++k) {
         for (const char *c : Cases) {
             w.prepare(c, k);
             w.trigger(c, k);
+            turn();
         }
     }
 }
@@ -253,8 +263,9 @@ void snapshot(const QString &source)
 int main(int argc, char **argv)
 {
     const long start = status("VmRSS:");
-    if (argc != 3)
-        fail(QStringLiteral("usage: qt_aot_bench cases|steps|rss|snapshot module:World|module:WorldTyped|<file.qml>"));
+    if (argc != 3 && !(argc == 4 && QLatin1String(argv[1]) == QLatin1String("rss")))
+        fail(QStringLiteral("usage: qt_aot_bench cases|steps|rss|snapshot module:World|module:WorldTyped|<file.qml> "
+                            "[steps, for rss]"));
     const QString kind = QString::fromLocal8Bit(argv[1]);
     const QString source = QString::fromLocal8Bit(argv[2]);
     if (!source.startsWith(QLatin1String("module:")))
@@ -266,7 +277,7 @@ int main(int argc, char **argv)
     } else if (kind == QLatin1String("rss")) {
         World w(source);
         const long loaded = status("VmRSS:");
-        drive(w);
+        drive(w, argc == 4 ? std::atoi(argv[3]) : Samples);
         std::printf("mode\tstart_kb\tloaded_kb\tafter_kb\thwm_kb\n");
         std::printf("%s\t%ld\t%ld\t%ld\t%ld\n", qPrintable(source), start, loaded, status("VmRSS:"),
                     status("VmHWM:"));
