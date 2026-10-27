@@ -290,9 +290,9 @@ impl<M> ShellApp<M> {
     /// that asked for a reload. What it brings is applied by the next
     /// [`pump_dev`](Self::pump_dev), which the watcher's wake causes.
     #[cfg(feature = "mcp")]
-    pub(crate) fn reload_now(&self) {
-        if let Some(dev) = &self.dev {
-            dev.session.reload_now();
+    pub(crate) fn reload_now(&mut self) {
+        if let Some(dev) = &mut self.dev {
+            dev.session.reload_now(self.view.engine());
         }
     }
 

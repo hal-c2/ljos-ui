@@ -220,7 +220,13 @@ impl Watcher {
         };
         let thread = std::thread::Builder::new()
             .name("ljos-dev-watcher".to_owned())
-            .spawn(move || run.run(&rx))
+            .spawn(move || {
+                run.run(&rx);
+                // The commands go first: once whoever the sink tells
+                // sees it dropped, a flush already finds nobody to take it.
+                drop(rx);
+                drop(run);
+            })
             .map_err(WatchError::Thread)?;
         Ok(Self {
             tx,
@@ -244,9 +250,12 @@ impl Watcher {
     /// Reads the files and builds now, without the quiet time: the host
     /// is asked for a reload by a person or an agent who has just saved.
     /// Whatever the build brings is sent, then [`DevMsg::Idle`], so the
-    /// asker is always answered, even when no file changed.
-    pub fn flush(&self) {
-        let _ = self.tx.send(Cmd::Flush);
+    /// asker is always answered, even when no file changed. False when the
+    /// watcher's thread has ended (its sink was closed, or a build
+    /// panicked): nothing will answer, and the asker has to say so itself.
+    #[must_use = "a watcher that has stopped never answers the flush"]
+    pub fn flush(&self) -> bool {
+        self.tx.send(Cmd::Flush).is_ok()
     }
 
     /// How often the watcher's thread has woken: for a test that it does

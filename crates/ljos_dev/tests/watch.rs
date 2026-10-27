@@ -587,7 +587,7 @@ fn the_watcher_sleeps_while_nothing_changes() {
 #[test]
 fn a_flush_with_nothing_changed_is_answered_and_nothing_is_applied() {
     let mut app = app(&[("Main.qml", MAIN)]);
-    app.session.reload_now();
+    app.session.reload_now(&app.engine);
     let reports = app.wait();
     assert_eq!(reports, [], "nothing was applied");
     assert!(app.session.take_flushed(), "the flush was answered");
@@ -599,7 +599,7 @@ fn a_flush_with_nothing_changed_is_answered_and_nothing_is_applied() {
 fn a_flush_applies_the_save_before_the_answer_to_it() {
     let mut app = app(&[("Main.qml", MAIN)]);
     app.save("Main.qml", &MAIN.replace("width: 10;", "width: 50;"));
-    app.session.reload_now();
+    app.session.reload_now(&app.engine);
     let mut reports = Vec::new();
     while !app.session.take_flushed() {
         reports.extend(app.wait());
@@ -612,7 +612,7 @@ fn a_flush_applies_the_save_before_the_answer_to_it() {
 fn a_flush_with_a_broken_save_reports_it_and_is_answered() {
     let mut app = app(&[("Main.qml", MAIN)]);
     app.save("Main.qml", "import QtQuick\nItem {\n");
-    app.session.reload_now();
+    app.session.reload_now(&app.engine);
     let mut reports = Vec::new();
     while !app.session.take_flushed() {
         reports.extend(app.wait());
@@ -834,4 +834,32 @@ fn a_file_closed_after_its_first_part_is_built_once_the_rest_is_written() {
     let reports = app.wait();
     assert_eq!(reloaded(&reports).generation, 1, "{reports:?}");
     assert_eq!(app.num("root", "width"), 20.0);
+}
+
+/// A watcher whose thread has ended says so when asked to build, rather
+/// than take the request and never answer it.
+#[test]
+fn a_watcher_that_has_stopped_says_so_when_asked_to_build() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    write(&dir, "Main.qml", MAIN);
+    let mut reloader = ljos_dev::Reloader::open(&dir, QtTypeOracle).unwrap();
+    reloader.start();
+    // The sink is dropped with the thread; its sender then hangs up.
+    let (alive, ended) = mpsc::channel::<()>();
+    let watcher = ljos_dev::Watcher::spawn(reloader, move |_| {
+        let _ = &alive;
+        false
+    })
+    .unwrap();
+    assert!(watcher.flush(), "a running watcher takes the flush");
+    // Its answer finds nobody listening, so the thread ends.
+    assert!(
+        matches!(
+            ended.recv_timeout(PATIENCE),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ),
+        "the thread ended"
+    );
+    assert!(!watcher.flush(), "a stopped watcher says it takes nothing");
 }

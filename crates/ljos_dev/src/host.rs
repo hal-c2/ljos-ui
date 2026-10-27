@@ -591,9 +591,20 @@ impl DevSession {
     /// person or an agent who asked for a reload. What it brings is
     /// applied by [`pump`](Self::pump) as any save is; when everything
     /// that was asked for has been, [`take_flushed`](Self::take_flushed)
-    /// says so.
-    pub fn reload_now(&self) {
-        self.watcher.flush();
+    /// says so. A watcher that has stopped cannot: the engine's reload
+    /// error then says so, and `take_flushed` answers at once.
+    pub fn reload_now(&mut self, engine: &Engine) {
+        if !self.watcher.flush() {
+            engine.set_last_reload_error(Some(ReloadFault {
+                file: String::new(),
+                line: 0,
+                column: 0,
+                message: "the file watcher has stopped, so saves are no longer read; \
+                          start the application again"
+                    .to_owned(),
+            }));
+            self.flushed = true;
+        }
     }
 
     /// True once after a [`reload_now`](Self::reload_now) was answered and
