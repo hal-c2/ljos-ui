@@ -887,8 +887,6 @@ pub struct QuickScene {
     placed: Vec<ObjectId>,
     /// How many frames read places.
     places_read: u64,
-    /// The items whose place was read this frame, kept for its capacity.
-    told_moved: Vec<ObjectId>,
     /// Each `MultiEffect` as read, before it is given the picture of a
     /// source with children, and a fingerprint of the picture it was given
     /// with what it was made from (held, so no display list it names is
@@ -1010,7 +1008,6 @@ impl QuickScene {
             by_node: SecondaryMap::new(),
             placed: Vec::new(),
             places_read: 0,
-            told_moved: Vec::new(),
             effect_base: HashMap::new(),
             source_base: HashMap::new(),
             layer_base: HashMap::new(),
@@ -2009,7 +2006,6 @@ impl QuickScene {
                         local_transform(e.place, g, e.list(), self.scale_factor),
                     );
                 }
-                self.told_moved.push(obj);
             }
         }
     }
@@ -2020,7 +2016,7 @@ impl QuickScene {
         // an order; what only moved is told apart while the maps stand.
         let (geoms, moved) = {
             let mut s = self.shared.borrow_mut();
-            let mut moved = Vec::with_capacity(self.told_moved.len());
+            let mut moved = Vec::new();
             // Before the places, so an item that also moved is told once.
             for (obj, ()) in s.take(Dirty::LIST, |_| ()) {
                 let list = s.lists.remove(&obj);
@@ -2031,8 +2027,6 @@ impl QuickScene {
                     }
                 }
             }
-            // Each was moved as its place was read.
-            self.told_moved.clear();
             // With whether a hidden parent covers it, which `inherit` keeps
             // in the marks; the geometry is read below.
             let geoms: Vec<(ObjectId, (Geom, bool))> = s.take(Dirty::GEOM, |m| {
@@ -3444,13 +3438,10 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Row => positioners::read_inputs(e, obj, Axis::Horizontal),
         Kind::Column => positioners::read_inputs(e, obj, Axis::Vertical),
         Kind::Managed => crate::layouts::read_inputs(e, obj),
-        Kind::Text => {
-            // Reads the item's size too, where the layout depends on it.
-            text_polish(e, obj, TextInputs::read(e, obj), shared);
-            return;
-        }
         Kind::Canvas => crate::canvas::read_inputs(e, obj),
-        Kind::Item
+        // A Text is followed by `text::follow_into` instead.
+        Kind::Text
+        | Kind::Item
         | Kind::Rectangle
         | Kind::Image
         | Kind::Editor
