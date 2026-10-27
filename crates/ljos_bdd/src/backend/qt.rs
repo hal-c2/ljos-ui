@@ -219,7 +219,7 @@ impl QtBackend {
             )
             .replace(
                 "/*HELD*/\n",
-                if self.holds_pointer() {
+                if self.has_pointer_steps() {
                     HELD_HANDLER
                 } else {
                     ""
@@ -288,12 +288,12 @@ impl QtBackend {
 
     /// Whether the program holds the pointer down across steps, or moves it
     /// with no button down.
-    fn holds_pointer(&self) -> bool {
+    fn has_pointer_steps(&self) -> bool {
         self.program.iter().any(|op| op["step"].is_string())
     }
 
     /// Whether the button is down after the program as recorded so far.
-    fn pointer_held(&self) -> bool {
+    fn button_down(&self) -> bool {
         self.program
             .iter()
             .rev()
@@ -315,8 +315,8 @@ impl QtBackend {
 
     /// Input that ends with the acknowledgement move cannot be sent while
     /// the button is down: the move would let go.
-    fn not_held(&self) -> Result<()> {
-        if self.pointer_held() {
+    fn refuse_while_button_down(&self) -> Result<()> {
+        if self.button_down() {
             return Err(BackendError::Unsupported {
                 backend: "qt",
                 what: "other input while the pointer is held down",
@@ -680,14 +680,14 @@ impl Backend for QtBackend {
         // Recorded only, like a wait; a chord the oracle cannot type is
         // reported by the step that names it.
         Chord::parse(chord).map_err(BackendError::Failed)?;
-        self.not_held()?;
+        self.refuse_while_button_down()?;
         self.push(json!({"op": "key", "chord": chord}));
         Ok(())
     }
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
         let (x, y) = on_screen(x, y)?;
-        let held = self.pointer_held();
+        let held = self.button_down();
         let step = match step {
             PointerStep::Press if held => {
                 return Err(BackendError::Failed(
@@ -779,7 +779,7 @@ impl Input for QtBackend {
                 "{x}, {y} is outside the {SCREEN} pixel window"
             )));
         }
-        self.not_held()?;
+        self.refuse_while_button_down()?;
         self.push(json!({"op": "pointer", "x": x as u16, "y": y as u16}));
         Ok(())
     }
@@ -790,7 +790,7 @@ impl Input for QtBackend {
                 "the Qt oracle cannot type {c:?}"
             )));
         }
-        self.not_held()?;
+        self.refuse_while_button_down()?;
         self.push(json!({"op": "type", "text": text}));
         Ok(())
     }
@@ -813,14 +813,14 @@ impl Input for QtBackend {
             };
         }
         let (x, y) = on_screen(x, y)?;
-        self.not_held()?;
+        self.refuse_while_button_down()?;
         self.push(json!({"op": "click", "x": x, "y": y, "modifiers": held}));
         Ok(())
     }
 
     fn click_button(&mut self, button: super::OtherButton, x: f64, y: f64) -> Result<()> {
         let (x, y) = on_screen(x, y)?;
-        self.not_held()?;
+        self.refuse_while_button_down()?;
         // RFB's button mask: 2 is the middle button, 4 the right.
         let mask = match button {
             super::OtherButton::Right => 4,
@@ -832,7 +832,7 @@ impl Input for QtBackend {
 
     fn clicks(&mut self, count: u8, x: f64, y: f64) -> Result<()> {
         let (x, y) = on_screen(x, y)?;
-        self.not_held()?;
+        self.refuse_while_button_down()?;
         self.push(json!({"op": "double", "x": x, "y": y, "count": count}));
         Ok(())
     }
@@ -840,7 +840,7 @@ impl Input for QtBackend {
     fn drag(&mut self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
         let (x, y) = on_screen(from.0, from.1)?;
         let (x2, y2) = on_screen(to.0, to.1)?;
-        self.not_held()?;
+        self.refuse_while_button_down()?;
         self.push(json!({"op": "drag", "x": x, "y": y, "x2": x2, "y2": y2}));
         Ok(())
     }
@@ -857,7 +857,7 @@ impl Input for QtBackend {
             }
             out.push(Value::Array(points));
         }
-        self.not_held()?;
+        self.refuse_while_button_down()?;
         self.push(json!({"op": "touches", "frames": out}));
         Ok(())
     }
@@ -1046,8 +1046,8 @@ mod tests {
             .map(|op| op["step"].as_str().unwrap_or("-"))
             .collect();
         assert_eq!(steps, ["hover", "press", "move", "-", "release"]);
-        assert!(qt.holds_pointer());
-        assert!(!qt.pointer_held());
+        assert!(qt.has_pointer_steps());
+        assert!(!qt.button_down());
     }
 
     #[test]
