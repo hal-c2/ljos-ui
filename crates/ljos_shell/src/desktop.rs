@@ -720,8 +720,10 @@ struct Desktop<M> {
     slots: Vec<Slot>,
     repaints: RepaintSchedule<u64>,
     proxy: Proxy,
-    /// A QML window wants something else than its platform window has.
-    dirty: Rc<Cell<bool>>,
+    /// The platform's windows are to be made what the application's want
+    /// (`sync`): a QML window wants something else than its platform
+    /// window has, or a window came or went.
+    needs_sync: Rc<Cell<bool>>,
     /// The device of the first window that opened.
     gpu: Option<Gpu>,
     /// The graphics instances made while the application starts, until
@@ -743,7 +745,7 @@ struct Desktop<M> {
     icons_shown: u64,
     /// How many windows had closed when it was last asked whether the
     /// application ends.
-    closed: u64,
+    closes_seen: u64,
     /// The user closed the window of a root that is a plain item.
     root_closed: bool,
     next_key: u64,
@@ -869,7 +871,7 @@ impl<M: Send + 'static> Desktop<M> {
         config: ShellConfig,
         ctx: egui::Context,
         proxy: Proxy,
-        dirty: Rc<Cell<bool>>,
+        needs_sync: Rc<Cell<bool>>,
         failure: Rc<RefCell<Option<ShellError>>>,
         starting: Starting,
     ) -> Self {
@@ -886,7 +888,7 @@ impl<M: Send + 'static> Desktop<M> {
             slots: vec![Slot::new(0, None, ctx, None)],
             repaints: RepaintSchedule::default(),
             proxy,
-            dirty,
+            needs_sync,
             gpu: None,
             painter_choice: starting.chosen().choice,
             painter_automatic: starting.chosen().automatic,
@@ -896,7 +898,7 @@ impl<M: Send + 'static> Desktop<M> {
             screens: Vec::new(),
             screens_stale: true,
             icons_shown: 0,
-            closed: 0,
+            closes_seen: 0,
             root_closed: false,
             next_key: 1,
             last_root: None,
@@ -977,7 +979,7 @@ impl<M: Send + 'static> Desktop<M> {
 
     /// Makes the platform's windows what the application's windows want.
     fn sync(&mut self, host: &mut Control<'_>, engine: &Rc<Engine>, sys: &WindowSystem) {
-        self.dirty.set(false);
+        self.needs_sync.set(false);
         // Before the windows are matched: the root the application put in
         // the window of the old one takes that platform window, where a
         // `Window` made and shown on its own would get one of its own.
@@ -2194,7 +2196,7 @@ impl<M: Send + 'static> Desktop<M> {
             }
             None => {
                 self.root_closed = true;
-                self.dirty.set(true);
+                self.needs_sync.set(true);
             }
         }
     }
@@ -2402,10 +2404,10 @@ impl<M: Send + 'static> Desktop<M> {
             return true;
         }
         let closed = sys.closed_count() + u64::from(self.root_closed);
-        if closed == self.closed {
+        if closed == self.closes_seen {
             return false;
         }
-        self.closed = closed;
+        self.closes_seen = closed;
         let root_shown = self.slots[0].window.is_none() && !self.root_closed;
         let any_shown = sys
             .windows(engine)
@@ -2420,7 +2422,7 @@ impl<M: Send + 'static> Desktop<M> {
     fn reopened(&mut self, has_visible_windows: bool) {
         if self.root_closed && !has_visible_windows {
             self.root_closed = false;
-            self.dirty.set(true);
+            self.needs_sync.set(true);
         }
         ljos_controls::application_reopened(self.app.engine(), has_visible_windows);
     }
@@ -2531,7 +2533,7 @@ impl<M: Send + 'static> Desktop<M> {
     }
 
     fn unsettled(&self) -> bool {
-        self.dirty.get() || self.app.view().scene().root() != self.last_root
+        self.needs_sync.get() || self.app.view().scene().root() != self.last_root
     }
 
     /// Everything that waited was delivered: the bookkeeping, and then
@@ -2738,7 +2740,7 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
         match event {
             Event::SurfaceCreated => {
                 self.live = true;
-                self.dirty.set(true);
+                self.needs_sync.set(true);
                 self.screens_stale = true;
             }
             Event::SurfaceDestroyed => {
@@ -2777,7 +2779,7 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
             Event::AboutToWait => {
                 #[cfg(feature = "mcp")]
                 {
-                    let dirty = self.dirty.get();
+                    let dirty = self.needs_sync.get();
                     self.note_wake(|w| w.dirty = dirty);
                 }
                 if let Some(drags) = self.drags.borrow_mut().as_mut() {
@@ -2854,14 +2856,14 @@ pub(crate) fn run<M: Send + 'static>(
     let proxy: Proxy = Arc::new(Mutex::new(host.proxy()));
     let ctx = new_context(0, &proxy);
     // True from the start: the first turn of the loop opens the windows.
-    let dirty = Rc::new(Cell::new(true));
+    let needs_sync = Rc::new(Cell::new(true));
     let hosting = Hosting {
         wayland: host.is_wayland(),
         tree: tree_id(0),
         wake: waker(0, &proxy),
         changed: {
-            let dirty = Rc::clone(&dirty);
-            Box::new(move || dirty.set(true))
+            let needs_sync = Rc::clone(&needs_sync);
+            Box::new(move || needs_sync.set(true))
         },
     };
     #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
@@ -2882,7 +2884,7 @@ pub(crate) fn run<M: Send + 'static>(
         config,
         ctx,
         proxy,
-        dirty,
+        needs_sync,
         Rc::clone(&failure),
         starting,
     );
