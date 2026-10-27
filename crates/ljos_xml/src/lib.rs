@@ -53,7 +53,7 @@
 //! ## Loading
 //!
 //! Every load is asynchronous, local files included: `status` says
-//! `Loading` while the document is read on a thread of its own (a
+//! `Loading` while the document is read on the compute pool (a
 //! local file directly, a remote one through the platform's
 //! fetcher), then the rows replace the old ones and `status` says
 //! `Ready`. Setting `source` or `query`, or calling `reload()`,
@@ -384,7 +384,9 @@ fn load(e: &Engine, me: ObjectId) {
     start_worker(e, me, generation, path, roles, Input::Local { real, url });
 }
 
-/// Reads and parses one source on a worker, then answers on Engine.
+/// Reads and parses one source on the compute pool, then answers on
+/// Engine. A load that panics there is a fault of the engine and ends
+/// in `Error`, not in a `Loading` that never changes.
 fn start_worker(
     e: &Engine,
     me: ObjectId,
@@ -393,15 +395,15 @@ fn start_worker(
     roles: Vec<RoleSpec>,
     input: Input,
 ) {
-    let platform = Platform::of(e);
     let what = match &input {
         Input::Bytes(_) => "XmlListModel source".to_owned(),
         Input::Local { url, .. } => format!("read {url}"),
     };
-    let reply = platform.expect_for(what, Some(me));
-    let spawned = std::thread::Builder::new()
-        .name("ljos-xml".to_owned())
-        .spawn(move || {
+    let queued = ljos::task::spawn_for(
+        e,
+        what,
+        Some(me),
+        move || {
             let bytes = match input {
                 Input::Bytes(bytes) => Ok(bytes),
                 Input::Local { real, url } => {
@@ -418,6 +420,11 @@ fn start_worker(
                     }
                 }
             };
+            // A test's way to make the work panic, as a bug in it would.
+            #[cfg(test)]
+            if bytes.as_deref().is_ok_and(|b| b == tests::PANICS) {
+                panic!("a load that panics");
+            }
             let outcome = match bytes {
                 Ok(bytes) => match parse::parse(&bytes, &path, &roles) {
                     Ok(parsed) => Outcome::Parsed(parsed),
@@ -425,17 +432,25 @@ fn start_worker(
                 },
                 Err(outcome) => outcome,
             };
-            reply.send(move |e| loaded(e, me, generation, &roles, outcome));
-        });
-    if let Err(err) = spawned {
+            // The roles ride back with the answer rather than being
+            // copied for it.
+            (roles, outcome)
+        },
+        move |e, answer| match answer {
+            Ok((roles, outcome)) => loaded(e, me, generation, &roles, outcome),
+            // An error answer reads no roles.
+            Err(panic) => loaded(e, me, generation, &[], Outcome::Failed(panic.to_string())),
+        },
+    );
+    if let Err(full) = queued {
         e.log(
             LogLevel::Warning,
             CATEGORY,
-            format!("QML XmlListModel: no thread to read with: {err}"),
+            format!("QML XmlListModel: no worker to read with: {full}"),
         );
         let cx = Cx::new(e, me);
         let _ = cx.with_mut(|m: &mut XmlListModel| {
-            m.shared.borrow_mut().error = format!("no thread to read with: {err}");
+            m.shared.borrow_mut().error = format!("no worker to read with: {full}");
         });
         set_status(e, me, status::ERROR);
     }
@@ -563,6 +578,57 @@ fn read_document_with_limit(reader: impl std::io::Read, limit: usize) -> Result<
 mod tests {
     use super::*;
     use std::io::Read;
+
+    /// The document whose load panics on the worker.
+    pub(super) const PANICS: &[u8] = b"<ljos-test-panics/>";
+
+    #[test]
+    fn a_load_that_panics_ends_in_error_not_loading() {
+        let e = ljos::engine();
+        register(&e);
+        let platform = Platform::of(&e);
+        platform.register_resource("file:///boom.xml", PANICS.to_vec());
+        let mut project = ljos_compiler::Project::new(ljos::dev::EngineOracle::from_engine(&e));
+        project.add(
+            "Main",
+            r#"
+            import QtQml.XmlListModel
+            XmlListModel {
+                source: "boom.xml"
+                query: "/a"
+            }
+            "#,
+        );
+        let compiled = ljos_compiler::compile_file(&project, "Main").expect("compiles");
+        let mut source = ljos::MapSource::new();
+        source.insert("Main", compiled.file);
+        e.set_component_source(source);
+        let m = e
+            .create_from_url("Main", None, Vec::new())
+            .expect("created");
+        e.take_log();
+        platform.finish(&e);
+        assert_eq!(
+            e.read_by_name(m, "status").to_number(),
+            f64::from(status::ERROR)
+        );
+        let said = e
+            .invoke_by_name(m, "errorString", &[])
+            .expect("errorString");
+        assert!(
+            said.to_js_string().contains("a load that panics"),
+            "errorString was {:?}",
+            said.to_js_string()
+        );
+        // The panic is a fault of the engine, as one on its own thread is.
+        assert!(
+            e.faults()
+                .iter()
+                .any(|f| format!("{:?}", f.fault).contains("a load that panics")),
+            "faults: {:?}",
+            e.faults()
+        );
+    }
 
     #[test]
     fn document_reader_rejects_overflow_without_truncating() {
