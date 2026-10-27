@@ -77,6 +77,19 @@ impl Tools {
         }
         self.top.visible()
     }
+
+    /// The window's inspector, when one is served.
+    #[cfg(feature = "mcp")]
+    fn inspector(&self) -> Option<&ljos_dev::mcp::Inspector> {
+        self.inspector.as_ref().map(inspector::Served::inspector)
+    }
+
+    #[cfg(feature = "mcp")]
+    fn inspector_mut(&mut self) -> Option<&mut ljos_dev::mcp::Inspector> {
+        self.inspector
+            .as_mut()
+            .map(inspector::Served::inspector_mut)
+    }
 }
 
 impl<M> Setup<'_, M> {
@@ -208,8 +221,8 @@ impl<M> ShellApp<M> {
     }
 
     pub(crate) fn set_painter(&mut self, painter: ljos_dev::mcp::PainterInfo) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().set_painter(painter);
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.set_painter(painter);
         }
     }
 
@@ -218,14 +231,14 @@ impl<M> ShellApp<M> {
         step: ljos_dev::mcp::StartupStep,
         at: std::time::Duration,
     ) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().record_startup(step, at);
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.record_startup(step, at);
         }
     }
 
     pub(crate) fn record_paint(&mut self, report: &ljos_dev::mcp::PaintReport) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().record_paint(report);
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.record_paint(report);
         }
     }
 
@@ -233,29 +246,26 @@ impl<M> ShellApp<M> {
     /// are timed too.
     pub(crate) fn records_frames(&self) -> bool {
         self.tools
-            .inspector
-            .as_ref()
-            .is_some_and(|s| s.inspector().records_frames())
+            .inspector()
+            .is_some_and(|inspector| inspector.records_frames())
     }
 
     /// Whether a client keeps the UI thread's wakes, so that the loop
     /// notes what woke it.
     pub(crate) fn records_wakes(&self) -> bool {
         self.tools
-            .inspector
-            .as_ref()
-            .is_some_and(|s| s.inspector().records_wakes())
+            .inspector()
+            .is_some_and(|inspector| inspector.records_wakes())
     }
 
     pub(crate) fn record_wake(&mut self, wake: &ljos_dev::mcp::HostWake) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().record_wake(self.view.engine(), wake);
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.record_wake(self.view.engine(), wake);
         }
     }
 
     pub(crate) fn record_rest(&mut self, rest: ljos_dev::mcp::Rest, collect_due: Option<Instant>) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            let inspector = served.inspector_mut();
+        if let Some(inspector) = self.tools.inspector_mut() {
             inspector.record_rest(rest);
             inspector.record_collect_due(collect_due);
         }
@@ -264,9 +274,9 @@ impl<M> ShellApp<M> {
     /// Before a pass over another window: its scene is timed while a
     /// client records.
     pub(crate) fn time_window(&mut self, view: &mut ljos_egui::QmlView) {
-        if let Some(served) = self.tools.inspector.as_ref() {
+        if let Some(inspector) = self.tools.inspector() {
             let engine = std::rc::Rc::clone(view.engine());
-            served.inspector().time_window(&engine, view.scene_mut());
+            inspector.time_window(&engine, view.scene_mut());
         }
     }
 
@@ -276,10 +286,8 @@ impl<M> ShellApp<M> {
         window: Option<ljos_engine::ObjectId>,
         view: &mut ljos_egui::QmlView,
     ) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served
-                .inspector_mut()
-                .record_window_frames(window, view.scene_mut());
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.record_window_frames(window, view.scene_mut());
         }
     }
 
@@ -288,8 +296,8 @@ impl<M> ShellApp<M> {
         window: Option<ljos_engine::ObjectId>,
         report: &ljos_dev::mcp::PaintReport,
     ) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().record_window_paint(window, report);
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.record_window_paint(window, report);
         }
     }
 
@@ -297,9 +305,8 @@ impl<M> ShellApp<M> {
     /// changed the picture.
     pub(crate) fn watches_items(&self) -> bool {
         self.tools
-            .inspector
-            .as_ref()
-            .is_some_and(|served| served.inspector().watches_items())
+            .inspector()
+            .is_some_and(|inspector| inspector.watches_items())
     }
 
     /// Where a pass of the primary window changed the picture; `None` for
@@ -309,73 +316,70 @@ impl<M> ShellApp<M> {
         engine: &ljos_engine::Engine,
         areas: Option<&[[f64; 4]]>,
     ) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().record_changed(engine, areas);
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.record_changed(engine, areas);
         }
     }
 
     /// Says that the primary window is the platform's, so that
     /// `app_resize` asks the platform for its size.
     pub(crate) fn set_resizes_window(&mut self) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().set_resizes_window();
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.set_resizes_window();
         }
     }
 
     /// The size an agent asked the primary window to have.
     pub(crate) fn take_resize_request(&mut self) -> Option<[f64; 2]> {
         self.tools
-            .inspector
-            .as_mut()
-            .and_then(|served| served.inspector_mut().take_resize_request())
+            .inspector_mut()
+            .and_then(|inspector| inspector.take_resize_request())
     }
 
     /// Whether an agent waits for the primary window to have a size.
     pub(crate) fn waits_for_resize(&self) -> bool {
         self.tools
-            .inspector
-            .as_ref()
-            .is_some_and(|served| served.inspector().waits_for_resize())
+            .inspector()
+            .is_some_and(|inspector| inspector.waits_for_resize())
     }
 
     /// Answers the agent that waits for a size, if the scene has it or
     /// the platform has `settled` on another.
     pub(crate) fn finish_resize(&mut self, settled: bool) {
         let Self { view, tools, .. } = self;
-        if let Some(served) = tools.inspector.as_mut() {
-            served.inspector_mut().finish_resize(view.scene(), settled);
+        if let Some(inspector) = tools.inspector_mut() {
+            inspector.finish_resize(view.scene(), settled);
         }
     }
 
     /// Says that the shell tells `app_metrics` `memory` what each window's scene
     /// and renderer hold.
     pub(crate) fn set_measures_render(&mut self) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().set_measures_render();
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.set_measures_render();
         }
     }
 
     /// Whether an `app_metrics` `memory` waits to be told what the windows hold.
     pub(crate) fn waits_for_memory(&self) -> bool {
         self.tools
-            .inspector
-            .as_ref()
-            .is_some_and(|served| served.inspector().waits_for_memory())
+            .inspector()
+            .is_some_and(|inspector| inspector.waits_for_memory())
     }
 
     /// Answers the `app_metrics` `memory` requests that wait.
     pub(crate) fn finish_memory(&mut self, windows: &[ljos_dev::mcp::WindowMemory]) {
         let Self { view, tools, .. } = self;
-        if let Some(served) = tools.inspector.as_mut() {
-            served.inspector_mut().finish_memory(view.engine(), windows);
+        if let Some(inspector) = tools.inspector_mut() {
+            inspector.finish_memory(view.engine(), windows);
         }
     }
 
     /// A frame of the primary window's display: what a slow frame is
     /// slower than.
     pub(crate) fn set_frame_budget(&mut self, budget: std::time::Duration) {
-        if let Some(served) = self.tools.inspector.as_mut() {
-            served.inspector_mut().set_frame_budget(budget);
+        if let Some(inspector) = self.tools.inspector_mut() {
+            inspector.set_frame_budget(budget);
         }
     }
 }
