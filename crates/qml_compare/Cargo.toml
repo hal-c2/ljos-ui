@@ -19,6 +19,8 @@ png.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+ljos_child = { path = "../ljos_child" }
+libc.workspace = true
 
 [lints]
 workspace = true

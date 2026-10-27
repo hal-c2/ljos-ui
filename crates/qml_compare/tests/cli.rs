@@ -262,3 +262,74 @@ fn raise_lifts_floors_to_the_scores_and_holds_them() {
         serde_json::json!({"pixels": 0.5})
     );
 }
+
+/// One example whose name is long enough that the request on the
+/// renderer's stdin is more than a pipe holds.
+fn long_corpus(dir: &Path) -> PathBuf {
+    let corpus = dir.join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let entry = format!("{}.qml", "e".repeat(100_000));
+    std::fs::write(
+        corpus.join("examples.json"),
+        format!(
+            r#"{{"root":"ex","examples":[
+              {{"id":"long","dir":"long","entry":"{entry}","window":{{"width":8,"height":8}}}}
+            ]}}"#
+        ),
+    )
+    .unwrap();
+    corpus.join("examples.json")
+}
+
+fn run_with(dir: &Path, manifest: &Path, renderer: &str, extra: &[&str]) -> serde_json::Value {
+    let report = dir.join("report");
+    let o = bin()
+        .args(["run", "--manifest"])
+        .arg(manifest)
+        .args(["--renderer", renderer, "--report-dir"])
+        .arg(&report)
+        .args(extra)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "{}\n{}",
+        stdout(&o),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    serde_json::from_slice(&std::fs::read(report.join("report.json")).unwrap()).unwrap()
+}
+
+#[test]
+fn a_renderer_that_writes_before_it_reads_does_not_stall_the_run() {
+    let dir = scratch("cli_write_first");
+    let manifest = long_corpus(&dir);
+    let white = dir.join("white.png");
+    flat(255).write(&white).unwrap();
+    // More than a pipe holds out, before a byte of the request is read.
+    let renderer = format!(
+        "head -c 300000 /dev/zero | tr '\\0' x; echo; cat >/dev/null; cp '{}' {{out}}",
+        white.display()
+    );
+    let started = std::time::Instant::now();
+    let rows = run_with(&dir, &manifest, &renderer, &["--timeout", "60"]);
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    assert_eq!(rows[0]["renders"], true, "{rows}");
+}
+
+#[test]
+fn a_renderer_that_takes_too_long_is_killed_with_what_it_started() {
+    let dir = scratch("cli_timeout");
+    let manifest = long_corpus(&dir);
+    let started = std::time::Instant::now();
+    // The shell waits on a child of its own, which holds the pipes too.
+    let rows = run_with(&dir, &manifest, "sleep 30 & wait", &["--timeout", "1"]);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(rows[0]["renders"], false, "{rows}");
+    let error = rows[0]["error"].as_str().unwrap_or_default();
+    assert!(error.contains("longer than 1 s"), "{error}");
+}

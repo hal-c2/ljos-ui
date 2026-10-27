@@ -71,6 +71,10 @@ enum Command {
         report_dir: PathBuf,
         #[arg(long, default_value_t = DEFAULT_THRESHOLD)]
         threshold: f64,
+        /// Seconds an example may take before its renderer is killed and
+        /// the example reported as failed.
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
         /// Run only these example ids.
         ids: Vec<String>,
     },
@@ -143,6 +147,7 @@ fn real_main() -> Result<ExitCode> {
             top,
             report_dir,
             threshold,
+            timeout,
             ids,
         } => {
             let manifest = Manifest::read(&manifest)?;
@@ -150,6 +155,7 @@ fn real_main() -> Result<ExitCode> {
                 renderer,
                 report_dir: report_dir.clone(),
                 threshold,
+                timeout: std::time::Duration::from_secs(timeout),
                 only: ids,
             };
             let rows = run::run(&manifest, &options)?;

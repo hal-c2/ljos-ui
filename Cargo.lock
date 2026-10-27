@@ -5951,6 +5951,8 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
+ "ljos_child",
  "png",
  "serde",
  "serde_json",

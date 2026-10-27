@@ -5,11 +5,18 @@
 //! details arrive as JSON on stdin and as `QML_COMPARE_*` environment
 //! variables. The command succeeds when it wrote the picture. It may print
 //! one JSON object as the last line of stdout to add what it knows
-//! (see [`Notes`]).
+//! (see [`Notes`]). A renderer that takes longer than the timeout is
+//! killed with every process it started, and the example fails.
 
-use std::io::Write as _;
+use std::io::{Read, Write as _};
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use ljos_child::Reaped;
 
 use serde::Deserialize;
 use serde_json::json;
@@ -51,6 +58,8 @@ pub struct Options {
     pub renderer: String,
     pub report_dir: PathBuf,
     pub threshold: f64,
+    /// How long one example may take.
+    pub timeout: Duration,
     /// Run only these ids (all when empty).
     pub only: Vec<String>,
 }
@@ -75,6 +84,70 @@ pub fn run(manifest: &Manifest, options: &Options) -> Result<Vec<Row>, RunError>
     }
     rows.sort_by_key(|r| r.id.to_lowercase());
     Ok(rows)
+}
+
+/// What a renderer did: how it ended (`None` when it was killed for
+/// taking too long) and what it wrote.
+struct Rendered {
+    status: Option<ExitStatus>,
+    stdout: String,
+    stderr: String,
+}
+
+/// How long a renderer's output is waited for after it ended, in case a
+/// process it left behind holds a pipe.
+const DRAIN: Duration = Duration::from_secs(2);
+
+/// Runs `command` with `request` on its stdin, for at most `within`.
+/// The request is written and the output read at once, so a renderer
+/// that writes before it reads cannot stall on a full pipe.
+fn render(command: &mut Command, request: String, within: Duration) -> std::io::Result<Rendered> {
+    let mut child = Reaped::spawn(command)?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // A renderer that ignores stdin may exit first; that is not an error.
+        thread::spawn(move || {
+            let _ = stdin.write_all(request.as_bytes());
+        });
+    }
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        let (tx, rx) = mpsc::channel();
+        if let Some(mut pipe) = pipe {
+            thread::spawn(move || {
+                let mut text = Vec::new();
+                let _ = pipe.read_to_end(&mut text);
+                let _ = tx.send(String::from_utf8_lossy(&text).into_owned());
+            });
+        }
+        rx
+    };
+    let stdout = drain(child.stdout.take().map(|p| Box::new(p) as _));
+    let stderr = drain(child.stderr.take().map(|p| Box::new(p) as _));
+    let deadline = Instant::now() + within;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if Instant::now() > deadline {
+            if let Ok(group) = i32::try_from(child.id()) {
+                // SAFETY: the group is our child's, which is not yet waited
+                // for, so its id cannot have been reused.
+                unsafe {
+                    libc::killpg(group, libc::SIGKILL);
+                }
+            }
+            let _ = child.stop();
+            break None;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    // Once the renderer has ended, what is left in a pipe is read at
+    // once; only a process it left behind can hold one open.
+    let read = |rx: mpsc::Receiver<String>| rx.recv_timeout(DRAIN).unwrap_or_default();
+    Ok(Rendered {
+        status,
+        stdout: read(stdout),
+        stderr: read(stderr),
+    })
 }
 
 fn run_one(manifest: &Manifest, example: &Example, options: &Options) -> Result<Row, RunError> {
@@ -103,7 +176,8 @@ fn run_one(manifest: &Manifest, example: &Example, options: &Options) -> Result<
         "out": out,
         "example": example,
     });
-    let spawned = Command::new("sh")
+    let mut renderer = Command::new("sh");
+    renderer
         .arg("-c")
         .arg(&command)
         .env("QML_COMPARE_ID", &example.id)
@@ -124,26 +198,27 @@ fn run_one(manifest: &Manifest, example: &Example, options: &Options) -> Result<
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn();
+        // Its own group, so that a timeout ends what the shell started.
+        .process_group(0);
 
-    let (status_ok, stdout, stderr, spawn_error) = match spawned {
-        Ok(mut child) => {
-            if let Some(mut stdin) = child.stdin.take() {
-                // A renderer that ignores stdin may exit first; that is not an error.
-                let _ = stdin.write_all(request.to_string().as_bytes());
-            }
-            match child.wait_with_output() {
-                Ok(o) => (
-                    o.status.success(),
-                    String::from_utf8_lossy(&o.stdout).into_owned(),
-                    String::from_utf8_lossy(&o.stderr).into_owned(),
-                    None,
-                ),
-                Err(e) => (false, String::new(), String::new(), Some(e.to_string())),
-            }
-        }
-        Err(e) => (false, String::new(), String::new(), Some(e.to_string())),
-    };
+    let (status_ok, stdout, stderr, spawn_error) =
+        match render(&mut renderer, request.to_string(), options.timeout) {
+            Ok(Rendered {
+                status: Some(status),
+                stdout,
+                stderr,
+            }) => (status.success(), stdout, stderr, None),
+            Ok(Rendered { status: None, .. }) => (
+                false,
+                String::new(),
+                String::new(),
+                Some(format!(
+                    "it took longer than {} s",
+                    options.timeout.as_secs_f32()
+                )),
+            ),
+            Err(e) => (false, String::new(), String::new(), Some(e.to_string())),
+        };
     let notes: Notes = stdout
         .lines()
         .rev()
