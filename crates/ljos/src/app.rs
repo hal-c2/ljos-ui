@@ -56,6 +56,20 @@ type MessageHandler<M> = Box<dyn FnMut(&Engine, M) + 'static>;
 #[cfg(feature = "dev-qml")]
 type DiagnosticsHandler = Box<dyn FnMut(&[crate::dev::Diagnostic])>;
 
+/// What [`App::qml_dirs`] compiled and how, with the `dev-qml` feature.
+#[cfg(feature = "dev-qml")]
+#[derive(Default)]
+struct DevQml {
+    errors: crate::dev::OnError,
+    diagnostics: Option<DiagnosticsHandler>,
+    /// What `Qt.createQmlObject` compiles with, over the directories
+    /// `qml_dirs` compiled.
+    texts: Option<crate::texts::DiskTexts>,
+    /// The directories `qml_dirs` compiled, earlier ones first: what hot
+    /// reload follows.
+    dirs: Vec<std::path::PathBuf>,
+}
+
 /// The start of an application: configuration, native modules,
 /// compiled components, context state and the root component.
 ///
@@ -68,17 +82,7 @@ pub struct App<M = ()> {
     #[cfg(feature = "shell")]
     shell_config: Option<crate::ShellConfig>,
     #[cfg(feature = "dev-qml")]
-    qml_errors: crate::dev::OnError,
-    #[cfg(feature = "dev-qml")]
-    qml_diagnostics: Option<DiagnosticsHandler>,
-    /// What `Qt.createQmlObject` compiles with, over the directories
-    /// `qml_dirs` compiled.
-    #[cfg(feature = "dev-qml")]
-    texts: Option<crate::texts::DiskTexts>,
-    /// The directories `qml_dirs` compiled, earlier ones first: what hot
-    /// reload follows.
-    #[cfg(feature = "dev-qml")]
-    qml_dirs: Vec<std::path::PathBuf>,
+    dev: DevQml,
     #[cfg(feature = "mcp")]
     inspector: Option<crate::mcp::CapSet>,
     modules: Vec<Module>,
@@ -118,13 +122,7 @@ impl App<()> {
             #[cfg(feature = "shell")]
             shell_config: None,
             #[cfg(feature = "dev-qml")]
-            qml_errors: crate::dev::OnError::Record,
-            #[cfg(feature = "dev-qml")]
-            qml_diagnostics: None,
-            #[cfg(feature = "dev-qml")]
-            texts: None,
-            #[cfg(feature = "dev-qml")]
-            qml_dirs: Vec::new(),
+            dev: DevQml::default(),
             #[cfg(feature = "mcp")]
             inspector: None,
             modules: Vec::new(),
@@ -380,7 +378,7 @@ impl<M> App<M> {
             dirs.into_iter().map(|d| d.as_ref().to_owned()).collect();
         let dirs: Vec<&std::path::Path> = dirs.iter().map(|d| d.as_path()).collect();
         let compiled = crate::dev::compile_quiet(&dirs, Some(&snapshot))?;
-        match &mut self.qml_diagnostics {
+        match &mut self.dev.diagnostics {
             Some(handler) => handler(&compiled.diagnostics),
             None => {
                 for d in &compiled.diagnostics {
@@ -391,13 +389,13 @@ impl<M> App<M> {
         self.source = Some(crate::compile::checked_source(
             &dirs,
             compiled,
-            self.qml_errors,
+            self.dev.errors,
         )?);
-        self.texts = Some(crate::texts::DiskTexts::new(
+        self.dev.texts = Some(crate::texts::DiskTexts::new(
             &dirs,
             crate::dev::EngineOracle::from_engine(&snapshot),
         ));
-        self.qml_dirs = dirs.iter().map(|d| d.to_path_buf()).collect();
+        self.dev.dirs = dirs.iter().map(|d| d.to_path_buf()).collect();
         self.root = Some(root.into());
         Ok(self)
     }
@@ -415,7 +413,7 @@ impl<M> App<M> {
         mut self,
         handler: impl FnMut(&[crate::dev::Diagnostic]) + 'static,
     ) -> Self {
-        self.qml_diagnostics = Some(Box::new(handler));
+        self.dev.diagnostics = Some(Box::new(handler));
         self
     }
 
@@ -426,7 +424,7 @@ impl<M> App<M> {
     #[cfg(feature = "dev-qml")]
     #[must_use]
     pub fn qml_errors(mut self, on_error: crate::dev::OnError) -> Self {
-        self.qml_errors = on_error;
+        self.dev.errors = on_error;
         self
     }
 
@@ -492,13 +490,7 @@ impl<M> App<M> {
             #[cfg(feature = "shell")]
             shell_config,
             #[cfg(feature = "dev-qml")]
-            qml_errors,
-            #[cfg(feature = "dev-qml")]
-            qml_diagnostics,
-            #[cfg(feature = "dev-qml")]
-            texts,
-            #[cfg(feature = "dev-qml")]
-            qml_dirs,
+            dev,
             #[cfg(feature = "mcp")]
             inspector,
             modules,
@@ -514,13 +506,7 @@ impl<M> App<M> {
             #[cfg(feature = "shell")]
             shell_config,
             #[cfg(feature = "dev-qml")]
-            qml_errors,
-            #[cfg(feature = "dev-qml")]
-            qml_diagnostics,
-            #[cfg(feature = "dev-qml")]
-            texts,
-            #[cfg(feature = "dev-qml")]
-            qml_dirs,
+            dev,
             #[cfg(feature = "mcp")]
             inspector,
             modules,
@@ -542,12 +528,15 @@ impl<M> App<M> {
             context,
             on_window,
             #[cfg(feature = "dev-qml")]
-            texts,
+            dev,
             ..
         } = self;
         let engine = crate::engine();
         #[cfg(feature = "dev-qml")]
-        let source = Source { source, texts };
+        let source = Source {
+            source,
+            texts: dev.texts,
+        };
         prepare(&engine, modules, source, context, on_window);
         engine
     }
@@ -633,9 +622,7 @@ impl<M> App<M> {
             #[cfg(feature = "mcp")]
             inspector,
             #[cfg(feature = "dev-qml")]
-            texts,
-            #[cfg(feature = "dev-qml")]
-            qml_dirs,
+            dev,
             ..
         } = self;
         #[cfg(feature = "mcp")]
@@ -656,12 +643,15 @@ impl<M> App<M> {
             // `prepare` must not register them a second time, so it
             // is the same function `build_engine` uses on its own.
             #[cfg(feature = "dev-qml")]
-            let source = Source { source, texts };
+            let source = Source {
+                source,
+                texts: dev.texts,
+            };
             prepare(s.engine(), modules, source, context, on_window);
             #[cfg(all(feature = "dev", feature = "dev-qml"))]
-            s.set_qml_dirs(qml_dirs);
+            s.set_qml_dirs(dev.dirs);
             #[cfg(all(feature = "dev-qml", not(feature = "dev")))]
-            drop(qml_dirs);
+            drop(dev.dirs);
             if let Some(handler) = on_message.take() {
                 s.on_message(handler);
             }
