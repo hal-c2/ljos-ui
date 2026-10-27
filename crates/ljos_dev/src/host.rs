@@ -130,15 +130,18 @@ impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
     }
 
     fn url(&self, key: &str) -> String {
-        let name = format!("{key}.qml");
-        match self
-            .roots
-            .iter()
-            .find(|(root, _)| root.join(&name).exists())
-        {
-            Some((_, base)) if self.roots.len() > 1 => format!("{base}/{name}"),
-            _ => self.urls.url(key),
+        // One root has nothing to choose between, so asks no file.
+        if self.roots.len() > 1 {
+            let name = format!("{key}.qml");
+            if let Some((_, base)) = self
+                .roots
+                .iter()
+                .find(|(root, _)| root.join(&name).exists())
+            {
+                return format!("{base}/{name}");
+            }
         }
+        self.urls.url(key)
     }
 
     fn key(&self, url: &str) -> String {
