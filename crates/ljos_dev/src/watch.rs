@@ -506,14 +506,43 @@ impl<O: TypeOracle + Clone> Run<O> {
     /// needs its own. One that is gone lost its watch with it.
     fn watch_new_dirs(&mut self) {
         let now: BTreeSet<PathBuf> = self.roots.iter().flat_map(|r| project_dirs(r)).collect();
-        for dir in now.difference(&self.watched) {
-            let _ = self.fs.watch(dir, RecursiveMode::NonRecursive);
-        }
-        for dir in self.watched.difference(&now) {
-            let _ = self.fs.unwatch(dir);
-        }
-        self.watched = now;
+        let fs = std::cell::RefCell::new(&mut self.fs);
+        let watched = std::mem::take(&mut self.watched);
+        self.watched = rewatch(
+            watched,
+            now,
+            |dir| {
+                fs.borrow_mut()
+                    .watch(dir, RecursiveMode::NonRecursive)
+                    .is_ok()
+            },
+            |dir| {
+                let _ = fs.borrow_mut().unwatch(dir);
+            },
+        );
     }
+}
+
+/// The directories watched once `now` is what the project holds: those
+/// already watched that are still there, and those newly watched. A
+/// directory whose watch failed is not among them, so the next rescan
+/// tries it again rather than taking it for watched.
+fn rewatch<W, U>(
+    watched: BTreeSet<PathBuf>,
+    now: BTreeSet<PathBuf>,
+    mut watch: W,
+    mut unwatch: U,
+) -> BTreeSet<PathBuf>
+where
+    W: FnMut(&Path) -> bool,
+    U: FnMut(&Path),
+{
+    for dir in watched.difference(&now) {
+        unwatch(dir);
+    }
+    now.into_iter()
+        .filter(|dir| watched.contains(dir) || watch(dir))
+        .collect()
 }
 
 /// Whether `path` is where a project's entry file can be: used by hosts
@@ -521,4 +550,45 @@ impl<O: TypeOracle + Clone> Run<O> {
 #[must_use]
 pub fn is_qml_file(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "qml") && path.is_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dirs(names: &[&str]) -> BTreeSet<PathBuf> {
+        names.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn a_directory_whose_watch_failed_is_tried_again() {
+        let now = dirs(&["p", "p/a"]);
+        let watched = rewatch(dirs(&["p"]), now.clone(), |_| false, |_| {});
+        assert_eq!(watched, dirs(&["p"]));
+        let mut tried = Vec::new();
+        let watched = rewatch(
+            watched,
+            now,
+            |d| {
+                tried.push(d.to_owned());
+                true
+            },
+            |_| {},
+        );
+        assert_eq!(tried, [PathBuf::from("p/a")]);
+        assert_eq!(watched, dirs(&["p", "p/a"]));
+    }
+
+    #[test]
+    fn a_directory_that_is_gone_is_let_go_of() {
+        let mut gone = Vec::new();
+        let watched = rewatch(
+            dirs(&["p", "p/a"]),
+            dirs(&["p"]),
+            |_| true,
+            |d| gone.push(d.to_owned()),
+        );
+        assert_eq!(gone, [PathBuf::from("p/a")]);
+        assert_eq!(watched, dirs(&["p"]));
+    }
 }
