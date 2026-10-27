@@ -35,6 +35,7 @@ pub(super) struct Cx<'c, 'a> {
 pub(super) fn run<'a>(cx: &Cx<'_, 'a>, root: &QmlObject<'a>, out: &mut Vec<Diagnostic>) {
     visit(cx, root, None, out);
     super::design::run(cx, root, out);
+    super::declarative::run(cx, root, out);
 }
 
 fn visit<'a>(

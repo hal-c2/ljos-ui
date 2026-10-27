@@ -49,6 +49,13 @@
 //! | `a11y-unnamed-image` | warning | An `Image` with neither `Accessible.name` nor `Accessible.ignored`, not inside a named parent or a button. |
 //! | `i18n-untranslated-string` | hint | A literal string bound to `text`, `title`, `placeholderText`, `ToolTip.text` or `Accessible.name`/`description` and not wrapped in `qsTr`. Literals without a letter are ignored. |
 //! | `i18n-qstr-non-literal` | warning | `qsTr(...)` whose first argument is not a literal, which the translation tools cannot extract. |
+//! | `decl-mirror-handler` | hint | `onFooChanged: bar = foo`, where nothing else writes `bar`: the binding `bar: foo`. |
+//! | `decl-mode-by-handlers` | hint | Handlers that each set the same two or more item properties to values written out: states. |
+//! | `decl-imperative-animation` | hint | An animation started from another's `onFinished`, or opposite animations of one property started from script: a `SequentialAnimation`, a `Transition` or a `Behavior`. |
+//! | `decl-visibility-juggling` | hint | One item's `visible` or `opacity` set to values written out from several handlers: a binding or states. |
+//!
+//! The design rules are in `design/` and the declarative ones in
+//! `declarative.rs` (`docs/declarative.md`).
 //!
 //! # Known limits
 //!
@@ -61,6 +68,7 @@
 mod allow;
 mod check;
 mod compiled;
+mod declarative;
 mod design;
 mod facts;
 mod lint;
@@ -141,7 +149,9 @@ pub(crate) fn diagnostic(
     message: impl Into<String>,
 ) -> Diagnostic {
     let (line, column) = qml_syntax::position(source, offset);
-    let design = crate::lint(code).and_then(|l| l.design);
+    // A rule with a guideline says what to write instead; the others say it
+    // in their message.
+    let guided = crate::lint(code).and_then(|l| Some((l.fix, l.guide()?)));
     Diagnostic {
         file: path.to_string_lossy().into_owned(),
         line: line as u32,
@@ -149,8 +159,8 @@ pub(crate) fn diagnostic(
         severity,
         code: code.to_owned(),
         message: message.into(),
-        fix: design.map(|r| r.fix.to_owned()),
-        guide: design.map(|r| r.guide()),
+        fix: guided.as_ref().map(|(fix, _)| (*fix).to_owned()),
+        guide: guided.map(|(_, guide)| guide),
     }
 }
 
