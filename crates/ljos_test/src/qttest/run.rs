@@ -70,20 +70,20 @@ impl Filter {
     }
 
     /// Whether the filter names the whole of `case`.
-    fn is_case(&self, case: &str) -> bool {
+    fn names_whole_case(&self, case: &str) -> bool {
         self.case.is_none() && self.tag.is_none() && !case.is_empty() && self.name == case
     }
 
     fn takes_function(&self, case: &str, function: &str) -> bool {
         match &self.case {
             Some(c) => c == case && self.name == function,
-            None => self.is_case(case) || self.name == function,
+            None => self.names_whole_case(case) || self.name == function,
         }
     }
 
     fn takes_row(&self, case: &str, function: &str, tag: Option<&str>) -> bool {
         self.takes_function(case, function)
-            && (self.is_case(case) || self.tag.is_none() || self.tag.as_deref() == tag)
+            && (self.names_whole_case(case) || self.tag.is_none() || self.tag.as_deref() == tag)
     }
 }
 

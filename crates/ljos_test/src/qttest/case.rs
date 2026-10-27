@@ -147,7 +147,7 @@ impl TestCase {
         let engine = cx.engine;
         let host = Host::of(engine);
         let item = input::item_of(engine, item, function)?;
-        input::before(engine, &host, delay)?;
+        input::settle_then_delay(engine, &host, delay)?;
         let at = input::window_point(engine, item, x, y)?;
         let button = input::buttons_of(button).unwrap_or(MouseButtons::LEFT);
         let modifiers = input::modifiers_of(modifiers);
@@ -171,7 +171,7 @@ impl TestCase {
         let host = Host::of(engine);
         let stroke = input::stroke_of(key, function)?;
         let modifiers = input::modifiers_of(modifiers);
-        input::before(engine, &host, delay)?;
+        input::settle_then_delay(engine, &host, delay)?;
         if down {
             input::key_down(engine, &host, &stroke, modifiers)?;
         }
@@ -520,7 +520,7 @@ impl TestCase {
         let engine = cx.engine;
         let host = Host::of(engine);
         let item = input::item_of(engine, &item, "mousePress")?;
-        input::before(engine, &host, &delay)?;
+        input::settle_then_delay(engine, &host, &delay)?;
         let at = input::window_point(engine, item, &x, &y)?;
         let button = input::buttons_of(&button).unwrap_or(MouseButtons::LEFT);
         input::press_at(
@@ -546,7 +546,7 @@ impl TestCase {
         let engine = cx.engine;
         let host = Host::of(engine);
         let item = input::item_of(engine, &item, "mouseRelease")?;
-        input::before(engine, &host, &delay)?;
+        input::settle_then_delay(engine, &host, &delay)?;
         let at = input::window_point(engine, item, &x, &y)?;
         let button = input::buttons_of(&button).unwrap_or(MouseButtons::LEFT);
         input::release_at(engine, &host, at, button, input::modifiers_of(&modifiers))
@@ -567,7 +567,7 @@ impl TestCase {
         let engine = cx.engine;
         let host = Host::of(engine);
         let item = input::item_of(engine, &item, "mouseMove")?;
-        input::before(engine, &host, &delay)?;
+        input::settle_then_delay(engine, &host, &delay)?;
         let at = input::window_point(engine, item, &x, &y)?;
         let buttons = input::buttons_of(&buttons).unwrap_or_default();
         input::move_to(engine, &host, at, buttons, input::modifiers_of(&modifiers))
@@ -591,7 +591,7 @@ impl TestCase {
         let engine = cx.engine;
         let host = Host::of(engine);
         let item = input::item_of(engine, &item, "mouseDrag")?;
-        input::before(engine, &host, &delay)?;
+        input::settle_then_delay(engine, &host, &delay)?;
         let button = input::buttons_of(&button).unwrap_or(MouseButtons::LEFT);
         let modifiers = input::modifiers_of(&modifiers);
         let start = input::window_point(engine, item, &x, &y)?;
@@ -631,7 +631,7 @@ impl TestCase {
         let engine = cx.engine;
         let host = Host::of(engine);
         let item = input::item_of(engine, &item, "mouseWheel")?;
-        input::before(engine, &host, &delay)?;
+        input::settle_then_delay(engine, &host, &delay)?;
         let at = input::window_point(engine, item, &x, &y)?;
         let delta = (
             number(&x_delta).unwrap_or(0.0),

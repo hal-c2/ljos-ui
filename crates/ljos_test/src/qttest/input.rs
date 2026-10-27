@@ -76,7 +76,11 @@ pub(crate) fn window_point(
 /// What every event function does first: the scene is brought to rest, so
 /// the event meets what the test has set up, after the delay the test
 /// asked for.
-pub(crate) fn before(engine: &Engine, host: &Host, delay: &Value) -> Result<(), EngineError> {
+pub(crate) fn settle_then_delay(
+    engine: &Engine,
+    host: &Host,
+    delay: &Value,
+) -> Result<(), EngineError> {
     host.settle(engine)?;
     match number(delay) {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
