@@ -524,6 +524,30 @@ impl Engine {
         }
     }
 
+    /// Where `obj` was declared, as Qt writes it before an object's own
+    /// warning (`file.qml:5:9: QML Image: Cannot open: …`): the file's URL,
+    /// line and column, then `": "`. `None` for an object not made from QML.
+    pub fn declared_at(&self, obj: ObjectId) -> Option<String> {
+        let store = self.inner.store.borrow();
+        let loc = store.objects.get(obj)?.location()?;
+        Some(format!("{}:{}:{}: ", loc.url, loc.line, loc.column))
+    }
+
+    /// The type Qt names after `QML ` in an object's own warning: the
+    /// file or inline component `obj` is the root of, else the nearest
+    /// such type it derives from (`MyCol {}` warns as `QML MyCol:`), else
+    /// `builtin`, the native type the warning is about.
+    pub fn warning_type_name(&self, obj: ObjectId, builtin: &str) -> String {
+        let mut meta = self.meta_of(obj);
+        while let Some(m) = meta {
+            if matches!(m.declared, Some(Declared::File | Declared::Inline)) {
+                return m.name.to_string();
+            }
+            meta = m.base.clone();
+        }
+        builtin.to_owned()
+    }
+
     // ------------------------------------------------------------- objects
 
     /// Makes an object of `meta` with its constructor. `owner` destroys it.
@@ -652,6 +676,11 @@ impl Engine {
     /// with them, so a tool watching memory reads this.
     pub fn node_count(&self) -> usize {
         self.inner.graph.len()
+    }
+
+    /// The object's scope in the graph, if it has nodes yet.
+    pub fn object_scope(&self, obj: ObjectId) -> Option<ScopeId> {
+        self.inner.store.borrow().objects.get(obj)?.scope
     }
 
     pub fn meta_of(&self, obj: ObjectId) -> Option<MetaRef> {
@@ -3714,35 +3743,6 @@ impl Engine {
             },
             v => v.to_js_string(),
         }
-    }
-
-    /// The object's scope in the graph, if it has nodes yet.
-    pub fn object_scope(&self, obj: ObjectId) -> Option<ScopeId> {
-        self.inner.store.borrow().objects.get(obj)?.scope
-    }
-
-    /// Where `obj` was declared, as Qt writes it before an object's own
-    /// warning (`file.qml:5:9: QML Image: Cannot open: …`): the file's URL,
-    /// line and column, then `": "`. `None` for an object not made from QML.
-    pub fn declared_at(&self, obj: ObjectId) -> Option<String> {
-        let store = self.inner.store.borrow();
-        let loc = store.objects.get(obj)?.location()?;
-        Some(format!("{}:{}:{}: ", loc.url, loc.line, loc.column))
-    }
-
-    /// The type Qt names after `QML ` in an object's own warning: the
-    /// file or inline component `obj` is the root of, else the nearest
-    /// such type it derives from (`MyCol {}` warns as `QML MyCol:`), else
-    /// `builtin`, the native type the warning is about.
-    pub fn warning_type_name(&self, obj: ObjectId, builtin: &str) -> String {
-        let mut meta = self.meta_of(obj);
-        while let Some(m) = meta {
-            if matches!(m.declared, Some(Declared::File | Declared::Inline)) {
-                return m.name.to_string();
-            }
-            meta = m.base.clone();
-        }
-        builtin.to_owned()
     }
 }
 
