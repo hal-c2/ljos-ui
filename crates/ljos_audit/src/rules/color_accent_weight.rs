@@ -16,16 +16,14 @@ use ljos_engine::{ObjectId, Value};
 
 use crate::cx::{Cx, ancestors, is_a, item_words, shown_items, takes_focus, words};
 use crate::pixels::{Painter, backdrop};
+use crate::surfaces::qcolor;
 
 /// The palette's accent, from the first item that has a palette.
 fn accent(cx: &Cx, items: &[ObjectId]) -> Option<Srgb> {
     let e = cx.engine;
     items.iter().find_map(
         |item| match e.untrack(|| e.read_by_name(*item, "palette.highlight")) {
-            Value::Color(c) => {
-                let ch = |v: u16| f32::from(v) / 65535.0;
-                Some(Srgb::new(ch(c.r), ch(c.g), ch(c.b)))
-            }
+            Value::Color(c) => Some(qcolor(c).rgb()),
             _ => None,
         },
     )

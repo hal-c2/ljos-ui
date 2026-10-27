@@ -51,6 +51,12 @@ pub(crate) fn straight(c: Rgba) -> Srgba {
     Srgba::new(c.r / c.a, c.g / c.a, c.b / c.a, c.a)
 }
 
+/// A colour a property holds, in sRGB.
+pub(crate) fn qcolor(c: ljos_engine::Color) -> Srgba {
+    let ch = |v: u16| f32::from(v) / 65535.0;
+    Srgba::new(ch(c.r), ch(c.g), ch(c.b), ch(c.a))
+}
+
 /// The first rectangle an item paints: its fill, as shown (with the
 /// item's opacity), and whether it has a border that can be seen.
 pub(crate) fn own_rect(cx: &Cx, snapshot: &FrameSnapshot, item: ObjectId) -> Option<(Srgba, bool)> {

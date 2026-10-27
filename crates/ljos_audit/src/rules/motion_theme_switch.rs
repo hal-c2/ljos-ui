@@ -12,7 +12,7 @@
 //! `limits::motion::THEME_FLASH_MIN_L`.
 
 use ljos_a11y::ColorScheme;
-use ljos_design::color::{Oklab, Srgb};
+use ljos_design::color::Oklab;
 use ljos_design::limits::motion::{THEME_FLASH_MIN_L, THEME_SWITCH_MAX_MS};
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::Rectangle;
@@ -20,6 +20,7 @@ use ljos_quick::Rectangle;
 use crate::acting::Act;
 use crate::cx::{declared_by_app, is_a, shown_items};
 use crate::motion_watch::{anim_words, surely, watch, with_motion};
+use crate::surfaces::qcolor;
 
 /// No audit follows more rectangles than this.
 const MOST: usize = 256;
@@ -29,10 +30,7 @@ fn lightness(e: &Engine, r: ObjectId) -> f64 {
         return f64::NAN;
     }
     match e.untrack(|| e.read_by_name(r, "color")) {
-        Value::Color(c) if c.a > 0 => {
-            let ch = |v: u16| f32::from(v) / 65535.0;
-            f64::from(Oklab::from_srgb(Srgb::new(ch(c.r), ch(c.g), ch(c.b))).l)
-        }
+        Value::Color(c) if c.a > 0 => f64::from(Oklab::from_srgb(qcolor(c).rgb()).l),
         _ => f64::NAN,
     }
 }

@@ -26,9 +26,11 @@ use ljos_design::limits::{LARGE_TEXT_CONTRAST, TEXT_CONTRAST};
 use ljos_engine::ObjectId;
 use ljos_quick::{Item, Text};
 use ljos_render::kurbo::{Affine, Point, Rect};
-use ljos_render::{ClipId, DrawOp, FrameSnapshot, Paint, Rgba};
+use ljos_render::{ClipId, DrawOp, FrameSnapshot, Paint};
 
 use crate::cx::{Cx, item_words};
+use crate::pixels::backdrop;
+use crate::surfaces::{qcolor, straight};
 
 /// Something painted that text may lie on.
 struct Fill {
@@ -38,14 +40,6 @@ struct Fill {
     paint: Option<Paint>,
     opacity: f32,
     clip: Option<ClipId>,
-}
-
-/// The renderer's premultiplied colour as straight sRGB.
-fn straight(c: Rgba) -> Srgba {
-    if c.a <= 0.0 {
-        return Srgba::TRANSPARENT;
-    }
-    Srgba::new(c.r / c.a, c.g / c.a, c.b / c.a, c.a)
 }
 
 fn contains(r: Rect, p: Point) -> bool {
@@ -103,8 +97,7 @@ fn halo(cx: &Cx, item: ObjectId) -> Option<Srgba> {
         .engine
         .with::<Text, _>(item, |t| (t.style, t.style_color))
         .ok()?;
-    let ch = |v: u16| f32::from(v) / 65535.0;
-    (style != 0).then(|| Srgba::new(ch(c.r), ch(c.g), ch(c.b), ch(c.a)))
+    (style != 0).then(|| qcolor(c))
 }
 
 fn same(a: Srgba, b: Srgba) -> bool {
@@ -127,13 +120,7 @@ pub(crate) fn check(cx: &mut Cx) {
     let Some(snapshot) = cx.scene.snapshot().cloned() else {
         return;
     };
-    let backdrop = match cx.options.backdrop {
-        Some([r, g, b]) => Srgb::from_u8(r, g, b),
-        None => match ljos_quick::system_prefs(cx.engine).color_scheme {
-            ljos_a11y::ColorScheme::Dark => Srgb::BLACK,
-            _ => Srgb::WHITE,
-        },
-    };
+    let backdrop = backdrop(cx.engine, cx.options);
     let bare = cx.engine.stood_in_modules().is_empty();
     let mut fills: Vec<Fill> = Vec::new();
     let mut worst: HashMap<ObjectId, Worst> = HashMap::new();
