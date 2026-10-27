@@ -1299,11 +1299,7 @@ impl<M: Send + 'static> Desktop<M> {
         let painter = match (attached, slot.painter.as_ref()) {
             (Ok(why), Some(painter)) => {
                 if let Some(why) = why {
-                    engine.log(
-                        LogLevel::Warning,
-                        CATEGORY,
-                        format!("drawing with wgpu: GL could not be had ({why})"),
-                    );
+                    log_gl_refused(engine, &why);
                 }
                 painter
             }
@@ -1405,11 +1401,7 @@ impl<M: Send + 'static> Desktop<M> {
                 &window,
                 surface::Choice::Gl,
             ) {
-                Ok(Some(why)) => engine.log(
-                    LogLevel::Warning,
-                    CATEGORY,
-                    format!("drawing with wgpu: GL could not be had ({why})"),
-                ),
+                Ok(Some(why)) => log_gl_refused(&engine, &why),
                 Ok(None) => {}
                 Err(e) => {
                     engine.log(
@@ -2923,6 +2915,15 @@ fn only_software(display: &egui_winit::winit::event_loop::OwnedDisplayHandle) ->
         let _ = display;
         false
     }
+}
+
+/// Says that a window GL was asked for is drawn with wgpu, and why.
+fn log_gl_refused(engine: &Engine, why: &str) {
+    engine.log(
+        LogLevel::Warning,
+        CATEGORY,
+        format!("drawing with wgpu: GL could not be had ({why})"),
+    );
 }
 
 /// Makes egui's font atlas again, so that it is sent whole with the next
