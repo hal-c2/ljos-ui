@@ -1,6 +1,7 @@
 //! What the audit found, and the report of it.
 
 use std::fmt;
+use std::fmt::Write as _;
 
 use ljos_design::{Rule, Severity};
 use ljos_engine::ObjectId;
@@ -196,27 +197,21 @@ impl Report {
             let mut of = self.of(code).peekable();
             let Some(first) = of.peek() else { continue };
             let rule = first.rule;
-            out.push_str(&format!(
-                "{code} ({}): {}
-  fix: {}
-  guide: {}
-",
+            let _ = writeln!(
+                out,
+                "{code} ({}): {}\n  fix: {}\n  guide: {}",
                 severity_word(rule.severity),
                 rule.rule,
                 rule.fix,
                 rule.guide()
-            ));
+            );
             for f in of {
                 let place = f
                     .place
                     .as_deref()
                     .map(|p| p.strip_prefix(strip).unwrap_or(p).trim_start_matches('/'))
                     .unwrap_or("(no source)");
-                out.push_str(&format!(
-                    "  {place}: {}
-",
-                    f.message
-                ));
+                let _ = writeln!(out, "  {place}: {}", f.message);
                 let mut more = Vec::new();
                 if let Some(m) = &f.measured {
                     more.push(m.clone());
@@ -229,34 +224,28 @@ impl Report {
                     more.push(format!("at {}", points.join("; ")));
                 }
                 if !more.is_empty() {
-                    out.push_str(&format!(
-                        "    {}
-",
-                        more.join(" | ")
-                    ));
+                    let _ = writeln!(out, "    {}", more.join(" | "));
                 }
             }
         }
         if !self.unseen.is_empty() {
-            out.push_str(&format!(
+            let _ = writeln!(
+                out,
                 "Not audited: what the items of {} show; Ljós does not have the module, and \
-                 they stand in as empty Items.\n",
+                 they stand in as empty Items.",
                 self.unseen.join(", ")
-            ));
+            );
         }
         if !self.not_checked.is_empty() {
-            out.push_str(&format!(
+            let _ = writeln!(
+                out,
                 "Not checked: {}; these checks press keys, toggle controls and run the \
-                 application's handlers, which this audit was not asked to do.\n",
+                 application's handlers, which this audit was not asked to do.",
                 self.not_checked.join(", ")
-            ));
+            );
         }
         if self.left_out > 0 {
-            out.push_str(&format!(
-                "({} more not shown)
-",
-                self.left_out
-            ));
+            let _ = writeln!(out, "({} more not shown)", self.left_out);
         }
         out
     }
