@@ -7782,3 +7782,56 @@ DECISIONs:
   drops the shown page and keeps it alive, Ljós diverges.
 - What thermostat's nodes hold (binding closures, per-node cost) is left to the delegate
   track.
+
+#### The glyph atlas: what is drawn, not what was (2026-10-27)
+
+On a Mac, under `ljos run`, B0's glyph atlas had grown to 4096²: 80 MiB (16 MiB of
+coverage and a 64 MiB texture) for 975 glyphs. The atlas doubled whenever a glyph did not
+fit, and emptied only at its largest side: the GPU's limit, at most 4096² on desktop. A
+glyph is filled at its device size in eighths of a pixel, so text drawn at a new size each
+frame, as a scale animation draws it, filled it with sizes never drawn again. The 2048 in
+the shell is something else: the limit egui is told for its own text atlas
+(`EGUI_TEXTURE_SIDE`). Ljós's atlas follows the GPU's limit in `ljos run` and in the
+shell alike.
+
+Now a full atlas keeps only the glyphs the frame draws. They are copied into an atlas as
+small as they fit, not filled again. The atlas grows only while everything it holds is
+this frame's. After a compaction that leaves it more than half full, it doubles, so the
+next new glyphs find room (`ljos_render` tests `b0_lets_go_of_sizes_no_longer_drawn_before_it_grows`,
+`b0_copies_the_glyphs_it_keeps_when_it_lets_others_go`).
+
+Off-screen in the cua sandbox at scale 2, Ljós drawing with GL (`LJOS_PAINTER=gl`): the
+bench's Ljós runs above draw on the processor, where llvmpipe is all EGL offers, and B0's
+atlas is not used. A window of 14 labels and one label whose `scale` animates between 1
+and 1.6. Private is `Pss_Anon + SwapPss` in MiB; CPU is seconds used from 10 s to 40 s.
+
+| Run | Load | Atlas at 10 s | Atlas at 40 s | Private at 40 s | CPU 10–40 s |
+|---|---:|---|---|---:|---:|
+| Ljós before, 1 | 33.9 | 2048², 20 MiB, 1412 glyphs | 4096², 80 MiB, 2351 glyphs | 119.4 | 1.59 |
+| Ljós before, 2 | 7.9 | 4096², 80 MiB, 1888 glyphs | 4096², 80 MiB, 2353 glyphs | 119.4 | 1.09 |
+| Ljós after, 1 | 17.1 | 1024², 5 MiB, 247 glyphs | 512², 1.25 MiB, 167 glyphs | 48.5 | 1.51 |
+| Ljós after, 2 | 5.5 | 1024², 5 MiB, 127 glyphs | 1024², 5 MiB, 285 glyphs | 52.4 | 1.42 |
+| qml6, 1 | 9.8 | | | 71.9 | 18.54 |
+| qml6, 2 | 4.7 | | | 77.7 | 18.58 |
+
+Copying the kept glyphs costs no CPU that shows beside the run-to-run spread.
+
+Thermostat and maroon, the same way, with the page replaced each round (thermostat) or the
+5×5 grid clicked (maroon):
+
+| App | Load before / after | Atlas before | Atlas after |
+|---|---:|---|---|
+| thermostat, 8 rounds | 8.4–20.0 / 19.5–71.4 | 1024², 5 MiB, 227 → 448 glyphs | the same: it never filled |
+| maroon, 5 rounds | 7.3–28.7 / 25.0–62.0 | 512², 1.25 MiB, 121 → 295 glyphs | 256², 0.31 MiB, 21–56 glyphs |
+
+Their private memory did not move beyond the spread of the runs: the machine was swapping
+(`SwapPss` up to 80 MiB of it), and the atlas is at most 5 MiB of either.
+
+DECISIONs:
+
+- Compact before growing, copying the frame's glyphs, rather than evicting glyph by glyph:
+  a shelf packer cannot reuse a single freed slot. A compaction costs what growing did (a
+  new texture, meshes rebuilt) and no filling.
+- The 4096² limit on desktop stays: the atlas now reaches it only for a frame that draws
+  that much text.
+- Checked by Rust tests: neither QML nor the BDD runner (which draws with R) sees B0's atlas.
