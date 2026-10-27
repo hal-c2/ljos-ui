@@ -770,7 +770,7 @@ fn above(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
 
 /// The nearest window at or above `cur` (tracked).
 fn window_above(engine: &Engine, mut cur: Option<ObjectId>) -> Option<ObjectId> {
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let p = cur.filter(|p| engine.is_alive(*p))?;
         if matches!(
             kind_of(engine, p),
@@ -798,7 +798,7 @@ struct FromAbove {
 fn inherited_font(engine: &Engine, obj: ObjectId) -> FromAbove {
     let mut cur = above(engine, obj);
     // A tree deeper than this is a cycle someone built by hand.
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
@@ -915,7 +915,7 @@ fn take_font_back(engine: &Engine, obj: ObjectId, fp: PropIndex) -> Result<(), E
 fn inherited_locale(engine: &Engine, obj: ObjectId) -> Value {
     let mut cur = above(engine, obj);
     // A tree deeper than this is a cycle someone built by hand.
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
@@ -1056,7 +1056,7 @@ fn resolve_palette(
         let mut cur = above(engine, obj);
         let mut ended = false;
         // A tree deeper than this is a cycle someone built by hand.
-        for _ in 0..4096 {
+        for _ in 0..crate::util::DEPTH {
             let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
                 ended = true;
                 break;
@@ -1407,7 +1407,7 @@ fn take_from_above(engine: &Engine, item: ObjectId, roles: u32) {
     });
     let mut open = mine.iter().filter(|m| !**m).count();
     let mut cur = above(engine, item);
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
@@ -1510,7 +1510,7 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
     };
     if in_use(engine, Which::Palette) {
         let mut cur = above(engine, obj);
-        for _ in 0..4096 {
+        for _ in 0..crate::util::DEPTH {
             let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
                 break;
             };

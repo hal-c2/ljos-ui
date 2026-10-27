@@ -194,7 +194,7 @@ const LEAVES: [&str; 5] = [
 fn button_of(engine: &Engine, label: ObjectId) -> Option<ObjectId> {
     let mut cur = engine.owner(label);
     // An ownership chain deeper than this is a cycle someone built.
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let o = cur.filter(|o| engine.is_alive(*o))?;
         if is_a::<AbstractButton>(engine, o) {
             return Some(o);

@@ -107,6 +107,11 @@ pub(crate) fn set_derived(
     engine.write_derived(obj, prop, v)
 }
 
+/// How far up a tree of items, popups or windows a walk goes before it
+/// counts the tree as a cycle someone built by hand. One bound for every
+/// walk, so that what one walk finds another does too.
+pub(crate) const DEPTH: usize = 4096;
+
 /// The text a control draws for `text`: an `&` marks the letter after it
 /// as the mnemonic and is not drawn, and `&&` is one literal `&`. Measured
 /// on qml6 for longer runs: an `&` is dropped unless another `&` comes right

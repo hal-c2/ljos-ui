@@ -407,7 +407,7 @@ fn key_press(engine: &Engine, item: ObjectId, ev: &KeyEvent) -> bool {
 pub(crate) fn is_inside(engine: &Engine, obj: ObjectId, ancestor: ObjectId) -> bool {
     engine.untrack(|| {
         let mut cur = Some(obj);
-        for _ in 0..4096 {
+        for _ in 0..crate::util::DEPTH {
             match cur {
                 Some(o) if o == ancestor => return true,
                 Some(o) => cur = engine.visual_parent(o),

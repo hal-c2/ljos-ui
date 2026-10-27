@@ -50,10 +50,7 @@ pub use system::{
 use crate::containers::{Host, bar_height, host_append, host_complete, host_insert};
 use crate::inherit::{self, InheritState, Kind};
 use crate::parts::{PartKind, manage_part, settle_parts};
-use crate::util::{check, flag, is_a, is_unset, num, object, set_computed};
-
-/// How far up a tree is searched before it counts as broken.
-const DEPTH: usize = 256;
+use crate::util::{DEPTH, check, flag, is_a, is_unset, num, object, set_computed};
 
 /// `Window.Windowed`: what `visibility` holds (numbers read off qml6
 /// 6.11.2), and `Window.BlurBackdrop`, `Window.GlassBackdrop`: what `backdrop`
@@ -1078,5 +1075,26 @@ impl ApplicationWindow {
         )?;
         manage_part(e, obj, ApplicationWindow::FOOTER.index, PartKind::Footer)?;
         inherit::attach(e, obj, Kind::ApplicationWindow, true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tree is walked as deep as anywhere else in the controls: an item
+    /// 300 levels into a window is in it.
+    #[test]
+    fn an_item_deep_in_a_window_is_under_it() {
+        let e = Engine::new();
+        ljos_quick::register(&e);
+        let top = e.create_native(Item::default(), None).unwrap();
+        let mut leaf = top;
+        for _ in 0..300 {
+            let child = e.create_native(Item::default(), None).unwrap();
+            e.set_visual_parent(child, Some(leaf)).unwrap();
+            leaf = child;
+        }
+        assert!(is_under(&e, leaf, top));
     }
 }

@@ -1059,7 +1059,7 @@ fn material_ini_value(text: &str, key: &str) -> Option<String> {
 fn inherited_material_theme(engine: &Engine, att: ObjectId) -> i32 {
     let meta = material_attacher();
     let mut cur = engine.owner(att).and_then(|o| above(engine, o));
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
@@ -1107,7 +1107,7 @@ fn inherited_material_color(
 ) -> Color {
     let meta = material_attacher();
     let mut cur = engine.owner(att).and_then(|o| above(engine, o));
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
@@ -1999,7 +1999,7 @@ fn reset_universal_background(
 fn inherited_universal_theme(engine: &Engine, att: ObjectId) -> i32 {
     let meta = universal_attacher();
     let mut cur = engine.owner(att).and_then(|o| above(engine, o));
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
@@ -2042,7 +2042,7 @@ fn inherited_universal_color(
 ) -> Color {
     let meta = universal_attacher();
     let mut cur = engine.owner(att).and_then(|o| above(engine, o));
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };

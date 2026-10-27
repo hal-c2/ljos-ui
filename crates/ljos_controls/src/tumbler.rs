@@ -592,7 +592,7 @@ fn release(e: &Engine, item: ObjectId, held: Held) {
 fn tumbler_above(e: &Engine, item: ObjectId) -> Option<ObjectId> {
     let mut cur = e.read(item, Item::PARENT.index).as_object()?;
     // A tree deeper than this is a cycle someone built by hand.
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         if !e.is_alive(cur) {
             return None;
         }
@@ -613,7 +613,7 @@ fn displacement(e: &Engine, item: ObjectId, tumbler: ObjectId) -> f64 {
     // Where the item is in the content item, through what it is in.
     let mut y = num(e, item, Item::Y.index) + num(e, item, Item::HEIGHT.index) / 2.0;
     let mut cur = e.read(item, Item::PARENT.index).as_object();
-    for _ in 0..4096 {
+    for _ in 0..crate::util::DEPTH {
         let Some(p) = cur.filter(|p| e.is_alive(*p)) else {
             return 0.0;
         };
