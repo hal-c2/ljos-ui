@@ -15,7 +15,7 @@ use ljos_a11y::accesskit::Toggled;
 use ljos_a11y::{NodeData, Role};
 use ljos_engine::{Atom, Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlType, Value};
 use ljos_quick::{
-    Accessible, AccessibleAction, AccessibleAttached, AccessibleDefaults, AccessibleItem,
+    Accessible, AccessibleAttached, AccessibleDefaults, AccessibleItem,
     register_accessible_defaults, register_accessible_item,
 };
 
@@ -24,6 +24,7 @@ use crate::button::{AbstractButton, Button, CheckBox, RadioButton, Switch};
 use crate::calendar::{DayOfWeekRow, MonthGrid, WeekNumberColumn};
 use crate::combobox::ComboBox;
 use crate::containers::{Frame, GroupBox, Page, Pane, ToolBar};
+use crate::control::no_action;
 use crate::dial::Dial;
 use crate::label::Label;
 use crate::menu::MenuSeparator;
@@ -185,11 +186,6 @@ fn describe_button(e: &Engine, obj: ObjectId, data: &mut NodeData) {
             data.selected = Some(row.picked);
         }
     }
-}
-
-/// A press is the scene's to deliver; a button takes nothing else.
-fn no_action(_: &Engine, _: ObjectId, _: AccessibleAction) -> bool {
-    false
 }
 
 /// A type, by its meta-object.

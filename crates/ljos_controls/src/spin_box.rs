@@ -46,6 +46,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
+use crate::control::no_key;
 use crate::control::{Control, hover, is_left, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::ticker;
@@ -1233,10 +1234,6 @@ fn key_press(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
         }
         _ => false,
     }
-}
-
-fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
-    false
 }
 
 fn wheel(engine: &Engine, obj: ObjectId, ev: &WheelEvent, _at: kurbo::Point) -> bool {

@@ -29,6 +29,7 @@ use ljos_render::kurbo;
 use super::{Popup, close_policy, dismiss, popup_of, put};
 use crate::containers::{Page, Pane};
 use crate::control::Control;
+use crate::control::{ignore, no_key};
 use crate::util::{check, flag};
 use ljos_quick::palette::{ROLE_COUNT, group_props, role_props};
 
@@ -363,8 +364,6 @@ fn press(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) -> bool {
     true
 }
 
-fn ignore(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) {}
-
 /// A drawer that has the pointer follows it from the overlay, which sees
 /// each move first; what is left here is to let go.
 fn release(engine: &Engine, item: ObjectId, ev: &PointerEvent, _: kurbo::Point) {
@@ -373,10 +372,6 @@ fn release(engine: &Engine, item: ObjectId, ev: &PointerEvent, _: kurbo::Point) 
 
 fn cancel(engine: &Engine, item: ObjectId) {
     super::drawer_drag::canceled(engine, item);
-}
-
-fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
-    false
 }
 
 fn key_press(engine: &Engine, item: ObjectId, ev: &KeyEvent) -> bool {

@@ -369,9 +369,21 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, _at: kurbo::Point) -
     true
 }
 
-fn ignore(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) {}
+// The hooks a control takes no part in, shared so each registration names
+// what it leaves alone instead of carrying its own empty function.
+pub(crate) fn ignore(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) {}
 
-fn ignore_cancel(_: &Engine, _: ObjectId) {}
+pub(crate) fn ignore_cancel(_: &Engine, _: ObjectId) {}
+
+pub(crate) fn no_key(_: &Engine, _: ObjectId, _: &ljos_quick::KeyEvent) -> bool {
+    false
+}
+
+/// A press is the scene's to deliver; a control with no other action takes
+/// nothing else.
+pub(crate) fn no_action(_: &Engine, _: ObjectId, _: ljos_quick::AccessibleAction) -> bool {
+    false
+}
 
 pub(crate) fn hover(engine: &Engine, obj: ObjectId, over: bool) {
     let on = over && engine.untrack(|| flag(engine, obj, Control::HOVER_ENABLED.index));

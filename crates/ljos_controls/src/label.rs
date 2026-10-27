@@ -15,6 +15,7 @@ use ljos_quick::{
 use ljos_render::kurbo;
 
 use crate::control::{focus_policy, is_left, takes_input};
+use crate::control::{ignore, ignore_cancel};
 use crate::inherit::{self, InheritState, Kind};
 use crate::parts::{PartKind, manage_part, settle_parts};
 use crate::util::{num, object};
@@ -100,10 +101,6 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, _at: kurbo::Point) -
     force_active_focus(engine, obj, FocusReason::Mouse);
     true
 }
-
-fn ignore(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) {}
-
-fn ignore_cancel(_: &Engine, _: ObjectId) {}
 
 fn ignore_hover(_: &Engine, _: ObjectId, _: bool) {}
 

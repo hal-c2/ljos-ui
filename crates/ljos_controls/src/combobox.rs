@@ -43,6 +43,7 @@ use ljos_quick::{
 use ljos_render::kurbo;
 
 use crate::button::AbstractButton;
+use crate::control::no_key;
 use crate::control::{Control, focus_policy, hover, is_left, takes_input};
 use crate::parts::{PartKind, declared_by_style, manage_part};
 use crate::popup::{self, Popup, close_policy};
@@ -1528,10 +1529,6 @@ fn cancel(engine: &Engine, combo: ObjectId) {
     if st.key_held.replace(false) || held {
         set_pressed(engine, combo, false);
     }
-}
-
-fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
-    false
 }
 
 /// The character a key types, when it is one a row could start with.

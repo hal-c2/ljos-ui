@@ -34,6 +34,7 @@ use ljos_quick::{
 
 use crate::containers::Pane;
 use crate::control::Control;
+use crate::control::no_key;
 use crate::scroll_bar::{scroll_bars, step};
 use crate::text_area::TextArea;
 use crate::util::{flag, is_a, is_unset, num, object};
@@ -394,10 +395,6 @@ fn key_press(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
     step(engine, bar, forward);
     // Taken also where the bar could go no further.
     true
-}
-
-fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
-    false
 }
 
 /// The node of a view says how far it is scrolled; the scroll actions

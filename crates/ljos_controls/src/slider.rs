@@ -40,6 +40,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
+use crate::control::no_key;
 use crate::control::{Control, focus_policy, hover, is_left, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::scroll_bar::{orientation, snap_mode};
@@ -968,10 +969,6 @@ fn key_press(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
     let at = focused_knob(engine, obj, kind);
     user_step(engine, obj, kind, at, up);
     true
-}
-
-fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
-    false
 }
 
 fn wheel(engine: &Engine, obj: ObjectId, ev: &WheelEvent, _p: kurbo::Point) -> bool {

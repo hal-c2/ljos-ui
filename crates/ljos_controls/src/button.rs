@@ -31,6 +31,7 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use crate::action::Action;
+use crate::control::no_key;
 use crate::control::{Control, click_focus, focus_policy, hover, is_left, takes_input};
 use crate::group;
 use crate::parts::{PartKind, manage_part};
@@ -913,10 +914,6 @@ fn key_release(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
         trigger(engine, obj);
     }
     true
-}
-
-fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
-    false
 }
 
 pub(crate) fn register(engine: &Engine) {

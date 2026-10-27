@@ -40,6 +40,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
+use crate::control::no_key;
 use crate::control::{Control, focus_policy, takes_input};
 use crate::rows;
 use crate::util::{bind_default, check, flag, is_a, num, object, on_model_made, set_computed};
@@ -662,10 +663,6 @@ fn key_press(e: &Engine, me: ObjectId, ev: &KeyEvent) -> bool {
         }
         _ => false,
     }
-}
-
-fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
-    false
 }
 
 // qml6 turns no tumbler by the wheel. One that takes the wheel keeps it

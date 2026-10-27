@@ -34,6 +34,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
+use crate::control::no_key;
 use crate::control::{Control, focus_policy, hover, is_left, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::scroll_bar::snap_mode;
@@ -449,10 +450,6 @@ fn key_press(e: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
         moved_signal(e, obj);
     }
     true
-}
-
-fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
-    false
 }
 
 fn wheel(e: &Engine, obj: ObjectId, ev: &WheelEvent, _p: kurbo::Point) -> bool {

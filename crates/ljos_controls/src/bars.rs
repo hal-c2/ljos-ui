@@ -12,9 +12,10 @@ use ljos_a11y::{NodeData, Range};
 use ljos_engine::{
     Cx, Engine, EngineError, MetaRef, ObjectId, QmlObject, QmlType, Value, qml_impl,
 };
-use ljos_quick::{AccessibleAction, AccessibleItem, register_accessible_item};
+use ljos_quick::{AccessibleItem, register_accessible_item};
 
 use crate::control::Control;
+use crate::control::no_action;
 use crate::scroll_bar::orientation;
 use crate::slider::Span;
 use crate::util::{check, flag, num};
@@ -174,10 +175,6 @@ fn describe_bar(e: &Engine, obj: ObjectId, data: &mut NodeData) {
         max: s.hi(),
         step: 0.0,
     });
-}
-
-fn no_action(_: &Engine, _: ObjectId, _: AccessibleAction) -> bool {
-    false
 }
 
 pub(crate) fn register(engine: &Engine) {

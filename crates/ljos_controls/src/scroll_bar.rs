@@ -32,6 +32,7 @@ use ljos_quick::{
 use ljos_render::kurbo;
 
 use crate::control::{Control, hover, is_left, takes_input};
+use crate::control::{ignore, ignore_cancel};
 use crate::util::{check, flag, is_a, is_unset, num, object};
 
 /// `Qt.Orientation`.
@@ -640,10 +641,6 @@ fn bar_hover(engine: &Engine, obj: ObjectId, over: bool) {
 fn pass(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) -> bool {
     false
 }
-
-fn ignore(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) {}
-
-fn ignore_cancel(_: &Engine, _: ObjectId) {}
 
 // ------------------------------------------------- attached to a Flickable
 
