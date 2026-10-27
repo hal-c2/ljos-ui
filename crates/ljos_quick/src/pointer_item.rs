@@ -14,6 +14,8 @@
 use std::cell::RefCell;
 
 use ljos_engine::{Engine, MetaRef, ObjectId};
+
+use crate::by_type::ByType;
 use ljos_render::kurbo;
 
 use crate::input::PointerEvent;
@@ -40,34 +42,24 @@ pub struct PointerItem {
 
 #[derive(Default)]
 struct Registry {
-    types: RefCell<Vec<(MetaRef, PointerItem)>>,
+    types: ByType<PointerItem>,
 }
 
 /// Makes the scene deliver the pointer to items of type `meta` (and of the
 /// types derived from it) through `hooks`. A later registration wins, so a
 /// derived type can be given hooks of its own.
 pub fn register_pointer_item(engine: &Engine, meta: MetaRef, hooks: PointerItem) {
-    engine
-        .extension::<Registry>()
-        .types
-        .borrow_mut()
-        .push((meta, hooks));
+    engine.extension::<Registry>().types.push(meta, hooks);
 }
 
 /// The hooks of `obj`'s type.
 pub(crate) fn pointer_item(engine: &Engine, obj: ObjectId) -> Option<PointerItem> {
     let reg = engine.extension::<Registry>();
-    let types = reg.types.borrow();
-    if types.is_empty() {
+    if reg.types.is_empty() {
         return None;
     }
     let meta = engine.meta_of(obj)?;
-    let hooks = types
-        .iter()
-        .rev()
-        .find(|(m, _)| meta.inherits(m))
-        .map(|(_, h)| *h)?;
-    drop(types);
+    let hooks = reg.types.find(&meta)?;
     let conditions = engine.extension::<Conditions>();
     let unmet = conditions
         .types
@@ -123,7 +115,7 @@ pub fn register_pointer_condition(engine: &Engine, meta: MetaRef, met: PointerCo
 /// pointer (`hits`, topmost first): the topmost registered one and the
 /// registered items it is inside.
 pub(crate) fn update_hover(engine: &Engine, hits: &[ObjectId], hovered: &mut Vec<ObjectId>) {
-    if hovered.is_empty() && engine.extension::<Registry>().types.borrow().is_empty() {
+    if hovered.is_empty() && engine.extension::<Registry>().types.is_empty() {
         return;
     }
     let mut now: Vec<(ObjectId, PointerItem)> = Vec::new();
@@ -167,18 +159,14 @@ pub type HoverMove = fn(&Engine, ObjectId, kurbo::Point);
 
 #[derive(Default)]
 struct HoverMoves {
-    types: RefCell<Vec<(MetaRef, HoverMove)>>,
+    types: ByType<HoverMove>,
 }
 
 /// Makes the scene tell hovered items of type `meta` (and of the types
 /// derived from it) where the pointer is, each time it moves. The item
 /// must also be a [`PointerItem`]: only those are hovered.
 pub fn register_hover_move(engine: &Engine, meta: MetaRef, moved: HoverMove) {
-    engine
-        .extension::<HoverMoves>()
-        .types
-        .borrow_mut()
-        .push((meta, moved));
+    engine.extension::<HoverMoves>().types.push(meta, moved);
 }
 
 /// Tells the hovered items that asked where the pointer is. `local` maps
@@ -189,7 +177,7 @@ pub(crate) fn hover_moved(
     local: impl Fn(ObjectId) -> kurbo::Point,
 ) {
     let reg = engine.extension::<HoverMoves>();
-    if hovered.is_empty() || reg.types.borrow().is_empty() {
+    if hovered.is_empty() || reg.types.is_empty() {
         return;
     }
     for o in hovered {
@@ -197,13 +185,7 @@ pub(crate) fn hover_moved(
             continue;
         };
         // Copied out: the hook may register or destroy.
-        let hook = reg
-            .types
-            .borrow()
-            .iter()
-            .rev()
-            .find(|(m, _)| meta.inherits(m))
-            .map(|(_, h)| *h);
+        let hook = reg.types.find(&meta);
         if let Some(hook) = hook {
             hook(engine, *o, local(*o));
         }

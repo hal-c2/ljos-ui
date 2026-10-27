@@ -22,6 +22,8 @@ use ljos_engine::{
     Atom, Cx, Engine, EngineError, LogLevel, MetaRef, NodeId as GraphNode, ObjectId, PropIndex,
     QmlObject, QmlType, QtObject, Value, qml_impl,
 };
+
+use crate::by_type::ByType;
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -397,7 +399,7 @@ pub struct AccessibleItem {
 
 #[derive(Default)]
 struct AccessibleItems {
-    types: RefCell<Vec<(MetaRef, AccessibleItem)>>,
+    types: ByType<AccessibleItem>,
 }
 
 /// Makes the accessibility pass ask items of type `meta` (and of the
@@ -406,22 +408,11 @@ pub fn register_accessible_item(engine: &Engine, meta: MetaRef, hooks: Accessibl
     engine
         .extension::<AccessibleItems>()
         .types
-        .borrow_mut()
-        .push((meta, hooks));
+        .push(meta, hooks);
 }
 
 fn accessible_item(engine: &Engine, obj: ObjectId) -> Option<AccessibleItem> {
-    let reg = engine.extension::<AccessibleItems>();
-    let types = reg.types.borrow();
-    if types.is_empty() {
-        return None;
-    }
-    let meta = engine.meta_of(obj)?;
-    types
-        .iter()
-        .rev()
-        .find(|(m, _)| meta.inherits(m))
-        .map(|(_, h)| *h)
+    engine.extension::<AccessibleItems>().types.of(engine, obj)
 }
 
 /// A part of an item that is a node of its own inside the item's node: a
@@ -445,32 +436,18 @@ pub type AccessibleParts = fn(&Engine, ObjectId) -> Vec<AccessiblePart>;
 
 #[derive(Default)]
 struct PartTypes {
-    types: RefCell<Vec<(MetaRef, AccessibleParts)>>,
+    types: ByType<AccessibleParts>,
 }
 
 /// Makes the accessibility pass list the parts of exposed items of type
 /// `meta` (and of the types derived from it) through `parts`. A later
 /// registration wins.
 pub fn register_accessible_parts(engine: &Engine, meta: MetaRef, parts: AccessibleParts) {
-    engine
-        .extension::<PartTypes>()
-        .types
-        .borrow_mut()
-        .push((meta, parts));
+    engine.extension::<PartTypes>().types.push(meta, parts);
 }
 
 fn accessible_parts(engine: &Engine, obj: ObjectId) -> Option<AccessibleParts> {
-    let reg = engine.extension::<PartTypes>();
-    let types = reg.types.borrow();
-    if types.is_empty() {
-        return None;
-    }
-    let meta = engine.meta_of(obj)?;
-    types
-        .iter()
-        .rev()
-        .find(|(m, _)| meta.inherits(m))
-        .map(|(_, h)| *h)
+    engine.extension::<PartTypes>().types.of(engine, obj)
 }
 
 /// Gives an item of a registered type what its `Accessible` object says

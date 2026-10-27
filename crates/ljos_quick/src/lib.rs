@@ -12,6 +12,7 @@ mod anchors;
 mod animation;
 mod app_font;
 mod application_palette;
+mod by_type;
 pub use app_font::application_font_changed;
 mod canvas;
 mod context_menu;

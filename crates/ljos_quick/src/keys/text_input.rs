@@ -6,11 +6,12 @@
 //! Positions count UTF-16 code units, as QML's `cursorPosition` and the
 //! input methods of the platforms do.
 
-use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
 use ljos_engine::{Engine, MetaRef, ObjectId};
+
+use crate::by_type::ByType;
 use ljos_render::kurbo;
 
 use crate::scene::QuickScene;
@@ -71,32 +72,18 @@ pub trait TextInputClient {
 
 #[derive(Default)]
 struct Registry {
-    types: RefCell<Vec<(MetaRef, Rc<dyn TextInputClient>)>>,
+    types: ByType<Rc<dyn TextInputClient>>,
 }
 
 /// Makes items of type `meta` (and of the types derived from it) text
 /// input clients. A later registration wins.
 pub fn register_text_input_client(engine: &Engine, meta: MetaRef, client: Rc<dyn TextInputClient>) {
-    engine
-        .extension::<Registry>()
-        .types
-        .borrow_mut()
-        .push((meta, client));
+    engine.extension::<Registry>().types.push(meta, client);
 }
 
 /// The client of `item`'s type, if it edits text.
 pub fn text_input_client(engine: &Engine, item: ObjectId) -> Option<Rc<dyn TextInputClient>> {
-    let reg = engine.extension::<Registry>();
-    let types = reg.types.borrow();
-    if types.is_empty() {
-        return None;
-    }
-    let meta = engine.meta_of(item)?;
-    types
-        .iter()
-        .rev()
-        .find(|(m, _)| meta.inherits(m))
-        .map(|(_, c)| Rc::clone(c))
+    engine.extension::<Registry>().types.of(engine, item)
 }
 
 impl QuickScene {

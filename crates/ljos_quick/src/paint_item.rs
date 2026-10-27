@@ -20,6 +20,8 @@ use std::fmt::Debug;
 use std::rc::Rc;
 
 use ljos_engine::{Engine, MetaRef, ObjectId, Value};
+
+use crate::by_type::ByType;
 use ljos_reactive::NodeId;
 use ljos_render::{DisplayListBuilder, kurbo};
 use ljos_text::TextEngine;
@@ -40,32 +42,18 @@ pub type ReadPaint = fn(&Engine, ObjectId) -> Rc<dyn ItemPaint>;
 
 #[derive(Default)]
 struct Registry {
-    types: RefCell<Vec<(MetaRef, ReadPaint)>>,
+    types: ByType<ReadPaint>,
 }
 
 /// Makes the scene paint items of type `meta` (and of the types derived
 /// from it) with what `read` returns. A later registration wins.
 pub fn register_paint_item(engine: &Engine, meta: MetaRef, read: ReadPaint) {
-    engine
-        .extension::<Registry>()
-        .types
-        .borrow_mut()
-        .push((meta, read));
+    engine.extension::<Registry>().types.push(meta, read);
 }
 
 /// The reader of `obj`'s type, if another crate registered one.
 pub(crate) fn paint_item(engine: &Engine, obj: ObjectId) -> Option<ReadPaint> {
-    let reg = engine.extension::<Registry>();
-    let types = reg.types.borrow();
-    if types.is_empty() {
-        return None;
-    }
-    let meta = engine.meta_of(obj)?;
-    types
-        .iter()
-        .rev()
-        .find(|(m, _)| meta.inherits(m))
-        .map(|(_, r)| *r)
+    engine.extension::<Registry>().types.of(engine, obj)
 }
 
 /// Each painted item's repaint node, made the first time the item is read.

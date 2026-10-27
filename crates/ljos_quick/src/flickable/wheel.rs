@@ -8,9 +8,9 @@
 //! scroll, as Qt does. An event nothing uses changes nothing and costs no
 //! frame.
 
-use std::cell::RefCell;
-
 use ljos_engine::{Engine, MetaRef, ObjectId};
+
+use crate::by_type::ByType;
 use ljos_render::kurbo;
 
 use super::physics::{Motion, WHEEL_NOTCH_PIXELS, scroll_physics};
@@ -32,28 +32,17 @@ pub struct WheelItem {
 
 #[derive(Default)]
 struct Registry {
-    types: RefCell<Vec<(MetaRef, WheelItem)>>,
+    types: ByType<WheelItem>,
 }
 
 /// Makes the scene offer wheel events to items of type `meta` (and of the
 /// types derived from it). A later registration wins.
 pub fn register_wheel_item(engine: &Engine, meta: MetaRef, hooks: WheelItem) {
-    engine
-        .extension::<Registry>()
-        .types
-        .borrow_mut()
-        .push((meta, hooks));
+    engine.extension::<Registry>().types.push(meta, hooks);
 }
 
 fn wheel_item(engine: &Engine, obj: ObjectId) -> Option<WheelItem> {
-    let reg = engine.extension::<Registry>();
-    let types = reg.types.borrow();
-    let meta = engine.meta_of(obj)?;
-    types
-        .iter()
-        .rev()
-        .find(|(m, _)| meta.inherits(m))
-        .map(|(_, h)| *h)
+    engine.extension::<Registry>().types.of(engine, obj)
 }
 
 /// Offers `ev` to one item under the pointer, if its type takes the

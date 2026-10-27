@@ -13,9 +13,9 @@
 //!
 //! A release takes road 3 alone. Nothing here runs unless a key arrives.
 
-use std::cell::RefCell;
-
 use ljos_engine::{Engine, MetaRef, ObjectId, Value};
+
+use crate::by_type::ByType;
 
 use super::attached::{
     self, KeyNavigationAttached, KeysAttached, key_signal, keys_attacher, navigation_attacher,
@@ -47,32 +47,18 @@ pub struct KeyItem {
 
 #[derive(Default)]
 struct Registry {
-    types: RefCell<Vec<(MetaRef, KeyItem)>>,
+    types: ByType<KeyItem>,
 }
 
 /// Makes key delivery ask items of type `meta` (and of the types derived
 /// from it) through `hooks`. A later registration wins, so a derived type
 /// can be given hooks of its own.
 pub fn register_key_item(engine: &Engine, meta: MetaRef, hooks: KeyItem) {
-    engine
-        .extension::<Registry>()
-        .types
-        .borrow_mut()
-        .push((meta, hooks));
+    engine.extension::<Registry>().types.push(meta, hooks);
 }
 
 fn key_item(engine: &Engine, obj: ObjectId) -> Option<KeyItem> {
-    let reg = engine.extension::<Registry>();
-    let types = reg.types.borrow();
-    if types.is_empty() {
-        return None;
-    }
-    let meta = engine.meta_of(obj)?;
-    types
-        .iter()
-        .rev()
-        .find(|(m, _)| meta.inherits(m))
-        .map(|(_, h)| *h)
+    engine.extension::<Registry>().types.of(engine, obj)
 }
 
 /// Which way Tab goes for this key: forward for Tab, back for Backtab
