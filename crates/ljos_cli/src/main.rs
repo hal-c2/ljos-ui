@@ -199,7 +199,7 @@ fn run() -> anyhow::Result<()> {
         // As `fmt`: 1 is `--check` finding work, 2 a shader in error.
         Command::Shaders(shaders) => match shaders.run() {
             0 => Ok(()),
-            status => std::process::exit(status),
+            status => exit(status),
         },
         Command::Bench(bench) => match bench.run()? {
             0 => Ok(()),
