@@ -48,9 +48,14 @@ pub(crate) fn skipped(name: &str) -> bool {
         || name.starts_with("cmake-build")
 }
 
-/// Every `.qml` file below `dir`, in the order of their names. Links to
-/// directories are not entered: they can loop.
-fn qml_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+/// Every file below `dir` that `wanted` takes, in the order of their
+/// names, outside the [`skipped`] directories. Links to directories are
+/// not entered: they can loop.
+pub(crate) fn files_below(
+    dir: &Path,
+    wanted: fn(&Path) -> bool,
+    out: &mut Vec<PathBuf>,
+) -> std::io::Result<()> {
     let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
@@ -58,13 +63,17 @@ fn qml_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
         let kind = entry.file_type()?;
         if kind.is_dir() {
             if !skipped(&entry.file_name().to_string_lossy()) {
-                qml_files(&path, out)?;
+                files_below(&path, wanted, out)?;
             }
-        } else if path.extension().is_some_and(|e| e == "qml") && path.is_file() {
+        } else if wanted(&path) && path.is_file() {
             out.push(path);
         }
     }
     Ok(())
+}
+
+fn is_qml(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "qml")
 }
 
 /// A path as a report names it: as it was given, without the `./` a walk
@@ -104,7 +113,7 @@ impl Fmt {
         for path in &self.paths {
             if path.is_dir() {
                 let mut files = Vec::new();
-                if let Err(e) = qml_files(path, &mut files) {
+                if let Err(e) = files_below(path, is_qml, &mut files) {
                     eprintln!("{}: error: {e}", shown(path));
                     tally.failed += 1;
                 }

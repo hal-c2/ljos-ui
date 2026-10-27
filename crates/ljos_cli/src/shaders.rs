@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use clap::Args;
 use ljos_shader::{Compiled, Stage, artifact_path};
 
-use crate::fmt::{shown, skipped};
+use crate::fmt::{files_below, shown};
 
 #[derive(Args)]
 pub struct Shaders {
@@ -44,23 +44,8 @@ fn stage(path: &Path) -> Option<Stage> {
     }
 }
 
-/// Every shader below `dir`, in the order of their names. Links to
-/// directories are not entered: they can loop.
-fn shader_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
-        let path = entry.path();
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
-            if !skipped(&entry.file_name().to_string_lossy()) {
-                shader_files(&path, out)?;
-            }
-        } else if stage(&path).is_some() && path.is_file() {
-            out.push(path);
-        }
-    }
-    Ok(())
+fn is_shader(path: &Path) -> bool {
+    stage(path).is_some()
 }
 
 #[derive(Default)]
@@ -78,7 +63,7 @@ impl Shaders {
         for path in &self.paths {
             if path.is_dir() {
                 let mut files = Vec::new();
-                if let Err(e) = shader_files(path, &mut files) {
+                if let Err(e) = files_below(path, is_shader, &mut files) {
                     eprintln!("{}: error: {e}", shown(path));
                     tally.failed += 1;
                 }
