@@ -6,14 +6,14 @@
 //! [`crate::QuickScene::pointer_event`].
 
 use ljos_engine::{
-    Cx, Engine, EngineError, IntPoint, ObjectId, Point, PropIndex, QmlObject, QmlType, QmlValue,
-    QtObject, Value, Vector2d, WriteKind, qml_impl,
+    Cx, Engine, EngineError, IntPoint, ObjectId, Point, PropIndex, QmlObject, QmlType, QtObject,
+    Value, Vector2d, WriteKind, qml_impl,
 };
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use crate::enums::{gesture_policy, mouse_button};
-use crate::handlers::PointValues;
+use crate::handlers::{PointValues, point_value};
 use crate::item::{Item, scene_transform};
 
 bitflags::bitflags! {
@@ -592,10 +592,6 @@ fn point_props() -> Option<PointProps> {
         device: p("point.device")?,
         modifiers: p("point.modifiers")?,
     })
-}
-
-fn point_value(p: kurbo::Point) -> Value {
-    Point { x: p.x, y: p.y }.to_value()
 }
 
 /// Where a scene position is in the handler's item.
