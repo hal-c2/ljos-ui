@@ -749,7 +749,7 @@ fn push_quad(mesh: &mut Mesh, corners: [Pos2; 4], uv: [Pos2; 4], color: Color32)
         .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
-fn pos2(p: Point) -> Pos2 {
+pub(crate) fn pos2(p: Point) -> Pos2 {
     Pos2::new(p.x as f32, p.y as f32)
 }
 
@@ -1193,7 +1193,7 @@ enum Drawn {
     Solid(ERect, ERect, Color32),
 }
 
-fn erect(r: Rect) -> ERect {
+pub(crate) fn erect(r: Rect) -> ERect {
     ERect::from_min_max(
         Pos2::new(r.x0 as f32, r.y0 as f32),
         Pos2::new(r.x1 as f32, r.y1 as f32),
@@ -1888,7 +1888,7 @@ fn map_mesh(m: &Mesh, to_screen: Affine, opacity: f32) -> Mesh {
     for v in &m.vertices {
         let p = to_screen * Point::new(f64::from(v.pos.x), f64::from(v.pos.y));
         out.vertices.push(Vertex {
-            pos: Pos2::new(p.x as f32, p.y as f32),
+            pos: pos2(p),
             uv: v.uv,
             color: fade(v.color),
         });
@@ -1991,7 +1991,7 @@ trait FlattenInto {
 
 impl FlattenInto for vello_cpu::kurbo::BezPath {
     fn flatten_into(&self, tolerance: f64, out: &mut Vec<(Vec<Pos2>, bool)>) {
-        let p = |p: Point| Pos2::new(p.x as f32, p.y as f32);
+        let p = pos2;
         let mut cur: Vec<Pos2> = Vec::new();
         vello_cpu::kurbo::flatten(self.elements().iter().copied(), tolerance, |el| match el {
             PathEl::MoveTo(pt) => {

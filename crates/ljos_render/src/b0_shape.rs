@@ -39,7 +39,7 @@ use vello_cpu::{
     Level, Pixmap, RasterizerSettings, RenderContext, RenderMode, RenderSettings, Resources,
 };
 
-use crate::b0::color32;
+use crate::b0::{color32, erect, pos2};
 use crate::display_list::{Brush, BrushGradient, FillRule, GradientGeometry, ShapeStyle, Spread};
 use crate::rgba::Rgba;
 use crate::shape::{
@@ -264,7 +264,7 @@ impl Geom {
                     f64::from(pos[1] + dir[1] * h),
                 );
             mesh.vertices.push(Vertex {
-                pos: Pos2::new(p.x as f32, p.y as f32),
+                pos: pos2(p),
                 uv: WHITE_UV,
                 color: if opacity < 1.0 {
                     color.gamma_multiply(opacity)
@@ -403,12 +403,7 @@ impl ShapeCache {
         frame: u64,
         warnings: &mut u32,
     ) -> Option<Arc<Mesh>> {
-        let on_screen = seg.to_screen.transform_rect_bbox(seg.cmd.bounds);
-        let on_screen = ERect::from_min_max(
-            Pos2::new(on_screen.x0 as f32, on_screen.y0 as f32),
-            Pos2::new(on_screen.x1 as f32, on_screen.y1 as f32),
-        )
-        .expand(1.0 / ppp);
+        let on_screen = erect(seg.to_screen.transform_rect_bbox(seg.cmd.bounds)).expand(1.0 / ppp);
         if !on_screen.intersects(clip) {
             // Pixels nobody sees are megabytes; the triangles are small and
             // stay until memory is asked for.
