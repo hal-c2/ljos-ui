@@ -1089,13 +1089,21 @@ impl Engine {
                     Edited::Handler => {}
                 }
             }
-            let Some((whole, remap, moved, objects, models, realias)) = same_but_edits(
+            let Some(Same {
+                whole,
+                remap,
+                moved,
+                objects,
+                models,
+                realias,
+            }) = same_but_edits(
                 &old.ir,
                 new,
                 &comps,
                 &mut edits,
                 moves.get(new.file.as_str()).unwrap_or(&HashMap::default()),
-            ) else {
+            )
+            else {
                 tracing::debug!("reload not in place: {} changed its shape", new.file);
                 return None;
             };
@@ -2468,18 +2476,16 @@ fn aliased(file: &CompiledFile, comp: CompIdx, obj: usize, name: &str) -> bool {
         .any(|a| a.object == Some(at) && a.path.first().is_some_and(|p| p == name))
 }
 
-/// What [`same_but_edits`] finds: the aliases of whole edited objects
-/// (see [`Changed::whole`]), where the old expressions are in the new
-/// file, the places that moved (see [`Changed::moved`]) and where the
-/// objects are (see [`Changed::objects`]).
-type Same = (
-    Vec<(CompIdx, usize, String)>,
-    Vec<Option<ExprId>>,
-    Moves,
-    Vec<Objects>,
-    Vec<(CompIdx, usize, usize)>,
-    Vec<(CompIdx, usize, String)>,
-);
+/// What [`same_but_edits`] finds, kept as [`Changed`]'s fields of the
+/// same names.
+struct Same {
+    whole: Vec<(CompIdx, usize, String)>,
+    remap: Vec<Option<ExprId>>,
+    moved: Moves,
+    objects: Vec<Objects>,
+    models: Vec<(CompIdx, usize, usize)>,
+    realias: Vec<(CompIdx, usize, String)>,
+}
 
 /// [`Same`] when `new` is `old` but for the edited members and for
 /// objects added after the children of one that stays or removed;
@@ -2821,7 +2827,14 @@ fn same_but_edits(
             }),
         }
     }
-    Some((whole, remap, moved, objects, models, realias))
+    Some(Same {
+        whole,
+        remap,
+        moved,
+        objects,
+        models,
+        realias,
+    })
 }
 
 /// Takes out of `a`, an old object renumbered, the members given an
