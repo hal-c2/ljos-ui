@@ -40,6 +40,19 @@
 //!     .root("Main")
 //!     .run()?;
 //! ```
+//!
+//! The `_to_rust` forms also compile the files' bindings and handlers to
+//! Rust (ARCHITECTURE.md §5.4), beside the pack (`qml.pack` and
+//! `qml.rs`); the program embeds both, and what the generator refused
+//! runs as it would without:
+//!
+//! ```ignore
+//! ljos::App::new("Hello")
+//!     .source(ljos::include_qml!("qml.pack"))
+//!     .compiled(ljos::include_compiled!("qml.rs"))
+//!     .root("Main")
+//!     .run()?;
+//! ```
 
 use std::path::{Path, PathBuf};
 
@@ -109,13 +122,35 @@ pub fn compile_dirs(
     register: impl Fn(&Engine),
     out: &Path,
 ) -> Result<(), BuildError> {
+    let (source, _) = registered_source(dirs, register)?;
+    write_pack(&source, out).map(drop)
+}
+
+/// [`compile_dirs`], and the files' bindings and handlers compiled to
+/// Rust in `out` with the extension `rs`, for
+/// [`include_compiled!`](crate::include_compiled). What the generator
+/// compiled and refused, by file, comes back.
+pub fn compile_dirs_to_rust(
+    dirs: &[&Path],
+    register: impl Fn(&Engine),
+    out: &Path,
+) -> Result<Vec<CompiledFile>, BuildError> {
+    let (source, oracle) = registered_source(dirs, register)?;
+    let pack = write_pack(&source, out)?;
+    write_rust(&pack, &oracle, &out.with_extension("rs"))
+}
+
+fn registered_source(
+    dirs: &[&Path],
+    register: impl Fn(&Engine),
+) -> Result<(MapSource, EngineOracle), BuildError> {
     for dir in dirs {
         rerun_if_changed(dir);
     }
     let engine = crate::engine();
     register(&engine);
     let source = compile_to_source(dirs, Some(&engine), OnError::Fail)?;
-    write_pack(&source, out)
+    Ok((source, EngineOracle::from_engine(&engine)))
 }
 
 /// Compiles every `.qml` file under `dir` into the pack `out`, against
@@ -135,6 +170,24 @@ pub fn compile_dir_with_types(dir: &Path, types: &Path, out: &Path) -> Result<()
 /// warning, so that the application builds and its test can write the
 /// new file.
 pub fn compile_dirs_with_types(dirs: &[&Path], types: &Path, out: &Path) -> Result<(), BuildError> {
+    let (source, _) = typed_source(dirs, types)?;
+    write_pack(&source, out).map(drop)
+}
+
+/// [`compile_dirs_with_types`], and the files' bindings and handlers
+/// compiled to Rust in `out` with the extension `rs`; see
+/// [`compile_dirs_to_rust`].
+pub fn compile_dirs_with_types_to_rust(
+    dirs: &[&Path],
+    types: &Path,
+    out: &Path,
+) -> Result<Vec<CompiledFile>, BuildError> {
+    let (source, oracle) = typed_source(dirs, types)?;
+    let pack = write_pack(&source, out)?;
+    write_rust(&pack, &oracle, &out.with_extension("rs"))
+}
+
+fn typed_source(dirs: &[&Path], types: &Path) -> Result<(MapSource, EngineOracle), BuildError> {
     for dir in dirs {
         rerun_if_changed(dir);
     }
@@ -178,19 +231,78 @@ pub fn compile_dirs_with_types(dirs: &[&Path], types: &Path, out: &Path) -> Resu
                 "cargo:warning=packed as failing while {} is written; build again once it is",
                 types.display()
             );
-            compile_with_oracle(dirs, oracle, OnError::Record)?
+            compile_with_oracle(dirs, oracle.clone(), OnError::Record)?
         }
         Err(e) => return Err(e.into()),
     };
-    write_pack(&source, out)
+    Ok((source, oracle))
 }
 
-fn write_pack(source: &MapSource, out: &Path) -> Result<(), BuildError> {
+/// Writes the pack and hands back the files as the program will read
+/// them from it: compiled code is matched to a file by the content of
+/// what the program loads.
+fn write_pack(source: &MapSource, out: &Path) -> Result<MapSource, BuildError> {
     let pack = source.to_pack().map_err(BuildError::Pack)?;
-    std::fs::write(out, pack).map_err(|source| BuildError::Write {
+    std::fs::write(out, &pack).map_err(|source| BuildError::Write {
         path: out.to_path_buf(),
         source,
-    })
+    })?;
+    MapSource::from_pack(&pack).map_err(BuildError::Pack)
+}
+
+/// What the generator made of one file.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct CompiledFile {
+    /// The key the file is known by (`Main`).
+    pub key: String,
+    /// Its expressions that run compiled code.
+    pub compiled: usize,
+    /// Those that run dynamically, each with why: `(expression, reason)`.
+    pub refused: Vec<(u32, String)>,
+}
+
+const RUNTIME: &str = "::ljos::aot";
+
+fn write_rust(
+    source: &MapSource,
+    oracle: &EngineOracle,
+    out: &Path,
+) -> Result<Vec<CompiledFile>, BuildError> {
+    use ljos_engine::ComponentSource as _;
+
+    let mut generated = Vec::new();
+    for key in source.keys() {
+        if let Some(file) = source.load(key) {
+            generated.push((
+                key.to_owned(),
+                ljos_compiler::aot::generate(&file, oracle, RUNTIME),
+            ));
+        }
+    }
+    let named: Vec<(&str, &ljos_aot::Generated)> =
+        generated.iter().map(|(k, g)| (k.as_str(), g)).collect();
+    let rust = ljos_aot::assemble(RUNTIME, &named);
+    std::fs::write(out, rust).map_err(|source| BuildError::Write {
+        path: out.to_path_buf(),
+        source,
+    })?;
+    Ok(generated
+        .iter()
+        .map(|(key, g)| CompiledFile {
+            key: key.clone(),
+            compiled: g.compiled(),
+            refused: g
+                .outcomes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, o)| match o {
+                    ljos_aot::Outcome::Refused(why) => Some((i as u32, why.to_string())),
+                    ljos_aot::Outcome::Compiled => None,
+                })
+                .collect(),
+        })
+        .collect())
 }
 
 fn rerun_if_changed(dir: &Path) {

@@ -55,6 +55,9 @@ qml_front = { path = "../qml_front", optional = true }
 # Only with `dev-qml`, for the component source `qml_dirs` hands the
 # engine (`texts.rs`): the compiled files and bytecode it passes on.
 ljos_ir = { path = "../ljos_ir", optional = true }
+# Only with `build`: the bindings and handlers compiled to Rust
+# (`build::compile_dirs_to_rust`).
+ljos_aot = { path = "../ljos_aot", optional = true }
 ljos_js = { path = "../ljos_js", optional = true }
 
 [dev-dependencies]
@@ -101,7 +104,7 @@ dev-qml = ["dep:ljos_compiler", "dep:qml_front", "dep:ljos_ir", "dep:ljos_js"]
 # against its own native types as its type dump file describes them
 # (`ljos::types`), into a pack the program embeds with
 # `ljos::include_qml!`. The program's own `ljos` leaves it off.
-build = ["dep:ljos_compiler", "dep:qml_front"]
+build = ["dep:ljos_compiler", "dep:qml_front", "dep:ljos_aot"]
 # PDF documents in an Image, a page at a time (hayro, with a rasteriser
 # and font readers of its own). Off by default: without it a PDF source is
 # an unsupported format, as in a Qt without its PDF plugin.

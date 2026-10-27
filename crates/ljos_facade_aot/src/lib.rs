@@ -1,7 +1,8 @@
 //! An application's start with QML compiled ahead of time: the build
 //! script packed `qml/` against `ljostypes.json`, the type dump file of
-//! the native module below, and the program embeds the pack. Nothing
-//! here links the parser, and the build script runs none of this code.
+//! the native module below, and the program embeds the pack and the
+//! bindings and handlers the script compiled to Rust. Nothing here links
+//! the parser, and the build script runs none of this code.
 
 use ljos::prelude::*;
 
@@ -37,5 +38,6 @@ pub fn app() -> ljos::App {
     ljos::App::new("Ahead of time")
         .register(register)
         .source(ljos::include_qml!("qml.pack"))
+        .compiled(ljos::include_compiled!("qml.rs"))
         .root("Main")
 }

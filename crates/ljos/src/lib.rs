@@ -253,6 +253,24 @@ macro_rules! include_qml {
         .expect("the QML pack this build wrote")
     };
 }
+/// The bindings and handlers a build script compiled to Rust with
+/// [`build::compile_dirs_to_rust`] (the `build` feature), embedded in the
+/// program: `include_compiled!("qml.rs")` includes `$OUT_DIR/qml.rs` and
+/// is its table, for [`App::compiled`].
+#[macro_export]
+macro_rules! include_compiled {
+    ($name:literal) => {{
+        mod __ljos_compiled {
+            ::core::include!(::core::concat!(::core::env!("OUT_DIR"), "/", $name));
+        }
+        __ljos_compiled::COMPILED
+    }};
+}
+
+/// What code compiled from QML by an application's build runs with
+/// ([`include_compiled!`]); only that code names it.
+pub use ljos_engine::aot;
+
 /// The engine crate itself, for the paths the `QmlObject` derive,
 /// `qml_impl` and `qml_singleton` generate in a crate that depends on
 /// this facade alone (`::ljos::ljos_engine::…`); such a crate needs no
