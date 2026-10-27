@@ -85,7 +85,8 @@
 //! (Basic's `Button` is Templates' `QQuickButton`), when there is one.
 //!
 //! Enum keys of Qt's table have no numbers: `.qmltypes` has listed only the
-//! names since Qt 5.15. Ljós's own types say theirs (`Top=1`). Versions are
+//! names since Qt 5.15. Ljós's own types say theirs (`Top=1`), and a key of
+//! a type both tables describe has the number Ljós's gives it. Versions are
 //! not kept; the table is one Qt, the newest name wins.
 //!
 //! # What Ljós's own table adds to the format
@@ -711,7 +712,8 @@ fn read(qt: &'static str, own: &'static str) -> Table {
     let mut named = Vec::new();
     let mut module = "";
     // A module of the own table that Qt's has described already is passed
-    // over, with everything in it but the names of what its types have:
+    // over, with everything in it but the names of what its types have and
+    // the numbers of their enum keys:
     // what the runtime adds to Qt's types.
     let mut passed_over = false;
     let mut over = PassedOver::default();
@@ -752,6 +754,20 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     "prop" | "signal" | "method" => ty.names.push(word()),
                     "attached" => ty.attached = Some(word()),
                     "prototype" => ty.prototype = Some((word(), word() == "named")),
+                    // Qt's keys have no numbers, and the runtime's say them.
+                    "enum" | "flags" => {
+                        // The flags' keys are the enum's they are made of.
+                        let name = word();
+                        let names = match name.split_once('=') {
+                            Some((name, alias)) => [name, alias],
+                            None => [name, name],
+                        };
+                        let keys = words.filter_map(|key| {
+                            let (key, number) = key.split_once('=')?;
+                            Some((names, key, number.parse().ok()?))
+                        });
+                        ty.numbers.extend(keys);
+                    }
                     _ => {}
                 }
             }
@@ -939,6 +955,24 @@ fn read(qt: &'static str, own: &'static str) -> Table {
         };
         let ty = &over.types[*own];
         table.types[index].added.extend(&ty.names);
+        // The namespace a type extends has the enums: `Qt.AlignLeft`.
+        let extension = table.types[index].extension;
+        for at in std::iter::once(index).chain(extension) {
+            for enumeration in &mut table.types[at].enums {
+                let names = [Some(enumeration.name), enumeration.alias];
+                // Keys the runtime gives without their enum's name are `_`'s.
+                let numbers = ty.numbers.iter().filter(|(own, ..)| {
+                    own.iter()
+                        .any(|own| *own == "_" || names.contains(&Some(own)))
+                });
+                for (_, key, number) in numbers {
+                    let known = enumeration.keys.iter_mut().find(|(known, _)| known == key);
+                    if let Some((_, slot @ None)) = known {
+                        *slot = Some(*number);
+                    }
+                }
+            }
+        }
         if table.types[index].qml_file.is_some() && table.types[index].prototype.is_none() {
             let base = ty.prototype.and_then(|(class, named)| {
                 if named {
@@ -968,6 +1002,8 @@ struct OverType {
     attached: Option<&'static str>,
     /// The class it is built on, and whether that is a QML name.
     prototype: Option<(&'static str, bool)>,
+    /// The enum (and what its flags are called), the key and its number.
+    numbers: Vec<([&'static str; 2], &'static str, i64)>,
 }
 
 /// What a module of Ljós's own table that Qt's describes has.

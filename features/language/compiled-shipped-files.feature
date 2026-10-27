@@ -159,6 +159,41 @@ Feature: Files compiled ahead of time
       Main.qml:4:30: runs dynamically: type: var property items
       """
 
+  Scenario: A key of Qt's namespace is compiled ahead of time
+    Given the files are compiled ahead of time
+    And the compiled code cross-check is on
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+          id: root
+          objectName: "root"
+          property int modifiers: 0
+          property bool control: (modifiers & Qt.ControlModifier) !== 0
+          property bool digit: modifiers === Qt.Key_1
+      }
+      """
+    When the property "modifiers" of "root" is set to 67108864
+    Then the property "control" of "root" is true
+    And the property "digit" of "root" is false
+    And the file "Scenario.qml" ran compiled code
+    And the log has no warning matching "compiled code and the dynamic tiers differ"
+
+  Scenario: The check compiles a key of Qt's namespace ahead of time
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+          property int modifiers: 0
+          property bool control: (modifiers & Qt.ControlModifier) !== 0
+      }
+      """
+    When the files are checked with statistics
+    Then the check reports the lines:
+      """
+      compiled ahead of time  1 of 1 (100.0%)
+      """
+
   Scenario: The check says a variable declared in a switch case runs dynamically
     Given the file "Main.qml":
       """qml

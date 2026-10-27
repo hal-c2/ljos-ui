@@ -110,8 +110,9 @@ fn the_table_gives_the_number_of_an_enum_key_when_its_description_has_one() {
     );
     assert_eq!(qt.enum_value(text, Some("NotAnEnum"), "AlignHCenter"), None);
     assert_eq!(qt.enum_value(text, None, "NotAKey"), None);
-    // A Qt 6 description gives no number for a key; Ljós's types say theirs.
-    assert_eq!(number.is_some(), !qt_types::has_qt_table());
+    // A Qt 6 description gives no number for a key; Ljós's types say theirs,
+    // and Qt's `Text` has the numbers of Ljós's.
+    assert_eq!(number, Some(4));
 }
 
 /// A name no module has is said to be unknown the same way in every build;

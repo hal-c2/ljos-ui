@@ -286,7 +286,7 @@ fn an_enum_key_is_found_on_the_type() {
     let raised = ty("QtQuick", "Text").enum_value("Raised").unwrap();
     assert_eq!(
         (raised.enumeration.name, raised.key, raised.number),
-        ("TextStyle", "Raised", None)
+        ("TextStyle", "Raised", Some(2))
     );
     assert_eq!(
         ty("QtQuick", "ListView")
@@ -323,6 +323,10 @@ fn the_qt_singleton_has_the_qt_namespace() {
         ("Alignment", Some("AlignmentFlag"))
     );
     assert!(qt.enum_value("Key_Return").is_some());
+    // The keys have the numbers of Ljós's own `Qt`, which Qt's table lacks.
+    assert_eq!(left.number, Some(1));
+    let control = qt.enum_value("ControlModifier").unwrap();
+    assert_eq!(control.number, Some(0x0400_0000));
     assert!(qt.has_method("rgba") && qt.has_method("openUrlExternally"));
 }
 
@@ -883,6 +887,7 @@ module Shared
 \tThing QThing
 \ttype QThing Thing
 \t\tprop theirs int
+\t\tenum Side Top Bottom Left
 ";
 
 const BESIDE: &str = "\
@@ -891,6 +896,8 @@ module Shared
 \tOther Shared.Other
 \ttype Shared.Thing Thing
 \t\tprop ours int
+\t\tenum Side Top=1 Bottom=8
+\t\tenum _ Left=4
 \ttype Shared.Other Other
 module Mine
 \tWidget Mine.Widget
@@ -925,6 +932,22 @@ fn a_module_both_tables_describe_is_read_from_qt_s() {
     assert_eq!(class_of(&table, widget.prototype), Some("QThing"));
     // A name Qt's module does not have stays as it was written.
     assert_eq!(widget.properties[0].type_name, "Shared.Other");
+}
+
+#[test]
+fn a_key_both_tables_describe_has_the_number_ljos_gives_it() {
+    let table = read(QT, BESIDE);
+    let thing = &table.types[table.classes["QThing"]];
+    let keys = &thing.enums[0].keys;
+    // A key Ljós gives without its enum's name has its number too.
+    assert_eq!(
+        keys,
+        &[("Top", Some(1)), ("Bottom", Some(8)), ("Left", Some(4))]
+    );
+    // What only Qt's table has stays without one.
+    let alone = read(QT, "");
+    let keys = &alone.types[alone.classes["QThing"]].enums[0].keys;
+    assert!(keys.iter().all(|(_, number)| number.is_none()));
 }
 
 #[test]
