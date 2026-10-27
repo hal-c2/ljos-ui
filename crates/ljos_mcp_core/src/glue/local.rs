@@ -232,27 +232,12 @@ impl LocalClient {
                 )));
             }
         }
-        let wake = self.wake.notify.clone();
-        let client = &self.client;
-        let result = self.runtime.block_on(async {
-            let call = client.call_tool(params);
-            tokio::pin!(call);
-            loop {
-                tokio::select! {
-                    biased;
-                    out = &mut call => break out,
-                    () = wake.notified() => {
-                        pump();
-                        // A pump that asks to be run again at once makes
-                        // this loop always ready. Without a turn of the
-                        // runtime in between, no timer would ever fire and
-                        // a surface that waits with a timeout would wait
-                        // for ever.
-                        tokio::task::yield_now().await;
-                    }
-                }
-            }
-        });
+        let result = pumped(
+            &self.runtime,
+            &self.wake.notify,
+            self.client.call_tool(params),
+            pump,
+        );
         let result = result.map_err(LocalError::of)?;
         let mut text = String::new();
         let mut images = Vec::new();
@@ -288,23 +273,13 @@ impl LocalClient {
         uri: &str,
         pump: &mut dyn FnMut(),
     ) -> Result<String, LocalError> {
-        let wake = self.wake.notify.clone();
-        let client = &self.client;
-        let result = self.runtime.block_on(async {
-            let read = client.read_resource(ReadResourceRequestParams::new(uri));
-            tokio::pin!(read);
-            loop {
-                tokio::select! {
-                    biased;
-                    out = &mut read => break out,
-                    () = wake.notified() => {
-                        pump();
-                        // As in `call`.
-                        tokio::task::yield_now().await;
-                    }
-                }
-            }
-        });
+        let result = pumped(
+            &self.runtime,
+            &self.wake.notify,
+            self.client
+                .read_resource(ReadResourceRequestParams::new(uri)),
+            pump,
+        );
         let result = result.map_err(LocalError::of)?;
         let mut text = String::new();
         for part in &result.contents {
@@ -317,4 +292,32 @@ impl LocalClient {
         }
         Ok(text)
     }
+}
+
+/// Runs `work` to its end, running `pump` each time the surface's wake
+/// fires.
+fn pumped<F: std::future::Future>(
+    runtime: &tokio::runtime::Runtime,
+    wake: &Notify,
+    work: F,
+    pump: &mut dyn FnMut(),
+) -> F::Output {
+    runtime.block_on(async {
+        tokio::pin!(work);
+        loop {
+            tokio::select! {
+                biased;
+                out = &mut work => break out,
+                () = wake.notified() => {
+                    pump();
+                    // A pump that asks to be run again at once makes
+                    // this loop always ready. Without a turn of the
+                    // runtime in between, no timer would ever fire and
+                    // a surface that waits with a timeout would wait
+                    // for ever.
+                    tokio::task::yield_now().await;
+                }
+            }
+        }
+    })
 }
