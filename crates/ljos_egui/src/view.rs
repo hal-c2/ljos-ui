@@ -1115,8 +1115,7 @@ impl QmlView {
         let over = |p: Pos2| {
             rect.contains(p) && clip.contains(p) && ctx.layer_id_at(p).is_none_or(|l| l == layer)
         };
-        let local =
-            |p: Pos2| kurbo::Point::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y));
+        let local = |p: Pos2| to_scene(rect, p);
         let base = |kind, p: Pos2| PointerEvent {
             kind,
             pos: local(p),
@@ -1381,7 +1380,7 @@ impl QmlView {
                 .filter(|p| rect.contains(*p))
                 .or_else(|| rect.is_positive().then(|| rect.center())),
         }
-        .map(|p| kurbo::Point::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y)));
+        .map(|p| to_scene(rect, p));
         let root = self.scene.root();
         let engine = &self.engine;
         let start = |files: Vec<std::path::PathBuf>| {
@@ -1469,7 +1468,7 @@ impl QmlView {
         actions: ljos_quick::DragActions,
     ) -> Option<ljos_quick::DropAction> {
         let rect = self.shown_at.filter(|r| r.contains(at))?;
-        let at = kurbo::Point::new(f64::from(at.x - rect.min.x), f64::from(at.y - rect.min.y));
+        let at = to_scene(rect, at);
         let over = self.scene.root();
         ljos_quick::platform_drag_offered(&self.engine, over, formats, actions, at)
     }
@@ -1488,10 +1487,7 @@ impl QmlView {
         use ljos_quick::{IGNORE_ACTION, PlatformDrag, PlatformDragKind, platform_drag};
         let engine = &self.engine;
         let rect = self.shown_at;
-        let inside = |p: Pos2| {
-            rect.filter(|r| r.contains(p))
-                .map(|r| kurbo::Point::new(f64::from(p.x - r.min.x), f64::from(p.y - r.min.y)))
-        };
+        let inside = |p: Pos2| rect.filter(|r| r.contains(p)).map(|r| to_scene(r, p));
         let (at, changed) = match step {
             WindowDrag::Entered { data, at, actions } => {
                 if let Some((drag, ..)) = self.window_drag.take() {
@@ -1598,4 +1594,9 @@ fn cursor_icon(shape: i32) -> egui::CursorIcon {
         21 => C::Alias,
         _ => C::Default,
     }
+}
+
+/// `p` on the screen as a point of the scene shown at `rect`.
+fn to_scene(rect: Rect, p: Pos2) -> kurbo::Point {
+    kurbo::Point::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y))
 }
