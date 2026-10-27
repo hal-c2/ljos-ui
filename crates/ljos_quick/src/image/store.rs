@@ -45,6 +45,10 @@ const MAX_IN_FLIGHT: usize = 8;
 /// gives up, so a broken decoder fails a test instead of hanging it.
 const FINISH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long [`ImageStore::finish_with`] waits between calls of its
+/// `between`, short enough that a fake answered there feels prompt.
+const SERVE_SLICE: Duration = Duration::from_millis(2);
+
 /// A decoded picture and the size it reports, which is larger than its
 /// pixels when it was kept smaller for a request's `limit`.
 #[derive(Clone, Debug)]
@@ -866,7 +870,20 @@ impl ImageStore {
     /// them, held or not. For tests and harnesses: a UI thread that must
     /// stay responsive never calls it.
     pub fn finish(&self, engine: &Engine) {
+        self.finish_waiting(engine, FINISH_TIMEOUT, &mut || {});
+    }
+
+    /// [`ImageStore::finish`] that calls `between` on this thread every
+    /// few milliseconds while it waits: a harness serves there what a
+    /// picture's fetch waits on (a fake server it runs on this thread),
+    /// which it could not while blocked.
+    pub fn finish_with(&self, engine: &Engine, between: &mut dyn FnMut()) {
+        self.finish_waiting(engine, SERVE_SLICE, between);
+    }
+
+    fn finish_waiting(&self, engine: &Engine, slice: Duration, between: &mut dyn FnMut()) {
         self.request_deferred(engine);
+        let mut quiet = Duration::ZERO;
         loop {
             let seen = self.signal.count();
             self.frame_drawn(engine);
@@ -874,6 +891,7 @@ impl ImageStore {
             if self.pending() == 0 {
                 return;
             }
+            between();
             let sent = self
                 .signal
                 .sent
@@ -882,9 +900,14 @@ impl ImageStore {
             let (_sent, timeout) = self
                 .signal
                 .arrived
-                .wait_timeout_while(sent, FINISH_TIMEOUT, |n| *n == seen)
+                .wait_timeout_while(sent, slice, |n| *n == seen)
                 .unwrap_or_else(PoisonError::into_inner);
-            if timeout.timed_out() {
+            quiet = if timeout.timed_out() {
+                quiet + slice
+            } else {
+                Duration::ZERO
+            };
+            if quiet >= FINISH_TIMEOUT {
                 engine.log(
                     ljos_engine::LogLevel::Warning,
                     super::CATEGORY,

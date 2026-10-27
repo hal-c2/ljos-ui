@@ -172,7 +172,10 @@ pub fn finish_promised<'f, E>(
         // again would only give up again.
         let gave_up = platform.pending() > 0;
         settle()?;
-        images.finish(engine);
+        match serve.as_deref_mut() {
+            Some(serve) => images.finish_with(engine, serve),
+            None => images.finish(engine),
+        }
         settle()?;
         if gave_up || images.pending() > 0 {
             return Ok(());
