@@ -191,8 +191,10 @@ fn makes_objects(source: &str, export: &str) -> bool {
 }
 
 /// Whether `text` names a way to make an object, or to read another
-/// script that could.
+/// script that could. A name is matched whole: `list.includes(x)` is not
+/// `Qt.include(...)`.
 fn names_a_maker(text: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
     [
         "createObject",
         "createQmlObject",
@@ -201,7 +203,12 @@ fn names_a_maker(text: &str) -> bool {
         "include",
     ]
     .iter()
-    .any(|w| text.contains(w))
+    .any(|w| {
+        text.match_indices(w).any(|(at, _)| {
+            !text[..at].chars().next_back().is_some_and(ident)
+                && !text[at + w.len()..].chars().next().is_some_and(ident)
+        })
+    })
 }
 
 #[cfg(test)]
@@ -215,5 +222,15 @@ mod tests {
         assert!(!makes_objects(src, "f0"));
         assert!(makes_objects(src, "f1"));
         assert!(makes_objects(src, "f2"));
+    }
+
+    #[test]
+    fn a_name_is_matched_whole() {
+        let src = "export function f0(l, v) {\n  return l.includes(v);\n}\n\
+                   export function f1() {\n  Qt.include(\"a.js\");\n}\n\
+                   export function f2(c) {\n  return c.createObjectLater;\n}\n";
+        assert!(!makes_objects(src, "f0"));
+        assert!(makes_objects(src, "f1"));
+        assert!(!makes_objects(src, "f2"));
     }
 }
