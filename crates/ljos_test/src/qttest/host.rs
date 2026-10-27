@@ -112,12 +112,8 @@ pub(crate) struct Host {
     helpers: RefCell<Vec<(&'static str, Value)>>,
 }
 
-fn invoke_error(text: impl Into<String>) -> EngineError {
-    EngineError::Invoke(text.into())
-}
-
 fn drive_error(e: DriveError) -> EngineError {
-    invoke_error(e.to_string())
+    EngineError::from(e.to_string())
 }
 
 impl Host {
@@ -166,11 +162,11 @@ impl Host {
     /// sends input from inside the delivery of input.
     pub(crate) fn with_rig<R>(&self, f: impl FnOnce(&mut Rig) -> R) -> Result<R, EngineError> {
         let mut rig = self.rig.try_borrow_mut().map_err(|_| {
-            invoke_error("a test cannot send input or wait from inside a frame or an event")
+            EngineError::from("a test cannot send input or wait from inside a frame or an event")
         })?;
         let rig = rig
             .as_mut()
-            .ok_or_else(|| invoke_error("no test run is in progress: use `ljos test`"))?;
+            .ok_or_else(|| EngineError::from("no test run is in progress: use `ljos test`"))?;
         Ok(f(rig))
     }
 
@@ -296,7 +292,7 @@ impl Host {
             (None, true) => Ok(()),
             (None, false) => {
                 self.say(engine, failure().at(place));
-                Err(invoke_error(FAIL_MARKER))
+                Err(EngineError::from(FAIL_MARKER))
             }
             (Some(expect), false) => {
                 self.say(
@@ -304,7 +300,7 @@ impl Host {
                     Message::new(MessageKind::ExpectedFail, expect.message).at(place),
                 );
                 if expect.abort {
-                    Err(invoke_error(FAIL_MARKER))
+                    Err(EngineError::from(FAIL_MARKER))
                 } else {
                     Ok(())
                 }
@@ -314,7 +310,7 @@ impl Host {
                     engine,
                     Message::new(MessageKind::UnexpectedPass, unexpected()).at(place),
                 );
-                Err(invoke_error(FAIL_MARKER))
+                Err(EngineError::from(FAIL_MARKER))
             }
         }
     }
@@ -438,7 +434,7 @@ impl Host {
         }
         let out = engine.call_js(function, &[]);
         self.state.borrow_mut().capture = false;
-        out.ok_or_else(|| invoke_error(FAIL_MARKER))
+        out.ok_or_else(|| EngineError::from(FAIL_MARKER))
     }
 
     // ------------------------------------------------------------ runner

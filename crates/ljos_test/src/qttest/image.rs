@@ -15,10 +15,6 @@ use ljos_runtime::Clock as _;
 use super::host::Host;
 use super::input::number;
 
-fn error(text: impl Into<String>) -> EngineError {
-    EngineError::Invoke(text.into())
-}
-
 /// A picture of an item
 /// (doc.qt.io/qt-6/qml-qttest-testcase.html#grabImage-method).
 #[derive(Debug, Default, QmlObject)]
@@ -53,7 +49,7 @@ impl GrabbedImage {
             };
             ljos_drive::draw(engine, &mut rig.scene, rig.clock.now(), config)
         })?;
-        let window = window.map_err(|e| error(format!("grabImage: {e}")))?;
+        let window = window.map_err(|e| EngineError::from(format!("grabImage: {e}")))?;
         let width = engine.get(item, Item::WIDTH)?;
         let height = engine.get(item, Item::HEIGHT)?;
         let area =
@@ -151,7 +147,7 @@ impl GrabbedImage {
     fn save(cx: &Cx, path: Value) -> Result<(), EngineError> {
         let name = match &path {
             Value::String(s) | Value::Url(s) => s.to_string(),
-            _ => return Err(error("save: no path was given")),
+            _ => return Err(EngineError::from("save: no path was given")),
         };
         let name = name.strip_prefix("file://").unwrap_or(&name);
         let mut file = PathBuf::from(name);
@@ -165,8 +161,11 @@ impl GrabbedImage {
             height: s.height as u32,
             data: s.data.clone(),
         })?;
-        let png = image.to_png().map_err(|e| error(format!("save: {e}")))?;
-        std::fs::write(&file, png).map_err(|e| error(format!("save: {}: {e}", file.display())))
+        let png = image
+            .to_png()
+            .map_err(|e| EngineError::from(format!("save: {e}")))?;
+        std::fs::write(&file, png)
+            .map_err(|e| EngineError::from(format!("save: {}: {e}", file.display())))
     }
 }
 

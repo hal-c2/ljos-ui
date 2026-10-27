@@ -74,10 +74,6 @@ impl Default for TestCase {
     }
 }
 
-fn error(text: impl Into<String>) -> EngineError {
-    EngineError::Invoke(text.into())
-}
-
 /// What a test wrote as a message, when it wrote one.
 fn text(engine: &Engine, v: &Value) -> Option<String> {
     match v {
@@ -279,7 +275,7 @@ impl TestCase {
         let said = text(engine, &message).unwrap_or_default();
         let place = host.place(engine);
         host.say(engine, Message::new(MessageKind::Skip, said).at(place));
-        Err(error(SKIP_MARKER))
+        Err(EngineError::from(SKIP_MARKER))
     }
 
     /// Writes a warning into the report.

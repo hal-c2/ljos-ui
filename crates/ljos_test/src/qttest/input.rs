@@ -25,10 +25,6 @@ const MODIFIER_KEYS: [(Modifiers, i32); 4] = [
 const DRAG_FIRST_STEP: f64 = 9.0;
 const DRAG_STEPS_FROM: f64 = 25.0;
 
-fn error(text: impl Into<String>) -> EngineError {
-    EngineError::Invoke(text.into())
-}
-
 /// A number a test gave, `None` when it gave none.
 pub(crate) fn number(v: &Value) -> Option<f64> {
     match v {
@@ -41,7 +37,7 @@ pub(crate) fn number(v: &Value) -> Option<f64> {
 pub(crate) fn item_of(engine: &Engine, v: &Value, function: &str) -> Result<ObjectId, EngineError> {
     v.as_object()
         .filter(|o| is_item(engine, *o))
-        .ok_or_else(|| error(format!("{function}: the first argument is not an item")))
+        .ok_or_else(|| EngineError::from(format!("{function}: the first argument is not an item")))
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -237,7 +233,7 @@ pub(crate) fn stroke_of(v: &Value, function: &str) -> Result<Stroke, EngineError
                     key: key::from_char(c).unwrap_or(0),
                     text: c.to_string(),
                 }),
-                _ => Err(error(format!(
+                _ => Err(EngineError::from(format!(
                     "{function}: a key is a Qt.Key or one character, not \"{s}\""
                 ))),
             }
@@ -248,7 +244,7 @@ pub(crate) fn stroke_of(v: &Value, function: &str) -> Result<Stroke, EngineError
                 key: n as i32,
                 text: text_of(n as i32),
             }),
-            None => Err(error(format!("{function}: no key was given"))),
+            None => Err(EngineError::from(format!("{function}: no key was given"))),
         },
     }
 }
@@ -305,15 +301,18 @@ pub(crate) fn key_up(
 /// or a `StandardKey`, which is the first sequence the platform has for it.
 pub(crate) fn chords_of(engine: &Engine, v: &Value) -> Result<Vec<KeyChord>, EngineError> {
     let sequence = match v {
-        Value::String(s) => KeySequence::parse(s)
-            .ok_or_else(|| error(format!("keySequence: \"{s}\" is not a key sequence")))?,
+        Value::String(s) => KeySequence::parse(s).ok_or_else(|| {
+            EngineError::from(format!("keySequence: \"{s}\" is not a key sequence"))
+        })?,
         #[allow(clippy::cast_possible_truncation)]
         v => match number(v) {
             Some(n) => standard_key_sequences(n as i32, platform(engine))
                 .into_iter()
                 .next()
-                .ok_or_else(|| error("keySequence: the platform has no keys for this"))?,
-            None => return Err(error("keySequence: no key sequence was given")),
+                .ok_or_else(|| {
+                    EngineError::from("keySequence: the platform has no keys for this")
+                })?,
+            None => return Err(EngineError::from("keySequence: no key sequence was given")),
         },
     };
     Ok(sequence.chords().to_vec())
