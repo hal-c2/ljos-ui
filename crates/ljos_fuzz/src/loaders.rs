@@ -76,12 +76,7 @@ pub fn program(rng: &mut Rng) -> Program {
 }
 
 fn setting(name: &str, text: String) -> Prop {
-    Prop {
-        name: name.into(),
-        decl: Decl::Setting,
-        init: Some(Expr::Lit(text, Kind::Any)),
-        in_loop: false,
-    }
+    Prop::setting(name, Expr::Lit(text, Kind::Any))
 }
 
 fn prop(name: &str, ty: PType, init: Expr) -> Prop {

@@ -117,12 +117,7 @@ fn props(g: &mut Gen, o: &mut Obj) {
 }
 
 fn setting(name: &str, e: Expr) -> Prop {
-    Prop {
-        name: name.into(),
-        decl: Decl::Setting,
-        init: Some(e),
-        in_loop: false,
-    }
+    Prop::setting(name, e)
 }
 
 fn object(id: &str) -> Expr {

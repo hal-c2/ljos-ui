@@ -129,12 +129,7 @@ fn props(g: &mut Gen, o: &mut Obj) {
 }
 
 fn setting(name: &str, text: String) -> Prop {
-    Prop {
-        name: name.into(),
-        decl: Decl::Setting,
-        init: Some(Expr::Lit(text, Kind::Any)),
-        in_loop: false,
-    }
+    Prop::setting(name, Expr::Lit(text, Kind::Any))
 }
 
 fn log(text: &str) -> String {

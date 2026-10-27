@@ -115,12 +115,8 @@ fn list_model(g: &mut Gen, root: &mut Obj) -> String {
         let row_id = g.name("r");
         let mut row = Obj::new(row_id, ObjType::ListElement);
         for (role, from) in [("k", NUMS), ("s", STRS)] {
-            row.props.push(Prop {
-                name: role.into(),
-                decl: Decl::Setting,
-                init: Some(g.lit_from(from, Kind::Any)),
-                in_loop: false,
-            });
+            row.props
+                .push(Prop::setting(role, g.lit_from(from, Kind::Any)));
         }
         m.children.push(row);
     }
@@ -200,12 +196,8 @@ fn list_model(g: &mut Gen, root: &mut Obj) -> String {
 fn repeater(g: &mut Gen, root: &mut Obj, model: &str, source: Source) {
     let id = g.name("rep");
     let mut r = Obj::new(id.clone(), ObjType::Repeater);
-    r.props.push(Prop {
-        name: "model".into(),
-        decl: Decl::Setting,
-        init: Some(Expr::Lit(model.into(), Kind::Any)),
-        in_loop: false,
-    });
+    r.props
+        .push(Prop::setting("model", Expr::Lit(model.into(), Kind::Any)));
     r.props.push(Prop {
         name: "count".into(),
         decl: Decl::Builtin { ty: PType::Int },
@@ -213,24 +205,20 @@ fn repeater(g: &mut Gen, root: &mut Obj, model: &str, source: Source) {
         in_loop: false,
     });
     if g.rng.chance(50) {
-        r.props.push(Prop {
-            name: "onItemAdded".into(),
-            decl: Decl::Setting,
-            init: Some(Expr::Lit(
+        r.props.push(Prop::setting(
+            "onItemAdded",
+            Expr::Lit(
                 format!("function (index, item) {{ root.log += \"{id}+\" + index + \";\"; }}"),
                 Kind::Any,
-            )),
-            in_loop: false,
-        });
-        r.props.push(Prop {
-            name: "onItemRemoved".into(),
-            decl: Decl::Setting,
-            init: Some(Expr::Lit(
+            ),
+        ));
+        r.props.push(Prop::setting(
+            "onItemRemoved",
+            Expr::Lit(
                 format!("function (index, item) {{ root.log += \"{id}-\" + index + \";\"; }}"),
                 Kind::Any,
-            )),
-            in_loop: false,
-        });
+            ),
+        ));
     }
     let did = g.name("d");
     let mut d = Obj::new(did, ObjType::Item);

@@ -281,6 +281,17 @@ pub struct Prop {
 }
 
 impl Prop {
+    /// A property the object already has, set to `init`.
+    #[must_use]
+    pub fn setting(name: impl Into<String>, init: Expr) -> Self {
+        Prop {
+            name: name.into(),
+            decl: Decl::Setting,
+            init: Some(init),
+            in_loop: false,
+        }
+    }
+
     /// The type its value is observed as.
     #[must_use]
     pub fn ty(&self) -> PType {

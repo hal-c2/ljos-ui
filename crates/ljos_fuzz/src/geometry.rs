@@ -231,12 +231,8 @@ fn anchors(g: &mut Gen, o: &mut Obj, siblings: &[String]) -> Vec<&'static str> {
     let mut set = Vec::new();
     let mut setting = |o: &mut Obj, name: &'static str, e: Expr| {
         set.push(name);
-        o.props.push(bindings::ast::Prop {
-            name: format!("anchors.{name}"),
-            decl: Decl::Setting,
-            init: Some(e),
-            in_loop: false,
-        });
+        o.props
+            .push(bindings::ast::Prop::setting(format!("anchors.{name}"), e));
     };
     match g.rng.below(10) {
         0..2 => {
