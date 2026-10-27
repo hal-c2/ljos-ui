@@ -17,7 +17,7 @@ use ljos_runtime::Time;
 
 use super::{
     EnumTable, PointValues, PointerHandler, axis, clamp, emit, flag, handler_item, handler_target,
-    local, num, put, put_point, read_vector, scene_point, set_active, vector_value,
+    local, member, num, put, put_point, read_vector, scene_point, set_active, vector_value,
 };
 use crate::input::{HandlerPoint, PointerEvent};
 use crate::item::Item;
@@ -178,8 +178,16 @@ fn state(engine: &Engine, h: ObjectId) -> Option<Rc<DragState>> {
 /// disabled axis would move taken out.
 fn dragged(engine: &Engine, h: ObjectId, ev: &PointerEvent, press: kurbo::Point) -> kurbo::Vec2 {
     let d = ev.pos - press;
-    let x = if axis(engine, h, "xAxis").0 { d.x } else { 0.0 };
-    let y = if axis(engine, h, "yAxis").0 { d.y } else { 0.0 };
+    let x = if axis(engine, h, DragHandler::X_AXIS.index).0 {
+        d.x
+    } else {
+        0.0
+    };
+    let y = if axis(engine, h, DragHandler::Y_AXIS.index).0 {
+        d.y
+    } else {
+        0.0
+    };
     kurbo::Vec2::new(x, y)
 }
 
@@ -297,8 +305,8 @@ fn place(engine: &Engine, h: ObjectId, st: &DragState, target: ObjectId, d: kurb
     let press = super::grabs(engine).press.get();
     let move_by = in_parent(engine, target, press, d) + st.snap.get();
     let start = st.start.get();
-    let (x_on, x_min, x_max) = axis(engine, h, "xAxis");
-    let (y_on, y_min, y_max) = axis(engine, h, "yAxis");
+    let (x_on, x_min, x_max) = axis(engine, h, DragHandler::X_AXIS.index);
+    let (y_on, y_min, y_max) = axis(engine, h, DragHandler::Y_AXIS.index);
     let write = |p: ljos_engine::PropIndex, v: f64| {
         // A NaN limit leaves the target where it is along that axis.
         if !v.is_nan()
@@ -354,8 +362,8 @@ pub(super) fn active_move(engine: &Engine, h: ObjectId, ev: &PointerEvent, press
     let Some(st) = state(engine, h) else { return };
     centroid(engine, h, ev, press);
     let d = dragged(engine, h, ev, press);
-    let (_, x_min, x_max) = axis(engine, h, "xAxis");
-    let (_, y_min, y_max) = axis(engine, h, "yAxis");
+    let (_, x_min, x_max) = axis(engine, h, DragHandler::X_AXIS.index);
+    let (_, y_min, y_max) = axis(engine, h, DragHandler::Y_AXIS.index);
     let target = handler_target(engine, h);
     let base = st.persistent.get();
     let persistent = match target {
@@ -393,10 +401,16 @@ pub(super) fn active_move(engine: &Engine, h: ObjectId, ev: &PointerEvent, press
     if put(engine, h, DragHandler::TRANSLATION.index, vector_value(d)) {
         emit(engine, h, "translationChanged", &[vector_value(d - before)]);
     }
-    for (name, v) in [("xAxis", d.x), ("yAxis", d.y)] {
-        if let Ok(p) = engine.property_index(h, &format!("{name}.activeValue")) {
-            put(engine, h, p, Value::Real(v));
-        }
+    for (group, v) in [
+        (DragHandler::X_AXIS.index, d.x),
+        (DragHandler::Y_AXIS.index, d.y),
+    ] {
+        put(
+            engine,
+            h,
+            member(group, DragAxis::ACTIVE_VALUE.index),
+            Value::Real(v),
+        );
     }
     if let Some(t) = target {
         place(engine, h, &st, t, d);
@@ -415,10 +429,13 @@ pub(super) fn deactivate(engine: &Engine, h: ObjectId) -> kurbo::Point {
     ] {
         put(engine, h, p, vector_value(kurbo::Vec2::ZERO));
     }
-    for name in ["xAxis", "yAxis"] {
-        if let Ok(p) = engine.property_index(h, &format!("{name}.activeValue")) {
-            put(engine, h, p, Value::Real(0.0));
-        }
+    for group in [DragHandler::X_AXIS.index, DragHandler::Y_AXIS.index] {
+        put(
+            engine,
+            h,
+            member(group, DragAxis::ACTIVE_VALUE.index),
+            Value::Real(0.0),
+        );
     }
     at
 }

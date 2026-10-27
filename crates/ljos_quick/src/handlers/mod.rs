@@ -397,18 +397,23 @@ pub(crate) fn flag(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
     engine.untrack(|| engine.read(obj, p)).to_boolean()
 }
 
-/// One axis's `enabled`, `minimum` and `maximum`.
-pub(super) fn axis(engine: &Engine, h: ObjectId, name: &str) -> (bool, f64, f64) {
-    let read = |p: &str| {
-        engine
-            .property_index(h, &format!("{name}.{p}"))
-            .map(|i| engine.untrack(|| engine.read(h, i)))
-            .ok()
-    };
-    let enabled = read("enabled").is_none_or(|v| v.to_boolean());
-    let min = read("minimum").map_or(-f64::MAX, |v| v.to_number());
-    let max = read("maximum").map_or(f64::MAX, |v| v.to_number());
-    (enabled, min, max)
+/// A member of a grouped property: it follows the group, at its index in
+/// the group plus one.
+pub(crate) fn member(group: PropIndex, member: PropIndex) -> PropIndex {
+    PropIndex(group.0 + 1 + member.0)
+}
+
+/// One axis's `enabled`, `minimum` and `maximum`. `group` is the handler's
+/// `DragAxis` group.
+pub(super) fn axis(engine: &Engine, h: ObjectId, group: PropIndex) -> (bool, f64, f64) {
+    engine.untrack(|| {
+        let read = |p: PropIndex| engine.read(h, member(group, p));
+        (
+            read(DragAxis::ENABLED.index).to_boolean(),
+            read(DragAxis::MINIMUM.index).to_number(),
+            read(DragAxis::MAXIMUM.index).to_number(),
+        )
+    })
 }
 
 /// `v` within `min` and `max`, or as it is when they are the wrong way round.
@@ -1092,7 +1097,37 @@ pub(crate) fn register(engine: &Engine) {
 
 #[cfg(test)]
 mod tests {
-    use super::clamp;
+    use ljos_engine::{Engine, PropIndex};
+
+    use super::{DragAxis, DragHandler, PinchHandler, clamp, member};
+
+    /// The typed reads find the members the names do.
+    #[test]
+    fn an_axis_member_is_found_by_its_index() {
+        let e = Engine::new();
+        crate::register(&e);
+        let drag = e.create_native(DragHandler::default(), None).unwrap();
+        let pinch = e.create_native(PinchHandler::default(), None).unwrap();
+        let groups: [(_, &str, PropIndex); 6] = [
+            (drag, "xAxis", DragHandler::X_AXIS.index),
+            (drag, "yAxis", DragHandler::Y_AXIS.index),
+            (pinch, "scaleAxis", PinchHandler::SCALE_AXIS.index),
+            (pinch, "rotationAxis", PinchHandler::ROTATION_AXIS.index),
+            (pinch, "xAxis", PinchHandler::X_AXIS.index),
+            (pinch, "yAxis", PinchHandler::Y_AXIS.index),
+        ];
+        for (h, name, group) in groups {
+            for (m, p) in [
+                ("enabled", DragAxis::ENABLED.index),
+                ("minimum", DragAxis::MINIMUM.index),
+                ("maximum", DragAxis::MAXIMUM.index),
+                ("activeValue", DragAxis::ACTIVE_VALUE.index),
+            ] {
+                let by_name = e.property_index(h, &format!("{name}.{m}")).unwrap();
+                assert_eq!(member(group, p), by_name, "{name}.{m}");
+            }
+        }
+    }
 
     #[test]
     fn a_nan_limit_does_not_panic() {

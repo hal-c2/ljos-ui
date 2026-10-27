@@ -14,8 +14,8 @@ use ljos_engine::{
 use ljos_render::kurbo;
 
 use super::{
-    DragAxis, PointValues, PointerHandler, axis, clamp, emit, handler_item, handler_target, num,
-    point_value, put, put_point, reaches, set_active, usable, vector_value,
+    DragAxis, PointValues, PointerHandler, axis, clamp, emit, handler_item, handler_target, member,
+    num, point_value, put, put_point, reaches, set_active, usable, vector_value,
 };
 use crate::input::{HandlerPoint, PointerEvent};
 use crate::item::Item;
@@ -280,10 +280,10 @@ fn update(engine: &Engine, h: ObjectId, g: &PinchGesture) {
     let Some(st) = state(engine, h) else { return };
     let press = super::grabs(engine).press.get();
     centroid(engine, h, g, press);
-    let (s_on, s_min, s_max) = axis(engine, h, "scaleAxis");
-    let (r_on, r_min, r_max) = axis(engine, h, "rotationAxis");
-    let (x_on, x_min, x_max) = axis(engine, h, "xAxis");
-    let (y_on, y_min, y_max) = axis(engine, h, "yAxis");
+    let (s_on, s_min, s_max) = axis(engine, h, PinchHandler::SCALE_AXIS.index);
+    let (r_on, r_min, r_max) = axis(engine, h, PinchHandler::ROTATION_AXIS.index);
+    let (x_on, x_min, x_max) = axis(engine, h, PinchHandler::X_AXIS.index);
+    let (y_on, y_min, y_max) = axis(engine, h, PinchHandler::Y_AXIS.index);
     let s_min = s_min.max(num(engine, h, PinchHandler::MINIMUM_SCALE.index));
     let s_max = s_max.min(num(engine, h, PinchHandler::MAXIMUM_SCALE.index));
     let r_min = r_min.max(num(engine, h, PinchHandler::MINIMUM_ROTATION.index));
@@ -352,15 +352,18 @@ fn update(engine: &Engine, h: ObjectId, g: &PinchGesture) {
             PinchHandler::ACTIVE_TRANSLATION.index,
             point_value((persistent_t - base_t).to_point()),
         );
-        for (name, v) in [
-            ("scaleAxis", active_scale),
-            ("rotationAxis", active_rotation),
-            ("xAxis", persistent_t.x - base_t.x),
-            ("yAxis", persistent_t.y - base_t.y),
+        for (group, v) in [
+            (PinchHandler::SCALE_AXIS.index, active_scale),
+            (PinchHandler::ROTATION_AXIS.index, active_rotation),
+            (PinchHandler::X_AXIS.index, persistent_t.x - base_t.x),
+            (PinchHandler::Y_AXIS.index, persistent_t.y - base_t.y),
         ] {
-            if let Ok(p) = engine.property_index(h, &format!("{name}.activeValue")) {
-                put(engine, h, p, Value::Real(v));
-            }
+            put(
+                engine,
+                h,
+                member(group, DragAxis::ACTIVE_VALUE.index),
+                Value::Real(v),
+            );
         }
     });
     if put(
