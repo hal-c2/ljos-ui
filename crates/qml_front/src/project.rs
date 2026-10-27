@@ -38,6 +38,11 @@ pub struct Project {
     diagnostics: HashMap<String, Vec<Error>>,
     /// The style `import QtQuick.Controls` brings, when one was chosen.
     controls_style: Option<ControlsStyle>,
+    /// Directories on disk, with `/` between their parts and none at the
+    /// end, and the key their files are added under: where a `file:` URL
+    /// an import writes leads. In the order said, the first that holds a
+    /// place wins.
+    places: Vec<(String, String)>,
 }
 
 /// The style behind `import QtQuick.Controls`, as Qt chooses one when the
@@ -227,6 +232,43 @@ impl Project {
                 .is_some_and(|errors| !errors.is_empty())
     }
 
+    /// Says the files of the directory `dir` on disk, and of those below
+    /// it, are added under `prefix`: a project's root under `""`, a
+    /// directory read beside a text under that text's directory. A
+    /// directory an import names by its `file:` URL is found through it.
+    pub fn add_place(&mut self, dir: &str, prefix: &str) {
+        let dir = dir.replace('\\', "/").trim_end_matches('/').to_string();
+        if !self.places.iter().any(|(d, p)| *d == dir && p == prefix) {
+            self.places.push((dir, prefix.to_string()));
+        }
+    }
+
+    /// The key of the directory the import `path` of `file` names: from
+    /// the file's own directory, or, for a `file:` URL, from where it is on
+    /// disk, as [`add_place`](Self::add_place) says. A URL outside every
+    /// place is its path, which no file is under.
+    pub fn import_dir(&self, file: &str, path: &str) -> String {
+        let Some(on_disk) = url_path(path) else {
+            return join(directory(file), path);
+        };
+        for (dir, prefix) in &self.places {
+            let rest = if dir.is_empty() {
+                on_disk.strip_prefix('/')
+            } else {
+                on_disk
+                    .strip_prefix(dir.as_str())
+                    .and_then(|rest| match rest {
+                        "" => Some(""),
+                        rest => rest.strip_prefix('/'),
+                    })
+            };
+            if let Some(rest) = rest {
+                return join(prefix, rest);
+            }
+        }
+        on_disk
+    }
+
     /// The directories the files import by path (`import "content"`), as the
     /// keys their files are to be added under: `content` for `content/Clock`.
     /// What is in them may import others, so this is asked again after they
@@ -238,7 +280,7 @@ impl Project {
                 if let Source::Path(path) = &import.source
                     && !is_script(path)
                 {
-                    directories.insert(join(directory(file), path));
+                    directories.insert(self.import_dir(file, path));
                 }
             }
         }
@@ -644,6 +686,46 @@ fn inline_shapes(summary: &mut Summary, object: &QmlObject<'_>) {
 /// `import "lib.js"`: a script, not a directory of types.
 pub fn is_script(path: &str) -> bool {
     path.ends_with(".js") || path.ends_with(".mjs")
+}
+
+/// The path on disk of a `file:` URL, with `/` between its parts: the
+/// URL percent-decoded, as Qt reads one, so that `%23`, `%3F` and `%25`
+/// are `#`, `?` and `%` of a directory's name. `None` for anything else.
+fn url_path(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("file:")?;
+    let rest = match rest.strip_prefix("//") {
+        Some(rest) => rest.strip_prefix("localhost").unwrap_or(rest),
+        None => rest,
+    };
+    if !rest.starts_with('/') {
+        return None;
+    }
+    // `file:///C:/x` names `C:/x`.
+    let rest = match rest.as_bytes() {
+        [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => &rest[1..],
+        _ => rest,
+    };
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |at: usize| bytes.get(at).and_then(|b| char::from(*b).to_digit(16));
+        match (bytes[i], hex(i + 1), hex(i + 2)) {
+            (b'%', Some(high), Some(low)) => {
+                out.push((high * 16 + low) as u8);
+                i += 3;
+            }
+            (b, ..) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    Some(
+        String::from_utf8_lossy(&out)
+            .trim_end_matches('/')
+            .to_string(),
+    )
 }
 
 /// The directory of a file's key: `content` of `content/Clock`.

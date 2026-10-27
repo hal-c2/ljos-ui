@@ -900,6 +900,43 @@ fn the_files_a_project_imports_by_path_are_found() {
 }
 
 #[test]
+fn a_directory_imported_by_its_file_url_is_the_key_of_where_it_is() {
+    let mut project = project(&[
+        (
+            "Main",
+            "import QtQuick\nimport \"file:///app/plugin\"\nItem {}",
+        ),
+        (
+            "parts/Panel",
+            "import \"file:///app/odd%20%231%2525%3Fx/\"\nItem {}",
+        ),
+    ]);
+    project.add_place("/app/", "");
+    project.add_place("/home/me/notes", "notes");
+    assert_eq!(project.directories(), ["odd #1%25?x", "plugin"]);
+    // A path is from the file's own directory, as before.
+    assert_eq!(project.import_dir("parts/Panel", "../plugin"), "plugin");
+    assert_eq!(project.import_dir("x/Main", "file:///app"), "");
+    assert_eq!(
+        project.import_dir("Main", "file://localhost/app/a/b"),
+        "a/b"
+    );
+    assert_eq!(
+        project.import_dir("Main", "file:/home/me/notes/x"),
+        "notes/x"
+    );
+    // Only a whole directory name is a place's.
+    assert_eq!(
+        project.import_dir("Main", "file:///application/x"),
+        "/application/x"
+    );
+    assert_eq!(
+        project.import_dir("Main", "file:///elsewhere"),
+        "/elsewhere"
+    );
+}
+
+#[test]
 fn a_name_one_component_has_may_be_used_by_another_as_it_runs() {
     let project = project(&[
         (

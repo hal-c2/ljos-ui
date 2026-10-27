@@ -248,6 +248,7 @@ fn add_beside(
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
     };
+    project.add_place(dir, prefix);
     for entry in read.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
