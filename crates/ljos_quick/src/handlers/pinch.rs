@@ -14,8 +14,8 @@ use ljos_engine::{
 use ljos_render::kurbo;
 
 use super::{
-    DragAxis, PointValues, PointerHandler, emit, handler_item, handler_target, num, point_value,
-    put, put_point, reaches, set_active, usable, vector_value,
+    DragAxis, PointValues, PointerHandler, axis, clamp, emit, handler_item, handler_target, num,
+    point_value, put, put_point, reaches, set_active, usable, vector_value,
 };
 use crate::input::{HandlerPoint, PointerEvent};
 use crate::item::Item;
@@ -183,24 +183,6 @@ struct Current(Cell<Option<ObjectId>>);
 
 fn state(engine: &Engine, h: ObjectId) -> Option<Rc<PinchState>> {
     engine.with(h, |p: &PinchHandler| p.state.clone()).ok()
-}
-
-fn axis(engine: &Engine, h: ObjectId, name: &str) -> (bool, f64, f64) {
-    let read = |p: &str| {
-        engine
-            .property_index(h, &format!("{name}.{p}"))
-            .map(|i| engine.untrack(|| engine.read(h, i)))
-            .ok()
-    };
-    (
-        read("enabled").is_none_or(|v| v.to_boolean()),
-        read("minimum").map_or(-f64::MAX, |v| v.to_number()),
-        read("maximum").map_or(f64::MAX, |v| v.to_number()),
-    )
-}
-
-fn clamp(v: f64, min: f64, max: f64) -> f64 {
-    if min > max { v } else { v.clamp(min, max) }
 }
 
 /// The topmost usable PinchHandler of the items under `at`.

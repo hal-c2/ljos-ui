@@ -397,6 +397,25 @@ pub(crate) fn flag(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
     engine.untrack(|| engine.read(obj, p)).to_boolean()
 }
 
+/// One axis's `enabled`, `minimum` and `maximum`.
+pub(super) fn axis(engine: &Engine, h: ObjectId, name: &str) -> (bool, f64, f64) {
+    let read = |p: &str| {
+        engine
+            .property_index(h, &format!("{name}.{p}"))
+            .map(|i| engine.untrack(|| engine.read(h, i)))
+            .ok()
+    };
+    let enabled = read("enabled").is_none_or(|v| v.to_boolean());
+    let min = read("minimum").map_or(-f64::MAX, |v| v.to_number());
+    let max = read("maximum").map_or(f64::MAX, |v| v.to_number());
+    (enabled, min, max)
+}
+
+/// `v` within `min` and `max`, or as it is when they are the wrong way round.
+pub(crate) fn clamp(v: f64, min: f64, max: f64) -> f64 {
+    if min > max { v } else { v.clamp(min, max) }
+}
+
 fn object(engine: &Engine, obj: ObjectId, p: PropIndex) -> Option<ObjectId> {
     engine
         .untrack(|| engine.read(obj, p))

@@ -15,7 +15,7 @@ use ljos_engine::{Engine, ObjectId, Point, QmlObject, QmlType, QtObject, Value, 
 use ljos_render::kurbo;
 
 use crate::enums::EnumTable;
-use crate::handlers::{emit, flag, num, put};
+use crate::handlers::{clamp, emit, flag, num, put};
 use crate::item::Item;
 use crate::scene::{DRAG_THRESHOLD, local_point};
 
@@ -234,10 +234,6 @@ pub(crate) fn takes_touch(engine: &Engine, obj: ObjectId) -> bool {
     crate::item::is_a::<PinchArea>(engine, obj)
         && flag(engine, obj, Item::ENABLED.index)
         && flag(engine, obj, Item::VISIBLE.index)
-}
-
-fn clamp(v: f64, min: f64, max: f64) -> f64 {
-    if min > max { v } else { v.clamp(min, max) }
 }
 
 /// From `from` to `to`, the shorter way round, in degrees.
