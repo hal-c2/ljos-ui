@@ -1393,3 +1393,52 @@ fn a_spin_box_scrolled_out_of_view_is_reached_through_its_number() {
         "\n{report}"
     );
 }
+
+fn offscreen(source: &str) -> Report {
+    let options = Options::desktop().only(&["layout-offscreen"]).unwrap();
+    audit_with(source, &options)
+}
+
+/// A popup whose list opens at `y` in the 640x480 page.
+fn list_popup_at(y: u32, height: &str) -> String {
+    page(&format!(
+        r##"
+    Popup {{
+        id: popup
+        y: {y}
+        width: 160
+        padding: 4
+        contentItem: ListView {{
+            implicitHeight: {height}
+            clip: true
+            model: ["Low", "Medium", "High", "Extra High", "Max"]
+            delegate: ItemDelegate {{
+                required property string modelData
+                width: ListView.view.width
+                height: 28
+                text: modelData
+            }}
+        }}
+        Component.onCompleted: open()
+    }}"##
+    ))
+}
+
+#[test]
+fn rows_of_a_list_past_the_window_that_cannot_scroll_are_offscreen() {
+    // Issue #153: the list is as tall as its rows, so scrolling it brings
+    // nothing back into the window.
+    let report = offscreen(&list_popup_at(452, "contentHeight"));
+    let names: Vec<_> = report
+        .findings
+        .iter()
+        .filter_map(|f| f.name.clone())
+        .collect();
+    assert_eq!(names, ["Medium", "High", "Extra High", "Max"], "\n{report}");
+}
+
+#[test]
+fn rows_of_a_list_that_scrolls_them_into_the_window_are_not_offscreen() {
+    let report = offscreen(&list_popup_at(300, "100"));
+    assert!(report.is_clean(), "expected nothing, found:\n{report}");
+}

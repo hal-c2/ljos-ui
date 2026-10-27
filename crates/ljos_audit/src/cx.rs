@@ -379,12 +379,6 @@ pub(crate) fn trim(n: f64) -> String {
     s.strip_suffix(".0").map(str::to_string).unwrap_or(s)
 }
 
-/// Whether something between `item` and the window scrolls, so that what
-/// lies past its edge can be brought into view.
-pub(crate) fn scrolls(engine: &Engine, item: ObjectId) -> bool {
-    ancestors(engine, item).any(|a| is_scroller(engine, a))
-}
-
 /// Whether `obj` scrolls what it holds: a Flickable or a ScrollView.
 pub(crate) fn is_scroller(engine: &Engine, obj: ObjectId) -> bool {
     is_a::<ljos_quick::Flickable>(engine, obj) || is_a::<ljos_controls::ScrollView>(engine, obj)
