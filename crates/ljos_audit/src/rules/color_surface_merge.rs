@@ -14,7 +14,7 @@ use ljos_engine::ObjectId;
 use ljos_render::{DrawOp, FrameSnapshot};
 
 use crate::acting::Act;
-use crate::cx::{Cx, place_of, scene_rect, within};
+use crate::cx::{Cx, declared_by_app, scene_rect, within};
 use crate::pixels::{Painter, backdrop};
 use crate::surfaces::{dominant, open_surfaces, own_rect};
 
@@ -42,7 +42,7 @@ pub(crate) fn check(act: &mut Act) {
         let mut painter = Painter::new(backdrop(e, cx.options));
         for s in open_surfaces(&cx) {
             let Some(bg) = s.background else { continue };
-            let own = place_of(e, bg).is_some_and(|p| !ljos_controls::is_style_url(&p));
+            let own = declared_by_app(e, bg);
             let Some((fill, edged)) = own_rect(&cx, &snapshot, bg) else {
                 continue;
             };

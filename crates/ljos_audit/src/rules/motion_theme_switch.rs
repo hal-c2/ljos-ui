@@ -18,8 +18,8 @@ use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::Rectangle;
 
 use crate::acting::Act;
-use crate::cx::{is_a, shown_items};
-use crate::motion_watch::{anim_words, own, surely, watch, with_motion};
+use crate::cx::{declared_by_app, is_a, shown_items};
+use crate::motion_watch::{anim_words, surely, watch, with_motion};
 
 /// No audit follows more rectangles than this.
 const MOST: usize = 256;
@@ -42,7 +42,7 @@ pub(crate) fn check(act: &mut Act) {
     let e = act.engine;
     let rects: Vec<ObjectId> = shown_items(&act.cx())
         .into_iter()
-        .filter(|r| is_a::<Rectangle>(e, *r) && own(e, *r))
+        .filter(|r| is_a::<Rectangle>(e, *r) && declared_by_app(e, *r))
         .take(MOST)
         .collect();
     let probe = |e: &Engine| rects.iter().map(|r| lightness(e, *r)).collect::<Vec<_>>();

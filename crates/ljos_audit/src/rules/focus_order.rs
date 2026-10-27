@@ -16,7 +16,7 @@
 use ljos_design::limits::keyboard::ROW_OVERLAP;
 use ljos_render::kurbo::Rect;
 
-use crate::cx::{Cx, place_of, scene_rect, shown_items, words};
+use crate::cx::{Cx, declared_by_app, scene_rect, shown_items, words};
 use crate::focus_walk::rounds;
 
 fn row_overlap(a: Rect, b: Rect) -> bool {
@@ -31,7 +31,7 @@ fn column_overlap(a: Rect, b: Rect) -> bool {
 pub(crate) fn check(cx: &mut Cx) {
     let e = cx.engine;
     let drawn: std::collections::HashSet<_> = shown_items(cx).into_iter().collect();
-    let own = |s| place_of(e, s).is_some_and(|p| !ljos_controls::is_style_url(&p));
+    let own = |s| declared_by_app(e, s);
     let mut found = Vec::new();
     for (_, round) in rounds(cx) {
         let placed: Vec<_> = round

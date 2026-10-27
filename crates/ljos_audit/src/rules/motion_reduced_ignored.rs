@@ -17,8 +17,8 @@ use ljos_design::limits::audit::ANIMATION_WAIT_MS;
 use ljos_engine::{Engine, ObjectId};
 
 use crate::acting::Act;
-use crate::cx::{ancestors, is_a, shown_items, slack};
-use crate::motion_watch::{frames_for, own, with_motion};
+use crate::cx::{ancestors, declared_by_app, is_a, shown_items, slack};
+use crate::motion_watch::{frames_for, with_motion};
 
 /// What is read of each item, in order.
 const PROBES: [&str; 6] = ["x", "y", "width", "height", "scale", "rotation"];
@@ -42,7 +42,7 @@ pub(crate) fn check(act: &mut Act) {
         act.finish();
         let items: Vec<ObjectId> = shown_items(&act.cx())
             .into_iter()
-            .filter(|i| own(e, *i) && !busy(e, *i))
+            .filter(|i| declared_by_app(e, *i) && !busy(e, *i))
             .take(MOST)
             .collect();
         let probe = |e: &Engine| {

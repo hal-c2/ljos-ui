@@ -162,6 +162,11 @@ pub(crate) fn place_of(engine: &Engine, item: ObjectId) -> Option<String> {
     (!at.is_empty()).then(|| at.to_string())
 }
 
+/// Whether the application's own QML declared `obj` (not a style).
+pub(crate) fn declared_by_app(engine: &Engine, obj: ObjectId) -> bool {
+    place_of(engine, obj).is_some_and(|p| !ljos_controls::is_style_url(&p))
+}
+
 /// Where the application's own QML has the item: its place, or for what
 /// a control's style makes (a button's label) or what has no place, the
 /// nearest item above it the application declared. A finding is fixed

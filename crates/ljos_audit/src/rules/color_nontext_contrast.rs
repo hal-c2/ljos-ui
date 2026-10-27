@@ -23,7 +23,7 @@ use ljos_engine::ObjectId;
 use ljos_quick::Item;
 use ljos_render::{DrawOp, FrameSnapshot};
 
-use crate::cx::{Cx, is_a, place_of, scene_rect, shown_items, takes_focus, within, words};
+use crate::cx::{Cx, declared_by_app, is_a, scene_rect, shown_items, takes_focus, within, words};
 use crate::pixels::{Painter, backdrop};
 
 /// The parts of `control` the rule holds, each with what a message calls
@@ -128,7 +128,7 @@ pub(crate) fn check(cx: &mut Cx) {
             continue;
         }
         for (part, what) in parts(cx, control) {
-            let own = place_of(e, part).is_some_and(|p| !ljos_controls::is_style_url(&p));
+            let own = declared_by_app(e, part);
             if !own || !e.untrack(|| e.read(part, Item::VISIBLE.index)).to_boolean() {
                 continue;
             }

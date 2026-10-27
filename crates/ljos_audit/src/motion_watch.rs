@@ -18,7 +18,7 @@ use ljos_design::limits::motion::FRAME_BUDGET_MS;
 use ljos_engine::{Engine, ObjectId};
 
 use crate::acting::Act;
-use crate::cx::place_of;
+use crate::cx::{declared_by_app, place_of};
 
 /// One frame of the display, as the audit's clock steps it.
 pub(crate) fn period() -> Duration {
@@ -52,13 +52,8 @@ impl Watched {
     /// The runs of animations the application declared, and not its
     /// style: what the application can change.
     pub(crate) fn own_runs<'a>(&'a self, e: &'a Engine) -> impl Iterator<Item = &'a Run> + 'a {
-        self.runs.iter().filter(move |r| own(e, r.anim))
+        self.runs.iter().filter(move |r| declared_by_app(e, r.anim))
     }
-}
-
-/// Whether the application's own QML declared `obj` (not a style).
-pub(crate) fn own(e: &Engine, obj: ObjectId) -> bool {
-    place_of(e, obj).is_some_and(|p| !ljos_controls::is_style_url(&p))
 }
 
 fn running(e: &Engine) -> HashSet<ObjectId> {
@@ -120,7 +115,7 @@ pub(crate) fn watch(
         for (a, at, ms) in &mut started {
             if ms.is_none() {
                 if now_running.contains(a) {
-                    stepped |= own(e, *a);
+                    stepped |= declared_by_app(e, *a);
                 } else {
                     *ms = Some(act.now.saturating_since(*at).as_secs_f64() * 1000.0);
                 }
@@ -237,7 +232,7 @@ fn reopen_popups(act: &mut Act) -> Vec<Reopened> {
         let cx = act.cx();
         crate::surfaces::open_surfaces(&cx)
             .into_iter()
-            .filter(|s| own(e, s.popup))
+            .filter(|s| declared_by_app(e, s.popup))
             .filter(|s| e.untrack(|| e.read_by_name(s.popup, "opened")).to_boolean())
             .map(|s| (s.popup, s.item))
             .collect()

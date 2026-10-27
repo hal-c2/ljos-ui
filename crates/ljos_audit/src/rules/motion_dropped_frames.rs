@@ -15,7 +15,8 @@ use ljos_design::limits::motion::FRAME_BUDGET_MS;
 use ljos_engine::ObjectId;
 
 use crate::acting::Act;
-use crate::motion_watch::{anim_words, frames_for, no_probe, own, reopened, with_motion};
+use crate::cx::declared_by_app;
+use crate::motion_watch::{anim_words, frames_for, no_probe, reopened, with_motion};
 
 /// How long what runs at rest is timed for, on the scene's clock.
 const RESTING_MS: u32 = 500;
@@ -45,7 +46,7 @@ pub(crate) fn check(act: &mut Act) {
     act.rest();
     let resting: Vec<ObjectId> = ljos_quick::running_animations(e)
         .into_iter()
-        .filter(|(a, paused)| !paused && own(e, *a))
+        .filter(|(a, paused)| !paused && declared_by_app(e, *a))
         .map(|(a, _)| a)
         .collect();
     if let Some(&anim) = resting.first() {

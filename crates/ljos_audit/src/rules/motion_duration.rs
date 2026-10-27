@@ -19,10 +19,8 @@ use ljos_engine::ObjectId;
 
 use super::controls::{checked, hold_checked, restore_checked, set_checked};
 use crate::acting::Act;
-use crate::cx::{is_a, shown_items, takes_focus};
-use crate::motion_watch::{
-    Watched, anim_words, no_probe, own, reopened, surely, watch, with_motion,
-};
+use crate::cx::{declared_by_app, is_a, shown_items, takes_focus};
+use crate::motion_watch::{Watched, anim_words, no_probe, reopened, surely, watch, with_motion};
 
 /// No audit flips more than this many controls.
 const MOST: usize = 32;
@@ -91,7 +89,7 @@ pub(crate) fn check(act: &mut Act) {
         .iter()
         .copied()
         .filter(|b| {
-            own(e, *b)
+            declared_by_app(e, *b)
                 && takes_focus(e, *b)
                 && e.untrack(|| e.read_by_name(*b, "checkable")).to_boolean()
         })

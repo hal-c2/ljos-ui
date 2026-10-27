@@ -27,7 +27,7 @@ use ljos_quick::focus::{FocusReason, force_active_focus};
 use ljos_render::kurbo::Rect;
 
 use crate::acting::{Act, hold_focus, restore_focus};
-use crate::cx::{clipped_away, is_a, place_of, scene_rect, shown_items};
+use crate::cx::{clipped_away, declared_by_app, is_a, scene_rect, shown_items};
 use crate::focus_walk::rounds;
 use crate::pixels::{Painter, Picture, backdrop};
 
@@ -39,7 +39,7 @@ const PARTS: [&str; 3] = ["background", "contentItem", "indicator"];
 
 /// Whether the application, and not a style, draws how `stop` looks.
 fn drawn_by_app(e: &ljos_engine::Engine, stop: ObjectId) -> bool {
-    let own = |o| place_of(e, o).is_some_and(|p| !ljos_controls::is_style_url(&p));
+    let own = |o| declared_by_app(e, o);
     if !own(stop) {
         return false;
     }

@@ -15,7 +15,7 @@ use ljos_design::limits::keyboard::COMPOSITE_TAB_STOPS_MAX;
 use ljos_engine::ObjectId;
 use ljos_quick::{GridView, ListView, PathView};
 
-use crate::cx::{Cx, ancestors, is_a, item_words, place_of, words};
+use crate::cx::{Cx, ancestors, declared_by_app, is_a, item_words, words};
 use crate::focus_walk::rounds;
 
 /// What `stop` is one item of, and what a message calls it.
@@ -51,7 +51,7 @@ fn own(cx: &Cx, owner: ObjectId) -> bool {
         .chain(ancestors(e, owner))
         .filter_map(|a| ljos_controls::item_popup(e, a))
         .any(|p| is_a::<Menu>(e, p));
-    !in_menu && place_of(e, owner).is_some_and(|p| !ljos_controls::is_style_url(&p))
+    !in_menu && declared_by_app(e, owner)
 }
 
 pub(crate) fn check(cx: &mut Cx) {

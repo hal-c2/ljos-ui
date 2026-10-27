@@ -14,8 +14,7 @@ use ljos_design::limits::motion::{STAGGER_STEP_MAX_MS, STAGGER_TOTAL_MAX_MS};
 use ljos_engine::ObjectId;
 use ljos_quick::PauseAnimation;
 
-use crate::cx::{Cx, is_a};
-use crate::motion_watch::own;
+use crate::cx::{Cx, declared_by_app, is_a};
 
 /// No audit looks at more objects than this.
 const MOST: usize = 50_000;
@@ -49,7 +48,7 @@ pub(crate) fn check(cx: &mut Cx) {
     let e = cx.engine;
     let mut groups: BTreeMap<String, Vec<(ObjectId, i64)>> = BTreeMap::new();
     for o in every_object(cx) {
-        if !is_a::<PauseAnimation>(e, o) || !own(e, o) {
+        if !is_a::<PauseAnimation>(e, o) || !declared_by_app(e, o) {
             continue;
         }
         let Some(at) = crate::cx::place_of(e, o) else {

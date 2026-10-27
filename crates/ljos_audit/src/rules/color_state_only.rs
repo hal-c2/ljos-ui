@@ -26,7 +26,9 @@ use ljos_render::kurbo::Rect;
 
 use super::controls::{checked, hold_checked, restore_checked, set_checked};
 use crate::acting::Act;
-use crate::cx::{is_a, place_of, scene_rect, shown_items, shown_opacity, takes_focus, within};
+use crate::cx::{
+    declared_by_app, is_a, scene_rect, shown_items, shown_opacity, takes_focus, within,
+};
 use crate::pixels::{Painter, Picture, backdrop};
 
 /// No audit flips more than this many buttons: a long list of check
@@ -83,7 +85,7 @@ pub(crate) fn check(act: &mut Act) {
             .filter(|b| {
                 takes_focus(e, *b)
                     && e.untrack(|| e.read_by_name(*b, "checkable")).to_boolean()
-                    && place_of(e, *b).is_some_and(|p| !ljos_controls::is_style_url(&p))
+                    && declared_by_app(e, *b)
             })
             .take(MOST)
             .collect();

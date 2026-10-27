@@ -11,15 +11,13 @@ use std::collections::HashMap;
 use ljos_engine::ObjectId;
 
 use super::controls::{shown_texts, word_list};
-use crate::cx::{Cx, place_of};
+use crate::cx::{Cx, declared_by_app};
 
 pub(crate) fn check(cx: &mut Cx) {
     let e = cx.engine;
     let mut first: HashMap<(ObjectId, String), ObjectId> = HashMap::new();
     for (item, text) in shown_texts(cx) {
-        if word_list(&text).len() < 2
-            || place_of(e, item).is_none_or(|p| ljos_controls::is_style_url(&p))
-        {
+        if word_list(&text).len() < 2 || !declared_by_app(e, item) {
             continue;
         }
         let Some(parent) = e.visual_parent(item) else {

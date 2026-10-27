@@ -15,9 +15,9 @@ use ljos_engine::{ObjectId, Value, WriteKind};
 use ljos_quick::focus::{FocusReason, force_active_focus};
 
 use crate::acting::{Act, hold_focus, restore_focus};
-use crate::cx::{is_a, shown_items};
+use crate::cx::{declared_by_app, is_a, shown_items};
 use crate::focus_walk::rounds;
-use crate::motion_watch::{Watched, anim_words, no_probe, own, surely, watch, with_motion};
+use crate::motion_watch::{Watched, anim_words, no_probe, surely, watch, with_motion};
 
 /// No audit focuses more than this many stops.
 const MOST: usize = 64;
@@ -51,7 +51,7 @@ pub(crate) fn check(act: &mut Act) {
             .collect();
         let bars = shown_items(&cx)
             .into_iter()
-            .filter(|b| is_a::<TabBar>(e, *b) && own(e, *b))
+            .filter(|b| is_a::<TabBar>(e, *b) && declared_by_app(e, *b))
             .filter(|b| e.untrack(|| e.read_by_name(*b, "count")).to_number() >= 2.0)
             .collect();
         (stops, bars)
