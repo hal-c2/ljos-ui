@@ -1819,7 +1819,7 @@ impl<M: Send + 'static> Desktop<M> {
         let change = if painter.wants_areas() || follows {
             slot.shown.change(&shapes, pixels_per_point, clear)
         } else {
-            slot.shown.differs(&shapes, pixels_per_point, clear)
+            slot.shown.whole_change(&shapes, pixels_per_point, clear)
         };
         #[cfg(feature = "mcp")]
         let changed = follows.then(|| change.boxes());
@@ -2829,12 +2829,12 @@ pub(crate) fn run<M: Send + 'static>(
     // A window that can be seen through is not chosen for the
     // processor: its pixels have no alpha.
     let opaque = config.background.to_rgba8()[3] == 255;
-    let painter_choice = surface::Choice::from_env(
+    let chosen = surface::Chosen::from_env(
         std::env::var("LJOS_PAINTER").ok().as_deref(),
         config.drawn_on_processor,
         || opaque && only_software(&host.display_handle()),
     );
-    let starting = Starting::start(host.display_handle(), painter_choice);
+    let starting = Starting::start(host.display_handle(), chosen);
     // Before `setup`: bindings may measure text while the root is being
     // built. They wait for the fonts; making the engine and registering
     // its types do not.
@@ -2868,7 +2868,7 @@ pub(crate) fn run<M: Send + 'static>(
     };
     #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
     let mut app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
-    if painter_choice.automatic {
+    if chosen.automatic {
         app.engine().log(
             LogLevel::Info,
             CATEGORY,

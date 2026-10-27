@@ -41,7 +41,7 @@ pub(crate) enum Choice {
     Cpu,
 }
 
-impl Choice {
+impl Chosen {
     /// From `LJOS_PAINTER` (`gl`, `wgpu` or `cpu`), else the processor
     /// where the application asked for it (`on_processor`), else GL where
     /// the platform has EGL. Where EGL would offer only a software
@@ -51,7 +51,7 @@ impl Choice {
         value: Option<&str>,
         on_processor: bool,
         only_software: impl FnOnce() -> bool,
-    ) -> Chosen {
+    ) -> Self {
         let choice = match value.map(str::trim) {
             Some(v) if v.eq_ignore_ascii_case("wgpu") => Choice::Wgpu,
             Some(v) if v.eq_ignore_ascii_case("gl") => Choice::Gl,
@@ -804,7 +804,7 @@ mod tests {
     use super::*;
 
     fn choice(value: Option<&str>, on_processor: bool) -> Choice {
-        Choice::from_env(value, on_processor, || false).choice
+        Chosen::from_env(value, on_processor, || false).choice
     }
 
     #[test]
@@ -835,7 +835,7 @@ mod tests {
     fn where_egl_draws_in_software_the_shell_chooses_the_processor() {
         let software = |value, on_processor| {
             let mut asked = false;
-            let chosen = Choice::from_env(value, on_processor, || {
+            let chosen = Chosen::from_env(value, on_processor, || {
                 asked = true;
                 true
             });
