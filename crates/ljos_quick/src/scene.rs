@@ -770,9 +770,10 @@ struct Record {
     class: ItemClass,
     /// The item this one was adopted under; `None` for the root.
     parent: Option<ObjectId>,
-    /// The effects made with it, newest last. Room for those that come
-    /// later too, so letting go of them all takes no allocation.
-    effects: SmallVec<[GraphNode; 8]>,
+    /// The effect made with it, if its kind follows one: a Text's follow
+    /// effect, a Row's or Column's told polish effect, or a layout's or
+    /// Canvas's polish effect.
+    effect: Option<GraphNode>,
     /// It is on screen and its paint is followed: by `content_effect`, or
     /// for a Text by its follow effect, which reads all its paint does.
     painting: bool,
@@ -1646,7 +1647,7 @@ impl QuickScene {
                 }
                 let Some((kind, told)) = self.items.get(obj).map(|e| {
                     let told = matches!(e.class.kind, Kind::Row | Kind::Column)
-                        .then(|| e.effects.last().copied())
+                        .then_some(e.effect)
                         .flatten();
                     (e.class.kind, told)
                 }) else {
@@ -1750,7 +1751,7 @@ impl QuickScene {
                 node,
                 class,
                 parent,
-                effects: SmallVec::new(),
+                effect: None,
                 painting: false,
                 content_effect: None,
                 paint: None,
@@ -1776,18 +1777,17 @@ impl QuickScene {
         }
         self.by_node.insert(node, obj);
 
-        let mut effects = SmallVec::<[GraphNode; 8]>::new();
         // What it inherits is passed on by the hooks of its parent's
         // `visible` and `enabled` and by a reparent; here it takes it once.
         engine.untrack(|| inherit(engine, obj, &self.shared));
         // Its anchors have an effect of their own only once one is given.
         anchors::follow(engine, obj)?;
-        if kind == Kind::Text {
+        let effect = if kind == Kind::Text {
             // What the text read as it was completed is handed over, not
             // read again; from now on each change is.
             let shared = Rc::clone(&self.shared);
             let sink: text::Sink = Rc::new(move |e, obj, t| text_polish(e, obj, t, &shared));
-            effects.push(text::follow_into(engine, obj, sink)?);
+            Some(text::follow_into(engine, obj, sink)?)
         } else if matches!(kind, Kind::Row | Kind::Column) {
             // Told, not run: a positioner reads every child, and the
             // children of one change one at a time (all of them as a
@@ -1805,17 +1805,16 @@ impl QuickScene {
                     }
                 },
             )?;
-            // Last, where `QuickScene::polish` finds it: a field of its
-            // own would make every item's record larger for the few
-            // positioners.
-            effects.push(n);
+            Some(n)
         } else if kind.polishes() {
             // A layout's own inputs say what changed (`layouts::read_inputs`).
             let shared = Rc::clone(&self.shared);
-            effects.push(engine.effect_in(obj, move |e| polish_effect(e, obj, kind, &shared))?);
-        }
+            Some(engine.effect_in(obj, move |e| polish_effect(e, obj, kind, &shared))?)
+        } else {
+            None
+        };
         if let Some(e) = self.items.get_mut(obj) {
-            e.effects = effects;
+            e.effect = effect;
         }
         self.a11y.adopt(engine, obj, kind == Kind::Text);
 
@@ -1840,11 +1839,14 @@ impl QuickScene {
         let marks = self.shared.borrow_mut().forget(obj);
         self.items_gen += 1;
         if record.class.kind == Kind::Text {
-            // Its effect is among `effects`; this also forgets the sink.
+            // Its effect is `effect`; this also forgets the sink.
             text::unfollow(engine, obj);
         }
-        let mut effects = record.effects;
-        effects.extend(record.content_effect.into_iter().chain(record.list_effect));
+        let effects: SmallVec<[GraphNode; 3]> =
+            [record.effect, record.content_effect, record.list_effect]
+                .into_iter()
+                .flatten()
+                .collect();
         engine.graph().dispose_all(&effects);
         anchors::unfollow(engine, obj);
         self.a11y.forget(engine, obj);
@@ -4046,11 +4048,12 @@ mod sizes {
     /// large and that few items have is held apart: a text's inputs, the
     /// content and list a mark carries, the map of a `transform` list and
     /// a text field's paint. Each was in the marks or the record, which
-    /// were 688 and 576 bytes (B29).
+    /// were 688 and 576 bytes (B29). A record held room for eight effects
+    /// where it has at most one, 64 bytes more (MIR).
     #[test]
     fn an_items_marks_and_record_stay_small() {
         assert_eq!(size_of::<super::Marks>(), 56);
-        assert_eq!(size_of::<super::Record>(), 328);
+        assert_eq!(size_of::<super::Record>(), 264);
         assert_eq!(size_of::<super::Paint>(), 104);
     }
 }
