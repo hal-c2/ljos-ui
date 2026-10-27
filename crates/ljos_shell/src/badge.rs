@@ -225,22 +225,30 @@ pub(crate) mod launcher {
         use zbus::zvariant::OwnedValue;
 
         use super::{INTERFACE, LauncherEntry};
-        use crate::test_bus::Bus;
+        use crate::test_bus::{Bus, REPLY_WAIT, Step, within};
 
         type Update = (String, std::collections::HashMap<String, OwnedValue>);
 
         #[test]
         fn a_count_is_sent_as_the_launcher_entry_update_of_the_desktop_entry() {
+            // Each wait on the bus is bounded: a hang fails, naming its step.
+            within(Duration::from_secs(60), sends_the_update_and_answers_query);
+        }
+
+        fn sends_the_update_and_answers_query(step: &Step) {
+            step.at("starting dbus-daemon");
             let Some(bus) = Bus::start() else {
                 eprintln!("skipped: no dbus-daemon to start");
                 return;
             };
+            step.at("connecting the listener");
             let listener = bus.connect();
             let rule = zbus::MatchRule::builder()
                 .msg_type(zbus::message::Type::Signal)
                 .interface(INTERFACE)
                 .expect("the interface")
                 .build();
+            step.at("adding the match rule");
             let mut updates =
                 MessageIterator::for_match_rule(rule, &listener, None).expect("a match rule");
             let (tx, rx) = mpsc::channel::<(Update, String, String)>();
@@ -266,8 +274,13 @@ pub(crate) mod launcher {
             let address = bus.address.clone();
             let entry = LauncherEntry::new(
                 &platform,
-                Box::new(move || connection::Builder::address(address.as_str())?.build()),
+                Box::new(move || {
+                    connection::Builder::address(address.as_str())?
+                        .method_timeout(REPLY_WAIT)
+                        .build()
+                }),
             );
+            step.at("waiting for the first Update");
             entry.show(3);
             let ((uri, properties), sender, path) = rx
                 .recv_timeout(Duration::from_secs(10))
@@ -294,10 +307,12 @@ pub(crate) mod launcher {
                     .deserialize()
                     .expect("Query's reply")
             };
+            step.at("calling Query after the first Update");
             let (uri, properties) = query(&listener);
             assert_eq!(uri, "application://org.example.Notes.desktop");
             assert_eq!(i64::try_from(&properties["count"]).ok(), Some(3));
 
+            step.at("waiting for the second Update");
             entry.show(0);
             let ((_, properties), _, _) = rx
                 .recv_timeout(Duration::from_secs(10))
@@ -307,12 +322,14 @@ pub(crate) mod launcher {
                 bool::try_from(&properties["count-visible"]).ok(),
                 Some(false)
             );
+            step.at("calling Query after the second Update");
             let (_, properties) = query(&listener);
             assert_eq!(i64::try_from(&properties["count"]).ok(), Some(0));
             assert_eq!(
                 bool::try_from(&properties["count-visible"]).ok(),
                 Some(false)
             );
+            step.at("closing the connections");
         }
 
         #[test]
