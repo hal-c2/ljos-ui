@@ -14,6 +14,16 @@ pub(crate) fn is_unset(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
     )
 }
 
+/// Whether the author gave the property a value (assigned or bound). What
+/// this crate writes does not count: it writes with
+/// [`Engine::write_derived`].
+pub(crate) fn author_set(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
+    matches!(
+        engine.provenance(obj, p),
+        Some(Provenance::Assigned | Provenance::Bound)
+    )
+}
+
 /// Reads a number (tracked).
 pub(crate) fn num(engine: &Engine, obj: ObjectId, p: PropIndex) -> f64 {
     engine.read(obj, p).to_number()

@@ -12,8 +12,7 @@ use std::sync::OnceLock;
 
 use ljos_a11y::Role;
 use ljos_engine::{
-    Engine, EngineError, MetaRef, ObjectId, PropIndex, Provenance, QmlObject, QmlType, Reset,
-    Value, WriteKind,
+    Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Reset, Value, WriteKind,
 };
 use ljos_quick::focus::{
     FocusReason, active_focus_item, force_active_focus, next_item_in_focus_chain,
@@ -30,7 +29,7 @@ use super::{Popup, close_policy, dismiss, popup_of};
 use crate::containers::{Page, Pane};
 use crate::control::Control;
 use crate::control::{ignore, no_key};
-use crate::util::{check, flag, set_derived};
+use crate::util::{author_set, check, flag, set_derived};
 use ljos_quick::palette::{ROLE_COUNT, group_props, role_props};
 
 /// The item of a popup.
@@ -135,13 +134,6 @@ pub(super) fn set_modal(
         att,
         AccessibleAttached::MODAL.index,
         Value::Bool(modal),
-    )
-}
-
-fn author_set(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
-    matches!(
-        engine.provenance(obj, p),
-        Some(Provenance::Assigned | Provenance::Bound)
     )
 }
 

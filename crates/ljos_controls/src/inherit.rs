@@ -74,7 +74,7 @@ use crate::label::Label;
 use crate::style_font::{self, Look, Scope};
 use crate::text_area::TextArea;
 use crate::text_field::TextField;
-use crate::util::{check, warn};
+use crate::util::{author_set, check, warn};
 use crate::window::{ApplicationWindow, Window};
 use ljos_quick::palette::{
     FUSION_ROLES, ROLE_COUNT, ROLES, Role, group_props, has_groups, role_props,
@@ -645,16 +645,6 @@ fn state_of(engine: &Engine, obj: ObjectId, kind: Kind) -> Option<Rc<InheritStat
         Kind::Item => return None,
     }
     .ok()
-}
-
-/// Whether the author gave the property a value (assigned or bound). What
-/// this module writes does not count: it writes with
-/// [`Engine::write_derived`].
-fn author_set(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
-    matches!(
-        engine.provenance(obj, p),
-        Some(Provenance::Assigned | Provenance::Bound)
-    )
 }
 
 fn font_value(v: &Value) -> Arc<Font> {
