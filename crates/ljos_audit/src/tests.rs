@@ -1442,3 +1442,37 @@ fn rows_of_a_list_that_scrolls_them_into_the_window_are_not_offscreen() {
     let report = offscreen(&list_popup_at(300, "100"));
     assert!(report.is_clean(), "expected nothing, found:\n{report}");
 }
+
+#[test]
+fn text_under_an_opacity_is_measured_over_what_is_behind_it() {
+    // Issue #150: the faded tile and its text lie on the light page, not
+    // on black. Without a layer each item fades on its own: the tile at
+    // 0.14 × 0.4 over #fafafa is #faf2ed, the text at 0.4 over that is
+    // #fabf97.
+    let source = r##"
+import QtQuick
+Rectangle {
+    width: 200; height: 100
+    color: "#fafafa"
+    Item {
+        opacity: 0.4
+        width: 16; height: 16
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.alpha("#f97316", 0.14)
+            Text {
+                anchors.centerIn: parent
+                text: "AB"
+                color: "#f97316"
+                font.pixelSize: 8
+            }
+        }
+    }
+}
+"##;
+    let options = Options::desktop().only(&["color-text-contrast"]).unwrap();
+    let report = audit_with(source, &options);
+    assert_eq!(report.findings.len(), 1, "\n{report}");
+    let message = &report.findings[0].message;
+    assert!(message.contains("#fabf97 on #faf2ed"), "{message}");
+}
