@@ -502,13 +502,12 @@ impl VelloCpuReference {
         // lies behind, and one that adds its colour.
         let passes = match tint {
             Some([r, g, b, a]) if r.max(g).max(b) > a => [
-                (Some([0, 0, 0, a]), Compose::SrcOver),
-                (Some([r, g, b, 0]), Compose::Plus),
-            ]
-            .to_vec(),
-            _ => vec![(tint, Compose::SrcOver)],
+                Some((Some([0, 0, 0, a]), Compose::SrcOver)),
+                Some((Some([r, g, b, 0]), Compose::Plus)),
+            ],
+            _ => [Some((tint, Compose::SrcOver)), None],
         };
-        for (tint, compose) in passes {
+        for (tint, compose) in passes.into_iter().flatten() {
             let Some(pixmap) = self.pixmap(image, crop, tint) else {
                 if warned.insert("image-size") {
                     tracing::debug!("R: an image larger than 65535 pixels is not drawn");
