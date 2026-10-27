@@ -1398,7 +1398,7 @@ ApplicationWindow {
                     // frame does a whole tree of thousands.
                     property int treeCount: 0
                     property int shownCount: 0
-                    property string filter: ""
+                    property string filter: treeFilter.text
                     onFilterChanged: show()
                     // The largest first, as `app_objects` says each holds,
                     // rather than in the tree's order.
@@ -1965,7 +1965,6 @@ ApplicationWindow {
                             placeholderText: "Filter by type, id, name or >size"
                             // A field is not named by its placeholder.
                             Accessible.name: "Filter objects"
-                            onTextChanged: objects.filter = text
                         }
                         Text {
                             id: sizeOrder
