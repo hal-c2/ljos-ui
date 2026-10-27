@@ -13,6 +13,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
+use ljos_a11y::ColorScheme;
 use ljos_engine::{
     Color, ComponentSource, Cx, Engine, EngineError, MetaRef, NodeId, ObjectId, PropIndex,
     Provenance, QmlObject, QmlType, QmlValue, Reset, Value, Version, qml_singleton,
@@ -238,14 +239,89 @@ fn bump_style_epoch(engine: &Engine) {
     }
 }
 
+/// What an author's `System` theme became: the theme stands in the
+/// property, so that it reads Light or Dark as qml6's does, and this
+/// remembers that it was `System` so that it follows the scheme.
+#[derive(Debug, Default)]
+struct SystemTheme {
+    system: Cell<bool>,
+    shown: Cell<i32>,
+}
+
+/// The `Theme` enum's `System`.
+const SYSTEM_THEME: i32 = 2;
+
+/// Light (0) or Dark (1): what an author's theme `v` is, `System` being
+/// the theme of the colour scheme in effect. Tracked, so that what reads
+/// `System` follows the scheme.
+fn theme_of(engine: &Engine, v: i32) -> i32 {
+    match v {
+        1 => 1,
+        SYSTEM_THEME => i32::from(ljos_quick::color_scheme(engine) == ColorScheme::Dark),
+        _ => 0,
+    }
+}
+
+/// The theme an author gave an attached object, and whether it is
+/// `System`. The theme [`show_system_theme`] wrote over `System` is still
+/// `System`. The state is read and written apart from resolving the
+/// scheme, which may make objects while the attached one is borrowed.
+fn own_theme<T: QmlType>(
+    engine: &Engine,
+    att: ObjectId,
+    prop: PropIndex,
+    state: impl Fn(&T) -> &SystemTheme,
+) -> (i32, bool) {
+    let v = engine.read(att, prop).to_number() as i32;
+    let was = engine
+        .with::<T, _>(att, |a| {
+            let st = state(a);
+            st.system.get() && st.shown.get() == v
+        })
+        .unwrap_or(false);
+    let system = v == SYSTEM_THEME || was;
+    let theme = theme_of(engine, if system { SYSTEM_THEME } else { v });
+    let _ = engine.with::<T, _>(att, |a| state(a).system.set(system));
+    (theme, system)
+}
+
+/// Writes the theme an author's `System` is over it, and remembers it as
+/// `System`'s.
+fn show_system_theme<T: QmlType>(
+    engine: &Engine,
+    att: ObjectId,
+    prop: PropIndex,
+    theme: i32,
+    state: impl Fn(&T) -> &SystemTheme,
+) {
+    let _ = engine.with::<T, _>(att, |a| state(a).shown.set(theme));
+    write_if_changed(engine, att, prop, Value::Int(theme));
+}
+
+fn material_own_theme(engine: &Engine, att: ObjectId) -> (i32, bool) {
+    own_theme::<MaterialAttached>(engine, att, MaterialAttached::THEME.index, |m| {
+        &m.system_theme
+    })
+}
+
+fn universal_own_theme(engine: &Engine, att: ObjectId) -> (i32, bool) {
+    own_theme::<UniversalAttached>(engine, att, UniversalAttached::THEME.index, |u| {
+        &u.system_theme
+    })
+}
+
 fn author_set(engine: &Engine, obj: ObjectId, prop: PropIndex) -> bool {
     match engine.provenance_tracked(obj, prop) {
         Some(Provenance::Assigned | Provenance::Bound) => true,
         Some(Provenance::Animated | Provenance::Host) => {
-            // Resolving an enum to a color uses a derived write. Keep the
-            // author's raw choice until a reset explicitly clears it.
+            // Resolving an enum to a color, or `System` to a theme, uses a
+            // derived write. Keep the author's raw choice until a reset
+            // explicitly clears it.
             engine
                 .with::<MaterialAttached, _>(obj, |m| {
+                    if prop == MaterialAttached::THEME.index {
+                        return m.system_theme.system.get();
+                    }
                     let raw = if prop == MaterialAttached::PRIMARY.index {
                         m.raw_primary.get()
                     } else if prop == MaterialAttached::ACCENT.index {
@@ -262,6 +338,9 @@ fn author_set(engine: &Engine, obj: ObjectId, prop: PropIndex) -> bool {
                 .unwrap_or(false)
                 || engine
                     .with::<UniversalAttached, _>(obj, |u| {
+                        if prop == UniversalAttached::THEME.index {
+                            return u.system_theme.system.get();
+                        }
                         let raw = if prop == UniversalAttached::ACCENT.index {
                             u.raw_accent.get()
                         } else if prop == UniversalAttached::FOREGROUND.index {
@@ -570,6 +649,8 @@ pub struct MaterialAttached {
     pub text_field_height: i32,
 
     #[qml(skip)]
+    system_theme: SystemTheme,
+    #[qml(skip)]
     raw_primary: Cell<RawColor>,
     #[qml(skip)]
     last_primary: Cell<Option<Color>>,
@@ -616,6 +697,7 @@ impl Default for MaterialAttached {
             button_height: 40,
             delegate_height: 48,
             text_field_height: 56,
+            system_theme: SystemTheme::default(),
             raw_primary: Cell::new(RawColor::Unset),
             last_primary: Cell::new(None),
             raw_accent: Cell::new(RawColor::Unset),
@@ -706,6 +788,7 @@ fn reset_material_theme(
     att: ObjectId,
     prop: PropIndex,
 ) -> Result<(), EngineError> {
+    let _ = engine.with::<MaterialAttached, _>(att, |a| a.system_theme.system.set(false));
     let v = engine.untrack(|| material_theme_value(engine, att, prop));
     engine.reset_to(att, prop, v)?;
     sync_material(engine, att);
@@ -984,21 +1067,19 @@ fn inherited_material_theme(engine: &Engine, att: ObjectId) -> i32 {
         if attached.is_none() {
             passed_bare(engine, p);
         }
-        if let Some(a) = attached {
-            let v = engine.read(a, MaterialAttached::THEME.index).to_number() as i32;
-            if author_set(engine, a, MaterialAttached::THEME.index) {
-                return if v == 1 { 1 } else { 0 };
-            }
+        if let Some(a) = attached
+            && author_set(engine, a, MaterialAttached::THEME.index)
+        {
+            return material_own_theme(engine, a).0;
         }
         cur = above(engine, p);
     }
-    i32::from(material_defaults(engine).theme == Some(1))
+    theme_of(engine, material_defaults(engine).theme.unwrap_or(0))
 }
 
 fn effective_material_theme(engine: &Engine, att: ObjectId) -> i32 {
-    let own = engine.read(att, MaterialAttached::THEME.index).to_number() as i32;
     if author_set(engine, att, MaterialAttached::THEME.index) {
-        if own == 1 { 1 } else { 0 }
+        material_own_theme(engine, att).0
     } else {
         inherited_material_theme(engine, att)
     }
@@ -1109,6 +1190,16 @@ fn sync_material(engine: &Engine, att: ObjectId) {
             att,
             MaterialAttached::THEME.index,
             Value::Int(theme),
+        );
+    } else if material_own_theme(engine, att).1 {
+        // The author's `System` reads as the theme it is, and a binding
+        // that gave it stays.
+        show_system_theme::<MaterialAttached>(
+            engine,
+            att,
+            MaterialAttached::THEME.index,
+            theme,
+            |a| &a.system_theme,
         );
     }
 
@@ -1709,6 +1800,8 @@ pub struct UniversalAttached {
     pub list_medium_color: Color,
 
     #[qml(skip)]
+    system_theme: SystemTheme,
+    #[qml(skip)]
     raw_accent: Cell<RawColor>,
     #[qml(skip)]
     last_accent: Cell<Option<Color>>,
@@ -1756,6 +1849,7 @@ impl Default for UniversalAttached {
             chrome_white_color: rgb(0xffffff),
             list_low_color: argb(0x19000000),
             list_medium_color: argb(0x33000000),
+            system_theme: SystemTheme::default(),
             raw_accent: Cell::new(RawColor::Unset),
             last_accent: Cell::new(None),
             raw_foreground: Cell::new(RawColor::Unset),
@@ -1804,6 +1898,7 @@ fn reset_universal_theme(
     att: ObjectId,
     prop: PropIndex,
 ) -> Result<(), EngineError> {
+    let _ = engine.with::<UniversalAttached, _>(att, |a| a.system_theme.system.set(false));
     let v = engine.untrack(|| universal_theme_value(engine, att, prop));
     engine.reset_to(att, prop, v)?;
     sync_universal(engine, att);
@@ -1912,11 +2007,10 @@ fn inherited_universal_theme(engine: &Engine, att: ObjectId) -> i32 {
         if attached.is_none() {
             passed_bare(engine, p);
         }
-        if let Some(a) = attached {
-            let v = engine.read(a, UniversalAttached::THEME.index).to_number() as i32;
-            if author_set(engine, a, UniversalAttached::THEME.index) {
-                return if v == 1 { 1 } else { 0 };
-            }
+        if let Some(a) = attached
+            && author_set(engine, a, UniversalAttached::THEME.index)
+        {
+            return universal_own_theme(engine, a).0;
         }
         cur = above(engine, p);
     }
@@ -1924,9 +2018,8 @@ fn inherited_universal_theme(engine: &Engine, att: ObjectId) -> i32 {
 }
 
 fn effective_universal_theme(engine: &Engine, att: ObjectId) -> i32 {
-    let own = engine.read(att, UniversalAttached::THEME.index).to_number() as i32;
     if author_set(engine, att, UniversalAttached::THEME.index) {
-        if own == 1 { 1 } else { 0 }
+        universal_own_theme(engine, att).0
     } else {
         inherited_universal_theme(engine, att)
     }
@@ -2027,6 +2120,16 @@ fn sync_universal(engine: &Engine, att: ObjectId) {
             att,
             UniversalAttached::THEME.index,
             Value::Int(theme),
+        );
+    } else if universal_own_theme(engine, att).1 {
+        // The author's `System` reads as the theme it is, and a binding
+        // that gave it stays.
+        show_system_theme::<UniversalAttached>(
+            engine,
+            att,
+            UniversalAttached::THEME.index,
+            theme,
+            |a| &a.system_theme,
         );
     }
 
