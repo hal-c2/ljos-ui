@@ -7,7 +7,9 @@
 //! are `ljos_design`'s, where the runtime audit and the guidelines read
 //! them too; this table takes the ones the source can tell and maps their
 //! severity. The translation rules are about the text, not the design, and
-//! stay here.
+//! stay here; so do the declarative rules (`decl-*`), which are about how
+//! the code says what it does, not about what a user sees
+//! (`docs/declarative.md`).
 
 use std::sync::LazyLock;
 
@@ -33,9 +35,15 @@ pub struct Lint {
 }
 
 impl Lint {
-    /// The guideline section (`docs/design/<page>#<code>`) of a design rule.
+    /// The guideline section of a design rule (`docs/design/<page>#<code>`)
+    /// or of a declarative one (`docs/declarative.md#<code>`).
     pub fn guide(&self) -> Option<String> {
-        self.design.map(Rule::guide)
+        self.design.map(Rule::guide).or_else(|| {
+            DECLARATIVE
+                .iter()
+                .any(|l| l.code == self.code)
+                .then(|| format!("docs/declarative.md#{}", self.code))
+        })
     }
 }
 
@@ -57,6 +65,62 @@ pub const UNTRANSLATED_STRING: Lint = Lint {
     in_check: false,
     design: None,
 };
+
+pub const MIRROR_HANDLER: Lint = Lint {
+    code: "decl-mirror-handler",
+    severity: Severity::Hint,
+    rule: "A change handler only copies a value into a property nothing else writes, which a \
+           binding says.",
+    fix: "Bind the property and drop the handler: `onLevelChanged: shown = level` is \
+          `shown: level`.",
+    in_check: false,
+    design: None,
+};
+
+pub const MODE_BY_HANDLERS: Lint = Lint {
+    code: "decl-mode-by-handlers",
+    severity: Severity::Hint,
+    rule: "Two or more handlers each set the same group of properties to values of their own: \
+           modes switched by hand.",
+    fix: "Make each mode a state and let the handlers name it: `states: [State { name: \
+          \"edit\"; PropertyChanges { list.opacity: 0; editor.opacity: 1 } }]`, then \
+          `onClicked: root.state = \"edit\"`, or give each state a `when:`.",
+    in_check: false,
+    design: None,
+};
+
+pub const IMPERATIVE_ANIMATION: Lint = Lint {
+    code: "decl-imperative-animation",
+    severity: Severity::Hint,
+    rule: "Script starts animations one after another, or starts opposite animations of one \
+           property from different handlers.",
+    fix: "Chain them in one animation, `SequentialAnimation { id: pulse; NumberAnimation { … } \
+          NumberAnimation { … } }`, or animate a change of state: `transitions: Transition { \
+          NumberAnimation { property: \"opacity\" } }`, or `Behavior on opacity { \
+          NumberAnimation { } }`.",
+    in_check: false,
+    design: None,
+};
+
+pub const VISIBILITY_JUGGLING: Lint = Lint {
+    code: "decl-visibility-juggling",
+    severity: Severity::Hint,
+    rule: "One item's `visible` or `opacity` is set to values written out from several handlers.",
+    fix: "Bind it to what decides it, `visible: drawer.opened`, or make the shown and hidden \
+          states and give them a transition: `states: State { name: \"shown\"; PropertyChanges \
+          { banner.visible: true } }`.",
+    in_check: false,
+    design: None,
+};
+
+/// The declarative rules: script where a declaration says the same, which
+/// the engine compiles and the motion and focus rules can read.
+pub const DECLARATIVE: &[Lint] = &[
+    MIRROR_HANDLER,
+    MODE_BY_HANDLERS,
+    IMPERATIVE_ANIMATION,
+    VISIBILITY_JUGGLING,
+];
 
 /// The design rules the static lints implement. A rule whose check is
 /// `static` or `both` and that is not here has no static check yet: its
@@ -129,6 +193,7 @@ static TABLE: LazyLock<Vec<Lint>> = LazyLock::new(|| {
         .filter(|r| r.check != Check::Runtime && IMPLEMENTED.contains(&r.code))
         .map(from_design)
         .chain([QSTR_NON_LITERAL, UNTRANSLATED_STRING])
+        .chain(DECLARATIVE.iter().copied())
         .collect()
 });
 
@@ -161,6 +226,8 @@ pub(crate) fn markdown() -> String {
          code that is not yours). A `warning` is kept with a reason: \
          `// ljos-allow(<code>): <why>` on the finding's line, the line above, or the first \
          line of the object it is in. A `hint` is advice, from `qml_lint` alone.\n\n\
+         A declarative rule (`decl-*`) finds script that a binding, a state or a transition \
+         says better, and links to `docs/declarative.md#<code>`.\n\n\
          | Code | Severity | Reported by | Rule | Fix | Guide |\n|---|---|---|---|---|---|\n",
     );
     for lint in lints() {
@@ -236,5 +303,27 @@ mod tests {
         }
         assert!(page.contains("ljos check"));
         assert!(page.contains("ljos-allow"));
+    }
+
+    #[test]
+    fn a_declarative_rule_is_a_hint_with_a_section_of_its_own() {
+        let page = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/declarative.md"),
+        )
+        .unwrap();
+        for lint in DECLARATIVE {
+            assert!(lint.code.starts_with("decl-"), "{}", lint.code);
+            assert_eq!(lint.severity, Severity::Hint);
+            assert!(!lint.in_check);
+            assert_eq!(
+                lint.guide(),
+                Some(format!("docs/declarative.md#{}", lint.code))
+            );
+            assert!(
+                page.contains(&format!("<a id=\"{}\"></a>", lint.code)),
+                "docs/declarative.md has no section for {}",
+                lint.code
+            );
+        }
     }
 }
