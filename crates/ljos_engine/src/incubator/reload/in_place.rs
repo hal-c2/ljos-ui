@@ -286,6 +286,15 @@ struct EditedObject<'a> {
 }
 
 impl Engine {
+    /// Sweeps what reloads track when a list of it, `len` long now, has
+    /// grown to the mark of the next sweep.
+    #[inline]
+    fn reload_sweep_if_due(&self, len: usize) {
+        if len >= self.inner.reload.sweep_at.get().max(FIRST_SWEEP) {
+            self.reload_sweep();
+        }
+    }
+
     /// Notes the instance a creation made and those it is made of.
     pub(super) fn reload_note_instances(&self, top: &Rc<Instance>) {
         let st = &self.inner.reload;
@@ -295,11 +304,9 @@ impl Engine {
             stack.extend(inst.inner.iter().flatten().cloned());
             all.push(inst);
         }
-        let due = all.len() >= st.sweep_at.get().max(FIRST_SWEEP);
+        let len = all.len();
         drop(all);
-        if due {
-            self.reload_sweep();
-        }
+        self.reload_sweep_if_due(len);
     }
 
     pub(crate) fn reload_note_template(&self, component: ObjectId) {
@@ -309,11 +316,9 @@ impl Engine {
         }
         let mut all = st.templates.borrow_mut();
         all.push(component);
-        let due = all.len() >= st.sweep_at.get().max(FIRST_SWEEP);
+        let len = all.len();
         drop(all);
-        if due {
-            self.reload_sweep();
-        }
+        self.reload_sweep_if_due(len);
     }
 
     /// What a binding, handler or method made now runs: through a slot
@@ -326,11 +331,9 @@ impl Engine {
         let slot = Rc::new(RefCell::new((inst.clone(), expr)));
         let mut all = st.slots.borrow_mut();
         all.push(Rc::downgrade(&slot));
-        let due = all.len() >= st.sweep_at.get().max(FIRST_SWEEP);
+        let len = all.len();
         drop(all);
-        if due {
-            self.reload_sweep();
-        }
+        self.reload_sweep_if_due(len);
         Code::Slot(slot)
     }
 
