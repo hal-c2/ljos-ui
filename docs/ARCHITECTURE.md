@@ -586,7 +586,7 @@ Source: 05 §3.3.
 **`TextEngine`**, one per app, contains:
 - `parley::FontContext` (Fontique) and `LayoutContext`;
 - an LRU cache of layouts keyed by `(text hash, style hash, width bucket, scale, locale)`;
-- `GlyphAtlas`: skrifa outlines rasterised by vello_cpu into egui textures, at most 2048² (4096² on desktop), separate per scale, with an RGBA path for colour emoji.
+- `GlyphAtlas`: skrifa outlines rasterised by vello_cpu into egui textures, at most 2048² (4096² on desktop), separate per scale, with an RGBA path for colour emoji. A full atlas first lets go of the glyphs the frame does not draw and grows only for those it does, so sizes no longer drawn (a scale animation fills one per frame) never make it grow.
 
 As built: `ljos_quick` holds the engine in a thread-local, since an Engine is `!Send` and there is one per app. Items emit glyph runs, not pixels: R draws the outlines directly and the atlas lives in the B0 backend, the only one that needs textures. `Gradient` and `GradientStop` fill a Rectangle vertically or with `Gradient.Horizontal` on both backends (B0 by vertex colours, with extra vertices at the stops); presets by name are not there yet.
 

@@ -570,6 +570,77 @@ mod b0 {
         assert_eq!(be.memory().glyph_atlas_bytes, 256 * 256 + 256 * 256 * 4);
     }
 
+    /// Text drawn at a new size each frame, as a scale animation draws it:
+    /// the sizes gone are let go, not kept by an atlas that doubles for
+    /// them, here to 1024² by the 34th size.
+    #[test]
+    fn b0_lets_go_of_sizes_no_longer_drawn_before_it_grows() {
+        let mut s = Scene::new(1200.0, 120.0);
+        let n = s.node(None, 0.0, 0.0, 1200.0, 120.0);
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        for k in 0..120 {
+            let size = 24.0 + k as f32 * 0.25;
+            s.paint(n, |b| {
+                b.glyphs(
+                    Arc::new(run("ABCDEFGHIJKLMNOP", size, 0.0)),
+                    Vec2::new(4.0, 90.0),
+                    Rgba::BLACK,
+                    Decorations::default(),
+                );
+            });
+            let (_, stats) = frame(&mut s, &mut be, &ctx, 1.0);
+            assert_eq!(stats.warnings, 0);
+            let side = be.glyph_atlas().side;
+            assert!(side <= 512, "{size}: {side}");
+        }
+        let held = be.glyph_atlas().glyphs;
+        assert!(held <= 16 * 8, "{held}");
+    }
+
+    /// A glyph drawn on in the frame that lets the others go is copied,
+    /// not filled again, and drawn as a backend that never held the
+    /// others draws it.
+    #[test]
+    fn b0_copies_the_glyphs_it_keeps_when_it_lets_others_go() {
+        let mut s = Scene::new(1200.0, 200.0);
+        let still = s.node(None, 0.0, 0.0, 1200.0, 90.0);
+        let moving = s.node(None, 0.0, 100.0, 1200.0, 100.0);
+        s.paint(still, |b| {
+            b.glyphs(
+                Arc::new(run("abcdefghij", 20.0, 0.0)),
+                Vec2::new(4.0, 40.0),
+                Rgba::BLACK,
+                Decorations::default(),
+            );
+        });
+        let ctx = Context::default();
+        let mut be = EpaintBackend::new();
+        let mut compactions = 0;
+        for k in 0..120 {
+            let size = 24.0 + k as f32 * 0.25;
+            s.paint(moving, |b| {
+                b.glyphs(
+                    Arc::new(run("ABCDEFGHIJKLMNOP", size, 0.0)),
+                    Vec2::new(4.0, 80.0),
+                    Rgba::BLACK,
+                    Decorations::default(),
+                );
+            });
+            let (held, filled) = (be.glyph_atlas().glyphs, be.glyph_atlas().rasterised);
+            let (shapes, _) = frame(&mut s, &mut be, &ctx, 1.0);
+            let new = be.glyph_atlas().rasterised - filled;
+            assert_eq!(new, if k == 0 { 26 } else { 16 }, "{size}");
+            if be.glyph_atlas().glyphs < held {
+                compactions += 1;
+                let img = blit(&shapes, &ctx, 1200, 200, 1.0);
+                let (whole, _) = frame(&mut s, &mut EpaintBackend::new(), &ctx, 1.0);
+                assert_eq!(difference(&img, &blit(&whole, &ctx, 1200, 200, 1.0)).0, 0);
+            }
+        }
+        assert!(compactions >= 2, "{compactions}");
+    }
+
     /// Glyphs that do not fit double the atlas, and are drawn as before.
     #[test]
     fn b0_grows_the_atlas_and_keeps_the_ink() {

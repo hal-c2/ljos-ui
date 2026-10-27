@@ -1809,14 +1809,15 @@ impl EpaintBackend {
                 break;
             }
             if attempt == 0 {
-                // Largest size reached: drop the glyphs of earlier frames and
-                // fill this frame's again.
-                self.atlas.clear();
+                // No room without letting go of the glyphs of earlier
+                // frames: keep this frame's, copied, and grow only for them.
+                self.atlas.compact();
             } else {
                 stats.warnings += 1;
                 tracing::debug!("B0: the glyph atlas is full; some glyphs are not drawn");
             }
         }
+        self.atlas.end_frame(max_side);
         self.atlas.upload(ctx);
     }
 
