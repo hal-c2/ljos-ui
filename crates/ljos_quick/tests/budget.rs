@@ -366,8 +366,9 @@ fn ten_listview_delegates() {
     // its parent's: an effect, a value and two allocations fewer a
     // delegate (B29). A text's inputs are shared between its marks and its
     // paint, one box where both held a copy (one more a delegate), and the
-    // side maps of what marks carry grew (four more). 26.6 kB kept a
-    // delegate: the step that grew those maps pays for their room
+    // side maps of what marks carry grew (four more). The scene's list of
+    // what moved, reused between frames, makes one fewer (MIR). 26.6 kB
+    // kept a delegate: the step that grew those maps pays for their room
     // ([`bytes_a_thousand_instances_keep`]).
     // What an item shows of its children is matched to them when their
     // list's change hook, a Loader's, the end of an incubation or a
@@ -392,7 +393,7 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1209,
+            allocations: 1208,
             bytes: 151880,
         }
     );
@@ -427,7 +428,8 @@ fn ten_wrapped_listview_delegates() {
     // effects, 40 fewer values and 49 fewer allocations. The graph's nodes
     // in pages of 1024 that stay where they are, not in one vector that
     // doubles, make one fewer and keep 53 kB less, the doubling's spare
-    // room (MEM3). 23.3 kB kept a delegate.
+    // room (MEM3). The scene's list of what moved, reused, one fewer (MIR).
+    // 23.2 kB kept a delegate.
     assert_eq!(
         b,
         Budget {
@@ -444,7 +446,7 @@ fn ten_wrapped_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1231,
+            allocations: 1230,
             bytes: 204273,
         }
     );
@@ -476,8 +478,8 @@ fn ten_plain_items() {
     // allocations fewer, and acts on `parent` and `focus` from their
     // change hooks, where each item watched both: forty effects, forty
     // values and sixty allocations fewer. The graph's nodes in pages, not
-    // a vector that doubles, two fewer and 14 kB less (MEM3). 11.3 kB
-    // kept an instance.
+    // a vector that doubles, two fewer and 14 kB less (MEM3). The scene's
+    // list of what moved, reused, one fewer (MIR). 11.2 kB kept an instance.
     assert_eq!(
         b,
         Budget {
@@ -494,8 +496,8 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 672,
-            bytes: 122664,
+            allocations: 671,
+            bytes: 120616,
         }
     );
 }
@@ -558,14 +560,16 @@ fn bytes_a_thousand_instances_keep() {
     // before), and the watches of `parent` and `focus` with the values
     // they made (25.9, 25.1 and 15.8 kB before). The graph's nodes in
     // pages, not a vector that doubles, leave out its spare room (22.0,
-    // 25.0 and 11.7 kB before, MEM3). The rest is mostly the graph's
+    // 25.0 and 11.7 kB before, MEM3). MIR's smaller record, 264 bytes
+    // where it was 328, leaves 0.1 kB less each (21.1, 23.3 and 11.3 kB
+    // before). The rest is mostly the graph's
     // nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 21064,
-            wrapped: 23339,
-            plain: 11303,
+            one_line: 20921,
+            wrapped: 23195,
+            plain: 11158,
         }
     );
 }
