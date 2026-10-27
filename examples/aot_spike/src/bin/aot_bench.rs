@@ -3,8 +3,11 @@
 //!
 //! ```text
 //! aot_bench cases <mode>      per case: median and p99 ns of a trigger
+//! aot_bench steps <mode>      per case: the same of a step, its inputs and trigger
 //! aot_bench boundary <mode>   ns per tracked read, write and emit
 //! aot_bench rss <mode>        VmRSS and VmHWM after the cases ran
+//! aot_bench snapshot <mode>   the end state after the rss run's steps, to
+//!                             check a driver for another engine against
 //! aot_bench pauses            back end A: slowest call, and a full collection
 //! ```
 //!
@@ -15,7 +18,9 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use ljos_engine::{Engine, ObjectId, Value};
-use ljos_example_aot_spike::{BENCH, CASES, Mode, compile, drive, engine, load, prepare, trigger};
+use ljos_example_aot_spike::{
+    BENCH, CASES, Mode, compile, drive, engine, load, prepare, snapshot, trigger,
+};
 
 const SAMPLES: usize = 2000;
 const WARM: usize = 200;
@@ -27,12 +32,21 @@ fn main() -> Result<()> {
         Mode::parse(s).with_context(|| format!("no mode {s}"))
     };
     match args.first().map(String::as_str) {
-        Some("cases") => cases(mode(1)?),
+        Some("cases") => cases(mode(1)?, false),
+        Some("steps") => cases(mode(1)?, true),
         Some("boundary") => boundary(mode(1)?),
         Some("rss") => rss(mode(1)?),
+        Some("snapshot") => {
+            let run = load(mode(1)?, false);
+            drive(&run, 0..SAMPLES);
+            for line in snapshot(&run) {
+                println!("{line}");
+            }
+            Ok(())
+        }
         #[cfg(feature = "scriptc")]
         Some("pauses") => pauses(),
-        _ => bail!("usage: aot_bench cases|boundary|rss <mode> | pauses"),
+        _ => bail!("usage: aot_bench cases|steps|boundary|rss|snapshot <mode> | pauses"),
     }
 }
 
@@ -40,7 +54,10 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
     sorted[((sorted.len() - 1) as f64 * p).round() as usize]
 }
 
-fn cases(mode: Mode) -> Result<()> {
+/// With `step`, the inputs are inside the clock too: an engine that
+/// evaluates a binding as soon as its inputs change (Qt's) does the work
+/// there, so for a binding only the step compares across engines.
+fn cases(mode: Mode, step: bool) -> Result<()> {
     println!("case\tmedian_ns\tp99_ns\ttier1_runs_per_trigger\taot_runs_per_trigger");
     for case in CASES {
         let run = load(mode, false);
@@ -52,10 +69,15 @@ fn cases(mode: Mode) -> Result<()> {
         let mut tier1 = 0;
         let mut aot = 0;
         for k in WARM..WARM + SAMPLES {
-            prepare(&run, case, k);
+            if !step {
+                prepare(&run, case, k);
+            }
             let before = run.engine.tier1_stats().runs;
             let aot_before = run.engine.aot_stats().runs;
             let t = Instant::now();
+            if step {
+                prepare(&run, case, k);
+            }
             trigger(&run, case, k);
             ns.push(t.elapsed().as_nanos() as u64);
             tier1 += run.engine.tier1_stats().runs - before;
