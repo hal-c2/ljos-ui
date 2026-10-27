@@ -26,7 +26,7 @@ use super::pointer::PointerState;
 use super::{cursor_position, selection_mode};
 use crate::enums::{align, wrap_mode};
 use crate::focus;
-use crate::item::{Item, init_item, is_item, is_unset, write_computed};
+use crate::item::{Item, bump_node, init_item, is_item, is_unset, write_computed};
 use crate::tree::set_parent_item;
 
 /// The log category of an editor that cannot do its work.
@@ -511,13 +511,6 @@ pub(crate) fn check(engine: &Engine, what: &str, r: Result<(), EngineError>) {
     }
 }
 
-/// Makes a node that counts changes tell its readers.
-pub(crate) fn bump(engine: &Engine, n: NodeId) {
-    let g = engine.graph();
-    let v = g.get_untracked(n).to_number() as i32;
-    g.set(n, Value::Int(v.wrapping_add(1)));
-}
-
 fn flag(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> bool {
     engine.untrack(|| engine.read(obj, p)).to_boolean()
 }
@@ -832,9 +825,7 @@ fn text_to_publish(
         return Ok(None);
     }
     if let Some(n) = epoch {
-        let g = engine.graph();
-        let v = g.get_untracked(n).to_number() as i32;
-        g.set(n, Value::Int(v.wrapping_add(1)));
+        bump_node(engine, n);
     }
     let p = TextEditor::TEXT.index;
     let observed =
@@ -966,7 +957,7 @@ fn sync_blink(engine: &Engine, obj: ObjectId) {
         s.paint_epoch
     };
     if let Some(n) = epoch {
-        bump(engine, n);
+        bump_node(engine, n);
     }
 }
 
@@ -980,7 +971,7 @@ fn blink(engine: &Engine, obj: ObjectId) {
         s.paint_epoch
     };
     if let Some(n) = epoch {
-        bump(engine, n);
+        bump_node(engine, n);
     }
 }
 
@@ -995,7 +986,7 @@ fn show_cursor(engine: &Engine, st: &SharedState) {
     // The picture was taken when the layout changed, before this; only a
     // cursor that was hidden needs another.
     if let Some(n) = epoch {
-        bump(engine, n);
+        bump_node(engine, n);
     }
     if let Some(t) = timer.filter(|t| engine.is_alive(*t))
         && engine

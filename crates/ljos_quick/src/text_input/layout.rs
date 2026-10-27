@@ -12,12 +12,12 @@ use ljos_text::{
     utf16_to_byte,
 };
 
-use super::base::{SharedState, TextEditor, bump};
+use super::base::{SharedState, TextEditor};
 use super::edit::TextEdit;
 use super::input::TextInput;
 use super::{cursor_position, echo_mode};
 use crate::enums::{align, wrap_mode};
-use crate::item::{Item, num, size_follows_implicit, write_computed};
+use crate::item::{Item, bump_node, num, size_follows_implicit, write_computed};
 use crate::text::{read_style, text_engine};
 use ljos_text::rich::HAlign;
 
@@ -599,7 +599,7 @@ pub(crate) fn relayout(
         return Ok(());
     }
     for n in epochs.into_iter().flatten() {
-        bump(engine, n);
+        bump_node(engine, n);
     }
     Ok(())
 }

@@ -93,8 +93,7 @@ fn bump(engine: &Engine, s: &State) {
             n
         }
     };
-    let n = g.get_untracked(node).to_number() as i32;
-    g.set(node, Value::Int(n.wrapping_add(1)));
+    crate::item::bump_node(engine, node);
 }
 
 fn watch_epoch(engine: &Engine, s: &State) {

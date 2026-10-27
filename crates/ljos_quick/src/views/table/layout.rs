@@ -35,9 +35,7 @@ const MAX_LOADED_ROWS: usize = 1024;
 /// Makes the layout effect run again.
 pub(crate) fn bump(e: &Engine, st: &TableState) {
     if let Some(n) = st.trigger.get() {
-        let g = e.graph();
-        let now = g.get_untracked(n).to_number() as i32;
-        g.set(n, Value::Int(now.wrapping_add(1)));
+        crate::item::bump_node(e, n);
     }
 }
 
@@ -499,9 +497,7 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     );
     *st.column_x.borrow_mut() = column_x;
     if moved && let Some(n) = st.laid.get() {
-        let g = e.graph();
-        let now = g.get_untracked(n).to_number() as i32;
-        g.set(n, Value::Int(now.wrapping_add(1)));
+        crate::item::bump_node(e, n);
     }
 
     let (row, column) = current_cell(e, view, st).map_or((-1, -1), |(r, c)| (r as i32, c as i32));

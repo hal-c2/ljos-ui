@@ -81,9 +81,7 @@ pub fn set_layer(engine: &Engine, top: ObjectId, layer: ObjectId) {
     }
     layers.by_layer.borrow_mut().insert(layer, top);
     if let Some(n) = epoch(engine, &layers) {
-        let g = engine.graph();
-        let v = g.get_untracked(n).to_number() as i32;
-        g.set(n, Value::Int(v.wrapping_add(1)));
+        crate::item::bump_node(engine, n);
     }
     engine.request_wake();
 }

@@ -100,9 +100,7 @@ fn node(engine: &Engine, slot: &Cell<Option<NodeId>>) -> Option<NodeId> {
 
 fn bump(engine: &Engine, slot: &Cell<Option<NodeId>>) {
     if let Some(n) = node(engine, slot) {
-        let g = engine.graph();
-        let v = g.get_untracked(n).to_number() as i32;
-        g.set(n, Value::Int(v.wrapping_add(1)));
+        crate::item::bump_node(engine, n);
     }
 }
 

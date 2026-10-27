@@ -86,8 +86,6 @@ pub fn set_application_palette(engine: &Engine, palette: ApplicationPalette) {
         return;
     }
     if let Some(n) = node(engine, &s) {
-        let g = engine.graph();
-        let next = (g.get_untracked(n).to_number() as i32).wrapping_add(1);
-        g.set(n, Value::Int(next));
+        crate::item::bump_node(engine, n);
     }
 }

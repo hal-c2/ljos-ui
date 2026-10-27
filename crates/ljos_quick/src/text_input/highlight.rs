@@ -33,9 +33,10 @@ use ljos_engine::{
 use ljos_render::{Decorations, GlyphRun, Rgba};
 use ljos_text::{EditLayout, EditLine, StyleSpan, TextStyle, byte_to_utf16, utf16_to_byte};
 
-use super::base::{SharedState, bump, check, state_of};
+use super::base::{SharedState, check, state_of};
 use super::edit::TextEdit;
 use super::ops;
+use crate::item::bump_node;
 use crate::rectangle::to_rgba;
 
 /// One stretch of an editor's text and how it is painted.
@@ -432,7 +433,7 @@ fn repaint(engine: &Engine, st: &SharedState, shaped: bool) {
         [s.paint_epoch, s.shape_epoch.filter(|_| shapes)]
     };
     for n in epochs.into_iter().flatten() {
-        bump(engine, n);
+        bump_node(engine, n);
     }
 }
 

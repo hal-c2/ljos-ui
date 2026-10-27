@@ -927,6 +927,13 @@ fn children_rect(engine: &Engine, obj: ObjectId) -> Rect {
     })
 }
 
+/// Makes a node that counts changes tell its readers.
+pub(crate) fn bump_node(engine: &Engine, n: ljos_engine::NodeId) {
+    let g = engine.graph();
+    let v = g.get_untracked(n).to_number() as i32;
+    g.set(n, Value::Int(v.wrapping_add(1)));
+}
+
 /// Reads a number property of an item.
 pub(crate) fn num(engine: &Engine, obj: ObjectId, p: PropIndex) -> f64 {
     engine.read_number(obj, p)

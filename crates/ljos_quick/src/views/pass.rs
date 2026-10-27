@@ -70,9 +70,7 @@ pub(crate) fn rd(e: &Engine, obj: ObjectId, p: PropIndex) -> f64 {
 /// Makes the layout effect run again.
 pub(crate) fn bump(e: &Engine, st: &ViewState) {
     if let Some(n) = st.trigger.get() {
-        let g = e.graph();
-        let now = g.get_untracked(n).to_number() as i32;
-        g.set(n, Value::Int(now.wrapping_add(1)));
+        crate::item::bump_node(e, n);
     }
 }
 

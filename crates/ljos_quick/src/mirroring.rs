@@ -65,9 +65,7 @@ fn epoch(engine: &Engine) -> Option<NodeId> {
 pub(crate) fn register(engine: &Engine) {
     engine.on_attached_created_of::<LayoutMirroringAttached>(|e, _, _| {
         if let Some(node) = epoch(e) {
-            let g = e.graph();
-            let n = g.get_untracked(node).to_number() as i32;
-            g.set(node, Value::Int(n.wrapping_add(1)));
+            crate::item::bump_node(e, node);
         }
         true
     });

@@ -454,9 +454,7 @@ pub(crate) fn range_mode(e: &Engine, view: ObjectId) -> i32 {
 /// Lays the rows out again.
 pub(crate) fn bump(e: &Engine, st: &State) {
     if let Some(n) = st.trigger.get() {
-        let g = e.graph();
-        let now = g.get_untracked(n).to_number() as i32;
-        g.set(n, Value::Int(now.wrapping_add(1)));
+        crate::item::bump_node(e, n);
     }
 }
 

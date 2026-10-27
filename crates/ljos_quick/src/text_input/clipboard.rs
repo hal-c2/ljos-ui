@@ -69,9 +69,7 @@ impl Clipboard {
 
     fn bump(&self, engine: &Engine) {
         if let Some(n) = self.node(engine) {
-            let g = engine.graph();
-            let v = g.get_untracked(n).to_number() as i32;
-            g.set(n, Value::Int(v.wrapping_add(1)));
+            crate::item::bump_node(engine, n);
         }
     }
 
