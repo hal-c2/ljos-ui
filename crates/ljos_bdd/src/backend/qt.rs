@@ -486,7 +486,11 @@ impl QtBackend {
         if outcome.is_err() {
             let _ = child.stop();
         }
-        let text = reader.join().unwrap_or_default();
+        // Its log is what the run is judged by: a reader that panicked
+        // leaves no outcome to report, which is not an empty log.
+        let text = reader
+            .join()
+            .map_err(|_| BackendError::Failed("the reader of qml6's log panicked".into()))?;
         outcome.map(|()| text)
     }
 
