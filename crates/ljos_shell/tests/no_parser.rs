@@ -1,7 +1,7 @@
-//! CLAUDE.md rule 5: a shipped application links no parser. The shell
-//! takes the watcher and the reload driver, and with them the compiler,
-//! only behind its `dev` feature; this asks cargo what a build without
-//! the feature links.
+//! CLAUDE.md rule 5: an application that does not let its users change it
+//! links no parser. The shell takes the watcher and the reload driver,
+//! and with them the compiler, only behind its `dev` feature; this asks
+//! cargo what a build without the feature links.
 
 use std::process::Command;
 

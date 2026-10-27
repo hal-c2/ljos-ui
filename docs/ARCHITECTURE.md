@@ -20,6 +20,7 @@ Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/h
 6. **Fault isolation and fair scheduling,** with ideas taken from Erlang/BEAM (section 3.4). A runaway handler, binding or plugin cannot take over the frame or the process.
 7. **Every behaviour is specified in Gherkin** and checked against real Qt wherever that is possible (section 18).
 8. **MCP out of the box.** Coding agents can check, look up, lint and test QML without a running app, and can inspect and drive a running dev build (section 19).
+9. **Malleable software.** People tailor the applications they use, alone or with a coding agent, instead of accepting what they are given or reverse-engineering it. An application can let its user change its QML and scripts on their own device and see the change live, checked by the same compiler and lints the dev tools use. This is why a shipped application may carry the compiler (section 2, crate rules). Where a platform forbids code generated at run time (iOS has no JIT), the changed code still runs, as IR the engine interprets.
 
 **Non-goals (for now)**
 
@@ -242,7 +243,7 @@ ljos-ui/
 
 **Crate rules**
 
-- **No parser in shipped apps.** Runtime crates depend on `ljos_ir`, never on `qml_syntax` or `qml_front`. A shipped app loads compiled IR, so it does not link the parser and its roughly 106 dependency crates (06 §4.6). Loading `.qml` at runtime is an optional `ljos_compiler` feature for dev builds and for plugins.
+- **The parser is the application's choice.** Runtime crates depend on `ljos_ir`, never on `qml_syntax` or `qml_front`: the engine runs IR, whoever compiled it. An application that does not let its user change it loads compiled IR and links no parser and none of its roughly 106 dependency crates (06 §4.6). One that does (goal 9) links `ljos_compiler` through an opt-in feature, and compiles its user's changes to IR on the device. Today that feature is for dev builds and plugins only (`ljos`'s `dev-qml`, `ljos_shell`'s `dev`); a feature for shipped applications that their users can change is still to come.
 - **MCP never ships by accident.** `ljos_mcp_author` is linked only by `ljos_cli`. The inspector is a feature of `ljos_dev` that release builds refuse (section 19.7).
 - **egui stays in three crates.** Only `ljos_egui`, `ljos_shell` and `ljos_render`'s B0 backend name egui types. `ljos_test` and `ljos_bdd` use egui_kittest, but scenarios never see it.
 - **Start small and split later.** M0 creates the crates on its own critical path. The rest begin as modules and get their own crate when the boundary has proven itself. The tree above is the target.

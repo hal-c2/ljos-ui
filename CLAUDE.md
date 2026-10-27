@@ -8,7 +8,7 @@ Ljós is a general-purpose Rust UI toolkit that runs QML (Qt Quick + Qt Quick Co
 2. **General purpose.** No crate, type, API, tool or milestone is written for one application. App-specific glue lives in that app's repository (ARCHITECTURE.md principle 9).
 3. **Behaviour first.** New behaviour starts as a scenario in `features/` (see `features/README.md`), then code.
 4. **egui stays in three crates:** `ljos_egui`, `ljos_shell`, and the B0 backend of `ljos_render`.
-5. **No parser in shipped apps.** Runtime crates depend on `ljos_ir`, never on `qml_syntax` or `qml_front`.
+5. **The parser is the app's choice.** Runtime crates depend on `ljos_ir`, never on `qml_syntax` or `qml_front`. An app that lets its users change it may link `ljos_compiler` through an opt-in feature; one that doesn't links no parser (malleable software, ARCHITECTURE.md goal 9).
 6. **0 % CPU when idle.** Nothing polls. Work is scheduled by dirty state, timers, animations, input or messages.
 7. **Bounded messages.** Threads talk to the Engine through `UiHandle` only.
 
