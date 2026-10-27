@@ -18,7 +18,7 @@ Feature: Files compiled ahead of time
   Scenario Outline: A compiled file gives the values and signal order it gives dynamically (cross-check <check>)
     Given the files are compiled ahead of time
     And the compiled code cross-check is <check>
-    And the file "Main.qml":
+    And the QML:
       """qml
       import QtQuick
       Item {
@@ -42,7 +42,7 @@ Feature: Files compiled ahead of time
     Then the property "half" of "root" is 2
     And the property "label" of "root" is "n=4"
     And the property "order" of "root" is "cp3ecp4e"
-    And the file "Main.qml" ran compiled code
+    And the file "Scenario.qml" ran compiled code
     And the log has no warning matching "compiled code and the dynamic tiers differ"
 
     Examples:
@@ -53,7 +53,7 @@ Feature: Files compiled ahead of time
   Scenario: Changes made while a file is created are the same compiled
     Given the files are compiled ahead of time
     And the compiled code cross-check is off
-    And the file "Main.qml":
+    And the QML:
       """qml
       import QtQuick
       Item {
@@ -70,12 +70,12 @@ Feature: Files compiled ahead of time
       }
       """
     Then the property "doubled" of "root" is 10
-    And the property "order" of "root" is "cd10"
-    And the file "Main.qml" ran compiled code
+    And the property "order" of "root" is "d4cd10"
+    And the file "Scenario.qml" ran compiled code
 
   Scenario: An expression the compiler cannot type runs dynamically
     Given the files are compiled ahead of time
-    And the file "Main.qml":
+    And the QML:
       """qml
       import QtQuick
       Item {
@@ -90,7 +90,7 @@ Feature: Files compiled ahead of time
     When the method "grow" of "root" is called
     Then the property "size" of "root" is 4
     And the property "twice" of "root" is 8
-    And the file "Main.qml" ran compiled code
+    And the file "Scenario.qml" ran compiled code
 
   Scenario: The check says which expressions run dynamically, and why
     Given the file "Main.qml":
@@ -109,7 +109,7 @@ Feature: Files compiled ahead of time
       """
     And the check reports the lines:
       """
-      Main.qml:4:25: runs dynamically: type: var property items
+      Main.qml:4:30: runs dynamically: type: var property items
       """
 
   Rule: An edited file runs dynamically

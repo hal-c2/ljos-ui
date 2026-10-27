@@ -615,6 +615,21 @@ pub trait Environment: Backend {
         Err(BackendError::NotImplemented("a pinned wall clock"))
     }
 
+    /// The files the scenario gives run the code compiled from them
+    /// ahead of time, as a shipped application's do. Only Ljós compiles
+    /// QML to native code.
+    fn compiled_ahead_of_time(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("files compiled ahead of time"))
+    }
+
+    /// Every run of code compiled ahead of time is compared with the
+    /// dynamic one, a difference being a warning; or not (`on` false).
+    fn aot_check(&mut self, _on: bool) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "the cross-check of compiled code",
+        ))
+    }
+
     /// Every binding tier 1 runs is run in tier 2 as well and the two
     /// compared, a difference being a warning; or not (`on` false).
     fn tier1_check(&mut self, _on: bool) -> Result<()> {
@@ -989,6 +1004,16 @@ pub trait Reload: Backend {
 /// What the runtime can say of itself that a QML program cannot see:
 /// what it has scheduled, what it keeps, how much work it does.
 pub trait Probes: Backend {
+    /// Whether the file `file` (`Main.qml`) as the application has it now
+    /// runs code compiled ahead of time, and how many runs of such code
+    /// the application has made. Only Ljós compiles QML to native code.
+    fn compiled_code(&mut self, _file: &str) -> Result<(bool, u64)> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "seeing which files run compiled code",
+        })
+    }
+
     /// What the application would wake for if no one touched it: the
     /// next timer, the next frame of something moving, an answer it waits
     /// for. Empty when it is idle. The oracle's event loop cannot be read.

@@ -151,6 +151,8 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the user has the text file "path":` + doc string | a text file under the user's home directory (`.config/tool.conf`), which is `/home/user` in a scenario (`@ljos-only`: the oracle's home is the real one) |
 | `Given the system clock reads "2026-10-11T17:57:09Z"` | the time a script's `new Date()` and `Date.now()` see when the application starts (an RFC 3339 time); it then moves with application time, so `1 second passes` moves it by a second (`@ljos-only`: the oracle's clock is the machine's) |
 | `Given the tier 1 cross-check is on` (or `off`) | every binding tier 1 runs is run in tier 2 as well and the results compared, a difference being a warning "tier 1 and tier 2 differ"; it is on in a debug build unless `LJOS_TIER1_CHECK` says otherwise, and the step makes it so whatever the build (`@ljos-only`: Qt has no tiers) |
+| `Given the files are compiled ahead of time` | the scenario's files run the code their bindings and handlers compiled to, as a shipped application's do: the code is in `crates/ljos_bdd/src/backend/ljos/aot/`, matched to a file by its content, and a run with `LJOS_AOT_FIXTURES=write` writes it; before the files are given (`@ljos-only`) |
+| `Given the compiled code cross-check is on` (or `off`) | each run of compiled code is compared with the dynamic tiers', a difference being a warning "compiled code and the dynamic tiers differ"; on in a debug build unless `LJOS_AOT_CHECK` says otherwise (`@ljos-only`) |
 | `Given the application uses the fonts installed on the system` | text is set in the machine's fonts, as a desktop application's is, and not only in the font Ljós carries; give it before the QML. Which faces those are is the machine's own, so a scenario compares one family with another rather than with numbers |
 | `Given the application uses the key bindings of "macOS"` | the standard keys (`StandardKey`, and the keys an entry takes) are that platform's, whatever the machine: `"Linux"` (a desktop that is neither of the next two), `"GNOME"`, `"KDE Plasma"`, `"Windows"` or `"macOS"`. Without it they are the build's own platform's, and on Linux no desktop's own. The oracle has only `"Windows"`: qml6's `offscreen` and `vnc` platforms take that column on any machine, so a scenario about another platform's keys is `@ljos-only` |
 | `Given the system cannot take its dialogs away` | a dialog the system shows stays up when the application closes it, until the user ends it (`@ljos-only`) |
@@ -216,6 +218,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the tests are run with the import path "dir"` | the same, with a directory of test-only modules given to the runner (`-import`) |
 | `When the tests matching "Case::test_x" are run` | only the named test function (`Case::function`), or one of its data rows (`Case::function:tag`) |
 | `When the files are checked` | read every file given with `Given the file` as one project with `ljos check`; nothing is loaded or run (`@ljos-only`: Qt has no program of the kind) |
+| `When the files are checked with statistics` | the same with `--stats`: the tiers of the expressions, how many would be compiled ahead of time, and where each of the rest is and why it runs dynamically (`@ljos-only`) |
 | `When the user chooses "path" in the system dialog` | the user picks a file or folder in the dialog the system shows (`@ljos-only`: the oracle cannot answer a dialog the system shows) |
 | `When the user chooses the files "path, path" in the system dialog` | the user picks several files, named with `", "` between them (`@ljos-only`) |
 | `When the user answers "button" in the system dialog` | the user presses the button with that text in the message the system shows (`@ljos-only`) |
@@ -279,12 +282,14 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the application was asked to quit` / `Then the application was not asked to quit` | whether `Qt.quit()` was called, which a host answers by ending (`@ljos-only`: the oracle is itself the application that would end) |
 | `Then the application has nothing scheduled` | nothing would wake the application if no one touched it: no timer, no frame of something moving, no answer it waits for (`@ljos-only`: the oracle's event loop cannot be read) |
 | `Then the application has no fault` | no fault got past every boundary, or the one that did was cleared (`@ljos-only`) |
+| `Then the file "X" ran compiled code` (or `ran no compiled code`) | the file as the application has it now runs the code compiled ahead of time from it, and some has run; or none was compiled from it as it is now, as for a file edited while the application runs (`@ljos-only`) |
 | `Then the application fault is a "kind" matching "regex"` | the fault no boundary contained, which the host shows: its kind (`"JsException"`, `"JsInterrupted"`, `"JsOutOfMemory"`, `"Panic"`, `"Startup"`) and its message (`@ljos-only`) |
 | `Then the test report is:` + doc string | everything the test runner printed, without its banner lines, the directory of the files, the runner's own name in front of a test, and the time after `skipped` |
 | `Then the test report has the lines:` + doc string | those lines are in the report, one after the other |
 | `Then the test run exits with status N` | the runner's exit status: the number of failed tests |
 | `Then the test results' "/pointer" is V` | a value of the machine-readable report, by JSON pointer (`@ljos-only`) |
 | `Then the check reports:` + doc string | everything `ljos check` said, in order: one line for each thing it found (`file:line:column: error: ...` or `warning: ...`), its count of files, errors and warnings, and `ljos: N errors` when there are errors (`@ljos-only`) |
+| `Then the check reports the lines:` + doc string | those lines are in what `ljos check` said, one after the other (`@ljos-only`) |
 
 ### The inspector (`tooling/mcp/`; all `@ljos-only`)
 
