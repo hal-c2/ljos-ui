@@ -155,7 +155,7 @@ struct Space {
     /// From this space to the scene's.
     scene: Affine,
     members: HashSet<NodeKey>,
-    inner: Vec<NodeKey>,
+    child_spaces: Vec<NodeKey>,
 }
 
 /// The ids of the containers that carry a space's transform to an
@@ -534,7 +534,7 @@ impl Changes {
 #[derive(Debug, Default)]
 pub struct Tree {
     slots: HashMap<NodeKey, Slot>,
-    top: Vec<NodeKey>,
+    root_children: Vec<NodeKey>,
     dirty: HashSet<NodeKey>,
     removed: Vec<NodeKey>,
     /// The nodes that say they are focused: the focus item and the focus
@@ -582,7 +582,7 @@ impl Tree {
     /// The children of `key`; of the scene for [`NodeKey::ROOT`].
     pub fn children(&self, key: NodeKey) -> &[NodeKey] {
         if key == NodeKey::ROOT {
-            return &self.top;
+            return &self.root_children;
         }
         self.slots.get(&key).map_or(&[], |s| &s.children)
     }
@@ -732,7 +732,7 @@ impl Tree {
             transform: Affine::IDENTITY,
             scene: Affine::IDENTITY,
             members: HashSet::new(),
-            inner: Vec::new(),
+            child_spaces: Vec::new(),
         })
     }
 
@@ -763,10 +763,10 @@ impl Tree {
         if was != parent {
             s.parent = parent;
             if let Some(w) = was.and_then(|w| self.spaces.get_mut(&w)) {
-                w.inner.retain(|i| *i != space);
+                w.child_spaces.retain(|i| *i != space);
             }
             if let Some(p) = parent {
-                self.space_entry(p).inner.push(space);
+                self.space_entry(p).child_spaces.push(space);
             }
         }
         self.rescene(space);
@@ -780,9 +780,9 @@ impl Tree {
             return false;
         };
         if let Some(p) = s.parent.and_then(|p| self.spaces.get_mut(&p)) {
-            p.inner.retain(|i| *i != space);
+            p.child_spaces.retain(|i| *i != space);
         }
-        for inner in &s.inner {
+        for inner in &s.child_spaces {
             if let Some(i) = self.spaces.get_mut(inner) {
                 i.parent = None;
                 i.transform = i.scene;
@@ -842,7 +842,7 @@ impl Tree {
             let up = self.scene_of(s.parent);
             let scene = up * s.transform;
             let members: Vec<NodeKey> = s.members.iter().copied().collect();
-            todo.extend(s.inner.iter().copied());
+            todo.extend(s.child_spaces.iter().copied());
             self.spaces.get_mut(&space).expect("checked").scene = scene;
             for m in members {
                 let Some(slot) = self.slots.get(&m) else {
@@ -956,7 +956,7 @@ impl Tree {
             }
         }
         if let Some(parent) = slot.parent {
-            let list = self.list_mut(parent);
+            let list = self.children_mut(parent);
             if let Some(at) = list.iter().position(|c| *c == key) {
                 list.splice(at..=at, slot.children);
             }
@@ -1039,7 +1039,7 @@ impl Tree {
         if self.children(parent) == new.as_slice() {
             return false;
         }
-        let old = std::mem::take(self.list_mut(parent));
+        let old = std::mem::take(self.children_mut(parent));
         for c in &old {
             if !new.contains(c)
                 && let Some(s) = self.slots.get_mut(c)
@@ -1053,7 +1053,7 @@ impl Tree {
             if let Some(was) = was
                 && was != parent
             {
-                self.list_mut(was).retain(|k| k != c);
+                self.children_mut(was).retain(|k| k != c);
                 self.dirty.insert(was);
                 self.stats.child_updates += 1;
             }
@@ -1061,7 +1061,7 @@ impl Tree {
                 s.parent = Some(parent);
             }
         }
-        *self.list_mut(parent) = new;
+        *self.children_mut(parent) = new;
         self.dirty.insert(parent);
         self.stats.child_updates += 1;
         true
@@ -1098,8 +1098,8 @@ impl Tree {
         }
         // Polite before assertive, so the order does not depend on which
         // was said first.
-        self.top.retain(|k| !k.is_announcement());
-        self.top.extend(self.announced.iter().flatten());
+        self.root_children.retain(|k| !k.is_announcement());
+        self.root_children.extend(self.announced.iter().flatten());
         self.dirty.insert(NodeKey::ROOT);
         self.stats.child_updates += 1;
         key
@@ -1111,15 +1111,15 @@ impl Tree {
         self.get(key).map(|d| d.name.as_str())
     }
 
-    fn list_mut(&mut self, key: NodeKey) -> &mut Vec<NodeKey> {
+    fn children_mut(&mut self, key: NodeKey) -> &mut Vec<NodeKey> {
         if key == NodeKey::ROOT {
-            return &mut self.top;
+            return &mut self.root_children;
         }
         // Callers check the slot is there; a missing one gets a list that
         // nobody reads rather than a panic.
         match self.slots.get_mut(&key) {
             Some(s) => &mut s.children,
-            None => &mut self.top,
+            None => &mut self.root_children,
         }
     }
 
@@ -1166,8 +1166,12 @@ impl Tree {
     /// Visits every node reachable from the root, parents before children
     /// and siblings in order, with the node's parent.
     pub fn walk(&self, mut f: impl FnMut(NodeKey, NodeKey, &NodeData)) {
-        let mut stack: Vec<(NodeKey, NodeKey)> =
-            self.top.iter().rev().map(|k| (*k, NodeKey::ROOT)).collect();
+        let mut stack: Vec<(NodeKey, NodeKey)> = self
+            .root_children
+            .iter()
+            .rev()
+            .map(|k| (*k, NodeKey::ROOT))
+            .collect();
         while let Some((key, parent)) = stack.pop() {
             let Some(slot) = self.slots.get(&key) else {
                 continue;
