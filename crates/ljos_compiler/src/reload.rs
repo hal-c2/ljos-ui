@@ -17,6 +17,7 @@ use ljos_ir::{
     ObjIdx, ObjRef, ObjectDef, ObjectKey, ObjectValue, ReloadOp, ReloadPatch, Resolved,
 };
 use qml_front::TypeOracle;
+use qml_front::project::is_script;
 
 use crate::{Diagnostic, Error, Project, Severity, compile_file, reload_lint};
 
@@ -1185,9 +1186,4 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         }
         out
     }
-}
-
-/// Whether the key or path names a JavaScript file.
-fn is_script(key: &str) -> bool {
-    key.ends_with(".js") || key.ends_with(".mjs")
 }

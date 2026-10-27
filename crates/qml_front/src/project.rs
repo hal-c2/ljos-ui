@@ -620,7 +620,7 @@ fn inline_shapes(summary: &mut Summary, object: &QmlObject<'_>) {
 }
 
 /// `import "lib.js"`: a script, not a directory of types.
-pub(crate) fn is_script(path: &str) -> bool {
+pub fn is_script(path: &str) -> bool {
     path.ends_with(".js") || path.ends_with(".mjs")
 }
 

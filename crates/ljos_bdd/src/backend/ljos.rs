@@ -27,7 +27,7 @@ use ljos_quick::{Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene};
 use ljos_render::RasterConfig;
 use ljos_render::kurbo::{self, Point};
 use ljos_runtime::{Clock as _, VirtualClock};
-use qml_front::project::ControlsStyle;
+use qml_front::project::{ControlsStyle, is_script};
 use serde_json::{Map, Number, Value, json};
 
 use super::fake_platform::{self, FakePlatform};
@@ -297,11 +297,6 @@ fn not_loaded() -> BackendError {
 /// `Scenario.qml` → `Scenario`, the engine's file key.
 fn key_of(name: &str) -> &str {
     name.strip_suffix(".qml").unwrap_or(name)
-}
-
-/// A JavaScript file a QML file may import: it is not QML either.
-fn is_script(name: &str) -> bool {
-    name.ends_with(".js") || name.ends_with(".mjs")
 }
 
 /// The directory `name` is the `qmldir` file of (empty for the scenario's

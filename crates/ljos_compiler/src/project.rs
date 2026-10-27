@@ -11,7 +11,7 @@ use std::{
 use qml_front::{
     TypeOracle,
     discover::{self, Module},
-    project::{self, ControlsStyle, join},
+    project::{self, ControlsStyle, is_script, join},
 };
 
 use crate::Error;
@@ -527,10 +527,6 @@ fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf
         modules.extend(built);
     }
     (modules, resources)
-}
-
-fn is_script(name: &str) -> bool {
-    name.ends_with(".js") || name.ends_with(".mjs")
 }
 
 /// A file's key: its path from the root without `.qml`, with forward
