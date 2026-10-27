@@ -49,7 +49,7 @@ pub(crate) fn refresh(e: &Engine, view: ObjectId) {
 }
 
 fn rd(e: &Engine, obj: ObjectId, p: PropIndex) -> f64 {
-    e.read(obj, p).to_number()
+    e.read_number(obj, p)
 }
 
 /// Reads, tracked, what a layout depends on besides the delegates.

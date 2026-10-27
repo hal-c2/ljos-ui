@@ -386,7 +386,7 @@ pub(crate) fn dir(axis: usize) -> Dir {
 }
 
 pub(crate) fn num(e: &Engine, obj: ObjectId, p: PropIndex) -> f64 {
-    e.read(obj, p).to_number()
+    e.read_number(obj, p)
 }
 
 pub(crate) fn flag(e: &Engine, obj: ObjectId, p: PropIndex) -> bool {

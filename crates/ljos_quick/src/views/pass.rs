@@ -64,7 +64,7 @@ pub(crate) fn size_prop(axis: usize) -> PropIndex {
 }
 
 pub(crate) fn rd(e: &Engine, obj: ObjectId, p: PropIndex) -> f64 {
-    e.read(obj, p).to_number()
+    e.read_number(obj, p)
 }
 
 /// Makes the layout effect run again.
