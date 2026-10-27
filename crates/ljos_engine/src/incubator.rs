@@ -725,7 +725,7 @@ impl Engine {
                 if !set {
                     let at = match meta.required_at(prop) {
                         Some(at) => at.to_string(),
-                        None => self.location_of(o).unwrap_or_default(),
+                        None => self.declared_at(o).unwrap_or_default(),
                     };
                     unset.push(format!(
                         "{at}Required property {} was not initialized",
@@ -1030,13 +1030,6 @@ impl Engine {
         if let Some(h) = self.inner.store.borrow_mut().objects.get_mut(obj) {
             h.ext_mut().contexts.push(ctx);
         }
-    }
-
-    /// `url:line:col: ` of an object made from QML.
-    pub(crate) fn location_of(&self, obj: ObjectId) -> Option<String> {
-        let store = self.inner.store.borrow();
-        let loc = store.objects.get(obj)?.location()?;
-        Some(format!("{}:{}:{}: ", loc.url, loc.line, loc.column))
     }
 
     // ---------------------------------------------------------- allocation
@@ -1539,7 +1532,7 @@ impl Engine {
                     if let Err(e) = r {
                         self.warn(format!(
                             "{}Cannot assign to non-existent default property ({e})",
-                            self.location_of(child).unwrap_or_default()
+                            self.declared_at(child).unwrap_or_default()
                         ));
                     }
                 }
@@ -1585,7 +1578,7 @@ impl Engine {
             return;
         };
         // Only a warning names the place.
-        let at = || self.location_of(source).unwrap_or_default();
+        let at = || self.declared_at(source).unwrap_or_default();
         let target = self
             .member_target(obj, path, name)
             .or_else(|e| self.attached_target(file, obj, path, name).ok_or(e));
@@ -1781,7 +1774,7 @@ impl Engine {
             }
             Err(e) => self.warn(format!(
                 "{}{}: {e}",
-                self.location_of(id).unwrap_or_default(),
+                self.declared_at(id).unwrap_or_default(),
                 at.written
             )),
         }
@@ -1844,7 +1837,7 @@ impl Engine {
             let t = match self.planned_target(obj, path, &oa.name, at) {
                 Ok((t, _)) => t,
                 Err(_) => {
-                    let at = self.location_of(obj);
+                    let at = self.declared_at(obj);
                     self.not_assignable(format!(
                         "{}Cannot assign to non-existent property \"{}\"",
                         at.unwrap_or_default(),
@@ -1882,7 +1875,7 @@ impl Engine {
                 if let Err(e) = r {
                     self.warn(format!(
                         "{}{e}",
-                        self.location_of(value).unwrap_or_default()
+                        self.declared_at(value).unwrap_or_default()
                     ));
                 }
             }
@@ -2048,7 +2041,7 @@ impl Engine {
         for oa in &m.objects {
             self.not_assignable(format!(
                 "{}Cannot assign to non-existent property \"{name}.{}\"",
-                self.location_of(obj).unwrap_or_default(),
+                self.declared_at(obj).unwrap_or_default(),
                 oa.name
             ));
         }
@@ -2064,7 +2057,7 @@ impl Engine {
         }
         if bound.is_empty() {
             if let Err(e) = self.write_internal(obj, prop, base, WriteKind::Initial) {
-                let at = self.location_of(obj).unwrap_or_default();
+                let at = self.declared_at(obj).unwrap_or_default();
                 self.warn(format!("{at}{e}"));
             }
             return true;
@@ -2395,7 +2388,7 @@ impl Engine {
                 self.warn(format!("{}:{line}:{col}: {e}", inst.url()));
                 return;
             }
-            let at = self.location_of(t.obj).unwrap_or_default();
+            let at = self.declared_at(t.obj).unwrap_or_default();
             self.warn(format!("{at}{e}"));
         }
     }

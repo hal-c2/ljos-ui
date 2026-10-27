@@ -1815,7 +1815,7 @@ impl Engine {
             if let Err(why) = (m.migrate)(self, obj, state) {
                 self.warn(format!(
                     "{}reload: {} is made anew, its state could not be carried: {why}",
-                    self.location_of(obj).unwrap_or_default(),
+                    self.declared_at(obj).unwrap_or_default(),
                     m.meta.name
                 ));
                 ok = false;

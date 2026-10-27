@@ -1440,7 +1440,7 @@ impl Engine {
         if let Err(e) = r {
             self.warn(format!(
                 "{}Cannot assign to non-existent default property ({e})",
-                self.location_of(child).unwrap_or_default()
+                self.declared_at(child).unwrap_or_default()
             ));
         }
     }
@@ -2133,7 +2133,7 @@ impl Engine {
             None => Ok(()),
         });
         if let Err(e) = r {
-            let at = self.location_of(t.obj).unwrap_or_default();
+            let at = self.declared_at(t.obj).unwrap_or_default();
             self.warn(format!("{at}{e}"));
         }
     }

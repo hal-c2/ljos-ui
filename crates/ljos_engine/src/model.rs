@@ -909,7 +909,7 @@ impl Engine {
     pub fn model_from_value(&self, v: &Value, view: Option<ObjectId>) -> Rc<dyn ItemModel> {
         let count = |n: f64| -> Rc<dyn ItemModel> {
             if n < 0.0 {
-                let at = view.and_then(|o| self.location_of(o)).unwrap_or_default();
+                let at = view.and_then(|o| self.declared_at(o)).unwrap_or_default();
                 let ty = view.and_then(|o| self.meta_of(o)).and_then(|m| {
                     m.chain()
                         .find(|m| m.module.is_some())

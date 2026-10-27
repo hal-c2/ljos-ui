@@ -259,7 +259,7 @@ impl TreeState {
 
     pub(crate) fn warn(&self, engine: &Engine, what: &str) {
         let me = self.me.get();
-        let at = me.and_then(|o| engine.location_of(o)).unwrap_or_default();
+        let at = me.and_then(|o| engine.declared_at(o)).unwrap_or_default();
         let name = me.map_or_else(
             || self.name.to_owned(),
             |o| engine.warning_type_name(o, self.name),

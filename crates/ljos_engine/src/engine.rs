@@ -3725,7 +3725,9 @@ impl Engine {
     /// warning (`file.qml:5:9: QML Image: Cannot open: …`): the file's URL,
     /// line and column, then `": "`. `None` for an object not made from QML.
     pub fn declared_at(&self, obj: ObjectId) -> Option<String> {
-        self.location_of(obj)
+        let store = self.inner.store.borrow();
+        let loc = store.objects.get(obj)?.location()?;
+        Some(format!("{}:{}:{}: ", loc.url, loc.line, loc.column))
     }
 
     /// The type Qt names after `QML ` in an object's own warning: the

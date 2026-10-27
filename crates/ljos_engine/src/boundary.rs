@@ -743,7 +743,7 @@ impl Engine {
                 continue;
             };
             if let Err(e) = self.migrate_restore(obj, kept.migrator, kept.state) {
-                let place = self.location_of(obj).unwrap_or_default();
+                let place = self.declared_at(obj).unwrap_or_default();
                 self.warn(format!("{place}state not restored: {e}"));
             }
         }

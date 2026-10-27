@@ -227,7 +227,7 @@ impl Engine {
             _ => origin,
         };
         let (file, line) = self.declared_place(origin);
-        let place = origin.and_then(|o| self.location_of(o)).unwrap_or_default();
+        let place = origin.and_then(|o| self.declared_at(o)).unwrap_or_default();
         self.warn(format!("{place}{fault}"));
         self.file_fault(FaultReport {
             fault,
@@ -248,7 +248,7 @@ impl Engine {
     /// boundary, counted like any other exit of its content.
     pub fn report_boundary_fault(&self, boundary: ObjectId, fault: Fault) {
         let (file, line) = self.declared_place(Some(boundary));
-        let place = self.location_of(boundary).unwrap_or_default();
+        let place = self.declared_at(boundary).unwrap_or_default();
         self.warn(format!("{place}{fault}"));
         self.file_fault(FaultReport {
             fault,

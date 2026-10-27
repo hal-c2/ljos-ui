@@ -1871,7 +1871,7 @@ impl ViewShared {
 /// delegate (the `Component` made around it has no place of its own).
 fn cannot_create(engine: &Engine, component: ObjectId) {
     let at = engine
-        .location_of(component)
+        .declared_at(component)
         .or_else(|| {
             let t = engine.component_template(component).ok()?;
             let o = t.file.ir.component(t.comp).objects.first()?;
