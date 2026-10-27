@@ -110,6 +110,16 @@ impl<'a> Found<'_, '_, '_, 'a> {
         self.base(frame).is_some_and(|ty| ty.0.is_a(classes))
     }
 
+    /// What the object's component sets in its own definition, by name
+    /// as written: nothing for an object of a builtin type.
+    pub fn inherited(&self, frame: &Frame<'_, 'a>) -> std::collections::HashSet<&str> {
+        frame
+            .index
+            .and_then(|i| self.cx.tree.objects[i].kind.as_ref())
+            .map(|kind| self.cx.types.bound_by_components(kind))
+            .unwrap_or_default()
+    }
+
     /// The object's name as written (`NumberAnimation`, `Controls.Button`).
     pub fn name<'s>(&self, frame: &Frame<'s, 'a>) -> String {
         frame.object.type_name.parts.join(".")

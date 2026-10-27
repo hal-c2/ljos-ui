@@ -126,6 +126,9 @@ pub struct Shape {
     /// The names its scripts use that nothing in it declares: members of the
     /// runtime's types, mostly.
     pub mentions: HashSet<String>,
+    /// The properties its root binds, as written (`wrapMode`,
+    /// `anchors.left`): what an instance has without writing it.
+    pub bound: HashSet<String>,
 }
 
 /// One key of an enum a component declares.
@@ -419,7 +422,9 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
         enums: HashMap::new(),
         ids: HashSet::new(),
         mentions: HashSet::new(),
+        bound: HashSet::new(),
     };
+    bound_names(root, "", &mut shape.bound);
     shape.mentions = names
         .mentions
         .into_iter()
@@ -498,6 +503,23 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
     }
     summary.shapes.push(shape);
     inline_shapes(summary, root);
+}
+
+/// The properties `object` binds, a group's (`anchors { left: ... }`)
+/// under its name.
+fn bound_names(object: &QmlObject<'_>, group: &str, out: &mut HashSet<String>) {
+    for member in &object.members {
+        match member {
+            QmlMember::Binding(binding) => {
+                out.insert(format!("{group}{}", binding.name.parts.join(".")));
+            }
+            QmlMember::Object(child) if crate::scope::is_group(child) => {
+                let group = format!("{group}{}.", child.type_name.parts.join("."));
+                bound_names(child, &group, out);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// `image.source`: the names of a path that is written with nothing else.

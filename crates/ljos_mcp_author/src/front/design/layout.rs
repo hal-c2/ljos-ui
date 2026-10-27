@@ -242,7 +242,10 @@ fn unbounded<'a>(found: &mut Found<'_, '_, '_, 'a>, frame: &Frame<'_, 'a>) {
         .any(|n| has(n))
         || fill_width
         || has("anchors.left") && has("anchors.right");
-    if !bounded || FITS.iter().any(|n| has(n)) {
+    // A component that wraps or elides in its definition does so for
+    // every instance.
+    let inherited = found.inherited(frame);
+    if !bounded || FITS.iter().any(|n| has(n) || inherited.contains(n)) {
         return;
     }
     found.report(

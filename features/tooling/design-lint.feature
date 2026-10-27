@@ -164,3 +164,82 @@ Feature: The design rules a file's source can show
       Then the answer's "/diagnostics/0/code" is "lint-allow-unused"
       And the answer's "/diagnostics/0/severity" is "hint"
       And the answer's "/diagnostics/0/line" is 4
+
+  Rule: An object has what its component's own definition sets
+
+    Scenario: A text component that wraps in its definition is not told to wrap where it is used
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            id: root
+            width: 200
+            property string name: "x"
+
+            component Wrapped: Text {
+                wrapMode: Text.Wrap
+            }
+
+            Wrapped {
+                width: root.width
+                text: root.name
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command exits with status 0
+      And the command's output does not mention "text-unbounded-dynamic"
+
+    Scenario: A text component of its own file that elides is not told to where it is used
+      Given the file "Elided.qml":
+        """qml
+        import QtQuick
+
+        Text {
+            elide: Text.ElideRight
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            id: root
+            width: 200
+            property string name: "x"
+
+            Elided {
+                width: root.width
+                text: root.name
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command exits with status 0
+      And the command's output does not mention "text-unbounded-dynamic"
+
+    Scenario: A text component that neither wraps nor elides is told to where it is used
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            id: root
+            width: 200
+            property string name: "x"
+
+            component Plain: Text {
+                color: "black"
+            }
+
+            Plain {
+                width: root.width
+                text: root.name
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command's output mentions "Main.qml:14:9: warning:"
+      And the command's output mentions "[text-unbounded-dynamic]"
+

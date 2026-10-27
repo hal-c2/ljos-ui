@@ -6,6 +6,8 @@
 //! from the [`TypeOracle`]; what a component has, from the file that declares
 //! it.
 
+use std::collections::HashSet;
+
 use crate::{
     oracle::{Property, TypeOracle},
     project::{ControlsStyle, Key, Project, Shape, Source, directory, is_script, join},
@@ -390,6 +392,26 @@ impl<'p, O: TypeOracle> Types<'p, O> {
             }
         }
         None
+    }
+
+    /// What the components an object's type is built on bind on their
+    /// roots, by name as written (`wrapMode`, `anchors.left`): what an
+    /// object of the type has without writing it.
+    pub fn bound_by_components(&self, kind: &Kind<O::Type>) -> HashSet<&'p str> {
+        let mut bound = HashSet::new();
+        let mut kind = kind.clone();
+        for _ in 0..DEPTH {
+            let Kind::Component(key) = kind else { break };
+            let Some(shape) = self.project.shape(&key) else {
+                break;
+            };
+            bound.extend(shape.bound.iter().map(String::as_str));
+            let Some(next) = self.root(&key, shape) else {
+                break;
+            };
+            kind = next;
+        }
+        bound
     }
 
     /// The name of the type of a module the runtime does not have that a
