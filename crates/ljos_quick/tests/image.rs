@@ -2371,3 +2371,53 @@ fn a_large_picture_that_comes_back_for_a_row_gone_keeps_no_pixels() {
     let one = (shown.width() * shown.height() * 4) as usize;
     assert_eq!(store.resident_bytes(), 3 * one);
 }
+
+/// A fetcher that panics for every URL that names it bad.
+struct Panicking {
+    bytes: Vec<u8>,
+}
+
+impl ljos_platform::Fetcher for Panicking {
+    fn fetch(&self, url: &str) -> Result<Vec<u8>, ljos_platform::FetchError> {
+        assert!(!url.contains("bad"), "a fetcher that fails");
+        Ok(self.bytes.clone())
+    }
+}
+
+#[test]
+fn a_load_that_panics_is_an_error_and_frees_its_turn() {
+    let (e, store) = pictures();
+    ljos_platform::Platform::of(&e).set_fetcher(Arc::new(Panicking {
+        bytes: png(30, 20, GREEN),
+    }));
+    // More than load side by side, so the good one waits for a turn the
+    // bad ones must give back.
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Column {
+    Repeater {
+        model: 9
+        Image { required property int index; source: "http://example.invalid/bad" + index + ".png" }
+    }
+    Image { objectName: "good"; source: "http://example.invalid/good.png" }
+}
+"#,
+    );
+    store.finish(&e);
+    let good = find(&e, root, "good");
+    let bad: Vec<i32> = child_items(&e, root)
+        .into_iter()
+        .filter(|&i| i != good && e.property_index(i, "status").is_ok())
+        .map(|i| status(&e, i))
+        .collect();
+    assert_eq!(bad, vec![image_status::ERROR; 9]);
+    assert_eq!(status(&e, good), image_status::READY);
+    let panics = e
+        .faults()
+        .iter()
+        .filter(|f| matches!(f.fault, ljos_runtime::Fault::Panic(_)))
+        .count();
+    assert_eq!(panics, 9);
+}

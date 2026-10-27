@@ -140,6 +140,18 @@ fn run_once(slot: &Slot) {
 struct Done {
     key: ImageKey,
     result: Result<decode::Loaded, LoadError>,
+    /// What a panic in the job said: it is an error to the item and a
+    /// fault to the engine.
+    panic: Option<String>,
+}
+
+/// The words a panic was raised with.
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a panic".to_owned())
 }
 
 impl Done {
@@ -1314,7 +1326,10 @@ impl ImageStore {
         let fetcher = matches!(located, Ok(Origin::Remote)).then(|| Platform::of(engine).fetcher());
         let remote = fetcher.is_some();
         let work = move || {
-            let result = (|| {
+            // A fetch or a decoder that panics on a hostile file must still
+            // answer, or its Image would say "Loading" for ever and keep
+            // its turn from every picture after it.
+            let result = catch_unwind(AssertUnwindSafe(|| {
                 // None for a picture fetched from the network.
                 let origin = match located {
                     Ok(Origin::Remote) if fetcher.is_some() => None,
@@ -1335,17 +1350,7 @@ impl ImageStore {
                 let _decoding = gate
                     .decode(decode::cost(&bytes, key.request), cap)
                     .ok_or_else(|| decode::too_large(&key.url))?;
-                // A decoder that panics on a hostile file must still answer,
-                // or its Image would say "Loading" for ever.
-                let loaded = catch_unwind(AssertUnwindSafe(|| {
-                    decode::load_bytes(&key.url, &bytes, key.request)
-                }))
-                .unwrap_or_else(|_| {
-                    Err(LoadError::Decode {
-                        url: ljos_engine::diagnostic_url(&key.url),
-                        reason: "the decoder failed".to_owned(),
-                    })
-                })?;
+                let loaded = decode::load_bytes(&key.url, &bytes, key.request)?;
                 // Made again from what is at hand, never from the network.
                 match &origin {
                     Some(Origin::File(path)) => {
@@ -1362,9 +1367,19 @@ impl ImageStore {
                     _ => {}
                 }
                 Ok(loaded)
-            })();
+            }));
+            let (result, panic) = match result {
+                Ok(result) => (result, None),
+                Err(payload) => (
+                    Err(LoadError::Decode {
+                        url: ljos_engine::diagnostic_url(&key.url),
+                        reason: "the loader failed".to_owned(),
+                    }),
+                    Some(panic_text(payload.as_ref())),
+                ),
+            };
             // A closed inbox means the engine is gone and nobody waits.
-            let _ = tx.send(Done { key, result });
+            let _ = tx.send(Done { key, result, panic });
             signal.sent_one();
         };
         // The pool keeps a job it refuses, so the job sits in a slot both
@@ -1401,7 +1416,7 @@ impl ImageStore {
                 });
         }
         let count = done.len();
-        for Done { key, result } in done {
+        for Done { key, result, panic } in done {
             let (waiters, next) = {
                 let mut s = self.state.borrow_mut();
                 s.in_flight = s.in_flight.saturating_sub(1);
@@ -1437,6 +1452,10 @@ impl ImageStore {
                 && (caches || waiters.is_empty())
             {
                 self.keep(&key, &Picture::of(loaded));
+            }
+            if let Some(panic) = panic {
+                let origin = waiters.iter().find_map(Waiter::item);
+                engine.report_fault(origin, ljos_runtime::Fault::Panic(panic.into()));
             }
             let only_loads = waiters.iter().all(|w| matches!(w, Waiter::Load { .. }));
             let loaded_by: Vec<ObjectId> = waiters
