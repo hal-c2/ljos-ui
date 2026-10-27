@@ -443,7 +443,7 @@ impl Platform {
             drops.unavailable = Some(reason.into());
             drops.due()
         };
-        warn(engine, due);
+        warn_if_due(engine, due);
     }
 
     /// A drop target that would take files from other applications was
@@ -454,12 +454,12 @@ impl Platform {
             drops.target = true;
             drops.due()
         };
-        warn(engine, due);
+        warn_if_due(engine, due);
     }
 }
 
 // Logged with no borrow held: a log handler may reach the platform.
-fn warn(engine: &Engine, due: Option<String>) {
+fn warn_if_due(engine: &Engine, due: Option<String>) {
     if let Some(message) = due {
         engine.log(LogLevel::Warning, CATEGORY, message);
     }
