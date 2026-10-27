@@ -52,7 +52,7 @@ use ljos_runtime::Time;
 
 use crate::button::AbstractButton;
 use crate::combobox::ItemDelegate;
-use crate::util::{check, is_a, is_unset, num, object, set_computed, warn};
+use crate::util::{check, emit, is_a, is_unset, num, object, set_computed, warn};
 
 /// The sides, as `SwipeDelegate.Left` and `SwipeDelegate.Right` give them.
 pub mod side {
@@ -427,12 +427,6 @@ fn arrived(engine: &Engine, swipe: ObjectId, to: f64) {
         emit(engine, swipe, "opened");
     } else {
         emit(engine, swipe, "closed");
-    }
-}
-
-fn emit(engine: &Engine, obj: ObjectId, signal: &str) {
-    if engine.is_alive(obj) {
-        check(engine, signal, engine.emit_by_name(obj, signal, &[]));
     }
 }
 

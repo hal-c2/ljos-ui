@@ -45,7 +45,7 @@ use ljos_quick::{Item, Passage, is_item, set_parent_item};
 use crate::containers::{Host, content_size, host_append, host_complete, host_insert};
 use crate::control::Control;
 use crate::parts::settle_parts;
-use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
+use crate::util::{bind_default, check, emit, flag, is_a, num, object, set_computed};
 use crate::window::Window;
 use ljos_quick::Palette;
 
@@ -471,12 +471,6 @@ pub fn popup_item(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
 /// The popup `item` draws, if it is a popup's item.
 pub fn item_popup(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     popup_of(engine, item)
-}
-
-fn emit(engine: &Engine, popup: ObjectId, signal: &str) {
-    if engine.is_alive(popup) {
-        check(engine, signal, engine.emit_by_name(popup, signal, &[]));
-    }
 }
 
 /// Writes a value as the type's own code does: a binding on the property

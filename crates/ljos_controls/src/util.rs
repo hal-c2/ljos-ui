@@ -43,6 +43,14 @@ pub(crate) fn warn(engine: &Engine, what: impl Into<String>) {
     engine.log(LogLevel::Warning, CATEGORY, what.into());
 }
 
+/// Emits `signal` of `obj`, which takes no arguments, if `obj` is still
+/// alive.
+pub(crate) fn emit(engine: &Engine, obj: ObjectId, signal: &str) {
+    if engine.is_alive(obj) {
+        check(engine, signal, engine.emit_by_name(obj, signal, &[]));
+    }
+}
+
 /// Logs what went wrong where a hook cannot return it.
 pub(crate) fn check(engine: &Engine, what: &str, r: Result<(), EngineError>) {
     if let Err(err) = r {

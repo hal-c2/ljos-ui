@@ -24,7 +24,7 @@ use crate::button::{AbstractButton, Button};
 use crate::containers::{Host, Page, host_append, host_complete};
 use crate::control::Control;
 use crate::popup::{self, Popup};
-use crate::util::{bind_default, check, is_a, num, object, set_computed};
+use crate::util::{bind_default, check, emit, is_a, num, object, set_computed};
 
 /// `DialogButtonBox.ButtonRole`.
 pub(crate) mod role {
@@ -1082,12 +1082,6 @@ impl Dialog {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init_dialog(cx.engine, cx.this)
-    }
-}
-
-fn emit(engine: &Engine, obj: ObjectId, signal: &str) {
-    if engine.is_alive(obj) {
-        check(engine, signal, engine.emit_by_name(obj, signal, &[]));
     }
 }
 

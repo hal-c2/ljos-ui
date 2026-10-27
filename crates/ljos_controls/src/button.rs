@@ -35,7 +35,7 @@ use crate::control::{Control, click_focus, focus_policy, hover, is_left, takes_i
 use crate::group;
 use crate::parts::{PartKind, manage_part};
 use crate::util::{
-    bind_default, check, flag, is_a, is_unset, mnemonic_of, num, object, set_computed, warn,
+    bind_default, check, emit, flag, is_a, is_unset, mnemonic_of, num, object, set_computed, warn,
 };
 
 /// `Qt.CheckState`.
@@ -285,12 +285,6 @@ fn state_of(engine: &Engine, obj: ObjectId) -> Option<Rc<ButtonState>> {
 /// The pointer is down on the button (and no key is what presses it).
 pub(crate) fn held_by_pointer(engine: &Engine, obj: ObjectId) -> bool {
     state_of(engine, obj).is_some_and(|s| s.held.get())
-}
-
-fn emit(engine: &Engine, obj: ObjectId, signal: &str) {
-    if engine.is_alive(obj) {
-        check(engine, signal, engine.emit_by_name(obj, signal, &[]));
-    }
 }
 
 /// Sets `checked` the way a click does: a binding on it stays, as in Qt,
