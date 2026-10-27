@@ -7,6 +7,7 @@ use crate::backend::BackendError;
 use crate::world::LjosWorld;
 
 use super::StepResult;
+use super::inspector::unquoted;
 
 #[given("the window is drawn on the processor")]
 fn drawn_on_processor(w: &mut LjosWorld) -> StepResult {
@@ -96,13 +97,9 @@ fn application_observed(w: &mut LjosWorld) -> StepResult {
 // The observer's window is driven with its own inspector, as an agent
 // would: it is found by locator and pressed, never reached into.
 // A quote in a locator is written \" in a feature.
-fn unescaped(text: &str) -> String {
-    text.replace("\\\"", "\"")
-}
-
 #[when(regex = r#"^the observer's "((?:[^"\\]|\\.)+)" is clicked$"#)]
 fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
-    let locator = unescaped(&locator);
+    let locator = unquoted(&locator);
     w.each(|b| {
         b.probes()?
             .observer_call("app_click", serde_json::json!({ "target": locator }))
@@ -122,7 +119,7 @@ fn observer_does_not_show(w: &mut LjosWorld, text: String) -> StepResult {
 
 #[then(regex = r#"^the observer has "((?:[^"\\]|\\.)+)"$"#)]
 fn observer_has(w: &mut LjosWorld, locator: String) -> StepResult {
-    observer_matches(w, &unescaped(&locator), true)
+    observer_matches(w, &unquoted(&locator), true)
 }
 
 fn observer_matches(w: &mut LjosWorld, locator: &str, present: bool) -> StepResult {
