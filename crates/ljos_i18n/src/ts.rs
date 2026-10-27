@@ -136,7 +136,7 @@ struct Parser<'a> {
     reader: Reader<&'a [u8]>,
 }
 
-type Parsed<T> = Result<T, TsError>;
+type TsResult<T> = Result<T, TsError>;
 
 impl<'a> Parser<'a> {
     fn error(&self, message: impl std::fmt::Display) -> TsError {
@@ -153,11 +153,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn next(&mut self) -> Parsed<Event<'a>> {
+    fn next(&mut self) -> TsResult<Event<'a>> {
         self.reader.read_event().map_err(|e| self.error(e))
     }
 
-    fn attribute(&self, element: &BytesStart<'_>, name: &str) -> Parsed<Option<String>> {
+    fn attribute(&self, element: &BytesStart<'_>, name: &str) -> TsResult<Option<String>> {
         let Some(attribute) = element.try_get_attribute(name).map_err(|e| self.error(e))? else {
             return Ok(None);
         };
@@ -168,7 +168,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Skips an element this reader has no field for, with all it contains.
-    fn skip(&mut self, element: &BytesStart<'_>) -> Parsed<()> {
+    fn skip(&mut self, element: &BytesStart<'_>) -> TsResult<()> {
         self.reader
             .read_to_end(element.name())
             .map(|_| ())
@@ -180,7 +180,7 @@ impl<'a> Parser<'a> {
     /// Text arrives in pieces: plain runs, entity and character references,
     /// CDATA sections, and `<byte value="x1"/>` for the control characters
     /// XML cannot hold.
-    fn content(&mut self) -> Parsed<String> {
+    fn content(&mut self) -> TsResult<String> {
         let mut out = String::new();
         loop {
             match self.next()? {
@@ -219,8 +219,8 @@ impl<'a> Parser<'a> {
     /// Calls `child` for each element inside the one just opened.
     fn children(
         &mut self,
-        mut child: impl FnMut(&mut Self, &BytesStart<'a>) -> Parsed<()>,
-    ) -> Parsed<()> {
+        mut child: impl FnMut(&mut Self, &BytesStart<'a>) -> TsResult<()>,
+    ) -> TsResult<()> {
         loop {
             match self.next()? {
                 Event::Start(e) => child(self, &e)?,
@@ -231,7 +231,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn context(&mut self) -> Parsed<TsContext> {
+    fn context(&mut self) -> TsResult<TsContext> {
         let mut context = TsContext::default();
         self.children(|p, e| {
             match e.name().as_ref() {
@@ -248,7 +248,7 @@ impl<'a> Parser<'a> {
         Ok(context)
     }
 
-    fn message(&mut self, element: &BytesStart<'a>) -> Parsed<TsMessage> {
+    fn message(&mut self, element: &BytesStart<'a>) -> TsResult<TsMessage> {
         let mut m = TsMessage {
             id: self.attribute(element, "id")?,
             numerus: self.attribute(element, "numerus")?.as_deref() == Some("yes"),
@@ -305,7 +305,7 @@ impl<'a> Parser<'a> {
 
     /// The forms of a `<translation>`: its `<numerusform>` children for a
     /// numerus message, its text otherwise.
-    fn translation(&mut self, numerus: bool) -> Parsed<Vec<String>> {
+    fn translation(&mut self, numerus: bool) -> TsResult<Vec<String>> {
         if !numerus {
             return Ok(vec![self.content()?]);
         }
