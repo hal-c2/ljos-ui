@@ -397,18 +397,16 @@ impl<M: Send + 'static> ShellApp<M> {
                 wake();
             });
         }
-        if tree.is_some() && config.system_locale {
-            engine.use_system_locale();
-        }
         if tree.is_some() {
+            if config.system_locale {
+                engine.use_system_locale();
+            }
             // As Qt does, before the root: the Material theme and colours
             // the configuration file and its variables name.
             ljos_controls::set_material_defaults(
                 &engine,
                 ljos_controls::MaterialDefaults::from_environment(),
             );
-        }
-        if tree.is_some() {
             // Before `setup` too: a `Settings` reads its file, and a
             // binding may ask `Qt.platform`, while the root is built.
             let wake = Arc::clone(&wake);
