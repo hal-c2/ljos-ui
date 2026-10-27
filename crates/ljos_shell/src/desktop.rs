@@ -179,15 +179,15 @@ fn new_context(key: u64, proxy: &Proxy) -> egui::Context {
         let Some(when) = Instant::now().checked_add(info.delay) else {
             return;
         };
-        if let Ok(proxy) = proxy.lock() {
-            // Fails only when the loop has ended.
-            drop(proxy.send_event(ShellEvent::Repaint {
-                slot: key,
-                when,
-                pass: Some(info.current_cumulative_pass_nr),
-                at_once: info.delay.is_zero(),
-            }));
-        }
+        // Poison is shrugged off: a wake must not be lost to a panic elsewhere.
+        let proxy = crate::lock(&proxy);
+        // Fails only when the loop has ended.
+        drop(proxy.send_event(ShellEvent::Repaint {
+            slot: key,
+            when,
+            pass: Some(info.current_cumulative_pass_nr),
+            at_once: info.delay.is_zero(),
+        }));
     });
     ctx
 }
@@ -201,15 +201,14 @@ fn waker(key: u64, proxy: &Proxy) -> ljos_egui::Waker {
         let Some(when) = Instant::now().checked_add(delay) else {
             return;
         };
-        if let Ok(proxy) = proxy.lock() {
-            // Fails only when the loop has ended.
-            drop(proxy.send_event(ShellEvent::Repaint {
-                slot: key,
-                when,
-                pass: None,
-                at_once: delay.is_zero(),
-            }));
-        }
+        let proxy = crate::lock(&proxy);
+        // Fails only when the loop has ended.
+        drop(proxy.send_event(ShellEvent::Repaint {
+            slot: key,
+            when,
+            pass: None,
+            at_once: delay.is_zero(),
+        }));
     })
 }
 
@@ -2232,10 +2231,9 @@ pub(crate) fn run<M: Send + 'static>(
     *desktop.drags.borrow_mut() = drags::Drags::start(&host.display_handle(), {
         let proxy = Arc::clone(&desktop.proxy);
         Arc::new(move |step| {
-            if let Ok(proxy) = proxy.lock() {
-                // An error is a loop that has ended, and the drag with it.
-                let _ = proxy.send_event(ShellEvent::Drag(step));
-            }
+            let proxy = crate::lock(&proxy);
+            // An error is a loop that has ended, and the drag with it.
+            let _ = proxy.send_event(ShellEvent::Drag(step));
         })
     });
     // What follows drags in carries them out too.
