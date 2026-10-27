@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 ljos_ir = { path = "../ljos_ir" }
+ljos_aot = { path = "../ljos_aot" }
 qml_syntax = { path = "../qml_syntax" }
 qml_front = { path = "../qml_front" }
 qt_types = { path = "../qt_types" }

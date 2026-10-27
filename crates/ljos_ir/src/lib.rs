@@ -23,6 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod aot;
 pub mod color;
 
 /// Bumped whenever the serialised shape changes, or what the compiled

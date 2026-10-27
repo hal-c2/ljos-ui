@@ -1,0 +1,15 @@
+[package]
+name = "ljos_aot"
+description = "Compiles the bindings and handlers of shipped QML files to Rust at build time, from the IR alone: typed by the file's declarations and the engine's type table, refusing by name what it cannot type, with the dynamic tiers as the exact fallback (ARCHITECTURE.md §5.4)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos_ir = { path = "../ljos_ir" }
+
+[lints]
+workspace = true

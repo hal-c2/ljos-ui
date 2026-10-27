@@ -62,14 +62,14 @@ pub struct Reason {
 }
 
 impl Reason {
-    fn new(kind: &'static str) -> Self {
+    pub(crate) fn new(kind: &'static str) -> Self {
         Self {
             kind,
             detail: String::new(),
         }
     }
 
-    fn with(kind: &'static str, detail: impl Into<String>) -> Self {
+    pub(crate) fn with(kind: &'static str, detail: impl Into<String>) -> Self {
         Self {
             kind,
             detail: detail.into(),
@@ -128,14 +128,14 @@ pub fn analyze(file: &CompiledFile) -> Vec<Outcome> {
 }
 
 /// The file's module, by what it exports.
-struct Module<'p, 'a> {
-    functions: HashMap<&'p str, &'p Function<'a>>,
+pub(crate) struct Module<'p, 'a> {
+    pub(crate) functions: HashMap<&'p str, &'p Function<'a>>,
     /// The context of the file's own `qsTr`, when the module binds one.
-    context: Option<String>,
+    pub(crate) context: Option<String>,
 }
 
 impl<'p, 'a> Module<'p, 'a> {
-    fn of(program: &'p Program<'a>) -> Self {
+    pub(crate) fn of(program: &'p Program<'a>) -> Self {
         let mut module = Module {
             functions: HashMap::new(),
             context: None,
@@ -170,15 +170,15 @@ impl<'p, 'a> Module<'p, 'a> {
 
 /// A script as its function has it: the names of the call's arguments and
 /// the code.
-struct Shape<'p, 'a> {
-    formals: Vec<&'p str>,
+pub(crate) struct Shape<'p, 'a> {
+    pub(crate) formals: Vec<&'p str>,
     /// The name a function expression gives itself.
-    own: Option<&'p str>,
-    body: Body<'p, 'a>,
+    pub(crate) own: Option<&'p str>,
+    pub(crate) body: Body<'p, 'a>,
 }
 
 #[derive(Clone, Copy)]
-enum Body<'p, 'a> {
+pub(crate) enum Body<'p, 'a> {
     Statements(&'p [Statement<'a>]),
     /// The body of an arrow function written without braces.
     Expression(&'p Expression<'a>),
@@ -201,7 +201,10 @@ fn odd_shape(what: &str) -> Reason {
 /// Takes the wrapping the compiler gave a script apart (`compile.rs`,
 /// `function`): the parameters for its free names, then either the names of
 /// the call's arguments, or `...$args` applied to the function the script is.
-fn shape<'p, 'a>(function: &'p Function<'a>, binding: &Binding) -> Result<Shape<'p, 'a>, Reason> {
+pub(crate) fn shape<'p, 'a>(
+    function: &'p Function<'a>,
+    binding: &Binding,
+) -> Result<Shape<'p, 'a>, Reason> {
     let Some(body) = &function.body else {
         return Err(odd_shape("no body"));
     };
