@@ -87,35 +87,24 @@ impl WebServer {
 
     /// Streams a synthetic body without allocating its total length.
     pub fn stream_bytes(&self, name: &str, count: usize) {
-        self.files
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(
-                format!("/{}", name.trim_start_matches('/')),
-                Body::Repeated(count, Vec::new()),
-            );
+        self.put(name, Body::Repeated(count, Vec::new()));
     }
 
     /// Streams a short prefix followed by zero bytes.
     pub fn stream_prefixed_bytes(&self, name: &str, count: usize, prefix: Vec<u8>) {
-        self.files
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(
-                format!("/{}", name.trim_start_matches('/')),
-                Body::Repeated(count, prefix),
-            );
+        self.put(name, Body::Repeated(count, prefix));
     }
 
     /// From now on `/name` answers `bytes`.
     pub fn serve(&self, name: &str, bytes: Vec<u8>) {
+        self.put(name, Body::Bytes(bytes));
+    }
+
+    fn put(&self, name: &str, body: Body) {
         self.files
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(
-                format!("/{}", name.trim_start_matches('/')),
-                Body::Bytes(bytes),
-            );
+            .insert(format!("/{}", name.trim_start_matches('/')), body);
     }
 }
 
