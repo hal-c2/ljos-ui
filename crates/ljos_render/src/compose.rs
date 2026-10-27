@@ -421,8 +421,10 @@ impl RenderTree {
             here.clip_bbox = inter;
         }
         self.ensure_order(id);
+        // Taken while the children are walked, as `compose_fresh` does, and
+        // put back after, rather than copied for every node of the subtree.
+        let order = std::mem::take(&mut self.nodes[id].paint_order);
         let n = &self.nodes[id];
-        let order = n.paint_order.clone();
         let neg = n.neg_count;
         let item = PaintItem {
             node: id,
@@ -440,6 +442,7 @@ impl RenderTree {
         for c in &order[neg..] {
             self.subtree_node(*c, here, false, walk);
         }
+        self.nodes[id].paint_order = order;
     }
 
     fn compose_node(&mut self, id: NodeId, parent: &Parent, walk: &mut Walk) {
