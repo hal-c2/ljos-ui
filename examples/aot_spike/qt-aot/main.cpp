@@ -1,7 +1,8 @@
 // The spike's cases in Qt, driven from native code as src/bin/aot_bench.rs
-// drives them in Ljós: each step writes the case's inputs by property name,
-// then triggers it (reads the binding, or emits the handler's signal by
-// name), and the result is read back outside the clock.
+// drives them in Ljós: the objects are found once, and each step writes the
+// case's inputs by property name, then triggers it (reads the binding, or
+// emits the handler's signal by name), and the result is read back outside
+// the clock.
 //
 //   qt_aot_bench cases|steps|rss|snapshot <source>
 //
@@ -56,11 +57,15 @@ long status(const char *field)
     std::exit(1);
 }
 
-// One world: an engine and the root World created from the source.
+// One world: an engine, the root World created from the source, and the
+// objects the steps write and emit on, found once (as aot_bench holds them).
 struct World
 {
     std::unique_ptr<QQmlEngine> engine;
     std::unique_ptr<QObject> root;
+    QObject *editor = nullptr;
+    QObject *field = nullptr;
+    QObject *cards = nullptr;
 
     explicit World(const QString &source)
         : engine(std::make_unique<QQmlEngine>())
@@ -75,9 +80,11 @@ struct World
             fail(c.errorString());
         // As in Ljós's harness, counting starts after creation.
         root->setProperty("syncs", 0);
+        editor = find("editor");
+        field = find("field");
+        cards = find("cards");
     }
 
-    // By name on every call, as the Rust harness finds `editor` each time.
     QObject *find(const char *name) const
     {
         auto *o = root->findChild<QObject *>(QLatin1String(name));
@@ -106,7 +113,7 @@ struct World
             r->setProperty("runStatus", QString::fromLatin1(k % 5 == 4 ? "doing" : "proposed"));
         } else if (c == "c7") {
             r->setProperty("depth", k % 3);
-            find("field")->setProperty("text", QString::fromLatin1(k % 2 == 0 ? "" : "x"));
+            field->setProperty("text", QString::fromLatin1(k % 2 == 0 ? "" : "x"));
         }
     }
 
@@ -119,7 +126,7 @@ struct World
         } else if (c == "c2") {
             ok = QMetaObject::invokeMethod(r, "clicked");
         } else if (c == "c3") {
-            ok = QMetaObject::invokeMethod(find("editor"), "submitted",
+            ok = QMetaObject::invokeMethod(editor, "submitted",
                                            Q_ARG(QString, QString::fromLatin1(k % 2 == 0 ? "foreground" : "background")));
         } else if (c == "c4") {
             sink(r->property("statusText"));
@@ -231,7 +238,7 @@ void snapshot(const QString &source)
     for (const char *p : {"progress", "statusText", "runText", "lastMode", "selected", "ran", "cursor", "depth",
                           "accepted", "syncs"})
         std::printf("%s=%s\n", p, qPrintable(show(w.root->property(p))));
-    auto *cards = qobject_cast<QAbstractItemModel *>(w.find("cards"));
+    auto *cards = qobject_cast<QAbstractItemModel *>(w.cards);
     if (!cards)
         fail(QStringLiteral("cards is not a model"));
     const int role = cards->roleNames().key("toastId", -1);

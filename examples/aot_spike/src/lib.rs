@@ -149,6 +149,18 @@ pub struct Run {
     pub engine: Engine,
     pub root: ObjectId,
     pub slots: Vec<(String, Slot)>,
+    /// The objects the steps write and emit on, found once: Qt's driver
+    /// holds its pointers to them too, so a step measures the same work.
+    pub held: Held,
+}
+
+/// The world's objects, by their objectName.
+#[derive(Clone, Copy, Debug)]
+pub struct Held {
+    pub bar: ObjectId,
+    pub editor: ObjectId,
+    pub field: ObjectId,
+    pub cards: ObjectId,
 }
 
 /// Loads the world for `mode`. `check` turns on tier 1's cross-check
@@ -174,10 +186,18 @@ pub fn load(mode: Mode, check: bool) -> Run {
     let root = e
         .create_from_url(file, None, Vec::new())
         .expect("the world creates");
+    let find = |name: &str| rt::find(&e, root, name).expect("an object of the world");
+    let held = Held {
+        bar: find("bar"),
+        editor: find("editor"),
+        field: find("field"),
+        cards: find("cards"),
+    };
     let mut run = Run {
         engine: e,
         root,
         slots: Vec::new(),
+        held,
     };
     match mode {
         Mode::Tier1 | Mode::QuickJs | Mode::Shipped => {}
@@ -224,11 +244,22 @@ impl Run {
     }
 
     pub fn find(&self, name: &str) -> ObjectId {
-        rt::find(&self.engine, self.root, name).expect("an object of the world")
+        match name {
+            "root" => self.root,
+            "bar" => self.held.bar,
+            "editor" => self.held.editor,
+            "field" => self.held.field,
+            "cards" => self.held.cards,
+            _ => rt::find(&self.engine, self.root, name).expect("an object of the world"),
+        }
     }
 
     pub fn set(&self, obj: &str, prop: &str, v: Value) {
-        let o = self.find(obj);
+        self.set_on(self.find(obj), prop, v);
+    }
+
+    /// A write by the property's name, as Qt's driver's `setProperty`.
+    pub fn set_on(&self, o: ObjectId, prop: &str, v: Value) {
         self.engine.write_by_name(o, prop, v).expect("write");
     }
 
@@ -353,35 +384,35 @@ pub fn prepare(run: &Run, case: &str, k: usize) {
     let s = |v: &str| Value::String(v.into());
     match case {
         "c1" => {
-            run.set("root", "total", Value::Real([10.0, 0.0, 7.0][k % 3]));
-            run.set("root", "done", Value::Real((k % 11) as f64));
+            run.set_on(run.root, "total", Value::Real([10.0, 0.0, 7.0][k % 3]));
+            run.set_on(run.root, "done", Value::Real((k % 11) as f64));
         }
-        "c2" => run.set("root", "stopMode", Value::Bool(k.is_multiple_of(2))),
-        "c4" => run.set(
-            "root",
+        "c2" => run.set_on(run.root, "stopMode", Value::Bool(k.is_multiple_of(2))),
+        "c4" => run.set_on(
+            run.root,
             "status",
             s(["todo", "doing", "blocked", "done", "dropped", "archived"][k % 6]),
         ),
         "c5" => {
             let changes: &[bool] = [&[false, true, false][..], &[], &[true], &[false]][k % 4];
-            run.set(
-                "root",
+            run.set_on(
+                run.root,
                 "changes",
                 Value::List(std::sync::Arc::new(
                     changes.iter().map(|b| Value::Bool(*b)).collect(),
                 )),
             );
-            run.set("root", "health", Value::Bool(k.is_multiple_of(3)));
-            run.set(
-                "root",
+            run.set_on(run.root, "health", Value::Bool(k.is_multiple_of(3)));
+            run.set_on(
+                run.root,
                 "runStatus",
                 s(if k % 5 == 4 { "doing" } else { "proposed" }),
             );
         }
         "c7" => {
-            run.set("root", "depth", Value::Real((k % 3) as f64));
-            run.set(
-                "field",
+            run.set_on(run.root, "depth", Value::Real((k % 3) as f64));
+            run.set_on(
+                run.held.field,
                 "text",
                 s(if k.is_multiple_of(2) { "" } else { "x" }),
             );
@@ -410,7 +441,7 @@ pub fn trigger(run: &Run, case: &str, k: usize) {
         }
         "c2" => e.emit_by_name(run.root, "clicked", &[]).expect("emit"),
         "c3" => {
-            let editor = run.find("editor");
+            let editor = run.held.editor;
             e.emit_by_name(
                 editor,
                 "submitted",
@@ -439,7 +470,7 @@ pub fn trigger(run: &Run, case: &str, k: usize) {
         }
         "c8" => {
             let v = items(k).into_iter().map(Value::Real).collect();
-            run.set("root", "items", Value::List(std::sync::Arc::new(v)));
+            run.set_on(run.root, "items", Value::List(std::sync::Arc::new(v)));
         }
         other => panic!("no case {other}"),
     }
