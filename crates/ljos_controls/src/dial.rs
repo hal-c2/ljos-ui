@@ -34,8 +34,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
-use crate::control::no_key;
-use crate::control::{Control, focus_policy, hover, is_left, takes_input};
+use crate::control::{Control, focus_policy, hover, is_left, no_key, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::scroll_bar::snap_mode;
 use crate::slider::{DEFAULT_STEP, Span, snap_mode_enum};

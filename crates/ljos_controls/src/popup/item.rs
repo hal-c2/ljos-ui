@@ -27,8 +27,7 @@ use ljos_render::kurbo;
 
 use super::{Popup, close_policy, dismiss, popup_of};
 use crate::containers::{Page, Pane};
-use crate::control::Control;
-use crate::control::{ignore, no_key};
+use crate::control::{Control, ignore, no_key};
 use crate::util::{author_set, check, flag, set_derived};
 use ljos_quick::palette::{ROLE_COUNT, group_props, role_props};
 

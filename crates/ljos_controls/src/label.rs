@@ -14,8 +14,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
-use crate::control::{focus_policy, is_left, takes_input};
-use crate::control::{ignore, ignore_cancel};
+use crate::control::{focus_policy, ignore, ignore_cancel, is_left, takes_input};
 use crate::inherit::{self, InheritState, Kind};
 use crate::parts::{PartKind, manage_part, settle_parts};
 use crate::util::{num, object};

@@ -43,8 +43,7 @@ use ljos_quick::{
 use ljos_render::kurbo;
 
 use crate::button::AbstractButton;
-use crate::control::no_key;
-use crate::control::{Control, focus_policy, hover, is_left, takes_input};
+use crate::control::{Control, focus_policy, hover, is_left, no_key, takes_input};
 use crate::parts::{PartKind, declared_by_style, manage_part};
 use crate::popup::{self, Popup, close_policy};
 use crate::rows;

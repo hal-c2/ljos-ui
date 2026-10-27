@@ -33,8 +33,7 @@ use ljos_quick::{
 };
 
 use crate::containers::Pane;
-use crate::control::Control;
-use crate::control::no_key;
+use crate::control::{Control, no_key};
 use crate::scroll_bar::{scroll_bars, step};
 use crate::text_area::TextArea;
 use crate::util::{flag, is_a, is_unset, num, object};

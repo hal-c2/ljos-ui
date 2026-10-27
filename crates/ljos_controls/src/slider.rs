@@ -40,8 +40,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
-use crate::control::no_key;
-use crate::control::{Control, focus_policy, hover, is_left, takes_input};
+use crate::control::{Control, focus_policy, hover, is_left, no_key, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::scroll_bar::{orientation, snap_mode};
 use crate::util::{check, flag, is_a, num, object, set_derived};

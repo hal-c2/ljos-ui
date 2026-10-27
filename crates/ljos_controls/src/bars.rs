@@ -14,8 +14,7 @@ use ljos_engine::{
 };
 use ljos_quick::{AccessibleItem, register_accessible_item};
 
-use crate::control::Control;
-use crate::control::no_action;
+use crate::control::{Control, no_action};
 use crate::scroll_bar::orientation;
 use crate::slider::Span;
 use crate::util::{check, flag, num};

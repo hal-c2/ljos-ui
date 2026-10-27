@@ -31,8 +31,7 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use crate::action::Action;
-use crate::control::no_key;
-use crate::control::{Control, click_focus, focus_policy, hover, is_left, takes_input};
+use crate::control::{Control, click_focus, focus_policy, hover, is_left, no_key, takes_input};
 use crate::group;
 use crate::parts::{PartKind, manage_part};
 use crate::util::{

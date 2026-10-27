@@ -40,8 +40,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
-use crate::control::no_key;
-use crate::control::{Control, focus_policy, takes_input};
+use crate::control::{Control, focus_policy, no_key, takes_input};
 use crate::rows;
 use crate::util::{
     bind_default, check, flag, is_a, num, object, on_model_made, set_computed, set_derived,
