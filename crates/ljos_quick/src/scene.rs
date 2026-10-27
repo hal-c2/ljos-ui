@@ -542,20 +542,21 @@ impl Scenes {
         all.retain(|w| w.strong_count() > 0);
         all.push(Rc::downgrade(shared));
     }
+
+    /// The scenes still there, taken out of the list: a mark wakes the
+    /// host, which may make or drop a scene.
+    fn live(&self) -> SmallVec<[SharedRc; 2]> {
+        self.0
+            .borrow()
+            .iter()
+            .filter_map(std::rc::Weak::upgrade)
+            .collect()
+    }
 }
 
 /// Marks `obj` with `f` in each scene that shows it.
 fn mark_shown(e: &Engine, obj: ObjectId, f: impl Fn(&mut Shared)) {
-    let scenes = e.extension::<Scenes>();
-    // Taken out of the list first: a mark wakes the host, which may make
-    // or drop a scene.
-    let shown: SmallVec<[SharedRc; 2]> = scenes
-        .0
-        .borrow()
-        .iter()
-        .filter_map(std::rc::Weak::upgrade)
-        .collect();
-    for s in shown {
+    for s in e.extension::<Scenes>().live() {
         if s.borrow().marks.contains(obj) {
             mark(&s, &f);
         }
@@ -574,14 +575,7 @@ pub(crate) fn restructured(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
 /// [`Engine::on_destroyed`]: a scene that showed one of `gone` sweeps its
 /// dead at the next frame.
 pub(crate) fn destroyed(e: &Engine, gone: &[ObjectId]) {
-    let scenes = e.extension::<Scenes>();
-    let shown: SmallVec<[SharedRc; 2]> = scenes
-        .0
-        .borrow()
-        .iter()
-        .filter_map(std::rc::Weak::upgrade)
-        .collect();
-    for s in shown {
+    for s in e.extension::<Scenes>().live() {
         let first = gone.iter().find(|o| s.borrow().marks.contains(**o));
         if let Some(o) = first {
             mark(&s, |s| s.dead.push(*o));
@@ -616,15 +610,7 @@ struct CursorShapes(std::cell::Cell<u64>);
 pub(crate) fn cursor_shape_changed(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
     let changes = cx.engine.extension::<CursorShapes>();
     changes.0.set(changes.0.get() + 1);
-    let scenes: SmallVec<[SharedRc; 2]> = cx
-        .engine
-        .extension::<Scenes>()
-        .0
-        .borrow()
-        .iter()
-        .filter_map(std::rc::Weak::upgrade)
-        .collect();
-    for s in scenes {
+    for s in cx.engine.extension::<Scenes>().live() {
         wake(&s);
     }
 }
@@ -663,14 +649,8 @@ pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
 /// changes tells its own children through its hook, so this goes no
 /// deeper, but for a `MouseArea`, whose `enabled` its children skip.
 fn inherited(e: &Engine, obj: ObjectId, down: bool) {
-    let scenes = e.extension::<Scenes>();
-    let shown: SmallVec<[SharedRc; 2]> = scenes
-        .0
-        .borrow()
-        .iter()
-        .filter_map(std::rc::Weak::upgrade)
-        .filter(|s| s.borrow().marks.contains(obj))
-        .collect();
+    let mut shown = e.extension::<Scenes>().live();
+    shown.retain(|s| s.borrow().marks.contains(obj));
     for s in shown {
         inherit(e, obj, &s);
         if down {
