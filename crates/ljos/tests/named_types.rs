@@ -122,3 +122,33 @@ fn the_paths_and_a_drag_from_elsewhere_have_facade_names() {
     let drag = ExternalDrag::Left;
     assert!(external_drag(&engine, &drag).is_none());
 }
+
+/// What a host hands on of a drag from another application: a link, with
+/// the actions its source allows and would like, and the action the
+/// application's answer is to tell the source.
+fn hand_on(engine: &Engine, link: &str) -> Option<DropAction> {
+    let actions = DragActions {
+        allowed: DropActions::from_qt(DropAction::Copy as i32 | DropAction::Link as i32),
+        proposed: DropAction::Link,
+    };
+    let offered = ExternalDrag::Offered {
+        formats: vec!["text/uri-list".to_owned()],
+        at: (5.0, 5.0),
+        actions,
+    };
+    external_drag(engine, &offered);
+    let entered = ExternalDrag::Entered {
+        data: DragData::urls([link]),
+        at: Some((5.0, 5.0)),
+        actions,
+    };
+    external_drag(engine, &entered)
+}
+
+#[test]
+fn a_drag_s_actions_and_the_answer_to_it_have_facade_names() {
+    let engine = ljos::engine();
+    // Nothing in the window takes a drop, so the source is told none.
+    let told: Option<DropAction> = hand_on(&engine, "https://example.com/page");
+    assert_eq!(told, None);
+}

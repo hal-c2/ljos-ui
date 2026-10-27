@@ -78,7 +78,10 @@
 /// URL, the badge, the clipboard) a type may ask the host for, with what
 /// a host's own service takes and gives and the drags from other
 /// applications ([`ExternalDrag`](prelude::ExternalDrag), carrying a
-/// [`DragData`](prelude::DragData)) a host hands on, and what the
+/// [`DragData`](prelude::DragData) and the source's
+/// [`DragActions`](prelude::DragActions)) a host hands on, with the
+/// [`DropAction`](prelude::DropAction) the application answers it
+/// with, and what the
 /// Engine's own
 /// methods hand out: the [`Time`](prelude::Time) of `Engine::now`, the
 /// [`TimerId`](prelude::TimerId) of `Engine::call_at`, the
@@ -165,12 +168,12 @@ pub mod prelude {
     };
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,
-        DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, DragData,
-        ExternalDrag, FakeSensors, FetchError, Fetcher, Location, Measurement, Method, NameFilter,
-        NoSensors, OpenUrlService, PathEnv, Permission, PermissionAnswer, PermissionService,
-        PermissionStatus, Platform, Post, RecordedBadge, RecordedUrls, Request, Response,
-        SensorKind, SensorRequest, SensorService, SensorSink, StandardPaths, encoded_url,
-        external_drag, file_url, is_remote, url_path,
+        DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, DragActions, DragData,
+        DropAction, DropActions, ExternalDrag, FakeSensors, FetchError, Fetcher, Location,
+        Measurement, Method, NameFilter, NoSensors, OpenUrlService, PathEnv, Permission,
+        PermissionAnswer, PermissionService, PermissionStatus, Platform, Post, RecordedBadge,
+        RecordedUrls, Request, Response, SensorKind, SensorRequest, SensorService, SensorSink,
+        StandardPaths, encoded_url, external_drag, file_url, is_remote, url_path,
     };
     pub use ljos_quick::{ColorScheme, Item, StyleHints};
     pub use ljos_runtime::{Time, TimerId};
