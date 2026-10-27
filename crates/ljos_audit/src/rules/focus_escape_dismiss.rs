@@ -34,8 +34,7 @@ const CLOSE_ON_ESCAPE: i32 = 0x10;
 const CLOSE_WORDS: &[&str] = &["close", "cancel", "done", "dismiss", "ok", "back", "×", "✕"];
 
 fn number(cx: &Cx, obj: ObjectId, name: &str) -> i32 {
-    let e = cx.engine;
-    e.untrack(|| e.read_by_name(obj, name)).to_number() as i32
+    crate::cx::number(cx.engine, obj, name) as i32
 }
 
 fn is_open(act: &Act, popup: ObjectId) -> bool {

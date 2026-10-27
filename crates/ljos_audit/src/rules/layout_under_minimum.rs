@@ -12,13 +12,7 @@ use ljos_controls::{AbstractButton, is_style_url};
 use ljos_engine::{Engine, MetaRef, ObjectId, PropIndex, Provenance, QmlType};
 use ljos_quick::{Item, Layout, LayoutAttached};
 
-use crate::cx::{Cx, is_a, place_of, shown_items, shown_opacity, slack, trim, words};
-
-fn number(engine: &Engine, obj: ObjectId, name: &str) -> f64 {
-    engine
-        .untrack(|| engine.read_by_name(obj, name))
-        .to_number()
-}
+use crate::cx::{Cx, is_a, number, place_of, shown_items, shown_opacity, slack, trim, words};
 
 /// The least size the item holds to, and where it comes from.
 fn least(engine: &Engine, item: ObjectId) -> Option<([f64; 2], &'static str)> {

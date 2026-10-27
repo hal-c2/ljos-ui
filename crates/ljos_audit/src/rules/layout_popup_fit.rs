@@ -16,13 +16,7 @@ use ljos_design::limits::POPUP_MIN_FILL;
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::{Flickable, child_items};
 
-use crate::cx::{Cx, is_a, overhang, overhang_words, scene_rect, shown_items, slack, trim};
-
-fn number(engine: &Engine, obj: ObjectId, name: &str) -> f64 {
-    engine
-        .untrack(|| engine.read_by_name(obj, name))
-        .to_number()
-}
+use crate::cx::{Cx, is_a, number, overhang, overhang_words, scene_rect, shown_items, slack, trim};
 
 /// Whether the content, or an item near its top, scrolls.
 fn scrolls(engine: &Engine, content: ObjectId) -> bool {

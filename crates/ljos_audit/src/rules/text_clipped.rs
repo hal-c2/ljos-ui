@@ -16,15 +16,9 @@ use ljos_quick::{Flickable, Item, Text};
 use ljos_render::kurbo::{Point, Rect};
 
 use crate::cx::{
-    Cx, ancestors, at, is_a, item_words, overhang, overhang_words, scene_rect, shown_items,
+    Cx, ancestors, at, is_a, item_words, number, overhang, overhang_words, scene_rect, shown_items,
     shown_opacity, slack, trim,
 };
-
-fn number(engine: &Engine, item: ObjectId, name: &str) -> f64 {
-    engine
-        .untrack(|| engine.read_by_name(item, name))
-        .to_number()
-}
 
 fn clips(engine: &Engine, item: ObjectId) -> bool {
     engine

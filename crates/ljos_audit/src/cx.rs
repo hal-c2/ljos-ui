@@ -365,6 +365,13 @@ pub(crate) fn scrolls(engine: &Engine, item: ObjectId) -> bool {
     })
 }
 
+/// A property of `obj` as a number, read without tracking it.
+pub(crate) fn number(engine: &Engine, obj: ObjectId, name: &str) -> f64 {
+    engine
+        .untrack(|| engine.read_by_name(obj, name))
+        .to_number()
+}
+
 /// The slack of `ljos_design::limits::audit::SLACK_PX`.
 pub(crate) fn slack() -> f64 {
     f64::from(ljos_design::limits::audit::SLACK_PX)
