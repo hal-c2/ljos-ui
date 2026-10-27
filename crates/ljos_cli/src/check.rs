@@ -1,7 +1,9 @@
 //! `ljos check`: compiles QML projects and says what the compiler says.
 //! `--stats` adds the tier-1 coverage of their expressions: how many run in
 //! the binding VM rather than in JavaScript, per file and in total, and why
-//! the rest do not (ARCHITECTURE.md §5.4).
+//! the rest do not (ARCHITECTURE.md §5.4), and how many would be compiled
+//! ahead of time if the files were shipped, with where each of the rest is
+//! and why it runs dynamically.
 //!
 //! Each project is linted as well (`lint`, ARCHITECTURE.md §14) unless
 //! `--no-lint` says not to: a finding has its rule's severity, and an
@@ -100,6 +102,13 @@ pub struct Checked {
     pub lint: bool,
     /// Whether a lint that is certain counts as a warning.
     pub lint_warn: bool,
+    /// Whether each file's code ahead of time is generated, for `--stats`.
+    pub ahead: bool,
+    /// Expressions compiled ahead of time, of all.
+    pub compiled_ahead: usize,
+    pub expressions: usize,
+    /// One line per expression that would run dynamically.
+    pub dynamic: Vec<String>,
 }
 
 impl Check {
@@ -110,6 +119,7 @@ impl Check {
         let mut checked = Checked {
             lint: !self.no_lint,
             lint_warn: self.lint == LintMode::Warn,
+            ahead: self.stats,
             ..Checked::default()
         };
         for dir in &self.dirs {
@@ -190,6 +200,9 @@ impl Checked {
             let diagnostics = match &file.result {
                 Ok(compiled) => {
                     self.coverage.add(&name, &compiled.file);
+                    if self.ahead {
+                        self.compiled_ahead(&name, &compiled.file);
+                    }
                     let source = std::fs::read_to_string(dir.join(format!("{}.qml", file.key)));
                     for uri in stood_in(&compiled.file.imports) {
                         let (line, column) = source
@@ -252,6 +265,21 @@ impl Checked {
         Ok(())
     }
 
+    fn compiled_ahead(&mut self, name: &str, file: &ljos_ir::CompiledFile) {
+        let generated = ljos_compiler::aot::generate(file, &qml_front::QtTypeOracle, "::ljos::aot");
+        self.expressions += generated.outcomes.len();
+        self.compiled_ahead += generated.compiled();
+        for (outcome, expr) in generated.outcomes.iter().zip(&file.exprs) {
+            if let ljos_aot::Outcome::Refused(why) = outcome {
+                let at = expr.span;
+                self.dynamic.push(format!(
+                    "{name}.qml:{}:{}: runs dynamically: {why}",
+                    at.line, at.column
+                ));
+            }
+        }
+    }
+
     /// The coverage report.
     pub fn stats(&self, top: usize, per_file: bool) -> String {
         let mut out = String::new();
@@ -304,10 +332,29 @@ impl Checked {
                 tally.percent()
             );
         }
+        let _ = writeln!(
+            out,
+            "compiled ahead of time  {} of {} ({:.1}%)",
+            self.compiled_ahead,
+            self.expressions,
+            100.0 * self.compiled_ahead as f64 / self.expressions.max(1) as f64
+        );
         let kinds = coverage.reasons_by_kind();
-        if kinds.is_empty() {
-            return out;
+        if !kinds.is_empty() {
+            self.reasons(&mut out, top, &kinds);
         }
+        // Where each expression is: of a file, as the per-file table is.
+        if per_file && !self.dynamic.is_empty() {
+            let _ = writeln!(out);
+            for line in &self.dynamic {
+                let _ = writeln!(out, "{line}");
+            }
+        }
+        out
+    }
+
+    fn reasons(&self, out: &mut String, top: usize, kinds: &[(&str, Fell)]) {
+        let coverage = &self.coverage;
         // Bindings are what re-run when a property changes: the columns
         // say which reasons cost there and which only in a handler.
         let table =
@@ -331,19 +378,18 @@ impl Checked {
                 }
             };
         table(
-            &mut out,
+            out,
             "tier 2, by construct",
             &mut kinds.iter().map(|(kind, fell)| (*kind, *fell)),
         );
         let details = coverage.details_by_kind();
         table(
-            &mut out,
+            out,
             "tier 2, in full",
             &mut details
                 .iter()
                 .map(|(reason, fell)| (reason.as_str(), *fell)),
         );
-        out
     }
 }
 
