@@ -2992,6 +2992,11 @@ unsafe extern "C" fn raw_method(
             let host = scope.state.host()?;
             let args = (0..argc.max(0) as usize)
                 .map(|i| {
+                    // A number or a bool is the same copied or not, read
+                    // from its tag: most arguments are, and are read alone.
+                    if let Some(plain) = raw_in(*argv.add(i)) {
+                        return Ok(plain);
+                    }
                     let a = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, *argv.add(i)));
                     if i < 32 && copied >> i & 1 == 1 {
                         scope.copy_of(&a)
