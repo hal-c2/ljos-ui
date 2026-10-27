@@ -400,7 +400,7 @@ impl Engine {
                 }
             }
         }
-        if let Some(why) = self.realias_held(&changed, &instances, &users) {
+        if let Some(why) = self.in_place_realias_held(&changed, &instances, &users) {
             return not_here(why);
         }
         let mut targets: Vec<Target> = Vec::new();
@@ -427,7 +427,7 @@ impl Engine {
                 }
             }
         }
-        let rebinds = match self.rebinds(&changed, &instances) {
+        let rebinds = match self.in_place_rebinds(&changed, &instances) {
             Ok(r) => r,
             Err(why) => return not_here(why),
         };
@@ -936,7 +936,7 @@ impl Engine {
         }
         phases.mark("grown");
 
-        let under = self.under_roots(roots);
+        let under = self.in_place_under_roots(roots);
         // Every object went on: each is told so, as a full reload tells
         // the objects it keeps.
         let instances: Vec<Rc<Instance>> = st.instances.borrow().clone();
@@ -1098,7 +1098,7 @@ impl Engine {
                 tracing::debug!("reload not in place: {} changed its shape", new.file);
                 return None;
             };
-            let rebind = match self.renamed_elsewhere(&old, &edits, patch) {
+            let rebind = match self.in_place_renamed_elsewhere(&old, &edits, patch) {
                 Ok(rebind) => rebind,
                 Err(why) => return not_here(why),
             };
@@ -1123,7 +1123,7 @@ impl Engine {
     /// another file sets it by either name, or its signal, a script reads
     /// it, or its type has a member of one. Else the other files whose
     /// bindings may read it, with the names to look for.
-    fn renamed_elsewhere(
+    fn in_place_renamed_elsewhere(
         &self,
         file: &Rc<LoadedFile>,
         edits: &[Edit],
@@ -1217,7 +1217,7 @@ impl Engine {
     /// files that name a renamed property, by its old name or its new.
     /// One a script has since replaced stays replaced. Why not, when one
     /// cannot be bound again where it stands.
-    fn rebinds(
+    fn in_place_rebinds(
         &self,
         changed: &[Changed],
         instances: &[Rc<Instance>],
@@ -1317,7 +1317,7 @@ impl Engine {
             }
             let i = m.to_old[p.index()]?;
             let takes = self
-                .list_of(file, &comp.objects[p.index()], j, old.objects[i])
+                .in_place_list_prop(file, &comp.objects[p.index()], j, old.objects[i])
                 .is_ok_and(|prop| self.list_takes_insert(old.objects[i], prop));
             if !takes {
                 tracing::debug!(
@@ -1432,9 +1432,9 @@ impl Engine {
             return;
         }
         let r = self
-            .list_of(&inst.file, &comp.objects[p.index()], j, parent)
+            .in_place_list_prop(&inst.file, &comp.objects[p.index()], j, parent)
             .and_then(
-                |prop| match before.or_else(|| self.first_part(parent, prop)) {
+                |prop| match before.or_else(|| self.in_place_first_part(parent, prop)) {
                     Some(a) => self.list_insert(parent, prop, child, a).map(drop),
                     None => self.list_append(parent, prop, child),
                 },
@@ -1451,7 +1451,7 @@ impl Engine {
     /// properties holds (a control's `background`, `contentItem`): a
     /// control takes those in when it completes, after what the file
     /// writes in it, so an object the file adds last goes before them.
-    fn first_part(&self, parent: ObjectId, prop: PropIndex) -> Option<ObjectId> {
+    fn in_place_first_part(&self, parent: ObjectId, prop: PropIndex) -> Option<ObjectId> {
         let meta = self.meta_of(parent)?;
         self.untrack(|| {
             let Value::List(items) = self.read(parent, prop) else {
@@ -1477,7 +1477,7 @@ impl Engine {
 
     /// The list property of `parent` (written as `def`) the object `j` is
     /// written in.
-    fn list_of(
+    fn in_place_list_prop(
         &self,
         file: &Rc<LoadedFile>,
         def: &ObjectDef,
@@ -1620,7 +1620,7 @@ impl Engine {
             // A member the file did not give may be held by what took it
             // over (a view sizes a page that has no size of its own),
             // which decides again when the object is made again.
-            if !sets(old, name) && self.overridden(target.obj, target.prop) {
+            if !sets(old, name) && self.has_override(target.obj, target.prop) {
                 return Err("an edited member is held by what took it over");
             }
             if given.is_some_and(|g| {
@@ -1683,7 +1683,7 @@ impl Engine {
         Ok(())
     }
 
-    fn overridden(&self, obj: ObjectId, prop: crate::PropIndex) -> bool {
+    fn has_override(&self, obj: ObjectId, prop: crate::PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
         let node = self
             .inner
@@ -1779,11 +1779,11 @@ impl Engine {
                 at
             }
         };
-        self.forget_assigned(&t);
+        self.reload_forget_assigned(&t);
     }
 
     /// The edit outranks what a script assigned to `t`.
-    fn forget_assigned(&self, t: &IncTarget) {
+    fn reload_forget_assigned(&self, t: &IncTarget) {
         let (o, p) = self.redirect(t.obj, t.prop);
         if let Some(props) = self.inner.reload.assigned.borrow_mut().get_mut(&o) {
             props.retain(|q| *q != p);
@@ -1870,7 +1870,7 @@ impl Engine {
     /// one; or a user gives an object through it. The full path gives the
     /// new one all of that, as a fresh load does. Another object's alias
     /// of the same name is not this one.
-    fn realias_held(
+    fn in_place_realias_held(
         &self,
         changed: &[Changed],
         instances: &[Rc<Instance>],
@@ -1937,7 +1937,7 @@ impl Engine {
                         _ => None,
                     });
                 let held = given_names(od).chain(named).any(|n| match target {
-                    Some(Value::Object(t)) => self.walks_through(t, &n, &owners),
+                    Some(Value::Object(t)) => self.in_place_walks_through(t, &n, &owners),
                     // Where it writes is not known: by name.
                     _ => n.split('.').any(|s| owners.iter().any(|(_, a)| *a == s)),
                 });
@@ -1952,7 +1952,12 @@ impl Engine {
     /// Whether writing the dotted `name` on `from` goes through one of
     /// `owners`' aliases: each part read on the object the parts before it
     /// reached.
-    fn walks_through(&self, from: ObjectId, name: &str, owners: &[(ObjectId, &str)]) -> bool {
+    fn in_place_walks_through(
+        &self,
+        from: ObjectId,
+        name: &str,
+        owners: &[(ObjectId, &str)],
+    ) -> bool {
         let mut cur = from;
         for part in name.split('.') {
             if owners.iter().any(|&(o, a)| o == cur && a == part) {
@@ -2020,15 +2025,15 @@ impl Engine {
         if let Some((path, _)) = name.rsplit_once('.') {
             let p: Vec<String> = path.split('.').map(str::to_owned).collect();
             if let Some((at, _)) = self.value_target(obj, &p) {
-                if self.made_of_sets(inst, j, path) {
+                if self.in_place_inner_sets(inst, j, path) {
                     return Err("the component an object is made from gives the value");
                 }
                 if apply {
-                    self.reset_fresh(&at);
+                    self.in_place_reset_to_new(&at);
                     if let Some(g) = new.grouped.iter().find(|g| g.path == p) {
                         self.apply_value_members(inst, obj, &g.members, &g.path);
                     }
-                    self.forget_assigned(&at);
+                    self.reload_forget_assigned(&at);
                 }
                 return Ok(());
             }
@@ -2096,8 +2101,8 @@ impl Engine {
                 .then(|| self.untrack(|| self.read(at.obj, at.prop)).as_object())
                 .flatten()
                 .filter(|c| self.inner.reload.templates.borrow().contains(c));
-            self.reset_fresh(&at);
-            self.forget_assigned(&at);
+            self.in_place_reset_to_new(&at);
+            self.reload_forget_assigned(&at);
             if let Some(c) = template.filter(|c| self.is_alive(*c)) {
                 self.destroy_now(c);
             }
@@ -2105,9 +2110,9 @@ impl Engine {
         Ok(())
     }
 
-    /// Whether the components object `j` of `inst` is made from give any
-    /// of the value `path`.
-    fn made_of_sets(&self, inst: &Rc<Instance>, j: usize, path: &str) -> bool {
+    /// Whether a component object `j` of `inst` is made from, or one that
+    /// is made from in turn, sets `path`.
+    fn in_place_inner_sets(&self, inst: &Rc<Instance>, j: usize, path: &str) -> bool {
         let mut cur = inst.inner.get(j).cloned().flatten();
         while let Some(inner) = cur {
             if sets(&inner.file.ir.component(inner.comp).objects[0], path) {
@@ -2119,7 +2124,7 @@ impl Engine {
     }
 
     /// Puts `t` as a new object of its type has it, with no binding.
-    fn reset_fresh(&self, t: &IncTarget) {
+    fn in_place_reset_to_new(&self, t: &IncTarget) {
         let r = match self.reset_of(t.obj, t.prop) {
             Some(_) => self.reset_impl(t.obj, t.prop, true),
             None => self.reset_to_default(t.obj, t.prop),
@@ -2249,7 +2254,7 @@ impl Engine {
 
     /// Whether an object is one of `roots` or owned by one, remembered per
     /// object asked about.
-    fn under_roots<'a>(&'a self, roots: &'a [ObjectId]) -> impl Fn(ObjectId) -> bool + 'a {
+    fn in_place_under_roots<'a>(&'a self, roots: &'a [ObjectId]) -> impl Fn(ObjectId) -> bool + 'a {
         let seen: std::cell::RefCell<HashMap<ObjectId, bool>> = Default::default();
         move |o: ObjectId| {
             let mut walked = Vec::new();
