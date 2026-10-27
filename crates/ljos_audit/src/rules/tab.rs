@@ -140,18 +140,16 @@ pub(crate) fn check(cx: &mut Cx) {
     // shown, so whether it would say anything is not known.
     let drawn: std::collections::HashSet<ObjectId> = shown_items(cx).into_iter().collect();
     for stop in &seen {
-        if !drawn.contains(stop) || clipped_away(cx, *stop) {
+        // Tab that lands inside something that takes the keyboard is in
+        // it too, drawn or scrolled away: the number of a spin box is its
+        // box's.
+        let above = speaker(cx, *stop);
+        reached.extend(above);
+        if above.is_some() || cx.scene.accessible_node(*stop).is_some() {
             continue;
         }
-        if cx.scene.accessible_node(*stop).is_some() {
-            // Tab that lands inside something that takes the keyboard is
-            // in it too: the number of a spin box is its box's.
-            reached.extend(speaker(cx, *stop));
-            continue;
-        }
-        match speaker(cx, *stop) {
-            Some(above) => reached.push(above),
-            None => silent.push(*stop),
+        if drawn.contains(stop) && !clipped_away(cx, *stop) {
+            silent.push(*stop);
         }
     }
     for stop in silent {

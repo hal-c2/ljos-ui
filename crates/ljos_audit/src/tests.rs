@@ -1363,3 +1363,33 @@ fn two_popups_with_no_place_are_two_findings() {
     assert_eq!(report.findings.len(), 2, "\n{report}");
     assert_ne!(report.findings[0].item, report.findings[1].item);
 }
+
+#[test]
+fn a_spin_box_scrolled_out_of_view_is_reached_through_its_number() {
+    // Issue #149: Tab reaches the editor of a spin box below the fold,
+    // and the editor is the box's whether it is drawn or not.
+    let report = run(&page(
+        r##"
+    Flickable {
+        width: 300; height: 200
+        contentHeight: column.height
+        clip: true
+        Column {
+            id: column
+            spacing: 8
+            Repeater {
+                model: 10
+                Button { text: "Button " + index }
+            }
+            SpinBox {
+                editable: true
+                Accessible.name: "Retries"
+            }
+        }
+    }"##,
+    ));
+    assert!(
+        !report.codes().contains(&"a11y-tab-unreachable"),
+        "\n{report}"
+    );
+}
