@@ -1185,7 +1185,7 @@ impl Inspector {
             (Kind::Resource(Resource::Reload), _) => {
                 self.observe(engine);
                 let value = self.feed.state().json(false);
-                let text = serde_json::to_string_pretty(&value).unwrap_or_default();
+                let text = tools::pretty(&value);
                 Ok(ToolReply::from(value).with_text(text))
             }
             (Kind::Metrics, _) => Ok(tools::metrics(

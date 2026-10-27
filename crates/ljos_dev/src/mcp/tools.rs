@@ -72,6 +72,13 @@ fn micros(d: std::time::Duration) -> Value {
     json!(u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
 }
 
+/// `value` as the text of an answer that is JSON, indented. A `Value`
+/// always prints, so the compact form is only the fallback the type asks
+/// for, the same for every answer.
+pub(crate) fn pretty(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
 pub(crate) fn clip(text: &str, max: usize) -> String {
     match text.char_indices().nth(max) {
         Some((at, _)) => format!("{}…", &text[..at]),
@@ -1309,7 +1316,7 @@ pub(crate) fn metrics(
     value["recent"] = recent;
     value["slow"] = slow;
     if as_json_text {
-        let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+        let text = pretty(&value);
         return ToolReply::from(value).with_text(text);
     }
     let mut text = format!(
