@@ -2729,10 +2729,11 @@ impl Engine {
 
     // ---------------------------------------------------------- evaluation
 
-    /// Runs a handler or function; its value, or `undefined` on error.
-    pub(crate) fn call_expr(&self, inst: &Instance, expr: ExprId, args: &[Value]) -> Value {
-        self.eval_expr(inst, expr, &TypeTag::Var, args)
-            .unwrap_or(Value::Undefined)
+    /// Runs a handler, or a function whose value no one reads. What it
+    /// gives is kept as it is, not copied into a list only to be let go:
+    /// `onPicked: v => root.list = f(root.list, v)` gives the array.
+    pub(crate) fn call_expr(&self, inst: &Instance, expr: ExprId, args: &[Value]) {
+        self.eval_expr_as(inst, expr, &TypeTag::Var, args, false, true);
     }
 
     /// Runs a function declared in QML. Called from JS, what it throws is

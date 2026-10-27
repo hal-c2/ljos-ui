@@ -859,8 +859,13 @@ impl HostObjects for EngineHost {
                 .property(p)
                 .map_or((TypeTag::Var, false), |i| (i.ty.clone(), i.is_alias()))
         };
+        // Neither a group's proxy nor what `Qt.binding` gives is an array,
+        // which is nearly every handle a script writes: asked by name, it
+        // would be two lookups along its prototypes.
+        let marked = matches!(&value, JsValue::Handle(r) if !r.is_array());
         // `x.palette = y.palette`: a copy of the group the proxy stands for.
-        if let JsValue::Handle(r) = &value
+        if marked
+            && let JsValue::Handle(r) = &value
             && let Ok(JsValue::Object(src)) = scope.get_field(r, "__ljosGroupOf")
             && let Ok(JsValue::String(prefix)) = scope.get_field(r, "__ljosGroupPrefix")
             && engine.is_whole_group(id, p)
@@ -869,7 +874,8 @@ impl HostObjects for EngineHost {
                 .assign_group(id, p, u64_to_obj(src), &prefix, false)
                 .map_err(host_err);
         }
-        if let JsValue::Handle(r) = &value
+        if marked
+            && let JsValue::Handle(r) = &value
             && let Ok(JsValue::Handle(f)) = scope.get_field(r, "__ljosBinding")
             && scope.is_function(&f)
         {
