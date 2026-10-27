@@ -3695,38 +3695,6 @@ impl Engine {
         })
     }
 
-    // -------------------------------------------------------- translation
-
-    /// Re-runs every binding that produced a translated string (`qsTr`),
-    /// after the host changed the language.
-    pub fn retranslate(&self) {
-        let n = self.translation_node();
-        let g = &self.inner.graph;
-        let next = match g.untrack(|| g.try_get(n)) {
-            Some(Value::Int(i)) => i.wrapping_add(1),
-            _ => 1,
-        };
-        let _ = g.write(n, Value::Int(next), WriteKind::Initial);
-    }
-
-    /// Makes the running binding depend on the language.
-    pub fn track_translation(&self) {
-        let n = self.translation_node();
-        let _ = self.inner.graph.try_get(n);
-    }
-
-    fn translation_node(&self) -> NodeId {
-        if let Some(n) = self.inner.translation.get() {
-            return n;
-        }
-        let g = &self.inner.graph;
-        let n = g
-            .property(g.root(), Value::Int(0))
-            .expect("the root scope is always alive");
-        self.inner.translation.set(Some(n));
-        n
-    }
-
     // ------------------------------------------------------------- strings
 
     /// `ToString` with object names: `Rectangle(0x1)`, as QML prints

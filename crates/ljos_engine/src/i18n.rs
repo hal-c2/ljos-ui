@@ -89,6 +89,23 @@ fn part(v: Option<&JsValue>) -> Part {
 }
 
 impl Engine {
+    /// Re-runs every binding that produced a translated string (`qsTr`),
+    /// after the host changed the language.
+    pub fn retranslate(&self) {
+        let n = self.i18n_node(&self.inner.translation);
+        let g = &self.inner.graph;
+        let next = match g.untrack(|| g.try_get(n)) {
+            Some(Value::Int(i)) => i.wrapping_add(1),
+            _ => 1,
+        };
+        let _ = g.write(n, Value::Int(next), WriteKind::Initial);
+    }
+
+    /// Makes the running binding depend on the language.
+    pub fn track_translation(&self) {
+        self.i18n_track(&self.inner.translation);
+    }
+
     fn i18n(&self) -> Rc<I18nState> {
         self.extension::<I18nState>()
     }
