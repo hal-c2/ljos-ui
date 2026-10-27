@@ -5,6 +5,8 @@
 //! and bumps them when a setter here says something changed, so this crate
 //! does not depend on the reactive graph and tools can use it too.
 
+use std::fmt::Write as _;
+
 use crate::{
     LocaleInfo, PluralForms,
     catalog::{Entry, Messages},
@@ -223,7 +225,7 @@ impl I18n {
             out.push_str(&rest[..at]);
             let after = &rest[at + 1..];
             if let Some(tail) = after.strip_prefix('n') {
-                out.push_str(&n.to_string());
+                let _ = write!(out, "{n}");
                 rest = tail;
             } else if let Some(tail) = after.strip_prefix("Ln") {
                 out.push_str(&self.locale.format_integer(i64::from(n)));

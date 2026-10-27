@@ -99,22 +99,22 @@ fn general(value: f64, digits: usize) -> String {
     // The exponent of the number rounded to the wanted digits is the one
     // `%g` chooses its notation by.
     let (mantissa, exponent) = scientific(value, digits - 1);
-    let trim = |s: &str| -> String {
+    let trim = |mut s: String| -> String {
         if s.contains('.') {
-            s.trim_end_matches('0').trim_end_matches('.').to_owned()
-        } else {
-            s.to_owned()
+            let kept = s.trim_end_matches('0').trim_end_matches('.').len();
+            s.truncate(kept);
         }
+        s
     };
     let wanted = i32::try_from(digits).unwrap_or(i32::MAX);
     if exponent < -4 || exponent >= wanted {
-        let mut out = trim(&mantissa);
+        let mut out = trim(mantissa);
         let sign = if exponent < 0 { '-' } else { '+' };
         let _ = write!(out, "e{sign}{:02}", exponent.unsigned_abs());
         out
     } else {
         let decimals = usize::try_from(wanted - 1 - exponent).unwrap_or(0);
-        trim(&fixed(value, decimals))
+        trim(fixed(value, decimals))
     }
 }
 
