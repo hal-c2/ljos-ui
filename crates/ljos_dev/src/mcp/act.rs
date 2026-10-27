@@ -31,7 +31,7 @@ use super::args::{
     Act, AdvanceArgs, AppearanceArgs, Button, ClickArgs, EvalArgs, InvokeArgs, PressArgs,
     ResizeArgs, Scheme, ScrollArgs, SetPropertyArgs, TouchAction, TouchArgs, TypeArgs,
 };
-use super::capture::{self, Capture, REDACTED};
+use super::capture::{self, Capture, REDACTED, longest_first};
 use super::edits::{Edit, Edits};
 use super::redact::{mask_data, mask_error, mask_json, mask_text};
 use super::surface::Answer;
@@ -233,14 +233,7 @@ pub(crate) fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
 /// The secrets of every capture given, longest first. An act may have
 /// changed or cleared a field, so what it held before is a secret too.
 fn secrets_of_all(captures: &[&Capture]) -> Vec<String> {
-    let mut all: Vec<String> = captures
-        .iter()
-        .flat_map(|c| c.secrets.iter().cloned())
-        .collect();
-    all.sort_unstable();
-    all.dedup();
-    all.sort_by_key(|s| std::cmp::Reverse(s.len()));
-    all
+    longest_first(captures.iter().flat_map(|c| &c.secrets))
 }
 
 /// Masks what a script, a method or a set answered, keys and all: it is
@@ -258,10 +251,6 @@ fn mask_answered(fields: &mut Map<String, Value>, secrets: &[String]) {
             }
         }
     }
-}
-
-fn secrets_of(capture: &Capture) -> Vec<String> {
-    capture.masks()
 }
 
 // ----- the hands -------------------------------------------------------------
@@ -974,7 +963,7 @@ impl Hands<'_> {
         // A script may have changed what the fields hold.
         self.settle();
         self.refresh();
-        mask_data(&mut value, &secrets_of(&self.capture));
+        mask_data(&mut value, &self.capture.masks());
         // The serialiser bounded what it wrote; this is for the sum of it
         // with the escaping of both copies.
         if value.to_string().len() > self.per_copy / 2 {

@@ -120,11 +120,12 @@ impl Capture {
     }
 }
 
-/// `secrets` in the order the masks want them: a secret that holds another
-/// is masked whole.
-pub(crate) fn longest_first(secrets: &HashSet<String>) -> Vec<String> {
-    let mut all: Vec<String> = secrets.iter().cloned().collect();
+/// `secrets` in the order the masks want them, each once: a secret that
+/// holds another is masked whole.
+pub(crate) fn longest_first<'a>(secrets: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+    let mut all: Vec<String> = secrets.into_iter().cloned().collect();
     all.sort_unstable();
+    all.dedup();
     all.sort_by_key(|s| std::cmp::Reverse(s.len()));
     all
 }
