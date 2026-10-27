@@ -114,6 +114,32 @@ Feature: Mnemonics in the text of a control
     Then the pixel at 16, 39 of the window is within 120 of "#000000"
     And the pixel at 76, 39 of the window is within 10 of "#ffffff"
 
+  # Only the first "&" that is dropped marks a character, a space as well
+  # as a letter; when an "&" follows it nothing is underlined.
+  Scenario Outline: Which character is drawn underlined
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Rectangle {
+        width: 200; height: 60
+        color: "#ffffff"
+        Button {
+          anchors.<side>: parent.<side>
+          padding: 0; background: null; font.pixelSize: 40; text: "<text>"
+        }
+      }
+      """
+    Then the pixel at <x>, 39 of the window is within 120 of "<colour>"
+
+    Examples:
+      | text     | side  | x   | colour  |
+      | & H      | left  | 4   | #000000 |
+      | H        | left  | 4   | #ffffff |
+      | & &H     | right | 186 | #ffffff |
+      | a&&&H    | right | 186 | #ffffff |
+      | a&&&b &H | right | 186 | #ffffff |
+
   Scenario: Alt and the letter clicks a button
     Given the QML:
       """qml
@@ -139,6 +165,31 @@ Feature: Mnemonics in the text of a control
       """
     When the user presses "Alt+G"
     Then the property "hits" of "b" is 0
+
+  # The keys read the ampersands in pairs, so "a&&&b" has "b" although
+  # nothing is drawn underlined, and a space after the first "&" is the
+  # mnemonic even when a letter follows a later "&".
+  Scenario Outline: Which key clicks a button
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      ApplicationWindow {
+        width: 300; height: 200; visible: true
+        Button { objectName: "b"; text: "<text>"; property int hits: 0; onClicked: hits++ }
+      }
+      """
+    When the user presses "<keys>"
+    Then the property "hits" of "b" is <hits>
+
+    Examples:
+      | text    | keys      | hits |
+      | a&&&b   | Alt+B     | 1    |
+      | a&&&b   | Alt+A     | 0    |
+      | a& b    | Alt+Space | 1    |
+      | a& b    | Alt+B     | 0    |
+      | a& b &c | Alt+C     | 0    |
+      | ab      | Alt+Space | 0    |
 
   Scenario: A mnemonic given to a button later clicks it
     Given the QML:

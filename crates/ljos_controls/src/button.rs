@@ -35,7 +35,8 @@ use crate::control::{Control, click_focus, focus_policy, hover, is_left, no_key,
 use crate::group;
 use crate::parts::{PartKind, manage_part};
 use crate::util::{
-    bind_default, check, emit, flag, is_a, is_unset, mnemonic_of, num, object, set_computed, warn,
+    bind_default, check, emit, flag, is_a, is_unset, mnemonic_of, mnemonic_sequence, num, object,
+    set_computed, warn,
 };
 
 /// `Qt.CheckState`.
@@ -327,7 +328,7 @@ fn make_mnemonic(engine: &Engine, obj: ObjectId, st: &ButtonState) -> Result<(),
     engine.bind(s, Shortcut::SEQUENCE.index, move |e| {
         let text = e.read(obj, AbstractButton::TEXT.index).to_js_string();
         match mnemonic_of(&text) {
-            Some(c) => Value::from(format!("Alt+{}", c.to_uppercase()).as_str()),
+            Some(c) => Value::from(mnemonic_sequence(c).as_str()),
             None => Value::Undefined,
         }
     })?;

@@ -145,13 +145,18 @@ pub(crate) fn spoken_without_mnemonic(text: &str) -> String {
     out
 }
 
-/// What [`without_mnemonic`] draws, as `StyledText` with the letter after
-/// the first dropped `&` underlined (qml6 underlines it before Alt is
-/// pressed too), or `None` when no letter is.
+/// What [`without_mnemonic`] draws, as `StyledText` with the character
+/// after the first dropped `&` underlined (qml6 underlines it before Alt is
+/// pressed too), or `None` when none is. Only the first dropped `&` marks
+/// one, and a space is marked as a letter is; when an `&` follows it, as
+/// in `a&&&b`, nothing is underlined although Alt+B presses the control
+/// (see [`mnemonic_of`]; measured on qml6, pinned by
+/// `features/controls/mnemonics.feature`).
 pub(crate) fn mnemonic_underlined(text: &str) -> Option<String> {
     let mut out = String::with_capacity(text.len() + 8);
     let mut after_ampersand = false;
     let mut dropped = false;
+    let mut first_dropped = true;
     let mut marked = false;
     for c in text.chars() {
         if c == '&' && !after_ampersand {
@@ -159,8 +164,9 @@ pub(crate) fn mnemonic_underlined(text: &str) -> Option<String> {
             dropped = true;
             continue;
         }
-        let underline = dropped && !marked && c != '&' && !c.is_whitespace();
+        let underline = dropped && first_dropped && c != '&' && c != '\n';
         marked |= underline;
+        first_dropped &= !dropped;
         dropped = false;
         after_ampersand = c == '&';
         if underline {
@@ -172,6 +178,9 @@ pub(crate) fn mnemonic_underlined(text: &str) -> Option<String> {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\n' => out.push_str("<br>"),
+            // StyledText folds a space it does not keep, as one that starts
+            // the text; an underlined one is drawn.
+            ' ' if underline => out.push_str("&nbsp;"),
             c => out.push(c),
         }
         if underline {
@@ -181,8 +190,11 @@ pub(crate) fn mnemonic_underlined(text: &str) -> Option<String> {
     marked.then_some(out)
 }
 
-/// The mnemonic of `text`: the letter after the first single `&`,
-/// lower-cased, so that Alt+that letter activates the control.
+/// The mnemonic of `text`: the character after the first `&` that is not
+/// one of a pair, lower-cased, so that Alt+that character activates the
+/// control. It reads pairs, not what is drawn, so `a&&&b` has `b`; and a
+/// space is a mnemonic as a letter is, so `a& b &c` has the space, not
+/// `c` (measured on qml6, pinned by `features/controls/mnemonics.feature`).
 pub(crate) fn mnemonic_of(text: &str) -> Option<char> {
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
@@ -191,11 +203,19 @@ pub(crate) fn mnemonic_of(text: &str) -> Option<char> {
         }
         match chars.next() {
             Some('&') => {}
-            Some(m) if !m.is_whitespace() => return m.to_lowercase().next(),
-            _ => return None,
+            Some(m) => return m.to_lowercase().next(),
+            None => return None,
         }
     }
     None
+}
+
+/// The key sequence that presses a control whose mnemonic is `c`.
+pub(crate) fn mnemonic_sequence(c: char) -> String {
+    match c {
+        ' ' => "Alt+Space".to_owned(),
+        c => format!("Alt+{}", c.to_uppercase()),
+    }
 }
 
 /// Calls `f` when the object `prop` names becomes a model after `obj`
@@ -251,5 +271,21 @@ mod mnemonic_tests {
         assert_eq!(mnemonic_of("A&&B"), None);
         assert_eq!(mnemonic_of("A&&&b"), Some('b'));
         assert_eq!(mnemonic_of("File"), None);
+        assert_eq!(mnemonic_of("a& b &c"), Some(' '));
+        assert_eq!(mnemonic_of("Trail&"), None);
+        assert_eq!(mnemonic_sequence(' '), "Alt+Space");
+        assert_eq!(mnemonic_sequence('f'), "Alt+F");
+    }
+
+    #[test]
+    fn only_the_first_dropped_ampersand_underlines() {
+        assert_eq!(mnemonic_underlined("&File").as_deref(), Some("<u>F</u>ile"));
+        assert_eq!(
+            mnemonic_underlined("a& b &c").as_deref(),
+            Some("a<u>&nbsp;</u>b c")
+        );
+        assert_eq!(mnemonic_underlined("a&&&b"), None);
+        assert_eq!(mnemonic_underlined("a&&&b &H"), None);
+        assert_eq!(mnemonic_underlined("A&&B"), None);
     }
 }
