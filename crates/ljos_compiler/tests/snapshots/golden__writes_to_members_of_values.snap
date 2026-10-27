@@ -36,10 +36,10 @@ export function f1($scope, root, other, given) {
         __ljos_vt(other, "spot").y++
         __ljos_vt($scope.list, 0).x = 3
         other.Layout.row = 4
-        var kept$ljos = __ljos_at($scope, "area"), kept = kept$ljos.v
+        var kept$ljos = __ljos_place($scope, "area"), kept = kept$ljos.v
         __ljos_vp(kept, kept$ljos, ($v) => kept = $v).x = 5
         __ljos_vl(given, ($v) => given = $v).x = 6
-        let fixed$ljos = __ljos_at($scope, "area"), fixed = fixed$ljos.v
+        let fixed$ljos = __ljos_place($scope, "area"), fixed = fixed$ljos.v
         __ljos_vp(fixed, fixed$ljos, ($v) => fixed = $v).x = 7
         __ljos_vt(this, "area").height = 8
     }

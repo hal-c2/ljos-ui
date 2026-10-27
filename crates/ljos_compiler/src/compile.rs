@@ -2027,7 +2027,7 @@ pub(crate) const VALUE_HELD: &str = "__ljos_vp";
 
 /// `(object, name)`: the place a variable's value is read from, with the
 /// value it read (`.v`).
-pub(crate) const PLACE: &str = "__ljos_at";
+pub(crate) const PLACE: &str = "__ljos_place";
 
 /// What the variable that keeps a variable's place is named after it.
 const HELD: &str = "$ljos";
@@ -2090,6 +2090,48 @@ const QT_AT: &str = "__ljos_qt";
 
 /// The runtime's maker of a file's `qsTr`: `(context) => qsTr`.
 const TR_IN: &str = "__ljos_qsTr";
+
+/// The names the compiled code is given beside the file's own. They share
+/// one scope: a module's export ([`AT`]) shadows a global of the same name
+/// ([`PLACE`]) in that module alone, so two of them alike would break only
+/// the files that use both.
+const HELPERS: [&str; 11] = [
+    VALUE_AT, VALUE_IN, VALUE_HELD, PLACE, NAMED, KNOWN, ATTACHED, SINGLETON, AT, QT_AT, TR_IN,
+];
+
+const _: () = assert!(
+    all_differ(&HELPERS),
+    "two of the compiler's helpers share a name"
+);
+
+const fn all_differ(names: &[&str]) -> bool {
+    let mut i = 0;
+    while i < names.len() {
+        let mut j = i + 1;
+        while j < names.len() {
+            if same(names[i].as_bytes(), names[j].as_bytes()) {
+                return false;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    true
+}
+
+const fn same(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut k = 0;
+    while k < a.len() {
+        if a[k] != b[k] {
+            return false;
+        }
+        k += 1;
+    }
+    true
+}
 
 /// A string as a JavaScript literal.
 fn js_string(text: &str) -> String {

@@ -14,7 +14,7 @@
 //! member changed (`__ljos_with`) and assigns the result where the value
 //! was read from. For a property that is the write-back Qt does. A variable
 //! whose members are written and whose value was read from a place keeps
-//! that place beside it (`__ljos_at`), and a write to a member goes back
+//! that place beside it (`__ljos_place`), and a write to a member goes back
 //! there too (`__ljos_vp`), as it does in Qt.
 //!
 //! Text is made here the way [`crate::value_types`] makes it in Rust; the
@@ -204,7 +204,7 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
 }
 
 /// Defines `__ljos_faces` (one `{ make, proto, fields }` per kind, and `qt`:
-/// the constructors that go on `Qt`), `__ljos_vt`, `__ljos_vl`, `__ljos_at`
+/// the constructors that go on `Qt`), `__ljos_vt`, `__ljos_vl`, `__ljos_place`
 /// and `__ljos_vp`.
 pub(crate) const FACES: &str = r##"
 (function () {
@@ -642,7 +642,7 @@ pub(crate) const FACES: &str = r##"
   // `p` names the place, so a write starts from what is there now and goes
   // back there as well as to the variable. `v` is what the variable was
   // last given; were it given something else, the place is not its own.
-  g.__ljos_at = function (object, name) {
+  g.__ljos_place = function (object, name) {
     return { object, name, v: object[name] };
   };
   g.__ljos_vp = function (now, at, put) {
