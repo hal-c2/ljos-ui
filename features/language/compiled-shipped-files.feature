@@ -92,6 +92,53 @@ Feature: Files compiled ahead of time
     And the property "twice" of "root" is 8
     And the file "Scenario.qml" ran compiled code
 
+  Scenario: A signal argument is what the signal declares, compiled as dynamically
+    Given the files are compiled ahead of time
+    And the compiled code cross-check is on
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+          id: root
+          objectName: "root"
+          property real r: 0
+          property string order: ""
+          signal ping(int n)
+          onPing: (n) => { order = order + "p" + n }
+          onRChanged: ping(r)
+      }
+      """
+    When the property "r" of "root" is set to 2.5
+    Then the property "order" of "root" is "p2"
+    And the file "Scenario.qml" ran compiled code
+    And the log has no warning matching "compiled code and the dynamic tiers differ"
+
+  Scenario: A variable declared in a switch case is the cases' after it
+    Given the files are compiled ahead of time
+    And the compiled code cross-check is on
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+          id: root
+          objectName: "root"
+          property int start: 0
+          property string order: ""
+          signal ping(int n)
+          onPing: (n) => {
+              switch (n) {
+              case 1: let s = "a"
+              case 2: s = s + "b"; order = s
+              }
+          }
+          onStartChanged: ping(start)
+      }
+      """
+    When the property "start" of "root" is set to 1
+    Then the property "order" of "root" is "ab"
+    And the file "Scenario.qml" ran compiled code
+    And the log has no warning matching "compiled code and the dynamic tiers differ"
+
   Scenario: The check says which expressions run dynamically, and why
     Given the file "Main.qml":
       """qml
@@ -110,6 +157,27 @@ Feature: Files compiled ahead of time
     And the check reports the lines:
       """
       Main.qml:4:30: runs dynamically: type: var property items
+      """
+
+  Scenario: The check says a variable declared in a switch case runs dynamically
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+          property int n: 0
+          property string order: ""
+          function pick() {
+              switch (n) {
+              case 1: { let t = "a"; order = t; break }
+              case 2: let s = "b"; order = s
+              }
+          }
+      }
+      """
+    When the files are checked with statistics
+    Then the check reports the lines:
+      """
+      Main.qml:5:11: runs dynamically: statement: a variable declared in a switch case
       """
 
   Rule: An edited file runs dynamically

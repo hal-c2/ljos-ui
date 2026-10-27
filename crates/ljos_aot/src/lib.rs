@@ -631,6 +631,15 @@ impl<'p> Gen<'p> {
         {
             return Err(no("statement", "a switch whose default is not last"));
         }
+        // A case's variable belongs to the whole switch and is seen by the
+        // cases after it, but each case is its own Rust block; hoisting it
+        // would lose the error a read before its declaration throws.
+        if cases
+            .iter()
+            .any(|(_, body)| body.iter().any(|s| matches!(s, Stmt::Let { .. })))
+        {
+            return Err(no("statement", "a variable declared in a switch case"));
+        }
         let on = self.expr(on, Want::Value)?;
         if !matches!(on.ty, Ty::Num | Ty::Bool | Ty::Str) {
             return Err(no("type", format!("switch on a {}", on.ty.name())));
