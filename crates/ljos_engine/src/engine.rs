@@ -2954,6 +2954,19 @@ impl Engine {
         node.is_some_and(|n| self.inner.graph.is_bound(n) && self.inner.graph.ran_this_flush(n))
     }
 
+    /// Whether an override (a state, a `Binding`) holds `prop` now.
+    pub(crate) fn has_override(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let node = self
+            .inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .and_then(|h| h.node(prop));
+        node.is_some_and(|n| self.inner.graph.override_count(n) > 0)
+    }
+
     /// Pushes an override (`Binding {}`, `PropertyChanges`).
     pub fn push_override(
         &self,

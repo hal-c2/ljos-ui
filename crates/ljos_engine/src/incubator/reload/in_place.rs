@@ -1681,18 +1681,6 @@ impl Engine {
         Ok(())
     }
 
-    fn has_override(&self, obj: ObjectId, prop: crate::PropIndex) -> bool {
-        let (obj, prop) = self.redirect(obj, prop);
-        let node = self
-            .inner
-            .store
-            .borrow()
-            .objects
-            .get(obj)
-            .and_then(|h| h.node(prop));
-        node.is_some_and(|n| self.inner.graph.override_count(n) > 0)
-    }
-
     /// Where `od` writes the member `name` of `obj`: among its own, in a
     /// group (`font.pixelSize`) or on what is attached (`Layout.fillWidth`).
     fn in_place_placed<'d>(
