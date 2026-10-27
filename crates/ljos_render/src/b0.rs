@@ -1049,7 +1049,7 @@ fn tessellator(ppp: f32, feathering: bool) -> Tessellator {
     Tessellator::new(ppp, options, [1, 1], Vec::new())
 }
 
-fn color32(c: Rgba) -> Color32 {
+pub(crate) fn color32(c: Rgba) -> Color32 {
     let [r, g, b, a] = c.to_premul_u8();
     Color32::from_rgba_premultiplied(r, g, b, a)
 }
@@ -1214,10 +1214,6 @@ fn first_stop(g: &LinearGradient) -> Rgba {
     g.stops.first().map_or(Rgba::TRANSPARENT, |s| s.color)
 }
 
-fn coeffs_f32(a: Affine) -> [f64; 6] {
-    a.as_coeffs()
-}
-
 /// Recolour a white-filled mesh with a linear gradient. Each triangle is cut
 /// at every stop offset so the colour is linear inside every piece, which makes
 /// vertex colours exact for any gradient angle.
@@ -1293,12 +1289,10 @@ fn apply_gradient(src: &Mesh, g: &LinearGradient, out: &mut Mesh) {
             }
             let base = out.vertices.len() as u32;
             for v in &poly {
-                let c = g.color_at(v.t).with_opacity(v.cov);
-                let [r, gg, b, a] = c.to_premul_u8();
                 out.vertices.push(Vertex {
                     pos: v.pos,
                     uv,
-                    color: Color32::from_rgba_premultiplied(r, gg, b, a),
+                    color: color32(g.color_at(v.t).with_opacity(v.cov)),
                 });
             }
             for k in 1..poly.len() as u32 - 1 {
@@ -1920,10 +1914,7 @@ fn image_segs(
     // egui multiplies the texture by the vertex colour, so a tint costs no
     // texture of its own and the quads still join the batch of the picture.
     // egui blends premultiplied, so channels above the alpha add light.
-    let tint = tint.map_or(Color32::WHITE, |t| {
-        let [r, g, b, a] = t.to_premul_u8();
-        Color32::from_rgba_premultiplied(r, g, b, a)
-    });
+    let tint = tint.map_or(Color32::WHITE, color32);
     // One colour for all the quads, worked out once and not for each corner
     // of each of a particle system's pictures.
     let tint = if opacity < 1.0 {
@@ -2115,7 +2106,7 @@ impl RenderBackend for EpaintBackend {
             }
             let sig = Sig {
                 list: list.id(),
-                to_screen: coeffs_f32(to_screen),
+                to_screen: to_screen.as_coeffs(),
                 opacity: item.opacity,
             };
 

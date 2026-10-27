@@ -39,6 +39,7 @@ use vello_cpu::{
     Level, Pixmap, RasterizerSettings, RenderContext, RenderMode, RenderSettings, Resources,
 };
 
+use crate::b0::color32;
 use crate::display_list::{Brush, BrushGradient, FillRule, GradientGeometry, ShapeStyle, Spread};
 use crate::rgba::Rgba;
 use crate::shape::{
@@ -664,11 +665,6 @@ fn build_geom(cmd: &ShapeCmd, tolerance: f64, nominal_half_pixel: f32) -> Geom {
 }
 
 type Colored = (Vec<[f32; 2]>, Vec<[f32; 2]>, Vec<Color32>, Vec<u32>);
-
-fn color32(c: Rgba) -> Color32 {
-    let [r, g, b, a] = c.to_premul_u8();
-    Color32::from_rgba_premultiplied(r, g, b, a)
-}
 
 fn solid(f: Feathered, c: Rgba) -> Colored {
     let full = color32(c);
