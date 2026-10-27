@@ -261,6 +261,12 @@ type Rebind = (Rc<Instance>, usize, String);
 /// object's index.
 type User = (Rc<Instance>, usize);
 
+/// The [`User`] of each instance, by the instance.
+type Users = HashMap<*const Instance, User>;
+
+/// What [`renew`] made of each instance, by the old one.
+type Renewals = HashMap<*const Instance, Rc<Instance>>;
+
 /// (line, column) of the old file to (line, column) of the new.
 type Moves = HashMap<(u32, u32), (u32, u32)>;
 
@@ -393,7 +399,7 @@ impl Engine {
         // An instance used as the type of an object (`Foo {}`), to that
         // object's instance and index: what the user writes there
         // outranks the file.
-        let mut users: HashMap<*const Instance, (Rc<Instance>, usize)> = HashMap::default();
+        let mut users: Users = HashMap::default();
         for inst in &instances {
             for (i, inner) in inst.inner.iter().enumerate() {
                 if let Some(inner) = inner {
@@ -528,7 +534,7 @@ impl Engine {
             }
         }
 
-        let mut memo: HashMap<*const Instance, Rc<Instance>> = HashMap::default();
+        let mut memo: Renewals = HashMap::default();
         // Each instance is made again around the objects that stay, the
         // ones used as types and the ones a row is made in first, so that
         // the instances that hold them hold the new ones.
@@ -1277,12 +1283,7 @@ impl Engine {
     /// Whether objects can be added to `inst` and removed from it where it
     /// stands: it is of the tree a reload tracks. A row of a view, or what
     /// a `Loader` made from its `sourceComponent`, is tracked by itself.
-    fn in_place_grows(
-        &self,
-        inst: &Rc<Instance>,
-        roots: &[ObjectId],
-        users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
-    ) -> bool {
+    fn in_place_grows(&self, inst: &Rc<Instance>, roots: &[ObjectId], users: &Users) -> bool {
         let mut cur = inst.clone();
         while let Some((user, _)) = users.get(&Rc::as_ptr(&cur)) {
             cur = user.clone();
@@ -1306,7 +1307,7 @@ impl Engine {
         now: CompIdx,
         m: &Objects,
         files: &Files,
-        memo: &mut HashMap<*const Instance, Rc<Instance>>,
+        memo: &mut Renewals,
     ) -> Option<Grown> {
         let comp = file.ir.component(now);
         let was = old.file.ir.component(old.comp);
@@ -1538,7 +1539,7 @@ impl Engine {
         &self,
         t: &mut EditedObject,
         c: &Changed,
-        users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
+        users: &Users,
     ) -> Result<(), &'static str> {
         let id = t.inst.objects[t.was];
         if !self.is_alive(id) {
@@ -1871,7 +1872,7 @@ impl Engine {
         &self,
         changed: &[Changed],
         instances: &[Rc<Instance>],
-        users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
+        users: &Users,
     ) -> Option<&'static str> {
         // The object that has each alias, and the alias's name.
         let mut owners: Vec<(ObjectId, &str)> = Vec::new();
@@ -2310,11 +2311,7 @@ fn grow_order(growing: &[(Rc<Instance>, usize)]) -> Vec<(&Rc<Instance>, usize)> 
 
 /// `inst` with the files of `files` for theirs, and so its outer and
 /// inner instances; `inst` itself when none of them changed.
-fn renew(
-    inst: &Rc<Instance>,
-    files: &Files,
-    memo: &mut HashMap<*const Instance, Rc<Instance>>,
-) -> Rc<Instance> {
+fn renew(inst: &Rc<Instance>, files: &Files, memo: &mut Renewals) -> Rc<Instance> {
     if let Some(r) = memo.get(&Rc::as_ptr(inst)) {
         return r.clone();
     }
