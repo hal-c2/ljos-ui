@@ -200,6 +200,34 @@ impl View {
     }
 }
 
+/// The object `what` names for `tool`: a handle as it is, a locator in
+/// the scene as `capture` saw it.
+fn object_named(
+    engine: &Engine,
+    scene: &QuickScene,
+    capture: Option<&Rc<Capture>>,
+    refs: &mut RefTable,
+    what: &str,
+    tool: &str,
+) -> Result<ObjectId, SurfaceError> {
+    if let Some(found) = objects::parse_handle(engine, what) {
+        return found;
+    }
+    let Some(capture) = capture else {
+        return Err(SurfaceError::new(
+            ErrorCode::Internal,
+            "the scene was not looked at for a target that needs it",
+        ));
+    };
+    Look {
+        engine,
+        scene,
+        capture,
+        refs,
+    }
+    .object(what, tool)
+}
+
 struct Kept {
     epoch: u64,
     capture: Rc<Capture>,
@@ -960,10 +988,7 @@ impl Inspector {
     ) -> Result<ToolReply, SurfaceError> {
         if let Some(record) = args.record {
             self.wakes.ask(record, args.holder.as_deref())?;
-            let on = self.wakes.recording() || self.timeline.recording();
-            if on != scene.is_timed() {
-                scene.set_timed(engine, on);
-            }
+            self.time_window(engine, scene);
             engine.set_journaled(self.wakes.recording());
         }
         if args.wake.is_some() || args.last_input {
@@ -1189,24 +1214,8 @@ impl Inspector {
             ),
             (Kind::Objects(args), capture) if args.model.is_some() => {
                 let what = args.model.as_deref().unwrap_or_default();
-                let found = match capture {
-                    Some(capture) if objects::needs_scene(args) => {
-                        let mut look = Look {
-                            engine,
-                            scene,
-                            capture,
-                            refs: &mut self.refs,
-                        };
-                        look.object(what, "app_objects")
-                    }
-                    _ => match objects::parse_handle(engine, what) {
-                        Some(found) => found,
-                        None => Err(SurfaceError::new(
-                            ErrorCode::Internal,
-                            "the scene was not looked at for a target that needs it",
-                        )),
-                    },
-                };
+                let found =
+                    object_named(engine, scene, capture, &mut self.refs, what, "app_objects");
                 found
                     .and_then(|obj| {
                         models::rows(engine, obj, what, args.offset, args.limit, per_copy)
@@ -1244,25 +1253,13 @@ impl Inspector {
                 })
             }
             (Kind::Trace(args), capture) => {
-                let found = match (&args.target, capture) {
-                    (Some(what), Some(capture)) if trace::needs_scene(args) => {
-                        let mut look = Look {
-                            engine,
-                            scene,
-                            capture,
-                            refs: &mut self.refs,
-                        };
-                        look.object(what, "app_trace").map(Some)
-                    }
-                    (Some(what), _) => match objects::parse_handle(engine, what) {
-                        Some(found) => found.map(Some),
-                        None => Err(SurfaceError::new(
-                            ErrorCode::Internal,
-                            "the scene was not looked at for a target that needs it",
-                        )),
-                    },
-                    (None, _) => Ok(None),
-                };
+                let found = args
+                    .target
+                    .as_deref()
+                    .map(|what| {
+                        object_named(engine, scene, capture, &mut self.refs, what, "app_trace")
+                    })
+                    .transpose();
                 found.and_then(|found| {
                     trace::trace(engine, scene.root(), &self.traces, args, found, per_copy)
                 })
@@ -1420,12 +1417,7 @@ impl Inspector {
                 "the scene was not looked at for a snapshot",
             ));
         };
-        let whole = View {
-            root_id: capture.node(0).id,
-            max_depth: None,
-            line: LineOptions::default(),
-            max_nodes: MAX_NODES,
-        };
+        let whole = View::whole(capture);
         if let Some(since) = args.since {
             let Some(old) = self.kept.iter().find(|k| k.epoch == since) else {
                 return Err(SurfaceError::not_found(format!(
