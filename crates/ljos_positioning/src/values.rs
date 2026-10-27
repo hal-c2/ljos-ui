@@ -65,11 +65,16 @@ macro_rules! qml_value {
     };
 }
 
-fn real(v: &Value) -> f64 {
+/// The number in `v`, or `or` when it is left undefined.
+pub(crate) fn number_or(v: &Value, or: f64) -> f64 {
     match v {
-        Value::Undefined => f64::NAN,
+        Value::Undefined => or,
         v => v.to_number(),
     }
+}
+
+fn real(v: &Value) -> f64 {
+    number_or(v, f64::NAN)
 }
 
 /// A coordinate in a field or an argument; nowhere when it is not one.
@@ -95,10 +100,7 @@ fn arg(args: &[Value], i: usize) -> &Value {
 
 /// What a method left out is given.
 fn arg_or(args: &[Value], i: usize, or: f64) -> f64 {
-    match arg(args, i) {
-        Value::Undefined => or,
-        v => v.to_number(),
-    }
+    number_or(arg(args, i), or)
 }
 
 // ------------------------------------------------------------ geoCoordinate
@@ -671,10 +673,7 @@ impl GeoValue for GeoPath {
     fn from_custom(v: &CustomValue) -> Self {
         Self {
             path: coordinates_of(v.field(0)),
-            width: match v.field(1) {
-                Value::Undefined => 0.0,
-                w => w.to_number(),
-            },
+            width: number_or(v.field(1), 0.0),
         }
     }
     fn to_custom(&self) -> CustomValue {

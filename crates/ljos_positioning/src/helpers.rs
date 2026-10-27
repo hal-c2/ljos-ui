@@ -7,20 +7,13 @@ use std::sync::Arc;
 use ljos::prelude::*;
 
 use crate::geo::{self, GeoCoordinate};
-use crate::values::{GeoCircle, GeoPath, GeoPolygon, GeoRectangle, GeoValue, Shape};
+use crate::values::{GeoCircle, GeoPath, GeoPolygon, GeoRectangle, GeoValue, Shape, number_or};
 
 /// `QtPositioning` (QtPositioning).
 #[derive(Debug, Default, QmlObject)]
 #[qml(module = "QtPositioning", name = "QtPositioning")]
 #[qml_singleton]
 pub struct QtPositioning {}
-
-fn number(v: &Value, or: f64) -> f64 {
-    match v {
-        Value::Undefined => or,
-        v => v.to_number(),
-    }
-}
 
 /// A script's array as the coordinates in it.
 fn coordinates(cx: &Cx, v: &Value) -> Vec<GeoCoordinate> {
@@ -37,9 +30,9 @@ impl QtPositioning {
     #[qml(invokable)]
     fn coordinate(_cx: &Cx, latitude: Value, longitude: Value, altitude: Value) -> Value {
         GeoCoordinate::new(
-            number(&latitude, f64::NAN),
-            number(&longitude, f64::NAN),
-            number(&altitude, f64::NAN),
+            number_or(&latitude, f64::NAN),
+            number_or(&longitude, f64::NAN),
+            number_or(&altitude, f64::NAN),
         )
         .value()
     }
@@ -57,7 +50,7 @@ impl QtPositioning {
                 GeoRectangle::new(top_left, bottom_right).value()
             }
             (Some(center), None) if !matches!(b, Value::Undefined) => {
-                GeoRectangle::around(center, b.to_number(), number(&c, 0.0)).value()
+                GeoRectangle::around(center, b.to_number(), number_or(&c, 0.0)).value()
             }
             _ => GeoRectangle::default().value(),
         }
@@ -67,7 +60,7 @@ impl QtPositioning {
     fn circle(_cx: &Cx, center: Value, radius: Value) -> Value {
         GeoCircle {
             center: coordinate(&center).unwrap_or_default(),
-            radius: number(&radius, -1.0),
+            radius: number_or(&radius, -1.0),
         }
         .value()
     }
@@ -76,7 +69,7 @@ impl QtPositioning {
     fn path(cx: &Cx, path: Value, width: Value) -> Value {
         GeoPath {
             path: coordinates(cx, &path),
-            width: number(&width, 0.0),
+            width: number_or(&width, 0.0),
         }
         .value()
     }
