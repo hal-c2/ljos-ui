@@ -338,9 +338,10 @@ pub(crate) fn moved(engine: &Engine, area: ObjectId, f: Fingers) {
     if let Some((t, scale0, rotation0, pos0)) = run.target.filter(|t| engine.is_alive(t.0)) {
         let p = |n| pinch_num(engine, area, n);
         let write = |prop, v: f64| {
-            if !engine
-                .untrack(|| engine.read(t, prop))
-                .change_equals(&Value::Real(v))
+            if !v.is_nan()
+                && !engine
+                    .untrack(|| engine.read(t, prop))
+                    .change_equals(&Value::Real(v))
             {
                 let _ = engine.write(t, prop, Value::Real(v), ljos_engine::WriteKind::Imperative);
             }

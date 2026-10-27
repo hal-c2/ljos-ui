@@ -418,7 +418,9 @@ fn update(engine: &Engine, h: ObjectId, g: &PinchGesture) {
             (y_on, Item::Y.index, start.y + moved.y),
         ];
         for (on, p, v) in writes {
+            // A NaN limit leaves the target where it is.
             if on
+                && !v.is_nan()
                 && !engine
                     .untrack(|| engine.read(target, p))
                     .change_equals(&Value::Real(v))

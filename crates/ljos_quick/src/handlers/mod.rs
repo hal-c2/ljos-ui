@@ -412,8 +412,14 @@ pub(super) fn axis(engine: &Engine, h: ObjectId, name: &str) -> (bool, f64, f64)
 }
 
 /// `v` within `min` and `max`, or as it is when they are the wrong way round.
+/// A limit an author set to NaN does not panic: as in Qt, a NaN maximum is
+/// no limit and a NaN minimum makes the outcome NaN, which no target takes.
 pub(crate) fn clamp(v: f64, min: f64, max: f64) -> f64 {
-    if min > max { v } else { v.clamp(min, max) }
+    if min > max || v.is_nan() {
+        return v;
+    }
+    let v = if max < v { max } else { v };
+    if min < v { v } else { min }
 }
 
 fn object(engine: &Engine, obj: ObjectId, p: PropIndex) -> Option<ObjectId> {
@@ -1081,5 +1087,21 @@ pub(crate) fn register(engine: &Engine) {
         MetaRef::Static(PointHandler::static_meta()),
     ] {
         crate::pointer_item::register_pointer_item(engine, meta, hooks());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp;
+
+    #[test]
+    fn a_nan_limit_does_not_panic() {
+        assert_eq!(clamp(5.0, 0.0, f64::NAN), 5.0);
+        assert!(clamp(5.0, f64::NAN, 10.0).is_nan());
+        assert!(clamp(5.0, f64::NAN, f64::NAN).is_nan());
+        assert_eq!(clamp(15.0, 0.0, 10.0), 10.0);
+        assert_eq!(clamp(-5.0, 0.0, 10.0), 0.0);
+        assert_eq!(clamp(5.0, 10.0, 0.0), 5.0);
+        assert!(clamp(f64::NAN, 0.0, 10.0).is_nan());
     }
 }

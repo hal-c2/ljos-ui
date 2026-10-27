@@ -300,9 +300,11 @@ fn place(engine: &Engine, h: ObjectId, st: &DragState, target: ObjectId, d: kurb
     let (x_on, x_min, x_max) = axis(engine, h, "xAxis");
     let (y_on, y_min, y_max) = axis(engine, h, "yAxis");
     let write = |p: ljos_engine::PropIndex, v: f64| {
-        if !engine
-            .untrack(|| engine.read(target, p))
-            .change_equals(&Value::Real(v))
+        // A NaN limit leaves the target where it is along that axis.
+        if !v.is_nan()
+            && !engine
+                .untrack(|| engine.read(target, p))
+                .change_equals(&Value::Real(v))
             && let Err(err) = engine.write(target, p, Value::Real(v), WriteKind::Imperative)
         {
             engine.log(
