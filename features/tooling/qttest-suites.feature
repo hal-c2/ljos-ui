@@ -386,6 +386,33 @@ Feature: Test files, test cases and what they import
         """
 
     @qt-parity
+    Scenario: A run of the tests' directory imports a directory above it by its relative path
+      Given the file "qml/Doubler.qml":
+        """qml
+        import QtQuick
+        QtObject {
+          property int input: 0
+          readonly property int output: input * 2
+        }
+        """
+      And the file "tests/tst_up.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        import "../qml"
+        TestCase {
+          name: "Up"
+          Doubler { id: doubler; input: 5 }
+          function test_it() { compare(doubler.output, 10) }
+        }
+        """
+      When the tests in "tests" are run
+      Then the test report has the lines:
+        """
+        PASS   : Up::test_it()
+        """
+
+    @qt-parity
     Scenario: A module in an import path given to the run can be imported
       Given the file "imports/Helpers/qmldir":
         """
