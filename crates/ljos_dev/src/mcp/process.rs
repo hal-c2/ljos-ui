@@ -122,10 +122,29 @@ mod tests {
             .unwrap()
     }
 
+    /// Spins until the listing of the calling thread `tid` counts some of
+    /// its CPU time; what it counted and how long that took. Where the
+    /// platform counts in clock ticks (procfs without `schedstat`: 10 ms)
+    /// a fresh thread may not have used one yet.
+    fn spin_until_counted(tid: u64) -> (u64, std::time::Duration) {
+        let start = std::time::Instant::now();
+        let mut work = listed(tid).work_us;
+        while work == 0 && start.elapsed().as_secs() < 30 {
+            let lap = std::time::Instant::now();
+            let mut x = 0u64;
+            while lap.elapsed().as_millis() < 5 {
+                x = std::hint::black_box(x.wrapping_add(1));
+            }
+            work = listed(tid).work_us;
+        }
+        (work, start.elapsed())
+    }
+
     #[test]
     fn this_thread_is_listed_by_its_name() {
         let me = current_tid().unwrap();
-        assert!(listed(me).work_us > 0);
+        let (work, took) = spin_until_counted(me);
+        assert!(work > 0, "no CPU time counted after spinning {took:?}");
         let (tid, it) = std::thread::Builder::new()
             .name("ljos-proc-test".into())
             .spawn(|| {
