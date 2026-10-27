@@ -586,6 +586,9 @@ pub enum Kind {
     Resource(Resource),
     /// Something that changes the application or its input.
     Act(Act),
+    /// Lets go of what a gone holder held. No tool asks it; the server
+    /// sends it when a holder stops watching.
+    Release(String),
 }
 
 /// A request that acts. Each is a tool of its own except in a batch.

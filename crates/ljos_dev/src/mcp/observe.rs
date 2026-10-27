@@ -112,6 +112,7 @@ pub(crate) fn request_kind(req: &DevReq) -> &'static str {
         Kind::Frames(_) => "app_frames",
         Kind::Audit(_) => "app_audit",
         Kind::Memory(_) => "app_metrics",
+        Kind::Release(_) => "holder release",
         Kind::Resource(r) => match r {
             Resource::Tree => "resource tree",
             Resource::Logs => "resource logs",

@@ -155,57 +155,7 @@ impl InspectorSurface {
         changes: Arc<ChangeFeed>,
     ) -> Self {
         let release = handle.clone();
-        let holders = Holders::new(move |holder| {
-            // Whoever held the traces, the recordings and the followed
-            // model is gone, so the answers are awaited here: the UI
-            // thread skips a request nobody waits for. A full inbox drops
-            // it; what it held then stays until stopped, as what has no
-            // holder does.
-            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-                return;
-            };
-            let traces = Kind::Trace(super::trace::TraceArgs {
-                stop: true,
-                release: true,
-                holder: Some(holder.clone()),
-                ..Default::default()
-            });
-            // Each recording of `app_frames` is let go of on its own.
-            let stop = |mode: fn(&mut super::timeline::FramesArgs)| {
-                let mut a = super::timeline::FramesArgs {
-                    record: Some(false),
-                    holder: Some(holder.clone()),
-                    max: Some(1),
-                    ..Default::default()
-                };
-                mode(&mut a);
-                Kind::Frames(a)
-            };
-            let frames = stop(|_| {});
-            let wakes = stop(|a| a.wakes = true);
-            let bindings = stop(|a| a.bindings = true);
-            let growth = stop(|a| a.growth = true);
-            let models = Kind::Objects(super::objects::ObjectsArgs {
-                release: true,
-                holder: Some(holder),
-                ..Default::default()
-            });
-            for kind in [traces, frames, wakes, bindings, growth, models] {
-                let (reply, answer) = oneshot::channel();
-                runtime.spawn(async move {
-                    let _ = answer.await;
-                });
-                let _ = release.send(DevReq {
-                    kind,
-                    reply,
-                    deadline: Instant::now() + timeout,
-                    slot: None,
-                    per_copy: ljos_mcp_core::DEFAULT_RESULT_BYTES / 2,
-                    caps: CapSet::of([Cap::Inspect]),
-                    client: None,
-                });
-            }
-        });
+        let holders = Holders::new(move |holder| release_holder(&release, holder));
         InspectorSurface {
             registry: args::registry(),
             handle,
@@ -491,5 +441,93 @@ impl McpSurface for InspectorSurface {
                 text,
             }])
         })
+    }
+}
+
+/// Lets go of what `holder` held: its traces, its recordings and the
+/// model it followed, in one request, so that a holder that leaves takes
+/// one place in the inbox, as any client's call does. A full inbox makes it
+/// wait for room rather than drop it: what it held would otherwise stay
+/// until someone stopped it. The answer is awaited, since the UI thread
+/// skips a request nobody waits for.
+fn release_holder(handle: &UiHandle<DevReq>, holder: String) {
+    // Without a runtime the server is ending, and nobody holds anything.
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let handle = handle.clone();
+    runtime.spawn(async move {
+        let (reply, answer) = oneshot::channel();
+        let request = DevReq {
+            kind: Kind::Release(holder),
+            reply,
+            // A release is owed whenever it arrives; the UI thread does not
+            // hold it to a deadline.
+            deadline: Instant::now(),
+            slot: None,
+            per_copy: ljos_mcp_core::DEFAULT_RESULT_BYTES / 2,
+            caps: CapSet::of([Cap::Inspect]),
+            client: None,
+        };
+        // Disconnected: the application is gone, and what it held with it.
+        if handle.send_async(request).await.is_ok() {
+            let _ = answer.await;
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use ljos_runtime::{DrainBudget, SystemClock, UiInbox};
+
+    use super::*;
+
+    fn waiting() -> DevReq {
+        DevReq {
+            kind: Kind::Metrics,
+            reply: oneshot::channel().0,
+            deadline: Instant::now(),
+            slot: None,
+            per_copy: 0,
+            caps: CapSet::of([Cap::Inspect]),
+            client: None,
+        }
+    }
+
+    fn kinds(inbox: &UiInbox<DevReq>) -> Vec<Kind> {
+        let mut got = Vec::new();
+        inbox.drain(DrainBudget::UNLIMITED, &SystemClock::new(), |r| {
+            got.push(r.kind)
+        });
+        got
+    }
+
+    #[tokio::test]
+    async fn a_holder_is_released_in_one_request() {
+        let (inbox, handle) = UiInbox::channel(INBOX_CAPACITY);
+        release_holder(&handle, "a".into());
+        tokio::task::yield_now().await;
+        let got = kinds(&inbox);
+        assert!(
+            matches!(got.as_slice(), [Kind::Release(h)] if h == "a"),
+            "{got:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_release_waits_for_room_in_a_full_inbox() {
+        let (inbox, handle) = UiInbox::channel(INBOX_CAPACITY);
+        for _ in 0..INBOX_CAPACITY {
+            handle.send(waiting()).unwrap();
+        }
+        release_holder(&handle, "a".into());
+        tokio::task::yield_now().await;
+        assert_eq!(kinds(&inbox).len(), INBOX_CAPACITY);
+        tokio::task::yield_now().await;
+        let got = kinds(&inbox);
+        assert!(
+            matches!(got.as_slice(), [Kind::Release(h)] if h == "a"),
+            "{got:?}"
+        );
     }
 }

@@ -923,7 +923,8 @@ impl Inspector {
             }
         }
         for request in requests {
-            if Instant::now() >= request.deadline || request.reply.is_closed() {
+            let owed = matches!(request.kind, Kind::Release(_));
+            if !owed && (Instant::now() >= request.deadline || request.reply.is_closed()) {
                 let _ = request.reply.send(Err(timed_out()));
                 continue;
             }
@@ -1030,6 +1031,26 @@ impl Inspector {
             caps,
             client: _,
         } = request;
+        let kind = match kind {
+            Kind::Release(holder) => {
+                for part in releases(holder) {
+                    let (reply, _answer) = oneshot::channel();
+                    let part = DevReq {
+                        kind: part,
+                        reply,
+                        deadline,
+                        slot: None,
+                        per_copy,
+                        caps,
+                        client: None,
+                    };
+                    self.answer(engine, scene, clock, capture, part);
+                }
+                let _ = reply.send(Ok(ToolReply::from(json!({}))));
+                return;
+            }
+            kind => kind,
+        };
         if let Kind::Act(act) = &kind {
             if matches!(act, Act::Reload) {
                 self.start_reload(reply, deadline);
@@ -1506,6 +1527,37 @@ enum Started {
     },
 }
 
+/// What letting go of `holder` is made of: its traces, each recording of
+/// `app_frames`, and the model and mark it followed.
+fn releases(holder: String) -> [Kind; 6] {
+    let traces = Kind::Trace(trace::TraceArgs {
+        stop: true,
+        release: true,
+        holder: Some(holder.clone()),
+        ..Default::default()
+    });
+    let stop = |mode: fn(&mut timeline::FramesArgs)| {
+        let mut a = timeline::FramesArgs {
+            record: Some(false),
+            holder: Some(holder.clone()),
+            max: Some(1),
+            ..Default::default()
+        };
+        mode(&mut a);
+        Kind::Frames(a)
+    };
+    let frames = stop(|_| {});
+    let wakes = stop(|a| a.wakes = true);
+    let bindings = stop(|a| a.bindings = true);
+    let growth = stop(|a| a.growth = true);
+    let models = Kind::Objects(objects::ObjectsArgs {
+        release: true,
+        holder: Some(holder),
+        ..Default::default()
+    });
+    [traces, frames, wakes, bindings, growth, models]
+}
+
 /// Whether answering needs the scene looked at now. The log and the
 /// measurements do not, and neither does the next part of a snapshot
 /// already taken.
@@ -1516,7 +1568,8 @@ fn needs_scene(kind: &Kind) -> bool {
         | Kind::Processes(_)
         | Kind::Watch(_)
         | Kind::Frames(_)
-        | Kind::Memory(_) => false,
+        | Kind::Memory(_)
+        | Kind::Release(_) => false,
         Kind::Objects(args) => objects::needs_scene(args),
         // A locator is found in what was looked at.
         Kind::Audit(args) => args.root.is_some(),
