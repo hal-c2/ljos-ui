@@ -89,7 +89,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ljos_engine::{Engine, LogEntry, ObjectId};
+use ljos_engine::{Engine, LogEntry, ObjectId, ReloadFault};
 use ljos_mcp_core::{
     ErrorCode, LineOptions, OutlineOptions, OutlineWriter, RefTable, SurfaceError, ToolReply, delta,
 };
@@ -346,7 +346,7 @@ pub struct Inspector {
     /// What `app_watch` waits on.
     changes: Arc<ChangeFeed>,
     /// The reload generation and error as of the last [`observe`](Self::observe).
-    seen: Option<(u64, Option<String>)>,
+    seen: Option<(u64, Option<ReloadFault>)>,
     parked: Option<Parked>,
     reload_wanted: bool,
     /// The host gives the primary window the size `app_resize` asks for.
@@ -651,29 +651,30 @@ impl Inspector {
     /// its time.
     pub fn observe(&mut self, engine: &Engine) {
         let generation = engine.reload_generation();
-        let error = engine.last_reload_error().map(|e| e.to_string());
         let Some((was, was_error)) = self.seen.as_mut() else {
             // The first look is the baseline: what happened before the
             // inspector attached is not an event.
             self.feed.baseline(generation);
-            self.seen = Some((generation, error));
+            self.seen = Some((generation, engine.last_reload_error()));
             return;
         };
         if generation != *was {
             *was = generation;
-            *was_error = error;
+            *was_error = engine.last_reload_error();
             self.feed.applied(generation);
             self.changes.reload();
         } else {
-            match error {
-                Some(e) if was_error.as_deref() != Some(e.as_str()) => {
+            // Lent, not copied: this runs after every frame, and an error
+            // stands for many of them.
+            engine.with_last_reload_error(|error| match error {
+                Some(e) if was_error.as_ref() != Some(e) => {
                     *was_error = Some(e.clone());
-                    self.feed.failed(e);
+                    self.feed.failed(e.to_string());
                     self.changes.reload();
                 }
                 Some(_) => {}
                 None => *was_error = None,
-            }
+            });
         }
     }
 

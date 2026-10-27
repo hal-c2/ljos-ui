@@ -646,6 +646,13 @@ impl Engine {
         self.inner.reload.last_error.borrow().clone()
     }
 
+    /// [`last_reload_error`](Self::last_reload_error) lent rather than
+    /// copied, for a caller that looks after every frame and seldom finds
+    /// it changed.
+    pub fn with_last_reload_error<R>(&self, f: impl FnOnce(Option<&ReloadFault>) -> R) -> R {
+        f(self.inner.reload.last_error.borrow().as_ref())
+    }
+
     /// Records a reload that failed before it reached the engine (the
     /// file did not compile), or clears the error.
     pub fn set_last_reload_error(&self, fault: Option<ReloadFault>) {

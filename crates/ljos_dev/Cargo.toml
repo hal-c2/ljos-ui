@@ -104,6 +104,10 @@ name = "inspector_http"
 required-features = ["mcp"]
 
 [[test]]
+name = "observe_alloc"
+required-features = ["mcp"]
+
+[[test]]
 name = "conformance"
 required-features = ["mcp"]
 
