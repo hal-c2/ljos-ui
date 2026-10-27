@@ -1,9 +1,16 @@
 //! A scenario whose files are compiled ahead of time: the code is in
 //! `aot/`, written by running the scenario with `LJOS_AOT_FIXTURES=write`
 //! from the files exactly as the engine loads them.
+//!
+//! A write run is of every scenario that compiles ahead of time: what it
+//! leaves in `aot/` is the code of the files it was given, as `cargo fmt`
+//! writes it, and nothing else.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Mutex;
 
 use super::{Live, failed, key_of, qmldir_of};
 use crate::backend::Result;
@@ -59,11 +66,16 @@ impl Live {
         }
         Err(failed(format!(
             "no code was compiled ahead of time from {} as this scenario gives it: \
-             run the scenario with {WRITE_VAR}=write to write it, then again",
+             run the scenarios that compile ahead of time with {WRITE_VAR}=write \
+             to write it, then again",
             missing.join(", ")
         )))
     }
 }
+
+/// The modules this run has written. Scenarios run on several threads:
+/// one writes its file and the index at a time.
+static WRITTEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 fn write(
     file: &ljos_ir::CompiledFile,
@@ -72,25 +84,52 @@ fn write(
 ) -> Result<()> {
     let generated = ljos_compiler::aot::generate(file, oracle, RUNTIME);
     let dir = dir();
-    let name = format!("k{}.rs", hex(&key));
-    std::fs::write(dir.join(&name), &generated.rust)
-        .map_err(|e| failed(format!("cannot write {name}: {e}")))?;
-    index(&dir)
+    let module = format!("k{}", hex(&key));
+    let mut written = WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
+    let path = dir.join(format!("{module}.rs"));
+    std::fs::write(&path, &generated.rust)
+        .map_err(|e| failed(format!("cannot write {module}.rs: {e}")))?;
+    format(&path)?;
+    written.insert(module);
+    index(&dir, &written)
 }
 
-/// Writes `mod.rs` again for the files the directory has: scenarios run
-/// on several threads, and each writes the whole of it.
-fn index(dir: &Path) -> Result<()> {
-    let mut modules: Vec<String> = std::fs::read_dir(dir)
+/// Lays `path` out as `cargo fmt` would, by the workspace's rustfmt.
+fn format(path: &Path) -> Result<()> {
+    let rustfmt = std::env::var_os("RUSTFMT").unwrap_or_else(|| "rustfmt".into());
+    let out = Command::new(rustfmt)
+        .args(["--edition", "2024"])
+        .arg(path)
+        .output()
+        .map_err(|e| failed(format!("cannot run rustfmt: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(failed(format!(
+        "rustfmt refused {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&out.stderr)
+    )))
+}
+
+/// Writes `mod.rs` again for the modules this run wrote, and removes the
+/// code of files no scenario it ran gave.
+fn index(dir: &Path, modules: &BTreeSet<String>) -> Result<()> {
+    let stale: Vec<PathBuf> = std::fs::read_dir(dir)
         .map_err(|e| failed(format!("cannot read {}: {e}", dir.display())))?
         .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().into_string().ok()?;
-            let module = name.strip_suffix(".rs")?;
-            (module.starts_with('k')).then(|| module.to_owned())
+        .filter(|e| {
+            e.file_name().to_str().is_some_and(|name| {
+                name.strip_suffix(".rs")
+                    .is_some_and(|m| m.starts_with('k') && !modules.contains(m))
+            })
         })
+        .map(|e| e.path())
         .collect();
-    modules.sort();
+    for path in stale {
+        std::fs::remove_file(&path)
+            .map_err(|e| failed(format!("cannot remove {}: {e}", path.display())))?;
+    }
     let mut out = String::from(
         "//! Code compiled ahead of time from the QML of the scenarios that say\n\
          //! \"Given the files are compiled ahead of time\". Running those with\n\
@@ -98,7 +137,7 @@ fn index(dir: &Path) -> Result<()> {
          //! file's content, so code no scenario's file is any more is never run.\n\
          //! Generated: do not edit.\n\n",
     );
-    for m in &modules {
+    for m in modules {
         let _ = writeln!(
             out,
             "#[allow(\n    unused_mut,\n    unused_variables,\n    unused_assignments,\n    \
@@ -110,12 +149,11 @@ fn index(dir: &Path) -> Result<()> {
     if !modules.is_empty() {
         out.push('\n');
     }
-    for m in &modules {
+    for m in modules {
         let _ = writeln!(out, "    &{m}::FILE,");
     }
     out.push_str("];\n");
-    let tmp = dir.join(format!("mod.rs.{}", std::process::id()));
-    std::fs::write(&tmp, out).map_err(|e| failed(format!("cannot write the index: {e}")))?;
-    std::fs::rename(&tmp, dir.join("mod.rs"))
-        .map_err(|e| failed(format!("cannot write the index: {e}")))
+    let index = dir.join("mod.rs");
+    std::fs::write(&index, out).map_err(|e| failed(format!("cannot write the index: {e}")))?;
+    format(&index)
 }

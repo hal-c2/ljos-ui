@@ -408,7 +408,14 @@ impl TypeOracle for QtTypeOracle {
     }
 
     fn module(&self, ty: QtType) -> Option<String> {
-        (!ty.0.module.is_empty()).then(|| ty.0.module.to_string())
+        // Qt's table declares `Component`, `QtObject` and the value types
+        // in `QML`, a module no file imports: `QtQml` brings them, and is
+        // the module a build without the table names them by.
+        match ty.0.module {
+            "" => None,
+            "QML" => Some("QtQml".to_string()),
+            module => Some(module.to_string()),
+        }
     }
 
     fn members_known(&self, ty: QtType) -> bool {
