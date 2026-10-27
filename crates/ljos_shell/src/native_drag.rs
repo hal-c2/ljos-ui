@@ -64,9 +64,7 @@ struct State {
 
 impl Shared {
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        crate::lock(&self.state)
     }
 }
 

@@ -1,7 +1,7 @@
 //! The settings portal on the session bus (`crate::settings`).
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use ljos_a11y::{DesktopSettings, SettingValue};
 use ljos_platform::Post;
@@ -44,7 +44,7 @@ pub(crate) fn watch_with(post: Post, connect: Connect) -> Watch {
 
 impl Drop for Watch {
     fn drop(&mut self) {
-        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = crate::lock(&self.held);
         held.closed = true;
         if let Some(bus) = held.bus.take() {
             let _ = bus.close();
@@ -57,7 +57,7 @@ fn hear(connect: Connect, post: &Post, held: &Mutex<Held>) {
         return;
     };
     {
-        let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = crate::lock(held);
         if held.closed {
             return;
         }

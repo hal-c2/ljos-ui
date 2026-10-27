@@ -2,7 +2,7 @@
 //! NetworkManager on the system bus say it is (`crate::network`).
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use ljos_engine::Engine;
 use ljos_platform::{NetworkStatus, Post, Reachability, TransportMedium};
@@ -41,7 +41,7 @@ struct Held {
 impl Held {
     /// Keeps `bus` to close when the watch ends; `false` if it has.
     fn keep(held: &Mutex<Held>, bus: &Connection) -> bool {
-        let mut held = held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = crate::lock(held);
         if held.closed {
             return false;
         }
@@ -75,7 +75,7 @@ pub(crate) fn watch_with(post: Post, buses: Buses) -> Watch {
 
 impl Drop for Watch {
     fn drop(&mut self) {
-        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = crate::lock(&self.held);
         held.closed = true;
         if let Some(bus) = held.bus.take() {
             let _ = bus.close();

@@ -79,7 +79,7 @@ mod imp {
     use std::ffi::{c_int, c_ulong, c_void};
     use std::os::fd::AsRawFd;
     use std::ptr::NonNull;
-    use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
+    use std::sync::{Arc, Mutex, mpsc};
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
 
@@ -100,6 +100,7 @@ mod imp {
     use x11rb::wrapper::ConnectionExt as _;
 
     use crate::drags::{At, DragStep, Reply};
+    use crate::lock;
 
     x11rb::atom_manager! {
         pub(crate) Atoms: AtomsCookie {
@@ -196,10 +197,6 @@ mod imp {
         number: u32,
         formats: Vec<(String, Vec<u8>)>,
         actions: DragActions,
-    }
-
-    fn lock(outs: &Mutex<Outs>) -> MutexGuard<'_, Outs> {
-        outs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     impl Follower {

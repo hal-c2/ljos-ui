@@ -635,6 +635,13 @@ pub(crate) fn give_back_freed_heap() {
     }
 }
 
+/// Locks `m` whether or not a thread went down holding it: what the
+/// shell's threads share is whole between their steps, and a panic on
+/// one of them is not to stop the others.
+pub(crate) fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(all(test, target_os = "linux", target_env = "gnu"))]
 mod tests {
     /// Resident bytes of this process.

@@ -20,7 +20,7 @@
 //! after its first.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use egui::epaint::{ClippedShape, PaintCallbackInfo, Shape};
 use glow::HasContext;
@@ -83,7 +83,7 @@ struct Grid {
 impl Programs {
     /// Deletes everything linked, while the painter's context is current.
     pub(crate) fn destroy(&self, gl: &glow::Context) {
-        let mut cache = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut cache = crate::lock(&self.0);
         let cache = std::mem::take(&mut *cache);
         // SAFETY: the caller made the context current.
         unsafe {
@@ -123,11 +123,7 @@ pub(crate) struct Shaded {
 
 impl Shaded {
     pub(crate) fn call(&self, info: &PaintCallbackInfo, painter: &egui_glow::Painter) {
-        let mut cache = self
-            .programs
-            .0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut cache = crate::lock(&self.programs.0);
         draw(&mut cache, &self.paint, info, painter);
     }
 }

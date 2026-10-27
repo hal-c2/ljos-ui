@@ -128,6 +128,7 @@ mod imp {
     };
 
     use crate::drags::{At, DragStep, Reply};
+    use crate::lock;
 
     /// The most of one format that is read; a larger one is left out, as
     /// a source that offers a film as a drag would otherwise be held in
@@ -361,10 +362,6 @@ mod imp {
             stopping.store(true, Ordering::Release);
             self.wake.notify_all();
         }
-    }
-
-    fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-        m.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     #[derive(Default)]

@@ -28,9 +28,7 @@ fn start_in<T: Send + 'static>(
     choose: impl FnOnce(),
     read: impl FnOnce() -> T + Send + 'static,
 ) {
-    let mut reading = reading
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut reading = crate::lock(reading);
     if reading.is_none() {
         choose();
         *reading = thread::Builder::new()
@@ -44,18 +42,12 @@ fn start_in<T: Send + 'static>(
 /// be had.
 pub(crate) fn take() -> Option<JoinHandle<TextEngine>> {
     start();
-    READING
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
+    crate::lock(&READING).take()
 }
 
 /// Forgets a reading nothing will use. The thread ends by itself.
 pub(crate) fn forget() {
-    READING
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
+    crate::lock(&READING).take();
 }
 
 #[cfg(test)]
