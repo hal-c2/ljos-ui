@@ -280,12 +280,12 @@ impl GlPainter {
         Rc::clone(&self.gl)
     }
 
-    /// The `ShaderEffect` programs this painter links.
     /// Whether the context draws on the CPU.
     pub(crate) fn software(&self) -> bool {
         self.gl.software
     }
 
+    /// The `ShaderEffect` programs this painter links.
     pub(crate) fn programs(&self) -> &crate::gl_shader::Programs {
         &self.programs
     }

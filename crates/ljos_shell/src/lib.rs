@@ -1,5 +1,6 @@
-//! The desktop shell: its own loop on `ljos_host` with egui-winit and
-//! egui-wgpu (ARCHITECTURE.md §7.3), one [`Engine`] with QtQuick
+//! The desktop shell: its own loop on `ljos_host` with egui-winit, and
+//! egui's GL painter on EGL, egui-wgpu where that cannot be had, or the
+//! processor (ARCHITECTURE.md §7.3), one [`Engine`] with QtQuick
 //! registered, a platform window for the root and one for every QML
 //! `Window` that is shown, and the UI inbox through which other threads
 //! talk to the Engine (§7.2 step 1; principle: threads talk to the Engine
@@ -320,8 +321,7 @@ pub(crate) struct Hosting {
     /// which the loop's own passes do not answer for
     /// ([`QmlView::set_waker`]).
     pub(crate) wake: ljos_egui::Waker,
-    /// The host speaks Wayland, where files from other applications do
-    /// not come.
+    /// The host speaks Wayland, which `Qt.platform.pluginName` says.
     pub(crate) wayland: bool,
 }
 

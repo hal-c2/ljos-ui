@@ -1,3 +1,5 @@
+//! The settings portal on the session bus (`crate::settings`).
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 

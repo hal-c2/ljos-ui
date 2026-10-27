@@ -1,3 +1,6 @@
+//! The network as the portal's `NetworkMonitor` on the session bus and
+//! NetworkManager on the system bus say it is (`crate::network`).
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 

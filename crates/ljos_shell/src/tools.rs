@@ -555,7 +555,7 @@ mod inspector {
             &self.inspector
         }
 
-        /// What the host says of painting the window.
+        /// The inspector, for what only the host can tell it.
         pub(crate) fn inspector_mut(&mut self) -> &mut Inspector {
             &mut self.inspector
         }

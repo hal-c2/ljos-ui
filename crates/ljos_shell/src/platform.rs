@@ -4,11 +4,10 @@
 //! system prefers beyond the colour scheme (`settings.rs`), and the window
 //! system's name for `Qt.platform`.
 //!
-//! Files dragged in from other applications are not handled here: winit's
-//! file events reach each window's egui input, and the window's `QmlView`
-//! hands them to its scene's DropAreas (`ljos_egui`). Only the view knows
-//! where its scene is and which tree it shows, and one path delivers a drop
-//! once.
+//! Drags from other applications are not handled here: the shell follows
+//! them per window (`drags`), and the window's `QmlView` hands them to its
+//! scene's DropAreas (`ljos_egui`). Only the view knows where its scene is
+//! and which tree it shows, and one path delivers a drop once.
 
 use std::sync::Arc;
 

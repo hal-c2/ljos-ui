@@ -2304,10 +2304,6 @@ impl<M: Send + 'static> Desktop<M> {
         }
     }
 
-    /// What the windows asked for that is no property.
-    /// Asks the platform for the size an agent wants the primary window
-    /// to have (`app_resize`), as for a `Window` whose size the
-    /// application wrote; the pass at the size given answers the agent.
     /// Tells the `app_metrics` `memory` requests that wait what each window's scene
     /// and renderer hold, the root's first. A renderer is counted whether
     /// or not its window is on the screen: what it keeps is held all the
@@ -2329,6 +2325,9 @@ impl<M: Send + 'static> Desktop<M> {
         self.app.finish_memory(&windows);
     }
 
+    /// Asks the platform for the size an agent wants the primary window
+    /// to have (`app_resize`), as for a `Window` whose size the
+    /// application wrote; the pass at the size given answers the agent.
     #[cfg(feature = "mcp")]
     fn serve_resize(&mut self, host: &mut Control<'_>, engine: &Engine, sys: &WindowSystem) {
         let Some(size) = self.app.take_resize_request() else {
@@ -2353,6 +2352,7 @@ impl<M: Send + 'static> Desktop<M> {
         self.repaints.request(slot.key, now);
     }
 
+    /// What the windows asked for that is no property.
     fn serve_requests(&mut self, host: &mut Control<'_>, sys: &WindowSystem) {
         for (win, request) in sys.take_requests() {
             let Some(slot) = self.slots.iter_mut().find(|s| s.window == Some(win)) else {
@@ -2810,10 +2810,10 @@ pub(crate) fn run<M: Send + 'static>(
     config: ShellConfig,
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
-    // Only with the system's fonts: the bundled ones have none of the
-    // desktop's families.
     #[cfg(feature = "mcp")]
     let began = Instant::now();
+    // Only with the system's fonts: the bundled ones have none of the
+    // desktop's families.
     let desktop_font = config
         .system_fonts
         .then(crate::desktop_font::Reading::start);

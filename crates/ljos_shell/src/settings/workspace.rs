@@ -1,3 +1,5 @@
+//! `NSWorkspace`'s accessibility display options (`crate::settings`).
+
 use std::ptr::NonNull;
 
 use block2::RcBlock;

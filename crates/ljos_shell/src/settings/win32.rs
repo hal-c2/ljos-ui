@@ -1,3 +1,5 @@
+//! The system parameters and the Accessibility key (`crate::settings`).
+
 use std::cell::Cell;
 use std::sync::{Arc, Mutex, PoisonError};
 
