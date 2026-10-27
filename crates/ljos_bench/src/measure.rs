@@ -299,7 +299,7 @@ pub fn load_average() -> Option<f64> {
 /// Checks that `cg` is a cgroup of its own with the profile's limits. A
 /// launcher that only starts the command leaves it in the bench's cgroup,
 /// which holds the bench too.
-fn isolated(cg: &Path, pid: u32, profile: &Profile) -> Result<(), String> {
+fn check_isolated(cg: &Path, pid: u32, profile: &Profile) -> Result<(), String> {
     if !cg.is_dir() {
         return Err(format!("its cgroup {} does not exist", cg.display()));
     }
@@ -601,7 +601,7 @@ pub const QUIET_LIMIT: Duration = Duration::from_secs(5);
 /// Without this the first clicks landed wherever each runtime's startup
 /// animation happened to be, which differed between runtimes. How long
 /// it took; `None` when the window never stopped changing.
-fn quiet(
+fn wait_until_still(
     setup: &Setup,
     rect: (i32, i32, i32, i32),
     gesture: Gesture,
@@ -842,7 +842,7 @@ fn first_frame(
 /// new size, so the frame is looked for: until the application commits one
 /// of the new width, a strip just past its old right edge shows the
 /// background.
-fn answered(
+fn time_resize_answer(
     sway: &Sway,
     display: &Path,
     pid: u32,
@@ -964,7 +964,7 @@ fn run_once(
         let handed = procfs::exe(pid).is_some_and(|e| e == gate_exe)
             && procfs::has_arg(pid, gate.path().as_os_str());
         let cg = cgroup::of_pid(&setup.cgroup_root, pid)?;
-        match isolated(&cg, pid, profile) {
+        match check_isolated(&cg, pid, profile) {
             Ok(()) => break cg,
             Err(reason) if handed || Instant::now() > deadline => {
                 let _ = child.kill();
@@ -1001,7 +1001,9 @@ fn run_once(
     };
     let startup_cpu = w.cg.cpu_usec();
     let ready = match (&setup.sway, &setup.wayland, shown) {
-        (Some(sway), Some(display), Some(_)) => answered(sway, display, pid, &mut w, deadline),
+        (Some(sway), Some(display), Some(_)) => {
+            time_resize_answer(sway, display, pid, &mut w, deadline)
+        }
         _ => None,
     };
     w.sample();
@@ -1076,7 +1078,7 @@ fn run_once(
         }
         if !phases.load.is_zero() && w.exited.is_none() {
             if let (true, Some(rect)) = (drive, rect) {
-                out.quiet_ms = quiet(setup, rect, phases.gesture, points)
+                out.quiet_ms = wait_until_still(setup, rect, phases.gesture, points)
                     .map(|took| took.as_secs_f64() * 1000.0);
                 w.sample();
             }
