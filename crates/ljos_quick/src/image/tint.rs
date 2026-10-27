@@ -15,6 +15,8 @@ use ljos_engine::{Color, Engine, MetaRef, ObjectId};
 use ljos_render::{ImageHandle, WeakImage};
 use rustc_hash::FxHashMap;
 
+use crate::by_type::ByType;
+
 /// The colour an item of a registered type lays over its picture just
 /// now; none shows the picture as it is. Read inside the scene's paint
 /// effect, so what it reads is followed.
@@ -22,7 +24,7 @@ pub type ImageTint = fn(&Engine, ObjectId) -> Option<Color>;
 
 #[derive(Default)]
 struct Tints {
-    types: RefCell<Vec<(MetaRef, ImageTint)>>,
+    types: ByType<ImageTint>,
     /// By the picture's identity and the colour's bytes.
     made: RefCell<FxHashMap<(u64, [u8; 4]), WeakImage>>,
     /// How many `made` kept at its last sweep.
@@ -37,31 +39,15 @@ struct Tints {
 const RECENT: usize = 4;
 
 /// Makes items of type `meta` (and of the types derived from it) paint
-/// their picture in the colour `tint` gives.
+/// their picture in the colour `tint` gives. A later registration wins.
 pub fn register_image_tint(engine: &Engine, meta: MetaRef, tint: ImageTint) {
-    engine
-        .extension::<Tints>()
-        .types
-        .borrow_mut()
-        .push((meta, tint));
+    engine.extension::<Tints>().types.push(meta, tint);
 }
 
 /// `image` as `obj` paints it: tinted when its type registered a tint
 /// that gives a colour.
 pub(crate) fn tinted(engine: &Engine, obj: ObjectId, image: ImageHandle) -> ImageHandle {
-    let tints = engine.extension::<Tints>();
-    if tints.types.borrow().is_empty() {
-        return image;
-    }
-    let Some(meta) = engine.meta_of(obj) else {
-        return image;
-    };
-    let tint = tints
-        .types
-        .borrow()
-        .iter()
-        .find(|(m, _)| meta.inherits(m))
-        .map(|(_, t)| *t);
+    let tint = engine.extension::<Tints>().types.of(engine, obj);
     match tint.and_then(|t| t(engine, obj)) {
         Some(colour) => tinted_in(engine, image, colour),
         None => image,
@@ -125,5 +111,20 @@ mod tests {
         assert_eq!(green.pixel(0, 0), [0, 128, 0, 128]);
         let faint = lay_over(&half, [0, 255, 0, 128]);
         assert_eq!(faint.pixel(0, 0), [0, 64, 0, 64]);
+    }
+
+    /// As with every other per-type registry, a later registration wins.
+    #[test]
+    fn the_last_tint_registered_wins() {
+        use ljos_engine::QmlType;
+
+        let e = Engine::new();
+        crate::register(&e);
+        let meta = || MetaRef::Static(crate::Image::static_meta());
+        register_image_tint(&e, meta(), |_, _| Some(Color::from_rgba8(255, 0, 0, 255)));
+        register_image_tint(&e, meta(), |_, _| Some(Color::from_rgba8(0, 0, 255, 255)));
+        let image = e.create_native(crate::Image::default(), None).unwrap();
+        let white = ImageHandle::from_straight(1, 1, vec![255, 255, 255, 255]).expect("one pixel");
+        assert_eq!(tinted(&e, image, white).pixel(0, 0), [0, 0, 255, 255]);
     }
 }
