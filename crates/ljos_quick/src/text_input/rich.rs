@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ljos_engine::{Color, Engine, Font, ObjectId, QmlType as _, Value};
+use ljos_engine::{Color, Engine, Font, ObjectId, Value};
 use ljos_render::{ImageHandle, Rgba, kurbo};
 use ljos_text::rich::{
     BlockFormat, CharFormat, DocFont, HAlign, ImageFormat, OBJECT, ParseOptions, RichText,
@@ -844,11 +844,7 @@ pub(crate) fn hover_moved(engine: &Engine, obj: ObjectId, at: kurbo::Point) {
 
 /// The pointer left an editor: it is over no link.
 pub(crate) fn hover(engine: &Engine, obj: ObjectId, over: bool) {
-    if over
-        || !engine
-            .meta_of(obj)
-            .is_some_and(|m| m.inherits(&ljos_engine::MetaRef::Static(TextEdit::static_meta())))
-    {
+    if over || !crate::item::is_a::<TextEdit>(engine, obj) {
         return;
     }
     set_hovered(engine, obj, "");

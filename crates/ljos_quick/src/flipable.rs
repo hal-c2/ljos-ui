@@ -188,10 +188,7 @@ pub(crate) fn faces_away(e: &Engine, obj: ObjectId) -> bool {
     let Some(p) = e.visual_parent(obj) else {
         return false;
     };
-    if !e
-        .meta_of(p)
-        .is_some_and(|m| m.inherits(Flipable::static_meta()))
-    {
+    if !crate::item::is_a::<Flipable>(e, p) {
         return false;
     }
     let side = e.read(p, Flipable::SIDE.index).to_number() as i32;

@@ -251,15 +251,11 @@ pub fn register(engine: &Engine) {
     // not in a default property a component declares, nor in `resources`.
     // As Qt's `createObject` and `Qt.createQmlObject` do.
     engine.on_placed_under(|e, made, parent| {
-        let is_item = |o| {
-            e.meta_of(o)
-                .is_some_and(|m| m.inherits(<Item as ljos_engine::QmlType>::static_meta()))
-        };
-        if !is_item(parent) {
+        if !item::is_item(e, parent) {
             return false;
         }
         // The item's own `data`, which a Loader also hears of.
-        if is_item(made)
+        if item::is_item(e, made)
             && let Err(err) = tree::add_data(e, parent, made)
         {
             e.log(

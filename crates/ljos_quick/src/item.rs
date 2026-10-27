@@ -1058,9 +1058,7 @@ fn window_position(engine: &Engine, item: ObjectId) -> Point {
 
 /// Whether `obj`'s type is `Item` or derives from it.
 pub fn is_item(engine: &Engine, obj: ObjectId) -> bool {
-    engine
-        .meta_of(obj)
-        .is_some_and(|m| m.inherits(Item::static_meta()))
+    is_a::<Item>(engine, obj)
 }
 
 /// Whether the object's type derives from `T`.
