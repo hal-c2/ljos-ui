@@ -295,12 +295,12 @@ fn shift_line(line: &mut EditLine, dx: f64) {
         c.x1 += dx;
     }
     for run in &mut line.runs {
-        let mut glyphs = (*run.run.glyphs).clone();
+        // Copied only where something else still holds the run.
+        let glyphs = Arc::make_mut(&mut run.run.glyphs);
         for g in &mut glyphs.glyphs {
             g.x += dx as f32;
         }
         glyphs.bounds = glyphs.bounds + v;
-        run.run.glyphs = Arc::new(glyphs);
         let d = &mut run.run.decorations;
         d.underline = d.underline.map(|r| r + v);
         d.strike_through = d.strike_through.map(|r| r + v);
