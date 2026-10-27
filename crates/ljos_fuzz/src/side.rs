@@ -138,6 +138,9 @@ pub fn run_ljos(case: &Rendered) -> Outcome {
 
 /// Qt, as `qml6` runs a generated harness that loads a batch of cases one
 /// after another and prints a marked JSON line per phase.
+/// How long a killed qml6's log is waited for.
+const DRAIN: Duration = Duration::from_secs(2);
+
 #[derive(Debug)]
 pub struct QtSide {
     pub qml: String,
@@ -250,7 +253,9 @@ impl QtSide {
             Ok(t) => (t, false),
             Err(_) => {
                 let _ = child.kill();
-                (rx.recv().unwrap_or_default(), true)
+                // A process qml6 started may hold the pipe past its end;
+                // what was said by then is enough to tell the hang.
+                (rx.recv_timeout(DRAIN).unwrap_or_default(), true)
             }
         };
         let status = child.finish().map_err(|e| e.to_string())?;
@@ -408,6 +413,36 @@ Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hung_qml6_whose_log_outlives_it_is_given_up_on() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let work = std::env::temp_dir().join(format!("ljos-fuzz-hang-{}", std::process::id()));
+        fs::create_dir_all(&work).unwrap();
+        // A child of its own keeps the log's pipe open after it is killed.
+        let qml = work.join("qml6");
+        fs::write(&qml, "#!/bin/sh\nsleep 30 &\nexec sleep 30\n").unwrap();
+        fs::set_permissions(&qml, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut side = QtSide::new(qml.display().to_string(), work.join("home"), 1);
+        side.timeout = Duration::from_millis(200);
+        let case = Rendered {
+            qml: "import QtQuick\nItem {}\n".into(),
+            steps: 0,
+            unobserved: Default::default(),
+            types: Default::default(),
+        };
+        let started = std::time::Instant::now();
+        let got = side.spawn(&work.join("batch"), &[&case], &[0]);
+        let took = started.elapsed();
+        let _ = fs::remove_dir_all(&work);
+        let (done, failure) = got.unwrap();
+        assert!(done.is_empty());
+        let (at, why) = failure.expect("a hang is a failure");
+        assert_eq!(at, Some(0));
+        assert!(why.contains("hung"), "{why}");
+        assert!(took < Duration::from_secs(10), "waited {took:?}");
+    }
 
     #[test]
     fn the_harness_log_is_split_into_cases_and_phases() {
