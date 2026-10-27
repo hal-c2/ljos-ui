@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use ljos_engine::{APPLICATION_PROC, Engine};
+use ljos_runtime::scheduler::TOP_OWNERS;
 use ljos_runtime::{FrameReport, Lane, ProcId};
 
 /// The owner the inspector's own work is charged to, so that looking at an
@@ -126,17 +127,24 @@ pub fn add_work(report: &mut FrameReport, work: &FrameReport) {
     report.jobs_failed += work.jobs_failed;
     report.drained += work.drained;
     report.drain_time += work.drain_time;
-    for (owner, t) in &work.top_owners {
-        match report.top_owners.iter_mut().find(|(o, _)| o == owner) {
-            Some((_, total)) => *total += *t,
-            None => report.top_owners.push((*owner, *t)),
-        }
-    }
     // Largest first, as the scheduler leaves them; ties by id so the order
     // does not change between two frames.
-    report
-        .top_owners
-        .sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let order = |a: &(ProcId, Duration), b: &(ProcId, Duration)| b.1.cmp(&a.1).then(a.0.cmp(&b.0));
+    for (owner, t) in &work.top_owners {
+        let owners = &mut report.top_owners;
+        if let Some((_, total)) = owners.iter_mut().find(|(o, _)| o == owner) {
+            *total += *t;
+        } else if owners.len() < TOP_OWNERS {
+            owners.push((*owner, *t));
+        } else if let Some(least) = owners.iter_mut().max_by(|a, b| order(a, b))
+            && order(&(*owner, *t), least).is_lt()
+        {
+            // The report keeps the largest few, as the scheduler does, in
+            // place: one more would move them to the heap.
+            *least = (*owner, *t);
+        }
+    }
+    report.top_owners.sort_by(order);
 }
 
 /// What to call an owner: `application`, `inspector`, the boundary it
@@ -387,6 +395,32 @@ mod tests {
                 (INSPECTOR_PROC, Duration::from_micros(1500)),
                 (APPLICATION_PROC, Duration::from_micros(950)),
             ]
+        );
+    }
+
+    #[test]
+    fn a_tools_work_keeps_the_largest_owners_only() {
+        let owners: Vec<(ProcId, u64)> = (0..TOP_OWNERS as u32)
+            .map(|i| (ProcId::new(i + 10, 0), 100 + u64::from(i)))
+            .collect();
+        let mut frame = report(900, &owners);
+        let mut looked = FrameReport::default();
+        looked
+            .top_owners
+            .push((INSPECTOR_PROC, Duration::from_micros(1500)));
+        looked
+            .top_owners
+            .push((ProcId::new(99, 0), Duration::from_micros(1)));
+        add_work(&mut frame, &looked);
+        assert_eq!(frame.top_owners.len(), TOP_OWNERS);
+        assert!(!frame.top_owners.spilled());
+        assert_eq!(frame.top_owners[0].0, INSPECTOR_PROC);
+        // The smallest of the frame's own gave way.
+        assert!(
+            !frame
+                .top_owners
+                .iter()
+                .any(|(o, _)| *o == ProcId::new(10, 0))
         );
     }
 
