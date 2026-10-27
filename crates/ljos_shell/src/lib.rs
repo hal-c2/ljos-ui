@@ -64,7 +64,7 @@ mod test_bus;
 mod wayland_drag;
 #[cfg(target_os = "windows")]
 mod win32_drag;
-mod windows;
+mod window_spec;
 mod x11_drag;
 
 use std::rc::Rc;

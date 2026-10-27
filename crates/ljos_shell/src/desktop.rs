@@ -37,7 +37,7 @@ use crate::present::{self, Frame, LastPicture};
 use crate::repaint::RepaintSchedule;
 use crate::surface::{self, Gpu, Painter, Starting, Surface};
 use crate::{
-    Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, drags, wayland_drag, windows,
+    Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, drags, wayland_drag, window_spec,
 };
 
 /// The log category of what the shell has to say.
@@ -563,7 +563,7 @@ fn note_state(slot: &mut Slot, engine: &Engine, sys: &WindowSystem) {
     if slot.told_state != Some(state) {
         slot.told_state = Some(state);
         if let Some(win) = slot.window {
-            sys.shown_as(engine, win, windows::show(state));
+            sys.shown_as(engine, win, window_spec::show(state));
         }
     }
 }
@@ -1155,7 +1155,7 @@ impl<M: Send + 'static> Desktop<M> {
                     .applied
                     .clone()
                     .unwrap_or_else(|| spec.clone());
-                if windows::needs_new_window(&old, &spec, caps) {
+                if window_spec::needs_new_window(&old, &spec, caps) {
                     self.hide(host, i);
                     self.open(host, i, &spec, engine, sys);
                 } else {
@@ -1165,7 +1165,7 @@ impl<M: Send + 'static> Desktop<M> {
         }
         let slot = &mut self.slots[i];
         let [r, g, b, a] = spec.color;
-        slot.clear = if windows::transparent(&spec) {
+        slot.clear = if window_spec::transparent(&spec) {
             egui::Color32::TRANSPARENT
         } else {
             egui::Color32::from_rgba_unmultiplied(r, g, b, a)
@@ -1190,7 +1190,7 @@ impl<M: Send + 'static> Desktop<M> {
         };
         // egui's points are the platform's logical pixels times its zoom.
         let zoom = f64::from(slot.ctx.zoom_factor());
-        for change in windows::changes(old, new, caps) {
+        for change in window_spec::changes(old, new, caps) {
             let change = match change {
                 // The platform's own moves and its user's maximizing are
                 // written to the window, and are not asked back of it.
@@ -1207,7 +1207,7 @@ impl<M: Send + 'static> Desktop<M> {
             host.change_window(id, change);
         }
         let has = slot.told_size.unwrap_or(new.size);
-        if let Some(size) = windows::size_request(old, new, has) {
+        if let Some(size) = window_spec::size_request(old, new, has) {
             host.change_window(id, WindowChange::Size(scaled(size, zoom)));
             // Some platforms resize at once and say nothing; others
             // answer later, or never when they refuse.
@@ -1229,7 +1229,7 @@ impl<M: Send + 'static> Desktop<M> {
     ) {
         let caps = host.capabilities();
         let zoom = f64::from(self.slots[i].ctx.zoom_factor());
-        let mut attrs = windows::attributes(spec, caps);
+        let mut attrs = window_spec::attributes(spec, caps);
         attrs.size = attrs.size.map(|s| scaled(s, zoom));
         attrs.min_size = attrs.min_size.map(|s| scaled(s, zoom));
         attrs.max_size = attrs.max_size.map(|s| scaled(s, zoom));
@@ -2341,7 +2341,7 @@ impl<M: Send + 'static> Desktop<M> {
             return self.app.finish_resize(true);
         };
         let size = match self.spec_of(i, engine, sys) {
-            Some(spec) => windows::within_limits(&spec, size),
+            Some(spec) => window_spec::within_limits(&spec, size),
             None => size,
         };
         let slot = &mut self.slots[i];
