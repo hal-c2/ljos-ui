@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use super::args::{Level, LogsArgs, MAX_LOG_LINES};
 use super::redact::{SecretBook, mask_text};
+use super::tools::clip;
 
 /// Lines kept. Older ones are forgotten: the inspector is not a log store.
 const KEPT: usize = 1000;
@@ -58,13 +59,6 @@ fn leading_place(message: &str) -> Option<(String, u32)> {
     let (file, rest) = head.split_at(at);
     let line: String = rest[1..].chars().take_while(char::is_ascii_digit).collect();
     Some((file.to_string(), line.parse().ok()?))
-}
-
-fn clip(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        Some((at, _)) => format!("{}…", &text[..at]),
-        None => text.to_string(),
-    }
 }
 
 impl Line {

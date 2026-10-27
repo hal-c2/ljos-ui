@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use super::frames::{ms, us};
+
 /// What paints the primary window, as the host says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PainterInfo {
@@ -190,7 +192,6 @@ impl Cost {
     }
 
     fn json(&self) -> Value {
-        let us = |d: Duration| d.as_micros() as u64;
         json!({ "last": us(self.last), "max": us(self.max), "total": us(self.total) })
     }
 }
@@ -266,7 +267,6 @@ impl PaintStats {
         if self.presented + self.unchanged == 0 {
             return String::new();
         }
-        let ms = |d: Duration| format!("{:.2} ms", d.as_secs_f64() * 1000.0);
         let mut text = format!(
             "\npaint: {} passes presented ({} in part, {} moving a scrolled clip), {} unchanged and not presented\n\
              building last {}, longest {}; uploading, drawing and presenting last {}, longest {}\n\

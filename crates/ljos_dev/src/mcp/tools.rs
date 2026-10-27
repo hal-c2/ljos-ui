@@ -23,6 +23,7 @@ use super::args::{
     DEFAULT_MATCHES, FindArgs, InspectArgs, MAX_MATCHES, MAX_SCREENSHOT_SIDE, ScreenshotArgs,
 };
 use super::capture::{Capture, REDACTED, all_objects};
+use super::frames::ms;
 use super::redact::{mask_json, mask_text};
 use super::surface::Answer;
 use crate::top::{FrameStats, LANE_NAMES, owner_name};
@@ -1319,7 +1320,6 @@ pub(crate) fn metrics(
         let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
         return ToolReply::from(value).with_text(text);
     }
-    let ms = |d: std::time::Duration| format!("{:.2} ms", d.as_secs_f64() * 1000.0);
     let mut text = format!(
         "frames {} ({} over budget), last {}, longest {}, all {}\n",
         stats.frames,
