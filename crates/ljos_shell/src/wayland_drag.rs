@@ -313,12 +313,15 @@ mod imp {
 
         pub(crate) fn stop(self) {
             // The dispatcher looks when it is woken, or when its queue next
-            // hears something, which a sync makes it. It ends the reader as
-            // it ends.
+            // hears something, which a sync makes it.
             self.out.stop(&self.stopping);
             self.conn.display().sync(&self.qh, ());
             let _ = self.conn.flush();
             let _ = self.dispatcher.join();
+            // The reader ends when its jobs end, and the only sender of
+            // them is in the state, which this holds alone now that the
+            // dispatcher has gone: dropped, or the join never returns.
+            drop(self.events);
             let _ = self.reader.join();
         }
     }
