@@ -424,8 +424,10 @@ fn ten_wrapped_listview_delegates() {
     // more. Its structure marked by change hooks, where each item had an
     // effect, makes 20 fewer effects and 57 fewer allocations (B30), and
     // `parent` and `focus` acted on by change hooks, not watched, 40 fewer
-    // effects, 40 fewer values and 49 fewer allocations. 25.0 kB kept a
-    // delegate.
+    // effects, 40 fewer values and 49 fewer allocations. The graph's nodes
+    // in pages of 1024 that stay where they are, not in one vector that
+    // doubles, make one fewer and keep 53 kB less, the doubling's spare
+    // room (MEM3). 23.3 kB kept a delegate.
     assert_eq!(
         b,
         Budget {
@@ -442,8 +444,8 @@ fn ten_wrapped_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1232,
-            bytes: 257521,
+            allocations: 1231,
+            bytes: 204273,
         }
     );
 }
@@ -473,7 +475,9 @@ fn ten_plain_items() {
     // where each item had an effect: twenty effects and fifty-five
     // allocations fewer, and acts on `parent` and `focus` from their
     // change hooks, where each item watched both: forty effects, forty
-    // values and sixty allocations fewer. 11.7 kB kept an instance.
+    // values and sixty allocations fewer. The graph's nodes in pages, not
+    // a vector that doubles, two fewer and 14 kB less (MEM3). 11.3 kB
+    // kept an instance.
     assert_eq!(
         b,
         Budget {
@@ -490,8 +494,8 @@ fn ten_plain_items() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 674,
-            bytes: 136616,
+            allocations: 672,
+            bytes: 122664,
         }
     );
 }
@@ -552,14 +556,16 @@ fn bytes_a_thousand_instances_keep() {
     // and 17.1 kB before; B12b's call path keeps eight or nine more.
     // B30 drops the structure effect of each item (26.0, 28.9 and 15.9 kB
     // before), and the watches of `parent` and `focus` with the values
-    // they made (25.9, 25.1 and 15.8 kB before). The rest is mostly the
-    // graph's nodes, the objects and the text's runs.
+    // they made (25.9, 25.1 and 15.8 kB before). The graph's nodes in
+    // pages, not a vector that doubles, leave out its spare room (22.0,
+    // 25.0 and 11.7 kB before, MEM3). The rest is mostly the graph's
+    // nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 22000,
-            wrapped: 24972,
-            plain: 11721,
+            one_line: 21064,
+            wrapped: 23339,
+            plain: 11303,
         }
     );
 }
