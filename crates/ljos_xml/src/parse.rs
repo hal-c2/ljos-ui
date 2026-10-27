@@ -69,7 +69,7 @@ struct Budget {
 }
 
 impl Budget {
-    fn copy(&mut self, current: usize, added: usize) -> Result<(), String> {
+    fn charge(&mut self, current: usize, added: usize) -> Result<(), String> {
         if added > self.limits.value.saturating_sub(current) {
             return Err("XML value byte limit exceeded".into());
         }
@@ -280,7 +280,7 @@ fn start_element(
         } else {
             match attribute(e, &role.attribute) {
                 Some(value) => {
-                    budget.copy(0, value.len())?;
+                    budget.charge(0, value.len())?;
                     current.values[i] = value;
                 }
                 None => {
@@ -340,7 +340,7 @@ fn gather(
             && stack[..target.len()] == *target.as_slice()
             && let Some(buf) = current.gathering[i].as_mut()
         {
-            budget.copy(buf.len(), text.len())?;
+            budget.charge(buf.len(), text.len())?;
             buf.push_str(text);
         }
     }
