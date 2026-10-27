@@ -107,7 +107,7 @@ pub(crate) fn without_mnemonic(text: &str) -> String {
 /// `features/controls/accessibility.feature`).
 pub(crate) fn spoken_without_mnemonic(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
+    let mut chars = text.chars();
     while let Some(c) = chars.next() {
         if c == '&' {
             match chars.next() {
@@ -160,7 +160,7 @@ pub(crate) fn mnemonic_underlined(text: &str) -> Option<String> {
 /// The mnemonic of `text`: the letter after the first single `&`,
 /// lower-cased, so that Alt+that letter activates the control.
 pub(crate) fn mnemonic_of(text: &str) -> Option<char> {
-    let mut chars = text.chars().peekable();
+    let mut chars = text.chars();
     while let Some(c) = chars.next() {
         if c != '&' {
             continue;
