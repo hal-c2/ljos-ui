@@ -12,11 +12,12 @@
 use ljos_a11y::SystemPrefs;
 use ljos_controls::{Window, WindowSystem};
 use ljos_design::limits::audit::{NARROW_FRACTION, SHORT_FRACTION};
-use ljos_engine::{Engine, ObjectId, QmlType, Value, WriteKind};
+use ljos_engine::{Engine, ObjectId, Value, WriteKind};
 use ljos_quick::{HeldPrefs, Item, QuickScene};
 use ljos_render::kurbo::Rect;
 use ljos_runtime::Time;
 
+use crate::cx::is_a;
 use crate::matrix::{MatrixPoint, PointSize};
 
 /// Frames a settle may take before it gives up: a scene that keeps
@@ -67,12 +68,6 @@ impl Held {
     }
 }
 
-fn is_window(engine: &Engine, root: ObjectId) -> bool {
-    engine
-        .meta_of(root)
-        .is_some_and(|m| m.inherits(Window::static_meta()))
-}
-
 /// What `point` gives this scene.
 pub(crate) fn resolve(
     engine: &Engine,
@@ -102,7 +97,7 @@ pub(crate) fn resolve(
             let least = |name: &str| {
                 scene
                     .root()
-                    .filter(|r| is_window(engine, *r))
+                    .filter(|r| is_a::<Window>(engine, *r))
                     .map(|r| engine.untrack(|| engine.read_by_name(r, name)).to_number())
                     .filter(|n| n.is_finite() && *n >= 1.0)
             };
@@ -133,7 +128,7 @@ fn resize(engine: &Engine, scene: &mut QuickScene, size: [f64; 2], root: Option<
     let (Some(r), Some(root_to)) = (scene.root(), root) else {
         return;
     };
-    if is_window(engine, r) {
+    if is_a::<Window>(engine, r) {
         // As the platform says it: the window does not ask to be resized
         // back.
         WindowSystem::of(engine).resized(engine, r, root_to);

@@ -8,11 +8,12 @@
 use ljos_a11y::Role;
 use ljos_engine::ObjectId;
 use ljos_quick::keys::tab_target;
-use ljos_quick::{Item, child_items, is_item, tab_scope};
+use ljos_quick::{Item, child_items, is_item};
 
 use crate::cx::{
     Cx, DEPTH, at, clipped_away, item_words, node_words, shown_items, takes_focus, words,
 };
+use crate::focus_walk::scopes;
 
 /// The items Tab stops at, in the order of the document.
 fn stops(cx: &Cx, item: ObjectId, depth: usize, out: &mut Vec<ObjectId>) {
@@ -88,20 +89,6 @@ fn round(
         }
     }
     false
-}
-
-/// What Tab stays inside besides the window's content: the popups that
-/// are open, each a round of its own.
-fn scopes(cx: &Cx) -> Vec<ObjectId> {
-    let mut out = Vec::new();
-    for item in shown_items(cx) {
-        if let Some(scope) = tab_scope(cx.engine, item)
-            && !out.contains(&scope)
-        {
-            out.push(scope);
-        }
-    }
-    out
 }
 
 /// `a11y-tab-trap`, `a11y-tab-unreachable`, and `a11y-unnamed-interactive`
