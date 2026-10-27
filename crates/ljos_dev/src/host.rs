@@ -682,16 +682,7 @@ impl DevSession {
         if keys.is_empty() {
             return None;
         }
-        let mut now: HashMap<(String, String), usize> = HashMap::new();
-        let mut new = Vec::new();
-        for w in (self.warnings_of.0)(&keys) {
-            let place = (w.file.clone(), w.message.clone());
-            let seen = now.entry(place.clone()).or_insert(0);
-            *seen += 1;
-            if *seen > self.told.get(&place).copied().unwrap_or(0) {
-                new.push(w);
-            }
-        }
+        let (new, now) = untold(&self.told, (self.warnings_of.0)(&keys));
         for (place, n) in now {
             let told = self.told.entry(place).or_insert(0);
             *told = (*told).max(n);
@@ -810,28 +801,14 @@ impl DevSession {
         // The session compiles every file of the project, so that a save
         // to any is one patch; the developer hears of the ones the program
         // reached, as Qt never compiles the others.
-        let warnings: Vec<CompileFault> = warnings
-            .into_iter()
-            .filter(|w| {
+        let (warnings, now) = untold(
+            &self.told,
+            warnings.into_iter().filter(|w| {
                 w.file
                     .strip_suffix(".qml")
                     .is_some_and(|key| engine.has_loaded(key))
-            })
-            .collect();
-        let mut now = HashMap::new();
-        let warnings = warnings
-            .into_iter()
-            .filter(|w| {
-                let seen = now.entry((w.file.clone(), w.message.clone())).or_insert(0);
-                *seen += 1;
-                *seen
-                    > self
-                        .told
-                        .get(&(w.file.clone(), w.message.clone()))
-                        .copied()
-                        .unwrap_or(0)
-            })
-            .collect();
+            }),
+        );
         self.told = now;
         Report::Reloaded(ReloadStats {
             generation: done.generation,
@@ -847,4 +824,25 @@ impl DevSession {
             shown: None,
         })
     }
+}
+
+/// The warnings of `warnings` not in `told`, and how often each place
+/// (file and message) warns now: a warning is told again when it is
+/// there more often than it was told.
+fn untold(
+    told: &HashMap<(String, String), usize>,
+    warnings: impl IntoIterator<Item = CompileFault>,
+) -> (Vec<CompileFault>, HashMap<(String, String), usize>) {
+    let mut now: HashMap<(String, String), usize> = HashMap::new();
+    let mut new = Vec::new();
+    for w in warnings {
+        let place = (w.file.clone(), w.message.clone());
+        let before = told.get(&place).copied().unwrap_or(0);
+        let seen = now.entry(place).or_insert(0);
+        *seen += 1;
+        if *seen > before {
+            new.push(w);
+        }
+    }
+    (new, now)
 }
