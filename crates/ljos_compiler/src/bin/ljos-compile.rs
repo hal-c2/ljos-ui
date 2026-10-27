@@ -4,7 +4,8 @@
 //! handlers compile to. `ljos-compile aot-coverage [dir]`: how much of a
 //! tree of QML projects compiles to Rust, and why the rest does not; with
 //! `LJOS_AOT_OUT=<file.rs>` it writes that Rust too, every file's module
-//! and the table, as an application's build would (to time rustc on it).
+//! and the table, as an application's build would (to time rustc on it);
+//! with `LJOS_AOT_FILES=1`, each file's compiled and total counts on stderr.
 
 use std::path::{Path, PathBuf};
 
@@ -116,6 +117,21 @@ fn run_aot_coverage(root: &Path) -> anyhow::Result<()> {
             let outcome =
                 ljos_compiler::aot::generate(&compiled.file, &QtTypeOracle, "ljos_engine::aot");
             coverage.add(&outcome.outcomes);
+            // One line per file, to count a subset of the corpus (the files
+            // another compiler could resolve, say) the same way.
+            if std::env::var_os("LJOS_AOT_FILES").is_some() {
+                let compiled = outcome
+                    .outcomes
+                    .iter()
+                    .filter(|o| matches!(o, ljos_aot::Outcome::Compiled))
+                    .count();
+                eprintln!(
+                    "{compiled}\t{}\t{}/{}",
+                    outcome.outcomes.len(),
+                    dir.display(),
+                    result.key
+                );
+            }
             generated.push((format!("{}/{}", dir.display(), result.key), outcome));
         }
     }
