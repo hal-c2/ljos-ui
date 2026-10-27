@@ -1569,15 +1569,7 @@ impl<V: Clone + 'static> Graph<V> {
             if !matches!(i.nodes[n].kind, Kind::Property(_)) {
                 return Err(ReactiveError::NotAProperty(n));
             }
-            // A binding that writes is side-effecting: laziness would make
-            // the side effect depend on who reads it, so it becomes a root.
-            if let Some(&running) = i.eval_stack.last()
-                && running != n
-                && let Some(r) = i.nodes.get_mut(running)
-                && matches!(r.kind, Kind::Property(_))
-            {
-                r.flags.set(Flags::EAGER, true);
-            }
+            i.writer_becomes_eager(n);
             let was_unset = i.unset(n);
             let Kind::Property(p) = &mut i.nodes[n].kind else {
                 unreachable!()
@@ -1693,14 +1685,7 @@ impl<V: Clone + 'static> Graph<V> {
             // Animated, it is set now: what asked whether it was is told
             // when it was not (`tell_if_set`).
             let tell = node.flags.has(Flags::ASKED_IF_SET) && was_unset;
-            // As in `write`: a binding that writes becomes a root.
-            if let Some(&running) = i.eval_stack.last()
-                && running != n
-                && let Some(r) = i.nodes.get_mut(running)
-                && matches!(r.kind, Kind::Property(_))
-            {
-                r.flags.set(Flags::EAGER, true);
-            }
+            i.writer_becomes_eager(n);
             if changed {
                 i.stats.propagations += 1;
                 i.mark_observers(n, NodeState::Dirty);
@@ -1781,15 +1766,7 @@ impl<V: Clone + 'static> Graph<V> {
                 return Ok(false);
             };
             f(v);
-            // As in `write`: a binding that changes another property is
-            // side-effecting, so it may not stay lazy.
-            if let Some(&running) = i.eval_stack.last()
-                && running != n
-                && let Some(r) = i.nodes.get_mut(running)
-                && matches!(r.kind, Kind::Property(_))
-            {
-                r.flags.set(Flags::EAGER, true);
-            }
+            i.writer_becomes_eager(n);
             if let Kind::Property(p) = &mut i.nodes[n].kind {
                 p.base.provenance = Provenance::Assigned;
             }
@@ -2158,13 +2135,8 @@ impl<V: Clone + 'static> Graph<V> {
             && matches!(top.content, Content::Value(_))
             && node.state == NodeState::Clean
             && node.value.as_ref().is_some_and(|old| eq(old, v));
-        if same
-            && let Some(&running) = i.eval_stack.last()
-            && running != n
-            && let Some(r) = i.nodes.get_mut(running)
-            && matches!(r.kind, Kind::Property(_))
-        {
-            r.flags.set(Flags::EAGER, true);
+        if same {
+            i.writer_becomes_eager(n);
         }
         same
     }
@@ -3156,6 +3128,19 @@ fn enqueue<V>(queues: &mut [Queue], n: NodeId, node: &mut Node<V>) {
 }
 
 impl<V: Clone + 'static> Inner<V> {
+    /// A binding that writes `n` is side-effecting: laziness would make the
+    /// side effect depend on who reads it, so it becomes a root.
+    #[inline]
+    fn writer_becomes_eager(&mut self, n: NodeId) {
+        if let Some(&running) = self.eval_stack.last()
+            && running != n
+            && let Some(r) = self.nodes.get_mut(running)
+            && matches!(r.kind, Kind::Property(_))
+        {
+            r.flags.set(Flags::EAGER, true);
+        }
+    }
+
     /// Keeps an empty node list for a scope to come. Lists past a few
     /// hundred nodes, and lists past what a churning view needs, are freed.
     fn give_back_node_list(&mut self, list: Vec<NodeId>) {
