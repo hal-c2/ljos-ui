@@ -44,6 +44,8 @@ use oxc_syntax::operator::{
     AssignmentOperator, BinaryOperator, LogicalOperator, UnaryOperator, UpdateOperator,
 };
 
+use crate::compile::{ATTACHED, PLACE, SINGLETON, VALUE_AT, VALUE_HELD, VALUE_IN};
+
 /// Functions of the file inlined inside one another, at most.
 const MAX_INLINE_DEPTH: usize = 4;
 
@@ -1594,7 +1596,7 @@ impl<'p, 'a> Gen<'p, 'a> {
                 if !matches!(self.lookup(name)?, Name::Global) {
                     return Err(Reason::with("function call", "of a value"));
                 }
-                if name == "__ljos_single" {
+                if name == SINGLETON {
                     return self.singleton(it, dst);
                 }
                 let f = match name {
@@ -1615,10 +1617,10 @@ impl<'p, 'a> Gen<'p, 'a> {
                     "Boolean" => Builtin::Boolean,
                     "isNaN" => Builtin::IsNaN,
                     "isFinite" => Builtin::IsFinite,
-                    "__ljos_vt" | "__ljos_vl" | "__ljos_vp" | "__ljos_at" => {
+                    VALUE_AT | VALUE_IN | VALUE_HELD | PLACE => {
                         return Err(Reason::new("write to a member of a value"));
                     }
-                    "__ljos_att" => return Err(Reason::new("attached object of a value")),
+                    ATTACHED => return Err(Reason::new("attached object of a value")),
                     _ => return Err(Reason::with("global function call", name)),
                 };
                 self.builtin(f, Lead::None, it, dst)
@@ -1700,7 +1702,7 @@ impl<'p, 'a> Gen<'p, 'a> {
     fn singleton_param(&self, it: &'p CallExpression<'a>) -> Result<Option<u16>, Reason> {
         match &it.callee {
             Expression::Identifier(id)
-                if id.name == "__ljos_single" && matches!(self.lookup(&id.name)?, Name::Global) =>
+                if id.name == SINGLETON && matches!(self.lookup(&id.name)?, Name::Global) =>
             {
                 self.singleton_of(it)
             }
@@ -1924,7 +1926,7 @@ fn value_at<'p, 'a>(expression: &'p Expression<'a>) -> Option<(&'p Expression<'a
     let Expression::Identifier(callee) = &call.callee else {
         return None;
     };
-    if callee.name != "__ljos_vt" {
+    if callee.name != VALUE_AT {
         return None;
     }
     let [object, Argument::StringLiteral(name)] = &call.arguments[..] else {
@@ -1957,12 +1959,12 @@ fn is_known_global(name: &str) -> bool {
             | "QT_TRID_NOOP"
             | "QT_TRANSLATE_NOOP"
             | "arguments"
-            | "__ljos_vt"
-            | "__ljos_vl"
-            | "__ljos_vp"
-            | "__ljos_at"
-            | "__ljos_att"
-            | "__ljos_single"
+            | VALUE_AT
+            | VALUE_IN
+            | VALUE_HELD
+            | PLACE
+            | ATTACHED
+            | SINGLETON
     )
 }
 

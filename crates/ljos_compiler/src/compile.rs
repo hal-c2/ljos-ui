@@ -2796,18 +2796,18 @@ fn held(plan: Plan) -> Plan {
 /// The global that gives what `object[name]` is for a write to one of its
 /// members: the member itself, or a stand-in for a value type that writes
 /// the changed value back. The engine defines it, and [`VALUE_IN`].
-const VALUE_AT: &str = "__ljos_vt";
+pub(crate) const VALUE_AT: &str = "__ljos_vt";
 
 /// The same for a variable: `(value, put)`, where `put` assigns to it.
-const VALUE_IN: &str = "__ljos_vl";
+pub(crate) const VALUE_IN: &str = "__ljos_vl";
 
 /// The same for a variable that keeps where its value was read from:
 /// `(value, place, put)`. The changed value is written to the place too.
-const VALUE_HELD: &str = "__ljos_vp";
+pub(crate) const VALUE_HELD: &str = "__ljos_vp";
 
 /// `(object, name)`: the place a variable's value is read from, with the
 /// value it read (`.v`).
-const PLACE: &str = "__ljos_at";
+pub(crate) const PLACE: &str = "__ljos_at";
 
 /// What the variable that keeps a variable's place is named after it.
 const HELD: &str = "$ljos";
@@ -2852,12 +2852,12 @@ fn or_throw(free: &js::Free) -> String {
 
 /// The global that gives what a type attached to an object. The engine
 /// defines it.
-const ATTACHED: &str = "__ljos_att";
+pub(crate) const ATTACHED: &str = "__ljos_att";
 
 /// `__ljos_single($s_Theme)`: the one object a singleton type is, made on
 /// the first call. What the function is given for the type only stands for
 /// it.
-const SINGLETON: &str = "__ljos_single";
+pub(crate) const SINGLETON: &str = "__ljos_single";
 
 /// The members of `Qt` that read an address from the file that asks.
 const MAKERS: [&str; 3] = ["createComponent", "createQmlObject", "resolvedUrl"];
