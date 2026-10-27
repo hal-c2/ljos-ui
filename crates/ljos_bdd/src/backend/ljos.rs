@@ -144,7 +144,7 @@ pub struct LjosBackend {
     /// Whether the scenario changes files while it runs.
     watching: bool,
     /// What the system prefers, said before anything was loaded.
-    settings: Vec<Said>,
+    settings: Vec<HostSetting>,
     /// What the desktop's settings portal said.
     desktop: ljos_a11y::DesktopSettings,
     /// The inspector of a scenario that an agent looks at.
@@ -203,7 +203,7 @@ impl std::fmt::Debug for LjosBackend {
 
 /// Who said what the user prefers.
 #[derive(Clone, Debug)]
-enum Said {
+enum HostSetting {
     System(super::SystemSetting),
     App(super::SystemSetting),
     Desktop(ljos_a11y::HostPrefs),
@@ -216,29 +216,29 @@ enum Said {
     NoExternalDrops,
 }
 
-fn apply(engine: &Engine, said: Said) {
+fn apply(engine: &Engine, said: HostSetting) {
     match said {
         // The platform's say, which an assistive technology that listens no
         // longer stands in for.
-        Said::System(super::SystemSetting::ScreenReader(active)) => {
+        HostSetting::System(super::SystemSetting::ScreenReader(active)) => {
             ljos_quick::set_screen_reader_from_platform(engine, active)
         }
-        Said::System(setting) => {
+        HostSetting::System(setting) => {
             let mut prefs = ljos_quick::system_prefs(engine);
             change_setting(&mut prefs, setting);
             report_all(engine, prefs);
         }
-        Said::App(setting) => {
+        HostSetting::App(setting) => {
             ljos_quick::update_system_prefs(engine, |p| change_setting(p, setting))
         }
-        Said::Desktop(report) => ljos_quick::report_system_prefs(engine, report),
-        Said::Font(font) => ljos_controls::set_application_font(engine, Some(&font)),
-        Said::Network(status) => ljos_platform::report_network_status(engine, status),
-        Said::LinkColour(link) => {
+        HostSetting::Desktop(report) => ljos_quick::report_system_prefs(engine, report),
+        HostSetting::Font(font) => ljos_controls::set_application_font(engine, Some(&font)),
+        HostSetting::Network(status) => ljos_platform::report_network_status(engine, status),
+        HostSetting::LinkColour(link) => {
             let palette = ljos_quick::application_palette(engine).with_link(link);
             ljos_quick::set_application_palette(engine, palette)
         }
-        Said::NoExternalDrops => ljos_platform::Platform::of(engine)
+        HostSetting::NoExternalDrops => ljos_platform::Platform::of(engine)
             .set_external_drops_unavailable(engine, "the window system has no drag-and-drop"),
     }
 }
@@ -347,7 +347,7 @@ impl LjosBackend {
     }
 
     /// A setting said now, or at the start when nothing is loaded yet.
-    fn said(&mut self, said: Said) -> Result<()> {
+    fn apply_or_queue(&mut self, said: HostSetting) -> Result<()> {
         match self.live.as_mut() {
             Some(live) => {
                 apply(&live.engine, said);
@@ -1542,11 +1542,11 @@ impl Environment for LjosBackend {
     }
 
     fn system_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
-        self.said(Said::System(setting))
+        self.apply_or_queue(HostSetting::System(setting))
     }
 
     fn app_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
-        self.said(Said::App(setting))
+        self.apply_or_queue(HostSetting::App(setting))
     }
 
     fn desktop_setting(
@@ -1565,7 +1565,7 @@ impl Environment for LjosBackend {
                 ljos_a11y::DesktopFont::Qt(s) => ljos_controls::desktop_font::from_qt_string(&s),
             };
             return match font {
-                Some(font) => self.said(Said::Font(font)),
+                Some(font) => self.apply_or_queue(HostSetting::Font(font)),
                 None => Ok(()),
             };
         }
@@ -1574,17 +1574,17 @@ impl Environment for LjosBackend {
             return Ok(());
         }
         let report = self.desktop.prefs();
-        self.said(Said::Desktop(report))
+        self.apply_or_queue(HostSetting::Desktop(report))
     }
 
     fn network(&mut self, status: ljos_platform::NetworkStatus) -> Result<()> {
-        self.said(Said::Network(status))
+        self.apply_or_queue(HostSetting::Network(status))
     }
 
     fn link_colour(&mut self, colour: &str) -> Result<()> {
         let colour = ljos_engine::Color::parse(colour)
             .ok_or_else(|| failed(format!("{colour:?} is not a colour")))?;
-        self.said(Said::LinkColour(colour))
+        self.apply_or_queue(HostSetting::LinkColour(colour))
     }
 
     // The `.ts` file is read as it is, the way a development build reads
@@ -1894,7 +1894,7 @@ impl Platform for LjosBackend {
     }
 
     fn no_external_drops(&mut self) -> Result<()> {
-        self.said(Said::NoExternalDrops)
+        self.apply_or_queue(HostSetting::NoExternalDrops)
     }
 }
 
