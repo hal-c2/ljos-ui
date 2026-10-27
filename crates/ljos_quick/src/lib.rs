@@ -121,9 +121,8 @@ pub use input::{
 };
 pub use input::{ScrollPhase, WheelEvent};
 pub use item::{
-    AccessibleInfo, AnchorLine, AnchorProps, Anchors, Edge, Item, ItemLayer, WindowPosition,
-    accessible, effective_margin, init_item, is_item, local_transform, map_to_scene,
-    register_window_position, scene_transform, set_accessible,
+    AnchorLine, AnchorProps, Anchors, Edge, Item, ItemLayer, WindowPosition, effective_margin,
+    init_item, is_item, local_transform, map_to_scene, register_window_position, scene_transform,
 };
 pub use layer::{
     LayerHooks, LayerTake, layer_host, layer_of, set_layer, set_layer_hooks, set_layer_take,

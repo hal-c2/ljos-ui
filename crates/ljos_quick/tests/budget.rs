@@ -394,7 +394,7 @@ fn ten_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1208,
-            bytes: 151880,
+            bytes: 151400,
         }
     );
 }
@@ -447,7 +447,7 @@ fn ten_wrapped_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1230,
-            bytes: 204273,
+            bytes: 203793,
         }
     );
 }
@@ -497,7 +497,7 @@ fn ten_plain_items() {
                 atoms: 0,
             },
             allocations: 671,
-            bytes: 120616,
+            bytes: 120136,
         }
     );
 }
@@ -525,7 +525,7 @@ fn ten_plain_items_torn_down() {
             scopes: 20,
             nodes: 30,
             allocations: 56,
-            freed: 69214,
+            freed: 68734,
         }
     );
 }
@@ -562,14 +562,15 @@ fn bytes_a_thousand_instances_keep() {
     // pages, not a vector that doubles, leave out its spare room (22.0,
     // 25.0 and 11.7 kB before, MEM3). MIR's smaller record, 264 bytes
     // where it was 328, leaves 0.1 kB less each (21.1, 23.3 and 11.3 kB
-    // before). The rest is mostly the graph's
-    // nodes, the objects and the text's runs.
+    // before). An item without the accessible record nothing read keeps
+    // 48 bytes less (20.9, 23.2 and 11.2 kB before). The rest is mostly
+    // the graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 20921,
-            wrapped: 23195,
-            plain: 11158,
+            one_line: 20873,
+            wrapped: 23147,
+            plain: 11110,
         }
     );
 }

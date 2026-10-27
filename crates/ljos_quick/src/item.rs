@@ -147,9 +147,6 @@ pub struct Item {
     /// Made when a colour is first set: most items never set one.
     #[qml(group, lazy, reset)]
     pub palette: Option<Box<Palette>>,
-    /// Static accessibility data for a later a11y pass (ARCHITECTURE §14).
-    #[qml(skip)]
-    pub accessible: AccessibleInfo,
     /// The visual parent `children`/`data` and `parent` were last brought
     /// in step with, so a change knows which parent's lists to leave.
     #[qml(skip)]
@@ -211,23 +208,12 @@ impl Default for Item {
             transform: QmlList::new(),
             layer: ItemLayer::default(),
             palette: None,
-            accessible: AccessibleInfo::default(),
             synced_parent: None,
             follows_implicit: [Weak::new(), Weak::new()],
             focus_parent: None,
             focus_reason: crate::focus::FocusReason::Other as i32,
         }
     }
-}
-
-/// Where an assistive-technology pass will find an item's static role,
-/// name and description. Nothing reads it yet.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AccessibleInfo {
-    /// `Accessible.role` as its documented name (`"Button"`), if set.
-    pub role: Option<Atom>,
-    pub name: Option<Atom>,
-    pub description: Option<Atom>,
 }
 
 /// The `layer` group of [`Item`]: a ShaderEffect that names an item whose
@@ -1064,20 +1050,6 @@ pub fn is_item(engine: &Engine, obj: ObjectId) -> bool {
 /// Whether the object's type derives from `T`.
 pub(crate) fn is_a<T: QmlType>(engine: &Engine, obj: ObjectId) -> bool {
     engine.inherits(obj, T::static_meta())
-}
-
-/// Sets an item's static accessibility data.
-pub fn set_accessible(
-    engine: &Engine,
-    obj: ObjectId,
-    info: AccessibleInfo,
-) -> Result<(), EngineError> {
-    engine.with_mut(obj, |i: &mut Item| i.accessible = info)
-}
-
-/// An item's static accessibility data.
-pub fn accessible(engine: &Engine, obj: ObjectId) -> Result<AccessibleInfo, EngineError> {
-    engine.with(obj, |i: &Item| i.accessible.clone())
 }
 
 /// Writes a property from native code without breaking a binding the user
