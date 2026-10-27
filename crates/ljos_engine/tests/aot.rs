@@ -78,6 +78,15 @@ static PROPS: &[PropSite] = &[
 /// running dynamically, registered for the file as the harness compiles
 /// it.
 fn register(h: &Harness, key: &str, code: &[(u32, Code)]) -> Result<(), ljos_engine::EngineError> {
+    register_sites(h, key, PROPS, code)
+}
+
+fn register_sites(
+    h: &Harness,
+    key: &str,
+    props: &'static [PropSite],
+    code: &[(u32, Code)],
+) -> Result<(), ljos_engine::EngineError> {
     let file = h.engine.component_source().unwrap().load(key).unwrap();
     let mut exprs: Vec<Option<Code>> = vec![None; file.exprs.len()];
     for (line, c) in code {
@@ -93,7 +102,7 @@ fn register(h: &Harness, key: &str, code: &[(u32, Code)]) -> Result<(), ljos_eng
         content: ljos_ir::aot::content_key(&file),
         context: "Main",
         texts: &[],
-        props: PROPS,
+        props,
         signals: &["ping"],
         methods: &[],
         exprs: Box::leak(exprs.into_boxed_slice()),
@@ -361,4 +370,71 @@ fn a_write_through_an_alias_is_compared_as_the_script_makes_it() {
     let stats = h.engine.aot_stats();
     assert_eq!(stats.checked, 1, "{stats:?}");
     assert_eq!(differ(&h.engine, &h.warnings()), 0);
+}
+
+const SHUT: &str = r#"import QtQuick
+Item {
+    id: root
+    property int count: 0
+    property int a: 0
+    Item { id: inner; objectName: "inner"; property int v: 0 }
+    onAChanged: inner.destroy()
+    onCountChanged: { a = count; inner.v = count }
+}
+"#;
+
+static SHUT_PROPS: &[PropSite] = &[
+    PropSite {
+        name: "count",
+        kind: Kind::Number,
+        write: false,
+    },
+    PropSite {
+        name: "a",
+        kind: Kind::Number,
+        write: true,
+    },
+    PropSite {
+        name: "v",
+        kind: Kind::Number,
+        write: true,
+    },
+];
+
+/// `onCountChanged: { a = count; inner.v = count }`, `inner` looked up
+/// before the write of `a` has its handler destroy it.
+fn writes_after_a_destroy(f: &Frame<'_>) -> Result<Value, Stop> {
+    let root = f.object(0, 0)?;
+    let inner = f.object(0, 1)?;
+    let count = f.prop(root, 0)?;
+    let a = f.prop(root, 1)?;
+    let v = f.prop(inner, 2)?;
+    let n = f.num(root, count)?;
+    f.set(root, a, Value::Real(n))?;
+    f.set(inner, v, Value::Real(n))?;
+    Ok(Value::Undefined)
+}
+
+// What compiled code looks up before its first effect stays what a
+// script would find after it: a script destroys an object later, never
+// in the middle of a handler.
+#[test]
+fn an_object_looked_up_before_an_effect_that_destroys_it_is_still_there() {
+    for check in [true, false] {
+        let h = engine();
+        h.engine.set_aot_check(check);
+        h.files(&[("Main", SHUT)]);
+        register_sites(&h, "Main", SHUT_PROPS, &[(8, writes_after_a_destroy)]).unwrap();
+        let root = made(&h);
+        let inner = h.find(root, "inner");
+        h.set(root, "count", Value::Int(3));
+        assert_eq!(h.num(inner, "v"), 3.0, "check {check}");
+        let stats = h.engine.aot_stats();
+        assert_eq!(stats.runs, 1, "check {check}: {stats:?}");
+        assert_eq!(stats.checked, u64::from(check), "{stats:?}");
+        assert_eq!(differ(&h.engine, &h.warnings()), 0);
+        assert!(h.engine.is_alive(inner));
+        h.engine.process_deferred_deletes();
+        assert!(!h.engine.is_alive(inner));
+    }
 }
