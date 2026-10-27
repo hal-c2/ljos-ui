@@ -36,7 +36,7 @@ use serde_json::{Value, json};
 use super::capture::{self, REDACTED};
 use super::objects::handle;
 use super::redact::{SecretBook, mask_json, mask_text};
-use super::room::Room;
+use super::room::{self, Room};
 use super::watch::ChangeFeed;
 
 pub const TRACE: &str = "\
@@ -622,17 +622,13 @@ pub(crate) fn trace(
     );
     let mut events: Vec<Value> = Vec::new();
     let mut told = None;
-    for e in after.iter().take(max) {
+    let kept = room::rows(&mut room, &after[..after.len().min(max)], false, |e| {
         let (mut v, mut line) = row(e);
         log.book.mask_json(&mut v);
         log.book.mask_text(&mut line);
-        let (v, line) = if room.take(&v, &line) {
-            (v, line)
-        } else if events.is_empty() {
-            room.squeeze(v, &line)
-        } else {
-            break;
-        };
+        (v, line)
+    });
+    for (e, v, line) in kept {
         text.push_str(&line);
         if !line.ends_with('\n') {
             text.push('\n');
