@@ -1854,6 +1854,7 @@ module QtQuick
 		signal populateChanged
 		signal addChanged
 		signal moveChanged
+		method forceLayout
 	type QtQuick.DoubleValidator DoubleValidator
 		prototype QtQml.QtObject named
 		enum Notation StandardNotation=0 ScientificNotation=1
@@ -2086,6 +2087,7 @@ module QtQuick
 		signal populateChanged
 		signal addChanged
 		signal moveChanged
+		method forceLayout
 	type QtQuick.FocusScope FocusScope
 		prototype QtQuick.Item named
 	type QtQuick.Font Font
@@ -2217,6 +2219,7 @@ module QtQuick
 		signal populateChanged
 		signal addChanged
 		signal moveChanged
+		method forceLayout
 	type QtQuick.GridMesh GridMesh
 		prototype QtQml.QtObject named
 		prop resolution QtQml.size named
@@ -3020,6 +3023,7 @@ module QtQuick
 		signal populateChanged
 		signal addChanged
 		signal moveChanged
+		method forceLayout
 	type QtQuick.SafeArea SafeArea
 		attached QtQuick.SafeAreaAttached
 		is uncreatable

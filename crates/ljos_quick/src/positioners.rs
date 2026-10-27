@@ -335,6 +335,14 @@ impl Row {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init(cx.engine, cx.this, Which::Row)
     }
+
+    /// `forceLayout()`: the children are placed now rather than at the
+    /// next frame, so the script that asked reads the new places and
+    /// size on its next line.
+    #[qml(invokable, name = "forceLayout")]
+    fn force_layout(cx: &Cx) -> Result<(), EngineError> {
+        polish(cx.engine, cx.this, Which::Row)
+    }
 }
 
 #[qml_impl]
@@ -342,6 +350,14 @@ impl Column {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init(cx.engine, cx.this, Which::Column)
+    }
+
+    /// `forceLayout()`: the children are placed now rather than at the
+    /// next frame, so the script that asked reads the new places and
+    /// size on its next line.
+    #[qml(invokable, name = "forceLayout")]
+    fn force_layout(cx: &Cx) -> Result<(), EngineError> {
+        polish(cx.engine, cx.this, Which::Column)
     }
 }
 
@@ -351,6 +367,14 @@ impl Grid {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init(cx.engine, cx.this, Which::Grid)
     }
+
+    /// `forceLayout()`: the children are placed now rather than at the
+    /// next frame, so the script that asked reads the new places and
+    /// size on its next line.
+    #[qml(invokable, name = "forceLayout")]
+    fn force_layout(cx: &Cx) -> Result<(), EngineError> {
+        polish(cx.engine, cx.this, Which::Grid)
+    }
 }
 
 #[qml_impl]
@@ -358,6 +382,14 @@ impl Flow {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init(cx.engine, cx.this, Which::Flow)
+    }
+
+    /// `forceLayout()`: the children are placed now rather than at the
+    /// next frame, so the script that asked reads the new places and
+    /// size on its next line.
+    #[qml(invokable, name = "forceLayout")]
+    fn force_layout(cx: &Cx) -> Result<(), EngineError> {
+        polish(cx.engine, cx.this, Which::Flow)
     }
 }
 
