@@ -46,7 +46,7 @@
 //! - `folder` reads as it was written: Ljós does not resolve a relative
 //!   one in place, but lists the folder it resolves to.
 //!
-//! The folder is read on a thread of its own and the rows arrive as a
+//! The folder is read on the compute pool and the rows arrive as a
 //! message: `status` is `Loading` until then. Nothing polls: the model
 //! does not follow later changes on disk, as Qt's does.
 
@@ -391,7 +391,7 @@ fn options(m: &FolderListModel) -> Options {
     }
 }
 
-/// A file as the listing thread found it.
+/// A file as the listing worker found it.
 #[derive(Debug)]
 struct Found {
     name: String,
@@ -463,21 +463,43 @@ fn load(e: &Engine, me: ObjectId) {
     let _ = cx.set(FolderListModel::STATUS, status::LOADING);
 
     let real = env.real(&named);
-    let reply = platform.expect_for("FolderListModel folder", Some(me));
-    let spawned = std::thread::Builder::new()
-        .name("ljos-folder".to_owned())
-        .spawn(move || {
+    // On the compute pool: a listing that panics there is a fault of
+    // the engine and ends `Loading`, and loads in a row share its few
+    // threads rather than each starting one.
+    let queued = ljos::task::spawn_for(
+        e,
+        "FolderListModel folder",
+        Some(me),
+        move || {
+            // A test's way to make the work panic, as a bug in it would.
+            #[cfg(test)]
+            if real.as_ref().is_ok_and(|p| p.ends_with(tests::PANICS)) {
+                panic!("a listing that panics");
+            }
             let found = real.map(|real| list(&real, &opts)).unwrap_or_default();
-            reply.send(move |e| apply(e, me, generation, &named, found));
-        });
-    if let Err(err) = spawned {
+            (named, found)
+        },
+        move |e, answer| match answer {
+            Ok((named, found)) => apply(e, me, generation, &named, found),
+            Err(_) if current(e, me, generation) => clear(e, me),
+            Err(_) => {}
+        },
+    );
+    if let Err(full) = queued {
         e.log(
             LogLevel::Warning,
             CATEGORY,
-            format!("QML FolderListModel: no thread to read with: {err}"),
+            format!("QML FolderListModel: no worker to read with: {full}"),
         );
         let _ = cx.set(FolderListModel::STATUS, status::NULL);
     }
+}
+
+/// Whether `generation` is still the model's newest load.
+fn current(e: &Engine, me: ObjectId, generation: u64) -> bool {
+    e.is_alive(me)
+        && e.with(me, |m: &FolderListModel| m.generation == generation)
+            .unwrap_or(false)
 }
 
 /// No rows, a count of 0 and `Null`, saying so only where they change.
@@ -663,10 +685,7 @@ fn wildcard(p: &[char], s: &[char]) -> bool {
 
 /// The listing has arrived: the rows replace the old ones.
 fn apply(e: &Engine, me: ObjectId, generation: u64, dir: &Path, found: Vec<Found>) {
-    let current = e.is_alive(me)
-        && e.with(me, |m: &FolderListModel| m.generation == generation)
-            .unwrap_or(false);
-    if !current {
+    if !current(e, me, generation) {
         return;
     }
     let cx = Cx::new(e, me);
@@ -714,6 +733,50 @@ fn apply(e: &Engine, me: ObjectId, generation: u64, dir: &Path, found: Vec<Found
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The folder whose listing panics on the worker.
+    pub(super) const PANICS: &str = "ljos-test-panics";
+
+    #[test]
+    fn a_listing_that_panics_ends_loading_and_is_a_fault() {
+        let dir = std::env::temp_dir()
+            .join(format!("ljos-folder-{}", std::process::id()))
+            .join(PANICS);
+        std::fs::create_dir_all(&dir).expect("a folder to list");
+        let e = ljos::engine();
+        register(&e);
+        let mut project = ljos_compiler::Project::new(ljos::dev::EngineOracle::from_engine(&e));
+        project.add(
+            "Main",
+            format!(
+                "import Qt.labs.folderlistmodel\nFolderListModel {{ folder: \"{}\" }}\n",
+                file_url(&dir)
+            ),
+        );
+        let compiled = ljos_compiler::compile_file(&project, "Main").expect("compiles");
+        let mut source = ljos::MapSource::new();
+        source.insert("Main", compiled.file);
+        e.set_component_source(source);
+        let m = e
+            .create_from_url("Main", None, Vec::new())
+            .expect("created");
+        Platform::of(&e).finish(&e);
+        let _ = std::fs::remove_dir_all(dir.parent().expect("made above"));
+        // FolderListModel has no Error status: what a failed listing
+        // is (an empty, Null model) is what a panicking one is.
+        assert_eq!(
+            e.read_by_name(m, "status").to_number(),
+            f64::from(status::NULL)
+        );
+        assert_eq!(e.read_by_name(m, "count").to_number(), 0.0);
+        assert!(
+            e.faults()
+                .iter()
+                .any(|f| format!("{:?}", f.fault).contains("a listing that panics")),
+            "faults: {:?}",
+            e.faults()
+        );
+    }
 
     #[test]
     fn wildcards_match_as_name_filters_do() {
