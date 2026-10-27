@@ -23,9 +23,6 @@ use crate::Options;
 use crate::cx::Cx;
 use crate::finding::Finding;
 
-/// How many frames the scene is given to come to rest after a change.
-const SETTLE_FRAMES: usize = 32;
-
 /// What an acting check works with.
 pub(crate) struct Act<'a> {
     pub engine: &'a Engine,
@@ -68,12 +65,7 @@ impl<'a> Act<'a> {
 
     /// Frames the scene until it waits for nothing at the audit's time.
     pub(crate) fn settle(&mut self) {
-        for _ in 0..SETTLE_FRAMES {
-            let out = self.scene.frame(self.engine, self.now);
-            if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > self.now) {
-                return;
-            }
-        }
+        crate::apply::settle(self.engine, self.scene, self.now);
     }
 
     /// Lets what is animating end before the scene is looked at, so that
