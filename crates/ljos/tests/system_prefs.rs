@@ -2,7 +2,8 @@
 //! host reports the platform's settings, and what the application set
 //! itself stays over them.
 
-use ljos::prelude::*;
+mod common;
+
 use ljos::system::{
     Contrast, DesktopSettings, HostPrefs, SettingValue, report_system_prefs, system_prefs,
     update_system_prefs,
@@ -18,17 +19,10 @@ Item {
 }
 "#;
 
-fn load(engine: &Engine) -> ObjectId {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("Main.qml"), MAIN).unwrap();
-    let source = ljos::dev::compile_dir_with(dir.path(), engine).unwrap();
-    ljos::create_root(engine, source, "Main").unwrap()
-}
-
 #[test]
 fn a_desktops_settings_reach_qml() {
     let engine = ljos::engine();
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     let mut desktop = DesktopSettings::default();
     assert!(desktop.set(
         "org.gnome.desktop.interface",
@@ -51,7 +45,7 @@ fn a_desktops_settings_reach_qml() {
 #[test]
 fn what_the_application_set_stays_over_the_hosts_reports() {
     let engine = ljos::engine();
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     update_system_prefs(&engine, |p| p.reduced_motion = true);
 
     report_system_prefs(

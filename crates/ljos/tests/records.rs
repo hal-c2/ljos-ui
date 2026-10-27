@@ -2,6 +2,8 @@
 //! gives QML a list of records and reads a script's nested object back,
 //! with no JS source made in between.
 
+mod common;
+
 use std::collections::HashMap;
 
 use ljos::prelude::*;
@@ -79,10 +81,7 @@ Item {
 fn load() -> (Engine, ObjectId, ObjectId) {
     let engine = ljos::engine();
     engine.register_module(ljos::module!("Example" 1.0 => [Bridge]));
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("Main.qml"), MAIN).unwrap();
-    let source = ljos::dev::compile_dir_with(dir.path(), &engine).unwrap();
-    let root = ljos::create_root(&engine, source, "Main").unwrap();
+    let root = common::create_main(&engine, MAIN);
     let bridge = engine.read_by_name(root, "bridge").as_object().unwrap();
     (engine, root, bridge)
 }

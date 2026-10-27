@@ -1,10 +1,11 @@
 //! What the system says of its network reaches QML through
 //! `NetworkInformation` and Rust through `ljos::system`.
 
+mod common;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos::prelude::*;
 use ljos::system::{
     NetworkStatus, Reachability, TransportMedium, network_status, on_network_change,
     report_network_status,
@@ -19,13 +20,6 @@ Item {
 }
 "#;
 
-fn load(engine: &Engine) -> ObjectId {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("Main.qml"), MAIN).unwrap();
-    let source = ljos::dev::compile_dir_with(dir.path(), engine).unwrap();
-    ljos::create_root(engine, source, "Main").unwrap()
-}
-
 fn wifi() -> NetworkStatus {
     NetworkStatus {
         reachability: Reachability::Online,
@@ -37,7 +31,7 @@ fn wifi() -> NetworkStatus {
 #[test]
 fn what_the_host_says_reaches_qml_and_rust() {
     let engine = ljos::engine();
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     assert!(!engine.read_by_name(root, "online").to_boolean());
     assert_eq!(network_status(&engine), NetworkStatus::default());
 
@@ -51,7 +45,7 @@ fn what_the_host_says_reaches_qml_and_rust() {
 fn what_was_said_before_qml_asked_is_what_it_reads() {
     let engine = ljos::engine();
     report_network_status(&engine, wifi());
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     assert!(engine.read_by_name(root, "online").to_boolean());
 }
 

@@ -2,6 +2,8 @@
 //! `Qt.locale()`, for the application's locale and a named one, and a
 //! change of locale reaches Rust.
 
+mod common;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -24,13 +26,6 @@ Item {
     property string named: (1234.5).toLocaleString(Qt.locale("fr_FR"), "f", 1)
 }
 "#;
-
-fn load(engine: &Engine) -> ObjectId {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("Main.qml"), MAIN).unwrap();
-    let source = ljos::dev::compile_dir_with(dir.path(), engine).unwrap();
-    ljos::create_root(engine, source, "Main").unwrap()
-}
 
 fn text(engine: &Engine, root: ObjectId, name: &str) -> String {
     engine.read_by_name(root, name).to_js_string().to_string()
@@ -59,7 +54,7 @@ fn rust_writes_what_qml_writes() {
     for name in ["en_US", "de_DE", "is_IS", "ar_EG", "C"] {
         let engine = ljos::engine();
         ljos::locale::set_locale(&engine, name);
-        let root = load(&engine);
+        let root = common::create_main(&engine, MAIN);
         let locale = Locale::of(&engine);
         let day = day(&engine);
         assert_eq!(locale.name(), text(&engine, root, "name"));
@@ -129,7 +124,7 @@ fn a_few_known_answers() {
 #[test]
 fn a_change_of_locale_reaches_rust() {
     let engine = ljos::engine();
-    let _root = load(&engine);
+    let _root = common::create_main(&engine, MAIN);
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = Rc::clone(&seen);
     let watch = ljos::locale::on_change(&engine, move |_, l| {
@@ -153,7 +148,7 @@ fn a_change_of_locale_reaches_rust() {
 #[test]
 fn the_system_locale_takes_each_category_from_its_own_variable() {
     let engine = ljos::engine();
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     let env = [
         ("LANG", "en_US.UTF-8"),
         ("LC_MESSAGES", "de_DE.UTF-8"),

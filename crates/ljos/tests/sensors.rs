@@ -3,6 +3,8 @@
 //! from whatever thread reads the device, and a source faster than the
 //! frames costs the UI one reading a frame.
 
+mod common;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -28,10 +30,7 @@ Item {
 "#;
 
 fn load(engine: &Engine) -> ObjectId {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("Main.qml"), MAIN).unwrap();
-    let source = ljos::dev::compile_dir_with(dir.path(), engine).unwrap();
-    let root = ljos::create_root(engine, source, "Main").unwrap();
+    let root = common::create_main(engine, MAIN);
     engine.read_by_name(root, "acc").as_object().unwrap()
 }
 

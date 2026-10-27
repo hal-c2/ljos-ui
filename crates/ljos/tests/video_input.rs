@@ -1,6 +1,8 @@
 //! Frames a program makes itself, handed to a `VideoOutput` or a
 //! `VideoSink` from any thread: the newest is shown, one job a frame.
 
+mod common;
+
 use ljos::media::{FrameError, VideoFrame, VideoFrameInput, YuvColour};
 use ljos::prelude::*;
 
@@ -25,13 +27,6 @@ Item {
 }
 "#;
 
-fn load(engine: &Engine) -> ObjectId {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("Main.qml"), MAIN).unwrap();
-    let source = ljos::dev::compile_dir_with(dir.path(), engine).unwrap();
-    ljos::create_root(engine, source, "Main").unwrap()
-}
-
 fn object(engine: &Engine, root: ObjectId, name: &str) -> ObjectId {
     engine.read_by_name(root, name).as_object().unwrap()
 }
@@ -48,7 +43,7 @@ fn solid(width: u32, height: u32, n: u8) -> VideoFrame {
 #[test]
 fn frames_from_another_thread_show_the_newest_once() {
     let engine = ljos::engine();
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     let output = object(&engine, root, "output");
     let input = VideoFrameInput::new(&engine, output).unwrap();
     let platform = Platform::of(&engine);
@@ -81,7 +76,7 @@ fn frames_from_another_thread_show_the_newest_once() {
 #[test]
 fn a_sink_of_the_programs_takes_frames_too() {
     let engine = ljos::engine();
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     let sink = object(&engine, root, "sink");
     let input = VideoFrameInput::new(&engine, sink).unwrap();
     assert_eq!(input.sink(), sink);
@@ -99,7 +94,7 @@ fn a_sink_of_the_programs_takes_frames_too() {
 #[test]
 fn only_video_takes_frames() {
     let engine = ljos::engine();
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     let plain = object(&engine, root, "plain");
     assert!(matches!(
         VideoFrameInput::new(&engine, plain),
@@ -110,7 +105,7 @@ fn only_video_takes_frames() {
 #[test]
 fn a_frame_sent_after_its_sink_is_gone_is_dropped() {
     let engine = ljos::engine();
-    let root = load(&engine);
+    let root = common::create_main(&engine, MAIN);
     let sink = object(&engine, root, "sink");
     let input = VideoFrameInput::new(&engine, sink).unwrap();
     engine.destroy_now(sink);

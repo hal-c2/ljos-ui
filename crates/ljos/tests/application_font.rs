@@ -1,9 +1,9 @@
 //! A plain text item made before the application font changes follows it.
 
+mod common;
+
 fn compile(main: &str) -> ljos::MapSource {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("Main.qml"), main).unwrap();
-    ljos::dev::compile_dir_with(dir.path(), &ljos::engine()).unwrap()
+    common::compile_main(&ljos::engine(), main)
 }
 
 #[test]
