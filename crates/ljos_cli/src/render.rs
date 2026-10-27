@@ -194,7 +194,6 @@ impl Render {
             None => compile(&dir, &key, notes, EngineOracle::table_only())?,
         };
         let said = Said::default();
-        let sink = said.clone();
         // The reference picture of a window is of its items: the window's
         // own colour is not in it, and where no item paints the picture is
         // transparent (corpus/harness/reference.qml).
@@ -206,7 +205,6 @@ impl Render {
             picture
         }
         .settle(self.settle)
-        .on_scene_message(move |text| sink.add(text))
         .without_window_colour();
         picture.install(&engine);
         engine.set_wall_clock_origin(self.now);

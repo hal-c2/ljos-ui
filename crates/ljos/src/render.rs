@@ -32,7 +32,6 @@
 //! [`App::build`](crate::App::build) returns, with the time of the call
 //! as the clock's start.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -80,16 +79,12 @@ pub fn render_png(
     picture.png(engine, root)
 }
 
-/// Hears the scene's messages; shared with the scene's log handler.
-type SceneMessages = Rc<RefCell<dyn FnMut(&str)>>;
-
 /// What a picture is taken at: a size, a time to let pass, and the
 /// virtual clock the Engine runs on meanwhile.
 pub struct Picture {
     size: (u32, u32),
     settle_ms: u64,
     clock: Arc<VirtualClock>,
-    scene_messages: Option<SceneMessages>,
     window_colour: bool,
     root_sized: bool,
 }
@@ -111,7 +106,6 @@ impl Picture {
             size: (width, height),
             settle_ms: 0,
             clock: Arc::new(VirtualClock::new()),
-            scene_messages: None,
             window_colour: true,
             root_sized: false,
         }
@@ -122,15 +116,6 @@ impl Picture {
     #[must_use]
     pub fn settle(mut self, ms: u64) -> Self {
         self.settle_ms = ms;
-        self
-    }
-
-    /// Hears what the scene reports while it is laid out and drawn (a
-    /// binding loop in layout, a picture that did not load), one line
-    /// a message. The Engine's own messages go to its log handler.
-    #[must_use]
-    pub fn on_scene_message(mut self, f: impl FnMut(&str) + 'static) -> Self {
-        self.scene_messages = Some(Rc::new(RefCell::new(f)));
         self
     }
 
@@ -203,12 +188,6 @@ impl Picture {
     ) -> Result<QuickScene, String> {
         let (mut width, mut height) = self.size;
         let mut scene = QuickScene::new(kurbo::Size::new(f64::from(width), f64::from(height)));
-        if let Some(f) = &self.scene_messages {
-            let f = Rc::clone(f);
-            scene.log().set_handler(move |e| {
-                (f.borrow_mut())(e.message.lines().next().unwrap_or("").trim())
-            });
-        }
         scene.set_root(engine, root).map_err(|e| e.to_string())?;
         if self.root_sized {
             // Laid out first, as a Text knows its implicit size only then.

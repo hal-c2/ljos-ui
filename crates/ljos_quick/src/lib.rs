@@ -36,7 +36,6 @@ pub mod keys;
 mod layer;
 mod layouts;
 mod loader;
-mod log;
 mod long_press;
 mod metrics;
 mod mirroring;
@@ -135,7 +134,6 @@ pub use layouts::{
 pub use ljos_a11y::{ColorScheme, Contrast, DesktopSettings, HostPrefs, SettingValue, SystemPrefs};
 pub use loader::Loader;
 #[allow(deprecated)]
-pub use log::{LogEntry, QuickLog};
 pub use metrics::{FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
 pub use paint_item::{ItemPaint, ReadPaint, register_paint_item, request_repaint};

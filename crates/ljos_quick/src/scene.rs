@@ -68,7 +68,6 @@ use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKin
 use crate::item::{Item, init_item, is_a, is_item, num, scene_transform, write_computed};
 use crate::loader::{Loader, shown_children};
 #[allow(deprecated)]
-use crate::log::QuickLog;
 use crate::positioners::{self, Column, Row, Which};
 use crate::rectangle::{Rectangle, RectanglePaint};
 use crate::text::{self, SharedTextEngine, Text, TextInputs};
@@ -860,8 +859,6 @@ pub struct SceneMemory {
 pub struct QuickScene {
     tree: RenderTree,
     shared: SharedRc,
-    #[allow(deprecated)]
-    log: QuickLog,
     items: Records<Record>,
     by_node: SecondaryMap<NodeId, ObjectId>,
     /// `Shared::placed` of the last frame, kept for its capacity.
@@ -984,7 +981,6 @@ impl QuickScene {
         QuickScene {
             tree: RenderTree::new(),
             shared,
-            log: QuickLog::default(),
             items: Records::default(),
             by_node: SecondaryMap::new(),
             placed: Vec::new(),
@@ -1279,15 +1275,6 @@ impl QuickScene {
     /// run without one.
     pub fn set_timer_hook(&mut self, hook: TimerHook) {
         self.timers = Some(hook);
-    }
-
-    /// Always empty: the scene's warnings go to the engine log
-    /// ([`Engine::set_log_handler`], [`Engine::take_log`]). Kept, and not
-    /// marked deprecated, until its callers are gone: they build with
-    /// warnings as errors.
-    #[allow(deprecated)]
-    pub fn log(&self) -> &QuickLog {
-        &self.log
     }
 
     pub fn render_tree(&self) -> &RenderTree {

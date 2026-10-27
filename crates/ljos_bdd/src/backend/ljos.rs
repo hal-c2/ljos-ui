@@ -398,13 +398,6 @@ impl LjosBackend {
             .set_js_dispatch_budget(JS_BUDGET, JS_BUDGET)
             .map_err(|e| failed(format!("the JS budget is not set: {e}")))?;
         let mut scene = QuickScene::new(kurbo::Size::new(VIEWPORT, VIEWPORT));
-        let sink = log.clone();
-        scene.log().set_handler(move |e| {
-            sink.borrow_mut().push(LogEntry {
-                level: LogLevel::Warning,
-                message: e.message.clone(),
-            });
-        });
         scene.set_root(&engine, driver).map_err(failed)?;
         let mut live = Live {
             engine,
