@@ -1481,9 +1481,12 @@ impl<M: Send + 'static> Desktop<M> {
         #[cfg(feature = "mcp")]
         if let Some(meter) = meter {
             app.record_paint(&meter.report(asked, steps));
-            if !self.drawn_once {
-                app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
-            }
+        }
+        // As the CPU path does: the root's first frame is a step of the
+        // start-up whether or not a client was inspecting then.
+        #[cfg(feature = "mcp")]
+        if slot.view.is_none() && !self.drawn_once {
+            app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
         }
         show_when_drawn(host, surface, &mut slot.activate, screens_stale);
         slot.drawn(began, Instant::now());
