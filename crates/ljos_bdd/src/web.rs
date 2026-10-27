@@ -114,8 +114,13 @@ impl Drop for WebServer {
         // The thread waits in `accept`: one more connection wakes it to
         // see that it is to stop.
         let _ = TcpStream::connect(("127.0.0.1", self.port));
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        // A server that panicked fails the scenario that used it, unless
+        // that scenario is failing already.
+        if let Some(thread) = self.thread.take()
+            && let Err(panic) = thread.join()
+            && !std::thread::panicking()
+        {
+            std::panic::resume_unwind(panic);
         }
     }
 }
