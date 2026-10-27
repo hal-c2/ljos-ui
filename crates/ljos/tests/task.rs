@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::ThreadId;
 
 use ljos::prelude::*;
-use ljos::task::{Lane, TaskPanic, spawn, spawn_in};
+use ljos::task::{Lane, TaskPanic, spawn, spawn_for, spawn_in};
 
 fn finish(engine: &Engine) {
     Platform::of(engine).finish(engine);
@@ -193,6 +193,33 @@ fn spawn_in_runs_in_the_named_lane_and_the_prelude_holds_the_handle() {
     assert!(!task.is_cancelled());
     finish(&engine);
     assert_eq!(got.get(), 7);
+}
+
+#[test]
+fn spawn_for_lists_what_is_awaited_and_for_whom() {
+    let engine = ljos::engine();
+    let owner = ObjectId::default();
+    let (go_tx, go_rx) = mpsc::channel::<()>();
+    let got = Rc::new(Cell::new(0i32));
+    let seen = Rc::clone(&got);
+    spawn_for(
+        &engine,
+        "read file:///a.xml",
+        Some(owner),
+        move || {
+            go_rx.recv().expect("test lets it go");
+            5
+        },
+        move |_, v| seen.set(v.unwrap_or(0)),
+    )
+    .expect("queued");
+    let listed = Platform::of(&engine).promises();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].what, "read file:///a.xml");
+    assert_eq!(listed[0].owner, Some(owner));
+    go_tx.send(()).expect("work is waiting");
+    finish(&engine);
+    assert_eq!(got.get(), 5);
 }
 
 #[test]

@@ -75,13 +75,14 @@
 //! type writes against stays small.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ljos_engine::Engine;
+use ljos_engine::{Engine, ObjectId};
 use ljos_platform::{Platform, Reply};
 use ljos_runtime::{ComputePool, Fault};
 
@@ -196,6 +197,40 @@ where
     F: FnOnce() -> T + Send + 'static,
     D: FnOnce(&Engine, Result<T, TaskPanic>) + 'static,
 {
+    spawn_labelled(engine, lane, Cow::Borrowed("a task"), None, work, done)
+}
+
+/// [`spawn`], saying what is awaited and the object it is for, as
+/// `Platform::promises` lists it (an observer shows which object's
+/// load is still out, not just that a task is).
+pub fn spawn_for<T, F, D>(
+    engine: &Engine,
+    what: impl Into<Cow<'static, str>>,
+    owner: Option<ObjectId>,
+    work: F,
+    done: D,
+) -> Result<Task, PoolFull>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+    D: FnOnce(&Engine, Result<T, TaskPanic>) + 'static,
+{
+    spawn_labelled(engine, Lane::Deferred, what.into(), owner, work, done)
+}
+
+fn spawn_labelled<T, F, D>(
+    engine: &Engine,
+    lane: Lane,
+    what: Cow<'static, str>,
+    owner: Option<ObjectId>,
+    work: F,
+    done: D,
+) -> Result<Task, PoolFull>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+    D: FnOnce(&Engine, Result<T, TaskPanic>) + 'static,
+{
     let cancelled = Arc::new(AtomicBool::new(false));
     let waiting = callbacks(engine);
     let id = waiting.next.get();
@@ -211,7 +246,7 @@ where
             done(engine, outcome);
         }),
     );
-    let reply = Platform::of(engine).expect_for("a task", None);
+    let reply = Platform::of(engine).expect_for(what, owner);
     let flag = Arc::clone(&cancelled);
     let queued = ComputePool::global().spawn(lane, move || {
         // First thing on the pool thread: a task cancelled while it
