@@ -33,7 +33,7 @@ use ljos_render::kurbo;
 
 use crate::control::{Control, hover, is_left, takes_input};
 use crate::control::{ignore, ignore_cancel};
-use crate::util::{check, flag, is_a, is_unset, num, object};
+use crate::util::{check, flag, is_a, is_unset, num, object, set_derived};
 
 /// `Qt.Orientation`.
 pub(crate) mod orientation {
@@ -292,10 +292,9 @@ fn bar_of(engine: &Engine, obj: ObjectId) -> Option<Bar> {
 /// A write that is the template's and not the author's: a binding on the
 /// property stays, as it does when Qt's own code sets one.
 fn put(engine: &Engine, obj: ObjectId, prop: PropIndex, v: Value) {
-    if !engine.is_alive(obj) || engine.untrack(|| engine.read(obj, prop)).change_equals(&v) {
-        return;
+    if engine.is_alive(obj) {
+        check(engine, "scroll bar", set_derived(engine, obj, prop, v));
     }
-    check(engine, "scroll bar", engine.write_derived(obj, prop, v));
 }
 
 /// Where the handle starts and how long it is, as shares of the track.

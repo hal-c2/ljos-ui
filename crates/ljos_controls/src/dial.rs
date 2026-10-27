@@ -39,7 +39,7 @@ use crate::control::{Control, focus_policy, hover, is_left, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::scroll_bar::snap_mode;
 use crate::slider::{DEFAULT_STEP, Span, snap_mode_enum};
-use crate::util::{check, flag, num};
+use crate::util::{check, flag, num, set_derived};
 
 /// `Dial.InputMode`.
 pub(crate) mod input_mode {
@@ -151,10 +151,9 @@ fn span(e: &Engine, obj: ObjectId) -> Span {
 
 /// The template's write: a binding on the property stays.
 fn put(e: &Engine, obj: ObjectId, prop: PropIndex, v: Value) {
-    if !e.is_alive(obj) || e.untrack(|| e.read(obj, prop)).change_equals(&v) {
-        return;
+    if e.is_alive(obj) {
+        check(e, "dial", set_derived(e, obj, prop, v));
     }
-    check(e, "dial", e.write_derived(obj, prop, v));
 }
 
 fn keep_value(e: &Engine, obj: ObjectId) {

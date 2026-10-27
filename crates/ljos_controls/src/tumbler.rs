@@ -43,7 +43,9 @@ use ljos_render::kurbo;
 use crate::control::no_key;
 use crate::control::{Control, focus_policy, takes_input};
 use crate::rows;
-use crate::util::{bind_default, check, flag, is_a, num, object, on_model_made, set_computed};
+use crate::util::{
+    bind_default, check, flag, is_a, num, object, on_model_made, set_computed, set_derived,
+};
 
 /// `Tumbler.PositionMode`: the same numbers as a list view's.
 mod position_mode {
@@ -215,10 +217,9 @@ fn int(e: &Engine, me: ObjectId, p: PropIndex) -> i32 {
 
 /// The template's write: a binding on the property stays.
 fn put(e: &Engine, me: ObjectId, p: PropIndex, v: Value) {
-    if !e.is_alive(me) || e.untrack(|| e.read(me, p)).change_equals(&v) {
-        return;
+    if e.is_alive(me) {
+        check(e, "Tumbler", set_derived(e, me, p, v));
     }
-    check(e, "Tumbler", e.write_derived(me, p, v));
 }
 
 /// The view that shows the rows: the content item, or what a `Loader`

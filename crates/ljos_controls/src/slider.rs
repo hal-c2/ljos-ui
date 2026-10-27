@@ -44,7 +44,7 @@ use crate::control::no_key;
 use crate::control::{Control, focus_policy, hover, is_left, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::scroll_bar::{orientation, snap_mode};
-use crate::util::{check, flag, is_a, num, object};
+use crate::util::{check, flag, is_a, num, object, set_derived};
 
 /// How far `increase()` and `decrease()` go when no `stepSize` was given,
 /// in the units of the value.
@@ -366,10 +366,9 @@ fn held_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Held>> {
 /// A write that is the template's and not the author's: a binding on the
 /// property stays, as it does when Qt's own code sets one.
 fn put(engine: &Engine, obj: ObjectId, prop: PropIndex, v: Value) {
-    if !engine.is_alive(obj) || engine.untrack(|| engine.read(obj, prop)).change_equals(&v) {
-        return;
+    if engine.is_alive(obj) {
+        check(engine, "slider", set_derived(engine, obj, prop, v));
     }
-    check(engine, "slider", engine.write_derived(obj, prop, v));
 }
 
 // ---------------------------------------------------------------- values

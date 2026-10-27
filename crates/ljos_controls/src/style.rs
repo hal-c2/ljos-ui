@@ -300,10 +300,7 @@ fn is_a<T: QmlType>(engine: &Engine, obj: ObjectId) -> bool {
 }
 
 fn write_if_changed(engine: &Engine, obj: ObjectId, prop: PropIndex, val: Value) {
-    let cur = engine.untrack(|| engine.read(obj, prop));
-    if !cur.change_equals(&val) {
-        let _ = engine.write_derived(obj, prop, val);
-    }
+    let _ = crate::util::set_derived(engine, obj, prop, val);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
