@@ -40,6 +40,7 @@
 // Lets the derive's `::ljos_engine::…` paths work inside this crate too.
 extern crate self as ljos_engine;
 
+pub mod aot;
 mod atom;
 mod boundary;
 mod builtins;

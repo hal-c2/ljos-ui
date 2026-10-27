@@ -63,6 +63,8 @@ mod builtins;
 mod ops;
 mod vm;
 
+pub(crate) use builtins::round;
+pub(crate) use ops::{compare, pow, utf16_len};
 pub(crate) use vm::field as member_of;
 
 /// What tier 1 has done in one engine.
@@ -209,6 +211,16 @@ pub(crate) struct Noted {
 }
 
 impl Noted {
+    /// A record of `expr` installed for `inst`, whoever inlined it.
+    pub(crate) fn new(inst: &Rc<Instance>, expr: ExprId) -> Noted {
+        Noted {
+            inst: Rc::as_ptr(inst),
+            file: Rc::as_ptr(&inst.file),
+            expr,
+            weak: Rc::downgrade(inst),
+        }
+    }
+
     /// `Some` when a program of the file guards `expr`, or `expr` has a
     /// program another may run in place: only those are worth a record.
     pub(crate) fn of(inst: &Rc<Instance>, expr: ExprId) -> Option<Noted> {
@@ -219,12 +231,7 @@ impl Noted {
                 .get(expr.index())
                 .and_then(Option::as_ref)
                 .is_some_and(|p| p.pure);
-        worth.then(|| Noted {
-            inst: Rc::as_ptr(inst),
-            file: Rc::as_ptr(&inst.file),
-            expr,
-            weak: Rc::downgrade(inst),
-        })
+        worth.then(|| Noted::new(inst, expr))
     }
 }
 
@@ -735,7 +742,7 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
 }
 
 /// The text of a binding's JS function, for a report.
-fn js_text(ir: &CompiledFile, b: &Binding) -> String {
+pub(crate) fn js_text(ir: &CompiledFile, b: &Binding) -> String {
     const MOST: usize = 240;
     let Some(function) = ir.js.functions.get(b.js_fn.index()) else {
         return String::new();
@@ -837,6 +844,7 @@ impl Engine {
         };
         if !check {
             if let Some((o, prop, v)) = done.write {
+                self.aot_spy_write(o, prop, &v);
                 // Most handlers write a number to a plain property, which
                 // needs none of the looks the long way makes.
                 let plain = self.plain_script_write(o, prop, &v);
@@ -1001,10 +1009,54 @@ impl Engine {
         }
     }
 
+    /// Whether the function `o` has by `name` is still `expr` of `inst`'s
+    /// file, installed for the instance its parameters are resolved from:
+    /// what code with its body inlined runs on, as [`Op::Guard`] asks.
+    pub(crate) fn runs_inlined(
+        &self,
+        inst: &Instance,
+        o: ObjectId,
+        name: &str,
+        expr: ExprId,
+    ) -> bool {
+        let f = {
+            let store = self.inner.store.borrow();
+            let Some(h) = store.objects.get(o) else {
+                return false;
+            };
+            let Some(m) = vm::script_method_of(&h.meta, name) else {
+                return false;
+            };
+            let Some(f) = h
+                .ext
+                .as_ref()
+                .and_then(|ext| ext.methods.iter().find(|(i, _)| *i == m))
+                .map(|(_, f)| f.clone())
+            else {
+                return false;
+            };
+            (m, f)
+        };
+        let methods = self.inner.tier1.methods.borrow();
+        let Some(rec) = methods.get(&(o, f.0)) else {
+            return false;
+        };
+        let file = &inst.file;
+        let Some(callee) = inst.find(file.ir.expr(expr).scope.component) else {
+            return false;
+        };
+        std::ptr::addr_eq(Weak::as_ptr(&rec.f), Rc::as_ptr(&f.1))
+            && std::ptr::eq(rec.file, Rc::as_ptr(file))
+            && rec.expr == expr
+            && std::ptr::eq(rec.inst, callee)
+    }
+
     /// A JS function is about to write `v` to a property: the cross-check
     /// compares it with the write tier 1 would have made.
+    /// The cross-check of compiled code (aot.rs) spies on the same
+    /// writes.
     pub(crate) fn tier1_spying(&self) -> bool {
-        self.inner.tier1.spying.get()
+        self.inner.tier1.spying.get() || self.aot_spying()
     }
 
     pub(crate) fn tier1_spy(&self, o: ObjectId, p: PropIndex, v: &Value) {
@@ -1014,6 +1066,7 @@ impl Engine {
         {
             list.push((o, p, v.clone()));
         }
+        self.aot_spy_write(o, p, v);
     }
 }
 
