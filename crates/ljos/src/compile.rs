@@ -213,20 +213,10 @@ pub(crate) fn text_compiler_with_oracle<O: TypeOracle + Clone + 'static>(
 ) -> QmlTextCompiler {
     use std::cell::RefCell;
 
-    use ljos_compiler::{Project, compile_text};
-    use ljos_engine::{QmlText, QmlTextError};
+    use ljos_compiler::Project;
+    use ljos_engine::QmlText;
 
-    fn errors(diagnostics: &[ljos_compiler::Diagnostic]) -> Vec<QmlTextError> {
-        diagnostics
-            .iter()
-            .filter(|d| d.severity == ljos_compiler::Severity::Error)
-            .map(|d| QmlTextError {
-                line: d.span.line,
-                column: d.span.column,
-                message: d.message.clone(),
-            })
-            .collect()
-    }
+    use crate::texts::{compile_qml_text, plain};
 
     let dirs: Vec<PathBuf> = dirs.iter().map(|d| d.to_path_buf()).collect();
     let project: RefCell<Option<Project<O>>> = RefCell::new(None);
@@ -236,21 +226,12 @@ pub(crate) fn text_compiler_with_oracle<O: TypeOracle + Clone + 'static>(
             Some(project) => project,
             empty => {
                 let roots: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-                let loaded = Project::load_roots(&roots, oracle.clone()).map_err(|e| {
-                    vec![QmlTextError {
-                        line: 0,
-                        column: 0,
-                        message: e.to_string(),
-                    }]
-                })?;
+                let loaded = Project::load_roots(&roots, oracle.clone())
+                    .map_err(|e| plain(e.to_string()))?;
                 empty.insert(loaded)
             }
         };
-        match compile_text(project, text.key, text.text) {
-            Ok(compiled) if !compiled.has_errors() => Ok(compiled.file),
-            Ok(compiled) => Err(errors(&compiled.diagnostics)),
-            Err(diagnostics) => Err(errors(&diagnostics)),
-        }
+        compile_qml_text(project, text)
     })
 }
 

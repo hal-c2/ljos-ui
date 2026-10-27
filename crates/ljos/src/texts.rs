@@ -23,6 +23,7 @@ use ljos_compiler::{Project, compile_file, compile_text};
 use ljos_engine::{ComponentSource, Engine, MapSource, QmlText, QmlTextCompiler, QmlTextError};
 use ljos_ir::CompiledFile;
 use ljos_js::Bytecode;
+use qml_front::TypeOracle;
 
 use crate::compile::EngineOracle;
 
@@ -114,12 +115,35 @@ fn directories(root: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn plain(message: String) -> Vec<QmlTextError> {
+pub(crate) fn plain(message: String) -> Vec<QmlTextError> {
     vec![QmlTextError {
         line: 0,
         column: 0,
         message,
     }]
+}
+
+/// `text` compiled in `project`, or the errors found in it.
+pub(crate) fn compile_qml_text<O: TypeOracle>(
+    project: &mut Project<O>,
+    text: QmlText<'_>,
+) -> Result<CompiledFile, Vec<QmlTextError>> {
+    fn errors(diagnostics: &[ljos_compiler::Diagnostic]) -> Vec<QmlTextError> {
+        diagnostics
+            .iter()
+            .filter(|d| d.severity == ljos_compiler::Severity::Error)
+            .map(|d| QmlTextError {
+                line: d.span.line,
+                column: d.span.column,
+                message: d.message.clone(),
+            })
+            .collect()
+    }
+    match compile_text(project, text.key, text.text) {
+        Ok(compiled) if !compiled.has_errors() => Ok(compiled.file),
+        Ok(compiled) => Err(errors(&compiled.diagnostics)),
+        Err(diagnostics) => Err(errors(&diagnostics)),
+    }
 }
 
 impl State {
@@ -184,23 +208,7 @@ impl State {
     fn compile(&mut self, text: QmlText<'_>) -> Result<CompiledFile, Vec<QmlTextError>> {
         self.fresh().map_err(plain)?;
         self.place(text.key, text.url);
-        let project = self.project.as_mut().expect("read above");
-        let errors = |diagnostics: &[ljos_compiler::Diagnostic]| {
-            diagnostics
-                .iter()
-                .filter(|d| d.severity == ljos_compiler::Severity::Error)
-                .map(|d| QmlTextError {
-                    line: d.span.line,
-                    column: d.span.column,
-                    message: d.message.clone(),
-                })
-                .collect()
-        };
-        match compile_text(project, text.key, text.text) {
-            Ok(compiled) if !compiled.has_errors() => Ok(compiled.file),
-            Ok(compiled) => Err(errors(&compiled.diagnostics)),
-            Err(diagnostics) => Err(errors(&diagnostics)),
-        }
+        compile_qml_text(self.project.as_mut().expect("read above"), text)
     }
 
     fn load(&mut self, key: &str) -> Option<Arc<CompiledFile>> {
