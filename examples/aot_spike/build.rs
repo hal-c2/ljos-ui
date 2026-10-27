@@ -45,9 +45,32 @@ fn main() {
     std::fs::write(out.join("b_cases.rs"), output.rust).expect("write b_cases.rs");
     let _ = output.timings;
 
+    shipped(&dir, &out);
+
     if std::env::var_os("CARGO_FEATURE_SCRIPTC").is_some() {
         scriptc(&dir, &out);
     }
+}
+
+/// The generator of shipped files, on the QML the dynamic modes run: each
+/// project compiled as `load` and the boundary compile it at run time, so
+/// that the content keys are the ones the engine sees.
+fn shipped(dir: &Path, out: &Path) {
+    use ljos_compiler::{Project, compile_file};
+    let qml = dir.join("qml");
+    println!("cargo:rerun-if-changed={}", qml.display());
+    let compile = |files: &[&str], key: &str| {
+        let mut project = Project::new(qml_front::QtTypeOracle);
+        for f in files {
+            project.add(f, read(&qml.join(format!("{f}.qml"))));
+        }
+        let file = compile_file(&project, key).unwrap_or_else(|d| panic!("{key}: {d:?}"));
+        ljos_compiler::aot::generate(&file.file, &qml_front::QtTypeOracle, "ljos_engine::aot")
+    };
+    let world = compile(&["World", "Shell", "Swap"], "World");
+    let bench = compile(&["Bench"], "Bench");
+    let rust = ljos_aot::assemble("ljos_engine::aot", &[("World", &world), ("Bench", &bench)]);
+    std::fs::write(out.join("shipped.rs"), rust).expect("write shipped.rs");
 }
 
 fn read(p: &Path) -> String {

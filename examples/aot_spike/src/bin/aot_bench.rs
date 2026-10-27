@@ -41,7 +41,7 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
 }
 
 fn cases(mode: Mode) -> Result<()> {
-    println!("case\tmedian_ns\tp99_ns\ttier1_runs_per_trigger");
+    println!("case\tmedian_ns\tp99_ns\ttier1_runs_per_trigger\taot_runs_per_trigger");
     for case in CASES {
         let run = load(mode, false);
         for k in 0..WARM {
@@ -50,20 +50,24 @@ fn cases(mode: Mode) -> Result<()> {
         }
         let mut ns = Vec::with_capacity(SAMPLES);
         let mut tier1 = 0;
+        let mut aot = 0;
         for k in WARM..WARM + SAMPLES {
             prepare(&run, case, k);
             let before = run.engine.tier1_stats().runs;
+            let aot_before = run.engine.aot_stats().runs;
             let t = Instant::now();
             trigger(&run, case, k);
             ns.push(t.elapsed().as_nanos() as u64);
             tier1 += run.engine.tier1_stats().runs - before;
+            aot += run.engine.aot_stats().runs - aot_before;
         }
         ns.sort_unstable();
         println!(
-            "{case}\t{}\t{}\t{:.2}",
+            "{case}\t{}\t{}\t{:.2}\t{:.2}",
             percentile(&ns, 0.5),
             percentile(&ns, 0.99),
-            tier1 as f64 / SAMPLES as f64
+            tier1 as f64 / SAMPLES as f64,
+            aot as f64 / SAMPLES as f64
         );
     }
     Ok(())
@@ -94,7 +98,7 @@ fn per(one: f64, many: f64) -> f64 {
 
 fn boundary(mode: Mode) -> Result<()> {
     let (read, write, emit, entry) = match mode {
-        Mode::Tier1 | Mode::QuickJs => dynamic_boundary(mode)?,
+        Mode::Tier1 | Mode::QuickJs | Mode::Shipped => dynamic_boundary(mode)?,
         Mode::B => b_boundary()?,
         #[cfg(feature = "scriptc")]
         Mode::A => a_boundary()?,
@@ -106,7 +110,10 @@ fn boundary(mode: Mode) -> Result<()> {
 
 fn dynamic_boundary(mode: Mode) -> Result<(f64, f64, f64, f64)> {
     let e = engine();
-    e.set_tier1(mode == Mode::Tier1);
+    e.set_tier1(mode != Mode::QuickJs);
+    if mode == Mode::Shipped {
+        e.register_compiled(&ljos_example_aot_spike::shipped::COMPILED[1..]);
+    }
     e.set_component_source(compile(&[("Bench", BENCH)]));
     let o = e.create_from_url("Bench", None, Vec::new())?;
     e.connect_by_name(o, "ping", |_, _| {})?;

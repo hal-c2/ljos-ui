@@ -25,6 +25,11 @@ anyhow.workspace = true
 thiserror.workspace = true
 
 [build-dependencies]
+# The shipped-file generator (milestone A1) compiles World.qml and Bench.qml
+# here, as an application's build script does.
+ljos_aot = { path = "../../crates/ljos_aot" }
+ljos_compiler = { path = "../../crates/ljos_compiler" }
+qml_front = { path = "../../crates/qml_front" }
 # Back end B reads the cases' TypeScript with the parser the compiler uses.
 oxc_allocator.workspace = true
 oxc_ast.workspace = true
