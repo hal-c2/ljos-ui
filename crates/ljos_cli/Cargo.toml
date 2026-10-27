@@ -17,6 +17,7 @@ path = "src/main.rs"
 ljos_mcp_core = { path = "../ljos_mcp_core", features = ["http"] }
 ljos_mcp_author = { path = "../ljos_mcp_author" }
 # `ljos i18n extract`: the compiler finds the texts, ljos_i18n writes `.ts`.
+ljos_aot = { path = "../ljos_aot" }
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_i18n = { path = "../ljos_i18n" }
 # `ljos design export` writes the files of Ljos.Design.
