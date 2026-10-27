@@ -176,7 +176,9 @@ impl Checked {
     /// under `label`.
     pub fn project(&mut self, dir: &Path, label: &str) -> anyhow::Result<()> {
         let mut keys = Vec::new();
-        let mut compiled_lines = 0;
+        // This project's lines, the stand-in notes among them, which no
+        // finding is the same as.
+        let start = self.diagnostics.len();
         for file in compile_project(dir)? {
             self.files += 1;
             keys.push(file.key.clone());
@@ -213,14 +215,12 @@ impl Checked {
                 }
                 self.diagnostics
                     .push(format!("{name}.qml:{diagnostic} [{}]", diagnostic.code));
-                compiled_lines += 1;
             }
         }
         // What the compiler does not say and the run would: a name that is
         // no member of the type it is written on. Where the compiler said
         // it too, the finding, which may name what was meant, stands for
         // both, as an error when the compiler's was one.
-        let start = self.diagnostics.len() - compiled_lines;
         for finding in members::project(dir, label, &keys)? {
             let said = self.diagnostics[start..]
                 .iter()

@@ -300,3 +300,29 @@ Feature: Checking files on a machine that has no Qt
         Main.qml:2:9: warning: module "QtLocation" is not part of Ljós: its types stand in as empty Items, and what only they have is left out [stand-in]
         1 files, 0 errors, 1 warnings
         """
+
+    @no-qt-table
+    Scenario: A stand-in in one file leaves a name another file lacks told once
+      Given the file "Card.qml":
+        """qml
+        import QtQuick
+        Item {
+          widht: 10
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtLocation
+        Item {
+          Card { }
+          Map { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Card.qml:3:11: warning: `widht` is not a property of `Item`; did you mean `width`? [unknown-property]
+        Main.qml:2:9: warning: module "QtLocation" is not part of Ljós: its types stand in as empty Items, and what only they have is left out [stand-in]
+        2 files, 0 errors, 2 warnings
+        """
