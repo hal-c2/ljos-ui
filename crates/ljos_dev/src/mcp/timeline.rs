@@ -13,7 +13,7 @@
 //! oldest give way and are counted. A client that names a `holder` keeps
 //! the recording only while it watches, as traces are kept.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,8 @@ use ljos_quick::{FrameTimes, QuickScene};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+use super::held::{Held, MAX_HOLDERS};
 
 use super::frames::{ms, paint_json, spread, us};
 use super::objects::handle;
@@ -38,8 +40,6 @@ where its time went, pass by pass. Modes instead: `wakes`, `bindings` (hot bindi
 pub const MAX_KEPT: usize = 600;
 /// The most frames one answer lists unless told otherwise.
 const DEFAULT_MAX: usize = 60;
-/// The most clients that hold a recording at once.
-const MAX_HOLDERS: usize = 16;
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -270,9 +270,7 @@ pub(crate) struct Timeline {
     /// The number the next frame gets; the first is 1.
     next: u64,
     dropped: u64,
-    /// Asked for by a client that named no holder: it lasts until stopped.
-    unheld: bool,
-    held: HashSet<String>,
+    held: Held,
     /// Who asked what was answered since the last frame recorded.
     asked: Vec<Option<String>>,
     /// The frames, by window, that wait for the paint of their pass.
@@ -286,8 +284,7 @@ impl Default for Timeline {
             frames: VecDeque::new(),
             next: 1,
             dropped: 0,
-            unheld: false,
-            held: HashSet::new(),
+            held: Held::default(),
             asked: Vec::new(),
             unpainted: Vec::new(),
         }
@@ -296,7 +293,7 @@ impl Default for Timeline {
 
 impl Timeline {
     pub(crate) fn recording(&self) -> bool {
-        self.unheld || !self.held.is_empty()
+        self.held.any()
     }
 
     /// The inspector answered requests of these clients: the next frame
@@ -352,24 +349,7 @@ impl Timeline {
     /// Starts or stops recording for whoever asks, so that the scene
     /// is timed exactly while someone records.
     fn ask(&mut self, record: bool, holder: Option<&str>) -> Result<(), SurfaceError> {
-        match (record, holder) {
-            (true, Some(h)) => {
-                if !self.held.contains(h) && self.held.len() >= MAX_HOLDERS {
-                    return Err(SurfaceError::invalid_argument(format!(
-                        "`app_frames`: {MAX_HOLDERS} clients record already"
-                    )));
-                }
-                self.held.insert(h.to_owned());
-            }
-            (true, None) => self.unheld = true,
-            (false, Some(h)) => {
-                self.held.remove(h);
-            }
-            (false, None) => {
-                self.unheld = false;
-                self.held.clear();
-            }
-        }
+        self.held.ask(record, holder, "record")?;
         if !self.recording() {
             self.asked.clear();
             self.unpainted.clear();

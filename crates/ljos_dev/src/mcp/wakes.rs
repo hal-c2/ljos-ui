@@ -19,7 +19,7 @@
 //! bindings that ran, the properties that changed, the items laid out,
 //! placed and redrawn, and the time each took.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
@@ -28,14 +28,14 @@ use ljos_mcp_core::{SurfaceError, ToolReply};
 use ljos_quick::FrameTimes;
 use serde_json::{Value, json};
 
+use super::held::{Held, MAX_HOLDERS};
+
 use super::room::{self, Room};
 
 /// The most wakes kept.
 pub const MAX_KEPT: usize = 600;
 /// The most wakes one answer lists unless told otherwise.
 const DEFAULT_MAX: usize = 60;
-/// The most clients that hold the wakes at once.
-const MAX_HOLDERS: usize = 16;
 /// The most wakes that keep what they did.
 pub const MAX_DETAILED: usize = 16;
 /// How long after a wake only requests caused the loop's own follow-up
@@ -222,9 +222,7 @@ pub(crate) struct Wakes {
     /// The number the next wake gets; the first is 1.
     next: u64,
     dropped: u64,
-    /// Asked for by a client that named no holder: it lasts until stopped.
-    unheld: bool,
-    held: HashSet<String>,
+    held: Held,
     seen: Seen,
     /// The wakes that keep what they did, oldest first.
     detailed: VecDeque<u64>,
@@ -239,8 +237,7 @@ impl Default for Wakes {
             wakes: VecDeque::new(),
             next: 1,
             dropped: 0,
-            unheld: false,
-            held: HashSet::new(),
+            held: Held::default(),
             seen: Seen::default(),
             detailed: VecDeque::new(),
             echo_until: None,
@@ -250,7 +247,7 @@ impl Default for Wakes {
 
 impl Wakes {
     pub(crate) fn recording(&self) -> bool {
-        self.unheld || !self.held.is_empty()
+        self.held.any()
     }
 
     /// The inspector answered requests of these clients in this wake.
@@ -382,24 +379,7 @@ impl Wakes {
 
     /// Starts or stops keeping wakes for whoever asks.
     pub(crate) fn ask(&mut self, record: bool, holder: Option<&str>) -> Result<(), SurfaceError> {
-        match (record, holder) {
-            (true, Some(h)) => {
-                if !self.held.contains(h) && self.held.len() >= MAX_HOLDERS {
-                    return Err(SurfaceError::invalid_argument(format!(
-                        "`app_frames`: {MAX_HOLDERS} clients keep wakes already"
-                    )));
-                }
-                self.held.insert(h.to_owned());
-            }
-            (true, None) => self.unheld = true,
-            (false, Some(h)) => {
-                self.held.remove(h);
-            }
-            (false, None) => {
-                self.unheld = false;
-                self.held.clear();
-            }
-        }
+        self.held.ask(record, holder, "keep wakes")?;
         if !self.recording() {
             self.seen = Seen::default();
             self.echo_until = None;

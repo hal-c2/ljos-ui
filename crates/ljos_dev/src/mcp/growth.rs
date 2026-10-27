@@ -13,13 +13,15 @@
 //! Nothing is sampled until a client asks; while nobody does a pass pays
 //! one check. The samples are a ring of [`MAX_SAMPLES`].
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use ljos_engine::Engine;
 use ljos_mcp_core::{SurfaceError, ToolReply};
 use serde_json::{Value, json};
+
+use super::held::Held;
 
 /// The least time between two samples taken at passes.
 pub const EVERY: Duration = Duration::from_secs(1);
@@ -31,8 +33,6 @@ const DEFAULT_MAX: usize = 60;
 const MAX_LISTED: usize = 600;
 /// The most points of one component's series in an answer.
 const MAX_POINTS: usize = 120;
-/// The most clients that hold the sampling at once.
-const MAX_HOLDERS: usize = 16;
 /// The rises that make a component one that keeps growing.
 const RISES: u32 = 2;
 
@@ -62,8 +62,7 @@ impl Sample {
 
 pub(crate) struct Growth {
     started: Instant,
-    unheld: bool,
-    held: HashSet<String>,
+    held: Held,
     components: Vec<Component>,
     index: HashMap<String, u32>,
     samples: VecDeque<Sample>,
@@ -75,8 +74,7 @@ impl Default for Growth {
     fn default() -> Self {
         Growth {
             started: Instant::now(),
-            unheld: false,
-            held: HashSet::new(),
+            held: Held::default(),
             components: Vec::new(),
             index: HashMap::new(),
             samples: VecDeque::new(),
@@ -108,7 +106,7 @@ impl Trend {
 
 impl Growth {
     pub(crate) fn recording(&self) -> bool {
-        self.unheld || !self.held.is_empty()
+        self.held.any()
     }
 
     /// Starts or stops sampling for whoever asks. Starting afresh forgets
@@ -120,24 +118,7 @@ impl Growth {
         holder: Option<&str>,
     ) -> Result<(), SurfaceError> {
         let was = self.recording();
-        match (record, holder) {
-            (true, Some(h)) => {
-                if !self.held.contains(h) && self.held.len() >= MAX_HOLDERS {
-                    return Err(SurfaceError::invalid_argument(format!(
-                        "`app_frames`: {MAX_HOLDERS} clients sample growth already"
-                    )));
-                }
-                self.held.insert(h.to_owned());
-            }
-            (true, None) => self.unheld = true,
-            (false, Some(h)) => {
-                self.held.remove(h);
-            }
-            (false, None) => {
-                self.unheld = false;
-                self.held.clear();
-            }
-        }
+        self.held.ask(record, holder, "sample growth")?;
         if self.recording() && !was {
             self.samples.clear();
             self.dropped = 0;

@@ -7,7 +7,6 @@
 //! binding loops the graph broke are told whether or not anyone records:
 //! the engine keeps the first few it met, start-up included.
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::time::Duration;
 
@@ -18,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::frames::us;
+use super::held::Held;
 use super::objects::handle;
 
 /// The most rows one answer lists unless told otherwise.
@@ -26,8 +26,6 @@ const DEFAULT_MAX: usize = 60;
 const MAX_ROWS: usize = 600;
 /// The causes told per row.
 const MAX_CAUSES: usize = 5;
-/// The most clients that hold the profiling at once.
-const MAX_HOLDERS: usize = 16;
 
 /// How `bindings` orders its rows.
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -76,9 +74,7 @@ impl HotSort {
 /// Who asked for the profiling.
 #[derive(Default)]
 pub(crate) struct Hot {
-    /// Asked for by a client that named no holder: it lasts until stopped.
-    unheld: bool,
-    held: HashSet<String>,
+    held: Held,
 }
 
 fn kind(e: &HotEntry) -> &'static str {
@@ -150,7 +146,7 @@ fn line(e: &HotEntry) -> String {
 
 impl Hot {
     pub(crate) fn recording(&self) -> bool {
-        self.unheld || !self.held.is_empty()
+        self.held.any()
     }
 
     /// Starts or stops profiling for whoever asks, so that the engine
@@ -161,24 +157,7 @@ impl Hot {
         record: bool,
         holder: Option<&str>,
     ) -> Result<(), SurfaceError> {
-        match (record, holder) {
-            (true, Some(h)) => {
-                if !self.held.contains(h) && self.held.len() >= MAX_HOLDERS {
-                    return Err(SurfaceError::invalid_argument(format!(
-                        "`app_frames`: {MAX_HOLDERS} clients profile bindings already"
-                    )));
-                }
-                self.held.insert(h.to_owned());
-            }
-            (true, None) => self.unheld = true,
-            (false, Some(h)) => {
-                self.held.remove(h);
-            }
-            (false, None) => {
-                self.unheld = false;
-                self.held.clear();
-            }
-        }
+        self.held.ask(record, holder, "profile bindings")?;
         engine.set_profiled(self.recording());
         Ok(())
     }
