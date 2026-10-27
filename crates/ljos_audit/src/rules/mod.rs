@@ -5,6 +5,7 @@ mod color_text_contrast;
 mod duplicates;
 mod hidden;
 mod images;
+mod layout_fill_crushed;
 mod layout_occluded;
 mod layout_offscreen;
 mod layout_popup_fit;
@@ -89,6 +90,10 @@ pub(crate) const CHECKS: &[Check] = &[
     Check {
         codes: &["layout-under-minimum"],
         run: layout_under_minimum::check,
+    },
+    Check {
+        codes: &["layout-fill-crushed"],
+        run: layout_fill_crushed::check,
     },
     Check {
         codes: &["layout-popup-fit"],

@@ -432,6 +432,14 @@ pub const RULES: &[Rule] = &[
         "Give the window or the parent layout a minimum size that adds up, or collapse the part when it no longer fits.",
     ),
     r(
+        "layout-fill-crushed",
+        Layout,
+        Warning,
+        Runtime,
+        "An item that fills a row or column is laid out smaller than what it holds needs, while a sibling that does not fill keeps its preferred size.",
+        "Give the filling item a `Layout.minimumWidth` (or height), or cap the sibling with `Layout.maximumWidth` (or height).",
+    ),
+    r(
         "layout-popup-fit",
         Layout,
         Warning,

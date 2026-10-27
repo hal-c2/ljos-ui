@@ -49,6 +49,7 @@ Follow every line. `[code]` is the rule that finds the mistake; its section is `
 - Never cover a control with a toast, banner or popup. [layout-occluded]
 - Let layouts place text and controls, so they never overlap. [layout-overlap]
 - Make the window's minimum size add up to its parts' minimums. [layout-under-minimum]
+- Give a filling column a minimum, or cap the panel beside it, so the panel cannot crush it. [layout-fill-crushed]
 - Size popups from content, with a maximum and a scroll. [layout-popup-fit]
 - Never give a popup with changing content a literal width and height. [layout-fixed-size]
 - Align a column's controls in one layout; give fields of a kind one width. [layout-misaligned]

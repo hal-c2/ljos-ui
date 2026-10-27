@@ -78,6 +78,24 @@ ApplicationWindow { minimumWidth: 480; RowLayout { anchors.fill: parent; Pane { 
 
 Sources: https://developer.apple.com/design/human-interface-guidelines/layout
 
+<a id="layout-fill-crushed"></a>
+### `layout-fill-crushed`
+
+**Warning, runtime.** An item that fills a row (or column) of a layout is laid out smaller than what it holds needs, while a sibling that does not fill keeps its preferred size and could give the room. A `Flow`, a plain `Item` or a `Text` asks the layout for no least size, so a side panel's `Layout.preferredWidth` wins and the main column is crushed: its buttons squeeze, wrap and overlap far from the cause. What an item needs is counted as a floor: a button's implicit size, a `Layout.minimum` size, and what rows and columns add up from those.
+
+```qml
+// Bad
+RowLayout { anchors.fill: parent
+    ColumnLayout { Layout.fillWidth: true; Flow { Layout.fillWidth: true; Button { text: qsTr("Model") } } }
+    Pane { Layout.preferredWidth: 540 } }
+// Good
+RowLayout { anchors.fill: parent
+    ColumnLayout { Layout.fillWidth: true; Layout.minimumWidth: 280; Flow { Layout.fillWidth: true; Button { text: qsTr("Model") } } }
+    Pane { Layout.preferredWidth: 540; Layout.maximumWidth: parent.width / 2 } }
+```
+
+Sources: https://doc.qt.io/qt-6/qml-qtquick-layouts-layout.html, https://developer.apple.com/design/human-interface-guidelines/layout
+
 <a id="layout-popup-fit"></a>
 ### `layout-popup-fit`
 

@@ -1519,3 +1519,93 @@ fn a_flow_of_buttons_with_room_beside_its_neighbour_does_not_overlap() {
     let report = audit_with(&composer(400), &options);
     assert!(report.is_clean(), "\n{report}");
 }
+
+fn with_layouts(body: &str) -> String {
+    page(body).replace(
+        "import QtQuick\n",
+        "import QtQuick\nimport QtQuick.Layouts\n",
+    )
+}
+
+/// A row of 300: a panel that prefers `panel` beside a column that fills
+/// and holds a flow of two 80 px buttons beside an 80 px Send button;
+/// `column` is more of the column's QML. Measured in qml6 as well.
+fn panel_beside(panel: &str, column: &str) -> String {
+    with_layouts(&format!(
+        r##"    RowLayout {{
+        width: 300; height: 100
+        Rectangle {{ {panel}; Layout.fillHeight: true; color: "#eee" }}
+        ColumnLayout {{
+            objectName: "column"
+            Layout.fillWidth: true
+            {column}
+            RowLayout {{
+                Flow {{
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Button {{ implicitWidth: 80; text: "Open" }}
+                    Button {{ implicitWidth: 80; text: "Save" }}
+                }}
+                Button {{ implicitWidth: 80; text: "Send" }}
+            }}
+        }}
+    }}"##
+    ))
+}
+
+#[test]
+fn a_fill_column_crushed_by_a_panel_that_keeps_its_width_is_found() {
+    // Issue #156: a flow asks for no least width, so the panel keeps its
+    // 180 and the column gets 300 - 180 - 5 = 115, while its widest
+    // button, the gap and Send need 80 + 5 + 80 = 165.
+    let options = Options::desktop().only(&["layout-fill-crushed"]).unwrap();
+    let report = audit_with(&panel_beside("Layout.preferredWidth: 180", ""), &options);
+    assert_eq!(report.findings.len(), 1, "\n{report}");
+    let f = &report.findings[0];
+    assert_eq!(f.measured.as_deref(), Some("115 < 165"), "\n{report}");
+    assert!(f.message.contains("the Rectangle"), "{}", f.message);
+    assert!(f.message.contains("180"), "{}", f.message);
+}
+
+#[test]
+fn a_fill_column_with_a_minimum_is_not_crushed() {
+    let options = Options::desktop().only(&["layout-fill-crushed"]).unwrap();
+    let source = panel_beside("Layout.preferredWidth: 180", "Layout.minimumWidth: 165");
+    let report = audit_with(&source, &options);
+    assert!(report.is_clean(), "\n{report}");
+}
+
+#[test]
+fn a_fill_column_beside_what_cannot_give_the_room_is_not_crushed_by_it() {
+    // The panel could give 10 of the 50 the column lacks: the row is too
+    // narrow for both, which is for the window's minimum to say.
+    let options = Options::desktop().only(&["layout-fill-crushed"]).unwrap();
+    let source = panel_beside("Layout.preferredWidth: 180; Layout.minimumWidth: 170", "");
+    let report = audit_with(&source, &options);
+    assert!(report.is_clean(), "\n{report}");
+}
+
+#[test]
+fn a_fill_body_crushed_by_a_header_that_keeps_its_height_is_found() {
+    // A plain item asks for no least height: the header keeps 80 and the
+    // body gets 100 - 80 - 5 = 15 for a 40 px button, as in qml6.
+    let source = with_layouts(
+        r##"    ColumnLayout {
+        width: 200; height: 100
+        Rectangle { Layout.preferredHeight: 80; Layout.fillWidth: true; color: "#eee" }
+        Item {
+            Layout.fillHeight: true
+            Layout.fillWidth: true
+            Button { text: "Open" }
+        }
+    }"##,
+    );
+    let options = Options::desktop().only(&["layout-fill-crushed"]).unwrap();
+    let report = audit_with(&source, &options);
+    assert_eq!(report.findings.len(), 1, "\n{report}");
+    assert_eq!(
+        report.findings[0].measured.as_deref(),
+        Some("15 < 40"),
+        "\n{report}"
+    );
+}

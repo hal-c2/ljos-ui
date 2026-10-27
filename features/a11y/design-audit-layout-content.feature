@@ -287,6 +287,63 @@ Feature: The design audit checks layout and content in the live tree
       When the design audit runs at font scale 1 and window size 320x480
       Then the design audit does not report "layout-reflow"
 
+    Scenario: A side panel that keeps its width crushes the column that fills
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 400; height: 200
+          color: "white"
+          RowLayout {
+            width: 300; height: 100
+            ColumnLayout {
+              Layout.fillWidth: true
+              RowLayout {
+                Flow {
+                  Layout.fillWidth: true
+                  Button { implicitWidth: 80; text: "Open" }
+                  Button { implicitWidth: 80; text: "Save" }
+                }
+                Button { implicitWidth: 80; text: "Send" }
+              }
+            }
+            Rectangle { Layout.preferredWidth: 180; Layout.fillHeight: true; color: "#eee" }
+          }
+        }
+        """
+      Then the design audit reports "layout-fill-crushed" at line 9
+
+    Scenario: A column that fills with a minimum of its own
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 400; height: 200
+          color: "white"
+          RowLayout {
+            width: 300; height: 100
+            ColumnLayout {
+              Layout.fillWidth: true
+              Layout.minimumWidth: 165
+              RowLayout {
+                Flow {
+                  Layout.fillWidth: true
+                  Button { implicitWidth: 80; text: "Open" }
+                  Button { implicitWidth: 80; text: "Save" }
+                }
+                Button { implicitWidth: 80; text: "Send" }
+              }
+            }
+            Rectangle { Layout.preferredWidth: 120; Layout.fillHeight: true; color: "#eee" }
+          }
+        }
+        """
+      Then the design audit does not report "layout-fill-crushed"
+
   Rule: Content, as the window says it
 
     Scenario: An identifier shown as it is stored
