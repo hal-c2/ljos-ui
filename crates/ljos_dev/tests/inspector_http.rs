@@ -499,7 +499,7 @@ fn the_token_file_is_its_owners_alone_and_goes_with_the_server() {
     assert_eq!(body["pid"], std::process::id());
 
     let addr = served.addr();
-    served.server.stop();
+    served.server.stop().unwrap();
     assert!(!path.exists(), "the token does not outlive the server");
     assert!(
         TcpStream::connect(addr).is_err(),
@@ -545,7 +545,7 @@ fn a_unix_socket_only_its_owner_can_open_serves_the_same() {
     });
     assert_eq!(answer.status, 401);
 
-    served.server.stop();
+    served.server.stop().unwrap();
     assert!(!socket.exists(), "the socket goes with the server");
 }
 

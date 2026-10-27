@@ -325,7 +325,7 @@ fn the_token_file_is_the_owners_and_goes_when_the_server_stops() {
     assert_eq!(rig.call(&bearer).status, 200);
 
     let addr = rig.server.addr().unwrap();
-    rig.server.stop();
+    rig.server.stop().unwrap();
     assert!(!path.exists());
     // Nothing is left listening.
     assert!(std::net::TcpStream::connect(addr).is_err());
@@ -340,7 +340,7 @@ fn stopping_closes_a_connection_that_was_left_open() {
     idle.set_read_timeout(Some(std::time::Duration::from_secs(5)))
         .unwrap();
     assert_eq!(rig.call(&rig.bearer).status, 200);
-    rig.server.stop();
+    rig.server.stop().unwrap();
     let mut buf = [0u8; 8];
     // End of stream (or a reset), not a timeout.
     match idle.read(&mut buf) {
@@ -399,7 +399,7 @@ fn a_unix_socket_is_its_owners_alone() {
         exchange(stream, "/mcp", &mcp_headers("localhost", ""), CALL).status,
         401
     );
-    server.stop();
+    server.stop().unwrap();
     assert!(!path.exists());
 }
 

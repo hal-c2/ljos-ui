@@ -121,6 +121,8 @@ pub enum HttpError {
     Token(#[from] TokenFileError),
     #[error("cannot start the MCP server thread: {0}")]
     Thread(std::io::Error),
+    #[error("the MCP server stopped by panicking: {0}")]
+    Panicked(String),
 }
 
 /// Whether the server may listen on `addr`: any address of this machine,
@@ -165,9 +167,28 @@ impl std::fmt::Debug for HttpServer {
 }
 
 enum Listener {
+    Tcp(tokio::net::TcpListener),
+    #[cfg(unix)]
+    Unix(tokio::net::UnixListener),
+}
+
+enum StdListener {
     Tcp(std::net::TcpListener),
     #[cfg(unix)]
     Unix(std::os::unix::net::UnixListener),
+}
+
+impl StdListener {
+    /// Must be called inside the runtime that will serve it. Done before
+    /// the server's thread starts, so a listener the runtime cannot take
+    /// is an error of `start`, not a server that quietly never listens.
+    fn into_tokio(self) -> std::io::Result<Listener> {
+        Ok(match self {
+            StdListener::Tcp(l) => Listener::Tcp(tokio::net::TcpListener::from_std(l)?),
+            #[cfg(unix)]
+            StdListener::Unix(l) => Listener::Unix(tokio::net::UnixListener::from_std(l)?),
+        })
+    }
 }
 
 type Body = BoxBody<Bytes, Infallible>;
@@ -208,7 +229,7 @@ impl HttpServer {
                 l.set_nonblocking(true).map_err(bind)?;
                 let addr = l.local_addr().map_err(bind)?;
                 let url = format!("http://{addr}{MCP_PATH}");
-                (Listener::Tcp(l), url, Some(addr), None)
+                (StdListener::Tcp(l), url, Some(addr), None)
             }
             #[cfg(unix)]
             Listen::Unix(path) => {
@@ -233,13 +254,26 @@ impl HttpServer {
                     .map_err(bind)?;
                 l.set_nonblocking(true).map_err(bind)?;
                 let url = format!("unix:{}", path.display());
-                (Listener::Unix(l), url, None, Some(path.clone()))
+                (StdListener::Unix(l), url, None, Some(path.clone()))
             }
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(HttpError::Thread)?;
+        let listener = {
+            let _in_runtime = runtime.enter();
+            listener.into_tokio().map_err(|source| {
+                // Bound a moment ago by this call, so no one else's.
+                if let Some(path) = &socket {
+                    let _ = std::fs::remove_file(path);
+                }
+                HttpError::Bind {
+                    what: url.clone(),
+                    source,
+                }
+            })?
+        };
         // The handlers are in place before the token file names this
         // process, so a signal that comes the moment a client reads the
         // file is already cleaned up after.
@@ -342,22 +376,38 @@ impl HttpServer {
 
     /// Stops listening, closes every connection and removes the token
     /// file. Returns when the server's thread has ended.
-    pub fn stop(&mut self) {
+    ///
+    /// # Errors
+    /// The server's thread panicked; it is stopped and cleaned up after
+    /// all the same.
+    pub fn stop(&mut self) -> Result<(), HttpError> {
         // `notify_one` keeps the wake for a thread that is not waiting yet.
         self.shutdown.notify_one();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        let ended = match self.thread.take() {
+            Some(thread) => thread.join(),
+            None => Ok(()),
+        };
         self.token_file = None;
         if let Some(path) = self.socket.take() {
             let _ = std::fs::remove_file(path);
         }
+        ended.map_err(|panic| HttpError::Panicked(panic_message(panic.as_ref())))
     }
+}
+
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a panic that carried no message".to_owned())
 }
 
 impl Drop for HttpServer {
     fn drop(&mut self) {
-        self.stop();
+        // The panic was already printed by the hook; a drop has no one
+        // to hand it to, and `stop` is there for whoever wants it.
+        let _ = self.stop();
     }
 }
 
@@ -370,10 +420,7 @@ async fn accept<S: McpSurface>(
     let permits = Arc::new(Semaphore::new(max_connections.max(1)));
     macro_rules! serve {
         ($listener:expr) => {{
-            let listener = match $listener {
-                Ok(l) => l,
-                Err(_) => return,
-            };
+            let listener = $listener;
             loop {
                 let stream = tokio::select! {
                     biased;
@@ -410,9 +457,9 @@ async fn accept<S: McpSurface>(
         }};
     }
     match listener {
-        Listener::Tcp(l) => serve!(tokio::net::TcpListener::from_std(l)),
+        Listener::Tcp(l) => serve!(l),
         #[cfg(unix)]
-        Listener::Unix(l) => serve!(tokio::net::UnixListener::from_std(l)),
+        Listener::Unix(l) => serve!(l),
     }
 }
 
@@ -629,5 +676,42 @@ mod tests {
             !within_rate(&rate, now),
             "the third call in a second is refused"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_listener_the_runtime_cannot_take_is_an_error() {
+        use std::os::fd::{FromRawFd as _, IntoRawFd as _};
+        // epoll refuses a regular file, as it would any descriptor the
+        // runtime cannot wait on.
+        let file = tempfile::tempfile().unwrap();
+        let not_a_socket = unsafe { std::net::TcpListener::from_raw_fd(file.into_raw_fd()) };
+        not_a_socket.set_nonblocking(true).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _in_runtime = runtime.enter();
+        assert!(StdListener::Tcp(not_a_socket).into_tokio().is_err());
+    }
+
+    #[test]
+    fn a_server_that_panicked_says_so_when_stopped() {
+        let mut server = HttpServer {
+            url: String::new(),
+            addr: None,
+            token: Token::generate().unwrap(),
+            token_file: None,
+            socket: None,
+            warning: None,
+            shutdown: Arc::new(Notify::new()),
+            thread: Some(std::thread::spawn(|| panic!("the serving went wrong"))),
+        };
+        let stopped = server.stop();
+        assert!(
+            matches!(&stopped, Err(HttpError::Panicked(m)) if m == "the serving went wrong"),
+            "{stopped:?}"
+        );
+        assert!(server.stop().is_ok(), "a second stop has nothing to report");
     }
 }

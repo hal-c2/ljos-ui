@@ -491,7 +491,7 @@ mod inspector {
         assert_eq!(mode & 0o777, 0o600);
         assert_eq!(token(&address).len(), 64);
 
-        w.h.state_mut().stop_inspector();
+        w.h.state_mut().stop_inspector().unwrap();
         assert!(!address.token_file.exists(), "the token file is removed");
         assert_eq!(w.h.state().inspector_address(), None);
         let host = address

@@ -400,7 +400,7 @@ impl Rig {
             .served
             .take()
             .ok_or_else(|| failed("the inspector is not served"))?;
-        served.server.stop();
+        served.server.stop().map_err(failed)?;
         self.seen.stopped = Some(Stopped {
             socket_left: served.socket.as_deref().is_some_and(Path::exists),
             token_file_left: served.token_file.exists(),
@@ -537,7 +537,7 @@ impl Rig {
             // token and the one a client kept from before opens nothing.
             let mut old = self.served.take().ok_or_else(not_served)?;
             self.old_token = Some(old.server.token().as_str().to_owned());
-            old.server.stop();
+            old.server.stop().map_err(failed)?;
             drop(old);
             self.serve(false)?;
         }

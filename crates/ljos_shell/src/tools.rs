@@ -663,10 +663,14 @@ mod inspector {
 
         /// Stops the inspector's server and removes its token file. The
         /// window closing does the same.
-        pub fn stop_inspector(&mut self) {
+        ///
+        /// # Errors
+        /// The server had panicked; it is stopped all the same.
+        pub fn stop_inspector(&mut self) -> Result<(), SetupError> {
             if let Some(mut served) = self.tools.inspector.take() {
-                served.server.stop();
+                served.server.stop()?;
             }
+            Ok(())
         }
     }
 }

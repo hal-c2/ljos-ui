@@ -904,7 +904,7 @@ mod tests {
         let mut on_port = serve(dir.path(), Listen::Loopback(0));
         let answer = echo(&dir.path().join("mcp-1.json"), NAMED).unwrap();
         assert_eq!(said(&answer), json!({"say": "hi"}));
-        on_port.stop();
+        on_port.stop().unwrap();
 
         let socket = dir.path().join("m.sock");
         let mut on_socket = serve(dir.path(), Listen::Unix(socket.clone()));
@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(target.url, format!("unix:{}", socket.display()));
         let answer = echo(&dir.path().join("mcp-1.json"), NAMED).unwrap();
         assert_eq!(said(&answer), json!({"say": "hi"}));
-        on_socket.stop();
+        on_socket.stop().unwrap();
     }
 
     #[test]
