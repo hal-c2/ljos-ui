@@ -1278,7 +1278,7 @@ impl FontSelector for OneFont<'_> {
 
 /// The glyphs of a text that Parley lays out as one run on one line, read
 /// as [`snapped_widths_kept`] reads them from Parley's layout, but shaped
-/// with Parley's analyser and shaper alone, as its builder drives them.
+/// as Parley's builder would shape it, without building a layout.
 /// Building a layout costs more than shaping such a text: resolving its
 /// style, asking the font query for every cluster, and making the runs
 /// and lines. `None` when the text is not that simple (it is then shaped
@@ -2312,9 +2312,9 @@ fn coords(run: &parley::Run<'_, u32>) -> Vec<i16> {
         .collect()
 }
 
-/// Width of the widest line as Qt counts it, spaces at the end included.
-/// The widest line of `shape` by Qt's advances, and with the ink of each
-/// line's last glyph that reaches past them ([`overhang`]).
+/// The widest line of `shape` by Qt's advances, spaces at the end
+/// included, and with the ink of each line's last glyph that reaches past
+/// them ([`overhang`]): `(advance, natural)`.
 fn snapped_widths(shape: &Shape) -> (f32, f32) {
     snapped_widths_kept(shape).0
 }
@@ -2735,7 +2735,6 @@ impl TextEngine {
         layout
     }
 
-    /// Cache sizes and counters.
     /// What the caches hold now: one pass over their entries.
     pub fn memory(&self) -> TextMemory {
         let shaped: usize = self
@@ -2781,6 +2780,7 @@ impl TextEngine {
         }
     }
 
+    /// Cache sizes and counters.
     pub fn stats(&self) -> CacheStats {
         CacheStats {
             layouts: self.layouts.len(),

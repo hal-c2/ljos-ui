@@ -94,7 +94,8 @@ pub struct ViewStats {
     pub changed: u64,
     /// Pointer events handed to the scene.
     pub pointer_events: u64,
-    /// `request_repaint` / `request_repaint_after` calls made by the view.
+    /// Passes the view asked for: of egui, or of the host through
+    /// [`QmlView::take_asked`] when it has set a waker.
     pub repaint_requests: u64,
     /// Accessibility nodes written in the last pass; 0 while nothing
     /// listens.

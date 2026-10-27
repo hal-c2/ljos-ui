@@ -5,7 +5,8 @@
 //! * **R** ([`VelloCpuReference`]): deterministic vello_cpu renderer for tests,
 //!   Qt comparison and GPU-less fallback.
 //! * **B0** (`b0` module, feature `b0`, default on): epaint shapes with cached
-//!   meshes. It is the only place in this crate that names egui.
+//!   meshes. It and its private modules (`b0_shape`, `glyph_atlas`,
+//!   `image_atlas`) are the only places in this crate that name egui.
 
 mod backend;
 mod canvas;

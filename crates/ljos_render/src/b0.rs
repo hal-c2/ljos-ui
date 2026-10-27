@@ -1,4 +1,6 @@
-//! B0: epaint backend (M0 onward). The only place in `ljos_render` that names egui.
+//! B0: epaint backend (M0 onward). With its private modules (`b0_shape`,
+//! `glyph_atlas`, `image_atlas`), all behind the `b0` feature, the only
+//! place in `ljos_render` that names egui.
 //!
 //! Every display list is tessellated once into a local-space [`Mesh`] (keyed by
 //! [`DisplayListId`], so only a `CONTENT` rebuild invalidates it). Per node we
@@ -1387,7 +1389,6 @@ impl EpaintBackend {
         self.texture_uploads
     }
 
-    /// The glyph atlas as it is now.
     /// What it keeps from frame to frame: one pass over its lists and
     /// nodes. A mesh two of them share is counted once.
     pub fn memory(&self) -> crate::BackendMemory {
@@ -1460,6 +1461,7 @@ impl EpaintBackend {
         m
     }
 
+    /// The glyph atlas as it is now.
     pub fn glyph_atlas(&self) -> GlyphAtlasInfo<'_> {
         GlyphAtlasInfo {
             side: self.atlas.side(),
