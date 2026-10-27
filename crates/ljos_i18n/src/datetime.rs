@@ -587,15 +587,8 @@ fn read_zone(text: &str) -> Option<(ZoneRead, &str)> {
     }
     // The longest name the database has: a name may be followed by text
     // the format string has.
-    let run = text
-        .bytes()
-        .take_while(|b| b.is_ascii_alphanumeric() || b"/_+-".contains(b))
-        .count()
-        .min(64);
-    for end in (1..=run).rev() {
-        if let Some(zone) = TimeZone::named(&text[..end]) {
-            return Some((ZoneRead::Named(Box::new(zone)), &text[end..]));
-        }
+    if let Some((zone, end)) = TimeZone::named_prefix(text) {
+        return Some((ZoneRead::Named(Box::new(zone)), &text[end..]));
     }
     let local = TimeZone::local()?;
     local
@@ -825,6 +818,23 @@ pub fn from_cldr(pattern: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::tz::TimeZone;
+
+    #[test]
+    fn a_zone_name_is_read_with_a_few_lookups_not_one_per_length() {
+        // Not every system has a zone database.
+        if crate::tz::TimeZone::named("Europe/Oslo").is_none() {
+            return;
+        }
+        crate::tz::LOOKUPS.with(|n| n.set(0));
+        let text = format!("Europe/Oslo{}", "x".repeat(60));
+        let (read, rest) = read_zone(&text).expect("a zone");
+        let looked = crate::tz::LOOKUPS.with(std::cell::Cell::get);
+        assert!(matches!(read, ZoneRead::Named(z) if z.id() == "Europe/Oslo"));
+        assert_eq!(rest, "x".repeat(60));
+        // A listing per folder on the way down and one file read; never
+        // one try per length the text could have.
+        assert!(looked <= 8, "{looked} lookups");
+    }
 
     use super::*;
 

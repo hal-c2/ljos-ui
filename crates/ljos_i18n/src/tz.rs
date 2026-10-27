@@ -54,6 +54,36 @@ impl TimeZone {
         zoneinfo_dirs().find_map(|dir| Self::from_file(id, &dir.join(id)))
     }
 
+    /// The zone whose name is the longest the database has at the start
+    /// of `text`, and that name's length: text may follow a name with no
+    /// space between. Each folder on the way down is listed once and
+    /// only the longest name found is read, so the lookups grow with the
+    /// depth of the name, not with the length of the text.
+    pub(crate) fn named_prefix(text: &str) -> Option<(Self, usize)> {
+        let run = text
+            .bytes()
+            .take_while(|b| b.is_ascii_alphanumeric() || b"/_+-".contains(b))
+            .count()
+            .min(64);
+        let text = &text[..run];
+        let mut found = Vec::new();
+        for (rank, dir) in zoneinfo_dirs().enumerate() {
+            names_in(&dir, text, 0, &mut |end| {
+                found.push((end, rank, dir.join(&text[..end])))
+            });
+        }
+        // The longest name first; between folders, the order `named`
+        // looks in.
+        found.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        found.into_iter().find_map(|(end, _, path)| {
+            let id = &text[..end];
+            is_zone_id(id)
+                .then(|| Self::from_file(id, &path))
+                .flatten()
+                .map(|zone| (zone, end))
+        })
+    }
+
     /// The local zone, as the C library chooses it: `TZ` (a name, a file,
     /// or a POSIX rule such as `CET-1CEST,M3.5.0,M10.5.0/3`), else
     /// `/etc/localtime`.
@@ -96,6 +126,8 @@ impl TimeZone {
     }
 
     fn from_file(id: &str, path: &Path) -> Option<Self> {
+        #[cfg(test)]
+        LOOKUPS.with(|n| n.set(n.get() + 1));
         let data = std::fs::read(path).ok()?;
         Self::from_tzif(id, &data)
     }
@@ -190,6 +222,13 @@ impl TimeZone {
     }
 }
 
+// How many times this thread has touched the zone database: a file
+// opened or a folder listed. A parse must not grow it with its text.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LOOKUPS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// A name the database could have: no way out of its directory.
 fn is_zone_id(id: &str) -> bool {
     !id.is_empty()
@@ -200,6 +239,32 @@ fn is_zone_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"/_+-".contains(&b))
+}
+
+/// Calls `found` with the end of each file of `dir` (and its folders)
+/// whose name starts `text` at `at`.
+fn names_in(dir: &Path, text: &str, at: usize, found: &mut dyn FnMut(usize)) {
+    #[cfg(test)]
+    LOOKUPS.with(|n| n.set(n.get() + 1));
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let rest = &text[at..];
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(after) = name.to_str().and_then(|name| rest.strip_prefix(name)) else {
+            continue;
+        };
+        let end = text.len() - after.len();
+        // Followed, as `named` would: a folder may be a link to one.
+        if entry.path().is_dir() {
+            if after.starts_with('/') {
+                names_in(&entry.path(), text, end + 1, found);
+            }
+        } else {
+            found(end);
+        }
+    }
 }
 
 fn zoneinfo_dirs() -> impl Iterator<Item = PathBuf> {
