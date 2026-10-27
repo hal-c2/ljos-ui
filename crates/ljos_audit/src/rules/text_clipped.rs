@@ -12,22 +12,18 @@
 
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::enums::{align, elide};
-use ljos_quick::{Flickable, Item, Text};
+use ljos_quick::{Item, Text};
 use ljos_render::kurbo::{Point, Rect};
 
 use crate::cx::{
-    Cx, ancestors, at, is_a, item_words, number, overhang, overhang_words, scene_rect, shown_items,
-    shown_opacity, slack, trim,
+    Cx, ancestors, at, is_a, is_scroller, item_words, number, overhang, overhang_words, scene_rect,
+    shown_items, shown_opacity, slack, trim,
 };
 
 fn clips(engine: &Engine, item: ObjectId) -> bool {
     engine
         .untrack(|| engine.read(item, Item::CLIP.index))
         .to_boolean()
-}
-
-fn scrolls_here(engine: &Engine, item: ObjectId) -> bool {
-    is_a::<Flickable>(engine, item) || is_a::<ljos_controls::ScrollView>(engine, item)
 }
 
 /// The rectangle `local` of `item` in the scene.
@@ -97,7 +93,7 @@ pub(crate) fn check(cx: &mut Cx) {
         let mut shown = spills.then(|| (cx.scene.viewport(), None));
         let mut cutters: Vec<(Rect, Option<ObjectId>)> = Vec::new();
         for a in std::iter::once(text).chain(ancestors(engine, text)) {
-            if scrolls_here(engine, a) {
+            if is_scroller(engine, a) {
                 shown = None;
                 break;
             }

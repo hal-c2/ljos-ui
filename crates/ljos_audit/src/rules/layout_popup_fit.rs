@@ -11,19 +11,20 @@
 //! left out, and a drawer is not held to its fill: it runs along an edge
 //! of the window by design, whatever it holds.
 
-use ljos_controls::{Drawer, ScrollView, ToolTip, item_popup};
+use ljos_controls::{Drawer, ToolTip, item_popup};
 use ljos_design::limits::POPUP_MIN_FILL;
 use ljos_engine::{Engine, ObjectId};
-use ljos_quick::{Flickable, child_items};
+use ljos_quick::child_items;
 
-use crate::cx::{Cx, is_a, number, overhang, overhang_words, scene_rect, shown_items, slack, trim};
+use crate::cx::{
+    Cx, is_a, is_scroller, number, overhang, overhang_words, scene_rect, shown_items, slack, trim,
+};
 
 /// Whether the content, or an item near its top, scrolls.
-fn scrolls(engine: &Engine, content: ObjectId) -> bool {
-    let scroller = |o: ObjectId| is_a::<Flickable>(engine, o) || is_a::<ScrollView>(engine, o);
+fn content_scrolls(engine: &Engine, content: ObjectId) -> bool {
     let mut level = vec![content];
     for _ in 0..3 {
-        if level.iter().any(|o| scroller(*o)) {
+        if level.iter().any(|o| is_scroller(engine, *o)) {
             return true;
         }
         level = level.iter().flat_map(|o| child_items(engine, *o)).collect();
@@ -122,7 +123,7 @@ pub(crate) fn check(cx: &mut Cx) {
         if !(aw > 0.0 && ah > 0.0 && cw.is_finite() && ch.is_finite()) {
             continue;
         }
-        let scrolled = content.is_some_and(|c| scrolls(engine, c));
+        let scrolled = content.is_some_and(|c| content_scrolls(engine, c));
         if (cw > aw + slack() || ch > ah + slack()) && !scrolled {
             let message = format!(
                 "{what} is {has} px where what it holds asks for {asks}, and it does not \
