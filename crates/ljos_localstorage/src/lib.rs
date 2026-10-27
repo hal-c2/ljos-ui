@@ -302,17 +302,17 @@ pub struct SqlDatabase {
     name: String,
 }
 
+/// The database `cx.this` is a handle of. None only when `this` is no
+/// handle: a database stays open while the engine runs, and every SQL
+/// call then fails with "database is not open".
 fn database(cx: &Cx) -> Option<Rc<Database>> {
-    let name = cx
-        .engine
-        .with(cx.this, |h: &SqlDatabase| h.name.clone())
-        .ok()?;
+    let store = cx.engine.extension::<Store>();
+    let open = store.open.borrow();
+    // The name is looked up where it lies, not copied for every call.
     cx.engine
-        .extension::<Store>()
-        .open
-        .borrow()
-        .get(&name)
-        .cloned()
+        .with(cx.this, |h: &SqlDatabase| open.get(&h.name).cloned())
+        .ok()
+        .flatten()
 }
 
 /// `["error", code, message]`, which the script throws.
