@@ -802,8 +802,7 @@ impl Platform {
         url: &str,
         done: impl FnOnce(&Engine, Result<Vec<u8>, FetchError>) + 'static,
     ) {
-        let id = self.next_fetch.get();
-        self.next_fetch.set(id + 1);
+        let id = self.next_fetch_id();
         self.fetches.borrow_mut().insert(id, Box::new(done));
         let reply = self.expect_for(format!("fetch {url}"), owner);
         let fetcher = Arc::clone(&self.fetcher.borrow());
@@ -837,8 +836,7 @@ impl Platform {
         request: Request,
         done: impl FnOnce(&Engine, Result<Response, FetchError>) + 'static,
     ) {
-        let id = self.next_fetch.get();
-        self.next_fetch.set(id + 1);
+        let id = self.next_fetch_id();
         self.requests.borrow_mut().insert(id, Box::new(done));
         let reply = self.expect_for(format!("{} {}", request.method, request.url), None);
         let fetcher = Arc::clone(&self.fetcher.borrow());
@@ -862,10 +860,16 @@ impl Platform {
         }
     }
 
-    fn fail_request_later(&self, done: RequestDone, error: FetchError) {
-        // Not now: whoever asked is still in the middle of asking.
+    /// A key for a fetch or request waiting for its answer.
+    fn next_fetch_id(&self) -> u64 {
         let id = self.next_fetch.get();
         self.next_fetch.set(id + 1);
+        id
+    }
+
+    fn fail_request_later(&self, done: RequestDone, error: FetchError) {
+        // Not now: whoever asked is still in the middle of asking.
+        let id = self.next_fetch_id();
         self.requests.borrow_mut().insert(id, done);
         self.expect().send(move |e| {
             let done = Platform::of(e).requests.borrow_mut().remove(&id);
@@ -877,8 +881,7 @@ impl Platform {
 
     fn fail_later(&self, done: FetchDone, error: FetchError) {
         // Not now: whoever asked is still in the middle of asking.
-        let id = self.next_fetch.get();
-        self.next_fetch.set(id + 1);
+        let id = self.next_fetch_id();
         self.fetches.borrow_mut().insert(id, done);
         self.expect().send(move |e| {
             let done = Platform::of(e).fetches.borrow_mut().remove(&id);
