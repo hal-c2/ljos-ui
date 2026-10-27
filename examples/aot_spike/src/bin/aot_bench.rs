@@ -4,6 +4,8 @@
 //! ```text
 //! aot_bench cases <mode>      per case: median and p99 ns of a trigger
 //! aot_bench steps <mode>      per case: the same of a step, its inputs and trigger
+//!                             (`cases` and `steps` take case names after the
+//!                             mode to run only those, as a profiler wants)
 //! aot_bench boundary <mode>   ns per tracked read, write and emit
 //! aot_bench rss <mode>        VmRSS and VmHWM after the cases ran
 //! aot_bench snapshot <mode>   the end state after the rss run's steps, to
@@ -32,8 +34,8 @@ fn main() -> Result<()> {
         Mode::parse(s).with_context(|| format!("no mode {s}"))
     };
     match args.first().map(String::as_str) {
-        Some("cases") => cases(mode(1)?, false),
-        Some("steps") => cases(mode(1)?, true),
+        Some("cases") => cases(mode(1)?, false, &args[2..]),
+        Some("steps") => cases(mode(1)?, true, &args[2..]),
         Some("boundary") => boundary(mode(1)?),
         Some("rss") => rss(mode(1)?),
         Some("snapshot") => {
@@ -57,9 +59,12 @@ fn percentile(sorted: &[u64], p: f64) -> u64 {
 /// With `step`, the inputs are inside the clock too: an engine that
 /// evaluates a binding as soon as its inputs change (Qt's) does the work
 /// there, so for a binding only the step compares across engines.
-fn cases(mode: Mode, step: bool) -> Result<()> {
+fn cases(mode: Mode, step: bool, only: &[String]) -> Result<()> {
     println!("case\tmedian_ns\tp99_ns\ttier1_runs_per_trigger\taot_runs_per_trigger");
-    for case in CASES {
+    for case in CASES
+        .iter()
+        .filter(|c| only.is_empty() || only.iter().any(|o| o == *c))
+    {
         let run = load(mode, false);
         for k in 0..WARM {
             prepare(&run, case, k);
