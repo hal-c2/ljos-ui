@@ -739,11 +739,11 @@ impl CanvasPainter {
                 }
                 let s = ((row * i64::from(width) + col) * 4) as usize;
                 let d = ((dy * cw + dx) * 4) as usize;
-                let a = u32::from(data[s + 3]);
+                let a = data[s + 3];
                 for c in 0..3 {
-                    px[d + c] = ((u32::from(data[s + c]) * a + 127) / 255) as u8;
+                    px[d + c] = crate::rgba::mul_u8(data[s + c], a);
                 }
-                px[d + 3] = a as u8;
+                px[d + 3] = a;
             }
         }
         self.pixels = ImageHandle::from_premultiplied(cw as u32, ch as u32, px).ok();

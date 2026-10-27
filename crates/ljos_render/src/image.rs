@@ -226,11 +226,10 @@ impl ImageHandle {
     pub fn from_straight(width: u32, height: u32, mut data: Vec<u8>) -> Result<Self, ImageError> {
         check(width, height, data.len())?;
         for p in data.as_chunks_mut::<4>().0 {
-            let a = u32::from(p[3]);
+            let a = p[3];
             if a < 255 {
                 for c in &mut p[..3] {
-                    // Rounded, so 255 * a / 255 stays a.
-                    *c = ((u32::from(*c) * a + 127) / 255) as u8;
+                    *c = crate::rgba::mul_u8(*c, a);
                 }
             }
         }

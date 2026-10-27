@@ -449,7 +449,7 @@ impl VelloCpuReference {
             // blending turns into added light.
             for px in data.as_chunks_mut::<4>().0 {
                 for (c, t) in px.iter_mut().zip(t) {
-                    *c = ((u16::from(*c) * u16::from(t) + 127) / 255) as u8;
+                    *c = crate::rgba::mul_u8(*c, t);
                 }
             }
         }

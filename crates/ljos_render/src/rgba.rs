@@ -98,6 +98,14 @@ fn byte(c: f32) -> u8 {
     (f64::from(c.clamp(0.0, 1.0) * 255.0) + 0.5) as u8
 }
 
+/// `c * a / 255` of two bytes, rounded so that `mul_u8(c, 255)` is `c`.
+/// In `u16`, which holds `255 * 255 + 127`, so a loop over pixels does
+/// twice as many at once as in `u32`.
+#[inline]
+pub(crate) fn mul_u8(c: u8, a: u8) -> u8 {
+    ((u16::from(c) * u16::from(a) + 127) / 255) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
