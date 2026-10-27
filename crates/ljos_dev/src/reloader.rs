@@ -454,13 +454,7 @@ pub fn classify(root: &Path, path: &Path, is_dir: bool) -> Touch {
 
 /// Directories the compiler does not look into, so nothing in them is a
 /// change: build output, version control, an editor's own.
-#[must_use]
-pub fn skipped_dir(name: &str) -> bool {
-    name.starts_with('.')
-        || matches!(name, "target" | "node_modules" | "build")
-        || name.starts_with("build-")
-        || name.starts_with("cmake-build")
-}
+pub use ljos_compiler::skipped_dir;
 
 /// Every directory under `root` a project's files can be in, `root`
 /// first: what a watcher has to watch.

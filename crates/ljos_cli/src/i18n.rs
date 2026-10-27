@@ -152,7 +152,8 @@ struct Sources {
 impl Sources {
     fn read(dir: &Path) -> anyhow::Result<Self> {
         let mut qml = Vec::new();
-        qml_files(dir, &mut qml).with_context(|| format!("searching {}", dir.display()))?;
+        crate::walk::files_below(dir, crate::walk::is_qml, &mut qml)
+            .with_context(|| format!("searching {}", dir.display()))?;
         // Without regard to case, as `lupdate` orders them, so that the two
         // tools write the messages of a context in the same order.
         qml.sort_by_cached_key(|path| (path.to_string_lossy().to_lowercase(), path.clone()));
@@ -248,27 +249,6 @@ fn stem(path: &Path) -> String {
     path.file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default()
-}
-
-/// Every `.qml` file below `dir`. Hidden directories and links to
-/// directories are not entered: the first hold tools' files, the second can
-/// loop.
-fn qml_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
-            if !entry.file_name().to_string_lossy().starts_with('.') {
-                qml_files(&path, out)?;
-            }
-        } else if path.extension().is_some_and(|extension| extension == "qml")
-            && (kind.is_file() || path.is_file())
-        {
-            out.push(path);
-        }
-    }
-    Ok(())
 }
 
 /// `path` from the current directory, with `.` and `..` worked out, without

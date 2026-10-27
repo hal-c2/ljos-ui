@@ -18,13 +18,13 @@ use std::{
     path::Path,
 };
 
-use crate::stdout::{out, outln};
 use anyhow::{Context as _, bail};
 use ljos_compiler::baseline;
 use ljos_mcp_author::{ApiStatus, Ledger, MemberKind, QmlFrontEnd, Resolution, api};
 use serde_json::{Value, json};
 
 use super::Check;
+use crate::stdout::{out, outln};
 
 /// The module column of a use the front end could not place.
 const UNPLACED: &str = "(unplaced)";

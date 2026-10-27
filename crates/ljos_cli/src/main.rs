@@ -32,6 +32,7 @@ mod shaders;
 mod stderr;
 mod stdout;
 mod test;
+mod walk;
 
 #[derive(Parser)]
 #[command(name = "ljos", version, about = "Ljós UI toolkit")]

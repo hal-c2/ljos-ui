@@ -538,7 +538,13 @@ fn key(root: &Path, path: &Path) -> Option<String> {
     Some(text.strip_suffix(".qml").unwrap_or(&text).to_owned())
 }
 
-fn skipped(name: &str) -> bool {
+/// Directories a walk of a project does not enter: what tools keep for
+/// themselves (a name that starts with a dot) and build output, which
+/// holds copies of the sources. Every walk of a project's files (the
+/// compiler's, the watcher's, the command line's, the authoring
+/// server's) takes this one, so they all see one set of files.
+#[must_use]
+pub fn skipped_dir(name: &str) -> bool {
     name.starts_with('.')
         || matches!(name, "target" | "node_modules" | "build")
         || name.starts_with("build-")
@@ -565,7 +571,7 @@ fn scan(root: &Path) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
             // `file_type` does not follow links, so a link cannot lead the
             // walk out of the project.
             match entry.file_type() {
-                Ok(kind) if kind.is_dir() && !skipped(&name) => stack.push(entry.path()),
+                Ok(kind) if kind.is_dir() && !skipped_dir(&name) => stack.push(entry.path()),
                 Ok(kind) if kind.is_file() => names.push(name),
                 _ => {}
             }

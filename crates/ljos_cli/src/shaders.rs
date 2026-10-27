@@ -16,13 +16,14 @@
 //! | 1 | `--check` found an artifact missing or out of date. |
 //! | 2 | A shader does not compile or a file could not be read or written; the others were still handled. |
 
-use crate::stdout::outln;
 use std::path::{Path, PathBuf};
 
 use clap::Args;
 use ljos_shader::{Compiled, Stage, artifact_path};
 
-use crate::fmt::{files_below, shown};
+use crate::fmt::shown;
+use crate::stdout::outln;
+use crate::walk::files_below;
 
 #[derive(Args)]
 pub struct Shaders {

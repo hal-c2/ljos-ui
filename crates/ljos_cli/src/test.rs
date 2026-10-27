@@ -21,7 +21,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::stdout::outln;
 use anyhow::Context as _;
 use clap::Args;
 use ljos_compiler::{Compiled, Diagnostic, Project, Severity, compile_file, compile_text};
@@ -31,6 +30,8 @@ use ljos_test::qttest::{Filter, Options, Session};
 // `TestCase` and `SignalSpy` are in the table of types every file is read
 // against (`qt_types`), as Qt's own are.
 use qml_front::QtTypeOracle;
+
+use crate::stdout::outln;
 
 /// What a test file's name starts with.
 const TEST_PREFIX: &str = "tst_";
@@ -366,7 +367,7 @@ fn add_import(project: &mut Project<QtTypeOracle>, root: &Path, import: &Path) {
             // `file_type` does not follow links, so a link cannot lead
             // the walk round in a circle.
             match entry.file_type() {
-                Ok(kind) if kind.is_dir() && !name.starts_with('.') => stack.push(path),
+                Ok(kind) if kind.is_dir() && !ljos_compiler::skipped_dir(&name) => stack.push(path),
                 Ok(kind) if kind.is_file() && name.ends_with(".qml") => {
                     let key = key(root, &path);
                     if project.source(&key).is_none()

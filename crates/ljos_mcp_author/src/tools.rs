@@ -87,12 +87,7 @@ fn load_ledger(project: &Project) -> Result<Ledger, SurfaceError> {
 
 /// Directories a walk does not go into: build output and what tools keep
 /// for themselves. A path that is named is taken whatever it is called.
-pub(crate) fn skipped_dir(name: &str) -> bool {
-    name.starts_with('.')
-        || matches!(name, "target" | "node_modules" | "build")
-        || name.starts_with("build-")
-        || name.starts_with("cmake-build")
-}
+pub(crate) use ljos_compiler::skipped_dir;
 
 /// Expands directories to the `.qml` files below them, sorted so answers
 /// are reproducible and a cursor means the same file on the next call.

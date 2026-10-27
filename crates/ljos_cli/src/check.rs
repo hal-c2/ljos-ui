@@ -17,13 +17,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::stdout::{out, outln};
 use anyhow::bail;
 use clap::Args;
 use ljos_compiler::{
     Severity, baseline, compile_project,
     tier1::{Counts, Coverage, Fell, Tally},
 };
+
+use crate::stdout::{out, outln};
 
 mod lint;
 mod members;

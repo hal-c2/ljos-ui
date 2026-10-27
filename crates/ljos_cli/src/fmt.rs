@@ -20,8 +20,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::stdout::{out, outln};
 use clap::Args;
+
+use crate::stdout::{out, outln};
+use crate::walk::{files_below, is_qml};
 
 #[derive(Args)]
 pub struct Fmt {
@@ -37,44 +39,6 @@ pub struct Fmt {
     /// Change nothing; print what would change as a unified diff.
     #[arg(long)]
     diff: bool,
-}
-
-/// Directories a walk does not enter: tools' own, and build output that
-/// holds copies of the sources. The same ones the compiler skips, so `ljos
-/// fmt .` and `ljos check .` see one set of files.
-pub(crate) fn skipped(name: &str) -> bool {
-    name.starts_with('.')
-        || matches!(name, "target" | "node_modules" | "build")
-        || name.starts_with("build-")
-        || name.starts_with("cmake-build")
-}
-
-/// Every file below `dir` that `wanted` takes, in the order of their
-/// names, outside the [`skipped`] directories. Links to directories are
-/// not entered: they can loop.
-pub(crate) fn files_below(
-    dir: &Path,
-    wanted: fn(&Path) -> bool,
-    out: &mut Vec<PathBuf>,
-) -> std::io::Result<()> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
-        let path = entry.path();
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
-            if !skipped(&entry.file_name().to_string_lossy()) {
-                files_below(&path, wanted, out)?;
-            }
-        } else if wanted(&path) && path.is_file() {
-            out.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn is_qml(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e == "qml")
 }
 
 /// A path as a report names it: as it was given, without the `./` a walk

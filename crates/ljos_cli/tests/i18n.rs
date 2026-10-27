@@ -99,6 +99,33 @@ fn a_new_catalogue_lists_every_text_of_the_tree() {
     assert!(!ts.contains("Unused"), "{ts}");
 }
 
+/// Build output holds copies of the sources, which are not more texts to
+/// translate: the directories `ljos check` and `ljos fmt` leave out are left
+/// out here too.
+#[test]
+fn build_output_in_the_tree_is_not_searched() {
+    let dir = tempfile::tempdir().unwrap();
+    tree(dir.path());
+    for copy in ["build", "target", "build-desktop", ".rcc"] {
+        fs::create_dir_all(dir.path().join("ui").join(copy)).unwrap();
+        fs::write(
+            dir.path().join("ui").join(copy).join("Main.qml"),
+            "import QtQuick\nItem { property string t: qsTr(\"Copied\") }\n",
+        )
+        .unwrap();
+    }
+
+    let output = extract(dir.path(), &["--target-language", "is_IS"]);
+    assert!(output.status.success(), "{output:?}");
+    let said = stdout(&output);
+    assert!(
+        said.contains("Searched 2 QML and 1 JavaScript file(s)"),
+        "{said}"
+    );
+    let ts = fs::read_to_string(dir.path().join("i18n/app_is.ts")).unwrap();
+    assert!(!ts.contains("Copied"), "{ts}");
+}
+
 #[test]
 fn an_update_keeps_what_translators_did() {
     let dir = tempfile::tempdir().unwrap();

@@ -29,7 +29,7 @@ pub mod tier1;
 
 pub use compile::compile_file;
 pub use dump::dump;
-pub use project::{Project, resources};
+pub use project::{Project, resources, skipped_dir};
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
 pub use style::{controls_style, controls_style_on, platform_style};
 
