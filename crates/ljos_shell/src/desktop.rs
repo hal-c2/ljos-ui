@@ -653,6 +653,7 @@ impl<M: Send + 'static> Desktop<M> {
 
         let windows = sys.windows(engine);
         let mut i = 1;
+        let mut gone = false;
         while i < self.slots.len() {
             let stays = self.slots[i]
                 .window
@@ -660,10 +661,15 @@ impl<M: Send + 'static> Desktop<M> {
             if stays {
                 i += 1;
             } else {
-                self.hide(host, i);
+                self.take_down(host, i);
                 let slot = self.slots.remove(i);
                 self.repaints.forget(slot.key);
+                gone = true;
             }
+        }
+        // Once for all the windows that went, with their slots.
+        if gone {
+            crate::give_back_freed_heap();
         }
         self.refused.retain(|w| windows.contains(w));
         for win in &windows {
@@ -1046,12 +1052,21 @@ impl<M: Send + 'static> Desktop<M> {
         }
     }
 
-    /// Takes the window of slot `i` off the screen. The surface goes
-    /// before the window it draws into.
+    /// Takes the window of slot `i` off the screen, and gives the memory
+    /// that freed back to the system.
     fn hide(&mut self, host: &mut Control<'_>, i: usize) {
+        if self.take_down(host, i) {
+            crate::give_back_freed_heap();
+        }
+    }
+
+    /// [`Desktop::hide`] without giving memory back, for a caller that
+    /// takes down several windows and gives it back once: true when slot
+    /// `i` had a window. The surface goes before the window it draws into.
+    fn take_down(&mut self, host: &mut Control<'_>, i: usize) -> bool {
         let slot = &mut self.slots[i];
         let Some(surface) = slot.surface.take() else {
-            return;
+            return false;
         };
         if let Some(painter) = slot.painter.as_mut() {
             painter.forget_window();
@@ -1070,7 +1085,7 @@ impl<M: Send + 'static> Desktop<M> {
         let view = view_of_mut(&mut self.slots[i].view, &mut self.app);
         view.set_drawn(false);
         view.trim(MemoryPressure::Critical);
-        crate::give_back_freed_heap();
+        true
     }
 
     /// The system is short of memory: hidden windows give back all they
@@ -2084,8 +2099,12 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
             }
             Event::SurfaceDestroyed => {
                 self.live = false;
+                let mut hid = false;
                 for i in 0..self.slots.len() {
-                    self.hide(host, i);
+                    hid |= self.take_down(host, i);
+                }
+                if hid {
+                    crate::give_back_freed_heap();
                 }
             }
             Event::Window { id, event, raw } => self.window_event(host, id, &event, raw),
