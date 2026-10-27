@@ -6,14 +6,23 @@
 //! `StackLayout`, `SwipeView`, `StackView`) is left out, and so is a text's
 //! empty room: a text is measured by the words it paints, not its box.
 //! Scroll bars are left out too: two of them meet in a corner by design.
+//!
+//! Controls in two cells of one layout or positioner are measured as well:
+//! the layout keeps its cells apart, so a control crossing into its
+//! neighbour's cell has outgrown its own (a flow of buttons narrower than
+//! they are, beside a Send button). Only what the cells show counts, after
+//! the clip of anything between the control and the layout.
 
 use ljos_controls::{ScrollBar, ScrollIndicator, StackView, SwipeView};
 use ljos_engine::{Engine, ObjectId};
-use ljos_quick::{StackLayout, Text};
+use ljos_quick::{
+    Column, ColumnLayout, Flow, Grid, GridLayout, Item, Row, RowLayout, StackLayout, Text,
+};
 use ljos_render::kurbo::Rect;
 
 use crate::cx::{
-    Cx, acted_on, ancestors, is_a, scene_rect, shown_items, shown_opacity, slack, trim,
+    Cx, acted_on, ancestors, is_a, is_scroller, scene_rect, shown_items, shown_opacity, slack,
+    trim, within,
 };
 
 /// `Text.AlignRight`, `Text.AlignHCenter`, `Text.AlignBottom` and
@@ -65,6 +74,59 @@ fn stacks(e: &Engine, parent: ObjectId) -> bool {
         .any(|p| is_a::<StackLayout>(e, p) || is_a::<SwipeView>(e, p) || is_a::<StackView>(e, p))
 }
 
+/// Whether `obj` places its children apart from each other.
+fn keeps_apart(e: &Engine, obj: ObjectId) -> bool {
+    is_a::<RowLayout>(e, obj)
+        || is_a::<ColumnLayout>(e, obj)
+        || is_a::<GridLayout>(e, obj)
+        || is_a::<Row>(e, obj)
+        || is_a::<Column>(e, obj)
+        || is_a::<Grid>(e, obj)
+        || is_a::<Flow>(e, obj)
+}
+
+/// What of `item` shows inside `top`: its box cut by the clip of every
+/// item between them, or `None` when something between them scrolls it.
+fn shown_below(e: &Engine, item: ObjectId, top: ObjectId, r: Rect) -> Option<Rect> {
+    let mut r = r;
+    for a in ancestors(e, item).take_while(|a| *a != top) {
+        if is_scroller(e, a) {
+            return None;
+        }
+        if e.untrack(|| e.read(a, Item::CLIP.index)).to_boolean() {
+            r = r.intersect(scene_rect(e, a)?);
+        }
+    }
+    Some(r)
+}
+
+/// The nearest item above both `a` and `b`.
+fn common(e: &Engine, a: ObjectId, b: ObjectId) -> Option<ObjectId> {
+    let above_a: Vec<ObjectId> = ancestors(e, a).collect();
+    ancestors(e, b).find(|x| above_a.contains(x))
+}
+
+fn report(cx: &mut Cx, a: ObjectId, b: ObjectId, over: Rect, what: &str) {
+    let other = crate::cx::words(cx, a);
+    cx.report(
+        "layout-overlap",
+        Some(b),
+        format!(
+            "this is drawn over {} beside it ({} by {} px of the two {what} \
+             overlap); let a layout place them, rather than positions that ignore \
+             each other's size",
+            other,
+            trim(over.width()),
+            trim(over.height())
+        ),
+    )
+    .measured = Some(format!(
+        "{}x{} overlap",
+        trim(over.width()),
+        trim(over.height())
+    ));
+}
+
 pub(crate) fn check(cx: &mut Cx) {
     let e = cx.engine;
     let shown = shown_items(cx);
@@ -113,24 +175,60 @@ pub(crate) fn check(cx: &mut Cx) {
                     continue;
                 }
                 let what = if *ka == "text" { "texts" } else { "controls" };
-                cx.report(
-                    "layout-overlap",
-                    Some(*b),
-                    format!(
-                        "this is drawn over {} beside it ({} by {} px of the two {what} \
-                         overlap); let a layout place them, rather than positions that ignore \
-                         each other's size",
-                        crate::cx::item_words(e, *a),
-                        trim(over.width()),
-                        trim(over.height())
-                    ),
-                )
-                .measured = Some(format!(
-                    "{}x{} overlap",
-                    trim(over.width()),
-                    trim(over.height())
-                ));
+                report(cx, *a, *b, over, what);
             }
+        }
+    }
+    across_cells(cx, &shown);
+}
+
+/// Controls in two cells of one layout that cross each other.
+fn across_cells(cx: &mut Cx, shown: &[ObjectId]) {
+    let e = cx.engine;
+    let nodes = cx.scene.accessibility_tree();
+    let mut controls: Vec<(ObjectId, Rect)> = Vec::new();
+    for &c in shown {
+        if shown_opacity(e, c) <= 0.0 || is_a::<ScrollBar>(e, c) || is_a::<ScrollIndicator>(e, c) {
+            continue;
+        }
+        let acted = cx
+            .scene
+            .accessible_node(c)
+            .and_then(|k| nodes.get(k))
+            .is_some_and(acted_on);
+        // A control's own parts are the control.
+        if !acted || controls.iter().any(|(o, _)| within(e, c, *o)) {
+            continue;
+        }
+        if let Some(r) = scene_rect(e, c) {
+            controls.push((c, r));
+        }
+    }
+    for (i, (a, ra)) in controls.iter().enumerate() {
+        for (b, rb) in &controls[i + 1..] {
+            let crude = ra.intersect(*rb);
+            if crude.width() <= slack() || crude.height() <= slack() {
+                continue;
+            }
+            // Siblings were measured above.
+            if e.visual_parent(*a) == e.visual_parent(*b) {
+                continue;
+            }
+            let Some(top) = common(e, *a, *b) else {
+                continue;
+            };
+            if !keeps_apart(e, top) || stacks(e, top) {
+                continue;
+            }
+            let (Some(sa), Some(sb)) = (shown_below(e, *a, top, *ra), shown_below(e, *b, top, *rb))
+            else {
+                continue;
+            };
+            let over = sa.intersect(sb);
+            if over.width() <= slack() || over.height() <= slack() {
+                continue;
+            }
+            report(cx, *a, *b, over, "controls");
         }
     }
 }

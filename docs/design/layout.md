@@ -60,7 +60,7 @@ Item { Label { text: model.title } Label { anchors.right: parent.right; text: mo
 RowLayout { Label { text: model.title; elide: Text.ElideRight; Layout.fillWidth: true } Label { text: model.date } }
 ```
 
-Checked by: the runtime audit, on two shown texts or two controls of the application whose drawn boxes cross by more than a pixel, neither inside the other. Scroll bars, which meet in a corner by design, are left out.
+Checked by: the runtime audit, on two shown texts or two controls of the application whose drawn boxes cross by more than a pixel, neither inside the other. Scroll bars, which meet in a corner by design, are left out. Controls in two cells of one layout or positioner are compared too, by what each cell shows: a control that crosses into its neighbour's cell (a `Flow` of buttons narrower than they are, beside a Send button in a `RowLayout`) has outgrown its own.
 
 Sources: https://www.w3.org/WAI/WCAG22/Understanding/text-spacing.html
 

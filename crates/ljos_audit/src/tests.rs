@@ -1476,3 +1476,46 @@ Rectangle {
     let message = &report.findings[0].message;
     assert!(message.contains("#fabf97 on #faf2ed"), "{message}");
 }
+
+/// A row with a flow of buttons beside a Send button, `width` wide.
+fn composer(width: u32) -> String {
+    page(&format!(
+        r#"    RowLayout {{
+        x: 12; y: 200; width: {width}
+        Flow {{
+            Layout.fillWidth: true
+            spacing: 4
+            Button {{ width: 100; text: "Model" }}
+            Button {{ width: 100; text: "High" }}
+        }}
+        Button {{ width: 100; text: "Send" }}
+    }}"#
+    ))
+    .replace(
+        "import QtQuick\n",
+        "import QtQuick\nimport QtQuick.Layouts\n",
+    )
+}
+
+#[test]
+fn a_button_of_a_flow_crossing_its_neighbour_in_a_row_layout_overlaps() {
+    // Issue #155: the flow gets 80 of the 180, its buttons are 100 wide,
+    // so they reach 20 into the Send button beside it. The flow wraps to
+    // two rows, 84 tall, and Send is centred on them, 22 to 62: each
+    // button crosses it by 18.
+    let options = Options::desktop().only(&["layout-overlap"]).unwrap();
+    let report = audit_with(&composer(180), &options);
+    assert_eq!(report.findings.len(), 2, "\n{report}");
+    for (f, other) in report.findings.iter().zip(["\"Model\"", "\"High\""]) {
+        assert_eq!(f.name.as_deref(), Some("Send"), "\n{report}");
+        assert!(f.message.contains(other), "\n{report}");
+        assert_eq!(f.measured.as_deref(), Some("20x18 overlap"), "\n{report}");
+    }
+}
+
+#[test]
+fn a_flow_of_buttons_with_room_beside_its_neighbour_does_not_overlap() {
+    let options = Options::desktop().only(&["layout-overlap"]).unwrap();
+    let report = audit_with(&composer(400), &options);
+    assert!(report.is_clean(), "\n{report}");
+}
