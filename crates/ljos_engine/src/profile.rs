@@ -302,13 +302,7 @@ impl Engine {
                 signal: None,
             }
         })?;
-        let node = self
-            .inner
-            .store
-            .borrow()
-            .objects
-            .get(obj)
-            .and_then(|h| h.node(prop));
+        let node = self.node_if_any(obj, prop);
         if let Some(node) = node {
             if let Some(cause) = self.changed_read(obj, prop, node) {
                 p.caused(key, (cause.0, cause.1.0));

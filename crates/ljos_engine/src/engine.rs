@@ -2450,6 +2450,13 @@ impl Engine {
         self.ensure_node(obj, prop)
     }
 
+    /// The node `prop` of `obj` has, without making one. `prop` is
+    /// already redirected.
+    #[inline]
+    pub(crate) fn node_if_any(&self, obj: ObjectId, prop: PropIndex) -> Option<NodeId> {
+        self.inner.store.borrow().objects.get(obj)?.node(prop)
+    }
+
     /// Keeps a tracked read of a property that has no node
     /// ([`FieldReads`]).
     pub(crate) fn keep_field_read(&self, obj: ObjectId, prop: PropIndex) {
@@ -2915,13 +2922,7 @@ impl Engine {
     /// Whether a binding is active on the property.
     pub fn is_bound(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
-        let node = self
-            .inner
-            .store
-            .borrow()
-            .objects
-            .get(obj)
-            .and_then(|h| h.node(prop));
+        let node = self.node_if_any(obj, prop);
         node.is_some_and(|n| self.inner.graph.is_bound(n))
     }
 
@@ -2929,13 +2930,7 @@ impl Engine {
     /// binding: what taking the overrides off gives back.
     pub fn base_is_bound(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
-        let node = self
-            .inner
-            .store
-            .borrow()
-            .objects
-            .get(obj)
-            .and_then(|h| h.node(prop));
+        let node = self.node_if_any(obj, prop);
         node.is_some_and(|n| self.inner.graph.base_provenance(n) == Some(Provenance::Bound))
     }
 
@@ -2944,26 +2939,14 @@ impl Engine {
     /// did natively, so its value has the last word over a native reset.
     pub fn ran_this_change(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
-        let node = self
-            .inner
-            .store
-            .borrow()
-            .objects
-            .get(obj)
-            .and_then(|h| h.node(prop));
+        let node = self.node_if_any(obj, prop);
         node.is_some_and(|n| self.inner.graph.is_bound(n) && self.inner.graph.ran_this_flush(n))
     }
 
     /// Whether an override (a state, a `Binding`) holds `prop` now.
     pub(crate) fn has_override(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
-        let node = self
-            .inner
-            .store
-            .borrow()
-            .objects
-            .get(obj)
-            .and_then(|h| h.node(prop));
+        let node = self.node_if_any(obj, prop);
         node.is_some_and(|n| self.inner.graph.override_count(n) > 0)
     }
 

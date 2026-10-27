@@ -235,14 +235,7 @@ impl Engine {
             // A binding written on an alias is the node of what it leads to.
             for p in aliases {
                 let (to, tp) = self.redirect(obj, p);
-                let n = self
-                    .inner
-                    .store
-                    .borrow()
-                    .objects
-                    .get(to)
-                    .and_then(|h| h.node(tp));
-                if let Some(n) = n {
+                if let Some(n) = self.node_if_any(to, tp) {
                     nodes.push((p, n));
                 }
             }

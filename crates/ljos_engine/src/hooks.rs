@@ -249,10 +249,7 @@ impl Engine {
     /// where a read is not: inside the property's own binding.
     pub fn peek(&self, obj: ObjectId, prop: PropIndex) -> Value {
         let (obj, prop) = self.redirect(obj, prop);
-        let node = {
-            let store = self.inner.store.borrow();
-            store.objects.get(obj).and_then(|h| h.node(prop))
-        };
+        let node = self.node_if_any(obj, prop);
         match node {
             Some(n) => self.inner.graph.peek(n).unwrap_or_default(),
             // No node, so no binding: the read is of the field.

@@ -446,14 +446,9 @@ impl Engine {
     /// binding on the property stays, as it does on Qt: the list is the
     /// binding's again when what it reads changes.
     fn store_list(&self, obj: ObjectId, prop: PropIndex, v: Value) -> Result<(), EngineError> {
-        let bound = {
-            let store = self.inner.store.borrow();
-            store
-                .objects
-                .get(obj)
-                .and_then(|h| h.node(prop))
-                .is_some_and(|n| self.inner.graph.is_bound(n))
-        };
+        let bound = self
+            .node_if_any(obj, prop)
+            .is_some_and(|n| self.inner.graph.is_bound(n));
         let how = if bound {
             WriteKind::Animation
         } else {
