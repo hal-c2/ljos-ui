@@ -483,8 +483,7 @@ fn stroke(style: &StrokeStyle, t: f64, m: Affine) -> Option<kurbo::Stroke> {
         }
     }
     if pattern.len() % 2 == 1 {
-        let again = pattern.clone();
-        pattern.extend(again);
+        pattern.extend_from_within(..);
     }
     if pattern.iter().sum::<f64>() > 0.0 {
         stroke = stroke.with_dashes(offset, pattern);
@@ -517,18 +516,16 @@ fn trim(paths: &mut Vec<BezPath>, start: f64, end: f64, offset: f64, sequential:
     }
     let shift = (start + offset).floor();
     let (s, e) = (start + offset - shift, end + offset - shift);
-    let ranges: Vec<(f64, f64)> = if e <= 1.0 {
-        vec![(s, e)]
-    } else {
-        vec![(s, 1.0), (0.0, e - 1.0)]
-    };
+    // Past the end the stretch goes on from the start.
+    let both = [(s, e.min(1.0)), (0.0, e - 1.0)];
+    let ranges = if e <= 1.0 { &both[..1] } else { &both[..] };
     if sequential {
         let lengths: Vec<f64> = paths.iter().map(length).collect();
         let total: f64 = lengths.iter().sum();
         let mut at = 0.0;
         for (path, len) in paths.iter_mut().zip(lengths) {
             let mut cut = BezPath::new();
-            for (a, b) in &ranges {
+            for (a, b) in ranges {
                 let (from, to) = ((a * total - at).max(0.0), (b * total - at).min(len));
                 if to > from {
                     cut.extend(sub_path(path, from, to));
@@ -541,7 +538,7 @@ fn trim(paths: &mut Vec<BezPath>, start: f64, end: f64, offset: f64, sequential:
         for path in paths.iter_mut() {
             let len = length(path);
             let mut cut = BezPath::new();
-            for (a, b) in &ranges {
+            for (a, b) in ranges {
                 cut.extend(sub_path(path, a * len, b * len));
             }
             *path = cut;
