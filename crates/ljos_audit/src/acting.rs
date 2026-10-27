@@ -180,9 +180,12 @@ pub(crate) fn run(
         }
     }
     // Each instance of a delegate or a component says the same of the one
-    // place in the source that makes them all: one fix, one finding.
+    // place in the source that makes them all: one fix, one finding. What
+    // has no place is made by no one source, so each is its own.
     let mut seen = std::collections::HashSet::new();
-    act.out
-        .retain(|f| seen.insert((f.code, f.place.clone(), f.message.clone())));
+    act.out.retain(|f| {
+        let which = f.place.is_none().then_some(f.item).flatten();
+        seen.insert((f.code, f.place.clone(), which, f.message.clone()))
+    });
     (act.out, act.now)
 }

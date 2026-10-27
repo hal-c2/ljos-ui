@@ -1338,3 +1338,28 @@ fn what_is_wrong_in_a_popup_outside_the_audited_item_is_not_found() {
     let report = audit_within(&page(body), "part");
     assert!(report.is_clean(), "expected nothing, found:\n{report}");
 }
+
+#[test]
+fn two_popups_with_no_place_are_two_findings() {
+    // Made in Rust, the popups have no place in any source: the same
+    // message about each is still about two of them.
+    let e = engine();
+    let mut s = mount(&e, &page(""));
+    let root = s.root().expect("a root");
+    for _ in 0..2 {
+        let popup = e
+            .create_by_name("QtQuick.Controls", "Popup", Some(root))
+            .expect("a Popup");
+        e.write_by_name(popup, "parent", ljos_engine::Value::Object(root))
+            .unwrap();
+        e.write_by_name(popup, "width", 100.0.into()).unwrap();
+        e.write_by_name(popup, "height", 50.0.into()).unwrap();
+        e.write_by_name(popup, "closePolicy", 0x01.into()).unwrap();
+        e.invoke_by_name(popup, "open", &[]).unwrap();
+    }
+    s.frame(&e, Time::ZERO);
+    let options = Options::desktop().only(&["focus-escape-dismiss"]).unwrap();
+    let report = audit(&e, &mut s, Time::ZERO, &options);
+    assert_eq!(report.findings.len(), 2, "\n{report}");
+    assert_ne!(report.findings[0].item, report.findings[1].item);
+}
