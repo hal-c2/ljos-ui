@@ -532,11 +532,13 @@ fn drop_old(e: &Engine, me: ObjectId, old: Option<ObjectId>) {
 }
 
 /// Takes `obj` off its parent now and destroys it at the next frame: a
-/// handler of its own may be what is running.
+/// handler of its own may be what is running. It hears of its end first,
+/// while it is still the Loader's (once: a switch has told it already).
 fn discard(e: &Engine, obj: ObjectId) {
     if !e.is_alive(obj) {
         return;
     }
+    e.announce_destruction(obj);
     if is_item(e, obj) {
         let _ = tree::set_parent_item(e, obj, None);
     }

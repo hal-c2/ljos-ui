@@ -14,9 +14,18 @@ Feature: A Loader is a boundary
       """qml
       import QtQuick
       Item {
+        id: root
         objectName: "root"
         Item { objectName: "neighbour" }
-        Component { id: page; Item { objectName: "page"; Item { objectName: "deep" } } }
+        property string log: ""
+        Component {
+          id: page
+          Item {
+            objectName: "page"
+            Item { objectName: "deep" }
+            Component.onDestruction: root.log += "gone in " + (parent ? parent.objectName : "nothing") + " "
+          }
+        }
         Loader { id: loader; objectName: "loader"; sourceComponent: page }
         function again() { loader.active = false; loader.active = true }
       }
@@ -26,6 +35,10 @@ Feature: A Loader is a boundary
     When a native handler of "deep" panics with "boom"
     Then the object "page" does not exist
     And the property "item" of "loader" is null
+
+  Scenario: The unloaded item hears of its end while it is still the Loader's
+    When a native handler of "deep" panics with "boom"
+    Then the property "log" of "root" is "gone in loader "
 
   Scenario: The Loader reports an error
     When a native handler of "deep" panics with "boom"
