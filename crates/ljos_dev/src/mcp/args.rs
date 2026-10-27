@@ -776,6 +776,15 @@ fn bad(tool: &str, why: impl std::fmt::Display) -> SurfaceError {
     SurfaceError::invalid_argument(format!("`{tool}`: {why}"))
 }
 
+/// Refuses a count `name` of none or of more than `most`.
+fn within(tool: &str, name: &str, count: Option<usize>, most: usize) -> Result<(), SurfaceError> {
+    match count {
+        Some(0) => Err(bad(tool, format!("`{name}` is at least 1"))),
+        Some(c) if c > most => Err(bad(tool, format!("`{name}` is at most {most}"))),
+        _ => Ok(()),
+    }
+}
+
 /// The tools that act, by name. `None` for any other.
 pub fn act_name(tool: &str) -> Option<&'static str> {
     TOOLS[FIRST_ACT..].iter().find(|t| **t == tool).copied()
@@ -1006,21 +1015,21 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                     || !a.include.is_empty()
                     || a.since.is_some())
             {
-                return Err(SurfaceError::invalid_argument(
-                    "`app_snapshot`: `cursor` continues an outline as it was asked for; do not \
+                return Err(bad(
+                    tool,
+                    "`cursor` continues an outline as it was asked for; do not \
                      combine it with `root`, `depth`, `include` or `since`",
                 ));
             }
             if a.since.is_some() && (a.root.is_some() || a.depth.is_some()) {
-                return Err(SurfaceError::invalid_argument(
-                    "`app_snapshot`: `since` compares whole snapshots; do not combine it with \
+                return Err(bad(
+                    tool,
+                    "`since` compares whole snapshots; do not combine it with \
                      `root` or `depth`",
                 ));
             }
             if a.max_nodes == Some(0) {
-                return Err(SurfaceError::invalid_argument(
-                    "`app_snapshot`: `max_nodes` is at least 1",
-                ));
+                return Err(bad(tool, "`max_nodes` is at least 1"));
             }
             Kind::Snapshot(a)
         }
@@ -1034,9 +1043,7 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
         "app_screenshot" => {
             let a: ScreenshotArgs = read(tool, args)?;
             if a.max_size == Some(0) {
-                return Err(SurfaceError::invalid_argument(
-                    "`app_screenshot`: `max_size` is at least 1",
-                ));
+                return Err(bad(tool, "`max_size` is at least 1"));
             }
             Kind::Screenshot(a)
         }
@@ -1047,13 +1054,7 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                 return Ok(Kind::Metrics);
             };
             let most = super::memory::MOST_TYPES;
-            match a.max {
-                Some(0) => return Err(bad(tool, "`memory.max` is at least 1")),
-                Some(m) if m > most => {
-                    return Err(bad(tool, format!("`memory.max` is at most {most}")));
-                }
-                _ => {}
-            }
+            within(tool, "memory.max", a.max, most)?;
             if a.r#type.as_deref().is_some_and(str::is_empty) {
                 return Err(bad(tool, "`memory.type` names a type"));
             }
@@ -1145,22 +1146,14 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                 ));
             }
             let most = super::models::MAX_LIMIT;
-            match a.limit {
-                Some(0) => return Err(bad(tool, "`limit` is at least 1")),
-                Some(l) if l > most => return Err(bad(tool, format!("`limit` is at most {most}"))),
-                _ => {}
-            }
+            within(tool, "limit", a.limit, most)?;
             holder(tool, a.holder.as_deref())?;
             Kind::Objects(a)
         }
         "app_trace" => {
             let a: super::trace::TraceArgs = read(tool, args)?;
             let most = super::trace::MAX_EVENTS;
-            match a.max {
-                Some(0) => return Err(bad(tool, "`max` is at least 1")),
-                Some(m) if m > most => return Err(bad(tool, format!("`max` is at most {most}"))),
-                _ => {}
-            }
+            within(tool, "max", a.max, most)?;
             if !a.names.is_empty() && (a.target.is_none() || a.stop) {
                 return Err(bad(tool, "`names` go with a `target` to start tracing"));
             }
@@ -1174,11 +1167,7 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
         "app_frames" => {
             let a: super::timeline::FramesArgs = read(tool, args)?;
             let most = super::timeline::MAX_KEPT;
-            match a.max {
-                Some(0) => return Err(bad(tool, "`max` is at least 1")),
-                Some(m) if m > most => return Err(bad(tool, format!("`max` is at most {most}"))),
-                _ => {}
-            }
+            within(tool, "max", a.max, most)?;
             holder(tool, a.holder.as_deref())?;
             Kind::Frames(a)
         }
