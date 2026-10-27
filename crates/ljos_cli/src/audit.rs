@@ -36,7 +36,7 @@ pub struct Audit {
     touch: bool,
     /// The window's size in logical pixels. Without it, the root's own
     /// size, and 800x600 for a side it leaves at 0, as `ljos render`.
-    #[arg(long, value_parser = parse_size, value_name = "WxH")]
+    #[arg(long, value_parser = render::parse_size, value_name = "WxH")]
     size: Option<(u32, u32)>,
     /// Milliseconds of application time to let pass before the audit.
     #[arg(long, default_value_t = 500, value_name = "MS")]
@@ -65,10 +65,6 @@ pub struct Audit {
 
 fn parse_matrix(text: &str) -> Result<Matrix, String> {
     text.parse().map_err(|e| format!("{e}"))
-}
-
-fn parse_size(text: &str) -> Result<(u32, u32), String> {
-    render::parse_size(text)
 }
 
 impl Audit {
