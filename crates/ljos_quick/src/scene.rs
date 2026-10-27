@@ -826,6 +826,9 @@ struct PointerState {
     item_hovered: Vec<ObjectId>,
     /// The buttons held after the last pointer event.
     held: MouseButtons,
+    /// A grabbing MouseArea that left the scene: it is told it was
+    /// canceled once the scene is settled.
+    lost: Option<ObjectId>,
     /// The `Qt.CursorShape` the pointer shows.
     cursor: i32,
     /// The cursor is a TableView's over the end of a column or row, which
@@ -1856,6 +1859,7 @@ impl QuickScene {
         }
         if matches!(self.pointer.grab, Some(Grab::Mouse(o)) if o == obj) {
             self.pointer.grab = None;
+            self.pointer.lost = Some(obj);
         }
     }
 
@@ -1933,6 +1937,14 @@ impl QuickScene {
             if self.items.get(o).is_some_and(|e| e.parent == Some(p)) {
                 self.unadopt(engine, o, true);
             }
+        }
+        // As in Qt, a MouseArea that leaves the scene while it holds the
+        // pointer is canceled; one destroyed hears nothing.
+        if let Some(m) = self.pointer.lost.take()
+            && engine.is_alive(m)
+            && self.items.get(m).is_none()
+        {
+            mouse_canceled(engine, m);
         }
     }
 
@@ -3235,14 +3247,7 @@ impl QuickScene {
         let mut handled = self.pointer.context.take().is_some();
         match self.pointer.grab.take() {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
-                crate::press_and_hold::ended(engine, m);
-                set_pressed(engine, m, false);
-                set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
-                if !hover_enabled(engine, m) {
-                    set_contains(engine, m, false);
-                }
-                emit(engine, m, "canceled", &[]);
-                crate::mouse_drag::released(engine, m);
+                mouse_canceled(engine, m);
                 handled = true;
             }
             Some(Grab::Tap(h)) if engine.is_alive(h) => {
@@ -3862,6 +3867,18 @@ fn tap_ungrab(engine: &Engine, h: ObjectId, transition: i32, at: kurbo::Point, s
 /// `let_go`: how a handler that held the point alone let go of it, told
 /// between `pressed` and `canceled` as in Qt. A handler that only watched
 /// the point lets go of it at the release.
+/// The pointer `m` held was taken from it.
+fn mouse_canceled(engine: &Engine, m: ObjectId) {
+    crate::press_and_hold::ended(engine, m);
+    set_pressed(engine, m, false);
+    set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
+    if !hover_enabled(engine, m) {
+        set_contains(engine, m, false);
+    }
+    emit(engine, m, "canceled", &[]);
+    crate::mouse_drag::released(engine, m);
+}
+
 fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point, let_go: Option<LetGo>) {
     if !engine.is_alive(h) {
         return;
