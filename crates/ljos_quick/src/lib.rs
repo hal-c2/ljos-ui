@@ -40,6 +40,7 @@ mod long_press;
 mod metrics;
 mod mirroring;
 mod mouse_drag;
+mod off_thread;
 mod paint_item;
 pub mod palette;
 mod particles;

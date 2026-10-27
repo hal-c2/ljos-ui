@@ -19,15 +19,15 @@
 //! by the scene (`QuickScene::draw_effect_sources`) when what the source
 //! shows changed.
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
+use crate::off_thread::off_thread;
 use ljos_engine::{
     Atom, Cx, Engine, EngineError, LogLevel, ObjectId, QmlObject, Rect, Size, Url, Value, qml_impl,
 };
 use ljos_platform::{Platform, Reply, url_path};
 use ljos_reactive::NodeId;
 use ljos_render::{Cull, DisplayListBuilder, DrawOp, ImageHandle, ShaderOp, ShaderTexture, kurbo};
-use ljos_runtime::{ComputePool, Lane};
 use ljos_shader::{Compiled, Located, Program, Stage, Type, write_member};
 
 use crate::enums::EnumTable;
@@ -440,26 +440,6 @@ fn set_status(e: &Engine, me: ObjectId, status: i32, log: &str) {
         Value::String(Atom::from(log)),
     );
     let _ = write_computed(e, me, ShaderEffect::STATUS.index, Value::Int(status));
-}
-
-type Work = Box<dyn FnOnce() + Send>;
-
-/// Runs `work` on the compute pool, or here when the pool takes nothing.
-fn off_thread(work: impl FnOnce() + Send + 'static) {
-    let slot: Arc<Mutex<Option<Work>>> = Arc::new(Mutex::new(Some(Box::new(work))));
-    let run = |slot: &Mutex<Option<Work>>| {
-        let work = slot.lock().unwrap_or_else(PoisonError::into_inner).take();
-        if let Some(work) = work {
-            work();
-        }
-    };
-    let for_pool = Arc::clone(&slot);
-    if ComputePool::global()
-        .spawn(Lane::Visible, move || run(&for_pool))
-        .is_err()
-    {
-        run(&slot);
-    }
 }
 
 // ---------------------------------------------------------------- paint

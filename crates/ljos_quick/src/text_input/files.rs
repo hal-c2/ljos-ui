@@ -13,11 +13,10 @@
 //! suffix names none. Only local files are read and written.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::off_thread::off_thread;
 use ljos_engine::{Atom, Engine, LogLevel, ObjectId, PropIndex, Value};
 use ljos_platform::{Platform, Reply, url_path};
-use ljos_runtime::{ComputePool, Lane};
 use ljos_text::rich::{RichText, TextFormat};
 
 use super::base::{SharedState, check, publish, state_of};
@@ -140,27 +139,6 @@ fn is_current(engine: &Engine, doc: ObjectId, generation: u64) -> bool {
         && engine
             .with(doc, |d: &TextDocument| d.generation == generation)
             .unwrap_or(false)
-}
-
-type Work = Box<dyn FnOnce() + Send>;
-
-/// Runs `work` on the compute pool, or here when the pool is full: late
-/// beats never.
-fn off_thread(work: impl FnOnce() + Send + 'static) {
-    let slot: Arc<Mutex<Option<Work>>> = Arc::new(Mutex::new(Some(Box::new(work))));
-    let run = |slot: &Mutex<Option<Work>>| {
-        let work = slot.lock().unwrap_or_else(PoisonError::into_inner).take();
-        if let Some(work) = work {
-            work();
-        }
-    };
-    let for_pool = Arc::clone(&slot);
-    if ComputePool::global()
-        .spawn(Lane::Visible, move || run(&for_pool))
-        .is_err()
-    {
-        run(&slot);
-    }
 }
 
 /// A file as the application names it, and where it is.
