@@ -115,9 +115,10 @@ pub(crate) struct SecretBook {
 }
 
 impl SecretBook {
-    /// Adds what `secrets` holds that is not known yet, and returns those,
-    /// longest first: what was written down before must be masked with
-    /// them too.
+    /// Adds what `secrets` holds that is not known yet, and returns those
+    /// it kept, longest first: what was written down before must be masked
+    /// with them too. One the bounds made it forget again at once is not
+    /// among them, as it is not among [`SecretBook::secrets`].
     pub(crate) fn learn<'a>(
         &mut self,
         secrets: impl IntoIterator<Item = &'a String>,
@@ -148,6 +149,7 @@ impl SecretBook {
         self.longest_first = self.order.iter().cloned().collect();
         self.longest_first
             .sort_by_key(|s| std::cmp::Reverse(s.len()));
+        new.retain(|s| self.known.contains(s));
         new.sort_by_key(|s| std::cmp::Reverse(s.len()));
         new
     }
@@ -230,5 +232,18 @@ mod tests {
         let mut s = "s00000 s01028".to_string();
         book.mask_text(&mut s);
         assert_eq!(s, "s00000 <redacted>");
+    }
+
+    #[test]
+    fn what_is_learned_is_what_is_kept() {
+        let mut book = SecretBook::default();
+        let many: Vec<String> = (0..MAX_SECRETS + 5).map(|i| format!("s{i:05}")).collect();
+        let new = book.learn(&many);
+        let forgotten: Vec<_> = new.iter().filter(|s| !book.secrets().contains(s)).collect();
+        assert!(
+            forgotten.is_empty(),
+            "returned as new, but forgotten: {forgotten:?}"
+        );
+        assert_eq!(new.len(), book.secrets().len());
     }
 }
