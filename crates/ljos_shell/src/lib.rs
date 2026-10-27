@@ -417,10 +417,7 @@ impl<M: Send + 'static> ShellApp<M> {
             // Qt: their fetches and decodes never hold up a frame.
             ljos_quick::ImageStore::of(&engine).set_start_after_frame(true);
         }
-        let (inbox, handle) = UiInbox::channel_with_wake(config.inbox_capacity, {
-            let wake = Arc::clone(&wake);
-            Arc::new(move || wake())
-        });
+        let (inbox, handle) = UiInbox::channel_with_wake(config.inbox_capacity, Arc::clone(&wake));
         // The application's own messages: their kinds are its business.
         inbox.observe_as("application", None);
         let mut s = Setup {
@@ -434,8 +431,7 @@ impl<M: Send + 'static> ShellApp<M> {
             #[cfg(feature = "dev")]
             tools: {
                 let [r, g, b, _] = config.background.to_rgba8();
-                let wake = Arc::clone(&wake);
-                tools::ToolSetup::new(Arc::new(move || wake()), [r, g, b])
+                tools::ToolSetup::new(Arc::clone(&wake), [r, g, b])
             },
         };
         let root = setup(&mut s).map_err(ShellError::Setup)?;
