@@ -39,6 +39,18 @@ fn ticks_us(ticks: u64) -> u64 {
 
 fn threads(me: &Proc) -> Option<Vec<Thread>> {
     let mut all: Vec<Thread> = me.tasks().ok()?.filter_map(|t| thread(&t.ok()?)).collect();
+    // The kernel walks a task directory by position, so a thread that
+    // ends meanwhile can make the walk skip a living one. The calling
+    // thread is not ending, so it is read by its number when skipped.
+    if let Some(tid) = current_tid()
+        && !all.iter().any(|t| t.tid == tid)
+        && let Some(me) = i32::try_from(tid)
+            .ok()
+            .and_then(|tid| me.task_from_tid(tid).ok())
+            .and_then(|t| thread(&t))
+    {
+        all.push(me);
+    }
     all.sort_by_key(|t| t.tid);
     Some(all)
 }
