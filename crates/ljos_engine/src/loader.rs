@@ -636,7 +636,7 @@ impl LoadedFile {
         }
         .map_err(|e| {
             engine.report_js_fault(&e);
-            EngineError::Js(e.to_string())
+            EngineError::js(e)
         })?;
         js.lines.borrow_mut().add(&handle.name, &self.url, &self.ir);
         // A module that names `Qt` has its own, which reads a relative
@@ -646,7 +646,7 @@ impl LoadedFile {
                 .call(at, &[JsValue::String(self.url.to_string())])
                 .map_err(|e| {
                     engine.report_js_fault(&e);
-                    EngineError::Js(e.to_string())
+                    EngineError::js(e)
                 })?;
         }
         let fns: Vec<Option<FnId>> = self

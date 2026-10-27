@@ -173,7 +173,6 @@ impl Engine {
     /// object names: `__ljos_name(object, name, ids)` is `[value]` when the
     /// object's context finds it (an id only, with `ids`), else `null`.
     fn install_devtools_globals(&self, js: &JsState) -> Result<Runners, EngineError> {
-        let err = |e: ljos_js::JsFault| EngineError::Js(e.to_string());
         let w = Rc::downgrade(&self.inner);
         let name: HostFn = Rc::new(move |_scope, args| {
             let (Some(inner), [me, JsValue::String(name), ids, ..]) = (w.upgrade(), args) else {
@@ -214,10 +213,10 @@ impl Engine {
         });
         js.host
             .set_global_function("__ljos_name", name)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .eval_script("devtools-scope", SCOPE_OF)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         let slice = Slice {
             soft: MAX_EVAL_TIME,
             hard: MAX_EVAL_TIME,
@@ -236,7 +235,7 @@ impl Engine {
                     make: s.keep(make),
                 })
             })
-            .map_err(err)
+            .map_err(EngineError::js)
     }
 
     /// Runs `source` as a script. With `this` it runs in that object: `this`
@@ -273,7 +272,7 @@ impl Engine {
                         runner.call((me, source, depth, items, chars, nodes, budget))?;
                     Ok(out)
                 })
-                .map_err(|e| EngineError::Js(e.to_string()))
+                .map_err(EngineError::js)
         })
     }
 
@@ -330,7 +329,7 @@ impl Engine {
         match made {
             Ok(Ok(f)) => Ok(f),
             Ok(Err(why)) => Err(EngineError::Js(why)),
-            Err(e) => Err(EngineError::Js(e.to_string())),
+            Err(e) => Err(EngineError::js(e)),
         }
     }
 

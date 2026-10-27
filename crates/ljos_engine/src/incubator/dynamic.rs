@@ -17,7 +17,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_ir::CompiledFile;
-use ljos_js::{HostError, HostFn, JsFault, JsRef, JsValue};
+use ljos_js::{HostError, HostFn, JsRef, JsValue};
 
 use super::{Initial, Instance, Template};
 use crate::WriteKind;
@@ -806,11 +806,14 @@ impl Engine {
                 }),
             ),
         ];
-        let err = |e: JsFault| EngineError::Js(e.to_string());
         for (name, f) in functions {
-            js.host.set_global_function(name, f).map_err(err)?;
+            js.host
+                .set_global_function(name, f)
+                .map_err(EngineError::js)?;
         }
-        js.host.eval_script("dynamic", PRELUDE).map_err(err)?;
+        js.host
+            .eval_script("dynamic", PRELUDE)
+            .map_err(EngineError::js)?;
         Ok(())
     }
 }

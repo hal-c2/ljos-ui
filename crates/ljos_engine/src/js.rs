@@ -1295,7 +1295,7 @@ impl Engine {
         if let Some(js) = self.inner.js.borrow().clone() {
             return Ok(js);
         }
-        let host = JsHost::new(JsConfig::default()).map_err(|e| EngineError::Js(e.to_string()))?;
+        let host = JsHost::new(JsConfig::default()).map_err(EngineError::js)?;
         host.set_host_objects(Rc::new(EngineHost {
             inner: Rc::downgrade(&self.inner),
         }));
@@ -1459,7 +1459,7 @@ impl Engine {
                 let v = s.from_value(&v)?;
                 Ok(self.js_to_value(s, v, &TypeTag::Var))
             })
-            .map_err(|e| EngineError::Js(e.to_string()))
+            .map_err(EngineError::js)
     }
 
     /// An engine value as JS sees it. URLs are strings; a colour or another
@@ -2025,55 +2025,58 @@ impl Engine {
                 None => JsValue::Null,
             })
         });
-        let err = |e: JsFault| EngineError::Js(e.to_string());
         js.host
             .set_global_function("__ljos_errorPlace", error_place)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .eval_script("error-place", ERROR_PLACE)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_type", type_of)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_instanceOf", instance_of)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .eval_script("types", crate::incubator::types::TYPE_FACES)
-            .map_err(err)?;
-        js.host.eval_script("modules", MODULES).map_err(err)?;
+            .map_err(EngineError::js)?;
+        js.host
+            .eval_script("modules", MODULES)
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_wallNow", wall_now)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_attached", attached)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_single", single)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_color", color)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_colorOf", color_of)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_log", log)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_callLater", call_later)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_quit", quit)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         // The value types first: the prelude puts their makers on `Qt`.
-        value_faces::define(&js.host).map_err(err)?;
+        value_faces::define(&js.host).map_err(EngineError::js)?;
         self.install_custom_values(js)?;
-        js.host.eval_script("prelude", PRELUDE).map_err(err)?;
+        js.host
+            .eval_script("prelude", PRELUDE)
+            .map_err(EngineError::js)?;
         self.tell_scripts_wall_clock(js);
         js.host
             .eval_script("colors", value_faces::COLORS)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         // `qsTr` and its family, `String.prototype.arg`, `Qt.uiLanguage`,
         // `Qt.locale()`: see i18n.rs.
         self.install_i18n_globals(js)?;
@@ -2088,7 +2091,7 @@ impl Engine {
         // written again with the same number.
         js.host
             .eval_script("qt-enums", &qt_enums_script())
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         Ok(())
     }
 }

@@ -10,7 +10,7 @@
 
 use std::rc::Rc;
 
-use ljos_js::{HostError, HostFn, JsFault, JsValue};
+use ljos_js::{HostError, HostFn, JsValue};
 use url::Url;
 
 use crate::error::EngineError;
@@ -148,11 +148,14 @@ pub(crate) fn install(js: &JsState) -> Result<(), EngineError> {
             }),
         ),
     ];
-    let err = |e: JsFault| EngineError::Js(e.to_string());
     for (name, f) in functions {
-        js.host.set_global_function(name, f).map_err(err)?;
+        js.host
+            .set_global_function(name, f)
+            .map_err(EngineError::js)?;
     }
-    js.host.eval_script("url", PRELUDE).map_err(err)?;
+    js.host
+        .eval_script("url", PRELUDE)
+        .map_err(EngineError::js)?;
     Ok(())
 }
 

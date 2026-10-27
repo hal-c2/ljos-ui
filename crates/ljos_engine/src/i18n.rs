@@ -21,7 +21,7 @@ use std::rc::Rc;
 use ljos_i18n::datetime::{Fields, Part};
 use ljos_i18n::{Collator, I18n, LocaleInfo, Messages};
 use ljos_ir::{Translatable, TranslationKind};
-use ljos_js::{HostError, HostFn, JsFault, JsValue};
+use ljos_js::{HostError, HostFn, JsValue};
 
 use crate::engine::Engine;
 use crate::error::EngineError;
@@ -604,11 +604,14 @@ impl Engine {
                 }),
             ),
         ];
-        let err = |e: JsFault| EngineError::Js(e.to_string());
         for (name, f) in functions {
-            js.host.set_global_function(name, f).map_err(err)?;
+            js.host
+                .set_global_function(name, f)
+                .map_err(EngineError::js)?;
         }
-        js.host.eval_script("i18n", PRELUDE).map_err(err)?;
+        js.host
+            .eval_script("i18n", PRELUDE)
+            .map_err(EngineError::js)?;
         Ok(())
     }
 }

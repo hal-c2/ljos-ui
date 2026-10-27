@@ -463,7 +463,6 @@ impl Engine {
     }
 
     pub(crate) fn install_list_globals(&self, js: &JsState) -> Result<(), EngineError> {
-        let err = |e: ljos_js::JsFault| EngineError::Js(e.to_string());
         let target = |args: &[JsValue]| match args {
             [JsValue::Object(o), JsValue::Number(p), ..] => {
                 Some((u64_to_obj(*o), PropIndex(*p as u32)))
@@ -591,14 +590,16 @@ impl Engine {
         });
         js.host
             .set_global_function("__ljos_listConvert", convert)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_listSync", sync)
-            .map_err(err)?;
+            .map_err(EngineError::js)?;
         js.host
             .set_global_function("__ljos_listStore", store)
-            .map_err(err)?;
-        js.host.eval_script("lists", LISTS).map_err(err)?;
+            .map_err(EngineError::js)?;
+        js.host
+            .eval_script("lists", LISTS)
+            .map_err(EngineError::js)?;
         Ok(())
     }
 }

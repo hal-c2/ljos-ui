@@ -138,6 +138,11 @@ impl EngineError {
     pub fn dead(obj: ObjectId) -> Self {
         Self::DeadObject(obj)
     }
+
+    /// [`EngineError::Js`], for `map_err` on a [`ljos_js::JsFault`].
+    pub(crate) fn js(e: ljos_js::JsFault) -> Self {
+        Self::Js(e.to_string())
+    }
 }
 
 impl From<String> for EngineError {

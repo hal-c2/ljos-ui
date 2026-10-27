@@ -326,9 +326,8 @@ impl crate::Engine {
     /// Defines the faces of the types registered before the host started,
     /// and the functions a face calls back.
     pub(crate) fn install_custom_values(&self, js: &JsState) -> Result<(), EngineError> {
-        let err = |e: ljos_js::JsFault| EngineError::Js(e.to_string());
         for ty in self.value_types() {
-            define_face(js, ty).map_err(err)?;
+            define_face(js, ty).map_err(EngineError::js)?;
         }
         let weak = Rc::downgrade(&self.inner);
         let w = weak.clone();
@@ -376,7 +375,9 @@ impl crate::Engine {
             ("__ljos_custom_with", with),
             ("__ljos_custom_call", call),
         ] {
-            js.host.set_global_function(name, f).map_err(err)?;
+            js.host
+                .set_global_function(name, f)
+                .map_err(EngineError::js)?;
         }
         Ok(())
     }
