@@ -361,13 +361,6 @@ impl Flow {
     }
 }
 
-/// Which axis a positioner stacks along.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Axis {
-    Horizontal,
-    Vertical,
-}
-
 /// The four positioners.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Which {
@@ -731,24 +724,6 @@ fn reversed(engine: &Engine, obj: ObjectId, p: &Props) -> bool {
     };
     let rtl = num(engine, obj, direction) as i32 == layout_direction::RIGHT_TO_LEFT;
     rtl != mirrored(engine, obj)
-}
-
-/// Reads every input of a `Row` or `Column`. See [`track`].
-pub fn read_inputs(engine: &Engine, obj: ObjectId, axis: Axis) {
-    track(engine, obj, which_axis(axis));
-}
-
-/// Positions the children of a `Row` or `Column` and sets its implicit
-/// size.
-pub fn layout(engine: &Engine, obj: ObjectId, axis: Axis) -> Result<(), EngineError> {
-    polish(engine, obj, which_axis(axis))
-}
-
-fn which_axis(axis: Axis) -> Which {
-    match axis {
-        Axis::Horizontal => Which::Row,
-        Axis::Vertical => Which::Column,
-    }
 }
 
 /// Reads every input of a positioner's layout. The scene calls it inside

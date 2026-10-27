@@ -69,7 +69,7 @@ use crate::item::{Item, init_item, is_a, is_item, num, scene_transform, write_co
 use crate::loader::{Loader, shown_children};
 #[allow(deprecated)]
 use crate::log::QuickLog;
-use crate::positioners::{self, Axis, Column, Row};
+use crate::positioners::{self, Column, Row, Which};
 use crate::rectangle::{Rectangle, RectanglePaint};
 use crate::text::{self, SharedTextEngine, Text, TextInputs};
 use crate::tree::resources;
@@ -1635,8 +1635,8 @@ impl QuickScene {
                 };
                 let journaled = engine.is_journaled().then(std::time::Instant::now);
                 let r = match kind {
-                    Kind::Row => positioners::layout(engine, obj, Axis::Horizontal),
-                    Kind::Column => positioners::layout(engine, obj, Axis::Vertical),
+                    Kind::Row => positioners::polish(engine, obj, Which::Row),
+                    Kind::Column => positioners::polish(engine, obj, Which::Column),
                     Kind::Managed => crate::layouts::polish(engine, obj),
                     Kind::Text => {
                         let read = (self.shared.borrow().marks.get(obj))
@@ -3417,8 +3417,8 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         return;
     }
     match kind {
-        Kind::Row => positioners::read_inputs(e, obj, Axis::Horizontal),
-        Kind::Column => positioners::read_inputs(e, obj, Axis::Vertical),
+        Kind::Row => positioners::track(e, obj, Which::Row),
+        Kind::Column => positioners::track(e, obj, Which::Column),
         Kind::Managed => crate::layouts::read_inputs(e, obj),
         Kind::Canvas => crate::canvas::read_inputs(e, obj),
         // A Text is followed by `text::follow_into` instead.

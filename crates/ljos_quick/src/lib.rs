@@ -145,7 +145,7 @@ pub use pointer_item::{
     register_hover_move, register_pointer_item, takes_pointer,
 };
 pub use pointer_item::{PointerCondition, register_pointer_condition};
-pub use positioners::{Axis, Column, Flow, Grid, Positioner, PositionerAttached, Row};
+pub use positioners::{Column, Flow, Grid, Positioner, PositionerAttached, Row};
 pub use rectangle::{Rectangle, RectangleBorder, RectanglePaint, to_rgba};
 pub use repeater::Repeater;
 pub use safe_area::{SafeArea, SafeAreaAttached, safe_area_insets, set_safe_area_insets};
