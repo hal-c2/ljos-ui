@@ -79,11 +79,45 @@ Feature: StandardPaths
       Examples:
         | location              | url                               |
         | HomeLocation          | file:///home/user                 |
+        | DesktopLocation       | file:///home/user/Desktop         |
         | DocumentsLocation     | file:///home/user/Documents       |
+        | MusicLocation         | file:///home/user/Music           |
+        | MoviesLocation        | file:///home/user/Videos          |
+        | PicturesLocation      | file:///home/user/Pictures        |
+        | DownloadLocation      | file:///home/user/Downloads       |
+        | PublicShareLocation   | file:///home/user/Public          |
+        | TemplatesLocation     | file:///home/user/Templates       |
         | GenericConfigLocation | file:///home/user/.config         |
         | GenericDataLocation   | file:///home/user/.local/share    |
         | GenericCacheLocation  | file:///home/user/.cache          |
         | GenericStateLocation  | file:///home/user/.local/state    |
+
+    # Measured with qml6 in a home of its own: the directories named in
+    # `user-dirs.dirs` are the user's, and a variable such as
+    # `XDG_DESKTOP_DIR` in the environment changes nothing.
+    @api-QtCore.StandardPaths.writableLocation
+    Scenario Outline: The <location> is where user-dirs.dirs puts it
+      Given the user has the text file ".config/user-dirs.dirs":
+        """
+        # written by xdg-user-dirs-update
+        XDG_DESKTOP_DIR="$HOME/Skrifborð"
+        XDG_PICTURES_DIR="$HOME/Myndir"
+        XDG_TEMPLATES_DIR="/srv/templates"
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtCore
+        Item { objectName: "o"; property string v: StandardPaths.writableLocation(StandardPaths.<location>) }
+        """
+      Then the property "v" of "o" is "<url>"
+
+      Examples:
+        | location          | url                               |
+        | DesktopLocation   | file:///home/user/Skrifborð       |
+        | PicturesLocation  | file:///home/user/Myndir          |
+        | TemplatesLocation | file:///srv/templates             |
+        | MusicLocation     | file:///home/user/Music           |
 
     @api-QtCore.StandardPaths.standardLocations
     Scenario: Shared data is looked for in the user's directory, then the system's

@@ -35,7 +35,7 @@ pub struct PathEnv {
 /// home's configuration, data, state or cache directories.
 pub const GUARD_HOME_VAR: &str = "LJOS_GUARD_HOME";
 
-const VARS: [&str; 12] = [
+const VARS: [&str; 9] = [
     "XDG_CONFIG_HOME",
     "XDG_CONFIG_DIRS",
     "XDG_DATA_HOME",
@@ -45,9 +45,6 @@ const VARS: [&str; 12] = [
     "XDG_RUNTIME_DIR",
     "TMPDIR",
     "PATH",
-    "XDG_DESKTOP_DIR",
-    "XDG_DOCUMENTS_DIR",
-    "XDG_DOWNLOAD_DIR",
 ];
 
 impl PathEnv {
@@ -355,9 +352,10 @@ impl Location {
             return self.in_library(env, org, app);
         }
         match self {
-            // Without a user-dirs file, Qt puts these in the home itself.
-            Location::Desktop | Location::PublicShare | Location::Templates => {
-                user_dir(env, self).unwrap_or_else(|| env.home.clone())
+            Location::Desktop => user_dir(env, self).unwrap_or_else(|| env.home.join("Desktop")),
+            Location::PublicShare => user_dir(env, self).unwrap_or_else(|| env.home.join("Public")),
+            Location::Templates => {
+                user_dir(env, self).unwrap_or_else(|| env.home.join("Templates"))
             }
             Location::Documents => {
                 user_dir(env, self).unwrap_or_else(|| env.home.join("Documents"))
@@ -462,8 +460,9 @@ fn app_dir(base: PathBuf, org: &str, app: &str) -> PathBuf {
     p
 }
 
-/// A directory the user named in `XDG_*_DIR`, or in
-/// `$XDG_CONFIG_HOME/user-dirs.dirs` as `xdg-user-dirs` writes it.
+/// A directory the user named in `$XDG_CONFIG_HOME/user-dirs.dirs`, as
+/// `xdg-user-dirs` writes it. Only the file counts: qml6 reads a
+/// `XDG_DESKTOP_DIR` in the environment as nothing.
 fn user_dir(env: &PathEnv, location: Location) -> Option<PathBuf> {
     let key = match location {
         Location::Desktop => "XDG_DESKTOP_DIR",
@@ -665,9 +664,22 @@ mod tests {
             w(Location::GenericState),
             Path::new("/home/user/.local/state")
         );
-        assert_eq!(w(Location::Desktop), Path::new("/home/user"));
+        assert_eq!(w(Location::Desktop), Path::new("/home/user/Desktop"));
+        assert_eq!(w(Location::Templates), Path::new("/home/user/Templates"));
+        assert_eq!(w(Location::PublicShare), Path::new("/home/user/Public"));
         assert_eq!(w(Location::Movies), Path::new("/home/user/Videos"));
         assert_eq!(w(Location::Temp), Path::new("/tmp"));
+    }
+
+    #[test]
+    fn a_user_directory_in_the_environment_is_not_read() {
+        let mut env = user();
+        env.vars
+            .insert("XDG_DESKTOP_DIR".into(), "/elsewhere".into());
+        assert_eq!(
+            Location::Desktop.writable(&env, "", ""),
+            Path::new("/home/user/Desktop")
+        );
     }
 
     #[test]
