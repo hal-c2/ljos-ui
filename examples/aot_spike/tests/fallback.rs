@@ -79,7 +79,10 @@ fn a_case_swapped_for_its_dynamic_version_mid_run_changes_nothing() {
     let (qt, qs, _) = observe(Mode::QuickJs, None);
     for mode in Mode::all()
         .into_iter()
-        .filter(|m| !matches!(m, Mode::Tier1 | Mode::QuickJs))
+        // The shipped mode has no slots: its fallback is a file edited
+        // while it runs, which features/language/compiled-shipped-files
+        // holds to.
+        .filter(|m| !matches!(m, Mode::Tier1 | Mode::QuickJs | Mode::Shipped))
     {
         let (t, s, run) = observe(mode, Some(STEPS / 2));
         same(&format!("{} swapped", mode.name()), (&t, &s), (&qt, &qs));

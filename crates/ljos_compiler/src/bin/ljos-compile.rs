@@ -2,7 +2,9 @@
 //! compiles. `ljos-compile dump <dir> <file>`: one file's IR and module.
 //! `ljos-compile aot <dir> <file>`: the Rust a shipped file's bindings and
 //! handlers compile to. `ljos-compile aot-coverage [dir]`: how much of a
-//! tree of QML projects compiles to Rust, and why the rest does not.
+//! tree of QML projects compiles to Rust, and why the rest does not; with
+//! `LJOS_AOT_OUT=<file.rs>` it writes that Rust too, every file's module
+//! and the table, as an application's build would (to time rustc on it).
 
 use std::path::{Path, PathBuf};
 
@@ -101,6 +103,7 @@ fn run_aot_coverage(root: &Path) -> anyhow::Result<()> {
     }
     let mut coverage = ljos_aot::Coverage::default();
     let mut files = 0;
+    let mut generated = Vec::new();
     for dir in baseline::project_dirs(root) {
         let Ok(results) = ljos_compiler::compile_project_with(&dir, QtTypeOracle) else {
             continue;
@@ -110,10 +113,16 @@ fn run_aot_coverage(root: &Path) -> anyhow::Result<()> {
                 continue;
             };
             files += 1;
-            let generated =
-                ljos_compiler::aot::generate(&compiled.file, &QtTypeOracle, "::ljos::aot");
-            coverage.add(&generated.outcomes);
+            let outcome =
+                ljos_compiler::aot::generate(&compiled.file, &QtTypeOracle, "ljos_engine::aot");
+            coverage.add(&outcome.outcomes);
+            generated.push((format!("{}/{}", dir.display(), result.key), outcome));
         }
+    }
+    if let Some(out) = std::env::var_os("LJOS_AOT_OUT") {
+        let named: Vec<_> = generated.iter().map(|(k, g)| (k.as_str(), g)).collect();
+        std::fs::write(&out, ljos_aot::assemble("ljos_engine::aot", &named))
+            .with_context(|| format!("writing {}", Path::new(&out).display()))?;
     }
     let total = coverage.compiled + coverage.refused;
     println!(

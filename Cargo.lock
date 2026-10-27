@@ -3904,6 +3904,7 @@ name = "ljos_example_aot_spike"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "ljos_aot",
  "ljos_compiler",
  "ljos_engine",
  "ljos_i18n",

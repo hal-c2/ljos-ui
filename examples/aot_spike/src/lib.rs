@@ -2,6 +2,9 @@
 //!
 //! * tier 1 and QuickJS: `qml/World.qml`, the cases written in QML;
 //! * back end B: `qml/Shell.qml` plus Rust generated from `cases/*.ts`;
+//! * shipped (`aot`): `qml/World.qml` with the code the shipped-file
+//!   generator (`ljos_aot`, milestone A1) made from it at build time, the
+//!   dynamic tiers running what it refused;
 //! * back end A (feature `scriptc`): `qml/Shell.qml` plus a native library
 //!   scriptc made from `scriptc/cases.ts`, called through FFI.
 //!
@@ -19,6 +22,12 @@ pub mod a;
 #[allow(non_snake_case, unused_labels, unused_parens, clippy::all)]
 pub mod b {
     include!(concat!(env!("OUT_DIR"), "/b_cases.rs"));
+}
+
+/// What the shipped-file generator made of World.qml (`COMPILED[0]`) and
+/// Bench.qml (`COMPILED[1]`).
+pub mod shipped {
+    include!(concat!(env!("OUT_DIR"), "/shipped.rs"));
 }
 
 use std::cell::RefCell;
@@ -82,6 +91,7 @@ pub type Slot = Rc<RefCell<Handler>>;
 pub enum Mode {
     Tier1,
     QuickJs,
+    Shipped,
     B,
     #[cfg(feature = "scriptc")]
     A,
@@ -92,6 +102,7 @@ impl Mode {
         vec![
             Mode::Tier1,
             Mode::QuickJs,
+            Mode::Shipped,
             #[cfg(feature = "scriptc")]
             Mode::A,
             Mode::B,
@@ -101,6 +112,7 @@ impl Mode {
         match self {
             Mode::Tier1 => "tier1",
             Mode::QuickJs => "quickjs",
+            Mode::Shipped => "aot",
             Mode::B => "b",
             #[cfg(feature = "scriptc")]
             Mode::A => "a",
@@ -145,8 +157,12 @@ pub fn load(mode: Mode, check: bool) -> Run {
     let e = engine();
     e.set_tier1(mode != Mode::QuickJs);
     e.set_tier1_check(check);
+    if mode == Mode::Shipped {
+        e.register_compiled(&shipped::COMPILED[..1]);
+        e.set_aot_check(check);
+    }
     let file = match mode {
-        Mode::Tier1 | Mode::QuickJs => "World",
+        Mode::Tier1 | Mode::QuickJs | Mode::Shipped => "World",
         _ => "Shell",
     };
     e.set_component_source(compile(&[
@@ -163,7 +179,7 @@ pub fn load(mode: Mode, check: bool) -> Run {
         slots: Vec::new(),
     };
     match mode {
-        Mode::Tier1 | Mode::QuickJs => {}
+        Mode::Tier1 | Mode::QuickJs | Mode::Shipped => {}
         Mode::B => {
             let w = b::World::resolve(&run.engine, root).expect("B resolves the world");
             for (_, name) in b::EXPORTS {
