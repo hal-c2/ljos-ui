@@ -29,11 +29,11 @@ component c0 Main (file) id=Main signature=0ab03d48
     on countChanged => e10
 
 exprs
-  e0 handler f0 scope=c0o0 at 8:15 params[] args[index, name] refs[console:js global]
+  e0 handler f0 scope=c0o0 at 8:15 params[] args[i, n] refs[console:js global]
   e1 handler f1 scope=c0o0 at 9:21 params[$scope=c0o0] args[] refs[console:js global, count:scope]
   e2 handler f2 scope=c0o0 at 10:21 params[$scope=c0o0] args[] refs[count:scope]
   e3 handler f3 scope=c0o1 at 12:20 params[root=c0o0] args[mouse] refs[root:id c0o0, mouse:local]
-  e4 handler f4 scope=c0o1 at 13:20 params[root=c0o0] args[mouse] refs[root:id c0o0]
+  e4 handler f4 scope=c0o1 at 13:20 params[root=c0o0] args[m] refs[root:id c0o0]
   e5 handler f5 scope=c0o1 at 14:26 params[] args[] refs[console:js global]
   e6 handler f6 scope=c0o2 at 17:26 params[] args[link] refs[Qt:qml global, link:local]
   e7 property f7 scope=c0o3 at 20:17 params[root=c0o0] args[] refs[root:id c0o0]
@@ -45,8 +45,8 @@ module
 // Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
 
 // Main.qml:8:15 Item.onPicked
-export function f0(...$args) {
-  return ((i, n) => console.log(i, n)).apply(this, $args);
+export function f0(i, n) {
+  return (console.log(i, n));
 }
 
 // Main.qml:9:21 Item.onCountChanged
@@ -63,9 +63,7 @@ export function f3(root, mouse) {
 }
 
 // Main.qml:13:20 MouseArea.onPressed
-export function f4(root, ...$args) {
-  return (function(m) { root.picked(m.x, "pressed") }).apply(this, $args);
-}
+export function f4(root, m) { root.picked(m.x, "pressed") }
 
 // Main.qml:14:26 MouseArea.onDoubleClicked
 export function f5(...$args) {

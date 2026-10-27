@@ -395,6 +395,42 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 text: String::new(),
             });
         }
+        // So is a handler that is a function: the signal's arguments are its
+        // parameters, by place, as they would be applied.
+        let inside = |outer: Span, span: Span| span.start >= outer.start && span.end <= outer.end;
+        let flat_handler = (form == Form::Expression && kind == BindingKind::Handler)
+            .then_some(analysis.flat_handler.as_ref())
+            .flatten()
+            .filter(|flat| !flat.names.iter().any(|name| signature.contains(name)))
+            .filter(|flat| {
+                edits.iter().all(|edit| {
+                    let body = Span::new(flat.head.end, flat.tail.start);
+                    inside(flat.head, edit.span)
+                        || inside(flat.tail, edit.span)
+                        || inside(body, edit.span)
+                })
+            });
+        if let Some(flat) = flat_handler {
+            edits.retain(|edit| !inside(flat.head, edit.span) && !inside(flat.tail, edit.span));
+            // The body stays on the lines it is written on.
+            let lines = |span: Span| {
+                "\n".repeat(
+                    text[span.start as usize..span.end as usize]
+                        .matches('\n')
+                        .count(),
+                )
+            };
+            for span in [flat.head, flat.tail] {
+                edits.push(js::Edit {
+                    span,
+                    text: if span == flat.head {
+                        lines(span)
+                    } else {
+                        String::new()
+                    },
+                });
+            }
+        }
         let body = js::apply(text, &edits);
         let close = if body.contains("//") { "\n  " } else { "" };
         let wrapped = args.is_none() || analysis.uses_arguments;
@@ -419,6 +455,21 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     signature.join(", ")
                 );
                 (analysis.function_params.clone(), code)
+            }
+            Form::Expression if let Some(flat) = flat_handler => {
+                signature.extend(flat.params.iter().cloned());
+                let code = if flat.expression {
+                    format!(
+                        "export function {export}({}) {{\n  return ({body}{close});\n}}\n",
+                        signature.join(", ")
+                    )
+                } else {
+                    format!(
+                        "export function {export}({}) {body}\n",
+                        signature.join(", ")
+                    )
+                };
+                (flat.params.clone(), code)
             }
             Form::Expression if kind == BindingKind::Handler && analysis.is_function_value => {
                 signature.push("...$args".into());

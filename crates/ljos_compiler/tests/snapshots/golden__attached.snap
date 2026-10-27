@@ -41,9 +41,7 @@ export function f0(view) {
 export function f1($scope) { $scope.currentIndex = -1 }
 
 // Main.qml:8:21 ListView.Keys.onPressed
-export function f2(...$args) {
-  return ((event) => { if (event.key) __ljos_vl(event, ($v) => event = $v).accepted = true }).apply(this, $args);
-}
+export function f2(event) { if (event.key) __ljos_vl(event, ($v) => event = $v).accepted = true }
 
 // Main.qml:9:22 ListView.Keys.onReleased
 export function f3(event) {

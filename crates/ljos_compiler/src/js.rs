@@ -175,6 +175,11 @@ pub(crate) struct Analysis {
     /// [`Flat::head`]; [`Flat::names`] are what its body declares, which
     /// must not be the names given before.
     pub flat: Option<Flat>,
+    /// A handler written as a function value that can be the function it
+    /// is exported as, as [`Analysis::flat`] is for a method: one with
+    /// plain parameters that reads neither `arguments` nor its own name,
+    /// nor a parameter of the signal it does not name itself.
+    pub flat_handler: Option<FlatHandler>,
     /// What the script writes members of, in order of appearance.
     pub member_writes: Vec<ValueSource>,
     /// The variables in `member_writes` whose value was read from a place.
@@ -186,6 +191,21 @@ pub(crate) struct Analysis {
 pub(crate) struct Flat {
     /// The script's text up to and with the `(` of its parameters.
     pub head: Span,
+    /// The parameters and what the function's own scope declares.
+    pub names: Vec<String>,
+}
+
+/// See [`Analysis::flat_handler`]. Spans are of the script's text.
+#[derive(Debug)]
+pub(crate) struct FlatHandler {
+    /// The text before the function's body, which goes but for its line
+    /// ends.
+    pub head: Span,
+    /// The text after it, which goes.
+    pub tail: Span,
+    /// The body is an expression, to be returned, not a block.
+    pub expression: bool,
+    pub params: Vec<String>,
     /// The parameters and what the function's own scope declares.
     pub names: Vec<String>,
 }
@@ -254,6 +274,9 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
     reader.hold_written_locals();
     let mut analysis = reader.analysis;
     analysis.is_function_value = form == Form::Expression && is_function_value(program);
+    if analysis.is_function_value && !analysis.uses_arguments && analysis.locals.is_empty() {
+        analysis.flat_handler = flat_handler(program, scoping, prefix.len() as u32, text.len());
+    }
     if form == Form::Function
         && let Some(Statement::FunctionDeclaration(function)) = program.body.first()
     {
@@ -361,6 +384,82 @@ fn is_function_value(program: &Program<'_>) -> bool {
         expression,
         Some(Expression::FunctionExpression(_) | Expression::ArrowFunctionExpression(_))
     )
+}
+
+/// The function a handler's expression is, where it can be exported as
+/// itself. `offset` is where the script starts in the wrapped text.
+fn flat_handler(
+    program: &Program<'_>,
+    scoping: &Scoping,
+    offset: u32,
+    len: usize,
+) -> Option<FlatHandler> {
+    let Some(Statement::FunctionDeclaration(wrapper)) = program.body.first() else {
+        return None;
+    };
+    let Some(Statement::ReturnStatement(ret)) = wrapper.body.as_ref()?.statements.first() else {
+        return None;
+    };
+    let mut expression = ret.argument.as_ref()?;
+    while let Expression::ParenthesizedExpression(inner) = expression {
+        expression = &inner.expression;
+    }
+    let plain = |params: &oxc_ast::ast::FormalParameters<'_>| {
+        params.rest.is_none()
+            && params.items.iter().all(|param| {
+                param.initializer.is_none() && param.pattern.get_identifier_name().is_some()
+            })
+    };
+    let (params, body, scope) = match expression {
+        Expression::ArrowFunctionExpression(arrow)
+            if !arrow.r#async && arrow.type_parameters.is_none() && plain(&arrow.params) =>
+        {
+            let body = match &arrow.body {
+                oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => (body.span, false),
+                body => (body.span(), true),
+            };
+            (&arrow.params, body, arrow.scope_id.get()?)
+        }
+        // A function's name is what a stack shows it by.
+        Expression::FunctionExpression(function)
+            if function.id.is_none()
+                && !function.r#async
+                && !function.generator
+                && function.type_parameters.is_none()
+                && function.this_param.is_none()
+                && plain(&function.params) =>
+        {
+            (
+                &function.params,
+                (function.body.as_ref()?.span, false),
+                function.scope_id.get()?,
+            )
+        }
+        _ => return None,
+    };
+    let ((span, expression), len) = (body, len as u32);
+    let (start, end) = (
+        span.start.checked_sub(offset)?,
+        span.end.checked_sub(offset)?,
+    );
+    if end > len {
+        return None;
+    }
+    Some(FlatHandler {
+        head: Span::new(0, start),
+        tail: Span::new(end, len),
+        expression,
+        params: params
+            .items
+            .iter()
+            .filter_map(|param| param.pattern.get_identifier_name().map(|n| n.to_string()))
+            .collect(),
+        names: scoping
+            .get_bindings(scope)
+            .keys()
+            .map(|name| name.to_string())
+            .collect(),
+    })
 }
 
 /// The literal values of a call's arguments.
@@ -1203,6 +1302,35 @@ mod tests {
                 "t|t = |free g"
             ]
         );
+    }
+
+    #[test]
+    fn a_handler_that_is_a_function_can_be_one() {
+        let flat = |text: &str, args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            analyze(text, Form::Expression, &args)
+                .unwrap()
+                .flat_handler
+                .map(|f| {
+                    let body = &text[f.head.end as usize..f.tail.start as usize];
+                    (f.params, f.expression, body.to_string())
+                })
+        };
+        assert_eq!(
+            flat("(v) => f(v)", &["value"]),
+            Some((vec!["v".into()], true, "f(v)".into()))
+        );
+        assert_eq!(
+            flat("function (m) { m.x = 1 }", &["mouse"]),
+            Some((vec!["m".into()], false, "{ m.x = 1 }".into()))
+        );
+        // What it would read is not its own.
+        assert_eq!(flat("(v) => f(value)", &["value"]), None);
+        assert_eq!(flat("function (m) { g(arguments) }", &["mouse"]), None);
+        assert_eq!(flat("(...r) => f(r)", &["value"]), None);
+        assert_eq!(flat("(v = 1) => f(v)", &["value"]), None);
+        assert_eq!(flat("async (v) => f(v)", &["value"]), None);
+        assert_eq!(flat("function g(m) { m.x = 1 }", &["mouse"]), None);
     }
 
     #[test]
