@@ -179,7 +179,7 @@ fn mirror_back(e: &Engine, me: ObjectId, back: ObjectId) {
 fn sides_changed(cx: &Cx<'_>, _: ljos_engine::PropIndex) {
     let (e, me) = (cx.engine, cx.this);
     for c in crate::child_items(e, me) {
-        crate::scene::reshape(e, c);
+        crate::scene::reshape_again(e, c);
     }
 }
 

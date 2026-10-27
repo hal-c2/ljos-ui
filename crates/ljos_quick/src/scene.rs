@@ -133,7 +133,7 @@ enum Kind {
     /// A `Canvas`: paints in its polish, shows the picture.
     Canvas,
     /// A `MultiEffect`: paints its source with its mask applied.
-    Effect,
+    MultiEffect,
     /// A `ShaderEffect`: its programs, or its `source` with none.
     Shader,
     /// A `ShaderEffectSource`: a picture of its source item.
@@ -182,7 +182,7 @@ impl ItemClass {
         } else if is(crate::canvas::Canvas::static_meta()) {
             Kind::Canvas
         } else if is(crate::effects::MultiEffect::static_meta()) {
-            Kind::Effect
+            Kind::MultiEffect
         } else if is(crate::shader_effect::ShaderEffect::static_meta()) {
             Kind::Shader
         } else if is(crate::shader_effect::ShaderEffectSource::static_meta()) {
@@ -229,7 +229,7 @@ impl Kind {
                 | Kind::Editor
                 | Kind::Shape
                 | Kind::Canvas
-                | Kind::Effect
+                | Kind::MultiEffect
                 | Kind::Shader
                 | Kind::Source
                 | Kind::External
@@ -339,7 +339,7 @@ enum Paint {
     Editor(Box<crate::text_input::EditorPaint>),
     Shape(crate::shapes::ShapePaint),
     Canvas(crate::canvas::CanvasPicture),
-    Effect(crate::effects::EffectPaint),
+    MultiEffect(crate::effects::EffectPaint),
     Shader(crate::shader_effect::ShaderEffectPaint),
     Source(crate::shader_effect::SourcePaint),
     External(Rc<dyn crate::paint_item::ItemPaint>),
@@ -639,14 +639,14 @@ pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
 /// the frame, and what it inherits is passed on at once. A script that
 /// hides an item and reads a child's `visible` next reads false, as on
 /// Qt, so this cannot wait for the frame.
-pub(crate) fn visibility(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
+pub(crate) fn visible_changed(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
     reshaped(cx, p);
     inherited(cx.engine, cx.this, true);
 }
 
 /// The change hook of an item's `enabled`: passed on at once, as
-/// [`visibility`] is.
-pub(crate) fn enabling(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
+/// [`visible_changed`] is.
+pub(crate) fn enabled_changed(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
     inherited(cx.engine, cx.this, true);
 }
 
@@ -698,7 +698,7 @@ pub(crate) fn place_again(e: &Engine, obj: ObjectId) {
 
 /// [`reshaped`] for what a geometry reads beside the item's own
 /// properties: whether a Flipable shows the side `obj` is.
-pub(crate) fn reshape(e: &Engine, obj: ObjectId) {
+pub(crate) fn reshape_again(e: &Engine, obj: ObjectId) {
     mark_shown(e, obj, |s| s.set(obj, Dirty::GEOM, |_| ()));
 }
 
@@ -1671,7 +1671,7 @@ impl QuickScene {
                     | Kind::Rectangle
                     | Kind::Image
                     | Kind::Shape
-                    | Kind::Effect
+                    | Kind::MultiEffect
                     | Kind::Shader
                     | Kind::Source
                     | Kind::External => Ok(()),
@@ -2177,10 +2177,10 @@ impl QuickScene {
             if let Some(e) = self.items.get_mut(obj) {
                 self.tree.mark_content_dirty(e.node);
                 let p = match p {
-                    Paint::Effect(fx) => {
+                    Paint::MultiEffect(fx) => {
                         self.items_gen += 1;
                         self.effect_base.insert(obj, (fx.clone(), None));
-                        Paint::Effect(fx)
+                        Paint::MultiEffect(fx)
                     }
                     // What it was given of the source stays: one that is
                     // not live keeps it, and one that is takes it again
@@ -2266,7 +2266,7 @@ impl QuickScene {
                 Paint::Editor(p) => p.paint(cx.size, b),
                 Paint::Shape(s) => s.paint(cx.size, b),
                 Paint::Canvas(c) => c.paint(cx.size, b),
-                Paint::Effect(p) => p.paint(cx.size, b),
+                Paint::MultiEffect(p) => p.paint(cx.size, b),
                 Paint::Shader(p) => p.paint(
                     cx.size,
                     |s| match (paint(s), layers.get(&s)) {
@@ -2344,7 +2344,7 @@ impl QuickScene {
             };
             *seen = Some((print, snap));
             if let Some(e) = self.items.get_mut(*obj) {
-                e.paint = Some(Paint::Effect(paint));
+                e.paint = Some(Paint::MultiEffect(paint));
             }
             self.tree.mark_content_dirty(fx_node);
             redrawn = true;
@@ -3454,7 +3454,7 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         | Kind::Image
         | Kind::Editor
         | Kind::Shape
-        | Kind::Effect
+        | Kind::MultiEffect
         | Kind::Shader
         | Kind::Source
         | Kind::External => {
@@ -3581,7 +3581,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Editor => Paint::Editor(Box::new(crate::text_input::EditorPaint::read(e, obj))),
         Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),
         Kind::Canvas => Paint::Canvas(crate::canvas::CanvasPicture::read(e, obj)),
-        Kind::Effect => Paint::Effect(crate::effects::EffectPaint::read(e, obj)),
+        Kind::MultiEffect => Paint::MultiEffect(crate::effects::EffectPaint::read(e, obj)),
         Kind::Shader => Paint::Shader(crate::shader_effect::ShaderEffectPaint::read(e, obj)),
         Kind::Source => Paint::Source(crate::shader_effect::SourcePaint::read(e, obj)),
         Kind::External => match crate::paint_item::paint_item(e, obj) {
