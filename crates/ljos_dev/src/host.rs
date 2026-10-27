@@ -132,7 +132,7 @@ impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
     fn url(&self, key: &str) -> String {
         // One root has nothing to choose between, so asks no file.
         if self.roots.len() > 1 {
-            let name = format!("{key}.qml");
+            let name = file_of(key);
             if let Some((_, base)) = self
                 .roots
                 .iter()
@@ -156,6 +156,16 @@ impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
             _ => self.urls.key(url),
         }
     }
+}
+
+/// The file of the component `key`, as the reloader names it.
+fn file_of(key: &str) -> String {
+    format!("{key}.qml")
+}
+
+/// The component a file the reloader names is, when it is QML.
+fn key_of(file: &str) -> Option<&str> {
+    file.strip_suffix(".qml")
 }
 
 fn base_url(dir: &Path) -> String {
@@ -496,7 +506,7 @@ impl DevSession {
                         // that did not compile.
                         more_errors = failures
                             .iter()
-                            .find(|(key, _)| format!("{key}.qml") == fault.file)
+                            .find(|(key, _)| key_of(&fault.file) == Some(key.as_str()))
                             .map_or(0, |(_, faults)| faults.saturating_sub(1));
                         first_fault = Some(fault);
                     }
@@ -515,7 +525,7 @@ impl DevSession {
         let warnings_of = {
             let reloader = reloader.clone();
             WarningsOf(Rc::new(move |keys| {
-                let files: Vec<String> = keys.iter().map(|k| format!("{k}.qml")).collect();
+                let files: Vec<String> = keys.iter().map(|k| file_of(k)).collect();
                 lock(&reloader)
                     .session()
                     .warnings()
@@ -657,7 +667,7 @@ impl DevSession {
                     });
                     // The entry no longer compiles: the next one that
                     // does takes the window, while this one is mended.
-                    let broken = |key: &str| faults.iter().any(|f| f.file == format!("{key}.qml"));
+                    let broken = |key: &str| faults.iter().any(|f| key_of(&f.file) == Some(key));
                     if self.entries.len() > 1 && broken(&self.entry) {
                         let live = self.runs.0.clone();
                         let runs = |key: &str| live(key) && !broken(key);
@@ -733,7 +743,7 @@ impl DevSession {
             (_, Some(_)) => Ok(()),
             (Some(fault), None) => Err(fault),
             (None, None) => Err(ReloadFault {
-                file: format!("{}.qml", self.entries[0]),
+                file: file_of(&self.entries[0]),
                 line: 0,
                 column: 0,
                 message: "no entry has a file".to_owned(),
@@ -806,11 +816,9 @@ impl DevSession {
         // reached, as Qt never compiles the others.
         let (warnings, now) = untold(
             &self.told,
-            warnings.into_iter().filter(|w| {
-                w.file
-                    .strip_suffix(".qml")
-                    .is_some_and(|key| engine.has_loaded(key))
-            }),
+            warnings
+                .into_iter()
+                .filter(|w| key_of(&w.file).is_some_and(|key| engine.has_loaded(key))),
         );
         self.told = now;
         Report::Reloaded(ReloadStats {
