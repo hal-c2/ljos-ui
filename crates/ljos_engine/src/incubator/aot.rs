@@ -94,6 +94,9 @@ pub(crate) enum Effect {
 /// The engine's compiled code and its switches.
 pub(crate) struct State {
     enabled: Cell<bool>,
+    /// Enabled, with code registered: the one look an expression of an
+    /// application without compiled code pays.
+    active: Cell<bool>,
     check: Cell<bool>,
     table: RefCell<FxHashMap<[u8; 32], &'static File>>,
     /// The cross-check asking for the dynamic tiers: as tier 1's.
@@ -108,6 +111,7 @@ impl Default for State {
         let env = env();
         State {
             enabled: Cell::new(env.enabled),
+            active: Cell::new(false),
             check: Cell::new(env.check.unwrap_or(cfg!(debug_assertions))),
             table: RefCell::default(),
             skip: RefCell::default(),
@@ -119,6 +123,11 @@ impl Default for State {
 }
 
 impl State {
+    fn update_active(&self) {
+        self.active
+            .set(self.enabled.get() && !self.table.borrow().is_empty());
+    }
+
     fn count(&self, f: impl FnOnce(&mut AotStats)) {
         let mut s = self.stats.get();
         f(&mut s);
@@ -414,15 +423,19 @@ impl Engine {
     /// one the code was made from run it; a file is matched once, when it
     /// first runs an expression.
     pub fn register_compiled(&self, files: &'static [&'static File]) {
-        let mut table = self.inner.aot.table.borrow_mut();
+        let st = &self.inner.aot;
+        let mut table = st.table.borrow_mut();
         for f in files {
             table.insert(f.content, f);
         }
+        drop(table);
+        st.update_active();
     }
 
     /// Turns compiled code on or off. On unless `LJOS_AOT=0`.
     pub fn set_aot(&self, on: bool) {
         self.inner.aot.enabled.set(on);
+        self.inner.aot.update_active();
     }
 
     pub fn aot(&self) -> bool {
@@ -468,7 +481,7 @@ impl Engine {
 
     /// A function about to be installed that compiled code has inlined.
     pub(super) fn aot_noted(&self, inst: &std::rc::Rc<Instance>, expr: ExprId) -> Option<Noted> {
-        if !self.inner.aot.enabled.get() {
+        if !self.inner.aot.active.get() {
             return None;
         }
         self.aot_linked(&inst.file)?
@@ -476,10 +489,12 @@ impl Engine {
             .then(|| Noted::new(inst, expr))
     }
 
+    #[inline]
     pub(crate) fn aot_spying(&self) -> bool {
         self.inner.aot.spying.get()
     }
 
+    #[inline]
     pub(crate) fn aot_spy_write(&self, o: ObjectId, p: PropIndex, v: &Value) {
         let st = &self.inner.aot;
         if st.spying.get()
@@ -489,6 +504,7 @@ impl Engine {
         }
     }
 
+    #[inline]
     pub(crate) fn aot_spy_emit(&self, o: ObjectId, s: SignalIndex, args: &[Value]) {
         let st = &self.inner.aot;
         if st.spying.get()
@@ -509,7 +525,7 @@ impl Engine {
         kept: bool,
     ) -> Option<Option<Value>> {
         let st = &self.inner.aot;
-        if !st.enabled.get() {
+        if !st.active.get() {
             return None;
         }
         let linked = self.aot_linked(&inst.file)?;
