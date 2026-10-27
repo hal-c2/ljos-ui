@@ -174,15 +174,7 @@ impl Render {
         } else {
             ljos::render::Fonts::Bundled
         });
-        ljos_quick::register(&engine);
-        ljos_controls::register(&engine);
-        ljos_media::register(&engine);
-        // The render's clock is virtual: sound on a device would play at
-        // the wrong pace.
-        ljos_media::use_null_audio(&engine);
-        register_modules(&engine);
-        // A picture leaves no file behind: databases stay in memory.
-        ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
+        register_offscreen(&engine);
         if self.network {
             ljos_platform::Platform::of(&engine)
                 .set_fetcher(std::sync::Arc::new(ljos_platform::HttpFetcher::new()));
@@ -279,6 +271,19 @@ pub(crate) fn register_modules(engine: &Engine) {
     ljos_lottie::register(engine);
     ljos_folderlistmodel::register(engine);
     ljos_positioning::register(engine);
+}
+
+/// Registers what a run with no window and no device has: every module,
+/// sound that plays nowhere, since the clock is virtual and a device would
+/// play at the wrong pace, and databases in memory, so that a run leaves
+/// no file behind for the next to find. Shared with `audit` and `test`.
+pub(crate) fn register_offscreen(engine: &Engine) {
+    ljos_quick::register(engine);
+    ljos_controls::register(engine);
+    ljos_media::register(engine);
+    ljos_media::use_null_audio(engine);
+    register_modules(engine);
+    ljos_localstorage::set_storage(engine, ljos_localstorage::Storage::Memory);
 }
 
 /// Registers the backends of the gallery example `example` on `engine`;

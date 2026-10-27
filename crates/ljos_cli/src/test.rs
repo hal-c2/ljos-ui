@@ -221,13 +221,7 @@ impl Suite {
             let file = path_of(root, key).to_string_lossy().into_owned();
             // An engine a file: a test file starts from nothing.
             let engine = Engine::new();
-            ljos_quick::register(&engine);
-            ljos_controls::register(&engine);
-            ljos_media::register(&engine);
-            ljos_media::use_null_audio(&engine);
-            crate::render::register_modules(&engine);
-            // A test leaves no database behind for the next run to find.
-            ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
+            crate::render::register_offscreen(&engine);
             // The network, as qmltestrunner has it: a test may fetch.
             ljos_platform::Platform::of(&engine)
                 .set_fetcher(std::sync::Arc::new(ljos_platform::HttpFetcher::new()));

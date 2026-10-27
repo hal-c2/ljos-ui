@@ -100,12 +100,7 @@ impl Audit {
         // The bundled font: the same layout, and so the same report, on
         // every machine.
         ljos::render::set_fonts(ljos::render::Fonts::Bundled);
-        ljos_quick::register(&engine);
-        ljos_controls::register(&engine);
-        ljos_media::register(&engine);
-        ljos_media::use_null_audio(&engine);
-        render::register_modules(&engine);
-        ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
+        render::register_offscreen(&engine);
         // `Settings` reads and writes the user's configuration: a home of
         // the run's own, so that what one audit's points wrote (a theme
         // that followed the scheme) is not what the next one starts from,
