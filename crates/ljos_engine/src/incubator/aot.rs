@@ -29,14 +29,14 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::fmt::Write as _;
 use std::sync::OnceLock;
 
-use ljos_ir::{BindingKind, CompIdx, ExprId, ObjIdx, ObjRef};
+use ljos_ir::{BindingKind, CompIdx, ExprId, ObjIdx, ObjRef, TypeRef};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use ljos_reactive::{NodeId, Reader};
 
 use crate::WriteKind;
-use crate::aot::{File, Kind, Stop};
+use crate::aot::{File, Kind, Single, Stop};
 use crate::atom::Atom;
 use crate::engine::Engine;
 use crate::error::EngineError;
@@ -156,14 +156,31 @@ const LOOKED_TYPES: usize = 4;
 /// A loaded file's compiled code, with its sites' caches.
 pub(crate) struct Linked {
     file: &'static File,
+    /// [`File::singletons`], as the engine names types.
+    singletons: Box<[TypeRef]>,
     props: Box<[RefCell<Looks<PropIndex>>]>,
     signals: Box<[RefCell<Looks<SignalIndex>>]>,
 }
 
 impl Linked {
     fn new(file: &'static File) -> Linked {
+        let singletons = file
+            .singletons
+            .iter()
+            .map(|single| match *single {
+                Single::File { file } => TypeRef::Component {
+                    file: file.to_owned(),
+                    inline: None,
+                },
+                Single::Native { module, name } => TypeRef::Native {
+                    module: module.to_owned(),
+                    name: name.to_owned(),
+                },
+            })
+            .collect();
         Linked {
             file,
+            singletons,
             props: file.props.iter().map(|_| RefCell::default()).collect(),
             signals: file.signals.iter().map(|_| RefCell::default()).collect(),
         }
@@ -258,6 +275,17 @@ impl Frame<'_> {
         match self.inst.resolve(r) {
             Some(o) if self.e.is_alive(o) => Ok(Obj(o)),
             _ => Err(self.stop()),
+        }
+    }
+
+    /// The object of the singleton type at `site`, as the file's scripts
+    /// read it. One not made yet stops the code: making it runs its file,
+    /// which the dynamic tiers do where the expression first reads it.
+    pub fn singleton(&self, site: usize) -> Result<Obj, Stop> {
+        let ty = self.linked.singletons.get(site).ok_or(Stop::Fallback)?;
+        match self.e.singleton_ready(ty, self.inst.context) {
+            Some(o) => Ok(Obj(o)),
+            None => Err(self.stop()),
         }
     }
 

@@ -64,8 +64,21 @@ fn shipped(dir: &Path, out: &Path) {
         for f in files {
             project.add(f, read(&qml.join(format!("{f}.qml"))));
         }
+        let all: Vec<_> = files
+            .iter()
+            .map(|f| {
+                compile_file(&project, f)
+                    .unwrap_or_else(|d| panic!("{f}: {d:?}"))
+                    .file
+            })
+            .collect();
         let file = compile_file(&project, key).unwrap_or_else(|d| panic!("{key}: {d:?}"));
-        ljos_compiler::aot::generate(&file.file, &qml_front::QtTypeOracle, "ljos_engine::aot")
+        ljos_compiler::aot::generate_in(
+            &file.file,
+            &all,
+            &qml_front::QtTypeOracle,
+            "ljos_engine::aot",
+        )
     };
     let world = compile(&["World", "Shell", "Swap"], "World");
     let bench = compile(&["Bench"], "Bench");

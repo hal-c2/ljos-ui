@@ -193,7 +193,16 @@ impl Checked {
         // This project's lines, the stand-in notes among them, which no
         // finding is the same as.
         let start = self.diagnostics.len();
-        for file in compile_project(dir)? {
+        let results = compile_project(dir)?;
+        // What a file reads of the project's others types its code.
+        let project: Vec<ljos_ir::CompiledFile> = match self.ahead {
+            true => results
+                .iter()
+                .filter_map(|f| f.result.as_ref().ok().map(|c| c.file.clone()))
+                .collect(),
+            false => Vec::new(),
+        };
+        for file in results {
             self.files += 1;
             keys.push(file.key.clone());
             let name = shown_name(label, &file.key);
@@ -201,7 +210,7 @@ impl Checked {
                 Ok(compiled) => {
                     self.coverage.add(&name, &compiled.file);
                     if self.ahead {
-                        self.compiled_ahead(&name, &compiled.file);
+                        self.compiled_ahead(&name, &compiled.file, &project);
                     }
                     let source = std::fs::read_to_string(dir.join(format!("{}.qml", file.key)));
                     for uri in stood_in(&compiled.file.imports) {
@@ -265,8 +274,14 @@ impl Checked {
         Ok(())
     }
 
-    fn compiled_ahead(&mut self, name: &str, file: &ljos_ir::CompiledFile) {
-        let generated = ljos_compiler::aot::generate(file, &qml_front::QtTypeOracle, "::ljos::aot");
+    fn compiled_ahead(
+        &mut self,
+        name: &str,
+        file: &ljos_ir::CompiledFile,
+        project: &[ljos_ir::CompiledFile],
+    ) {
+        let generated =
+            ljos_compiler::aot::generate_in(file, project, &qml_front::QtTypeOracle, "::ljos::aot");
         self.expressions += generated.outcomes.len();
         self.compiled_ahead += generated.compiled();
         for (outcome, expr) in generated.outcomes.iter().zip(&file.exprs) {

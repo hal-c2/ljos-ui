@@ -370,32 +370,54 @@ fn template(it: &TemplateLiteral<'_>) -> Result<Expr, Refused> {
 }
 
 /// The types of a runtime as the generator asks for them: through the
-/// oracle the file was compiled against.
-struct OracleTypes<'o, O>(&'o O);
+/// oracle the file was compiled against, and the application's other
+/// files for the types written in QML.
+struct OracleTypes<'o, O> {
+    oracle: &'o O,
+    files: &'o [CompiledFile],
+}
 
 impl<O: qml_front::TypeOracle> ljos_aot::Types for OracleTypes<'_, O> {
     fn property(&self, ty: &ljos_ir::TypeRef, name: &str) -> Option<ljos_aot::PropertyType> {
         let ljos_ir::TypeRef::Native { module, name: ty } = ty else {
             return None;
         };
-        let ty = self.0.module_type(module, ty)?;
-        let property = self.0.property(ty, name)?;
+        let oracle = self.oracle;
+        let ty = oracle.module_type(module, ty)?;
+        let property = oracle.property(ty, name)?;
         Some(ljos_aot::PropertyType {
             // A property whose type the oracle does not name is refused by
             // the generator as untyped.
-            ty: self
-                .0
+            ty: oracle
                 .property_type(ty, name)
                 .unwrap_or_else(|| "unnamed".to_string()),
             readonly: property.is_readonly,
         })
     }
+
+    fn file(&self, key: &str) -> Option<&CompiledFile> {
+        self.files.iter().find(|f| f.file == key)
+    }
 }
 
 /// The file's bindings and handlers as Rust, for the runtime at `rt`
-/// (`::ljos::aot`), typed against `oracle`.
+/// (`::ljos::aot`), typed against `oracle`. A member of a type written in
+/// QML is refused: [`generate_in`] has the files.
 pub fn generate<O: qml_front::TypeOracle>(
     file: &CompiledFile,
+    oracle: &O,
+    rt: &str,
+) -> ljos_aot::Generated {
+    generate_in(file, &[], oracle, rt)
+}
+
+/// [`generate`], with the application's files (`file` among them or not):
+/// what a singleton or a type written in QML declares types its members.
+/// The code still finds each member's type when it runs, so a file that
+/// changes after the build stops the code rather than misleads it.
+pub fn generate_in<O: qml_front::TypeOracle>(
+    file: &CompiledFile,
+    files: &[CompiledFile],
     oracle: &O,
     rt: &str,
 ) -> ljos_aot::Generated {
@@ -404,7 +426,7 @@ pub fn generate<O: qml_front::TypeOracle>(
         file,
         &module,
         ljos_ir::aot::content_key(file),
-        &OracleTypes(oracle),
+        &OracleTypes { oracle, files },
         rt,
     )
 }

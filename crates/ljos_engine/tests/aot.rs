@@ -104,6 +104,7 @@ fn register_sites(
         texts: &[],
         props,
         signals: &["ping"],
+        singletons: &[],
         methods: &[],
         exprs: Box::leak(exprs.into_boxed_slice()),
     }));
@@ -357,6 +358,7 @@ fn a_write_through_an_alias_is_compared_as_the_script_makes_it() {
         texts: &[],
         props: ALIAS_PROPS,
         signals: &[],
+        singletons: &[],
         methods: &[],
         exprs: Box::leak(exprs.into_boxed_slice()),
     }));

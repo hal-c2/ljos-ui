@@ -47,16 +47,18 @@ impl Live {
             .component_source()
             .ok_or_else(|| failed("no files are given"))?;
         let mut missing = Vec::new();
-        for name in names {
-            if qmldir_of(name).is_some() || !name.ends_with(".qml") {
-                continue;
-            }
-            let Some(file) = source.load(key_of(name)) else {
-                continue;
-            };
-            let key = ljos_ir::aot::content_key(&file);
+        let files: Vec<(&str, _)> = names
+            .iter()
+            .filter(|name| qmldir_of(name).is_none() && name.ends_with(".qml"))
+            .filter_map(|name| Some((*name, source.load(key_of(name))?)))
+            .collect();
+        // What a file reads of the others types its code.
+        let project: Vec<ljos_ir::CompiledFile> =
+            files.iter().map(|(_, f)| (**f).clone()).collect();
+        for (name, file) in &files {
+            let key = ljos_ir::aot::content_key(file);
             if writing() {
-                write(&file, key, &super::oracle())?;
+                write(file, &project, key, &super::oracle())?;
             } else if !COMPILED.iter().any(|f| f.content == key) {
                 missing.push(*name);
             }
@@ -79,10 +81,11 @@ static WRITTEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 fn write(
     file: &ljos_ir::CompiledFile,
+    project: &[ljos_ir::CompiledFile],
     key: [u8; 32],
     oracle: &impl qml_front::TypeOracle,
 ) -> Result<()> {
-    let generated = ljos_compiler::aot::generate(file, oracle, RUNTIME);
+    let generated = ljos_compiler::aot::generate_in(file, project, oracle, RUNTIME);
     let dir = dir();
     let module = format!("k{}", hex(&key));
     let mut written = WRITTEN.lock().unwrap_or_else(|e| e.into_inner());

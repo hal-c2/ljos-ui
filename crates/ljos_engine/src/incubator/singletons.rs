@@ -657,6 +657,23 @@ impl Engine {
         i
     }
 
+    /// The object of the singleton `ty` for a script of `ctx` if it is made
+    /// and its file is the one it was made from, making nothing: what
+    /// compiled code reads.
+    pub(crate) fn singleton_ready(&self, ty: &TypeRef, ctx: ContextId) -> Option<ObjectId> {
+        let handle = self.singleton_handle(ty, Some(ctx));
+        let all = self.extension::<Singletons>();
+        let entries = all.entries.borrow();
+        match &entries.get(handle)?.state {
+            State::Made { obj, file, seen }
+                if self.is_alive(*obj) && (file.is_none() || *seen == all.sources.get()) =>
+            {
+                Some(*obj)
+            }
+            _ => None,
+        }
+    }
+
     /// `__ljos_single(handle)`: the object, or for a type with none the
     /// keys of its enums.
     pub(crate) fn singleton_js(&self, handle: usize) -> JsValue {

@@ -33,11 +33,19 @@ use std::fmt::Write as _;
 pub use ljos_ir::aot::Refused;
 use ljos_ir::aot::{BinaryOp, Body, Code, Expr, Module, Stmt, UnaryOp};
 use ljos_ir::{
-    Arg, Binding, BindingKind, CompiledFile, ExprId, Members, ObjRef, ObjectDef, Resolved, TypeRef,
+    Arg, Binding, BindingKind, CompiledFile, ComponentKind, ExprId, Members, ObjRef, ObjectDef,
+    Resolved, TypeRef,
 };
 
 /// Functions of the file inlined inside one another, at most.
 const MAX_INLINE_DEPTH: usize = 4;
+
+/// Files a type is written in, one based on the next, followed at most.
+const MAX_TYPE_DEPTH: usize = 16;
+
+/// What the compiler calls to have a singleton's object
+/// (`__ljos_single($s_Theme)`).
+const SINGLETON: &str = "__ljos_single";
 
 /// What the generator asks of the types the runtime provides.
 pub trait Types {
@@ -46,6 +54,14 @@ pub trait Types {
     /// read-only. `None` for a property the type does not have, or a type
     /// the table does not know.
     fn property(&self, ty: &TypeRef, name: &str) -> Option<PropertyType>;
+
+    /// The application's file of the key `key` (`Theme`), compiled: what a
+    /// type written in QML declares. `None` for one the build does not
+    /// have, whose members are then refused.
+    fn file(&self, key: &str) -> Option<&CompiledFile> {
+        let _ = key;
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +160,20 @@ pub fn generate(
     }
     rust.push_str("\n    ],\n");
     let _ = writeln!(rust, "    signals: &{:?},", sites.signals);
+    rust.push_str("    singletons: &[");
+    for ty in &sites.singletons {
+        let _ = match ty {
+            TypeRef::Native { module, name } => write!(
+                rust,
+                "\n        rt::Single::Native {{ module: {module:?}, name: {name:?} }},"
+            ),
+            TypeRef::Component { file, .. } => {
+                write!(rust, "\n        rt::Single::File {{ file: {file:?} }},")
+            }
+            TypeRef::Unresolved(_) => unreachable!("a singleton site is of a resolved type"),
+        };
+    }
+    rust.push_str("\n    ],\n");
     rust.push_str("    methods: &[");
     for (name, expr) in &sites.methods {
         let _ = write!(
@@ -239,6 +269,8 @@ struct Sites {
     signals: Vec<String>,
     methods: Vec<(String, u32)>,
     texts: Vec<String>,
+    /// The singleton types whose objects the code reads.
+    singletons: Vec<TypeRef>,
 }
 
 fn site<T: PartialEq>(list: &mut Vec<T>, item: T) -> usize {
@@ -261,9 +293,8 @@ enum Ty {
     Str,
     /// `undefined`: `()`.
     Void,
-    /// An object of the file, by where it is: only ever read from or
-    /// called, never a value.
-    Obj(ObjRef),
+    /// An object: only ever read from or called, never a value.
+    Obj(Src),
     /// A name that is a type, for its enum keys.
     Type,
 }
@@ -279,6 +310,15 @@ impl Ty {
             Ty::Type => "type",
         }
     }
+}
+
+/// Where the code has an object from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Src {
+    /// An object of the file, by where it is.
+    Here(ObjRef),
+    /// A singleton type's object, by the type's site in the file's table.
+    Single(usize),
 }
 
 /// Generated code and its type.
@@ -345,7 +385,7 @@ struct Gen<'p> {
     types: &'p dyn Types,
     sites: &'p mut Sites,
     /// The objects the code uses: `o<index>`.
-    objects: Vec<ObjRef>,
+    objects: Vec<Src>,
     /// Properties: the object, the site, and so `p<index>`.
     props: Vec<(usize, usize)>,
     signals: Vec<(usize, usize)>,
@@ -432,12 +472,15 @@ impl<'p> Gen<'p> {
             "\n// {}:{}:{}\nfn e{}(f: &rt::Frame<'_>) -> Result<rt::Value, rt::Stop> {{",
             self.file.file, binding.span.line, binding.span.column, id.0
         );
-        for (index, r) in self.objects.iter().enumerate() {
-            let _ = writeln!(
-                out,
-                "let o{index} = f.object({}, {})?;",
-                r.component.0, r.object.0
-            );
+        for (index, src) in self.objects.iter().enumerate() {
+            let _ = match src {
+                Src::Here(r) => writeln!(
+                    out,
+                    "let o{index} = f.object({}, {})?;",
+                    r.component.0, r.object.0
+                ),
+                Src::Single(at) => writeln!(out, "let o{index} = f.singleton({at})?;"),
+            };
         }
         for (index, (object, at)) in self.props.iter().enumerate() {
             let _ = writeln!(out, "let p{index} = f.prop(o{object}, {at})?;");
@@ -526,8 +569,8 @@ impl<'p> Gen<'p> {
         format!("l{}", self.locals)
     }
 
-    fn object(&mut self, r: ObjRef) -> usize {
-        site(&mut self.objects, r)
+    fn object(&mut self, src: Src) -> usize {
+        site(&mut self.objects, src)
     }
 
     // ---- statements -------------------------------------------------------
@@ -758,7 +801,7 @@ impl<'p> Gen<'p> {
         let frame = self.frames.last().expect("a frame");
         if let Some(param) = frame.binding.params.iter().find(|p| p.name == name) {
             return match &param.arg {
-                Arg::Object(r) => Ok(v(String::new(), Ty::Obj(*r))),
+                Arg::Object(r) => Ok(v(String::new(), Ty::Obj(Src::Here(*r)))),
                 Arg::Type(_) => Ok(v(String::new(), Ty::Type)),
                 Arg::Singleton(_) => Err(no("singleton", name)),
                 Arg::Attached { .. } => Err(no("attached object", name)),
@@ -804,31 +847,106 @@ impl<'p> Gen<'p> {
 
     // ---- properties -------------------------------------------------------
 
-    /// The kind of `name` on the object `r`, and whether it can be written.
-    fn property_of(&self, r: ObjRef, name: &str) -> Result<(Kind, bool), Refused> {
-        let def = self.file.object(r);
-        if let Some(decl) = def.properties.iter().rev().find(|p| p.name == name) {
-            if decl.alias.is_some() {
-                return Err(no("alias", name));
-            }
-            if decl.is_list {
-                return Err(no("type", format!("list property {name}")));
-            }
-            return match Kind::of(&decl.ty) {
-                Some(kind) => Ok((kind, !decl.is_readonly)),
-                None => Err(no("type", format!("{} property {name}", decl.ty))),
-            };
+    /// `__ljos_single($s_Theme)`: the object of the singleton type the
+    /// parameter stands for.
+    fn single(&mut self, e: &Expr) -> Option<Src> {
+        match e {
+            Expr::Call { callee, args } => self.single_call(callee, args),
+            _ => None,
         }
-        if def.functions.iter().any(|f| f.name == name)
-            || def.signals.iter().any(|s| s.name == name)
+    }
+
+    fn single_call(&mut self, callee: &Expr, args: &[Expr]) -> Option<Src> {
+        let (Expr::Name(callee), [Expr::Name(param)]) = (callee, args) else {
+            return None;
+        };
+        if callee != SINGLETON || self.visible(callee) || self.lookup_local(param).is_some() {
+            return None;
+        }
+        let frame = self.frames.last()?;
+        let ty = frame.binding.params.iter().find_map(|p| match &p.arg {
+            Arg::Singleton(ty) if p.name == *param => Some(ty),
+            _ => None,
+        })?;
+        match ty {
+            TypeRef::Native { .. } | TypeRef::Component { inline: None, .. } => {}
+            _ => return None,
+        }
+        let ty = ty.clone();
+        Some(Src::Single(site(&mut self.sites.singletons, ty)))
+    }
+
+    /// The object a member is read from or written to: a name, or a
+    /// singleton's.
+    fn object_of(&mut self, base: &Expr) -> Result<Option<Src>, Refused> {
+        if let Some(src) = self.single(base) {
+            return Ok(Some(src));
+        }
+        if let Expr::Name(b) = base
+            && let Ty::Obj(src) = self.name(b)?.ty
         {
-            return Err(no("function value", name));
+            return Ok(Some(src));
         }
-        match &def.ty {
-            TypeRef::Native { .. } | TypeRef::Component { .. } => {}
-            TypeRef::Unresolved(t) => return Err(no("unresolved type", t.clone())),
+        Ok(None)
+    }
+
+    /// The kind of `name` on the object `src`, and whether it can be
+    /// written.
+    fn property_of(&self, src: Src, name: &str) -> Result<(Kind, bool), Refused> {
+        match src {
+            Src::Here(r) => {
+                let def = self.file.object(r);
+                match declared_on(def, name)? {
+                    Some(found) => Ok(found),
+                    None => self.property_of_type(&def.ty, name),
+                }
+            }
+            Src::Single(at) => self.property_of_type(&self.sites.singletons[at].clone(), name),
         }
-        let Some(found) = self.types.property(&def.ty, name) else {
+    }
+
+    /// The kind of `name` on objects of `ty`: declared by the file the
+    /// type is written in, by one it is based on, or by the native type
+    /// under them.
+    fn property_of_type(&self, ty: &TypeRef, name: &str) -> Result<(Kind, bool), Refused> {
+        let mut ty = ty;
+        for _ in 0..MAX_TYPE_DEPTH {
+            let (file, inline) = match ty {
+                TypeRef::Native { .. } => break,
+                TypeRef::Unresolved(t) => return Err(no("unresolved type", t.clone())),
+                TypeRef::Component { file, inline } => (file, inline),
+            };
+            let other = if *file == self.file.file {
+                Some(self.file)
+            } else {
+                self.types.file(file)
+            };
+            let Some(other) = other else {
+                return Err(no("a type in a file the build does not have", file.clone()));
+            };
+            let component = match inline {
+                None => other.components.first(),
+                Some(inline) => other
+                    .components
+                    .iter()
+                    .find(|c| c.kind == ComponentKind::Inline && c.name == *inline),
+            };
+            let Some(component) = component else {
+                return Err(no("unresolved type", format!("{file}.{inline:?}")));
+            };
+            let root = component.root();
+            if let Some(found) = declared_on(root, name)? {
+                return Ok(found);
+            }
+            ty = &root.ty;
+        }
+        if !matches!(ty, TypeRef::Native { .. }) {
+            return Err(no(
+                "type",
+                format!("based on more than {MAX_TYPE_DEPTH} files"),
+            ));
+        }
+        let Some(found) = self.types.property(ty, name) else {
             return Err(no("member the type table does not have", name));
         };
         match Kind::of(&found.ty) {
@@ -839,22 +957,22 @@ impl<'p> Gen<'p> {
 
     fn prop(
         &mut self,
-        r: ObjRef,
+        src: Src,
         name: &str,
         write: bool,
     ) -> Result<(String, String, Kind), Refused> {
-        let (kind, writable) = self.property_of(r, name)?;
+        let (kind, writable) = self.property_of(src, name)?;
         if write && !writable {
             return Err(no("write to a read-only property", name));
         }
-        let object = self.object(r);
+        let object = self.object(src);
         let at = site(&mut self.sites.props, (name.to_string(), kind, write));
         let index = site(&mut self.props, (object, at));
         Ok((format!("o{object}"), format!("p{index}"), kind))
     }
 
-    fn read(&mut self, r: ObjRef, name: &str) -> Result<V, Refused> {
-        let (o, p, kind) = self.prop(r, name, false)?;
+    fn read(&mut self, src: Src, name: &str) -> Result<V, Refused> {
+        let (o, p, kind) = self.prop(src, name, false)?;
         let read = match kind {
             Kind::Number => "num",
             Kind::Bool => "bool",
@@ -997,13 +1115,13 @@ impl<'p> Gen<'p> {
         if let Some(n) = self.enum_key(base, name) {
             return Ok(v(number(n as f64), Ty::Num));
         }
-        if let Expr::Name(b) = base {
-            let got = self.name(b)?;
-            match got.ty {
-                Ty::Obj(r) => return self.read(r, name),
-                Ty::Type => return Err(no("member of a type", format!("{b}.{name}"))),
-                _ => {}
-            }
+        if let Some(src) = self.object_of(base)? {
+            return self.read(src, name);
+        }
+        if let Expr::Name(b) = base
+            && self.name(b)?.ty == Ty::Type
+        {
+            return Err(no("member of a type", format!("{b}.{name}")));
         }
         let got = self.expr(base, Want::Value)?;
         match (got.ty, name) {
@@ -1077,10 +1195,7 @@ impl<'p> Gen<'p> {
                 ))
             }
             Expr::Member(base, name) => {
-                let Expr::Name(b) = &**base else {
-                    return Err(no("assignment", "to a member of a value"));
-                };
-                let Ty::Obj(r) = self.name(b)?.ty else {
+                let Some(r) = self.object_of(base)? else {
                     return Err(no("assignment", "to a member of a value"));
                 };
                 self.effects = true;
@@ -1133,10 +1248,7 @@ impl<'p> Gen<'p> {
                 ))
             }
             Expr::Member(base, name) => {
-                let Expr::Name(b) = &**base else {
-                    return Err(no("assignment", "to a member of a value"));
-                };
-                let Ty::Obj(r) = self.name(b)?.ty else {
+                let Some(r) = self.object_of(base)? else {
                     return Err(no("assignment", "to a member of a value"));
                 };
                 self.effects = true;
@@ -1179,6 +1291,9 @@ impl<'p> Gen<'p> {
                         let a = self.expr(a, Want::Value)?;
                         convert(name, a)
                     }
+                    SINGLETON if self.single_call(callee, args).is_some() => {
+                        Err(no("object as a value", "a singleton"))
+                    }
                     _ => Err(no("global function call", name.clone())),
                 }
             }
@@ -1188,9 +1303,12 @@ impl<'p> Gen<'p> {
                         return self.math(method, args);
                     }
                     let got = self.name(b)?;
-                    if let Ty::Obj(r) = got.ty {
+                    if let Ty::Obj(Src::Here(r)) = got.ty {
                         return self.method(r, method, args, want);
                     }
+                }
+                if self.single(base).is_some() {
+                    return Err(no("method call of a singleton", format!(".{method}()")));
                 }
                 Err(no("method call", format!(".{method}()")))
             }
@@ -1283,7 +1401,7 @@ impl<'p> Gen<'p> {
                 values.push(a);
             }
             self.effects = true;
-            let object = self.object(r);
+            let object = self.object(Src::Here(r));
             let at = site(&mut self.sites.signals, name.to_string());
             let index = site(&mut self.signals, (object, at));
             let mut code = String::from("{ ");
@@ -1373,7 +1491,7 @@ impl<'p> Gen<'p> {
                 format!("{name} given more arguments than it names"),
             ));
         }
-        let object = self.object(r);
+        let object = self.object(Src::Here(r));
         let at = site(&mut self.sites.methods, (name.to_string(), callee.0));
         site(&mut self.guards, (object, at));
         let label = self.label("r");
@@ -1420,6 +1538,27 @@ impl<'p> Gen<'p> {
         let _ = write!(code, "{label}: {{\n{inner}}}\n}}");
         Ok(v(code, ty))
     }
+}
+
+/// What `def` itself declares `name` to be: its kind, and whether it can
+/// be written. `None` for a name it leaves to its type.
+fn declared_on(def: &ObjectDef, name: &str) -> Result<Option<(Kind, bool)>, Refused> {
+    if let Some(decl) = def.properties.iter().rev().find(|p| p.name == name) {
+        if decl.alias.is_some() {
+            return Err(no("alias", name));
+        }
+        if decl.is_list {
+            return Err(no("type", format!("list property {name}")));
+        }
+        return match Kind::of(&decl.ty) {
+            Some(kind) => Ok(Some((kind, !decl.is_readonly))),
+            None => Err(no("type", format!("{} property {name}", decl.ty))),
+        };
+    }
+    if def.functions.iter().any(|f| f.name == name) || def.signals.iter().any(|s| s.name == name) {
+        return Err(no("function value", name));
+    }
+    Ok(None)
 }
 
 /// Which signal the handler `id` of the object is for.

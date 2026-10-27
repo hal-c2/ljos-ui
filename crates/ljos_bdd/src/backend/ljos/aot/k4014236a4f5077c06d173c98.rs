@@ -36,6 +36,7 @@ pub static FILE: rt::File = rt::File {
         },
     ],
     signals: &[],
+    singletons: &[],
     methods: &[],
     exprs: &[Some(e0), Some(e1), Some(e2)],
 };

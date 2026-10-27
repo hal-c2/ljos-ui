@@ -56,6 +56,9 @@ pub struct File {
     pub props: &'static [PropSite],
     /// Signals the code emits, by name: declared by the file.
     pub signals: &'static [&'static str],
+    /// The singleton types whose objects the code reads, by
+    /// [`Frame::singleton`]'s index.
+    pub singletons: &'static [Single],
     /// Functions of the file the code has inlined.
     pub methods: &'static [MethodSite],
     /// By expression: `None` for one that runs dynamically.
@@ -78,6 +81,18 @@ pub enum Kind {
     Number,
     Bool,
     String,
+}
+
+/// A singleton type the code reads the object of.
+#[derive(Debug, Clone, Copy)]
+pub enum Single {
+    /// Written in QML: the file of that key (`Theme`).
+    File { file: &'static str },
+    /// Of a module: native, or a style's file.
+    Native {
+        module: &'static str,
+        name: &'static str,
+    },
 }
 
 /// A function of the file whose body is inlined: the object must still

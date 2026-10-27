@@ -14,6 +14,7 @@ pub static FILE: rt::File = rt::File {
         write: false,
     }],
     signals: &[],
+    singletons: &[],
     methods: &[],
     exprs: &[
         None, // type: var property items

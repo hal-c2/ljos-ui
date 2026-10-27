@@ -271,15 +271,19 @@ fn write_rust(
 ) -> Result<Vec<CompiledFile>, BuildError> {
     use ljos_engine::ComponentSource as _;
 
-    let mut generated = Vec::new();
-    for key in source.keys() {
-        if let Some(file) = source.load(key) {
-            generated.push((
-                key.to_owned(),
-                ljos_compiler::aot::generate(&file, oracle, RUNTIME),
-            ));
-        }
-    }
+    // What a file reads of the others types its code.
+    let files: Vec<(String, _)> = source
+        .keys()
+        .filter_map(|key| Some((key.to_owned(), source.load(key)?)))
+        .collect();
+    let project: Vec<_> = files.iter().map(|(_, f)| (**f).clone()).collect();
+    let generated: Vec<(String, ljos_aot::Generated)> = files
+        .iter()
+        .map(|(key, file)| {
+            let code = ljos_compiler::aot::generate_in(file, &project, oracle, RUNTIME);
+            (key.clone(), code)
+        })
+        .collect();
     let named: Vec<(&str, &ljos_aot::Generated)> =
         generated.iter().map(|(k, g)| (k.as_str(), g)).collect();
     let rust = ljos_aot::assemble(RUNTIME, &named);

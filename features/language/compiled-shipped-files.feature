@@ -194,6 +194,67 @@ Feature: Files compiled ahead of time
       compiled ahead of time  1 of 1 (100.0%)
       """
 
+  Scenario: A singleton written in QML is read and written by compiled code
+    Given the files are compiled ahead of time
+    And the compiled code cross-check is on
+    And the file "qmldir":
+      """
+      singleton Theme Theme.qml
+      """
+    And the file "Theme.qml":
+      """qml
+      pragma Singleton
+      import QtQuick
+      QtObject {
+          property int base: 4
+          property string name: "theme"
+      }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+          id: root
+          objectName: "root"
+          property int step: 1
+          property int scaled: Theme.base * step
+          property string label: Theme.name + step
+          onStepChanged: Theme.base += 1
+      }
+      """
+    When the property "step" of "root" is set to 3
+    Then the property "scaled" of "root" is 15
+    And the property "label" of "root" is "theme3"
+    And the file "Scenario.qml" ran compiled code
+    And the log has no warning matching "compiled code and the dynamic tiers differ"
+
+  Scenario: The check compiles what a file reads of a singleton the project declares
+    Given the file "qmldir":
+      """
+      singleton Theme Theme.qml
+      """
+    And the file "Theme.qml":
+      """qml
+      pragma Singleton
+      import QtQuick
+      QtObject {
+          property int base: 4
+      }
+      """
+    And the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+          property int step: 1
+          property int scaled: Theme.base * step
+      }
+      """
+    When the files are checked with statistics
+    Then the check reports the lines:
+      """
+      compiled ahead of time  1 of 1 (100.0%)
+      """
+
   Scenario: The check says a variable declared in a switch case runs dynamically
     Given the file "Main.qml":
       """qml

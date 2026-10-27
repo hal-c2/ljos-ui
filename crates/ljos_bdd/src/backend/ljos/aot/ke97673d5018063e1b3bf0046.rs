@@ -14,6 +14,7 @@ pub static FILE: rt::File = rt::File {
         write: false,
     }],
     signals: &["ping"],
+    singletons: &[],
     methods: &[],
     exprs: &[
         None, // statement: a variable declared in a switch case

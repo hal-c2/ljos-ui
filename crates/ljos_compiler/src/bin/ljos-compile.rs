@@ -109,13 +109,22 @@ fn run_aot_coverage(root: &Path) -> anyhow::Result<()> {
         let Ok(results) = ljos_compiler::compile_project_with(&dir, QtTypeOracle) else {
             continue;
         };
+        // What a file reads of the project's others types its code.
+        let project: Vec<ljos_ir::CompiledFile> = results
+            .iter()
+            .filter_map(|r| r.result.as_ref().ok().map(|c| c.file.clone()))
+            .collect();
         for result in results {
             let Ok(compiled) = result.result else {
                 continue;
             };
             files += 1;
-            let outcome =
-                ljos_compiler::aot::generate(&compiled.file, &QtTypeOracle, "ljos_engine::aot");
+            let outcome = ljos_compiler::aot::generate_in(
+                &compiled.file,
+                &project,
+                &QtTypeOracle,
+                "ljos_engine::aot",
+            );
             coverage.add(&outcome.outcomes);
             // One line per file, to count a subset of the corpus (the files
             // another compiler could resolve, say) the same way.

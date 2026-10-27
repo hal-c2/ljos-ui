@@ -39,6 +39,18 @@ mod k3549969ab72c876ae7c3e18a;
     clippy::all,
     clippy::pedantic
 )]
+mod k3cfcd6b8ee62af863cdc15e6;
+#[allow(
+    unused_mut,
+    unused_variables,
+    unused_assignments,
+    unreachable_code,
+    unused_labels,
+    unused_parens,
+    unused_braces,
+    clippy::all,
+    clippy::pedantic
+)]
 mod k4014236a4f5077c06d173c98;
 #[allow(
     unused_mut,
@@ -75,6 +87,18 @@ mod kb93b9e01e2838d4e772142be;
     clippy::all,
     clippy::pedantic
 )]
+mod kbbe3054d92c3ceda610d75d9;
+#[allow(
+    unused_mut,
+    unused_variables,
+    unused_assignments,
+    unreachable_code,
+    unused_labels,
+    unused_parens,
+    unused_braces,
+    clippy::all,
+    clippy::pedantic
+)]
 mod kde5f9e251c8535fcb2e583ff;
 #[allow(
     unused_mut,
@@ -92,9 +116,11 @@ mod ke97673d5018063e1b3bf0046;
 pub(in crate::backend) static COMPILED: &[&ljos_engine::aot::File] = &[
     &k109996ea80984d817765d2b3::FILE,
     &k3549969ab72c876ae7c3e18a::FILE,
+    &k3cfcd6b8ee62af863cdc15e6::FILE,
     &k4014236a4f5077c06d173c98::FILE,
     &k843eb8791aed39bdfad08733::FILE,
     &kb93b9e01e2838d4e772142be::FILE,
+    &kbbe3054d92c3ceda610d75d9::FILE,
     &kde5f9e251c8535fcb2e583ff::FILE,
     &ke97673d5018063e1b3bf0046::FILE,
 ];
