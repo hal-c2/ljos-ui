@@ -425,3 +425,20 @@ fn a_tool_script_names_singletons_by_their_type() {
     // Not a type's name, so not a singleton's either.
     assert!(eval(None, "typeof base").contains("\"value\":\"undefined\""));
 }
+
+/// A tool's script that runs past its time is stopped, and says so by
+/// the kind of its error, apart from a script host that failed.
+#[test]
+fn a_tool_script_over_its_time_is_an_interrupt() {
+    let h = with_settings();
+    let out = h.engine.eval_js_in(
+        None,
+        "for (;;) {}",
+        Duration::from_millis(50),
+        [4, 16, 64, 64, 1024],
+    );
+    assert!(
+        matches!(out, Err(ljos_engine::EngineError::JsInterrupted(_))),
+        "{out:?}"
+    );
+}

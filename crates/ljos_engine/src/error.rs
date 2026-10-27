@@ -67,6 +67,11 @@ pub enum EngineError {
     /// A JS exception or fault.
     #[error("{0}")]
     Js(String),
+    /// JS that ran past its time budget and was stopped. Apart from
+    /// [`EngineError::Js`] so a caller can tell a timeout by its kind,
+    /// not by searching the words.
+    #[error("{0}")]
+    JsInterrupted(String),
 }
 
 /// Why [`Engine::try_call_js`](crate::Engine::try_call_js) or
@@ -139,9 +144,13 @@ impl EngineError {
         Self::DeadObject(obj)
     }
 
-    /// [`EngineError::Js`], for `map_err` on a [`ljos_js::JsFault`].
+    /// [`EngineError::Js`], or [`EngineError::JsInterrupted`] for an
+    /// interrupt, for `map_err` on a [`ljos_js::JsFault`].
     pub(crate) fn js(e: ljos_js::JsFault) -> Self {
-        Self::Js(e.to_string())
+        match e {
+            ljos_js::JsFault::JsInterrupted { .. } => Self::JsInterrupted(e.to_string()),
+            e => Self::Js(e.to_string()),
+        }
     }
 }
 

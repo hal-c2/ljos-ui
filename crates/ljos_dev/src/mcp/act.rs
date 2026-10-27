@@ -916,30 +916,7 @@ impl Hands<'_> {
         let out = self
             .engine
             .eval_js_in(this, &a.source, limit, [6, 100, 2000, 2000, budget]);
-        let text = match out {
-            Ok(text) => text,
-            Err(e) => {
-                let said = e.to_string();
-                let lower = said.to_lowercase();
-                return Err(if lower.contains("interrupt") || lower.contains("time") {
-                    SurfaceError::new(
-                        ErrorCode::Timeout,
-                        format!(
-                            "the script did not finish in {} ms and was stopped; the \
-                             application goes on. Give `timeout_ms` more (at most {}), or write \
-                             it to end",
-                            limit.as_millis(),
-                            ljos_engine::MAX_EVAL_TIME.as_millis()
-                        ),
-                    )
-                } else {
-                    SurfaceError::new(
-                        ErrorCode::AppFaulted,
-                        format!("the script host failed: {said}"),
-                    )
-                });
-            }
-        };
+        let text = out.map_err(|e| eval_failure(&e, limit))?;
         let parsed: Value = serde_json::from_str(&text).map_err(|e| {
             SurfaceError::new(
                 ErrorCode::Internal,
@@ -1160,9 +1137,48 @@ impl Hands<'_> {
     }
 }
 
+/// Why `app_eval` gave no answer: a script stopped over its time is a
+/// timeout, anything else the script host failing. Decided on the error's
+/// kind; its words ("runtime", "timer") say nothing of that.
+fn eval_failure(e: &EngineError, limit: Duration) -> SurfaceError {
+    match e {
+        EngineError::JsInterrupted(_) => SurfaceError::new(
+            ErrorCode::Timeout,
+            format!(
+                "the script did not finish in {} ms and was stopped; the application goes on. \
+                 Give `timeout_ms` more (at most {}), or write it to end",
+                limit.as_millis(),
+                ljos_engine::MAX_EVAL_TIME.as_millis()
+            ),
+        ),
+        other => SurfaceError::new(
+            ErrorCode::AppFaulted,
+            format!("the script host failed: {other}"),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_interrupt_is_a_timeout() {
+        let limit = Duration::from_millis(250);
+        let timed_out = eval_failure(
+            &EngineError::JsInterrupted("JS `devtools eval` interrupted after 250ms".into()),
+            limit,
+        );
+        assert_eq!(timed_out.code, ErrorCode::Timeout);
+        for said in [
+            "JS host: runtime is gone",
+            "panic in `devtools eval`: no time left",
+        ] {
+            let failed = eval_failure(&EngineError::Js(said.into()), limit);
+            assert_eq!(failed.code, ErrorCode::AppFaulted, "{said}");
+            assert!(failed.message.contains(said), "{}", failed.message);
+        }
+    }
 
     #[test]
     fn a_refusal_is_masked_with_the_secrets_of_before_and_after() {
