@@ -339,7 +339,9 @@ fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
     let s = &mut *held;
     let fresh = s.layout.is_some()
         && same_text
-        && s.laid.as_ref() == Some(&(inputs.style.clone(), params))
+        && s.laid
+            .as_ref()
+            .is_some_and(|(style, laid)| *style == inputs.style && *laid == params)
         && s.laid_spans == spans;
     if !fresh {
         let layout = match &s.rich {
