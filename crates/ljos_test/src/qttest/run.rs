@@ -201,9 +201,12 @@ impl Session {
             self.compile_failure(stem, &refused.message, refused.place);
             return;
         }
-        // The budget is the JS host's, which the file has started by now
-        // if it has any JS at all.
-        let _ = engine.set_js_dispatch_budget(JS_BUDGET, JS_BUDGET);
+        // The budget is the JS host's, started here if the file has none:
+        // a host that cannot start is a file that cannot run.
+        if let Err(e) = engine.set_js_dispatch_budget(JS_BUDGET, JS_BUDGET) {
+            self.compile_failure(stem, &e.to_string(), None);
+            return;
+        }
         if let Err(e) = self.show(engine, &host, root) {
             self.compile_failure(stem, &e.to_string(), None);
             return;
