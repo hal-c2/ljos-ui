@@ -228,11 +228,37 @@ impl<O: TypeOracle> Project<O> {
         self.front.set_controls_style(style);
     }
 
+    /// Says the files of the directory `dir` on disk are added under the
+    /// key `prefix` (`""` for a root), so that an import naming it, or a
+    /// directory below it, by its `file:` URL finds them. A root loaded or
+    /// opened is said already.
+    pub fn add_place(&mut self, dir: &Path, prefix: &str) {
+        // The URL a file's own `Qt.resolvedUrl` makes has the absolute
+        // path with `.` and `..` taken out, and a link left as it is;
+        // the path with the links followed is the other way to write it.
+        let absolute = std::path::absolute(dir).unwrap_or_else(|_| dir.to_owned());
+        let mut clean = PathBuf::new();
+        for part in absolute.components() {
+            match part {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    clean.pop();
+                }
+                part => clean.push(part),
+            }
+        }
+        self.front.add_place(&clean.to_string_lossy(), prefix);
+        if let Ok(real) = clean.canonicalize() {
+            self.front.add_place(&real.to_string_lossy(), prefix);
+        }
+    }
+
     fn load_root(&mut self, root: &Path) -> Result<(), Error> {
         let dirs = scan(root).map_err(|source| Error::Io {
             path: root.to_owned(),
             source,
         })?;
+        self.add_place(root, "");
         // What earlier roots gave; those keys are not replaced.
         let earlier: HashSet<String> = self.sources.keys().cloned().collect();
         let earlier_scripts: HashSet<String> = self.scripts.keys().cloned().collect();
@@ -282,6 +308,7 @@ impl<O: TypeOracle> Project<O> {
             source,
         })?;
         let mut project = Self::new(oracle);
+        project.add_place(root, "");
         let mut modules = Vec::new();
         let mut resources = Vec::new();
         for (dir, names) in &dirs {
@@ -365,11 +392,10 @@ impl<O: TypeOracle> Project<O> {
             let Some(summary) = self.front.summary(&file) else {
                 continue;
             };
-            let here = project::directory(&file);
             for import in &summary.imports {
                 let uri = match &import.source {
                     project::Source::Path(path) if !is_script(path) => {
-                        dirs.push(join(here, path));
+                        dirs.push(self.front.import_dir(&file, path));
                         continue;
                     }
                     project::Source::Path(_) => continue,

@@ -179,7 +179,9 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                     }
                 }
                 Source::Path(path) if !is_script(path) => {
-                    if let Some(file) = self.file_named(&join(directory(self.file), path), name) {
+                    if let Some(file) =
+                        self.file_named(&self.project.import_dir(self.file, path), name)
+                    {
                         let origin = match qualifier {
                             Some(_) => Origin::Namespace,
                             None => Origin::File(file.clone()),

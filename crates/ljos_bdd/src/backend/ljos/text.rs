@@ -10,6 +10,9 @@ use super::{key_of, qmldir_of};
 
 pub(super) fn compiler(files: &BTreeMap<String, String>) -> QmlTextCompiler {
     let mut project = Project::new(super::oracle());
+    // A scenario's files have the URLs of files at the root of the disk
+    // (`file:///Main.qml`), so that is where a `file:` URL leads.
+    project.add_place(std::path::Path::new("/"), "");
     for (name, source) in files {
         if qmldir_of(name).is_none() {
             project.add(key_of(name), source.as_str());

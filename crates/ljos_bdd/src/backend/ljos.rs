@@ -556,6 +556,9 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
 
 fn compile(files: &BTreeMap<String, String>, style: Option<&ControlsStyle>) -> Result<MapSource> {
     let mut project = Project::new(oracle());
+    // A scenario's files have the URLs of files at the root of the disk
+    // (`file:///Main.qml`), so that is where a `file:` URL leads.
+    project.add_place(std::path::Path::new("/"), "");
     project.set_controls_style(style.cloned());
     for (name, source) in files {
         if is_script(name) {

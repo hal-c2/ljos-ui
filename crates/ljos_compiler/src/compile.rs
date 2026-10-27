@@ -1751,7 +1751,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             if !(path.ends_with(".js") || path.ends_with(".mjs")) {
                 continue;
             }
-            let key = qml_front::project::join(qml_front::project::directory(self.key), path);
+            let key = self.project.front().import_dir(self.key, path);
             let Some(text) = self.project.script(&key) else {
                 continue;
             };
