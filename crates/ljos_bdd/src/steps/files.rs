@@ -157,10 +157,7 @@ fn served_not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
 // A font file of features/text/fonts, beside the QML under its own name.
 #[given(regex = r#"^the font file "([^"]+)"$"#)]
 fn the_font_file(w: &mut LjosWorld, name: String) -> StepResult {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../features/text/fonts")
-        .join(&name);
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = feature_file("text/fonts", &name)?;
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
@@ -168,20 +165,14 @@ fn the_font_file(w: &mut LjosWorld, name: String) -> StepResult {
 // own name.
 #[given(regex = r#"^the media file "([^"]+)"$"#)]
 fn the_media_file(w: &mut LjosWorld, name: String) -> StepResult {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../features/multimedia/media")
-        .join(&name);
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = feature_file("multimedia/media", &name)?;
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
 // The same, at `$SERVER/X` on the scenario's web server.
 #[given(regex = r#"^the web server serves the media file "([^"]+)"$"#)]
 fn a_served_media_file(w: &mut LjosWorld, name: String) -> StepResult {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../features/multimedia/media")
-        .join(&name);
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = feature_file("multimedia/media", &name)?;
     w.web()?.serve(&name, bytes);
     Ok(())
 }
@@ -190,10 +181,7 @@ fn a_served_media_file(w: &mut LjosWorld, name: String) -> StepResult {
 // own name.
 #[given(regex = r#"^the sprite sheet "([^"]+)"$"#)]
 fn the_sprite_sheet(w: &mut LjosWorld, name: String) -> StepResult {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../features/animation/sprites")
-        .join(&name);
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bytes = feature_file("animation/sprites", &name)?;
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
@@ -269,4 +257,13 @@ fn prefixed_streamed_bytes(
         .map_err(|e| e.to_string())?;
     w.web()?.stream_prefixed_bytes(&name, count, prefix);
     Ok(())
+}
+
+/// A file of `features/<dir>`, which the scenarios keep beside themselves.
+fn feature_file(dir: &str, name: &str) -> Result<Vec<u8>, String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../features")
+        .join(dir)
+        .join(name);
+    std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
