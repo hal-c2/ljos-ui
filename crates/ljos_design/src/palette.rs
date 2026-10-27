@@ -483,8 +483,8 @@ const ALL_GROUNDS: [&str; 6] = [
     "surfaceSelected",
 ];
 
-/// The pairs a palette promises: (foreground, backgrounds, text or not,
-/// and for non-text whether the stronger text limit applies).
+/// The pairs a palette promises: (foreground, backgrounds, text or not).
+/// `checks` holds `borderStrong` to the text limit.
 fn pairs() -> Vec<(&'static str, &'static [&'static str], &'static str)> {
     vec![
         ("text", &ALL_GROUNDS, "text"),
