@@ -43,7 +43,7 @@ use ljos_render::{
     painted_size, place_image,
 };
 
-use crate::enums::{EnumTable, align};
+use crate::enums::{EnumTable, align, keys};
 use crate::item::{Item, is_a, size_follows_implicit, write_computed};
 pub(crate) use store::Waiter;
 
@@ -74,10 +74,6 @@ pub mod tile_mode {
     pub const STRETCH: i32 = 0;
     pub const REPEAT: i32 = 1;
     pub const ROUND: i32 = 2;
-}
-
-fn keys(list: &[(&'static str, i32)]) -> Vec<(&'static str, i64)> {
-    list.iter().map(|(k, v)| (*k, i64::from(*v))).collect()
 }
 
 fn status_enums() -> EnumTable {

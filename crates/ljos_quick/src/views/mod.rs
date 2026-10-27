@@ -37,7 +37,7 @@ use ljos_engine::{
 };
 use rustc_hash::FxHashMap;
 
-use crate::enums::{EnumTable, layout_direction};
+use crate::enums::{EnumTable, keys, layout_direction};
 use crate::flickable::{self, Flickable};
 use crate::item::{is_a, write_computed};
 
@@ -77,10 +77,6 @@ pub mod grid_flow {
 pub mod section_criteria {
     pub const FULL_STRING: i32 = 0;
     pub const FIRST_CHARACTER: i32 = 1;
-}
-
-fn keys(list: &[(&'static str, i32)]) -> Vec<(&'static str, i64)> {
-    list.iter().map(|(k, v)| (*k, i64::from(*v))).collect()
 }
 
 fn item_view_enums() -> EnumTable {

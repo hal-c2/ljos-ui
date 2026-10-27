@@ -27,7 +27,7 @@ use ljos_engine::{
     QmlType, Timer, Value, Version, WriteKind, qml_impl,
 };
 
-use crate::enums::EnumTable;
+use crate::enums::{EnumTable, keys};
 use crate::item::{Item, is_a, is_item, is_unset};
 use crate::tree;
 
@@ -64,10 +64,6 @@ pub mod bounds_behavior {
 pub mod bounds_movement {
     pub const STOP_AT_BOUNDS: i32 = 0;
     pub const FOLLOW_BOUNDS_BEHAVIOR: i32 = 1;
-}
-
-fn keys(list: &[(&'static str, i32)]) -> Vec<(&'static str, i64)> {
-    list.iter().map(|(k, v)| (*k, i64::from(*v))).collect()
 }
 
 fn flickable_enums() -> EnumTable {

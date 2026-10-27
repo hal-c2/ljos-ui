@@ -8,7 +8,8 @@
 /// What `#[qml(enums = …)]` takes: every enum's name and its keys.
 pub(crate) type EnumTable = Vec<(&'static str, Vec<(&'static str, i64)>)>;
 
-fn keys(list: &[(&'static str, i32)]) -> Vec<(&'static str, i64)> {
+/// An enum's keys, from the `i32` values the properties store.
+pub(crate) fn keys(list: &[(&'static str, i32)]) -> Vec<(&'static str, i64)> {
     list.iter().map(|(k, v)| (*k, i64::from(*v))).collect()
 }
 

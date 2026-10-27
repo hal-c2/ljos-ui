@@ -48,7 +48,7 @@ use std::rc::Rc;
 
 use ljos_engine::{Engine, MetaRef, QmlType, Version};
 
-use crate::enums::{EnumTable, align, wrap_mode};
+use crate::enums::{EnumTable, align, keys, wrap_mode};
 use crate::keys::{KeyItem, register_key_item, register_text_input_client};
 use crate::pointer_item::{PointerItem, register_hover_move, register_pointer_item};
 
@@ -110,10 +110,6 @@ pub mod input_method_hint {
     pub const MULTI_LINE: i32 = 0x400;
     pub const DIGITS_ONLY: i32 = 0x10000;
     pub const FORMATTED_NUMBERS_ONLY: i32 = 0x20000;
-}
-
-fn keys(list: &[(&'static str, i32)]) -> Vec<(&'static str, i64)> {
-    list.iter().map(|(k, v)| (*k, i64::from(*v))).collect()
 }
 
 /// The enums of `TextInput` and `TextEdit` (`TextInput.Password`,
