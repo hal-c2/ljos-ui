@@ -167,7 +167,7 @@ fn parse_with_limits(
         match event {
             Ok(Event::Start(e)) => {
                 saw_root = true;
-                stack.push(local(e.name().as_ref()));
+                stack.push(local(e.name().as_ref()).to_owned());
                 start_element(
                     &e,
                     &stack,
@@ -182,7 +182,7 @@ fn parse_with_limits(
             }
             Ok(Event::Empty(e)) => {
                 saw_root = true;
-                stack.push(local(e.name().as_ref()));
+                stack.push(local(e.name().as_ref()).to_owned());
                 start_element(
                     &e,
                     &stack,
@@ -242,11 +242,8 @@ fn parse_with_limits(
     Ok(out)
 }
 
-fn local(qname: &str) -> String {
-    match qname.rsplit_once(':') {
-        Some((_, local)) => local.to_owned(),
-        None => qname.to_owned(),
-    }
+fn local(qname: &str) -> &str {
+    qname.rsplit_once(':').map_or(qname, |(_, local)| local)
 }
 
 #[allow(clippy::too_many_arguments)]
