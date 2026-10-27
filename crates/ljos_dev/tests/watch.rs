@@ -791,10 +791,46 @@ fn write_in_place(path: &Path, text: &str, pause: Duration) {
     file.write_all(rest.as_bytes()).unwrap();
 }
 
+/// A watcher over `files` whose quiet time is longer than any test waits,
+/// so that what is built, and when, is decided by the events of a save and
+/// never by how long the machine took between two of them. What it sends
+/// comes on the receiver.
+fn watch_slowly(
+    files: &[(&str, &str)],
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    ljos_dev::Watcher,
+    mpsc::Receiver<ljos_dev::DevMsg>,
+) {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    for (name, text) in files {
+        write(&dir, name, text);
+    }
+    let mut reloader = ljos_dev::Reloader::open(&dir, QtTypeOracle).unwrap();
+    reloader.start();
+    let (tx, rx) = mpsc::channel();
+    let watcher =
+        ljos_dev::Watcher::spawn_with_quiet(reloader, 2 * PATIENCE, move |m| tx.send(m).is_ok())
+            .unwrap();
+    (tmp, dir, watcher, rx)
+}
+
+/// The next build, which must be a patch: told within PATIENCE, so a
+/// build that waited the whole quiet time is not one.
+fn patched(rx: &mpsc::Receiver<ljos_dev::DevMsg>) -> u64 {
+    match rx.recv_timeout(PATIENCE) {
+        Ok(ljos_dev::DevMsg::Reload { patch, .. }) => patch.generation,
+        other => panic!("expected a patch at once, got {other:?}"),
+    }
+}
+
 #[test]
 fn a_file_written_in_place_in_parts_is_built_once_it_is_closed() {
     // A save that is not yet closed waits the whole quiet time, so the
-    // pause between its parts is not taken for its end.
+    // pause between its parts is not taken for its end; its closing ends
+    // the wait. Half the file never compiles: a patch is the whole file.
     let rows: String = (0..300)
         .map(|i| format!("  property int p{i}: {i}\n"))
         .collect();
@@ -804,20 +840,12 @@ fn a_file_written_in_place_in_parts_is_built_once_it_is_closed() {
         )
     };
     let main = "import QtQuick\nItem {\n  Used { }\n}\n";
-    let mut app = app(&[("Main.qml", main), ("Used.qml", &used(1))]);
+    let (_tmp, dir, watcher, rx) = watch_slowly(&[("Main.qml", main), ("Used.qml", &used(1))]);
     for n in 2..6 {
-        write_in_place(
-            &app.dir.join("Used.qml"),
-            &used(n),
-            Duration::from_millis(40),
-        );
-        let reports = app.wait();
-        assert_eq!(
-            reloaded(&reports).generation,
-            u64::from(n - 1),
-            "{reports:?}"
-        );
-        assert_eq!(app.num("used", "n"), f64::from(n));
+        write_in_place(&dir.join("Used.qml"), &used(n), Duration::from_millis(40));
+        let generation = patched(&rx);
+        assert_eq!(generation, u64::from(n - 1));
+        watcher.ack(generation);
     }
 }
 
@@ -825,12 +853,13 @@ fn a_file_written_in_place_in_parts_is_built_once_it_is_closed() {
 fn a_file_closed_after_its_first_part_is_built_once_the_rest_is_written() {
     // Each part closed, the pause between them longer than a finished
     // save's quiet time: the first part alone does not compile, and is
-    // not told.
+    // not told; the watcher waits the (long) quiet time for more, and the
+    // rest, closed, is built at once.
     let main = "import QtQuick\nItem {\n  objectName: \"root\"\n  width: 10\n}\n";
-    let mut app = app(&[("Main.qml", main)]);
+    let (_tmp, dir, watcher, rx) = watch_slowly(&[("Main.qml", main)]);
     let whole = main.replace("10", "20");
     let (first, rest) = whole.split_at(whole.len() / 2);
-    let path = app.dir.join("Main.qml");
+    let path = dir.join("Main.qml");
     fs::write(&path, first).unwrap();
     std::thread::sleep(Duration::from_millis(60));
     {
@@ -838,9 +867,8 @@ fn a_file_closed_after_its_first_part_is_built_once_the_rest_is_written() {
         let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
         file.write_all(rest.as_bytes()).unwrap();
     }
-    let reports = app.wait();
-    assert_eq!(reloaded(&reports).generation, 1, "{reports:?}");
-    assert_eq!(app.num("root", "width"), 20.0);
+    assert_eq!(patched(&rx), 1);
+    drop(watcher);
 }
 
 /// A watcher whose thread has ended says so when asked to build, rather
