@@ -367,9 +367,8 @@ pub(super) fn register(engine: &Engine) {
             });
         });
         if let Err(err) = follows {
-            engine.log(
-                ljos_engine::LogLevel::Warning,
-                crate::util::CATEGORY,
+            crate::util::warn(
+                engine,
                 format!("Application.layoutDirection does not follow the language: {err}"),
             );
         }
@@ -382,11 +381,7 @@ pub(super) fn register(engine: &Engine) {
             Ok((app, install)) => {
                 let _ = e.call_js(&install, &[Value::Object(app)]);
             }
-            Err(err) => e.log(
-                ljos_engine::LogLevel::Warning,
-                crate::util::CATEGORY,
-                format!("Qt.application is not available: {err}"),
-            ),
+            Err(err) => crate::util::warn(e, format!("Qt.application is not available: {err}")),
         }
     });
 }

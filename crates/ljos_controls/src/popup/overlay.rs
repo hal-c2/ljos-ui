@@ -16,7 +16,7 @@
 //! `popup-close-policy.feature` and `popup-pointer.feature`.
 
 use ljos_engine::{
-    Color, Engine, EngineError, LogLevel, MetaRef, ObjectId, QmlObject, QmlType, Value, WriteKind,
+    Color, Engine, EngineError, MetaRef, ObjectId, QmlObject, QmlType, Value, WriteKind,
 };
 use ljos_quick::{
     Item, LayerHooks, PointerEvent, Rectangle, child_items, contains_point, is_item,
@@ -26,7 +26,7 @@ use ljos_render::kurbo;
 
 use super::item::is_inside;
 use super::{Popup, PopupState, close_policy, dismiss, item_of, popup_of, state_of};
-use crate::util::{CATEGORY, check, flag, is_a, num, object, set_computed};
+use crate::util::{check, flag, is_a, num, object, set_computed, warn};
 
 /// The overlay is above everything a window's content can be (the number
 /// is the one Qt's reads).
@@ -501,9 +501,8 @@ pub(super) fn register(engine: &Engine) {
                 .map_or(Value::Null, Value::Object)
         });
         if let Err(err) = bound {
-            e.log(
-                LogLevel::Warning,
-                CATEGORY,
+            warn(
+                e,
                 format!("Overlay: cannot bind the attached properties: {err}"),
             );
         }

@@ -7,7 +7,7 @@
 //! `Window.screen` and `Screen.`. Pinned by
 //! `features/window/screen-attached.feature`.
 
-use ljos_engine::{Atom, Cx, Engine, LogLevel, ObjectId, PropIndex, QmlObject, Value, qml_impl};
+use ljos_engine::{Atom, Cx, Engine, ObjectId, PropIndex, QmlObject, Value, qml_impl};
 
 use super::Window;
 use super::app::ScreenInfo;
@@ -234,9 +234,8 @@ pub(super) fn register(engine: &Engine) {
                 screen_of(e, obj).map_or_else(|| none.clone(), |s| e.read(s, theirs))
             });
             if let Err(err) = bound {
-                e.log(
-                    LogLevel::Warning,
-                    crate::util::CATEGORY,
+                crate::util::warn(
+                    e,
                     format!("Screen: cannot bind the attached properties: {err}"),
                 );
                 break;
