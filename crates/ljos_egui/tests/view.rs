@@ -10,34 +10,16 @@ use std::time::Duration;
 use egui::{Event, Modifiers, PointerButton, Pos2, Rect, Vec2, ViewportId};
 use egui_kittest::Harness;
 use ljos_egui::{QmlView, ResizeMode};
-use ljos_engine::{Color, Engine, ObjectId, QmlType, Value};
-use ljos_quick::{Item, MouseArea, Rectangle, Text, add_data};
+use ljos_engine::{Color, Engine, ObjectId, Value};
+use ljos_quick::{Item, MouseArea, Rectangle, Text};
 use ljos_runtime::{Time, VirtualClock};
+
+mod common;
+use common::{geom, make, set};
 
 const RED: Color = Color::from_rgba8(255, 0, 0, 255);
 const BLUE: Color = Color::from_rgba8(0, 0, 255, 255);
 const GREEN: Color = Color::from_rgba8(0, 255, 0, 255);
-
-fn make<T: QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
-    let o = e.create_native(T::default(), parent).unwrap();
-    if let Some(p) = parent {
-        add_data(e, p, o).unwrap();
-    }
-    e.complete(o).unwrap();
-    o
-}
-
-fn geom(e: &Engine, o: ObjectId, x: f64, y: f64, w: f64, h: f64) {
-    e.set(o, Item::X, x).unwrap();
-    e.set(o, Item::Y, y).unwrap();
-    e.set(o, Item::WIDTH, w).unwrap();
-    e.set(o, Item::HEIGHT, h).unwrap();
-}
-
-fn set(e: &Engine, o: ObjectId, name: &str, v: Value) {
-    e.write_by_name(o, name, v)
-        .unwrap_or_else(|err| panic!("{name}: {err}"));
-}
 
 /// A red square at (10,10) and a blue 60x40 button at (100,10) whose
 /// MouseArea turns it green on click.

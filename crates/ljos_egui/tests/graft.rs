@@ -12,23 +12,12 @@ use egui_kittest::kittest::{AccessKitNode, State};
 use ljos_a11y::Role as QtRole;
 use ljos_egui::QmlView;
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Value};
-use ljos_quick::{Accessible, Item, MouseArea, Rectangle, add_data};
+use ljos_quick::{Accessible, Item, MouseArea, Rectangle};
+
+mod common;
+use common::{make, set};
 
 const SUB: TreeId = TreeId(Uuid::from_u128(0x6c6a_6f73_0000_0000_0000_0000_0000_0001));
-
-fn make<T: QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
-    let o = e.create_native(T::default(), parent).unwrap();
-    if let Some(p) = parent {
-        add_data(e, p, o).unwrap();
-    }
-    e.complete(o).unwrap();
-    o
-}
-
-fn set(e: &Engine, o: ObjectId, name: &str, v: Value) {
-    e.write_by_name(o, name, v)
-        .unwrap_or_else(|err| panic!("{name}: {err}"));
-}
 
 fn accessible(e: &Engine, o: ObjectId) -> ObjectId {
     e.attached_object(o, &MetaRef::Static(Accessible::static_meta()))

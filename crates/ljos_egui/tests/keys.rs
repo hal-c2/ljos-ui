@@ -13,7 +13,10 @@ use ljos_a11y::Role as QtRole;
 use ljos_egui::{KeyboardPolicy, QmlView, ResizeMode};
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Value};
 use ljos_quick::keys::{KeyItem, Shortcut, key, register_key_item};
-use ljos_quick::{Accessible, Item, KeyEvent, KeyKind, Rectangle, add_data};
+use ljos_quick::{Accessible, Item, KeyEvent, KeyKind, Rectangle};
+
+mod common;
+use common::{make, set};
 
 thread_local! {
     /// What the Rectangles were handed, as `"press 65 a"`.
@@ -50,20 +53,6 @@ fn note(e: &Engine, item: ObjectId, ev: &KeyEvent) -> bool {
         );
     });
     TAKE.with(|t| t.borrow().contains(&ev.key))
-}
-
-fn make<T: QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
-    let o = e.create_native(T::default(), parent).unwrap();
-    if let Some(p) = parent {
-        add_data(e, p, o).unwrap();
-    }
-    e.complete(o).unwrap();
-    o
-}
-
-fn set(e: &Engine, o: ObjectId, name: &str, v: Value) {
-    e.write_by_name(o, name, v)
-        .unwrap_or_else(|err| panic!("{name}: {err}"));
 }
 
 fn flag(e: &Engine, o: ObjectId, name: &str) -> bool {

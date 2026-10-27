@@ -8,9 +8,12 @@ use std::sync::{Mutex, PoisonError};
 use egui::{Pos2, Rect, TextureId, Vec2};
 use egui_kittest::Harness;
 use ljos_egui::QmlView;
-use ljos_engine::{Engine, ObjectId, QmlType, Value};
-use ljos_quick::{Image, ImageStore, Item, Text, add_data};
+use ljos_engine::{Engine, Value};
+use ljos_quick::{Image, ImageStore, Item, Text};
 use ljos_runtime::MemoryPressure;
+
+mod common;
+use common::{make, set};
 
 /// kittest's renderer, made one test at a time. Two threads that start
 /// the Vulkan loader together can crash it: with the NVIDIA driver one
@@ -42,20 +45,6 @@ fn halves(w: u32, h: u32) -> Vec<u8> {
         writer.write_image_data(&data).unwrap();
     }
     out
-}
-
-fn make<T: QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
-    let o = e.create_native(T::default(), parent).unwrap();
-    if let Some(p) = parent {
-        add_data(e, p, o).unwrap();
-    }
-    e.complete(o).unwrap();
-    o
-}
-
-fn set(e: &Engine, o: ObjectId, name: &str, v: Value) {
-    e.write_by_name(o, name, v)
-        .unwrap_or_else(|err| panic!("{name}: {err}"));
 }
 
 struct State {

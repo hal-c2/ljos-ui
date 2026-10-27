@@ -11,24 +11,11 @@ use std::sync::Arc;
 use egui::{HoveredFile, Pos2, Rect, Vec2};
 use egui_kittest::Harness;
 use ljos_egui::QmlView;
-use ljos_engine::{Engine, ObjectId, QmlType, Value};
-use ljos_quick::{DropArea, Item, add_data};
+use ljos_engine::{Engine, ObjectId, Value};
+use ljos_quick::{DropArea, Item};
 
-fn make<T: QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
-    let o = e.create_native(T::default(), parent).unwrap();
-    if let Some(p) = parent {
-        add_data(e, p, o).unwrap();
-    }
-    e.complete(o).unwrap();
-    o
-}
-
-fn geom(e: &Engine, o: ObjectId, x: f64, y: f64, w: f64, h: f64) {
-    e.set(o, Item::X, x).unwrap();
-    e.set(o, Item::Y, y).unwrap();
-    e.set(o, Item::WIDTH, w).unwrap();
-    e.set(o, Item::HEIGHT, h).unwrap();
-}
+mod common;
+use common::{geom, make};
 
 /// What the DropAreas heard, in order.
 type Log = Rc<RefCell<Vec<String>>>;

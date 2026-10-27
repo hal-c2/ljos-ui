@@ -9,18 +9,12 @@ use std::time::Duration;
 use egui::{Event, Modifiers, MouseWheelSource, MouseWheelUnit, Pos2, Rect, TouchPhase, Vec2};
 use egui_kittest::Harness;
 use ljos_egui::{QmlView, ResizeMode};
-use ljos_engine::{Engine, ObjectId, QmlType, Value};
-use ljos_quick::{Flickable, Item, add_data};
+use ljos_engine::{Engine, ObjectId, Value};
+use ljos_quick::{Flickable, Item};
 use ljos_runtime::VirtualClock;
 
-fn make<T: QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
-    let o = e.create_native(T::default(), parent).unwrap();
-    if let Some(p) = parent {
-        add_data(e, p, o).unwrap();
-    }
-    e.complete(o).unwrap();
-    o
-}
+mod common;
+use common::make;
 
 fn num(e: &Engine, o: ObjectId, name: &str) -> f64 {
     match e.read_by_name(o, name) {
