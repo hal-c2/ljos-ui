@@ -94,7 +94,7 @@ fn open(e: &Engine, obj: ObjectId, at: kurbo::Point) -> Result<(), EngineError> 
     if menu.is_none() && editor {
         let made = edit_menu(e, obj)?;
         let att = e.attached_object(obj, &attacher())?;
-        crate::popup::put(e, att, ContextMenuAttached::MENU.index, Value::Object(made))?;
+        crate::util::set_derived(e, att, ContextMenuAttached::MENU.index, Value::Object(made))?;
         menu = Some(made);
     }
     match menu {

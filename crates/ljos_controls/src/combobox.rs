@@ -411,7 +411,11 @@ fn is_open(engine: &Engine, combo: ObjectId) -> bool {
 /// Writes a property the application may have bound, as the type's own
 /// code does: the binding stays.
 fn put(engine: &Engine, combo: ObjectId, prop: PropIndex, v: Value) {
-    check(engine, "ComboBox", popup::put(engine, combo, prop, v));
+    check(
+        engine,
+        "ComboBox",
+        crate::util::set_derived(engine, combo, prop, v),
+    );
 }
 
 fn emit(engine: &Engine, combo: ObjectId, signal: &str, index: i32) {

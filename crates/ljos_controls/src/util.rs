@@ -83,6 +83,20 @@ pub(crate) fn set_computed(
     engine.write_internal(obj, prop, v, ljos_engine::WriteKind::Imperative)
 }
 
+/// Writes a value as the type's own code does: a binding on the property
+/// stays, as `open()` leaves a `visible:` binding alone in Qt.
+pub(crate) fn set_derived(
+    engine: &Engine,
+    obj: ObjectId,
+    prop: PropIndex,
+    v: Value,
+) -> Result<(), EngineError> {
+    if engine.untrack(|| engine.read(obj, prop)).change_equals(&v) {
+        return Ok(());
+    }
+    engine.write_derived(obj, prop, v)
+}
+
 /// The text a control draws for `text`: an `&` marks the letter after it
 /// as the mnemonic and is not drawn, and `&&` is one literal `&`. Measured
 /// on qml6 for longer runs: an `&` is dropped unless another `&` comes right

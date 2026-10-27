@@ -618,7 +618,7 @@ fn wire(e: &Engine, bar: ObjectId, item: ObjectId) -> Result<(), EngineError> {
         )?;
         let policy = Popup::CLOSE_POLICY.index;
         if is_unset(e, menu, policy) {
-            popup::put(e, menu, policy, Value::Int(BAR_MENU_POLICY))?;
+            crate::util::set_derived(e, menu, policy, Value::Int(BAR_MENU_POLICY))?;
         }
         let conns = vec![
             e.connect_by_name(menu, "aboutToShow", move |e, _| {
@@ -668,7 +668,7 @@ fn leave(e: &Engine, bar: ObjectId, item: ObjectId) -> Result<Option<Slot>, Engi
     set_parent_item(e, item, None)?;
     if is_a::<MenuBarItem>(e, item) {
         set_computed(e, item, MenuBarItem::MENU_BAR.index, Value::Null)?;
-        popup::put(e, item, MenuBarItem::HIGHLIGHTED.index, Value::Bool(false))?;
+        crate::util::set_derived(e, item, MenuBarItem::HIGHLIGHTED.index, Value::Bool(false))?;
     }
     Ok(Some(slot))
 }
@@ -770,7 +770,7 @@ fn set_current(e: &Engine, bar: ObjectId, item: Option<ObjectId>) {
     for i in items(e, bar) {
         if is_a::<MenuBarItem>(e, i) {
             let on = Value::Bool(Some(i) == item);
-            let r = popup::put(e, i, MenuBarItem::HIGHLIGHTED.index, on);
+            let r = crate::util::set_derived(e, i, MenuBarItem::HIGHLIGHTED.index, on);
             check(e, "highlighted", r);
         }
     }

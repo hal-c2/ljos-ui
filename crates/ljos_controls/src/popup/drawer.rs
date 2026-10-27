@@ -16,8 +16,8 @@
 use ljos_engine::{Engine, EngineError, ObjectId, QmlObject, Value};
 use ljos_quick::Item;
 
-use super::{Popup, close_policy, item_of, put, state_of};
-use crate::util::{flag, num, set_computed};
+use super::{Popup, close_policy, item_of, state_of};
+use crate::util::{flag, num, set_computed, set_derived};
 
 /// `Qt.Edge`.
 pub(crate) mod edge {
@@ -121,8 +121,8 @@ pub(super) fn place(engine: &Engine, drawer: ObjectId) -> Result<(), EngineError
         // The overlay is where a drawer is placed from: its `x` and `y`
         // are from the corner of the window.
         state.placing.set(true);
-        let wrote = put(engine, drawer, Popup::X.index, Value::Real(x))
-            .and_then(|()| put(engine, drawer, Popup::Y.index, Value::Real(y)));
+        let wrote = set_derived(engine, drawer, Popup::X.index, Value::Real(x))
+            .and_then(|()| set_derived(engine, drawer, Popup::Y.index, Value::Real(y)));
         state.placing.set(false);
         wrote
     })

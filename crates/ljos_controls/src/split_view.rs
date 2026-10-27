@@ -238,7 +238,7 @@ impl SplitView {
             // The template lays its items out in an item of its own.
             let ci = e.create_native_incomplete(Item::default(), Some(me))?;
             e.complete(ci)?;
-            crate::popup::put(e, me, Control::CONTENT_ITEM.index, Value::Object(ci))?;
+            crate::util::set_derived(e, me, Control::CONTENT_ITEM.index, Value::Object(ci))?;
         }
         e.watch(me, SplitView::HANDLE.index, move |e, _| {
             check(e, "SplitView", remake_handles(e, me));

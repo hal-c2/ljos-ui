@@ -304,7 +304,8 @@ pub(crate) fn current_changed(e: &Engine, bar: ObjectId) {
         let on = i as i32 == cur;
         let was = e.untrack(|| flag(e, item, AbstractButton::CHECKED.index));
         if on != was {
-            let r = crate::popup::put(e, item, AbstractButton::CHECKED.index, Value::Bool(on));
+            let r =
+                crate::util::set_derived(e, item, AbstractButton::CHECKED.index, Value::Bool(on));
             check(e, "TabBar", r);
         }
     }

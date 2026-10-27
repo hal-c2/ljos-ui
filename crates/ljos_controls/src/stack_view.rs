@@ -820,7 +820,7 @@ fn show(e: &Engine, item: ObjectId, on: bool) {
         check(
             e,
             "StackView.visible",
-            crate::popup::put(e, att, StackViewAttached::VISIBLE.index, Value::Bool(on)),
+            crate::util::set_derived(e, att, StackViewAttached::VISIBLE.index, Value::Bool(on)),
         );
     }
 }

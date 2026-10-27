@@ -9,8 +9,8 @@ use ljos_engine::{Engine, EngineError, ObjectId, PropIndex, QmlType, Value};
 use ljos_quick::{Item, is_item, scene_transform};
 use ljos_render::kurbo;
 
-use super::{Popup, item_of, put, state_of};
-use crate::util::{flag, num, object, set_computed};
+use super::{Popup, item_of, state_of};
+use crate::util::{flag, num, object, set_computed, set_derived};
 
 fn center_in() -> PropIndex {
     static PROP: OnceLock<PropIndex> = OnceLock::new();
@@ -154,8 +154,8 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
         set_computed(engine, item, Item::Y.index, Value::Real(pos.y))?;
         let local = to_scene.inverse() * pos;
         state.placing.set(true);
-        let wrote = put(engine, popup, Popup::X.index, Value::Real(local.x))
-            .and_then(|()| put(engine, popup, Popup::Y.index, Value::Real(local.y)));
+        let wrote = set_derived(engine, popup, Popup::X.index, Value::Real(local.x))
+            .and_then(|()| set_derived(engine, popup, Popup::Y.index, Value::Real(local.y)));
         state.placing.set(false);
         state.placed.set(Some((local.x, local.y)));
         wrote

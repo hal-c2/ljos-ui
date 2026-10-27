@@ -272,7 +272,7 @@ fn count(engine: &Engine, me: ObjectId) -> i32 {
 /// Makes `index` the current one as the container itself does (a click on
 /// a tab, a swipe): a binding the author put on `currentIndex` stays.
 pub(crate) fn set_current(engine: &Engine, me: ObjectId, index: i32) {
-    let r = crate::popup::put(
+    let r = crate::util::set_derived(
         engine,
         me,
         Container::CURRENT_INDEX.index,
@@ -576,7 +576,7 @@ fn sync(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
         }
         object_model_changed(e, model);
         if let Some((view, held)) = view.zip(held) {
-            crate::popup::put(e, view, ItemView::CURRENT_INDEX.index, held)?;
+            crate::util::set_derived(e, view, ItemView::CURRENT_INDEX.index, held)?;
         }
     }
     let list: Vec<Value> = want.iter().copied().map(Value::Object).collect();

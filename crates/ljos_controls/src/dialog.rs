@@ -1088,7 +1088,7 @@ impl Dialog {
 /// Closes the dialog with `result`. A dialog that is closed already still
 /// gets the result and says so.
 pub(crate) fn done(e: &Engine, dialog: ObjectId, result: i32) -> Result<(), EngineError> {
-    popup::put(e, dialog, Dialog::RESULT.index, Value::Int(result))?;
+    crate::util::set_derived(e, dialog, Dialog::RESULT.index, Value::Int(result))?;
     match result {
         1 => emit(e, dialog, "accepted"),
         0 => emit(e, dialog, "rejected"),
@@ -1147,7 +1147,11 @@ fn init_dialog(e: &Engine, dialog: ObjectId) -> Result<(), EngineError> {
         let footer = e.untrack(|| object(e, dialog, Dialog::FOOTER.index));
         if let Some(f) = footer.filter(|f| is_a::<DialogButtonBox>(e, *f)) {
             let p = DialogButtonBox::STANDARD_BUTTONS.index;
-            check(e, "standardButtons", popup::put(e, f, p, v.clone()));
+            check(
+                e,
+                "standardButtons",
+                crate::util::set_derived(e, f, p, v.clone()),
+            );
         }
     })?;
     Ok(())
@@ -1168,7 +1172,7 @@ fn wire(e: &Engine, dialog: ObjectId, footer: Option<ObjectId>) -> Result<(), En
     };
     let wanted = e.untrack(|| e.read(dialog, Dialog::STANDARD_BUTTONS.index));
     if wanted.to_number() != 0.0 {
-        popup::put(e, bx, DialogButtonBox::STANDARD_BUTTONS.index, wanted)?;
+        crate::util::set_derived(e, bx, DialogButtonBox::STANDARD_BUTTONS.index, wanted)?;
     }
     let mut made = Vec::new();
     made.push(e.connect_by_name(bx, "accepted", move |e, _| {

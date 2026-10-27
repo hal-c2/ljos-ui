@@ -29,8 +29,8 @@ use ljos_runtime::Time;
 
 use super::drawer::{Drawer, edge, is_drawer};
 use super::overlay::{is_modal, point_in, stack};
-use super::{Popup, item_of, popup_of, put};
-use crate::util::{check, flag, num};
+use super::{Popup, item_of, popup_of};
+use crate::util::{check, flag, num, set_derived};
 
 /// How far along its axis the pointer goes before the drawer takes it:
 /// more than this.
@@ -245,7 +245,7 @@ fn follow(engine: &Engine, d: &Drag, at: f64) {
     check(
         engine,
         "position",
-        put(engine, d.drawer, Drawer::POSITION.index, Value::Real(p)),
+        set_derived(engine, d.drawer, Drawer::POSITION.index, Value::Real(p)),
     );
 }
 

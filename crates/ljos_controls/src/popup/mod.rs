@@ -45,7 +45,7 @@ use ljos_quick::{Item, Passage, is_item, set_parent_item};
 use crate::containers::{Host, content_size, host_append, host_complete, host_insert};
 use crate::control::Control;
 use crate::parts::settle_parts;
-use crate::util::{bind_default, check, emit, flag, is_a, num, object, set_computed};
+use crate::util::{bind_default, check, emit, flag, is_a, num, object, set_computed, set_derived};
 use crate::window::Window;
 use ljos_quick::Palette;
 
@@ -473,20 +473,6 @@ pub fn item_popup(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     popup_of(engine, item)
 }
 
-/// Writes a value as the type's own code does: a binding on the property
-/// stays, as `open()` leaves a `visible:` binding alone in Qt.
-pub(crate) fn put(
-    engine: &Engine,
-    obj: ObjectId,
-    prop: PropIndex,
-    v: Value,
-) -> Result<(), EngineError> {
-    if engine.untrack(|| engine.read(obj, prop)).change_equals(&v) {
-        return Ok(());
-    }
-    engine.write_derived(obj, prop, v)
-}
-
 /// Asks for `popup` to be at `x`, `y` from its parent, as a write of both
 /// at once: an open popup moves once, and a closed one opens there.
 pub(crate) fn move_to(engine: &Engine, popup: ObjectId, x: f64, y: f64) -> Result<(), EngineError> {
@@ -805,7 +791,7 @@ pub(crate) fn open(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> 
         }
     } else {
         state.switching.set(true);
-        let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
+        let wrote = set_derived(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
         state.switching.set(false);
         wrote?;
         try_present(engine, popup)?;
@@ -832,7 +818,7 @@ pub(super) fn show_still(engine: &Engine, popup: ObjectId) -> Result<(), EngineE
         return Ok(());
     }
     state.switching.set(true);
-    let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
+    let wrote = set_derived(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
     state.switching.set(false);
     wrote?;
     try_present(engine, popup)
@@ -948,11 +934,11 @@ fn gone(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), Engi
         engine.untrack(|| withdraw(engine, popup, state))?;
     }
     if let Some((opacity, scale)) = state.before_exit.take() {
-        put(engine, popup, Popup::OPACITY.index, Value::Real(opacity))?;
-        put(engine, popup, Popup::SCALE.index, Value::Real(scale))?;
+        set_derived(engine, popup, Popup::OPACITY.index, Value::Real(opacity))?;
+        set_derived(engine, popup, Popup::SCALE.index, Value::Real(scale))?;
     }
     state.switching.set(true);
-    let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(false));
+    let wrote = set_derived(engine, popup, Popup::VISIBLE.index, Value::Bool(false));
     state.switching.set(false);
     wrote?;
     emit(engine, popup, "closed");
@@ -1008,7 +994,7 @@ pub(crate) fn close(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
         // Still waiting for its delay: it was never shown, so there is
         // nothing to hide and nothing to say.
         state.switching.set(true);
-        let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(false));
+        let wrote = set_derived(engine, popup, Popup::VISIBLE.index, Value::Bool(false));
         state.switching.set(false);
         return wrote;
     }

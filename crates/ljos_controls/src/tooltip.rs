@@ -401,7 +401,7 @@ fn put_visible(e: &Engine, owner: ObjectId, on: bool) {
         return;
     }
     if let Some(att) = e.existing_attached_object(owner, &attacher()) {
-        let r = popup::put(e, att, ToolTipAttached::VISIBLE.index, Value::Bool(on));
+        let r = crate::util::set_derived(e, att, ToolTipAttached::VISIBLE.index, Value::Bool(on));
         check(e, "ToolTip.visible", r);
     }
 }
@@ -443,15 +443,15 @@ fn show_for(
         WriteKind::Imperative,
     )?;
     let text = text.map_or_else(|| read(ToolTipAttached::TEXT.index), Value::String);
-    popup::put(e, tip, ToolTip::TEXT.index, text)?;
-    popup::put(
+    crate::util::set_derived(e, tip, ToolTip::TEXT.index, text)?;
+    crate::util::set_derived(
         e,
         tip,
         ToolTip::DELAY.index,
         read(ToolTipAttached::DELAY.index),
     )?;
     let timeout = timeout.map_or_else(|| read(ToolTipAttached::TIMEOUT.index), Value::Int);
-    popup::put(e, tip, ToolTip::TIMEOUT.index, timeout)?;
+    crate::util::set_derived(e, tip, ToolTip::TIMEOUT.index, timeout)?;
     if is_visible(e, tip) && !st.pending.get() {
         // Already shown for another item: it stays, for as long as this
         // one says.
@@ -492,7 +492,11 @@ fn attached_created(e: &Engine, owner: ObjectId, att: ObjectId) -> Result<(), En
     ] {
         e.watch(att, from, move |e, v| {
             if let Some(tip) = showing_for(e, owner, att) {
-                check(e, "ToolTip", popup::put(e, tip, to, v.clone()));
+                check(
+                    e,
+                    "ToolTip",
+                    crate::util::set_derived(e, tip, to, v.clone()),
+                );
             }
         })?;
     }

@@ -432,7 +432,7 @@ fn current_item(engine: &Engine, menu: ObjectId) -> Option<ObjectId> {
 }
 
 fn set_current(engine: &Engine, menu: ObjectId, index: i32) {
-    let r = popup::put(engine, menu, Menu::CURRENT_INDEX.index, Value::Int(index));
+    let r = crate::util::set_derived(engine, menu, Menu::CURRENT_INDEX.index, Value::Int(index));
     check(engine, "currentIndex", r);
 }
 
@@ -827,7 +827,7 @@ fn leave(e: &Engine, menu: ObjectId, item: ObjectId) -> Result<Option<Entry>, En
     set_parent_item(e, item, None)?;
     if is_a::<MenuItem>(e, item) {
         set_computed(e, item, MenuItem::MENU.index, Value::Null)?;
-        popup::put(e, item, MenuItem::HIGHLIGHTED.index, Value::Bool(false))?;
+        crate::util::set_derived(e, item, MenuItem::HIGHLIGHTED.index, Value::Bool(false))?;
     }
     Ok(Some(entry))
 }
@@ -1051,7 +1051,7 @@ fn apply_current(e: &Engine, menu: ObjectId) {
     for item in items(e, menu) {
         if is_a::<MenuItem>(e, item) {
             let on = Value::Bool(Some(item) == current);
-            let r = popup::put(e, item, MenuItem::HIGHLIGHTED.index, on);
+            let r = crate::util::set_derived(e, item, MenuItem::HIGHLIGHTED.index, on);
             check(e, "highlighted", r);
         }
     }

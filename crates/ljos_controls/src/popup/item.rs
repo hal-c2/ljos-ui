@@ -26,11 +26,11 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
-use super::{Popup, close_policy, dismiss, popup_of, put};
+use super::{Popup, close_policy, dismiss, popup_of};
 use crate::containers::{Page, Pane};
 use crate::control::Control;
 use crate::control::{ignore, no_key};
-use crate::util::{check, flag};
+use crate::util::{check, flag, set_derived};
 use ljos_quick::palette::{ROLE_COUNT, group_props, role_props};
 
 /// The item of a popup.
@@ -130,7 +130,7 @@ pub(super) fn set_modal(
 ) -> Result<(), EngineError> {
     let modal = super::is_shown(engine, popup) && flag(engine, popup, Popup::MODAL.index);
     let att = engine.attached_object(item, &MetaRef::Static(Accessible::static_meta()))?;
-    put(
+    set_derived(
         engine,
         att,
         AccessibleAttached::MODAL.index,
@@ -215,9 +215,9 @@ pub(super) fn mirror_look(
         let font = e.read(item, theirs);
         let locale = e.read(item, their_locale);
         e.untrack(|| {
-            check(e, "font", put(e, popup, mine, font));
+            check(e, "font", set_derived(e, popup, mine, font));
             if !author_set(e, popup, my_locale) {
-                check(e, "locale", put(e, popup, my_locale, locale));
+                check(e, "locale", set_derived(e, popup, my_locale, locale));
             }
         });
     })?;
@@ -247,7 +247,7 @@ pub(super) fn mirror_look(
         // all again for each.
         let take = move |e: &Engine, v: &Value| {
             if !author_set(e, popup, from) {
-                check(e, "palette", put(e, popup, from, v.clone()));
+                check(e, "palette", set_derived(e, popup, from, v.clone()));
             }
         };
         take(engine, &engine.untrack(|| engine.read(item, to)));
