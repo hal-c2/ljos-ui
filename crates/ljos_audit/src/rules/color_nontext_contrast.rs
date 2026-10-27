@@ -23,7 +23,9 @@ use ljos_engine::ObjectId;
 use ljos_quick::Item;
 use ljos_render::{DrawOp, FrameSnapshot};
 
-use crate::cx::{Cx, declared_by_app, is_a, scene_rect, shown_items, takes_focus, within, words};
+use crate::cx::{
+    Cx, declared_by_app, is_a, scene_rect, shown_items, takes_focus, trim, within, words,
+};
 use crate::pixels::{Painter, backdrop};
 
 /// The parts of `control` the rule holds, each with what a message calls
@@ -147,14 +149,12 @@ pub(crate) fn check(cx: &mut Cx) {
             words(cx, control),
             shown.to_hex(),
             behind.to_hex(),
-            trim(NONTEXT_CONTRAST),
+            trim(f64::from(NONTEXT_CONTRAST)),
         );
         let f = cx.report("color-nontext-contrast", Some(part), message);
-        f.measured = Some(format!("{r:.2}:1 < {}:1", trim(NONTEXT_CONTRAST)));
+        f.measured = Some(format!(
+            "{r:.2}:1 < {}:1",
+            trim(f64::from(NONTEXT_CONTRAST))
+        ));
     }
-}
-
-fn trim(n: f32) -> String {
-    let s = format!("{n:.1}");
-    s.strip_suffix(".0").map(str::to_string).unwrap_or(s)
 }

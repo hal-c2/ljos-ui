@@ -28,7 +28,7 @@ use ljos_quick::{Item, Text};
 use ljos_render::kurbo::{Affine, Point, Rect};
 use ljos_render::{ClipId, DrawOp, FrameSnapshot, Paint};
 
-use crate::cx::{Cx, item_words};
+use crate::cx::{Cx, item_words, trim};
 use crate::pixels::backdrop;
 use crate::surfaces::{qcolor, straight};
 
@@ -229,7 +229,7 @@ pub(crate) fn check(cx: &mut Cx) {
         } else {
             format!("the text {said:?}")
         };
-        let least = trim_ratio(w.least);
+        let least = trim(f64::from(w.least));
         let lc = apca_lc(w.text, w.behind).abs();
         let message = format!(
             "{what} is {} on {}, a contrast of {:.2}:1 where {least}:1 is the least \
@@ -241,9 +241,4 @@ pub(crate) fn check(cx: &mut Cx) {
         let f = cx.report("color-text-contrast", Some(item), message);
         f.measured = Some(format!("{:.2}:1 < {least}:1", w.ratio));
     }
-}
-
-fn trim_ratio(n: f32) -> String {
-    let s = format!("{n:.1}");
-    s.strip_suffix(".0").map(str::to_string).unwrap_or(s)
 }
