@@ -1050,3 +1050,11 @@ fn the_own_table_says_the_class_of_a_part_a_control_holds() {
         assert_eq!(property.type_name, class, "{name}.{part}");
     }
 }
+
+#[test]
+fn an_enums_name_is_an_enum_name() {
+    // `Item.transformOrigin` is declared with the enum `TransformOrigin` in
+    // either table; a property's type name that is no enum anywhere is not.
+    assert!(is_enum_name("TransformOrigin"));
+    assert!(!is_enum_name("NoSuchEnumOfAnyType"));
+}

@@ -569,6 +569,25 @@ pub fn is_type_name(name: &str) -> bool {
         .contains(name)
 }
 
+/// Whether `name` is the name (or the alias, what properties are declared
+/// with) of an enum of some type of the table: a property whose type is
+/// named `name` then holds one of that enum's keys.
+pub fn is_enum_name(name: &str) -> bool {
+    static NAMES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            let names = |enumeration: &'static Enum| {
+                std::iter::once(enumeration.name).chain(enumeration.alias)
+            };
+            table()
+                .types
+                .iter()
+                .flat_map(|ty| ty.enums.iter().flat_map(names))
+                .collect()
+        })
+        .contains(name)
+}
+
 /// Whether some type of the table has a member called `name`: a name that
 /// is most likely that member wherever it is written.
 pub fn is_member_name(name: &str) -> bool {
