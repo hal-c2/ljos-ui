@@ -213,6 +213,9 @@ pub struct Property<T> {
     /// What is written there is run when its time comes and worth nothing
     /// until then: the `script` of a ScriptAction or a StateChangeScript.
     pub is_script: bool,
+    /// A key of an enum written there is a constant, not a name to look
+    /// up: the property holds an enum or an `int`.
+    pub takes_key: bool,
     /// An object written there is a list of one.
     pub is_list: bool,
     pub is_readonly: bool,
@@ -228,6 +231,7 @@ impl<T> Property<T> {
             is_url: type_name == "url" && !is_list,
             is_text: type_name == "string" && !is_list,
             is_script: false,
+            takes_key: type_name == "int" && !is_list,
             is_list,
             is_readonly,
             value: None,
@@ -480,6 +484,15 @@ fn qt_property(property: &'static qt_types::Property) -> Property<QtType> {
         is_url: class::URL.contains(&property.type_name) && !property.is_list,
         is_text: class::STRING.contains(&property.type_name) && !property.is_list,
         is_script: property.is_script,
+        takes_key: !property.is_list
+            && (property.type_name == "int"
+                || qt_types::is_enum_name(
+                    property
+                        .type_name
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(property.type_name),
+                )),
         is_list: property.is_list,
         is_readonly: property.is_readonly,
         value: property.value_type().map(QtType),

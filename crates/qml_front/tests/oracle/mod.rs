@@ -233,6 +233,7 @@ impl TypeOracle for Runtime {
             is_url: false,
             is_text: name == "text",
             is_script: false,
+            takes_key: false,
             is_list: false,
             is_readonly: false,
             value: value.and_then(|value| self.named(value)),

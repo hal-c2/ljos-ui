@@ -977,3 +977,16 @@ fn a_file_that_is_removed_is_forgotten_with_what_was_wrong_with_it() {
     assert!(!project.has("Good"));
     assert!(!project.has("Bad"));
 }
+
+#[test]
+fn a_property_that_holds_an_enum_takes_a_key() {
+    let oracle = qml_front::QtTypeOracle;
+    let item = qml_front::TypeOracle::module_type(&oracle, "QtQuick", "Item").expect("Item");
+    let origin =
+        qml_front::TypeOracle::property(&oracle, item, "transformOrigin").expect("transformOrigin");
+    assert!(origin.takes_key);
+    let width = qml_front::TypeOracle::property(&oracle, item, "width").expect("width");
+    assert!(!width.takes_key);
+    assert!(qml_front::Property::<usize>::declared("int", false, false).takes_key);
+    assert!(!qml_front::Property::<usize>::declared("int", true, false).takes_key);
+}

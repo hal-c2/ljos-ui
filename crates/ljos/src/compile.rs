@@ -718,6 +718,7 @@ fn qt_property(property: FrontProperty<QtType>) -> FrontProperty<EngineType> {
         is_url: property.is_url,
         is_text: property.is_text,
         is_script: property.is_script,
+        takes_key: property.takes_key,
         is_list: property.is_list,
         is_readonly: property.is_readonly,
         value: property.value.map(EngineType::Qt),
@@ -782,6 +783,7 @@ impl TypeOracle for EngineOracle {
                     is_url: info.ty == TypeTag::Url,
                     is_text: info.ty == TypeTag::String,
                     is_script: false,
+                    takes_key: info.ty == TypeTag::Int && !info.list,
                     is_list: info.list || matches!(info.ty, TypeTag::List(_)),
                     is_readonly: info.readonly,
                     value: match &info.ty {
