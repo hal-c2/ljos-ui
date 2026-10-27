@@ -24,7 +24,7 @@ ljos_media = { path = "../ljos_media", optional = true, default-features = false
 ljos_shell = { path = "../ljos_shell", optional = true, default-features = false }
 # Only with `mcp`: the inspector's capabilities (`ljos::mcp::Cap`).
 ljos_dev = { path = "../ljos_dev", optional = true }
-thiserror = { workspace = true, optional = true }
+thiserror.workspace = true
 # Unconditional: the compute pool behind `task::spawn`, and with `shell`
 # the UiHandle type the shell's setup hands out, named here so an
 # application needs no second Ljós dependency to hold one. Default
@@ -119,7 +119,7 @@ dev = ["shell", "ljos_shell/dev", "dep:ljos_dev"]
 # or the `LJOS_MCP` environment variable asks for it (`ljos::mcp`).
 # Links the QML compiler, an MCP SDK and an HTTP server; a shipped
 # application leaves it off.
-mcp = ["dev", "ljos_shell/mcp", "ljos_dev/mcp", "dep:thiserror"]
+mcp = ["dev", "ljos_shell/mcp", "ljos_dev/mcp"]
 # For an application's tests (`[dev-dependencies]`): `ljos::testing`, a
 # window without a platform on a virtual clock that a test hands input
 # to, and the host's and the system's part a test plays.

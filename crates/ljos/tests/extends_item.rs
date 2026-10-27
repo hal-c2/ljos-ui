@@ -55,7 +55,7 @@ fn compile(main: &str) -> Result<Vec<u8>, String> {
     let types = dir.path().join("ljostypes.json");
     std::fs::write(&types, ljos::types::dump(register).to_json()).unwrap();
     let pack = dir.path().join("qml.pack");
-    ljos::build::compile_dir_with_types(&qml, &types, &pack)?;
+    ljos::build::compile_dir_with_types(&qml, &types, &pack).map_err(|e| e.to_string())?;
     Ok(std::fs::read(pack).unwrap())
 }
 

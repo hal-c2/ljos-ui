@@ -28,7 +28,7 @@ fn engine() -> Engine {
     engine
 }
 
-fn compile(engine: &Engine, main: &str) -> Result<ljos::MapSource, String> {
+fn compile(engine: &Engine, main: &str) -> Result<ljos::MapSource, ljos::dev::CompileError> {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("Main.qml"), main).unwrap();
     ljos::dev::compile_dir_with(dir.path(), engine)
@@ -63,7 +63,7 @@ fn qml_cannot_make_an_uncreatable_singleton() {
     let made = compile(&engine, main).map(|source| ljos::create_root(&engine, source, "Main"));
     match made {
         Ok(Err(EngineError::NotCreatable(name))) => assert_eq!(name, "Store"),
-        Err(err) => assert!(err.contains("did not compile"), "{err}"),
+        Err(err) => assert!(err.to_string().contains("did not compile"), "{err}"),
         other => panic!("Store {{}} was made: {other:?}"),
     }
 }

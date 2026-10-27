@@ -42,6 +42,8 @@ use ljos_drive::{DriveState, Driver};
 use ljos_render::{RasterConfig, Rgba, kurbo};
 use ljos_runtime::VirtualClock;
 
+pub use crate::scene_error::SceneError;
+
 /// The fonts text is set in on this thread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Fonts {
@@ -73,7 +75,7 @@ pub fn render_png(
     root: ObjectId,
     size: (u32, u32),
     settle_ms: u64,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, SceneError> {
     let picture = Picture::new(size.0, size.1).settle(settle_ms);
     picture.install(engine);
     picture.png(engine, root)
@@ -153,7 +155,7 @@ impl Picture {
     /// its own shows it, and a `Window` with its own colour. A root
     /// window that leaves its size unsaid is as large as the picture.
     /// `Err` when the scene does not come to rest or cannot be drawn.
-    pub fn png(&self, engine: &Engine, root: ObjectId) -> Result<Vec<u8>, String> {
+    pub fn png(&self, engine: &Engine, root: ObjectId) -> Result<Vec<u8>, SceneError> {
         let mut scene = self.scene(engine, root)?;
         let mut state = DriveState::default();
         let mut run = Driver::new(engine, &mut scene, &*self.clock, &mut state);
@@ -162,9 +164,7 @@ impl Picture {
             .is_some_and(|m| m.inherits(ljos_controls::Window::static_meta()));
         if window && !self.window_colour {
             // A window is a Rectangle underneath: its fill goes.
-            engine
-                .write_by_name(root, "color", Value::from("transparent"))
-                .map_err(|e| e.to_string())?;
+            engine.write_by_name(root, "color", Value::from("transparent"))?;
         }
         picture(&mut run, window)
     }
@@ -173,7 +173,7 @@ impl Picture {
     /// picture's size with the settle time passed and at rest, for what
     /// reads a scene rather than its pixels (the design audit). The
     /// clock stands at [`now`](Self::now) afterwards.
-    pub fn scene(&self, engine: &Engine, root: ObjectId) -> Result<QuickScene, String> {
+    pub fn scene(&self, engine: &Engine, root: ObjectId) -> Result<QuickScene, SceneError> {
         self.scene_seen(engine, root, |_, _| {})
     }
 
@@ -185,10 +185,10 @@ impl Picture {
         engine: &Engine,
         root: ObjectId,
         at_rest: impl FnOnce(&Engine, &QuickScene),
-    ) -> Result<QuickScene, String> {
+    ) -> Result<QuickScene, SceneError> {
         let (mut width, mut height) = self.size;
         let mut scene = QuickScene::new(kurbo::Size::new(f64::from(width), f64::from(height)));
-        scene.set_root(engine, root).map_err(|e| e.to_string())?;
+        scene.set_root(engine, root)?;
         if self.root_sized {
             // Laid out first, as a Text knows its implicit size only then.
             scene.lay_out(engine);
@@ -216,13 +216,11 @@ impl Picture {
         }
         {
             let mut state = DriveState::default();
-            Driver::new(engine, &mut scene, &*self.clock, &mut state)
-                .settle()
-                .map_err(|e| e.to_string())?;
+            Driver::new(engine, &mut scene, &*self.clock, &mut state).settle()?;
             at_rest(engine, &scene);
             let mut run = Driver::new(engine, &mut scene, &*self.clock, &mut state);
-            run.advance(self.settle_ms).map_err(|e| e.to_string())?;
-            run.settle().map_err(|e| e.to_string())?;
+            run.advance(self.settle_ms)?;
+            run.settle()?;
         }
         Ok(scene)
     }
@@ -235,11 +233,10 @@ impl Picture {
 
 /// A PNG of the scene: on white, or on nothing for a window, which
 /// paints its own colour.
-fn picture(run: &mut Driver<'_>, window: bool) -> Result<Vec<u8>, String> {
+fn picture(run: &mut Driver<'_>, window: bool) -> Result<Vec<u8>, SceneError> {
     let backdrop = if window { 0.0 } else { 1.0 };
-    run.grab(RasterConfig {
+    Ok(run.grab(RasterConfig {
         background: Rgba::from_straight(backdrop, backdrop, backdrop, backdrop),
         ..RasterConfig::default()
-    })
-    .map_err(|e| e.to_string())
+    })?)
 }

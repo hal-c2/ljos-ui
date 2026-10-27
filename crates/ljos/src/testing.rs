@@ -32,6 +32,7 @@ pub use ljos_controls::ScreenSpec;
 
 use crate::item::{KeyEvent, PointerEvent, TextEngine, WheelEvent};
 use crate::prelude::ApplicationState;
+pub use crate::scene_error::SceneError;
 
 /// A window without a platform: what it shows is laid out and painted
 /// into display lists a test reads ([`painted`](Self::painted)), and
@@ -64,8 +65,10 @@ impl TestWindow {
 
     /// Shows `root`, an item or a `Window`, and lets the scene come to
     /// rest. `Err` says why it cannot be shown or does not come to rest.
-    pub fn show(&mut self, root: ObjectId) -> Result<(), String> {
-        self.stage.show(root)
+    pub fn show(&mut self, root: ObjectId) -> Result<(), SceneError> {
+        let Stage { engine, scene, .. } = &mut self.stage;
+        scene.set_root(engine, root)?;
+        self.settle()
     }
 
     /// Makes the window `width` by `height` logical pixels, as a user
@@ -73,7 +76,7 @@ impl TestWindow {
     /// clock: a root `Window` is told its new size as the platform tells
     /// it, and a root item takes it as `width` and `height`, as a host
     /// that sizes its root to the view writes it.
-    pub fn resize(&mut self, width: f64, height: f64) -> Result<(), String> {
+    pub fn resize(&mut self, width: f64, height: f64) -> Result<(), SceneError> {
         let Stage { engine, scene, .. } = &mut self.stage;
         scene.set_viewport(kurbo::Rect::new(0.0, 0.0, width, height));
         if let Some(root) = scene.root() {
@@ -82,7 +85,7 @@ impl TestWindow {
                 windows.resized(engine, root, [width, height]);
             } else {
                 for (prop, v) in [(Item::WIDTH, width), (Item::HEIGHT, height)] {
-                    engine.set(root, prop, v).map_err(|e| e.to_string())?;
+                    engine.set(root, prop, v)?;
                 }
             }
         }
@@ -96,8 +99,8 @@ impl TestWindow {
 
     /// Frames until the scene is idle, with no time passing: layout,
     /// anchors, paint, deferred deletes, what `Qt.callLater` put off.
-    pub fn settle(&mut self) -> Result<(), String> {
-        self.drive().settle().map_err(|e| e.to_string())
+    pub fn settle(&mut self) -> Result<(), SceneError> {
+        Ok(self.drive().settle()?)
     }
 
     /// Lets `ms` milliseconds pass, firing each timer at its own deadline
@@ -109,8 +112,8 @@ impl TestWindow {
     /// A test that serves what they wait on from this thread (a fake
     /// server) gives that to [`serve_while_waiting`](Self::serve_while_waiting),
     /// or the wait blocks it for up to 10 s without an answer.
-    pub fn advance(&mut self, ms: u64) -> Result<(), String> {
-        self.drive().advance(ms).map_err(|e| e.to_string())
+    pub fn advance(&mut self, ms: u64) -> Result<(), SceneError> {
+        Ok(self.drive().advance(ms)?)
     }
 
     /// Calls `serve` on this thread every few milliseconds while
@@ -196,7 +199,7 @@ impl TestWindow {
     /// Turns the accessibility tree on, as an assistive technology starting
     /// up does, or off, and lets the scene come to rest. The scene builds
     /// the tree only while it is on.
-    pub fn set_accessibility_active(&mut self, active: bool) -> Result<(), String> {
+    pub fn set_accessibility_active(&mut self, active: bool) -> Result<(), SceneError> {
         let Stage { engine, scene, .. } = &mut self.stage;
         scene.set_accessibility_active(engine, active);
         self.settle()

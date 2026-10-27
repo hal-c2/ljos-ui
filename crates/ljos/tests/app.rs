@@ -147,7 +147,8 @@ fn qml_dir_compiles_a_directory_for_development() {
     .unwrap();
     let err = ljos::dev::compile(dir.path(), None, ljos::dev::OnError::Fail)
         .err()
-        .unwrap();
+        .unwrap()
+        .to_string();
     assert!(err.contains("did not compile"), "{err}");
 }
 
@@ -184,7 +185,7 @@ fn a_file_that_does_not_compile_fails_only_where_it_is_made() {
         .qml_dir(dir.path(), "Main")
     {
         Ok(_) => panic!("a strict qml_dir compiled a broken file"),
-        Err(err) => err,
+        Err(err) => err.to_string(),
     };
     assert!(err.contains("Unused.qml:2:8: error: "), "{err}");
 }

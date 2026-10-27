@@ -32,6 +32,7 @@
 //! links the parser.
 
 pub use crate::compile::{
-    Compiled, Diagnostic, EngineOracle, EngineType, OnError, Severity, compile, compile_dir,
-    compile_dir_with, compile_dirs, compile_quiet, install_text_compiler, text_compiler,
+    CompileError, Compiled, Diagnostic, EngineOracle, EngineType, NativeTypeError, OnError,
+    Severity, compile, compile_dir, compile_dir_with, compile_dirs, compile_quiet,
+    install_text_compiler, text_compiler,
 };

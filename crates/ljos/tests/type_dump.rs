@@ -121,7 +121,8 @@ fn compile(dir: &tempfile::TempDir) -> Result<Vec<u8>, String> {
         &dir.path().join("qml"),
         &dir.path().join("ljostypes.json"),
         &pack,
-    )?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(std::fs::read(pack).unwrap())
 }
 
@@ -207,7 +208,8 @@ fn the_live_engine_build_checks_groups_and_attached_types_too() {
         register,
         &dir.path().join("qml.pack"),
     )
-    .expect_err("the build succeeded");
+    .expect_err("the build succeeded")
+    .to_string();
     assert!(err.contains("`limits.mx`"), "{err}");
 }
 
@@ -240,7 +242,8 @@ fn the_build_against_a_live_engine_checks_the_same() {
         register,
         &dir.path().join("qml.pack"),
     )
-    .expect_err("the build succeeded");
+    .expect_err("the build succeeded")
+    .to_string();
     assert!(err.contains("lable"), "{err}");
 }
 
@@ -263,5 +266,9 @@ fn check_file_accepts_a_current_dump_and_names_a_stale_one() {
         e.register_module(ljos::module!("Example.More" 1.0 => [Counter]));
     })
     .unwrap_err();
-    assert!(err.contains("LJOS_TYPES=write"), "{err}");
+    assert!(
+        matches!(err, ljos::types::TypesError::Stale { .. }),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("LJOS_TYPES=write"), "{err}");
 }

@@ -213,6 +213,8 @@ pub mod media {
 }
 #[cfg(feature = "render")]
 pub mod render;
+#[cfg(any(feature = "render", feature = "testing"))]
+mod scene_error;
 pub mod system;
 pub mod task;
 #[cfg(feature = "testing")]

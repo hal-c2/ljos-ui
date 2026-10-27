@@ -651,14 +651,6 @@ impl Stage {
         }
     }
 
-    /// Shows `root` and lets the scene come to rest.
-    pub fn show(&mut self, root: ObjectId) -> Result<(), String> {
-        self.scene
-            .set_root(&self.engine, root)
-            .map_err(|e| e.to_string())?;
-        self.drive().settle().map_err(|e| e.to_string())
-    }
-
     pub fn drive(&mut self) -> Driver<'_> {
         Driver::new(&self.engine, &mut self.scene, &*self.clock, &mut self.state)
     }

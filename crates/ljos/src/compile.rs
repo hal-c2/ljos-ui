@@ -11,7 +11,51 @@ use ljos_engine::QmlTextCompiler;
 use ljos_engine::{Engine, MapSource};
 use qml_front::{QtTypeOracle, TypeOracle};
 
-pub use crate::oracle::{EngineOracle, EngineType};
+pub use crate::oracle::{EngineOracle, EngineType, NativeTypeError};
+
+/// Why a compile of QML directories gave no component source.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum CompileError {
+    /// A directory or a file under it could not be read.
+    #[error("cannot read {}: {source}", path.display())]
+    Unreadable {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// With [`OnError::Fail`], a file had an error: the directories
+    /// compiled, and every error, in the order [`Compiled::diagnostics`]
+    /// has them.
+    #[error("{} did not compile:\n{}", named(.dirs), lines(.errors))]
+    Failed {
+        dirs: Vec<PathBuf>,
+        errors: Vec<Diagnostic>,
+    },
+}
+
+impl From<ljos_compiler::Error> for CompileError {
+    fn from(e: ljos_compiler::Error) -> Self {
+        match e {
+            ljos_compiler::Error::Io { path, source } => CompileError::Unreadable { path, source },
+        }
+    }
+}
+
+fn named(dirs: &[PathBuf]) -> String {
+    dirs.iter()
+        .map(|d| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn lines(errors: &[Diagnostic]) -> String {
+    errors
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// What a compile does with a file that has an error.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -106,7 +150,7 @@ impl fmt::Display for Diagnostic {
 /// diagnostics as a developer at a terminal expects; a file with an
 /// error is recorded, not fatal ([`OnError::Record`]).
 #[cfg(feature = "dev-qml")]
-pub fn compile_dir(dir: &Path) -> Result<MapSource, String> {
+pub fn compile_dir(dir: &Path) -> Result<MapSource, CompileError> {
     compile(dir, None, OnError::Record)
 }
 
@@ -118,7 +162,7 @@ pub fn compile_dir(dir: &Path) -> Result<MapSource, String> {
 /// create objects of its types. Same diagnostics and recording as
 /// [`compile_dir`].
 #[cfg(feature = "dev-qml")]
-pub fn compile_dir_with(dir: &Path, engine: &Engine) -> Result<MapSource, String> {
+pub fn compile_dir_with(dir: &Path, engine: &Engine) -> Result<MapSource, CompileError> {
     compile(dir, Some(engine), OnError::Record)
 }
 
@@ -131,7 +175,7 @@ pub fn compile(
     dir: &Path,
     engine: Option<&Engine>,
     on_error: OnError,
-) -> Result<MapSource, String> {
+) -> Result<MapSource, CompileError> {
     compile_dirs(&[dir], engine, on_error)
 }
 
@@ -149,7 +193,7 @@ pub fn compile_dirs(
     dirs: &[&Path],
     engine: Option<&Engine>,
     on_error: OnError,
-) -> Result<MapSource, String> {
+) -> Result<MapSource, CompileError> {
     match engine {
         Some(engine) => compile_with_oracle(dirs, EngineOracle::from_engine(engine), on_error),
         None => compile_with_oracle(dirs, QtTypeOracle, on_error),
@@ -163,7 +207,7 @@ pub fn compile_dirs(
 /// relative address in it resolve beside the file, as a QML file
 /// loaded from disk does. `Err` only when a directory cannot be read.
 #[cfg(feature = "dev-qml")]
-pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled, String> {
+pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled, CompileError> {
     match engine {
         Some(engine) => compile_quiet_with_oracle(dirs, EngineOracle::from_engine(engine)),
         None => compile_quiet_with_oracle(dirs, QtTypeOracle),
@@ -237,10 +281,10 @@ pub(crate) fn text_compiler_with_oracle<O: TypeOracle + Clone + 'static>(
 pub(crate) fn compile_quiet_with_oracle<O: TypeOracle>(
     dirs: &[&Path],
     oracle: O,
-) -> Result<Compiled, String> {
+) -> Result<Compiled, CompileError> {
     let mut source = MapSource::new();
     let mut found = Vec::new();
-    let files = ljos_compiler::compile_roots_with(dirs, oracle).map_err(|e| e.to_string())?;
+    let files = ljos_compiler::compile_roots_with(dirs, oracle)?;
     for r in files {
         let path = r.path.clone().unwrap_or_else(|| PathBuf::from(&r.key));
         let diagnostics = match &r.result {
@@ -280,7 +324,7 @@ pub(crate) fn compile_with_oracle<O: TypeOracle>(
     dirs: &[&Path],
     oracle: O,
     on_error: OnError,
-) -> Result<MapSource, String> {
+) -> Result<MapSource, CompileError> {
     let compiled = compile_quiet_with_oracle(dirs, oracle)?;
     for d in &compiled.diagnostics {
         eprintln!("{d}");
@@ -294,21 +338,16 @@ pub(crate) fn checked_source(
     dirs: &[&Path],
     compiled: Compiled,
     on_error: OnError,
-) -> Result<MapSource, String> {
+) -> Result<MapSource, CompileError> {
     if on_error == OnError::Fail && compiled.has_errors() {
-        let named = dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let errors = compiled
-            .diagnostics
-            .iter()
-            .filter(|d| d.severity == Severity::Error)
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(format!("{named} did not compile:\n{errors}"));
+        return Err(CompileError::Failed {
+            dirs: dirs.iter().map(|d| d.to_path_buf()).collect(),
+            errors: compiled
+                .diagnostics
+                .into_iter()
+                .filter(|d| d.severity == Severity::Error)
+                .collect(),
+        });
     }
     Ok(compiled.source)
 }

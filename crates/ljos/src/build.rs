@@ -41,17 +41,58 @@
 //!     .run()?;
 //! ```
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use ljos_engine::{Engine, MapSource, TypeDump};
+use ljos_engine::{Engine, EngineError, MapSource, TypeDump, TypeDumpError};
 
-pub use crate::compile::{EngineOracle, EngineType};
+pub use crate::compile::{CompileError, EngineOracle, EngineType, NativeTypeError};
 use crate::compile::{OnError, compile_dirs as compile_to_source, compile_with_oracle};
+use crate::types::WRITE_VAR;
+
+/// Why a build script's compile wrote no pack.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BuildError {
+    /// The QML did not compile, or a directory could not be read.
+    #[error(transparent)]
+    Compile(#[from] CompileError),
+    /// The type dump file could not be read: the text says what writes it.
+    #[error("{}: {source}; the application's test writes it with `{WRITE_VAR}=write cargo test --no-fail-fast`", path.display())]
+    TypesUnread {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// The type dump file is not a dump this version reads.
+    #[error("{}: {source}; the application's test writes it with `{WRITE_VAR}=write cargo test --no-fail-fast`", path.display())]
+    TypesUnreadable {
+        path: PathBuf,
+        #[source]
+        source: TypeDumpError,
+    },
+    /// The type dump describes a type the compiler cannot be told of.
+    #[error("{}: {source}", path.display())]
+    NativeTypes {
+        path: PathBuf,
+        #[source]
+        source: NativeTypeError,
+    },
+    /// The compiled files do not fit in a pack.
+    #[error(transparent)]
+    Pack(EngineError),
+    /// The pack could not be written.
+    #[error("{}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
 
 /// Compiles every `.qml` file under `dir` into the pack `out`, against
 /// the table of types plus what `register` registers; see
 /// [`compile_dirs`].
-pub fn compile_dir(dir: &Path, register: impl Fn(&Engine), out: &Path) -> Result<(), String> {
+pub fn compile_dir(dir: &Path, register: impl Fn(&Engine), out: &Path) -> Result<(), BuildError> {
     compile_dirs(&[dir], register, out)
 }
 
@@ -63,7 +104,11 @@ pub fn compile_dir(dir: &Path, register: impl Fn(&Engine), out: &Path) -> Result
 /// the compile with every error, one a line: what ships is clean.
 /// Prints `cargo:rerun-if-changed` for every directory and file read,
 /// so the script runs again when the QML changes.
-pub fn compile_dirs(dirs: &[&Path], register: impl Fn(&Engine), out: &Path) -> Result<(), String> {
+pub fn compile_dirs(
+    dirs: &[&Path],
+    register: impl Fn(&Engine),
+    out: &Path,
+) -> Result<(), BuildError> {
     for dir in dirs {
         rerun_if_changed(dir);
     }
@@ -76,7 +121,7 @@ pub fn compile_dirs(dirs: &[&Path], register: impl Fn(&Engine), out: &Path) -> R
 /// Compiles every `.qml` file under `dir` into the pack `out`, against
 /// the table of types plus the native types the type dump file `types`
 /// describes; see [`compile_dirs_with_types`].
-pub fn compile_dir_with_types(dir: &Path, types: &Path, out: &Path) -> Result<(), String> {
+pub fn compile_dir_with_types(dir: &Path, types: &Path, out: &Path) -> Result<(), BuildError> {
     compile_dirs_with_types(&[dir], types, out)
 }
 
@@ -89,16 +134,25 @@ pub fn compile_dir_with_types(dir: &Path, types: &Path, out: &Path) -> Result<()
 /// packed as a failure (it fails where it is made) and reported as a
 /// warning, so that the application builds and its test can write the
 /// new file.
-pub fn compile_dirs_with_types(dirs: &[&Path], types: &Path, out: &Path) -> Result<(), String> {
+pub fn compile_dirs_with_types(dirs: &[&Path], types: &Path, out: &Path) -> Result<(), BuildError> {
     for dir in dirs {
         rerun_if_changed(dir);
     }
     println!("cargo:rerun-if-changed={}", types.display());
     println!("cargo:rerun-if-env-changed={}", crate::types::WRITE_VAR);
     let writing = crate::types::writing();
+    let path = || types.to_path_buf();
     let read = std::fs::read_to_string(types)
-        .map_err(|e| e.to_string())
-        .and_then(|text| TypeDump::from_json(&text).map_err(|e| e.to_string()));
+        .map_err(|source| BuildError::TypesUnread {
+            path: path(),
+            source,
+        })
+        .and_then(|text| {
+            TypeDump::from_json(&text).map_err(|source| BuildError::TypesUnreadable {
+                path: path(),
+                source,
+            })
+        });
     let dump = match read {
         Ok(dump) => dump,
         Err(_) if writing => TypeDump {
@@ -106,21 +160,18 @@ pub fn compile_dirs_with_types(dirs: &[&Path], types: &Path, out: &Path) -> Resu
             modules: Vec::new(),
             unnamed: Vec::new(),
         },
-        Err(e) => {
-            return Err(format!(
-                "{}: {e}; the application's test writes it with `{}=write cargo test --no-fail-fast`",
-                types.display(),
-                crate::types::WRITE_VAR
-            ));
-        }
+        Err(e) => return Err(e),
     };
     let engine = crate::engine();
     let oracle =
-        EngineOracle::from_dump(&dump, &engine).map_err(|e| format!("{}: {e}", types.display()))?;
+        EngineOracle::from_dump(&dump, &engine).map_err(|source| BuildError::NativeTypes {
+            path: path(),
+            source,
+        })?;
     let source = match compile_with_oracle(dirs, oracle.clone(), OnError::Fail) {
         Ok(source) => source,
         Err(e) if writing => {
-            for line in e.lines() {
+            for line in e.to_string().lines() {
                 println!("cargo:warning={line}");
             }
             println!(
@@ -129,14 +180,17 @@ pub fn compile_dirs_with_types(dirs: &[&Path], types: &Path, out: &Path) -> Resu
             );
             compile_with_oracle(dirs, oracle, OnError::Record)?
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
     write_pack(&source, out)
 }
 
-fn write_pack(source: &MapSource, out: &Path) -> Result<(), String> {
-    let pack = source.to_pack().map_err(|e| e.to_string())?;
-    std::fs::write(out, pack).map_err(|e| format!("{}: {e}", out.display()))
+fn write_pack(source: &MapSource, out: &Path) -> Result<(), BuildError> {
+    let pack = source.to_pack().map_err(BuildError::Pack)?;
+    std::fs::write(out, pack).map_err(|source| BuildError::Write {
+        path: out.to_path_buf(),
+        source,
+    })
 }
 
 fn rerun_if_changed(dir: &Path) {

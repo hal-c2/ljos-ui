@@ -277,6 +277,12 @@ fn an_app_that_fails_on_errors_has_shown_them_first() {
         .qml_diagnostics(move |ds| *into.borrow_mut() += ds.len())
         .qml_dir(dir.path(), "Fine")
         .unwrap_err();
+    // What failed is in the error as well as in its text.
+    let ljos::dev::CompileError::Failed { errors, .. } = &err else {
+        panic!("{err:?}");
+    };
+    assert!(errors.iter().any(|d| d.key == "Fails"), "{errors:?}");
+    let err = err.to_string();
     assert!(err.contains("did not compile"), "{err}");
     assert!(err.contains("Fails.qml:4:1: error: "), "{err}");
     assert!(*seen.borrow() >= 2);

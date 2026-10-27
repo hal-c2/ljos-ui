@@ -92,7 +92,9 @@ fn compile_dir_stays_table_only_and_does_not_know_the_native_type() {
         .to_string();
     assert!(err.contains("`Counter` is not a type"), "{err}");
 
-    let err = ljos::dev::compile(dir.path(), None, ljos::dev::OnError::Fail).unwrap_err();
+    let err = ljos::dev::compile(dir.path(), None, ljos::dev::OnError::Fail)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("did not compile"), "{err}");
     assert!(err.contains("`Counter` is not a type"), "{err}");
 }
@@ -116,7 +118,7 @@ fn qml_dir_before_register_fails_where_the_root_is_made() {
         .qml_dir(dir.path(), "Main")
     {
         Ok(_) => panic!("a strict qml_dir before register compiled"),
-        Err(err) => err,
+        Err(err) => err.to_string(),
     };
     assert!(err.contains("did not compile"), "{err}");
     assert!(err.contains("`Counter` is not a type"), "{err}");
@@ -139,7 +141,9 @@ fn build_compiles_ahead_of_time_against_the_natives_into_a_pack() {
     assert_eq!(number(&engine, root, "seen"), 41.0);
 
     // What ships is clean: without the natives the build fails.
-    let err = ljos::build::compile_dir(dir.path(), |_| {}, &pack).unwrap_err();
+    let err = ljos::build::compile_dir(dir.path(), |_| {}, &pack)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("`Counter` is not a type"), "{err}");
 
     // A pack cut short is a broken build, not an empty program.

@@ -348,7 +348,7 @@ impl<M> App<M> {
         self,
         dir: impl AsRef<std::path::Path>,
         root: impl Into<String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, crate::dev::CompileError> {
         self.qml_dirs([dir], root)
     }
 
@@ -365,7 +365,7 @@ impl<M> App<M> {
         mut self,
         dirs: impl IntoIterator<Item = impl AsRef<std::path::Path>>,
         root: impl Into<String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, crate::dev::CompileError> {
         // The same throwaway snapshot the BDD backend and the
         // gallery's `--example` compile against: the standard
         // registrations the final Engine gets (`crate::engine`),

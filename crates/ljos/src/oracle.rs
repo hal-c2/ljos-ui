@@ -224,7 +224,7 @@ impl EngineOracle {
     /// by the program that registers them) that the table lacks. A base
     /// the dump does not have is one of the toolkit's, read from `engine`,
     /// an Engine with the standard modules. `Err` names a base neither has.
-    pub fn from_dump(dump: &TypeDump, engine: &Engine) -> Result<Self, String> {
+    pub fn from_dump(dump: &TypeDump, engine: &Engine) -> Result<Self, NativeTypeError> {
         let qt = QtTypeOracle;
         let mut natives: Vec<NativeType> = Vec::new();
         for module in &dump.modules {
@@ -327,6 +327,19 @@ fn table_reached(engine: &Engine) -> HashSet<String> {
     names
 }
 
+/// Why [`EngineOracle::from_dump`] cannot describe a type of the dump.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum NativeTypeError {
+    /// The type's chain of bases comes back to itself, or is deeper than
+    /// any program registers.
+    #[error("the bases of {name} loop")]
+    BasesLoop { name: String },
+    /// The type's base is neither in the dump nor a toolkit type.
+    #[error("{name}: its base {base} is neither in the type dump nor one of the toolkit's types")]
+    UnknownBase { name: String, base: String },
+}
+
 /// How deep a dump's chain of bases is followed before it is taken to
 /// loop.
 const BASE_DEPTH: usize = 64;
@@ -339,9 +352,11 @@ fn flatten(
     entry: &TypeEntry,
     module: String,
     depth: usize,
-) -> Result<NativeType, String> {
+) -> Result<NativeType, NativeTypeError> {
     if depth > BASE_DEPTH {
-        return Err(format!("the bases of {} loop", entry.name));
+        return Err(NativeTypeError::BasesLoop {
+            name: entry.name.clone(),
+        });
     }
     let Some(base) = &entry.base else {
         return Ok(NativeType::from_entry(entry, module, None));
@@ -362,11 +377,9 @@ fn flatten(
                 Some(uri) => engine.lookup_type(uri, base),
                 None => engine.lookup_type_any(base),
             }
-            .ok_or_else(|| {
-                format!(
-                    "{}: its base {base} is neither in the type dump nor one of the toolkit's types",
-                    entry.name
-                )
+            .ok_or_else(|| NativeTypeError::UnknownBase {
+                name: entry.name.clone(),
+                base: base.clone(),
             })?;
             let mut base = NativeType::from_meta(&meta, String::new(), false);
             base.toolkit = entry
