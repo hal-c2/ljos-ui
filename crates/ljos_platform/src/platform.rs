@@ -676,10 +676,7 @@ impl Platform {
         let organization = read("organization");
         let mut name = read("name");
         if name.is_empty() {
-            name = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| "ljos".to_owned());
+            name = program_name();
         }
         (organization, name)
     }
@@ -702,10 +699,7 @@ impl Platform {
         if let Some(name) = self.desktop_file_name.borrow().clone() {
             return name;
         }
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "ljos".to_owned())
+        program_name()
     }
 
     /// Gives the application an icon of its own, for the desktop to show
@@ -893,6 +887,14 @@ impl Platform {
             }
         });
     }
+}
+
+/// The program's file name without its extension.
+fn program_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "ljos".to_owned())
 }
 
 /// The nearest object `obj` is declared in, itself first, that is an
