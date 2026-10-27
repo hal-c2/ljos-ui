@@ -209,7 +209,7 @@ fn seat_hint(raw: &Raw) -> SeatHint {
 impl Keyboardless {
     /// The windows to take the focus from, then the one to give it to,
     /// before `hint` on window `id` is handled.
-    fn activate(
+    fn focus_handover(
         &mut self,
         hint: SeatHint,
         id: WindowId,
@@ -467,11 +467,11 @@ where
             proxy: &self.proxy,
         };
         self.app.event(&mut control, event);
-        self.settle(event_loop);
+        self.apply_control_flow(event_loop);
     }
 
     /// Applies what the application asked for: the end, or how to wait.
-    fn settle(&mut self, event_loop: &ActiveEventLoop) {
+    fn apply_control_flow(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.exit {
             event_loop.exit();
             return;
@@ -565,10 +565,10 @@ where
             return;
         }
         let hint = seat_hint(&raw);
-        if let Some((lose, gain)) = self
-            .state
-            .keyboardless
-            .activate(hint, id, &self.state.focused)
+        if let Some((lose, gain)) =
+            self.state
+                .keyboardless
+                .focus_handover(hint, id, &self.state.focused)
         {
             for other in lose {
                 self.handle(event_loop, other, Raw::Focused(false));
@@ -1459,14 +1459,20 @@ mod tests {
         let (a, b) = (WindowId(1), WindowId(2));
         let mut k = Keyboardless::default();
         let mut focused = BTreeSet::new();
-        assert_eq!(k.activate(SeatHint::Press, a, &focused), Some((vec![], a)));
+        assert_eq!(
+            k.focus_handover(SeatHint::Press, a, &focused),
+            Some((vec![], a))
+        );
         focused.insert(a);
-        assert_eq!(k.activate(SeatHint::Press, a, &focused), None);
-        assert_eq!(k.activate(SeatHint::Press, b, &focused), Some((vec![a], b)));
-        assert_eq!(k.activate(SeatHint::Other, b, &focused), None);
-        assert_eq!(k.activate(SeatHint::Keyboard, b, &focused), None);
+        assert_eq!(k.focus_handover(SeatHint::Press, a, &focused), None);
+        assert_eq!(
+            k.focus_handover(SeatHint::Press, b, &focused),
+            Some((vec![a], b))
+        );
+        assert_eq!(k.focus_handover(SeatHint::Other, b, &focused), None);
+        assert_eq!(k.focus_handover(SeatHint::Keyboard, b, &focused), None);
         focused.clear();
-        assert_eq!(k.activate(SeatHint::Press, a, &focused), None);
+        assert_eq!(k.focus_handover(SeatHint::Press, a, &focused), None);
     }
 
     #[test]
