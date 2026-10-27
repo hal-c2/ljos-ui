@@ -164,6 +164,12 @@ pub(crate) fn diagnostic(
     }
 }
 
+/// The last part of a dotted name: `Text` of `QtQuick.Text`, `color` of
+/// `border.color`.
+pub(crate) fn last_part(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
 /// The candidate closest to `name`, if one is close enough to be a typo:
 /// within a third of the name's length (at least one edit).
 pub(crate) fn closest<'c>(

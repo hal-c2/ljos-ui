@@ -219,13 +219,6 @@ impl<'r> Loader<'r> {
     }
 }
 
-fn skipped(name: &str) -> bool {
-    name.starts_with('.')
-        || matches!(name, "target" | "node_modules" | "build")
-        || name.starts_with("build-")
-        || name.starts_with("cmake-build")
-}
-
 fn scan(root: &Path) -> Vec<(PathBuf, Vec<String>)> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_owned()];
@@ -242,7 +235,9 @@ fn scan(root: &Path) -> Vec<(PathBuf, Vec<String>)> {
             // `file_type` does not follow links, so a link cannot lead the
             // walk out of the project.
             match entry.file_type() {
-                Ok(t) if t.is_dir() && !skipped(&name) => stack.push(entry.path()),
+                Ok(t) if t.is_dir() && !crate::tools::skipped_dir(&name) => {
+                    stack.push(entry.path())
+                }
                 Ok(t) if t.is_file() => names.push(name),
                 _ => {}
             }

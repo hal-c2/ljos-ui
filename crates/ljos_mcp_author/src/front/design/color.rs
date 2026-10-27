@@ -11,7 +11,7 @@ use super::{Bound, Found, Frame, bindings, bound, children, class, is_singleton}
 
 /// Whether a property holds a colour, by its name.
 fn is_color(name: &str) -> bool {
-    let last = name.rsplit('.').next().unwrap_or(name);
+    let last = crate::front::last_part(name);
     last == "color" || last.ends_with("Color")
 }
 

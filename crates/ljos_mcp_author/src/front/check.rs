@@ -23,7 +23,7 @@ use qml_syntax::{
 use super::{
     closest, diagnostic,
     facts::{Script, is_handler_name},
-    lint,
+    last_part, lint,
     load::Loader,
 };
 use crate::{Diagnostic, Severity, lints};
@@ -787,10 +787,6 @@ fn missing_severity(ty: QtType) -> Severity {
     } else {
         Severity::Error
     }
-}
-
-fn last_part(name: &str) -> &str {
-    name.rsplit('.').next().unwrap_or(name)
 }
 
 /// `clicked` is handled by `onClicked`.

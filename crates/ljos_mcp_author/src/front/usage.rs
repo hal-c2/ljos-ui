@@ -38,6 +38,7 @@ use qml_syntax::{
 
 use super::{
     check::{Shape, shape},
+    last_part,
     load::Loader,
 };
 use crate::{MemberKind, api::qt_kind};
@@ -186,10 +187,6 @@ struct Walk<'w, 'a> {
     /// or its chain is not known in full.
     bases: Vec<Option<Base>>,
     out: &'w mut Vec<ApiUse>,
-}
-
-fn last_part(name: &str) -> &str {
-    name.rsplit('.').next().unwrap_or(name)
 }
 
 /// The builtin type `parts` ends in, however many components down, with the
