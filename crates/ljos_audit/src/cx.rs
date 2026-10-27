@@ -294,6 +294,28 @@ pub(crate) fn within(engine: &Engine, inner: ObjectId, outer: ObjectId) -> bool 
     inner == outer || ancestors(engine, inner).any(|a| a == outer)
 }
 
+/// Whether `inner` is `outer` or belongs to it, as the author wrote it: a
+/// popup belongs to the item it was given as its parent, though it draws
+/// in the window's overlay and so is not [`within`] it.
+pub(crate) fn belongs_to(engine: &Engine, inner: ObjectId, outer: ObjectId) -> bool {
+    let mut cur = Some(inner);
+    for _ in 0..DEPTH {
+        let Some(here) = cur else {
+            return false;
+        };
+        if here == outer {
+            return true;
+        }
+        cur = match ljos_controls::item_popup(engine, here) {
+            Some(popup) => engine
+                .untrack(|| engine.read_by_name(popup, "parent"))
+                .as_object(),
+            None => engine.visual_parent(here),
+        };
+    }
+    false
+}
+
 /// The item's box in the scene's coordinates: the bounds of its four
 /// corners, so a turned item has the box around it.
 pub(crate) fn scene_rect(engine: &Engine, item: ObjectId) -> Option<Rect> {

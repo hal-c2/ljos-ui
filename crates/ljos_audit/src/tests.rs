@@ -1287,3 +1287,54 @@ fn an_audit_not_let_act_runs_no_handler_and_says_what_it_did_not_check() {
     assert!(ran() > 0.0, "the acting checks toggled the box");
     assert!(report.not_checked.is_empty());
 }
+
+/// The findings of an audit of only `part` of `source` (a property of
+/// its root that names an item).
+fn audit_within(source: &str, part: &str) -> Report {
+    let e = engine();
+    let mut s = mount(&e, source);
+    let root = s.root().expect("a root");
+    let within = e.read_by_name(root, part).as_object();
+    assert!(within.is_some(), "{part} names no item");
+    let options = Options {
+        within,
+        ..Options::desktop()
+    };
+    audit(&e, &mut s, Time::ZERO, &options).without(&BARE)
+}
+
+#[test]
+fn what_is_wrong_in_a_popup_declared_inside_the_audited_item_is_found() {
+    // The popup draws in the window's overlay, yet it is the panel's.
+    let body = r##"
+    property Item part: panel
+    Item {
+        id: panel
+        width: 200; height: 100
+        Dialog {
+            title: "Discard the changes?"
+            Component.onCompleted: open()
+            Button {}
+        }
+    }
+    Item {
+        id: other
+        y: 200; width: 200; height: 100
+    }"##;
+    let report = audit_within(&page(body), "part");
+    assert_eq!(report.codes(), ["a11y-unnamed-interactive"], "\n{report}");
+}
+
+#[test]
+fn what_is_wrong_in_a_popup_outside_the_audited_item_is_not_found() {
+    let body = r##"
+    property Item part: panel
+    Item { id: panel; width: 200; height: 100 }
+    Dialog {
+        title: "Discard the changes?"
+        Component.onCompleted: open()
+        Button {}
+    }"##;
+    let report = audit_within(&page(body), "part");
+    assert!(report.is_clean(), "expected nothing, found:\n{report}");
+}

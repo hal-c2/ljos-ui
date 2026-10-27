@@ -71,9 +71,10 @@ pub struct Options {
     /// At most this many findings are reported; the report says how many
     /// more there were.
     pub max_findings: Option<usize>,
-    /// Only findings about this item and what is inside it; the rest of
-    /// the scene is still looked at (what covers the item may be outside
-    /// it).
+    /// Only findings about this item and what is inside it, the popups
+    /// it holds included; the rest of the scene is still looked at (what
+    /// covers the item may be outside it). A finding about no item is
+    /// about the whole scene, so it is left out.
     pub within: Option<ObjectId>,
     /// Where the scene had its items when it first came to rest, before
     /// application time passed; what moved since is a layout shift.
@@ -185,7 +186,7 @@ fn run_checks(
         options.wants(f.code)
             && options
                 .within
-                .is_none_or(|root| f.item.is_some_and(|i| cx::within(engine, i, root)))
+                .is_none_or(|root| f.item.is_some_and(|i| cx::belongs_to(engine, i, root)))
     });
     (out, now)
 }
