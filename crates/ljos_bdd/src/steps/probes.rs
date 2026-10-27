@@ -260,3 +260,24 @@ fn pointer_cursor(w: &mut LjosWorld, name: String) -> StepResult {
         ))),
     })
 }
+
+// The file as the application has it now: one edited since runs none.
+#[then(regex = r#"^the file "([^"]+)" ran (no )?compiled code$"#)]
+fn ran_compiled_code(w: &mut LjosWorld, file: String, no: String) -> StepResult {
+    let want = no.is_empty();
+    w.each(|b| {
+        let (matched, runs) = b.probes()?.compiled_code(&file)?;
+        match (want, matched, runs) {
+            (true, true, 1..) | (false, false, _) => Ok(()),
+            (true, true, 0) => Err(BackendError::Failed(format!(
+                "{file} has compiled code, and none of it has run"
+            ))),
+            (true, false, _) => Err(BackendError::Failed(format!(
+                "{file} runs no compiled code: none was made from it as it is now"
+            ))),
+            (false, true, _) => Err(BackendError::Failed(format!(
+                "{file} runs compiled code ({runs} runs so far)"
+            ))),
+        }
+    })
+}

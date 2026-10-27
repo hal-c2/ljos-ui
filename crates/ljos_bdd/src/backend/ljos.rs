@@ -36,6 +36,8 @@ use super::{
     Input, LogEntry, LogLevel, Platform, PointerStep, Probes, QmlFile, Reload, Result, Tooling,
 };
 
+mod aot;
+mod compiled;
 mod disk;
 mod environment;
 mod fixtures;
@@ -116,6 +118,8 @@ struct Live {
     disk: Option<disk::Disk>,
     /// The `top` overlay; hidden unless a scenario shows it.
     top: ljos_dev::Top,
+    /// The files given run code compiled ahead of time.
+    ahead: bool,
     /// What the application answered the last step of a drag from
     /// another application.
     outside_taken: Option<ljos_platform::DropAction>,
@@ -160,6 +164,10 @@ pub struct LjosBackend {
     wall_clock: Option<f64>,
     /// The tier 1 cross-check the scenario asked for, when it asked.
     tier1_check: Option<bool>,
+    /// The scenario's files run code compiled ahead of time.
+    ahead: bool,
+    /// The cross-check of that code the scenario asked for, when it asked.
+    aot_check: Option<bool>,
     /// What native work takes on the clock of JavaScript's time limits,
     /// when the scenario gave them one.
     js_native: Option<Duration>,
@@ -414,6 +422,7 @@ impl LjosBackend {
             reloads: None,
             disk: None,
             top: ljos_dev::Top::new(),
+            ahead: false,
             outside_taken: None,
             outside_at: (0.0, 0.0),
             rest: None,
@@ -471,6 +480,13 @@ impl LjosBackend {
         live.engine.set_wall_clock_origin(self.wall_clock);
         if let Some(on) = self.tier1_check {
             live.engine.set_tier1_check(on);
+        }
+        if self.ahead {
+            live.engine.register_compiled(compiled::COMPILED);
+            live.ahead = true;
+        }
+        if let Some(on) = self.aot_check {
+            live.engine.set_aot_check(on);
         }
         if let Some(native) = self.js_native {
             set_js_clock(&live.engine, native)?;
@@ -655,6 +671,10 @@ impl Live {
             self.engine
                 .set_qml_text_compiler(Some(text::compiler(&wanted)));
             self.compiled_from = wanted;
+            if self.ahead {
+                let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+                self.compiled_ahead(&names)?;
+            }
         }
         let obj = self
             .engine
@@ -1584,6 +1604,17 @@ impl Reload for LjosBackend {
 }
 
 impl Probes for LjosBackend {
+    fn compiled_code(&mut self, file: &str) -> Result<(bool, u64)> {
+        let live = self.live()?;
+        let source = live
+            .engine
+            .component_source()
+            .ok_or_else(|| failed("no files are given"))?;
+        let url = source.url(key_of(file));
+        let ran = live.engine.aot_file(&url).unwrap_or(false);
+        Ok((ran, live.engine.aot_stats().runs))
+    }
+
     fn scheduled(&mut self) -> Result<Vec<String>> {
         let live = self.live()?;
         let now = live.clock.now();

@@ -80,6 +80,8 @@ ljos_runtime = { path = "../ljos_runtime" }
 # The characters of HTML another application copies, which it copies too.
 ljos_text = { path = "../ljos_text" }
 qml_front = { path = "../qml_front" }
+# The content key a file compiled ahead of time is matched by.
+ljos_ir = { path = "../ljos_ir" }
 # Which table of types the build reads QML against: a `@no-qt-table` scenario
 # is for a build without Qt's.
 qt_types = { path = "../qt_types" }

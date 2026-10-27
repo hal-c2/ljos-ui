@@ -20,6 +20,24 @@ impl Environment for LjosBackend {
         Ok(())
     }
 
+    fn compiled_ahead_of_time(&mut self) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "the files are compiled ahead of time before the QML is given",
+            ));
+        }
+        self.ahead = true;
+        Ok(())
+    }
+
+    fn aot_check(&mut self, on: bool) -> Result<()> {
+        self.aot_check = Some(on);
+        if let Some(live) = &self.live {
+            live.engine.set_aot_check(on);
+        }
+        Ok(())
+    }
+
     fn tier1_check(&mut self, on: bool) -> Result<()> {
         self.tier1_check = Some(on);
         if let Some(live) = &self.live {

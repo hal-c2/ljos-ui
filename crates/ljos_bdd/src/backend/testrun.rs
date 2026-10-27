@@ -35,6 +35,8 @@ pub struct TestRun {
     /// Nothing is run: the files are one project that `ljos check` reads,
     /// and the report is everything it says. Qt has no program of the kind.
     pub check: bool,
+    /// With `check`: `--stats`, the coverage tables after what it finds.
+    pub stats: bool,
     /// The `TZ` the runner starts with; UTC when `None`.
     pub time_zone: Option<String>,
 }
@@ -251,7 +253,7 @@ fn qt_runner() -> String {
 /// it is in the report.
 pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     if run.check {
-        return check_ljos(files);
+        return check_ljos(files, run.stats);
     }
     let staged = Staged::new(files)?;
     let json = staged.root.join("report.json");
@@ -290,13 +292,14 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
 /// Reads the files as one project with `ljos check` and gives all it says:
 /// what it finds, then its count, then its verdict when there are errors,
 /// in the order a terminal shows them.
-fn check_ljos(files: &[QmlFile]) -> Result<TestReport> {
+fn check_ljos(files: &[QmlFile], stats: bool) -> Result<TestReport> {
     let staged = Staged::new(files)?;
     // What is found goes to the error stream and the count to the output:
     // one pipe for both keeps them in the order they were written.
     let out = Command::new("sh")
-        .args(["-c", r#"exec "$0" check "$1" 2>&1"#])
+        .args(["-c", r#"exec "$0" check "$@" 2>&1"#])
         .arg(ljos_bin()?)
+        .args(stats.then_some("--stats"))
         .arg(&staged.suite)
         .stdin(Stdio::null())
         .output()

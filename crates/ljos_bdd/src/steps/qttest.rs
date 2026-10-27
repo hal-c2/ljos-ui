@@ -54,6 +54,31 @@ fn files_checked(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+// `ljos check --stats`: the coverage tables after what it finds.
+#[when("the files are checked with statistics")]
+fn files_checked_stats(w: &mut LjosWorld) -> StepResult {
+    w.run_tests(&TestRun {
+        check: true,
+        stats: true,
+        ..TestRun::default()
+    })
+}
+
+#[then("the check reports the lines:")]
+fn check_reports_lines(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = expected_lines(&docstring(step)?);
+    w.each_test_report(|report| {
+        if report.has_lines(&want) {
+            Ok(())
+        } else {
+            Err(format!(
+                "these lines are not in what the check reports, which is\n{}",
+                report.text()
+            ))
+        }
+    })
+}
+
 #[then("the check reports:")]
 fn check_reports(w: &mut LjosWorld, step: &Step) -> StepResult {
     let want = expected_lines(&docstring(step)?);

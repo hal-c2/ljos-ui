@@ -23,6 +23,18 @@ fn tier1_check_is(w: &mut LjosWorld, on: String) -> StepResult {
     w.each(|b| b.environment()?.tier1_check(on == "on"))
 }
 
+// As a shipped application's: the code compiled from exactly these files.
+#[given("the files are compiled ahead of time")]
+fn compiled_ahead(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.environment()?.compiled_ahead_of_time())
+}
+
+// On in a debug build already, unless `LJOS_AOT_CHECK` says otherwise.
+#[given(regex = r"^the compiled code cross-check is (on|off)$")]
+fn aot_check_is(w: &mut LjosWorld, on: String) -> StepResult {
+    w.each(|b| b.environment()?.aot_check(on == "on"))
+}
+
 // The time limits on JavaScript then do not depend on the machine: a poll
 // of the interrupt is ten milliseconds, and native work takes what it is said
 // to take.
