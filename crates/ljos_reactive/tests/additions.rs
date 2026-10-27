@@ -1,4 +1,7 @@
-//! `is_tracking`, node data, `refresh`, `peek`, `hold` and diagnostic accessors.
+//! What the graph grew past bindings and effects: `is_tracking`, node data,
+//! `refresh`, diagnostics, `peek`, `hold`, `modify`, quiet replacement,
+//! `settled`, effects made now, disposal at once, `ran_this_flush` and the
+//! journal.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
