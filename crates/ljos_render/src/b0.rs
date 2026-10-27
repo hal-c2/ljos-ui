@@ -1258,26 +1258,25 @@ fn apply_gradient(src: &Mesh, g: &LinearGradient, out: &mut Mesh) {
     cuts.dedup();
     let uv = src.vertices.first().map(|v| v.uv).unwrap_or_default();
     out.texture_id = src.texture_id;
+    let mut bounds = Vec::new();
     for tri in src.indices.as_chunks::<3>().0 {
-        let vs: Vec<V> = tri
-            .iter()
-            .map(|i| {
-                let v = &src.vertices[*i as usize];
-                V {
-                    pos: v.pos,
-                    cov: f32::from(v.color.a()) / 255.0,
-                    t: g.param(Point::new(f64::from(v.pos.x), f64::from(v.pos.y))),
-                }
-            })
-            .collect();
+        let vs = tri.map(|i| {
+            let v = &src.vertices[i as usize];
+            V {
+                pos: v.pos,
+                cov: f32::from(v.color.a()) / 255.0,
+                t: g.param(Point::new(f64::from(v.pos.x), f64::from(v.pos.y))),
+            }
+        });
         let tmin = vs.iter().map(|v| v.t).fold(f32::INFINITY, f32::min);
         let tmax = vs.iter().map(|v| v.t).fold(f32::NEG_INFINITY, f32::max);
         // Slab boundaries: -inf, each cut inside (tmin, tmax), +inf.
-        let mut bounds = vec![f32::NEG_INFINITY];
+        bounds.clear();
+        bounds.push(f32::NEG_INFINITY);
         bounds.extend(cuts.iter().copied().filter(|c| *c > tmin && *c < tmax));
         bounds.push(f32::INFINITY);
         for w in bounds.windows(2) {
-            let mut poly = vs.clone();
+            let mut poly = vs.to_vec();
             if w[0].is_finite() {
                 poly = clip(&poly, w[0], true);
             }
