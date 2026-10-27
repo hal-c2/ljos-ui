@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 #[cfg(feature = "dev-qml")]
 use ljos_engine::QmlTextCompiler;
@@ -354,7 +355,9 @@ pub enum EngineType {
 pub struct EngineOracle {
     /// The native types the table lacks, and the group and attached types
     /// reachable from them (with no module: reachable, not named).
-    natives: Vec<NativeType>,
+    /// Shared: a project reloaded for a text clones the oracle, and the
+    /// types never change once read.
+    natives: Arc<[NativeType]>,
 }
 
 /// One native type as the compiler asks about it, its bases' members
@@ -518,7 +521,7 @@ impl EngineOracle {
     /// exactly as it did before `--example` existed.
     pub fn table_only() -> Self {
         EngineOracle {
-            natives: Vec::new(),
+            natives: Arc::default(),
         }
     }
 
@@ -590,7 +593,9 @@ impl EngineOracle {
                 native.checked = !table.contains(&native.name);
             }
         }
-        EngineOracle { natives }
+        EngineOracle {
+            natives: natives.into(),
+        }
     }
 
     fn native(&self, index: u32) -> &NativeType {
