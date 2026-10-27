@@ -24,12 +24,14 @@ mod project;
 pub mod reload;
 pub mod reload_lint;
 mod script;
+mod style;
 pub mod tier1;
 
 pub use compile::compile_file;
 pub use dump::dump;
-pub use project::{Project, controls_style, controls_style_on, platform_style, resources};
+pub use project::{Project, resources};
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
+pub use style::{controls_style, controls_style_on, platform_style};
 
 /// A file's compiled form, with what was wrong with it. A file with errors
 /// still compiles as far as it can.
