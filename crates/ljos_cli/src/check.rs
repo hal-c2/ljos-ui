@@ -12,6 +12,7 @@
 //! run. The types are Qt's and Ljós's own (`Ljos`, `QtTest`) alike.
 
 use std::{
+    collections::HashMap,
     fmt::Write as _,
     path::{Path, PathBuf},
 };
@@ -142,6 +143,34 @@ impl Check {
     }
 }
 
+/// The name a report gives the file `key` of a project put under `label`.
+fn shown_name(label: &str, key: &str) -> String {
+    if label.is_empty() {
+        key.to_owned()
+    } else {
+        format!("{label}/{key}")
+    }
+}
+
+/// The paths of the project files `keys` in `dir`, and by each path the
+/// name a report gives it.
+fn project_files(
+    dir: &Path,
+    label: &str,
+    keys: &[String],
+) -> (Vec<PathBuf>, HashMap<String, String>) {
+    let mut names = HashMap::new();
+    let files = keys
+        .iter()
+        .map(|key| {
+            let path = dir.join(format!("{key}.qml"));
+            names.insert(path.to_string_lossy().into_owned(), shown_name(label, key));
+            path
+        })
+        .collect();
+    (files, names)
+}
+
 impl Checked {
     /// Compiles the project in `dir` and adds it in. Its files are named
     /// under `label`.
@@ -151,11 +180,7 @@ impl Checked {
         for file in compile_project(dir)? {
             self.files += 1;
             keys.push(file.key.clone());
-            let name = if label.is_empty() {
-                file.key.clone()
-            } else {
-                format!("{label}/{}", file.key)
-            };
+            let name = shown_name(label, &file.key);
             let diagnostics = match &file.result {
                 Ok(compiled) => {
                     self.coverage.add(&name, &compiled.file);

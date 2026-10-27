@@ -16,7 +16,7 @@
 //! | `unknown-property` | A binding of a property the object's type does not have. |
 //! | `unknown-signal` | A handler (`onFoo`) of a signal the object's type does not have. |
 
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 use ljos_mcp_author::QmlFrontEnd;
 
@@ -29,20 +29,7 @@ pub const CODES: [&str; 2] = ["unknown-property", "unknown-signal"];
 /// below `dir` without `.qml`), and `label` what their names are put under
 /// in a report. Without a table of types there is nothing to say.
 pub fn project(dir: &Path, label: &str, keys: &[String]) -> anyhow::Result<Vec<String>> {
-    let mut names = HashMap::new();
-    let files: Vec<_> = keys
-        .iter()
-        .map(|key| {
-            let path = dir.join(format!("{key}.qml"));
-            let name = if label.is_empty() {
-                key.clone()
-            } else {
-                format!("{label}/{key}")
-            };
-            names.insert(path.to_string_lossy().into_owned(), name);
-            path
-        })
-        .collect();
+    let (files, names) = super::project_files(dir, label, keys);
     // The compiler's findings are `ljos check`'s own already.
     let found = QmlFrontEnd::new(dir).front_findings(&files, false);
     Ok(found

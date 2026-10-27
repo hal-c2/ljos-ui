@@ -20,7 +20,7 @@
 //! | `a11y-unnamed-image` | An `Image` that has no name and is not `Accessible.ignored`. |
 //! | `i18n-qstr-non-literal` | `qsTr` of something that is not written out, which no tool can extract. |
 
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 use ljos_mcp_author::{QmlFrontEnd, Severity, lint};
 
@@ -49,20 +49,7 @@ pub fn project(
     keys: &[String],
     errors_as_warnings: bool,
 ) -> anyhow::Result<Linted> {
-    let mut names = HashMap::new();
-    let files: Vec<_> = keys
-        .iter()
-        .map(|key| {
-            let path = dir.join(format!("{key}.qml"));
-            let name = if label.is_empty() {
-                key.clone()
-            } else {
-                format!("{label}/{key}")
-            };
-            names.insert(path.to_string_lossy().into_owned(), name);
-            path
-        })
-        .collect();
+    let (files, names) = super::project_files(dir, label, keys);
     // The compiler's findings are `ljos check`'s own already.
     let found = QmlFrontEnd::new(dir).front_findings(&files, true);
     let mut linted = Linted::default();
