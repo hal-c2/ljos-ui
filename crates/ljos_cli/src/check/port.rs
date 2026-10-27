@@ -18,6 +18,7 @@ use std::{
     path::Path,
 };
 
+use crate::stdout::{out, outln};
 use anyhow::{Context as _, bail};
 use ljos_compiler::baseline;
 use ljos_mcp_author::{ApiStatus, Ledger, MemberKind, QmlFrontEnd, Resolution, api};
@@ -82,9 +83,9 @@ pub(super) fn run(check: &Check) -> anyhow::Result<()> {
     }
     if check.json {
         let text = serde_json::to_string_pretty(&report.to_json())?;
-        println!("{text}");
+        outln!("{text}");
     } else {
-        print!("{}", report.text(check.limit));
+        out!("{}", report.text(check.limit));
     }
     let missing = report.count(|v| matches!(v, Verdict::Missing(_)));
     if check.deny_missing && missing > 0 {

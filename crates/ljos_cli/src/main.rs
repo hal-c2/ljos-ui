@@ -30,6 +30,7 @@ mod render;
 mod run;
 mod shaders;
 mod stderr;
+mod stdout;
 mod test;
 
 #[derive(Parser)]

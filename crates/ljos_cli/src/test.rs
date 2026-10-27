@@ -21,6 +21,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::stdout::outln;
 use anyhow::Context as _;
 use clap::Args;
 use ljos_compiler::{Compiled, Diagnostic, Project, Severity, compile_file, compile_text};
@@ -104,7 +105,7 @@ impl Test {
         };
         let mut session = Session::new(
             options,
-            Box::new(|line| println!("{line}")),
+            Box::new(|line| outln!("{line}")),
             Box::new(|line| eprintln!("{line}")),
         );
         let mut found = 0;

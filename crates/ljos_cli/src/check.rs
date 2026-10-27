@@ -17,6 +17,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::stdout::{out, outln};
 use anyhow::bail;
 use clap::Args;
 use ljos_compiler::{
@@ -129,11 +130,13 @@ impl Check {
             }
         }
         if self.stats {
-            print!("{}", checked.stats(self.top, !self.summary));
+            out!("{}", checked.stats(self.top, !self.summary));
         } else {
-            println!(
+            outln!(
                 "{} files, {} errors, {} warnings",
-                checked.files, checked.errors, checked.warnings
+                checked.files,
+                checked.errors,
+                checked.warnings
             );
         }
         if checked.errors > 0 {

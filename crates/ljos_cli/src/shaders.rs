@@ -16,6 +16,7 @@
 //! | 1 | `--check` found an artifact missing or out of date. |
 //! | 2 | A shader does not compile or a file could not be read or written; the others were still handled. |
 
+use crate::stdout::outln;
 use std::path::{Path, PathBuf};
 
 use clap::Args;
@@ -79,7 +80,7 @@ impl Shaders {
         } else {
             "compiled"
         };
-        println!("{} shaders, {} {verb}", tally.files, tally.changed);
+        outln!("{} shaders, {} {verb}", tally.files, tally.changed);
         if tally.failed > 0 {
             2
         } else if self.check && tally.changed > 0 {
@@ -122,13 +123,13 @@ impl Shaders {
             return;
         }
         if self.check {
-            println!("would compile {name}");
+            outln!("would compile {name}");
         } else if let Err(e) = std::fs::write(&artifact, compiled.to_artifact()) {
             eprintln!("{}: error: {e}", shown(&artifact));
             tally.failed += 1;
             return;
         } else {
-            println!("compiled {name}");
+            outln!("compiled {name}");
         }
         tally.changed += 1;
     }

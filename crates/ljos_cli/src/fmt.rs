@@ -20,6 +20,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::stdout::{out, outln};
 use clap::Args;
 
 #[derive(Args)]
@@ -133,7 +134,7 @@ impl Fmt {
         if tally.not_parsed > 0 {
             summary.push_str(&format!(", {} not parsed", tally.not_parsed));
         }
-        println!("{summary}");
+        outln!("{summary}");
         if tally.not_parsed > 0 || tally.failed > 0 {
             2
         } else if self.check && tally.changed > 0 {
@@ -173,15 +174,15 @@ impl Fmt {
             return;
         }
         if self.diff {
-            print!("{}", qml_fmt::unified_diff(&name, &source, &formatted));
+            out!("{}", qml_fmt::unified_diff(&name, &source, &formatted));
         } else if self.check {
-            println!("would format {name}");
+            outln!("would format {name}");
         } else if let Err(e) = std::fs::write(path, &formatted) {
             eprintln!("{name}: error: {e}");
             tally.failed += 1;
             return;
         } else {
-            println!("formatted {name}");
+            outln!("formatted {name}");
         }
         tally.changed += 1;
     }
@@ -209,9 +210,9 @@ impl Fmt {
             }
         };
         if self.diff {
-            print!("{}", qml_fmt::unified_diff(NAME, &source, &formatted));
+            out!("{}", qml_fmt::unified_diff(NAME, &source, &formatted));
         } else if !self.check {
-            print!("{formatted}");
+            out!("{formatted}");
         }
         i32::from(self.check && formatted != source)
     }
