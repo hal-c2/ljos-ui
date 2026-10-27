@@ -3889,6 +3889,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_example_aot_spike"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "ljos_compiler",
+ "ljos_engine",
+ "ljos_i18n",
+ "ljos_oxc_parser",
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_span",
+ "oxc_syntax",
+ "qml_front",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ljos_example_colorpalette"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,36 @@
+[package]
+name = "ljos_example_aot_spike"
+description = "Spike, research note 13: two ways to compile the typed subset of shipped scripts ahead of time (scriptc to native through FFI, and TypeScript to Rust at build time), measured against tier 1 and QuickJS. Nothing depends on it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[features]
+# Back end A needs scriptc on the build machine (SCRIPTC names it), so it is
+# off by default and the workspace builds without it.
+scriptc = []
+
+[dependencies]
+ljos_engine = { path = "../../crates/ljos_engine" }
+ljos_i18n = { path = "../../crates/ljos_i18n" }
+# The harness compiles World.qml and Shell.qml, and the fallback swap
+# compiles a handler at run time. A spike is not a runtime crate.
+ljos_compiler = { path = "../../crates/ljos_compiler" }
+qml_front = { path = "../../crates/qml_front" }
+anyhow.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+# Back end B reads the cases' TypeScript with the parser the compiler uses.
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_parser.workspace = true
+oxc_span.workspace = true
+oxc_syntax.workspace = true
+
+[lints]
+workspace = true
