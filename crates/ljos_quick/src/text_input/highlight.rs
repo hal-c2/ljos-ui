@@ -366,10 +366,7 @@ pub(crate) fn current(st: &SharedState) -> Rc<[HighlightSpan]> {
     }
     let mut s = st.borrow_mut();
     let h = &mut s.highlights;
-    if h.flat.is_none() {
-        h.flat = Some(flatten(&h.raw).into());
-    }
-    Rc::clone(h.flat.as_ref().expect("set above"))
+    Rc::clone(h.flat.get_or_insert_with(|| flatten(&h.raw).into()))
 }
 
 /// How the lines with spans on them are painted, for the layout the editor
