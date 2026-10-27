@@ -73,19 +73,34 @@ const ABSTRACT_BUTTON: &[&str] = &["QQuickAbstractButton", "QtQuick.Templates.Ab
 const MOUSE_AREA: &[&str] = &["QQuickMouseArea", "QtQuick.MouseArea"];
 const TAP_HANDLER: &[&str] = &["QQuickTapHandler", "QtQuick.TapHandler"];
 const IMAGE: &[&str] = &["QQuickImage", "QtQuick.Image"];
+/// Items a screen reader reads by their `text` (a `Label` is a `Text`).
+const TEXT: &[&str] = &[
+    "QQuickText",
+    "QtQuick.Text",
+    "QQuickTextEdit",
+    "QtQuick.TextEdit",
+];
 
 fn inherits(ty: QtType, classes: &[&str]) -> bool {
     ty.0.is_a(classes)
 }
 
-fn parent_is_button(cx: &Cx<'_, '_>, parent: Option<&QmlObject<'_>>) -> bool {
+fn parent_base(cx: &Cx<'_, '_>, parent: Option<&QmlObject<'_>>) -> Option<QtType> {
     parent
         .and_then(|p| cx.tree.index_of(p))
-        .and_then(|i| match &cx.tree.objects[i].kind {
-            Some(kind) => cx.types.base(kind),
-            None => None,
-        })
-        .is_some_and(|ty| inherits(ty, ABSTRACT_BUTTON))
+        .and_then(|i| cx.tree.objects[i].kind.as_ref())
+        .and_then(|kind| cx.types.base(kind))
+}
+
+fn parent_is_button(cx: &Cx<'_, '_>, parent: Option<&QmlObject<'_>>) -> bool {
+    parent_base(cx, parent).is_some_and(|ty| inherits(ty, ABSTRACT_BUTTON))
+}
+
+/// A text that shows something: what it shows is its name, links and
+/// all, so a handler in it that follows a link needs no other.
+fn parent_is_named_text(cx: &Cx<'_, '_>, parent: Option<&QmlObject<'_>>) -> bool {
+    parent.is_some_and(|p| has_binding(p, &["text"]))
+        && parent_base(cx, parent).is_some_and(|ty| inherits(ty, TEXT))
 }
 
 const CLICK_HANDLERS: &[&str] = &[
@@ -141,6 +156,7 @@ fn accessibility<'a>(
         && !is_accessibly_described(object)
         && !parent_described
         && !parent_is_button(cx, parent)
+        && !parent_is_named_text(cx, parent)
         && !second_way(cx.source, object, CLICK_HANDLERS)
     {
         out.push(diagnostic(
@@ -162,6 +178,7 @@ fn accessibility<'a>(
         && TAP_HANDLERS.iter().any(|h| has_binding(object, &[h]))
         && parent.is_some_and(|p| !is_accessibly_described(p))
         && !parent_is_button(cx, parent)
+        && !parent_is_named_text(cx, parent)
         && !second_way(cx.source, object, TAP_HANDLERS)
     {
         out.push(diagnostic(

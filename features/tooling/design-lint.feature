@@ -243,3 +243,57 @@ Feature: The design rules a file's source can show
       Then the command's output mentions "Main.qml:14:9: warning:"
       And the command's output mentions "[text-unbounded-dynamic]"
 
+  Rule: A text is named by what it shows
+
+    Scenario: A tap that follows a link in a text needs no name besides the text
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            id: root
+            width: 300
+            height: 200
+            property string page: "<p>See <a href=\"https://example.com\">the docs</a>.</p>"
+
+            Text {
+                id: body
+                width: root.width
+                text: root.page
+                textFormat: Text.RichText
+                wrapMode: Text.Wrap
+
+                TapHandler {
+                    acceptedDevices: PointerDevice.TouchScreen
+                    onTapped: eventPoint => {
+                        const link = body.linkAt(eventPoint.position.x, eventPoint.position.y);
+                        if (link.length > 0)
+                            Qt.openUrlExternally(link);
+                    }
+                }
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command exits with status 0
+      And the command's output does not mention "a11y-unnamed-interactive"
+
+    Scenario: A tap in a text that shows nothing still needs a name
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            Text {
+                width: 100
+                height: 20
+                TapHandler {
+                    onTapped: console.log("tapped")
+                }
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command exits with status 1
+      And the command's output mentions "Main.qml:7:9: error:"
+      And the command's output mentions "[a11y-unnamed-interactive]"
