@@ -47,9 +47,7 @@ use rustc_hash::FxHashMap as HashMap;
 use super::{Phases, ReloadOutcome, resets};
 use crate::engine::Engine;
 use crate::ids::ObjectId;
-use crate::incubator::{
-    AllocFrame, Allocation, Creation, Instance, RootSpec, Target as IncTarget, Template,
-};
+use crate::incubator::{AllocFrame, Allocation, Creation, Instance, RootSpec, Target, Template};
 use crate::loader::LoadedFile;
 use crate::meta::{MetaRef, PropertyAccess};
 use crate::object::QmlType;
@@ -65,13 +63,13 @@ const FIRST_SWEEP: usize = 1024;
 enum Placed<'d> {
     /// `leaf` of `members` gives `at`.
     Member {
-        at: IncTarget,
+        at: Target,
         members: Cow<'d, Members>,
         leaf: String,
     },
     /// A field of the value-type property `path` of `on`, which `at` is.
     Value {
-        at: IncTarget,
+        at: Target,
         on: ObjectId,
         members: Cow<'d, Members>,
         path: Vec<String>,
@@ -79,7 +77,7 @@ enum Placed<'d> {
 }
 
 impl Placed<'_> {
-    fn at(&self) -> &IncTarget {
+    fn at(&self) -> &Target {
         match self {
             Placed::Member { at, .. } | Placed::Value { at, .. } => at,
         }
@@ -267,7 +265,7 @@ type User = (Rc<Instance>, usize);
 type Moves = HashMap<(u32, u32), (u32, u32)>;
 
 /// An object of a live instance the edit is applied to.
-struct Target<'a> {
+struct EditedObject<'a> {
     inst: Rc<Instance>,
     /// Its index in the new file, and in the old.
     obj: usize,
@@ -403,11 +401,11 @@ impl Engine {
         if let Some(why) = self.in_place_realias_held(&changed, &instances, &users) {
             return not_here(why);
         }
-        let mut targets: Vec<Target> = Vec::new();
+        let mut targets: Vec<EditedObject> = Vec::new();
         for c in &changed {
             for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
                 for e in c.edits.iter().filter(|e| e.comp == inst.comp) {
-                    let mut t = Target {
+                    let mut t = EditedObject {
                         inst: inst.clone(),
                         obj: e.obj,
                         was: e.was,
@@ -1527,7 +1525,7 @@ impl Engine {
     /// left out of `t`), as a fresh load gives it.
     fn in_place_applies(
         &self,
-        t: &mut Target,
+        t: &mut EditedObject,
         c: &Changed,
         users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
     ) -> Result<(), &'static str> {
@@ -1783,7 +1781,7 @@ impl Engine {
     }
 
     /// The edit outranks what a script assigned to `t`.
-    fn reload_forget_assigned(&self, t: &IncTarget) {
+    fn reload_forget_assigned(&self, t: &Target) {
         let (o, p) = self.redirect(t.obj, t.prop);
         if let Some(props) = self.inner.reload.assigned.borrow_mut().get_mut(&o) {
             props.retain(|q| *q != p);
@@ -2124,7 +2122,7 @@ impl Engine {
     }
 
     /// Puts `t` as a new object of its type has it, with no binding.
-    fn in_place_reset_to_new(&self, t: &IncTarget) {
+    fn in_place_reset_to_new(&self, t: &Target) {
         let r = match self.reset_of(t.obj, t.prop) {
             Some(_) => self.reset_impl(t.obj, t.prop, true),
             None => self.reset_to_default(t.obj, t.prop),
@@ -2140,7 +2138,7 @@ impl Engine {
         }
     }
 
-    fn in_place_member(&self, inst: &Rc<Instance>, t: &IncTarget, m: &Members, name: &str) {
+    fn in_place_member(&self, inst: &Rc<Instance>, t: &Target, m: &Members, name: &str) {
         if let Some(a) = m.assignments.iter().find(|a| a.name == name) {
             if matches!(a.value, Literal::Undefined) {
                 if let Err(e) =
