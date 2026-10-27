@@ -963,7 +963,7 @@ struct KeptBreaks {
 /// A pinned font at a size, set up for harfrust as Parley's shaper sets it
 /// up for the one segment of a printable ASCII text, and what Parley's
 /// shaping of a first text in it said of the run, which no text changes:
-/// every later text is shaped by harfrust alone ([`harf_shape`]), without
+/// every later text is shaped by harfrust alone ([`harfrust_shape`]), without
 /// Parley's analysis and the per-character bookkeeping of its shaper,
 /// which cost more than the shaping.
 struct Voice {
@@ -1185,7 +1185,7 @@ fn soft_breaks(text: &str, word_break: WordBreak, out: &mut Vec<bool>) {
 /// character, and reads its glyphs into `kept` as [`shape_direct`] reads
 /// them from Parley's: a cluster's one glyph without an offset is held
 /// inline there, and read back with offsets of plain zero.
-fn harf_shape(
+fn harfrust_shape(
     voice: &Voice,
     font: &FontData,
     text: &str,
@@ -1218,7 +1218,7 @@ fn harf_shape(
     let output = shaper.shape(input, options);
     let scale = voice.scale;
     kept.glyphs.reserve(chars);
-    kept.qt.reserve(chars);
+    kept.qt_advances.reserve(chars);
     let (bytes, ascii) = (text.as_bytes(), text.is_ascii());
     let mut unsafe_starts = Vec::new();
     let (mut cluster, mut first, mut plain) = (0, 0, true);
@@ -1355,7 +1355,7 @@ fn shape_direct(
     let (font, font_size, metrics, coords) = if let Some(run) = hit {
         direct.reused += 1;
         kept.glyphs.extend(run.glyphs.iter().map(|g| g.0));
-        kept.qt.extend(run.glyphs.iter().map(|g| g.1));
+        kept.qt_advances.extend(run.glyphs.iter().map(|g| g.1));
         kept.clusters.extend_from_slice(&run.clusters);
         kept.unsafe_starts = run.unsafe_starts.as_deref().map(<[u32]>::to_vec);
         let (font_size, metrics, coords) = (run.font_size, run.metrics, run.coords.to_vec());
@@ -1367,7 +1367,7 @@ fn shape_direct(
         let (font_size, metrics, coords) = if let Some(at) = voice {
             direct.voices[..=at].rotate_right(1);
             let voice = &direct.voices[0];
-            harf_shape(voice, &pinned.font, text, &mut direct.buffer, &mut kept)?;
+            harfrust_shape(voice, &pinned.font, text, &mut direct.buffer, &mut kept)?;
             (voice.font_size, voice.metrics, voice.coords.to_vec())
         } else {
             let (font_size, metrics, coords) = parley_shape(
@@ -1383,7 +1383,13 @@ fn shape_direct(
             return None;
         }
         let font = source_font(fcx, &pinned)?;
-        snap::advances(&font, font_size, &coords, &kept.glyphs, &mut kept.qt);
+        snap::advances(
+            &font,
+            font_size,
+            &coords,
+            &kept.glyphs,
+            &mut kept.qt_advances,
+        );
         // The trim keeps a frame's runs together, and one frame can lay
         // out any number of texts: past a ceiling nothing new is kept
         // until frames make room.
@@ -1398,7 +1404,7 @@ fn shape_direct(
                     .glyphs
                     .iter()
                     .copied()
-                    .zip(kept.qt.iter().copied())
+                    .zip(kept.qt_advances.iter().copied())
                     .collect(),
                 coords: coords.as_slice().into(),
                 clusters: kept.clusters.as_slice().into(),
@@ -1483,7 +1489,7 @@ fn parley_shape(
     }
     let slice = direct.shaped.run_slice(0);
     kept.glyphs.reserve(chars);
-    kept.qt.reserve(chars);
+    kept.qt_advances.reserve(chars);
     for cluster in slice.shaped_clusters_range() {
         kept.glyphs.extend(slice.shaped_cluster_glyphs(cluster));
     }
@@ -1506,7 +1512,7 @@ fn parley_shape(
     Some((run.font_size, run.font_metrics, coords))
 }
 
-/// `pinned` at `size` set up for [`harf_shape`] as Parley's shaper sets a
+/// `pinned` at `size` set up for [`harfrust_shape`] as Parley's shaper sets a
 /// font up, with what Parley's shaping of a text in it said of the run.
 fn voice_of(
     pinned: &PinnedFont,
@@ -2046,7 +2052,7 @@ fn wrap_direct(
             return false;
         }
         let glyphs = starts(&atoms, line).1;
-        let (shaped, qt) = (&known.glyphs[glyphs.clone()], &known.qt[glyphs]);
+        let (shaped, qt) = (&known.glyphs[glyphs.clone()], &known.qt_advances[glyphs]);
         let width = 0.0 + qt.iter().sum::<f32>();
         let past = last_overhang(&run, shaped, qt).unwrap_or(0.0);
         past > 0.0 && width + past > max
@@ -2085,7 +2091,7 @@ fn wrap_direct(
     }
     let broken = Snapped {
         glyphs: std::mem::take(&mut known.glyphs),
-        qt: std::mem::take(&mut known.qt),
+        qt_advances: std::mem::take(&mut known.qt_advances),
         items,
         lines: ends,
         clusters: Vec::new(),
@@ -2100,12 +2106,12 @@ fn wrap_direct(
     let raw = extract_lines(facts, &broken, fallback, None, objects);
     let Snapped {
         glyphs,
-        qt,
+        qt_advances: qt,
         mut items,
         lines: ends,
         ..
     } = broken;
-    (known.glyphs, known.qt) = (glyphs, qt);
+    (known.glyphs, known.qt_advances) = (glyphs, qt);
     items.clear();
     (direct.atoms, direct.lines, direct.limits) = (atoms, lines, limits);
     (direct.items, direct.ends) = (items, ends);
@@ -2186,7 +2192,7 @@ fn last_overhang(run: &RunFacts, glyphs: &[parley::Glyph], qt: &[f32]) -> Option
 #[derive(Default)]
 struct Snapped {
     glyphs: Vec<parley::Glyph>,
-    qt: Vec<f32>,
+    qt_advances: Vec<f32>,
     items: Vec<Item>,
     /// Where each line's items end.
     lines: Vec<usize>,
@@ -2194,7 +2200,7 @@ struct Snapped {
     /// ends in the text's characters and in `glyphs`; empty where every
     /// cluster is one character with one glyph, as nearly every one is.
     clusters: Vec<(u32, u32)>,
-    /// Of a text shaped by [`harf_shape`], the characters after a space
+    /// Of a text shaped by [`harfrust_shape`], the characters after a space
     /// that the shaper says the rest of the text cannot start at and be
     /// shaped as it is here (kerned against the space, say); `None` where
     /// that is not known. Only an elided line's rest asks
@@ -2253,7 +2259,7 @@ impl Snapped {
         // the clusters, so this is usually the one growth.
         let bytes = run.text_range().len();
         self.glyphs.reserve(bytes);
-        self.qt.reserve(bytes);
+        self.qt_advances.reserve(bytes);
         self.glyphs.extend(gr.glyphs());
         let coords = coords(run);
         snap::advances(
@@ -2261,7 +2267,7 @@ impl Snapped {
             run.font_size(),
             &coords,
             &self.glyphs[start..],
-            &mut self.qt,
+            &mut self.qt_advances,
         );
         let style = gr.style();
         self.items.push(Item::Run(RunFacts {
@@ -2283,7 +2289,7 @@ impl Snapped {
     fn glyphs(&self, run: &RunFacts) -> (&[parley::Glyph], &[f32]) {
         (
             &self.glyphs[run.glyphs.clone()],
-            &self.qt[run.glyphs.clone()],
+            &self.qt_advances[run.glyphs.clone()],
         )
     }
 
@@ -2301,7 +2307,7 @@ impl Snapped {
 fn snapped(gr: &parley::GlyphRun<'_, u32>) -> (Vec<parley::Glyph>, Vec<f32>) {
     let mut s = Snapped::default();
     s.push(gr);
-    (s.glyphs, s.qt)
+    (s.glyphs, s.qt_advances)
 }
 
 /// Where on its variation axes a run's font is.
@@ -2414,7 +2420,7 @@ fn direct_cluster_advances(text: &str, shaped: &Snapped, from: usize) -> Vec<(Ra
             continue;
         }
         let glyphs = &shaped.glyphs[glyph_start..glyph_end];
-        let qt = &shaped.qt[glyph_start..glyph_end];
+        let qt = &shaped.qt_advances[glyph_start..glyph_end];
         // As the shaper sums a cluster's advance.
         let advance = glyphs.iter().fold(0.0_f32, |a, g| a + g.advance);
         let share = advance / (char_end - char_start) as f32;
@@ -4253,7 +4259,7 @@ mod tests {
         }
     }
 
-    /// [`harf_shape`] stands in for Parley's shaper once a font is set up
+    /// [`harfrust_shape`] stands in for Parley's shaper once a font is set up
     /// ([`parley_shape`]), so the two have to give the same glyphs and
     /// clusters, in every font, size and synthesis, and with ellipses. An
     /// elided line's rest is read from its whole text's glyphs where the
@@ -4317,7 +4323,7 @@ mod tests {
                         assert_eq!(voice.font_size.to_bits(), font_size.to_bits());
                         assert_eq!(&*voice.coords, &coords[..], "{family} {size}");
                         let mut ours = Snapped::default();
-                        harf_shape(voice, &pinned.font, text, &mut direct.buffer, &mut ours)
+                        harfrust_shape(voice, &pinned.font, text, &mut direct.buffer, &mut ours)
                             .expect("shapes");
                         let bits = |s: &Snapped| {
                             let glyphs = s
@@ -4343,7 +4349,7 @@ mod tests {
                                 continue;
                             }
                             let mut rest = Snapped::default();
-                            harf_shape(
+                            harfrust_shape(
                                 voice,
                                 &pinned.font,
                                 &text[start..],
