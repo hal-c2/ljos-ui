@@ -309,7 +309,7 @@ impl MediaPlayer {
         e.watch(me, MediaPlayer::PLAYBACK_RATE.index, move |e, _| {
             if playing(e, me) {
                 // The clock goes on from here at the new rate.
-                let pos = clock(e, me);
+                let pos = clock_position(e, me);
                 restart_clock(e, me, pos);
             }
         })?;
@@ -339,7 +339,7 @@ impl MediaPlayer {
         })?;
         e.watch(me, MediaPlayer::AUDIO_OUTPUT.index, move |e, _| {
             if playing(e, me) {
-                let pos = clock(e, me);
+                let pos = clock_position(e, me);
                 restart_clock(e, me, pos);
             }
         })?;
@@ -537,7 +537,7 @@ fn pump(e: &Engine, me: ObjectId) {
             Look::Show(image) => {
                 let output = get(e, me, MediaPlayer::VIDEO_OUTPUT);
                 video::show(e, output, image);
-                let pos = clock(e, me);
+                let pos = clock_position(e, me);
                 if pos != run(e, me, |r| r.reported).unwrap_or(0.0) {
                     report(e, me, pos);
                 }
@@ -735,7 +735,7 @@ pub(crate) fn pause(e: &Engine, me: ObjectId) {
         return;
     }
     let pos = if playing(e, me) {
-        clock(e, me)
+        clock_position(e, me)
     } else {
         get(e, me, MediaPlayer::POSITION)
     };
@@ -823,7 +823,7 @@ fn halt(e: &Engine, me: ObjectId) {
 }
 
 /// Where the player is, by its clock.
-fn clock(e: &Engine, me: ObjectId) -> f64 {
+fn clock_position(e: &Engine, me: ObjectId) -> f64 {
     let rate = get(e, me, MediaPlayer::PLAYBACK_RATE);
     // A voice the device has played means the device is open.
     let format = Audio::of(e).known();
@@ -892,7 +892,7 @@ fn restart_clock(e: &Engine, me: ObjectId, pos: f64) {
 }
 
 fn arm_tick(e: &Engine, me: ObjectId) {
-    let pos = clock(e, me);
+    let pos = clock_position(e, me);
     let rate = get(e, me, MediaPlayer::PLAYBACK_RATE);
     let Some(duration) = run(e, me, |r| r.media.as_ref().map(|m| m.duration)).flatten() else {
         return;
@@ -917,7 +917,7 @@ fn tick(e: &Engine, me: ObjectId, generation: u64) {
     if !playing(e, me) {
         return;
     }
-    let pos = clock(e, me);
+    let pos = clock_position(e, me);
     let duration = run(e, me, |r| r.media.as_ref().map_or(0.0, |m| m.duration)).unwrap_or(0.0);
     if pos >= duration {
         ended(e, me, duration);
@@ -968,7 +968,7 @@ pub(crate) fn arm_frames(e: &Engine, me: ObjectId) {
     if run(e, me, |r| r.frame.is_some()).unwrap_or(false) {
         return;
     }
-    let pos = clock(e, me);
+    let pos = clock_position(e, me);
     let index = (pos * info.fps / 1000.0).floor() as i64;
     ask_frame(e, me, index, info);
     let rate = get(e, me, MediaPlayer::PLAYBACK_RATE);
