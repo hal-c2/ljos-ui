@@ -1,5 +1,5 @@
-//! The `ljos` command line. `run`, `check` and `dump` arrive in later milestones;
-//! each becomes another variant of [`Command`].
+//! The `ljos` command line: each subcommand is a variant of [`Command`],
+//! and most have a module of their own.
 
 use std::{path::PathBuf, process::ExitCode, sync::Arc};
 
