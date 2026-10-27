@@ -3568,6 +3568,7 @@ version = "0.0.0"
 dependencies = [
  "ljos",
  "ljos_a11y",
+ "ljos_aot",
  "ljos_compiler",
  "ljos_controls",
  "ljos_dev",
@@ -3604,6 +3605,13 @@ dependencies = [
  "ljos_runtime",
  "ljos_test",
  "qml_front",
+]
+
+[[package]]
+name = "ljos_aot"
+version = "0.0.0"
+dependencies = [
+ "ljos_ir",
 ]
 
 [[package]]
@@ -3742,6 +3750,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "insta",
+ "ljos_aot",
  "ljos_ir",
  "ljos_oxc_parser",
  "oxc_allocator",

@@ -296,6 +296,16 @@ impl<M> App<M> {
         self
     }
 
+    /// The application's bindings and handlers compiled to Rust by its
+    /// build ([`build::compile_dirs_to_rust`](crate::build::compile_dirs_to_rust)),
+    /// as [`include_compiled!`](crate::include_compiled) embeds them: a
+    /// file runs its compiled code while it is the file the code was made
+    /// from, and dynamically once it is not (a reload, another build).
+    #[must_use]
+    pub fn compiled(self, files: &'static [&'static crate::aot::File]) -> Self {
+        self.register(move |engine| engine.register_compiled(files))
+    }
+
     /// The component to make as the root: the key [`App::source`]
     /// knows it by.
     #[must_use]
