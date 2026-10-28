@@ -126,3 +126,50 @@ Feature: State and Binding overrides under hidden or disabled parents
     When the property "forceEnable" of "root" is set to false
     Then the property "enabled" of "child" is false
     And the property "sigs" of "root" is 2
+
+  Scenario: A write made while a State shows a child under a hidden parent leaves with the State
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property int sigs: 0
+        Item {
+          id: box; objectName: "box"; visible: false
+          Item {
+            id: child; objectName: "child"; visible: false
+            onVisibleChanged: root.sigs++
+          }
+        }
+        states: State { name: "on"; PropertyChanges { target: child; visible: true } }
+      }
+      """
+    When the property "state" of "root" is set to "on"
+    And the property "visible" of "child" is set to true
+    And the property "state" of "root" is set to ""
+    And the property "visible" of "box" is set to true
+    Then the property "visible" of "child" is false
+    And the property "sigs" of "root" is 0
+
+  Scenario: A write made while a State shows a child leaves with the State
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property int sigs: 0
+        Item {
+          id: box; objectName: "box"
+          Item {
+            id: child; objectName: "child"; visible: false
+            onVisibleChanged: root.sigs++
+          }
+        }
+        states: State { name: "on"; PropertyChanges { target: child; visible: true } }
+      }
+      """
+    When the property "state" of "root" is set to "on"
+    And the property "visible" of "child" is set to true
+    And the property "state" of "root" is set to ""
+    Then the property "visible" of "child" is false
+    And the property "sigs" of "root" is 2

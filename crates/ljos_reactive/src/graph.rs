@@ -142,13 +142,17 @@ impl<V> Prop<V> {
         self.overrides.last_mut().unwrap_or(&mut self.base)
     }
 
-    /// The layer an imperative write goes to: the property's own base while
-    /// a cover is on top, otherwise the top layer.
+    /// The layer an imperative write goes to: while a cover is on top, the
+    /// highest layer under the covers, so that a write made while a State
+    /// holds the property leaves with the State, as it does uncovered;
+    /// otherwise the top layer.
     fn written_mut(&mut self) -> (&mut Layer<V>, bool) {
-        if self.overrides.last().is_some_and(|layer| layer.cover) {
-            (&mut self.base, true)
-        } else {
-            (self.top_mut(), false)
+        if !self.overrides.last().is_some_and(|layer| layer.cover) {
+            return (self.top_mut(), false);
+        }
+        match self.overrides.iter().rposition(|layer| !layer.cover) {
+            Some(idx) => (&mut self.overrides[idx], true),
+            None => (&mut self.base, true),
         }
     }
 

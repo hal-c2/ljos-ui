@@ -467,7 +467,11 @@ fn a_write_under_a_cover_is_kept_below_it_and_seen_once_it_comes_off() {
     assert_eq!(g.get(x), 0);
     g.remove_override(x, c, RestoreMode::BindingOrValue)
         .unwrap();
-    assert_eq!(g.get(x), 6);
+    assert_eq!(
+        g.get(x),
+        7,
+        "the write made under the override left with it"
+    );
 }
 
 #[test]
