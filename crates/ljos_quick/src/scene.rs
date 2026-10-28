@@ -4410,4 +4410,27 @@ mod inheritance_tests {
         assert!(!e.is_alive(child));
         assert!(!pending_has(&e, child));
     }
+
+    #[test]
+    fn adoption_removes_duplicate_pending_and_scene_covers() {
+        let e = engine();
+        let root = item(&e, None);
+        let mut s = scene(&e, root);
+        let hidden = incomplete_item(&e, root);
+        set_visible(&e, hidden, false);
+        let child = incomplete_item(&e, hidden);
+        e.complete(child).unwrap();
+        assert!(pending_has(&e, child));
+        assert!(!s.shared.borrow().marks.contains(child));
+
+        e.complete(hidden).unwrap();
+        assert!(pending_has(&e, child));
+        assert!(s.shared.borrow().marks.contains(child));
+        s.frame(&e, Time::ZERO);
+        assert!(!pending_has(&e, child));
+        assert!(!visible(&e, child));
+
+        set_visible(&e, hidden, true);
+        assert!(visible(&e, child));
+    }
 }
