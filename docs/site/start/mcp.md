@@ -55,7 +55,31 @@ ljos mcp --project . --caps fs,run
 | `i18n_extract` | Report missing and stale translation catalogue entries | — |
 | `project_info` | Return the Ljós version, available modules, ledger summary and granted capabilities | — |
 
-The authoring server also exposes resources (`ljos://types/{module}/{type}`, `ljos://ledger[/{module}/{type}]`, `ljos://docs/{path}`, `ljos://features/{path}`, `ljos://features/steps`, `ljos://lints`, `ljos://project/qml-files`) and workflow prompts (`write-component`, `port-from-qtquick`, `add-accessibility`, `design-review`, `localise`, `write-feature`).
+The authoring server also exposes resources (`ljos://types/{module}/{type}`, `ljos://ledger[/{module}/{type}]`, `ljos://docs/{path}`, `ljos://features/{path}`, `ljos://features/steps`, `ljos://lints`, `ljos://project/qml-files`) and workflow prompts (`write-component`, `port-from-qtquick`, `add-accessibility`, `design-review`, `localise`, `write-feature`, `test-app`, `embed-in-rust`).
+
+### Skills
+
+The same workflows ship as [Agent Skills](https://agentskills.io) in the repository's `skills/` directory, one directory per skill, so that an agent picks one by what you ask for instead of you naming a prompt:
+
+| Skill | Prompt |
+|---|---|
+| `writing-qml-components` | `write-component` |
+| `porting-from-qt-quick` | `port-from-qtquick` |
+| `adding-accessibility` | `add-accessibility` |
+| `reviewing-qml-design` | `design-review` |
+| `localising-qml` | `localise` |
+| `writing-scenarios` | `write-feature` |
+| `testing-qml-apps` | `test-app` |
+| `embedding-qml-in-rust` | `embed-in-rust` |
+
+A skill calls the authoring server's tools, so it needs the `ljos` command on `PATH` and the server connected under the name `ljos`. To install the skills for Claude Code in one project, copy the directories into the project's `.claude/skills/`:
+
+```sh
+mkdir -p .claude/skills
+for skill in <ljos-ui>/skills/*/SKILL.md; do cp -r "$(dirname "$skill")" .claude/skills/; done
+```
+
+Copy them into `~/.claude/skills/` instead to have them in every project. Other agents that read Agent Skills take the same directories; see where your agent looks for them.
 
 ## The live inspector (`ljos run --mcp` and `ljos attach`)
 
