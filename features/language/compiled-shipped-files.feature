@@ -292,6 +292,7 @@ Feature: Files compiled ahead of time
     And the file "Scenario.qml" ran compiled code
     And the log has no warning matching "compiled code and the dynamic tiers differ"
 
+  @qt-table
   Scenario: The check compiles what an item reads of its parent, and its parent as a value
     Given the file "Main.qml":
       """qml
@@ -310,6 +311,31 @@ Feature: Files compiled ahead of time
     Then the check reports the lines:
       """
       compiled ahead of time  2 of 2 (100.0%)
+      """
+
+  # Ljós lets an item's visual parent be something other than an item, so its own table gives
+  # `parent` as an object of any type: what is read of it is not known before the code runs.
+  @no-qt-table
+  Scenario: Without Qt's table the check says what an item reads of its parent runs dynamically
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+          width: 40
+          Item {
+              width: parent.width / 2
+          }
+          Item {
+              anchors.fill: parent
+          }
+      }
+      """
+    When the files are checked with statistics
+    Then the check reports the lines:
+      """
+      compiled ahead of time  1 of 2 (50.0%)
+
+      Main.qml:5:22: runs dynamically: member the type table does not have: width
       """
 
   Scenario: The check says a variable declared in a switch case runs dynamically
