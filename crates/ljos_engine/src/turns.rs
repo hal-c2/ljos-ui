@@ -738,6 +738,10 @@ impl Watchdog {
 
     fn run(&self) {
         loop {
+            // While awake every new turn unparks: a turn that begins after
+            // `check` looked would otherwise wait out a wake computed
+            // without it. The unpark only makes the next park return.
+            self.next_wake.store(u64::MAX, Ordering::SeqCst);
             match self.check() {
                 Some(wait) => {
                     let wake = Instant::now().checked_add(wait);
@@ -746,7 +750,6 @@ impl Watchdog {
                     std::thread::park_timeout(wait);
                 }
                 None => {
-                    self.next_wake.store(u64::MAX, Ordering::SeqCst);
                     // A turn that began since the first look already has a
                     // deadline to sleep for instead of parking here.
                     if self.check().is_none() {
