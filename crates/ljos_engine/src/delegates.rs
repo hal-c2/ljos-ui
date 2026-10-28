@@ -1495,6 +1495,31 @@ impl ViewDelegates {
         false
     }
 
+    /// The view is done with `object`, but its existing owner keeps it
+    /// until that owner is destroyed.
+    pub fn release_to_owner(&self, engine: &Engine, object: ObjectId) {
+        let held = {
+            let mut st = self.shared.state.borrow_mut();
+            let Some(i) = st.live.iter().position(|h| h.object == Some(object)) else {
+                return;
+            };
+            st.live.swap_remove(i)
+        };
+        if held.pending.is_some() {
+            self.shared.destroy(engine, held);
+            return;
+        }
+        if let Some(obj) = held.object {
+            self.shared.host.destroying(engine, obj);
+            if !held.own {
+                let model = self.shared.state.borrow().model.clone();
+                if let Some(m) = model {
+                    m.delegate_gone(engine, obj);
+                }
+            }
+        }
+    }
+
     /// Calls off the delegate being made for row `index`.
     pub fn cancel(&self, engine: &Engine, index: usize) {
         let s = &self.shared;

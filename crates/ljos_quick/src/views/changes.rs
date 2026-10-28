@@ -533,12 +533,12 @@ fn leave(e: &Engine, view: ObjectId, st: &ViewState, object: ObjectId, index: i3
             // `ListView.delayRemove`: the delegate stays until it is false.
             let watching = e.watch(att, ViewAttached::DELAY_REMOVE.index, move |e, v| {
                 if !v.to_boolean() {
-                    finish(e, view, object, index, None);
+                    finish(e, view, object, index, None, true);
                 }
             });
             if let Err(err) = watching {
                 warn(e, "delayRemove", Err(err));
-                finish(e, view, object, index, None);
+                finish(e, view, object, index, None, false);
             }
         }
         // In the layout pass, once for every row that left with it, as
@@ -576,14 +576,14 @@ pub(crate) fn run_removals(e: &Engine, view: ObjectId, st: &ViewState) {
     let told = st.removed.borrow_mut().take();
     if let Some((targets, told)) = told {
         for (object, index) in told {
-            finish(e, view, object, index, Some(Rc::clone(&targets)));
+            finish(e, view, object, index, Some(Rc::clone(&targets)), false);
         }
     }
     let waits = (st.pending.borrow().as_ref()).is_some_and(|op| op.kind == OpKind::Remove);
     if !waits {
         let untold = std::mem::take(&mut *st.removing.borrow_mut());
         for (object, index) in untold {
-            finish(e, view, object, index, None);
+            finish(e, view, object, index, None, false);
         }
     }
 }
@@ -597,6 +597,7 @@ fn finish(
     object: ObjectId,
     index: i32,
     targets: Option<SharedTargets>,
+    to_owner: bool,
 ) {
     let Some(st) = state_of(e, view) else {
         return;
@@ -611,7 +612,7 @@ fn finish(
     }
     let transition = e.untrack(|| e.get(view, ItemView::REMOVE)).ok().flatten();
     let animated = animate_at(e, view, transition, object, index, targets, move |e| {
-        discard(e, view, object);
+        discard(e, view, object, to_owner);
         // At the next polish, not now: a transition that ends at once
         // ends while the model is still telling the view of its rows,
         // and the rows that go together are one change to the pass.
@@ -620,13 +621,17 @@ fn finish(
         }
     });
     if !animated {
-        discard(e, view, object);
+        discard(e, view, object, to_owner);
     }
 }
 
-fn discard(e: &Engine, view: ObjectId, object: ObjectId) {
+fn discard(e: &Engine, view: ObjectId, object: ObjectId, to_owner: bool) {
     if let Some(d) = state_of(e, view).and_then(|st| st.delegates()) {
-        d.release(e, object, false);
+        if to_owner {
+            d.release_to_owner(e, object);
+        } else {
+            d.release(e, object, false);
+        }
     }
 }
 
