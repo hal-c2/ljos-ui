@@ -38,3 +38,31 @@ Feature: Loader lifecycle parity
     Then the property "status" of "loader" is 1
     And the property "created" of "root" is 2
     And the property "visSignals" of "root" is 2
+
+  Scenario: Deactivating a Loader inside its own onLoaded handler leaves item null and status Null
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property int destroyed: 0
+        function loadAndCancel() { loader.active = true }
+        Component {
+          id: comp
+          Item {
+            objectName: "transientItem"
+            Component.onDestruction: root.destroyed++
+          }
+        }
+        Loader {
+          id: loader; objectName: "loader"
+          active: false; sourceComponent: comp
+          onLoaded: active = false
+        }
+      }
+      """
+    When the method "loadAndCancel" of "root" is called
+    Then the property "active" of "loader" is false
+    And the property "status" of "loader" is 0
+    And the property "item" of "loader" is null
+    And the property "destroyed" of "root" is 1
