@@ -563,15 +563,6 @@ impl Scenes {
             .collect()
     }
 
-    fn only(&self) -> bool {
-        self.all
-            .borrow()
-            .iter()
-            .filter(|w| w.strong_count() > 0)
-            .count()
-            == 1
-    }
-
     fn pending(&self) -> Option<SharedRc> {
         self.pending.borrow().clone()
     }
@@ -768,8 +759,7 @@ fn prepare_inherited(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, pendin
         return true;
     }
     let parent = e.visual_parent(obj);
-    let only = !pending && e.extension::<Scenes>().only();
-    if (!pending && !only && !parent.is_some_and(|p| s.marks.contains(p))) || !shows(e, obj) {
+    if (!pending && !parent.is_some_and(|p| s.marks.contains(p))) || !shows(e, obj) {
         return false;
     }
     let mut marks = Marks::new();
@@ -4319,5 +4309,68 @@ mod sizes {
         assert_eq!(size_of::<super::Marks>(), 56);
         assert_eq!(size_of::<super::Record>(), 264);
         assert_eq!(size_of::<super::Paint>(), 104);
+    }
+}
+
+#[cfg(test)]
+mod inheritance_tests {
+    use super::*;
+
+    fn engine() -> Engine {
+        let e = Engine::new();
+        crate::register(&e);
+        e
+    }
+
+    fn incomplete_item(e: &Engine, parent: ObjectId) -> ObjectId {
+        let o = e
+            .create_native_incomplete(Item::default(), Some(parent))
+            .unwrap();
+        crate::add_data(e, parent, o).unwrap();
+        o
+    }
+
+    fn item(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
+        let o = match parent {
+            Some(parent) => incomplete_item(e, parent),
+            None => e.create_native_incomplete(Item::default(), None).unwrap(),
+        };
+        e.complete(o).unwrap();
+        o
+    }
+
+    fn scene(e: &Engine, root: ObjectId) -> QuickScene {
+        let mut s = QuickScene::new(kurbo::Size::new(100.0, 100.0));
+        s.set_root(e, root).unwrap();
+        s.frame(e, Time::ZERO);
+        s
+    }
+
+    fn pending_has(e: &Engine, obj: ObjectId) -> bool {
+        e.extension::<Scenes>()
+            .pending()
+            .is_some_and(|s| s.borrow().marks.contains(obj))
+    }
+
+    fn set_visible(e: &Engine, obj: ObjectId, visible: bool) {
+        e.set(obj, Item::VISIBLE, visible).unwrap();
+    }
+
+    fn visible(e: &Engine, obj: ObjectId) -> bool {
+        e.read(obj, Item::VISIBLE.index).to_boolean()
+    }
+
+    #[test]
+    fn completion_outside_the_only_scene_stays_pending() {
+        let e = engine();
+        let root = item(&e, None);
+        let s = scene(&e, root);
+        let hidden = item(&e, None);
+        set_visible(&e, hidden, false);
+        let outside = item(&e, Some(hidden));
+
+        assert!(!visible(&e, outside));
+        assert!(!s.shared.borrow().marks.contains(outside));
+        assert!(pending_has(&e, outside));
     }
 }
