@@ -32,6 +32,8 @@ pub(crate) struct AnchorState {
     y: Option<OverrideId>,
     w: Option<OverrideId>,
     h: Option<OverrideId>,
+    fill: bool,
+    center_in: bool,
     /// Last warnings, so an effect re-run does not repeat them.
     warned: Vec<String>,
 }
@@ -287,16 +289,21 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) 
     // Most items are anchored by nothing, and each new one runs this: the
     // lines are read in one go, and an item none is set on asks no more.
     let lines = read_lines(engine, obj);
+    let (fill, center_in) = (lines[FILL].as_object(), lines[CENTER_IN].as_object());
     let mut st = state.borrow_mut();
     if lines.iter().all(Value::is_nullish) {
         if [st.x, st.y, st.w, st.h].iter().any(Option::is_some) {
             engine.batch(|| st.release(engine, obj));
         }
         st.warned.clear();
+        st.fill = false;
+        st.center_in = false;
         return;
     }
+    let keep = fill.is_none() && center_in.is_none() && (st.fill || st.center_in);
+    st.fill = fill.is_some();
+    st.center_in = center_in.is_some();
     drop(st);
-    let (fill, center_in) = (lines[FILL].as_object(), lines[CENTER_IN].as_object());
     let mut cx = Ctx {
         engine,
         obj,
@@ -304,8 +311,11 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) 
         lines,
         warnings: Vec::new(),
     };
-    let h = horizontal(&mut cx, fill, center_in);
-    let v = vertical(&mut cx, fill, center_in);
+    let (h, v) = if keep {
+        (Span::default(), Span::default())
+    } else {
+        (horizontal(&mut cx, fill, center_in), vertical(&mut cx, fill, center_in))
+    };
 
     let mut st = state.borrow_mut();
     let result = engine.batch(|| -> Result<(), EngineError> {
@@ -373,8 +383,11 @@ fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<Object
             _ => Span::default(),
         };
     }
-    let mut left = cx.line(LEFT, true);
-    let mut right = cx.line(RIGHT, true);
+    let (mut left, mut right) = if center_in.is_some() {
+        (None, None)
+    } else {
+        (cx.line(LEFT, true), cx.line(RIGHT, true))
+    };
     let mut hcenter = cx.line(H_CENTER, true);
     if hcenter.is_none()
         && let Some(t) = center_in
@@ -445,8 +458,11 @@ fn vertical(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<ObjectId
             _ => Span::default(),
         };
     }
-    let top = cx.line(TOP, false);
-    let bottom = cx.line(BOTTOM, false);
+    let (top, bottom) = if center_in.is_some() {
+        (None, None)
+    } else {
+        (cx.line(TOP, false), cx.line(BOTTOM, false))
+    };
     let mut vcenter = cx.line(V_CENTER, false);
     let baseline = cx.line(BASELINE, false);
     if vcenter.is_none()
