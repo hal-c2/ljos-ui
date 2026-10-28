@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-#MISE description="Lint the ledger: # Sources:, Qt version, doc string size, undefined or ambiguous steps, phrasing sprawl"
+#MISE description="Lint the ledger, or the directory given: # Sources:, Qt version, doc string size, undefined or ambiguous steps, phrasing sprawl"
 set -euo pipefail
-exec cargo run --quiet -p ljos_bdd --bin features-lint
+exec cargo run --quiet -p ljos_bdd --bin features-lint -- "$@"

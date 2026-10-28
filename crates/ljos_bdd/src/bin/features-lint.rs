@@ -1,11 +1,19 @@
 //! `mise run features:lint`: structure, step coverage and phrasing sprawl.
 
-use std::{path::Path, process::ExitCode};
+use std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 fn main() -> ExitCode {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // A directory given is linted instead of the ledger: scenarios a
+    // project keeps beside its own QML are held to the same rules.
+    let dir = std::env::args_os().nth(1).map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../features"),
+        PathBuf::from,
+    );
     let steps = ljos_bdd::steps::source();
-    let report = ljos_bdd::lint::lint(&root.join("../../features"), &steps);
+    let report = ljos_bdd::lint::lint(&dir, &steps);
     for e in &report.errors {
         eprintln!("error: {e}");
     }
