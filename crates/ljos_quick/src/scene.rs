@@ -645,6 +645,11 @@ pub(crate) fn enabled_changed(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
 /// `obj` was given another visual parent: it takes what the new one
 /// passes on, before whoever moved it reads it.
 pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
+    if e.flags(obj)
+        .is_some_and(|f| f.contains(ljos_engine::ObjectFlags::DESTRUCTION_TOLD))
+    {
+        return;
+    }
     inherited(e, obj, false);
 }
 
