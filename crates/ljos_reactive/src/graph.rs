@@ -43,7 +43,7 @@ struct Layer<V> {
     content: Content<V>,
     provenance: Provenance,
     /// A cover ([`Graph::push_cover`]): an imperative write while it is on
-    /// top goes to the layer below it.
+    /// top goes to the property's own base layer.
     cover: bool,
 }
 
@@ -131,15 +131,13 @@ impl<V> Prop<V> {
         self.overrides.last_mut().unwrap_or(&mut self.base)
     }
 
-    /// The layer an imperative write goes to: the top, or the one under it
-    /// while a cover is on top.
+    /// The layer an imperative write goes to: the property's own base while
+    /// a cover is on top, otherwise the top layer.
     fn written_mut(&mut self) -> (&mut Layer<V>, bool) {
-        match self.overrides.len() {
-            n if n > 0 && self.overrides[n - 1].cover => match n {
-                1 => (&mut self.base, true),
-                _ => (&mut self.overrides[n - 2], true),
-            },
-            _ => (self.top_mut(), false),
+        if self.overrides.last().is_some_and(|layer| layer.cover) {
+            (&mut self.base, true)
+        } else {
+            (self.top_mut(), false)
         }
     }
 
@@ -2037,8 +2035,8 @@ impl<V: Clone + 'static> Graph<V> {
 
     /// Pushes an override that covers the property's own value without
     /// taking it over: the property reads what `value` gives, and an
-    /// imperative write while the cover is on top goes to the layer below
-    /// it, unseen until the cover is removed. Qt's `visible` and `enabled`
+    /// imperative write while the cover is on top goes to the property's own
+    /// base, unseen until every cover is removed. Qt's `visible` and `enabled`
     /// under an ancestor that is off keep the item's own value this way.
     pub fn push_cover(
         &self,

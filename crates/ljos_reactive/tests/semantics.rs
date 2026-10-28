@@ -469,6 +469,24 @@ fn a_write_under_a_cover_is_kept_below_it_and_seen_once_it_comes_off() {
 }
 
 #[test]
+fn a_write_under_nested_covers_survives_removing_the_lower_cover() {
+    let g = Graph::new();
+    let r = g.root();
+    let x = g.property(r, 0).unwrap();
+    let lower = g.push_cover(x, OverrideValue::Value(0)).unwrap();
+    let upper = g.push_cover(x, OverrideValue::Value(0)).unwrap();
+
+    g.set(x, 7);
+    assert_eq!(g.get(x), 0, "the write went under both covers");
+    g.remove_override(x, lower, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 0, "the upper cover is still active");
+    g.remove_override(x, upper, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 7, "the property kept its own written value");
+}
+
+#[test]
 fn restore_binding_mode_brings_binding_back() {
     let g = Graph::new();
     let r = g.root();
