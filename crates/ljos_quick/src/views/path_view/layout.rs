@@ -73,7 +73,7 @@ impl ViewHost for Host {
         ) {
             return;
         }
-        super::motion::rows_changed(e, view, &st, d.count());
+        super::motion::rows_changed(e, view, &st, change, d.count());
         super::bump(e, &st);
     }
 }

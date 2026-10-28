@@ -25,7 +25,7 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
-use ljos_engine::{Engine, ObjectId, PropIndex, Value};
+use ljos_engine::{Engine, ModelChange, ObjectId, PropIndex, Value};
 use ljos_runtime::Time;
 
 use super::{
@@ -219,9 +219,25 @@ pub(crate) fn sourced(e: &Engine, view: ObjectId, st: &State) {
 }
 
 /// Rows came or went.
-pub(crate) fn rows_changed(e: &Engine, view: ObjectId, st: &State, n: usize) {
+pub(crate) fn rows_changed(
+    e: &Engine,
+    view: ObjectId,
+    st: &State,
+    change: &ModelChange,
+    n: usize,
+) {
     if n == 0 {
         return;
+    }
+    let c = current(e, view);
+    let adjusted = match *change {
+        ModelChange::RowsInserted { first, count } if c >= first as i64 => c + count as i64,
+        ModelChange::RowsRemoved { first, count } if c >= (first + count) as i64 => c - count as i64,
+        ModelChange::RowsRemoved { first, .. } if c >= first as i64 => (first as i64).min(n as i64 - 1),
+        _ => c,
+    };
+    if adjusted != c {
+        write_current(e, view, st, adjusted);
     }
     let c = current(e, view);
     if c >= n as i64 {
