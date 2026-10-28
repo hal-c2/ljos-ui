@@ -64,15 +64,13 @@ const SCENARIO_RULES: &str = "How a scenario is written here:\n   \
     presses the pointer at X, Y`, then `releases`) run on Ljós and on Qt; finding a control by \
     its role and name needs Ljós's accessibility bridge and fails on Qt.\n   \
     - A scenario sees only the files it declares. Give each with `Given the file \"X.qml\":` and \
-    a doc string labelled `qml`, at most 25 lines (cut a longer file down to what the \
-    scenario needs), and load it with `When \"X.qml\" is loaded`: \
+    a doc string labelled `qml`, at most 25 lines, and load it with `When \"X.qml\" is loaded`: \
     after a Given, an And is a Given too.\n   \
     - Objects are found by `objectName`, not by `id`: give the objects you check one in the \
     scenario's copy of the file.\n   \
     - The file starts with a `# Sources:` comment block, one source per line (the files it \
     describes, Qt documentation URLs). A file tagged `@qt-parity` then has the line \
-    `# Verified on Qt 6.x.y (qml6, offscreen).` with the Qt version it passed on, which \
-    `qml6 --version` prints.";
+    `# Verified on Qt 6.x.y (qml6, offscreen).` with the Qt version it passed on.";
 
 pub(crate) fn list() -> Vec<PromptDef> {
     let paths = |what: &'static str| PromptArg {
