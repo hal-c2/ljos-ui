@@ -133,3 +133,51 @@ Feature: Language parity
       """
     When the method "trigger" of "root" is called
     Then the property "log" of "root" is "first(1);first(2);"
+
+  Scenario: Disabling or retargeting a second Connections from the first handler during emission stops the second handler
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 100; height: 100
+        property string log: ""
+        signal ping(int v)
+        Item { id: other; signal ping(int v) }
+        Connections {
+          id: c1; target: root
+          function onPing(v) {
+            root.log += "c1(" + v + ");"
+            if (v === 1) c2.enabled = false
+            if (v === 2) c2.target = other
+          }
+        }
+        Connections {
+          id: c2; target: root
+          function onPing(v) { root.log += "c2(" + v + ");" }
+        }
+        function testDisable() { log = ""; c2.enabled = true; c2.target = root; ping(1) }
+        function testRetarget() { log = ""; c2.enabled = true; c2.target = root; ping(2); other.ping(9) }
+      }
+      """
+    When the method "testDisable" of "root" is called
+    Then the property "log" of "root" is "c2(1);c1(1);"
+    When the method "testRetarget" of "root" is called
+    Then the property "log" of "root" is "c2(2);c1(2);c2(9);"
+
+  Scenario: A Connections with target explicitly set to null logs no warning for handlers target would not have
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 100; height: 100
+        property bool isNullTarget: conn.target === null
+        Connections {
+          id: conn
+          target: null
+          ignoreUnknownSignals: false
+          function onNonExistentSignal() {}
+        }
+      }
+      """
+    Then the property "isNullTarget" of "root" is true
+    And the log has no warnings

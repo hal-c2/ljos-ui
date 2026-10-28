@@ -490,6 +490,8 @@ pub struct Connections {
     pub(crate) handlers: Vec<(Atom, Handler)>,
     #[qml(skip)]
     pub(crate) active: Vec<ConnectionId>,
+    #[qml(skip)]
+    pub(crate) connected_to: Option<ObjectId>,
 }
 
 impl Default for Connections {
@@ -501,6 +503,7 @@ impl Default for Connections {
             ignore_unknown_signals: false,
             handlers: Vec::new(),
             active: Vec::new(),
+            connected_to: None,
         }
     }
 }
@@ -522,7 +525,8 @@ impl Connections {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let me = cx.this;
-        cx.engine.effect_in(me, move |e| e.connections_update(me))?;
+        cx.engine
+            .effect_in(me, move |e| e.connections_update(me, false))?;
         Ok(())
     }
 }
@@ -1184,51 +1188,63 @@ impl Engine {
             .flags(obj)
             .is_some_and(|f| f.contains(crate::ObjectFlags::COMPLETED))
         {
-            self.untrack(|| self.connections_update(obj));
+            self.untrack(|| self.connections_update(obj, true));
         }
         Ok(())
     }
 
     /// Reconnects a `Connections` to its current target. Runs in an effect:
     /// reads of `target` and `enabled` are tracked, the rest is not.
-    fn connections_update(&self, me: ObjectId) {
+    fn connections_update(&self, me: ObjectId, force: bool) {
         let target = self.read(me, Connections::TARGET.index);
-        let enabled = self.read(me, Connections::ENABLED.index).to_boolean();
+        // Enabled changes need not reconnect: the handler checks it when run.
+        self.read(me, Connections::ENABLED.index);
         let explicit = self.untrack(|| {
             self.provenance(me, Connections::TARGET.index)
                 .is_some_and(|p| p != crate::Provenance::Default)
         });
         self.untrack(|| {
-            let Ok((old, handlers, ignore)) = self.with_mut::<Connections, _>(me, |c| {
-                (
-                    std::mem::take(&mut c.active),
-                    c.handlers.clone(),
-                    c.ignore_unknown_signals,
-                )
-            }) else {
-                return;
-            };
-            for id in old {
-                self.disconnect(id);
-            }
             // Unset, the target is the object the Connections is in.
             let target = match target.as_object() {
                 Some(t) => Some(t),
                 None if !explicit => self.owner(me),
                 None => None,
             };
-            let Some(target) = target.filter(|t| self.is_alive(*t)) else {
+            let target = target.filter(|t| self.is_alive(*t));
+            let Ok((current, handlers, ignore)) = self.with::<Connections, _>(me, |c| {
+                (c.connected_to, c.handlers.clone(), c.ignore_unknown_signals)
+            }) else {
                 return;
             };
-            if !enabled {
+            if !force && current == target {
                 return;
             }
+            let Ok(old) = self.with_mut::<Connections, _>(me, |c| {
+                c.connected_to = target;
+                std::mem::take(&mut c.active)
+            }) else {
+                return;
+            };
+            for id in old {
+                self.disconnect(id);
+            }
+            let Some(target) = target else {
+                return;
+            };
             let mut active = Vec::new();
             for (name, h) in handlers {
                 match self.signal_index(target, &name) {
                     Ok(s) => {
+                        let h = h.clone();
+                        let guarded: Handler = Rc::new(move |e, args| {
+                            if e.read(me, Connections::ENABLED.index).to_boolean() {
+                                h(e, args);
+                            }
+                        });
                         let later = crate::signal::Order::Later;
-                        if let Ok(id) = self.connect_ordered(target, s, Some(me), h.clone(), later) {
+                        if let Ok(id) =
+                            self.connect_ordered(target, s, Some(me), guarded, later)
+                        {
                             active.push(id);
                         }
                     }
