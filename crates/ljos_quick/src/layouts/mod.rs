@@ -6,7 +6,7 @@
 //! `Layout.` attached properties and its implicit size); the layout hands
 //! out its own size between them and takes its implicit size from them.
 //!
-//! Two steps, both in the polish pass (pipeline step 6):
+//! Two steps, run as the layout completes and then in the polish pass (pipeline step 6):
 //!
 //! - **measure** turns the children into a [`Plan`] and the layout's own
 //!   hints. It runs when an input changed, and climbs to the parent layout
@@ -29,6 +29,7 @@ use std::rc::Rc;
 
 use ljos_engine::{
     Cx, Engine, EngineError, MetaRef, ObjectId, PropIndex, Provenance, QmlObject, QmlType, Value,
+    qml_impl,
 };
 
 use crate::enums::{EnumTable, align, layout_direction};
@@ -59,6 +60,16 @@ pub struct Layout {
     pub item: Item,
     #[qml(skip)]
     state: State,
+}
+
+#[qml_impl]
+impl Layout {
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let (e, obj) = (cx.engine, cx.this);
+        state(e, obj, |s| s.dirty = true)?;
+        polish(e, obj)
+    }
 }
 
 /// `RowLayout` (QtQuick.Layouts).
