@@ -182,3 +182,27 @@ fn the_watchdog_reports_a_blocked_turn_before_it_ends() {
         warnings[0]
     );
 }
+
+#[test]
+fn a_watchdog_report_within_the_budget_does_not_claim_it_was_exceeded() {
+    let h = engine();
+    h.engine.set_turn_budget(Some(Duration::from_secs(60)));
+    let marker = h.engine.watch_turns(Duration::from_millis(20));
+    let (tx, rx) = mpsc::channel::<String>();
+    marker.set_reporter(move |text| {
+        let _ = tx.send(text.to_owned());
+    });
+    h.engine.turn(None, || {
+        rx.recv_timeout(PATIENCE)
+            .expect("the watchdog reported the turn while it ran");
+    });
+
+    let warnings = h.warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    let w = &warnings[0];
+    assert!(!w.contains("longer than its budget"), "{w}");
+    assert!(
+        w.ends_with("; the watchdog reported it while it ran"),
+        "{w}"
+    );
+}

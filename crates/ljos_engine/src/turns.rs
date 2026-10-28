@@ -587,13 +587,13 @@ impl Engine {
             c.label = self.label_of(o).map(|l| Atom::new(&l)).or(ty).or(c.label);
             c.place = place.or(c.place);
         }
-        let mut text = match t.budget.get() {
-            Some(b) => format!(
+        let mut text = match (t.budget.get(), over) {
+            (Some(b), true) => format!(
                 "a turn of the UI thread took {} ms, longer than its budget of {} ms: {c}",
                 took.as_millis(),
                 b.as_millis()
             ),
-            None => format!("a turn of the UI thread took {} ms: {c}", took.as_millis()),
+            _ => format!("a turn of the UI thread took {} ms: {c}", took.as_millis()),
         };
         if reported {
             text.push_str("; the watchdog reported it while it ran");
