@@ -808,11 +808,11 @@ pub(crate) fn open(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> 
         stop(engine, popup, &state, Popup::EXIT.index);
         state.before_exit.set(None);
     }
-    emit(engine, popup, "aboutToShow");
-    if !engine.is_alive(popup) {
-        return Ok(());
-    }
     if going {
+        emit(engine, popup, "aboutToShow");
+        if !engine.is_alive(popup) {
+            return Ok(());
+        }
         // Qt says so again, though the popup never stopped being visible.
         state.switching.set(true);
         emit(engine, popup, "visibleChanged");
@@ -822,9 +822,19 @@ pub(crate) fn open(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> 
         }
     } else {
         state.switching.set(true);
-        let wrote = set_derived(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
+        let opened = engine.batch(|| -> Result<(), EngineError> {
+            set_derived(engine, popup, Popup::VISIBLE.index, Value::Bool(true))?;
+            if transition(engine, popup, Popup::ENTER.index).is_none() {
+                set_computed(engine, popup, Popup::OPENED.index, Value::Bool(true))?;
+            }
+            emit(engine, popup, "aboutToShow");
+            Ok(())
+        });
         state.switching.set(false);
-        wrote?;
+        opened?;
+        if !engine.is_alive(popup) {
+            return Ok(());
+        }
         try_present(engine, popup)?;
     }
     arrive(engine, popup, &state)

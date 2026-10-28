@@ -30,3 +30,23 @@ Feature: Popup parent and open order parity
     Then the object "pop" exists
     And the property "parent" of "pop" is null
     And the property "parentChanges" of "root" is 2
+
+  Scenario: Calling open emits aboutToShow while visible is false, then visibleChanged, then opened
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls
+      Item {
+        id: root; objectName: "root"; width: 200; height: 200
+        property string log: ""
+        Popup {
+          id: pop; objectName: "pop"
+          enter: null; exit: null
+          onAboutToShow: root.log += "show:" + visible + ":" + opened + ";"
+          onVisibleChanged: root.log += "vis:" + visible + ";"
+          onOpened: root.log += "opened:" + visible + ":" + opened + ";"
+        }
+      }
+      """
+    When the method "open" of "pop" is called
+    Then the property "log" of "root" is "show:true:true;vis:true;opened:true:true;"
