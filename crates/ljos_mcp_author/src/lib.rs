@@ -21,6 +21,8 @@ mod resources;
 mod rewrite;
 mod runs;
 mod server;
+#[cfg(test)]
+mod skills;
 mod tiers;
 mod tools;
 

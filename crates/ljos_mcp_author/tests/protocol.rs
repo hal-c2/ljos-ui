@@ -1654,7 +1654,9 @@ async fn prompts_are_listed_and_name_only_tools_that_exist() {
             "add-accessibility",
             "design-review",
             "localise",
-            "write-feature"
+            "write-feature",
+            "test-app",
+            "embed-in-rust"
         ]
     );
     for prompt in &prompts {
@@ -1710,8 +1712,8 @@ async fn prompts_are_listed_and_name_only_tools_that_exist() {
     );
 }
 
-/// The order the first prompt gives: the ledger, then the documents and the
-/// scenarios, then the checks on what was written, then the run.
+/// The order the first prompt gives: the ledger, then the scenarios and the
+/// design rules, then the checks on what was written, then the run.
 #[tokio::test]
 async fn write_component_names_its_tools_in_the_order_they_are_used() {
     let dir = fixture();
@@ -1728,7 +1730,6 @@ async fn write_component_names_its_tools_in_the_order_they_are_used() {
         tools_named(&text),
         [
             "api_status",
-            "docs_search",
             "features_list",
             "design_rules",
             "qml_format",
@@ -1768,7 +1769,6 @@ async fn design_review_carries_the_brief_and_ends_in_the_audit() {
             "design_motion",
             "qml_check",
             "qml_lint",
-            "docs_search",
             "qml_format",
             "features_list",
             "features_run",
@@ -1795,12 +1795,18 @@ async fn design_review_carries_the_brief_and_ends_in_the_audit() {
     }
 }
 
-/// The prompts that write QML end with the lint and the audit.
+/// The prompts that write QML end with the compiler, the lint and the audit.
 #[tokio::test]
 async fn prompts_that_write_qml_end_with_the_design_checks() {
     let dir = fixture();
     let c = connect(dir.path(), CapSet::EMPTY).await;
-    for (prompt, arg) in [("write-component", "name"), ("add-accessibility", "paths")] {
+    for (prompt, arg) in [
+        ("write-component", "name"),
+        ("port-from-qtquick", "source"),
+        ("add-accessibility", "paths"),
+        ("design-review", "source"),
+        ("localise", "paths"),
+    ] {
         let got = c
             .get_prompt(
                 rmcp::model::GetPromptRequestParams::new(prompt)
@@ -1809,7 +1815,7 @@ async fn prompts_that_write_qml_end_with_the_design_checks() {
             .await
             .unwrap();
         let text = format!("{:?}", got.messages);
-        assert!(text.contains("agent-brief.md"), "{prompt}");
+        assert!(text.contains("ljos check"), "{prompt}");
         assert!(text.contains("ljos audit"), "{prompt}");
         assert!(text.contains("app_audit"), "{prompt}");
     }
