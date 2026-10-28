@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, bail};
 use clap::Args;
 use ljos_audit::{Matrix, Options, Severity};
-use ljos_engine::Engine;
+use ljos_engine::{Engine, QmlType as _};
 
 use crate::render;
 
@@ -131,6 +131,20 @@ impl Audit {
                 render::example_properties(self.example.as_deref()),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        // `--size` is the platform window's, as a matrix point's size is:
+        // a window root is resized to it, not measured against it at the
+        // size it asked for.
+        if let Some((w, h)) = self.size
+            && engine
+                .meta_of(root)
+                .is_some_and(|m| m.inherits(ljos_controls::Window::static_meta()))
+        {
+            ljos_controls::WindowSystem::of(&engine).resized(
+                &engine,
+                root,
+                [f64::from(w), f64::from(h)],
+            );
+        }
         // Where the scene had its items before the settle time passed:
         // what moved since is a layout shift.
         let mut before = None;

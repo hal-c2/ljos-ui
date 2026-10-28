@@ -35,3 +35,26 @@ Feature: A window as large as the root says
       | Item {}                                                  |                 | 800   | 600    |
       | Window { width: 320; height: 240 }                       |                 | 320   | 240    |
       | Rectangle { width: 300; height: 200 }                    | --size 640x480  | 640   | 480    |
+
+  Scenario: The audit sizes a window root to the size it is given
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      import QtQuick.Controls
+
+      ApplicationWindow {
+          width: 1280
+          height: 820
+          visible: true
+
+          Button {
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              anchors.margins: 8
+              text: "Save draft"
+          }
+      }
+      """
+    When the author runs "ljos audit Main.qml --matrix current --size 1280x800"
+    Then the command exits with status 0
+    And the command's output does not mention "layout-offscreen"
