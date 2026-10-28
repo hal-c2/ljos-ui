@@ -379,9 +379,6 @@ impl Dirty {
 /// the frame takes it. A value is read only while its mark is set.
 struct Marks {
     dirty: Dirty,
-    /// Adopted into the render tree, rather than only inheriting from an
-    /// adopted parent while its component is being created.
-    adopted: bool,
     /// What a Text's follow effect last read of it: its paint and its
     /// polish take it from here, so a text's inputs are read once a change
     /// and not by each. Shared with its paint, and only a Text has one, so
@@ -400,7 +397,6 @@ impl Marks {
     fn new() -> Marks {
         Marks {
             dirty: Dirty::empty(),
-            adopted: false,
             text: None,
             text_shown: false,
             inherit: Inherit::default(),
@@ -1961,7 +1957,6 @@ impl QuickScene {
                 None => {}
             }
             if let Some(marks) = s.marks.get_mut(obj) {
-                marks.adopted = true;
                 marks.inherit.mouse_area = class.mouse_area;
             }
             s.set(obj, Dirty::GEOM, |_| ());
