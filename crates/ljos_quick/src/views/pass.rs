@@ -311,6 +311,14 @@ pub(crate) fn drop_extra(e: &Engine, item: ObjectId) {
     }
 }
 
+/// Takes an extra out of the view; its owner destroys it with the view.
+pub(crate) fn retire_extra(e: &Engine, item: ObjectId) {
+    strike(e, item);
+    if e.is_alive(item) {
+        let _ = tree::set_parent_item(e, item, None);
+    }
+}
+
 /// Writes a property that holds an object or nothing.
 pub(crate) fn put_object(
     e: &Engine,
@@ -1256,7 +1264,7 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
             .collect()
     };
     for h in unused {
-        drop_extra(e, h);
+        retire_extra(e, h);
     }
     if let Some(longest) = heads.iter().map(|h| h.2).reduce(f64::max) {
         st.heading.set(longest);

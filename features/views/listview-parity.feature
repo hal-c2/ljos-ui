@@ -7,6 +7,10 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-listview.html#highlightFollowsCurrentItem-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-listview.html#delayRemove-attached-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-listview.html#remove-attached-signal
+#   https://doc.qt.io/qt-6/qml-qtquick-listview.html#section-attached-prop
+#   https://doc.qt.io/qt-6/qml-qtquick-listview.html#previousSection-attached-prop
+#   https://doc.qt.io/qt-6/qml-qtquick-listview.html#nextSection-attached-prop
+#   https://doc.qt.io/qt-6/qml-qtquick-viewsection.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
 @qt-parity
@@ -165,3 +169,60 @@ Feature: ListView behavior matches Qt
       And the method "releaseHeld" of "root" is called
       Then the property "log" of "root" is "rem:a(idx=-1,cnt=2);"
       And the property "cnt" of "root" is 2
+
+  Rule: ListView section headers and attached neighbour sections when mutating a middle row splits or merges sections
+    ListView sections are contiguous runs rather than global buckets. Changing a middle row's role
+    from A to B in [A, A, A] splits the list into three sections (A, B, A), creating two extra
+    section delegates and updating ListView.previousSection and ListView.nextSection on the
+    neighbouring rows. Changing it back merges them into one section again.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 100; height: 200
+          property int headers: 0; property real ch: lv.contentHeight
+          ListModel {
+            id: lm; objectName: "lm"
+            ListElement { tag: "a"; grp: "A" }
+            ListElement { tag: "b"; grp: "A" }
+            ListElement { tag: "c"; grp: "A" }
+          }
+          ListView {
+            id: lv; objectName: "lv"; width: 100; height: 200; model: lm; section.property: "grp"
+            section.delegate: Item {
+              width: 100; height: 10; Component.onCompleted: root.headers++; Component.onDestruction: root.headers--
+            }
+            delegate: Item {
+              required property string tag; required property string grp; objectName: "d-" + tag; width: 100; height: 20
+              property string sec: ListView.section + "|" + ListView.previousSection + "|" + ListView.nextSection
+            }
+          }
+          function splitMiddle() { lm.setProperty(1, "grp", "B"); lv.forceLayout() }
+          function mergeMiddle() { lm.setProperty(1, "grp", "B"); lv.forceLayout(); lm.setProperty(1, "grp", "A"); lv.forceLayout() }
+        }
+        """
+
+    Scenario: Three rows with the same section role share one section header and empty boundary strings
+      Then the property "headers" of "root" is 1
+      And the property "ch" of "root" is 70
+      And the property "sec" of "d-a" is "A||A"
+      And the property "sec" of "d-b" is "A|A|A"
+      And the property "sec" of "d-c" is "A|A|"
+
+    Scenario: Changing the middle row's section role splits the run into three section headers
+      When the method "splitMiddle" of "root" is called
+      Then the property "headers" of "root" is 3
+      And the property "ch" of "root" is 90
+      And the property "sec" of "d-a" is "A||B"
+      And the property "sec" of "d-b" is "B|A|A"
+      And the property "sec" of "d-c" is "A|B|"
+
+    Scenario: Restoring the middle row's section role merges the three sections back into one
+      When the method "mergeMiddle" of "root" is called
+      Then the property "headers" of "root" is 3
+      And the property "ch" of "root" is 70
+      And the property "sec" of "d-a" is "A||A"
+      And the property "sec" of "d-b" is "A|A|A"
+      And the property "sec" of "d-c" is "A|A|"
