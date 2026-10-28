@@ -450,8 +450,10 @@ impl Runs {
         ))
     }
 
-    /// What the runner is asked to run: the glob its `--input` takes.
-    fn input(&self, choice: &Choice) -> Option<String> {
+    /// What the runner is asked to run: the glob its `--input` takes. It is
+    /// always given, since a runner without one runs the scenarios it was
+    /// built with, which are not this project's when it serves another.
+    fn input(choice: &Choice) -> String {
         let root = &choice.root;
         let globs: Vec<String> = choice
             .paths
@@ -468,9 +470,12 @@ impl Runs {
             .collect();
         let root = root.to_string_lossy();
         match globs.as_slice() {
-            [] => None,
-            [one] => Some(format!("{root}/{one}")),
-            many => Some(format!("{root}/{{{}}}", many.join(","))),
+            [] => format!("{root}/**/*.feature"),
+            // The runner finds no file for a pattern without a wildcard in
+            // it, so one file is a group of one.
+            [one] if !one.contains('*') => format!("{root}/{{{one}}}"),
+            [one] => format!("{root}/{one}"),
+            many => format!("{root}/{{{}}}", many.join(",")),
         }
     }
 
@@ -482,9 +487,7 @@ impl Runs {
             args.name.as_deref(),
         )?;
         let (program, mut arguments) = self.runner()?;
-        if let Some(input) = self.input(&choice) {
-            arguments.extend(["--input".to_owned(), input]);
-        }
+        arguments.extend(["--input".to_owned(), Self::input(&choice)]);
         if let Some((text, _)) = &choice.tags {
             arguments.extend(["-t".to_owned(), text.clone()]);
         }

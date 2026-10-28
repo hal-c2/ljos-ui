@@ -206,6 +206,29 @@ Feature: Listing and running scenarios with the authoring tools
       Then the answer's "/output" matches "--input \S*/features/items/\*\*/\*\.feature"
       And the answer's "/output" matches "-t @qt-diverges and not @backlog -n wide"
 
+    # A runner given no `--input` runs the scenarios it was built with, which are not the
+    # project's when its server serves some other project.
+    Scenario: A run that names no paths runs every scenario of the project
+      Given the agent has called the tool "features_run"
+      When the agent calls the tool "run_status" with:
+        """json
+        {"run_id": "run-1", "wait_ms": 20000}
+        """
+      Then the answer's "/output" matches "--input \S*/features/\*\*/\*\.feature"
+
+    # The runner reads `--input` as a pattern, and a pattern with no wildcard in it finds
+    # no file at all; a group of one is a wildcard that matches only that file.
+    Scenario: A run of one file names a pattern only that file matches
+      Given the agent has called the tool "features_run" with:
+        """json
+        {"paths": ["items/box.feature"]}
+        """
+      When the agent calls the tool "run_status" with:
+        """json
+        {"run_id": "run-1", "wait_ms": 20000}
+        """
+      Then the answer's "/output" matches "--input \S*/features/\{items/box\.feature\}"
+
     Scenario: A run of nothing is refused before it starts
       When the agent calls the tool "features_run" with:
         """json
