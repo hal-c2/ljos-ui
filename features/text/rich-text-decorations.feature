@@ -20,6 +20,8 @@ Feature: Decorations and backgrounds in rich text
         R { y: 200; text: "<span style=\"text-decoration: underline; text-decoration-color: #00ff00\">" + gap + "</span>" }
         R { y: 300; text: "<span style=\"text-decoration: line-through; text-decoration-color: #ff0000\">" + gap + "</span>" }
         R { x: 200; text: "<span style=\"text-decoration: overline; text-decoration-color: #ff0000\">" + gap + "</span>" }
+        R { x: 200; y: 100; text: "<span style=\"background-color: #ff0000\">" + gap + "</span>" }
+        R { x: 200; y: 200; text: "<s style=\"background-color: lightgrey\">" + gap + "</s>" }
       }
       """
     When 100 milliseconds pass
@@ -41,3 +43,8 @@ Feature: Decorations and backgrounds in rich text
   @qt-parity
   Scenario: A span paints its overline in the decoration colour
     Then the pixel at 220, 1 of the window is within 5 of "#ff0000"
+
+  @qt-parity
+  Scenario: An inline element paints its background behind its text
+    Then the pixel at 220, 120 of the window is within 5 of "#ff0000"
+    And the pixel at 220, 220 of the window is within 5 of "#d3d3d3"
