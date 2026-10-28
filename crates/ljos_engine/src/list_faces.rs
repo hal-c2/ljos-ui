@@ -527,7 +527,7 @@ impl Engine {
                         .iter()
                         .enumerate()
                         .map(|(n, i)| {
-                            if kind != Entry::Any && holes.binary_search(&n).is_ok() {
+                            if !matches!(of, TypeTag::Var) && holes.binary_search(&n).is_ok() {
                                 of.default_value()
                             } else {
                                 entry(&engine, kind, &of, Origin::Put, i)
@@ -692,7 +692,17 @@ pub(crate) const LISTS: &str = r##"
     const method = (name, f) => {
       let m = methods.get(name);
       if (m === undefined) {
-        m = changing.has(name)
+        m = name === "push"
+          ? function (...args) {
+              read();
+              let out = t.length;
+              for (const arg of args) {
+                out = f.call(t, arg);
+                write();
+              }
+              return out;
+            }
+          : changing.has(name)
           ? function (...args) {
               read();
               let out;
