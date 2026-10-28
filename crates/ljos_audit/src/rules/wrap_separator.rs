@@ -2,14 +2,17 @@
 //! the start or the end of a line, where it separates nothing from
 //! nothing. Only a `Flow` that has wrapped onto more than one line is
 //! looked at; a separator is a `ToolSeparator`, a `MenuSeparator`, or a
-//! thin line (at most `SEPARATOR_PX` across and longer than that).
+//! thin line (at most `SEPARATOR_PX` across and longer than that). One
+//! drawn at an opacity of 0 is how a separator is dropped at a line's edge
+//! while it keeps its width, so the wrap points stay put: it shows nothing
+//! there and is not reported.
 
 use ljos_controls::{MenuSeparator, ToolSeparator};
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::Flow;
 use ljos_render::kurbo::Rect;
 
-use crate::cx::{Cx, is_a, scene_rect, shown_items, slack};
+use crate::cx::{Cx, is_a, scene_rect, shown_items, shown_opacity, slack};
 
 /// A line one draws as a separator is a pixel or two across.
 const SEPARATOR_PX: f64 = 2.0;
@@ -19,6 +22,9 @@ fn shown(e: &Engine, o: ObjectId) -> bool {
 }
 
 fn separator(e: &Engine, o: ObjectId) -> bool {
+    if shown_opacity(e, o) <= 0.0 {
+        return false;
+    }
     if is_a::<ToolSeparator>(e, o) || is_a::<MenuSeparator>(e, o) {
         return true;
     }

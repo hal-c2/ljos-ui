@@ -232,6 +232,29 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit reports "layout-wrap-separator" at line 12
 
+    Scenario: A wrapped row that hides the separator at a line's start by its opacity
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 200; height: 160
+          color: "white"
+          Flow {
+            width: parent.width; spacing: 6
+            Repeater {
+              model: ["Cut", "Copy", "Paste", "Undo"]
+              Row {
+                spacing: 6
+                Rectangle { width: 1; height: 24; color: "#767676"; opacity: parent.x === 0 ? 0 : 1 }
+                Button { text: modelData }
+              }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "layout-wrap-separator"
+
     Scenario: A menu a repeater fills with twelve items and no group
       Given the QML:
         """qml
