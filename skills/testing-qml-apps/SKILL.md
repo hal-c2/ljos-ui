@@ -18,9 +18,9 @@ Specify what the user's QML files do as scenarios that run on Ljós and on Qt, a
 1. Read the files and list what a user sees and does: the texts, which controls are enabled, what a press or a key changes. `ljos:features_list` shows scenarios the project has already.
 2. How a scenario is written here:
    - Use only the steps the resource `ljos://features/steps` lists, word for word: any other wording fails with "Step doesn't match any function". Pointer steps by position (`the user presses the pointer at X, Y`, then `releases`) run on Ljós and on Qt; finding a control by its role and name needs Ljós's accessibility bridge and fails on Qt.
-   - A scenario sees only the files it declares. Give each with `Given the file "X.qml":` and a doc string labelled `qml`, at most 25 lines, and load it with `When "X.qml" is loaded`: after a Given, an And is a Given too.
+   - A scenario sees only the files it declares. Give each with `Given the file "X.qml":` and a doc string labelled `qml`, at most 25 lines (cut a longer file down to what the scenario needs), and load it with `When "X.qml" is loaded`: after a Given, an And is a Given too.
    - Objects are found by `objectName`, not by `id`: give the objects you check one in the scenario's copy of the file.
-   - The file starts with a `# Sources:` comment block, one source per line (the files it describes, Qt documentation URLs). A file tagged `@qt-parity` then has the line `# Verified on Qt 6.x.y (qml6, offscreen).` with the Qt version it passed on.
+   - The file starts with a `# Sources:` comment block, one source per line (the files it describes, Qt documentation URLs). A file tagged `@qt-parity` then has the line `# Verified on Qt 6.x.y (qml6, offscreen).` with the Qt version it passed on, which `qml6 --version` prints.
 3. Tag the feature `@qt-parity`, one behaviour to a scenario.
 4. `ljos:features_run` with `paths` set to the file and `backend` set to `both`, then `ljos:run_status`, waiting until the run has ended. A step that fails on Qt alone is Ljós-only wording: find one that runs on both. A scenario that is wrong about the file is fixed; one where Ljós and Qt differ is reported, never changed to pass.
 

@@ -69,16 +69,28 @@ When an `XMLHttpRequest` reply has an XML content type, `http.responseXML` expos
 When your application runs long-lived background services (for example, on the `tokio` worker pool or a dedicated thread), use `App::run_with` (or `ljos::run(config, setup)`) instead of `App::run`. `App::run_with` performs the same start-up and then hands you the shell's `Setup`, which provides the `Engine`, the `UiHandle` that background threads clone and post through, and the message handler that runs on the `Engine` thread.
 
 ```rust
-// <!-- check: verify exact Setup field or method names passed to App::run_with and UiHandle::send -->
 use ljos::prelude::*;
+
+enum Msg {
+    Started,
+}
 
 fn main() {
     ljos::App::new("WorkerDemo")
         .size(640.0, 420.0)
         .source(ljos::include_qml!("qml.pack"))
-        .root("Main")
+        .on_message(|_engine, msg: Msg| match msg {
+            Msg::Started => {}
+        })
         .run_with(|setup| {
-            let _ui: ljos::UiHandle = setup.ui_handle();
+            let ui = setup.handle();
+            std::thread::spawn(move || {
+                let _ = ui.send_blocking(Msg::Started);
+            });
+            setup
+                .engine()
+                .create_from_url("Main", None, Vec::new())
+                .map_err(|e| -> ljos::SetupError { e.to_string().into() })
         })
         .unwrap();
 }

@@ -18,9 +18,9 @@ Write the Ljós QML component the user asks for, for the purpose they give.
 1. `ljos:api_status` for every Qt Quick type and member you plan to use (`QtQuick.Item.width`). A row that is `unsupported` or `dropped` says what to use instead.
 2. The behaviour before the code: `ljos:features_list` shows the scenarios nearest to it; write a `.feature` that says what the component does. How a scenario is written here:
    - Use only the steps the resource `ljos://features/steps` lists, word for word: any other wording fails with "Step doesn't match any function". Pointer steps by position (`the user presses the pointer at X, Y`, then `releases`) run on Ljós and on Qt; finding a control by its role and name needs Ljós's accessibility bridge and fails on Qt.
-   - A scenario sees only the files it declares. Give each with `Given the file "X.qml":` and a doc string labelled `qml`, at most 25 lines, and load it with `When "X.qml" is loaded`: after a Given, an And is a Given too.
+   - A scenario sees only the files it declares. Give each with `Given the file "X.qml":` and a doc string labelled `qml`, at most 25 lines (cut a longer file down to what the scenario needs), and load it with `When "X.qml" is loaded`: after a Given, an And is a Given too.
    - Objects are found by `objectName`, not by `id`: give the objects you check one in the scenario's copy of the file.
-   - The file starts with a `# Sources:` comment block, one source per line (the files it describes, Qt documentation URLs). A file tagged `@qt-parity` then has the line `# Verified on Qt 6.x.y (qml6, offscreen).` with the Qt version it passed on.
+   - The file starts with a `# Sources:` comment block, one source per line (the files it describes, Qt documentation URLs). A file tagged `@qt-parity` then has the line `# Verified on Qt 6.x.y (qml6, offscreen).` with the Qt version it passed on, which `qml6 --version` prints.
 3. `ljos:design_rules` lists the design rules; references/agent-brief.md has them as one line each. Follow every line.
 4. Write the QML, then `ljos:qml_format`, `ljos:qml_check` and `ljos:qml_lint` on it.
 5. `ljos:binding_tier_explain` on each file: take the rewrites it offers.

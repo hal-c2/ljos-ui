@@ -102,7 +102,7 @@ Feature: Prompts and reference pages of the authoring tools
       Then the prompt contains "a list of downloads that a worker thread fills"
       And the prompt contains "`dev-qml`"
       And the prompt contains "LJOS_TYPES=write cargo test"
-      And the prompt contains "setup.ui_handle()"
+      And the prompt contains "setup.handle()"
       And the prompt contains "docs/site/rust/threads-and-uihandle.md"
       And the prompt names the tools "qml_format, qml_check, qml_lint"
 

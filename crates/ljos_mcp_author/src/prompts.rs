@@ -64,13 +64,15 @@ const SCENARIO_RULES: &str = "How a scenario is written here:\n   \
     presses the pointer at X, Y`, then `releases`) run on Ljós and on Qt; finding a control by \
     its role and name needs Ljós's accessibility bridge and fails on Qt.\n   \
     - A scenario sees only the files it declares. Give each with `Given the file \"X.qml\":` and \
-    a doc string labelled `qml`, at most 25 lines, and load it with `When \"X.qml\" is loaded`: \
+    a doc string labelled `qml`, at most 25 lines (cut a longer file down to what the \
+    scenario needs), and load it with `When \"X.qml\" is loaded`: \
     after a Given, an And is a Given too.\n   \
     - Objects are found by `objectName`, not by `id`: give the objects you check one in the \
     scenario's copy of the file.\n   \
     - The file starts with a `# Sources:` comment block, one source per line (the files it \
     describes, Qt documentation URLs). A file tagged `@qt-parity` then has the line \
-    `# Verified on Qt 6.x.y (qml6, offscreen).` with the Qt version it passed on.";
+    `# Verified on Qt 6.x.y (qml6, offscreen).` with the Qt version it passed on, which \
+    `qml6 --version` prints.";
 
 pub(crate) fn list() -> Vec<PromptDef> {
     let paths = |what: &'static str| PromptArg {
@@ -377,8 +379,9 @@ pub(crate) fn body(name: &str, reader: Reader) -> Option<String> {
                  `Engine::set_list_model`; the `ModelSignals` it returns tell the views what \
                  changed: {models}.\n\
                  4. Only the UI thread touches the `Engine`. Another thread takes the `UiHandle` \
-                 of `setup.ui_handle()` in `App::run_with` and sends it messages or closures, \
-                 which run on the UI thread: {threads}.\n\
+                 that `setup.handle()` gives in `App::run_with`, and sends the messages that \
+                 `App::on_message` handles on the UI thread; the closure returns the root it \
+                 creates: {threads}.\n\
                  5. Test headless with `App::build`, which builds the Engine and the root \
                  without a window: {testing}.\n\
                  6. `qml_format`, `qml_check` and `qml_lint` on the QML files, then `cargo build` \
