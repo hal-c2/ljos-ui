@@ -81,14 +81,25 @@ impl<V> Overrides<V> {
     const NONE: Self = Overrides(None);
 
     fn push(&mut self, id: OverrideId, layer: Layer<V>) {
+        let idx = if layer.cover {
+            self.len()
+        } else {
+            self.iter()
+                .rposition(|under| !under.cover)
+                .map_or(0, |idx| idx + 1)
+        };
+        self.insert(idx, id, layer);
+    }
+
+    fn insert(&mut self, idx: usize, id: OverrideId, layer: Layer<V>) {
         let list = self.0.get_or_insert_with(|| {
             Box::new(OverrideList {
                 layers: Vec::new(),
                 ids: Vec::new(),
             })
         });
-        list.layers.push(layer);
-        list.ids.push(id);
+        list.layers.insert(idx, layer);
+        list.ids.insert(idx, id);
     }
 
     fn position(&self, id: OverrideId) -> Option<usize> {
@@ -2022,7 +2033,8 @@ impl<V: Clone + 'static> Graph<V> {
     // ----------------------------------------------------------- overrides
 
     /// Pushes an override (`Binding {}`, `PropertyChanges`) above the
-    /// property's current layers. The covered layer is kept for restore.
+    /// property's own layers and below any covers. The covered layer is kept
+    /// for restore; an override under a cover changes nothing until then.
     pub fn push_override(
         &self,
         n: NodeId,
@@ -2061,21 +2073,29 @@ impl<V: Clone + 'static> Graph<V> {
             };
             i.next_override += 1;
             p.animated = false;
-            if let Content::Value(saved) = &mut p.top_mut().content {
+            let covered = !cover && p.overrides.last().is_some_and(|layer| layer.cover);
+            if !covered && let Content::Value(saved) = &mut p.top_mut().content {
                 *saved = node.value.clone();
             }
             match value {
                 OverrideValue::Value(v) => {
+                    let (content, active) = if covered {
+                        (Content::Value(Some(v)), None)
+                    } else {
+                        (Content::Value(None), Some(v))
+                    };
                     p.overrides.push(
                         id,
                         Layer {
-                            content: Content::Value(None),
+                            content,
                             provenance: Provenance::Assigned,
                             cover,
                         },
                     );
-                    i.make_plain(n);
-                    i.set_value(n, v);
+                    if let Some(v) = active {
+                        i.make_plain(n);
+                        i.set_value(n, v);
+                    }
                 }
                 OverrideValue::Binding(f) => {
                     p.overrides.push(
@@ -2086,7 +2106,9 @@ impl<V: Clone + 'static> Graph<V> {
                             cover,
                         },
                     );
-                    i.make_bound_dirty(n);
+                    if !covered {
+                        i.make_bound_dirty(n);
+                    }
                 }
             }
             i.tell_if_set(n, was_unset);

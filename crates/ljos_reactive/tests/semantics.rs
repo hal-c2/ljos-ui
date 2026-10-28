@@ -456,16 +456,18 @@ fn a_write_under_a_cover_is_kept_below_it_and_seen_once_it_comes_off() {
     assert_eq!(g.get(x), 7);
     assert_eq!(*seen.borrow(), vec![0, 7]);
 
-    // An override above the cover takes writes as before.
+    // An override under the cover is kept there and tells no one.
     let c = g.push_cover(x, OverrideValue::binding(|_| 0)).unwrap();
     let o = g.push_override(x, OverrideValue::Value(5)).unwrap();
+    assert_eq!(g.get(x), 0);
     g.set(x, 6);
-    assert_eq!(g.get(x), 6);
+    assert_eq!(g.get(x), 0);
     g.remove_override(x, o, RestoreMode::BindingOrValue)
         .unwrap();
+    assert_eq!(g.get(x), 0);
     g.remove_override(x, c, RestoreMode::BindingOrValue)
         .unwrap();
-    assert_eq!(g.get(x), 7);
+    assert_eq!(g.get(x), 6);
 }
 
 #[test]
@@ -484,6 +486,32 @@ fn a_write_under_nested_covers_survives_removing_the_lower_cover() {
     g.remove_override(x, upper, RestoreMode::BindingOrValue)
         .unwrap();
     assert_eq!(g.get(x), 7, "the property kept its own written value");
+}
+
+#[test]
+fn an_override_under_nested_covers_waits_for_the_last_cover() {
+    let g = Graph::new();
+    let r = g.root();
+    let x = g.property(r, 0).unwrap();
+    let seen = log();
+    let s = seen.clone();
+    g.watch(r, x, move |_, v| s.borrow_mut().push(*v)).unwrap();
+    let lower = g.push_cover(x, OverrideValue::Value(0)).unwrap();
+    let upper = g.push_cover(x, OverrideValue::Value(0)).unwrap();
+    let o = g.push_override(x, OverrideValue::Value(1)).unwrap();
+
+    assert_eq!(g.get(x), 0);
+    g.remove_override(x, lower, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 0);
+    assert!(seen.borrow().is_empty());
+    g.remove_override(x, upper, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 1);
+    g.remove_override(x, o, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 0);
+    assert_eq!(*seen.borrow(), vec![1, 0]);
 }
 
 #[test]
