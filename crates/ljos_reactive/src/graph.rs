@@ -1894,10 +1894,8 @@ impl<V: Clone + 'static> Graph<V> {
             p.animated = false;
             let (layer, covered) = p.written_mut();
             layer.provenance = Provenance::Bound;
-            let dropped = std::mem::replace(
-                &mut layer.content,
-                Content::Binding(Some(Box::new(f))),
-            );
+            let dropped =
+                std::mem::replace(&mut layer.content, Content::Binding(Some(Box::new(f))));
             if !covered {
                 i.make_bound_dirty(n);
             }
