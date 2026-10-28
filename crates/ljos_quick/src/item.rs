@@ -703,18 +703,32 @@ impl Item {
         Ok(())
     }
 
-    /// `mapToItem(item, x, y)`: a point in this item's coordinates, in
-    /// `item`'s (the scene's when `item` is null).
+    /// `mapToItem(item, x, y[, width, height])`: a point or rectangle in
+    /// this item's coordinates, in `item`'s (the scene's when `item` is null).
     #[qml(invokable, name = "mapToItem")]
-    fn map_to_item(cx: &Cx, item: Option<ObjectId>, x: f64, y: f64) -> Point {
-        map_point(cx.engine, Some(cx.this), item, Point { x, y })
+    fn map_to_item(
+        cx: &Cx,
+        item: Option<ObjectId>,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+    ) -> Value {
+        map_arguments(cx.engine, Some(cx.this), item, x, y, width, height)
     }
 
-    /// `mapFromItem(item, x, y)`: a point in `item`'s coordinates (the
-    /// scene's when null), in this item's.
+    /// `mapFromItem(item, x, y[, width, height])`: a point or rectangle in
+    /// `item`'s coordinates (the scene's when null), in this item's.
     #[qml(invokable, name = "mapFromItem")]
-    fn map_from_item(cx: &Cx, item: Option<ObjectId>, x: f64, y: f64) -> Point {
-        map_point(cx.engine, item, Some(cx.this), Point { x, y })
+    fn map_from_item(
+        cx: &Cx,
+        item: Option<ObjectId>,
+        x: Value,
+        y: Value,
+        width: Value,
+        height: Value,
+    ) -> Value {
+        map_arguments(cx.engine, item, Some(cx.this), x, y, width, height)
     }
 
     /// `mapToGlobal(x, y)` or `mapToGlobal(point)`: a point in this item's
@@ -994,6 +1008,30 @@ pub fn scene_transform(engine: &Engine, obj: ObjectId) -> Affine {
 pub fn map_to_scene(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> kurbo::Point {
     let q = map_point(engine, Some(obj), None, Point { x: p.x, y: p.y });
     kurbo::Point::new(q.x, q.y)
+}
+
+fn map_arguments(
+    engine: &Engine,
+    from: Option<ObjectId>,
+    to: Option<ObjectId>,
+    x: Value,
+    y: Value,
+    width: Value,
+    height: Value,
+) -> Value {
+    let (x, y) = (x.to_number(), y.to_number());
+    if width.is_nullish() && height.is_nullish() {
+        let p = map_point(engine, from, to, Point { x, y });
+        return Value::point(p.x, p.y);
+    }
+    let (w, h) = (width.to_number(), height.to_number());
+    let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]
+        .map(|(x, y)| map_point(engine, from, to, Point { x, y }));
+    let (x0, y0, x1, y1) = corners.iter().fold(
+        (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+        |(x0, y0, x1, y1), p| (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
+    );
+    Value::rect(x0, y0, x1 - x0, y1 - y0)
 }
 
 fn map_point(engine: &Engine, from: Option<ObjectId>, to: Option<ObjectId>, p: Point) -> Point {
