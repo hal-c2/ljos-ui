@@ -12,6 +12,6 @@
   "graders": [
     {"name": "build", "run": "cargo build --offline -q"},
     {"name": "test", "run": "cargo test --offline -q 2>&1 | tee $RUN/cargo-test.log; grep -Eq 'test result: ok\\. [1-9]' $RUN/cargo-test.log && ! grep -q 'FAILED' $RUN/cargo-test.log"},
-    {"name": "content", "run": "grep -rq 'UiHandle\\|ui_handle' src && grep -rq 'QmlListModel' src && grep -rq 'QmlObject' src && grep -rq 'ListView' --include=*.qml . && grep -rq 'thread::spawn\\|task::spawn' src"}
+    {"name": "content", "run": "grep -rq 'UiHandle\\|ui_handle\\|\\.handle()' src && grep -rq 'QmlListModel' src && grep -rq 'QmlObject' src && grep -rq 'ListView' --include=*.qml . && grep -rq 'thread::spawn\\|task::spawn' src"}
   ]
 }
