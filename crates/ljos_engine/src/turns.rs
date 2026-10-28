@@ -25,8 +25,8 @@
 //! phase is one relaxed store, made only while a marker is attached.
 //!
 //! The watchdog never polls (rule 6): it sleeps until the deadline of the
-//! turn in progress and parks while no turn runs. Every new turn unparks it
-//! so that its own deadline replaces the previous turn's.
+//! turn in progress and parks while no turn runs. A new turn unparks it only
+//! when its first deadline is sooner than the wake already scheduled.
 //!
 //! [`JournalKind::Host`]: crate::JournalKind::Host
 
@@ -281,6 +281,10 @@ fn epoch() -> Instant {
     *EPOCH.get_or_init(Instant::now)
 }
 
+fn since_epoch(at: Instant) -> u64 {
+    u64::try_from(at.saturating_duration_since(epoch()).as_nanos()).unwrap_or(u64::MAX)
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -355,10 +359,13 @@ impl TurnMarker {
         *lock(&s.cause) = cause;
         s.phase.store(phase as u8, Ordering::Relaxed);
         let turn = s.turn.fetch_add(1, Ordering::AcqRel) + 1;
-        let ns = at.saturating_duration_since(epoch()).as_nanos() as u64;
+        let ns = since_epoch(at);
         s.started.store(ns + 1, Ordering::SeqCst);
-        if s.threshold.load(Ordering::Relaxed) > 0 {
-            watchdog().turn_began();
+        let threshold = s.threshold.load(Ordering::Relaxed);
+        if threshold > 0 {
+            let threshold = Duration::from_millis(threshold).as_nanos();
+            let threshold = u64::try_from(threshold).unwrap_or(u64::MAX);
+            watchdog().turn_began(ns.saturating_add(threshold));
         }
         turn
     }
@@ -668,6 +675,11 @@ impl Engine {
 struct Watchdog {
     markers: Mutex<Vec<Watched>>,
     thread: OnceLock<Thread>,
+    /// When the thread will next wake, in nanoseconds since [`epoch`];
+    /// `u64::MAX` while it is parked with no turn to watch.
+    next_wake: AtomicU64,
+    #[cfg(test)]
+    unparks: AtomicU64,
 }
 
 struct Watched {
@@ -682,6 +694,9 @@ fn watchdog() -> &'static Watchdog {
     WATCHDOG.get_or_init(|| Watchdog {
         markers: Mutex::new(Vec::new()),
         thread: OnceLock::new(),
+        next_wake: AtomicU64::new(u64::MAX),
+        #[cfg(test)]
+        unparks: AtomicU64::new(0),
     })
 }
 
@@ -709,10 +724,14 @@ impl Watchdog {
         thread.unpark();
     }
 
-    /// A marker's turn began: wakes the thread to replace any previous
-    /// turn's deadline with this turn's first deadline.
-    fn turn_began(&self) {
-        if let Some(t) = self.thread.get() {
+    /// A marker's turn began: wakes the thread only if its scheduled wake
+    /// is later than this turn's first deadline.
+    fn turn_began(&self, deadline: u64) {
+        if self.next_wake.load(Ordering::SeqCst) > deadline
+            && let Some(t) = self.thread.get()
+        {
+            #[cfg(test)]
+            self.unparks.fetch_add(1, Ordering::Relaxed);
             t.unpark();
         }
     }
@@ -720,8 +739,14 @@ impl Watchdog {
     fn run(&self) {
         loop {
             match self.check() {
-                Some(wait) => std::thread::park_timeout(wait),
+                Some(wait) => {
+                    let wake = Instant::now().checked_add(wait);
+                    self.next_wake
+                        .store(wake.map_or(u64::MAX, since_epoch), Ordering::SeqCst);
+                    std::thread::park_timeout(wait);
+                }
                 None => {
+                    self.next_wake.store(u64::MAX, Ordering::SeqCst);
                     // A turn that began since the first look already has a
                     // deadline to sleep for instead of parking here.
                     if self.check().is_none() {
@@ -793,12 +818,18 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
-    #[test]
-    fn a_new_turn_unparks_a_watchdog_sleeping_on_the_previous_turns_deadline() {
-        let watchdog = Watchdog {
+    fn test_watchdog(next_wake: u64) -> Watchdog {
+        Watchdog {
             markers: Mutex::new(Vec::new()),
             thread: OnceLock::new(),
-        };
+            next_wake: AtomicU64::new(next_wake),
+            unparks: AtomicU64::new(0),
+        }
+    }
+
+    #[test]
+    fn a_new_turn_unparks_a_watchdog_sleeping_on_the_previous_turns_deadline() {
+        let watchdog = test_watchdog(1_000);
         let (ready_tx, ready_rx) = mpsc::channel();
         let (woke_tx, woke_rx) = mpsc::channel();
         let sleeping = std::thread::spawn(move || {
@@ -809,11 +840,28 @@ mod tests {
         watchdog.thread.set(sleeping.thread().clone()).unwrap();
         ready_rx.recv().unwrap();
 
-        watchdog.turn_began();
+        watchdog.turn_began(10);
 
         let woke = woke_rx.recv_timeout(Duration::from_millis(100));
         sleeping.thread().unpark();
         sleeping.join().unwrap();
         woke.expect("a new turn interrupts the previous turn's deadline sleep");
+    }
+
+    #[test]
+    fn short_turns_do_not_unpark_the_watchdog_before_its_current_deadline() {
+        let watchdog = test_watchdog(100);
+        let sleeping = std::thread::spawn(|| {
+            std::thread::park_timeout(Duration::from_secs(30));
+        });
+        watchdog.thread.set(sleeping.thread().clone()).unwrap();
+
+        for deadline in [101, 102, 103] {
+            watchdog.turn_began(deadline);
+        }
+
+        sleeping.thread().unpark();
+        sleeping.join().unwrap();
+        assert_eq!(watchdog.unparks.load(Ordering::Relaxed), 0);
     }
 }
