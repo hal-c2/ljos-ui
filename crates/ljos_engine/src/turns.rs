@@ -363,8 +363,8 @@ impl TurnMarker {
         turn
     }
 
-    fn handler(&self, name: &Atom) {
-        lock(&self.0.cause).handler = Some(name.clone());
+    fn handler(&self, cause: &Cause) {
+        *lock(&self.0.cause) = cause.clone();
     }
 
     fn end(&self) {
@@ -608,15 +608,19 @@ impl Engine {
     }
 
     /// The QML handler `name` of the object whose code runs starts. The
-    /// first one in a turn names the turn.
-    pub(crate) fn turn_handler(&self, name: &Atom) -> PhaseGuard<'_> {
+    /// first one in a turn, and its object, name the turn.
+    pub(crate) fn turn_handler(&self, name: &Atom, obj: ObjectId) -> PhaseGuard<'_> {
         let t = &self.inner.turns;
         if t.started.get().is_some() {
             let mut c = t.cause.borrow_mut();
             if c.handler.is_none() {
                 c.handler = Some(name.clone());
+                if c.origin.is_none() {
+                    c.origin = Some(obj);
+                    (c.label, c.place) = self.type_and_place(obj);
+                }
                 if let Some(m) = t.marker.get() {
-                    m.handler(name);
+                    m.handler(&c);
                 }
             }
         }

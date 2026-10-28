@@ -86,6 +86,22 @@ fn a_handler_past_the_budget_is_named_with_its_object_and_place() {
 }
 
 #[test]
+fn a_handler_inside_a_frame_is_named_with_its_object_and_place() {
+    let h = engine();
+    let root = h.load(SRC);
+    h.engine.set_turn_budget(Some(Duration::from_nanos(1)));
+    h.engine.turn_for(TurnCause::Frame, None, || {
+        h.set(root, "base", Value::Int(2));
+    });
+    let warnings = h.warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    let w = &warnings[0];
+    assert!(w.contains("a frame of the scene"), "{w}");
+    assert!(w.contains("handler onBaseChanged of Main \"root\""), "{w}");
+    assert!(w.ends_with(" declared at file:///Main.qml:3:1"), "{w}");
+}
+
+#[test]
 fn only_the_outermost_of_nested_turns_is_timed() {
     let h = engine();
     h.engine.set_turn_budget(Some(Duration::from_millis(5)));
