@@ -1877,8 +1877,9 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(true)
     }
 
-    /// Installs a binding on the top layer (`x = Qt.binding(...)`), replacing
-    /// whatever was there. The property becomes dirty; observers re-check.
+    /// Installs a binding (`x = Qt.binding(...)`), replacing what was on the
+    /// layer an imperative write would use. A cover stays active; an
+    /// uncovered property becomes dirty and its observers re-check.
     pub fn bind(
         &self,
         n: NodeId,
@@ -1893,10 +1894,15 @@ impl<V: Clone + 'static> Graph<V> {
                 return Err(ReactiveError::NotAProperty(n));
             };
             p.animated = false;
-            let top = p.top_mut();
-            top.provenance = Provenance::Bound;
-            let dropped = std::mem::replace(&mut top.content, Content::Binding(Some(Box::new(f))));
-            i.make_bound_dirty(n);
+            let (layer, covered) = p.written_mut();
+            layer.provenance = Provenance::Bound;
+            let dropped = std::mem::replace(
+                &mut layer.content,
+                Content::Binding(Some(Box::new(f))),
+            );
+            if !covered {
+                i.make_bound_dirty(n);
+            }
             i.tell_if_set(n, was_unset);
             dropped
         };
