@@ -72,7 +72,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ljos_egui::{QmlView, ViewError};
-use ljos_engine::{Color, Engine, ObjectId};
+use ljos_engine::{Color, Engine, ObjectId, TurnCause};
 use ljos_quick::TimerHook;
 use ljos_runtime::{Clock, DrainBudget, DrainReport, UiHandle, UiInbox};
 
@@ -225,6 +225,7 @@ pub struct Setup<'a, M> {
     handle: UiHandle<M>,
     clock: Arc<dyn Clock>,
     on_message: Option<MessageHandler<M>>,
+    message_kinds: Option<fn(&M) -> &'static str>,
     timer_hook: Option<TimerHook>,
     #[cfg(feature = "dev")]
     dev: dev::DevSetup,
@@ -262,6 +263,13 @@ impl<M> Setup<'_, M> {
     /// message is still handled.
     pub fn on_message(&mut self, f: impl FnMut(&Engine, M) + 'static) {
         self.on_message = Some(Box::new(f));
+    }
+
+    /// Names each message's kind (its variant, never what it carries),
+    /// for an observer of the `application` mailbox and for a turn that
+    /// runs long: the warning then says which message it was.
+    pub fn name_messages(&mut self, kind_of: fn(&M) -> &'static str) {
+        self.message_kinds = Some(kind_of);
     }
 
     /// Installs an application-wide key filter: `filter` sees every key
@@ -429,14 +437,16 @@ impl<M: Send + 'static> ShellApp<M> {
             // Qt: their fetches and decodes never hold up a frame.
             ljos_quick::ImageStore::of(&engine).set_start_after_frame(true);
         }
+        // A turn that runs long is warned of, and one that never ends is
+        // reported while it runs, in a debug build or as the variables say.
+        engine.watch_turns_by_default();
         let (inbox, handle) = UiInbox::channel_with_wake(config.inbox_capacity, Arc::clone(&wake));
-        // The application's own messages: their kinds are its business.
-        inbox.observe_as("application", None);
         let mut s = Setup {
             engine: &engine,
             handle,
             clock: Arc::clone(&clock),
             on_message: None,
+            message_kinds: None,
             timer_hook: None,
             #[cfg(feature = "dev")]
             dev: dev::DevSetup::new(Arc::clone(&wake)),
@@ -449,6 +459,7 @@ impl<M: Send + 'static> ShellApp<M> {
         let root = setup(&mut s).map_err(ShellError::Setup)?;
         let Setup {
             on_message,
+            message_kinds,
             timer_hook,
             #[cfg(feature = "dev")]
             dev,
@@ -456,6 +467,9 @@ impl<M: Send + 'static> ShellApp<M> {
             tools,
             ..
         } = s;
+        // The application's own messages: their kinds are its business,
+        // named only if it names them.
+        inbox.observe_as("application", message_kinds);
         let mut view = QmlView::new(Rc::clone(&engine), root)?.with_clock(clock);
         ljos_quick::roots::RootSwaps::of(&engine).shows(None, root);
         if let Some(tree) = tree {
@@ -523,7 +537,11 @@ impl<M: Send + 'static> ShellApp<M> {
                     // One message, one turn: a handler that panics is a
                     // fault of the application, not the end of it, and
                     // the messages after it are still handled.
-                    engine.turn(None, || f(&engine, m));
+                    let cause = TurnCause::Message {
+                        mailbox: inbox.name().unwrap_or("application"),
+                        kind: inbox.kind_of(&m),
+                    };
+                    engine.turn_for(cause, None, || f(&engine, m));
                 }
             })
         });

@@ -204,7 +204,22 @@ impl Engine {
     /// happened) and gives `None`. For everything a host runs on the
     /// engine that is not already inside one: an input event, a message
     /// from another thread, a frame.
+    ///
+    /// The turn is timed and watched as [`Engine::begin_turn`] says.
     pub fn turn<R>(&self, origin: Option<ObjectId>, f: impl FnOnce() -> R) -> Option<R> {
+        self.turn_for(crate::TurnCause::Host, origin, f)
+    }
+
+    /// [`Engine::turn`] for something other than host code: a message
+    /// from another thread is named by its mailbox and kind when the turn
+    /// runs long.
+    pub fn turn_for<R>(
+        &self,
+        cause: crate::TurnCause,
+        origin: Option<ObjectId>,
+        f: impl FnOnce() -> R,
+    ) -> Option<R> {
+        let _turn = self.begin_turn(cause, origin);
         let guard = self.origin(origin);
         // The engine is usable after a panic by construction (see the
         // module documentation), which is what unwind safety asks about.

@@ -587,6 +587,19 @@ impl<M> UiInbox<M> {
     }
 }
 
+impl<M> UiInbox<M> {
+    /// The name [`UiInbox::observe_as`] gave this inbox.
+    pub fn name(&self) -> Option<&'static str> {
+        self.shared.watch.get().map(|w| w.name)
+    }
+
+    /// What [`UiInbox::observe_as`] names `m`'s kind, if it names kinds:
+    /// what a turn that handles `m` is said to run.
+    pub fn kind_of(&self, m: &M) -> Option<&'static str> {
+        self.shared.watch.get()?.kind_of.map(|k| k(m))
+    }
+}
+
 impl<M: Send + 'static> UiInbox<M> {
     /// Names this inbox for an observer (`app_processes`), once; a second
     /// name is ignored. `kind_of` names a message's kind for the counts

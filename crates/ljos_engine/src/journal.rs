@@ -40,6 +40,10 @@ pub enum JournalKind {
     Placed,
     /// The scene rebuilt what an item draws.
     Redrawn,
+    /// Host code ran: a message from another thread, a closure given to
+    /// [`Engine::turn`]. `type_name` is the mailbox (`host` for a
+    /// closure), `name` the message's kind.
+    Host,
 }
 
 impl JournalKind {
@@ -51,6 +55,7 @@ impl JournalKind {
             JournalKind::LaidOut => "laid out",
             JournalKind::Placed => "placed",
             JournalKind::Redrawn => "redrawn",
+            JournalKind::Host => "host",
         }
     }
 }
@@ -252,6 +257,21 @@ impl Engine {
                     .map_or_else(|| "?".to_owned(), |m| m.name.to_string());
                 (ty, crate::qtqml::handler_name(signal), at())
             },
+            false,
+        );
+        self.journal_run(index)
+    }
+
+    /// The start of a turn of host code, journaled if journaling is on.
+    /// It belongs to no object.
+    pub(crate) fn journal_host_run(&self, ty: &str, name: &str) -> Option<JournalRun<'_>> {
+        if !self.inner.journal.on.get() {
+            return None;
+        }
+        let index = self.journal_start(
+            JournalKind::Host,
+            ObjectId::default(),
+            || (ty.to_owned(), name.to_owned(), None),
             false,
         );
         self.journal_run(index)

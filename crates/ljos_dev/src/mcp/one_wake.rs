@@ -92,14 +92,28 @@ pub(super) fn answer(
     let mut slowest: Vec<&JournalEntry> = journal
         .entries
         .iter()
-        .filter(|e| matches!(e.kind, JournalKind::Handler | JournalKind::Binding))
+        .filter(|e| {
+            matches!(
+                e.kind,
+                JournalKind::Handler | JournalKind::Binding | JournalKind::Host
+            )
+        })
         .filter(|e| e.took.is_some())
         .collect();
     slowest.sort_by_key(|e| std::cmp::Reverse(e.took));
     slowest.truncate(SLOWEST);
 
+    // Host work runs outside the frames: without it a wake spent in a
+    // message's Rust code would show only an unexplained total.
+    let host: Duration = journal
+        .entries
+        .iter()
+        .filter(|e| e.kind == JournalKind::Host && e.depth == 0)
+        .filter_map(|e| e.took)
+        .sum();
     let s = entry.steps();
     let steps = json!({
+        "host_ms": ms(host),
         "frames": s.frames,
         "timers_ms": ms(s.timers),
         "animations_ms": ms(s.animations),
@@ -125,6 +139,9 @@ pub(super) fn answer(
         ms(s.scene),
         ms(s.bindings),
     );
+    if !host.is_zero() {
+        let _ = writeln!(text, "host code outside the frames took {:.2} ms", ms(host));
+    }
     let counted: Vec<String> = counts.iter().map(|(k, n)| format!("{n} {k}")).collect();
     if counted.is_empty() {
         text.push_str("it ran no handler or binding and changed nothing\n");
@@ -168,6 +185,15 @@ pub(super) fn answer(
             continue;
         }
         match e.kind {
+            JournalKind::Host => {
+                let _ = writeln!(
+                    text,
+                    "{pad}host work: {} of {}, {} µs",
+                    e.name,
+                    e.type_name,
+                    e.took.unwrap_or_default().as_micros()
+                );
+            }
             JournalKind::Changed => {
                 let _ = writeln!(
                     text,

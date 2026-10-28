@@ -185,6 +185,46 @@ fn a_panicking_message_is_a_fault_and_the_rest_are_handled() {
     assert_eq!(*handled.borrow(), vec![100, 101, 102]);
 }
 
+/// A message whose handler takes longer than the turn budget is named in
+/// the warning by the kind the application gave it (issue #164).
+#[test]
+fn a_slow_message_is_named_by_its_kind() {
+    let ctx = egui::Context::default();
+    let config = ShellConfig {
+        drain_budget: DrainBudget::UNLIMITED,
+        ..ShellConfig::default()
+    };
+    let mut app: ShellApp<Probe> =
+        ShellApp::new(&ctx, &config, Arc::new(SystemClock::new()), move |s| {
+            s.name_messages(|m| match m {
+                Probe::Ok(_) => "Ok",
+                Probe::Boom => "Boom",
+            });
+            s.on_message(|_, _| std::thread::sleep(Duration::from_millis(20)));
+            let root = s
+                .engine()
+                .create_native(Item::default(), None)
+                .map_err(|e| e.to_string())?;
+            s.engine().complete(root).map_err(|e| e.to_string())?;
+            Ok(root)
+        })
+        .unwrap();
+    app.engine().set_turn_budget(Some(Duration::from_millis(5)));
+    app.engine().take_warnings();
+    app.handle()
+        .send(Probe::Ok(1))
+        .unwrap_or_else(|_| panic!("room in the inbox"));
+    app.drain_inbox();
+    let warnings = app.engine().take_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0]
+            .ends_with("longer than its budget of 5 ms: message `Ok` of mailbox `application`"),
+        "{}",
+        warnings[0]
+    );
+}
+
 /// A root asked for and destroyed before the host makes the change is
 /// dropped: the window keeps the root it shows (issue #141).
 #[test]

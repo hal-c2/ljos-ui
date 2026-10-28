@@ -153,6 +153,7 @@ pub(crate) struct Inner {
     pub(crate) profile: crate::profile::Profiler,
     /// What each turn did, while an inspector asks (`journal.rs`).
     pub(crate) journal: crate::journal::JournalState,
+    pub(crate) turns: crate::turns::TurnState,
     /// The properties whose setters (those that get a `Cx`) are running,
     /// innermost last: a write to one of them from inside is refused.
     setters: RefCell<SmallVec<[(ObjectId, PropIndex); 2]>>,
@@ -323,6 +324,7 @@ impl Engine {
             timing: Default::default(),
             profile: Default::default(),
             journal: Default::default(),
+            turns: Default::default(),
             setters: RefCell::new(SmallVec::new()),
             frozen: Cell::new(0),
         });

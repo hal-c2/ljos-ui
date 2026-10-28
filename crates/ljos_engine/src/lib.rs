@@ -106,6 +106,7 @@ mod timing;
 mod trace;
 mod tree;
 mod tree_model;
+mod turns;
 mod types;
 mod url_global;
 mod url_text;
@@ -189,6 +190,7 @@ pub use timing::EngineTimes;
 pub use trace::{TraceSink, Traced};
 pub use tree::{ItemTree, TreeChange, TreeListener, TreeListeners, tree_model};
 pub use tree_model::{TableModelColumn, TreeModel};
+pub use turns::{BUDGET_VARIABLE, DEFAULT_TURN_BUDGET, TurnCause, TurnGuard};
 pub use types::{ConvertError, Copied, QmlValue, TypeTag, Url};
 pub use value::{Color, EnumValue, Font, JsHandle, Point, Rect, Size, Unwritten, Value};
 pub use value_types::{

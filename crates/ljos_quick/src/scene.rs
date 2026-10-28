@@ -1343,6 +1343,8 @@ impl QuickScene {
     /// need not share an epoch.
     pub fn frame(&mut self, engine: &Engine, now: Time) -> FrameOutput {
         use crate::frame_times::{FrameTimes, Laps, lap};
+        // A frame is a turn, timed against the budget like any other.
+        let _turn = engine.begin_turn(ljos_engine::TurnCause::Frame, None);
         self.frame += 1;
         let mut laps = self.timing.is_some().then(Laps::start);
         let mut steps = FrameTimes::default();
