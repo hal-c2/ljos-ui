@@ -1583,11 +1583,7 @@ impl Engine {
                     // value it was made with, before anything reads it: a
                     // read of it needs no keeping.
                     None if self.inner.tracking.get() == 0
-                        || p.flags.intersects(
-                            PropertyFlags::CONSTANT
-                                | PropertyFlags::GROUP
-                                | PropertyFlags::MADE_ONLY,
-                        ) =>
+                        || p.flags.intersects(PropertyFlags::UNKEPT) =>
                     {
                         Got::Value(read_access(&*h.native, &h.dynamic, &p.access))
                     }

@@ -742,6 +742,16 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
 }
 
 /// The text of a binding's JS function, for a report.
+/// `text`, which runs to the next export, less the comment that names the
+/// next function's binding: the compiler writes it before that function.
+fn function_text(text: &str) -> &str {
+    let text = text.trim_end();
+    match text.rfind('\n') {
+        Some(at) if text[at + 1..].trim_start().starts_with("// ") => &text[..at],
+        _ => text,
+    }
+}
+
 pub(crate) fn js_text(ir: &CompiledFile, b: &Binding) -> String {
     const MOST: usize = 240;
     let Some(function) = ir.js.functions.get(b.js_fn.index()) else {
@@ -753,8 +763,9 @@ pub(crate) fn js_text(ir: &CompiledFile, b: &Binding) -> String {
     };
     let rest = &ir.js.source[start + "export ".len()..];
     let end = rest.find("\nexport function ").unwrap_or(rest.len());
+    let text = function_text(&rest[..end]);
     let mut out = String::new();
-    for word in rest[..end].split_whitespace() {
+    for word in text.split_whitespace() {
         if out.len() + word.len() > MOST {
             out.push_str(" ...");
             break;
@@ -1100,6 +1111,20 @@ mod tests {
             &record(vec![("at", Value::Real(-0.0))])
         ));
         assert!(!same(&record(vec![kind()]), &Value::Null));
+    }
+
+    #[test]
+    fn a_function_text_leaves_out_the_next_functions_comment() {
+        let text = "function f0(root) {\n  return (root.width);\n}\n// Main.qml:11:12 Item.y\n";
+        assert_eq!(
+            super::function_text(text),
+            "function f0(root) {\n  return (root.width);\n}"
+        );
+        let last = "function f1(root) {\n  return (root.gap);\n}\n";
+        assert_eq!(
+            super::function_text(last),
+            "function f1(root) {\n  return (root.gap);\n}"
+        );
     }
 
     #[test]

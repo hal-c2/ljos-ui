@@ -292,6 +292,36 @@ Feature: Files compiled ahead of time
     And the file "Scenario.qml" ran compiled code
     And the log has no warning matching "compiled code and the dynamic tiers differ"
 
+  # A readonly property without a binding holds what it was made with: no read of it is kept,
+  # compiled or dynamic, so the two runs read the same.
+  Scenario: A binding that reads a readonly constant is compiled and agrees with the dynamic tiers
+    Given the files are compiled ahead of time
+    And the compiled code cross-check is on
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+          id: root
+          objectName: "root"
+          width: 100
+          readonly property int minimumWidth: 208
+          property int gap: 208
+          Item {
+              objectName: "inner"
+              x: Math.min(0, root.width - root.minimumWidth)
+              y: Math.min(0, root.width - root.gap)
+          }
+      }
+      """
+    Then the property "x" of "inner" is -108
+    And the property "y" of "inner" is -108
+    When the property "gap" of "root" is set to 50
+    Then the property "y" of "inner" is 0
+    When the property "width" of "root" is set to 300
+    Then the property "x" of "inner" is 0
+    And the file "Scenario.qml" ran compiled code
+    And the log has no warning matching "compiled code and the dynamic tiers differ"
+
   @qt-table
   Scenario: The check compiles what an item reads of its parent, and its parent as a value
     Given the file "Main.qml":
@@ -359,6 +389,33 @@ Feature: Files compiled ahead of time
       Main.qml:5:11: runs dynamically: statement: a variable declared in a switch case
       """
 
+  Scenario: A read-only value a reload changes reaches a binding compiled code ran
+    Given the files are compiled ahead of time
+    And the compiled code cross-check is on
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+          objectName: "root"
+          readonly property int r: 3
+          property int twice: r * 2
+      }
+      """
+    Then the property "twice" of "root" is 6
+    And the file "Scenario.qml" ran compiled code
+    When the file "Scenario.qml" is changed to:
+      """qml
+      import QtQuick
+      Item {
+          objectName: "root"
+          readonly property int r: 4
+          property int twice: r * 2
+      }
+      """
+    And a reload happens
+    Then the property "r" of "root" is 4
+    And the property "twice" of "root" is 8
+
   Rule: An edited file runs dynamically
 
     Background:
@@ -412,3 +469,4 @@ Feature: Files compiled ahead of time
       Then the property "order" of "root" is "a1b2"
       And the property "half" of "root" is 1
       And the file "Scenario.qml" ran no compiled code
+

@@ -536,14 +536,16 @@ struct Reads {
     fields: Vec<(ObjectId, PropIndex)>,
 }
 
+/// The distinct things of `v`: a read twice is one dependency.
+fn set<T: Ord + Copy>(v: &[T]) -> Vec<T> {
+    let mut v = v.to_vec();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
 impl Reads {
     fn same_as(&self, other: &Reads) -> bool {
-        fn set<T: Ord + Copy>(v: &[T]) -> Vec<T> {
-            let mut v = v.to_vec();
-            v.sort_unstable();
-            v.dedup();
-            v
-        }
         set(&self.nodes) == set(&other.nodes) && set(&self.fields) == set(&other.fields)
     }
 }
@@ -826,9 +828,18 @@ impl Engine {
         let js = self.eval_expr_as(inst, expr, hint, args, propagate, kept);
         let js_plain = js.as_ref().map(|v| self.plain(v));
         st.skip.borrow_mut().truncate(depth);
+        // The dynamic tiers keep a read compiled code does not: of a value
+        // only the object's making writes, which a reload may write again
+        // (and the tiers' kept read is how the reader hears of it).
+        // Compiled code is never run on a reloaded file, so the two agree.
         let dynamic_reads = tracked.map(|(_, at)| Reads {
             nodes: g.reads_since(at),
-            fields: st.field_reads.take(),
+            fields: st
+                .field_reads
+                .take()
+                .into_iter()
+                .filter(|&(o, p)| !self.unkept(o, p))
+                .collect(),
         });
         restore();
         st.nest.set(outer_nest);
@@ -938,9 +949,18 @@ impl Engine {
         }
     }
 
+    /// Whether compiled code reads `prop` of `obj` without keeping the
+    /// read, as `try_read` does a field that cannot change.
+    fn unkept(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        self.meta_of(obj)
+            .and_then(|m| m.property(prop).map(|p| p.flags))
+            .is_some_and(|f| f.intersects(crate::meta::PropertyFlags::UNKEPT))
+    }
+
     fn reads_text(&self, reads: &Reads) -> String {
-        let mut out = format!("{} nodes", reads.nodes.len());
-        for (o, p) in &reads.fields {
+        // As they are compared.
+        let mut out = format!("{} nodes", set(&reads.nodes).len());
+        for (o, p) in &set(&reads.fields) {
             let (ty, name) = self.describe(*o, *p);
             let _ = write!(out, ", {ty}.{name}");
         }

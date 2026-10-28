@@ -113,6 +113,14 @@ bitflags::bitflags! {
     }
 }
 
+impl PropertyFlags {
+    /// A property without a node that has one of these holds the value it
+    /// was made with, or is a group whose parts are read on their own:
+    /// [`Engine::try_read`](crate::Engine), which compiled code reads by,
+    /// does not keep a tracked read of it.
+    pub(crate) const UNKEPT: Self = Self::CONSTANT.union(Self::GROUP).union(Self::MADE_ONLY);
+}
+
 /// Reads a native field. The argument is the struct that declares it.
 pub type Getter = fn(&dyn QmlObject) -> Value;
 /// Writes a native field. The argument is the struct that declares it.
