@@ -1028,7 +1028,12 @@ fn map_arguments(
     let corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]
         .map(|(x, y)| map_point(engine, from, to, Point { x, y }));
     let (x0, y0, x1, y1) = corners.iter().fold(
-        (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+        (
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ),
         |(x0, y0, x1, y1), p| (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)),
     );
     Value::rect(x0, y0, x1 - x0, y1 - y0)

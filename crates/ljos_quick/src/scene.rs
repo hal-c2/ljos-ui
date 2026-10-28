@@ -653,9 +653,12 @@ pub(crate) fn cursor_shape_changed(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
 
 /// The change hook of what an item's [`Geom`] reads: it is read again at
 /// the frame.
-pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
+pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
     let obj = cx.this;
     mark_shown(cx.engine, obj, |s| s.set(obj, Dirty::GEOM, |_| ()));
+    if p == crate::item::Item::WIDTH.index || p == crate::item::Item::HEIGHT.index {
+        crate::anchors::size_changed(cx.engine, obj);
+    }
 }
 
 /// The change hook of an item's `visible`: its geometry is read again at

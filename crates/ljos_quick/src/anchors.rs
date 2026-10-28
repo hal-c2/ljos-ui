@@ -35,7 +35,7 @@ pub(crate) struct AnchorState {
     fill: bool,
     center_in: bool,
     /// Last warnings, so an effect re-run does not repeat them.
-    warned: Vec<String>,
+    warned: Box<[String]>,
 }
 
 impl AnchorState {
@@ -151,6 +151,21 @@ fn start(engine: &Engine, obj: ObjectId, followed: &Followed) -> Result<(), Engi
         engine.stop_effect(effect);
     }
     Ok(())
+}
+
+/// A followed item's size changed: anchors that depend on it catch up
+/// before its change signal runs. A write made by `run` itself finds the
+/// state borrowed and leaves the current pass to finish.
+pub(crate) fn size_changed(engine: &Engine, obj: ObjectId) {
+    let followed = engine.extension::<Followed>();
+    let state = followed
+        .items
+        .borrow()
+        .get(obj)
+        .and_then(|s| s.following.as_ref().map(|f| Rc::clone(&f.state)));
+    if let Some(state) = state.filter(|st| st.try_borrow().is_ok()) {
+        run(engine, obj, &state);
+    }
 }
 
 /// An anchor line of `cx.this` was given: an item shown and not yet
@@ -290,12 +305,14 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) 
     // lines are read in one go, and an item none is set on asks no more.
     let lines = read_lines(engine, obj);
     let (fill, center_in) = (lines[FILL].as_object(), lines[CENTER_IN].as_object());
-    let mut st = state.borrow_mut();
+    let Ok(mut st) = state.try_borrow_mut() else {
+        return;
+    };
     if lines.iter().all(Value::is_nullish) {
         if [st.x, st.y, st.w, st.h].iter().any(Option::is_some) {
             engine.batch(|| st.release(engine, obj));
         }
-        st.warned.clear();
+        st.warned = Box::default();
         st.fill = false;
         st.center_in = false;
         return;
@@ -314,26 +331,31 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) 
     let (h, v) = if keep {
         (Span::default(), Span::default())
     } else {
-        (horizontal(&mut cx, fill, center_in), vertical(&mut cx, fill, center_in))
+        (
+            horizontal(&mut cx, fill, center_in),
+            vertical(&mut cx, fill, center_in),
+        )
     };
 
-    let mut st = state.borrow_mut();
-    let result = engine.batch(|| -> Result<(), EngineError> {
-        apply(engine, obj, Item::X.index, &mut st.x, h.pos)?;
+    let Ok(mut st) = state.try_borrow_mut() else {
+        return;
+    };
+    let result = (|| -> Result<(), EngineError> {
         apply(engine, obj, Item::WIDTH.index, &mut st.w, h.len)?;
-        apply(engine, obj, Item::Y.index, &mut st.y, v.pos)?;
-        apply(engine, obj, Item::HEIGHT.index, &mut st.h, v.len)
-    });
+        apply(engine, obj, Item::X.index, &mut st.x, h.pos)?;
+        apply(engine, obj, Item::HEIGHT.index, &mut st.h, v.len)?;
+        apply(engine, obj, Item::Y.index, &mut st.y, v.pos)
+    })();
     if let Err(e) = result {
         cx.warnings.push(format!("anchors: {e}"));
     }
-    if cx.warnings != st.warned {
+    if cx.warnings.as_slice() != st.warned.as_ref() {
         for w in &cx.warnings {
             if !st.warned.contains(w) {
                 engine.log(LogLevel::Warning, CATEGORY, w.clone());
             }
         }
-        st.warned = cx.warnings;
+        st.warned = cx.warnings.into_boxed_slice();
     }
 }
 
