@@ -4,6 +4,9 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-layouts-layout.html#margins-attached-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-layouts-layout.html#alignment-attached-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-layouts-layout.html#fillHeight-attached-prop
+#   https://doc.qt.io/qt-6/qml-qtquick-layouts-gridlayout.html
+#   https://doc.qt.io/qt-6/qml-qtquick-layouts-layout.html#columnSpan-attached-prop
+#   https://doc.qt.io/qt-6/qml-qtquick-layouts-layout.html#rowSpan-attached-prop
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
 @qt-parity
@@ -102,3 +105,43 @@ Feature: Layout parity
       """
     When the method "hideA" of "root" is called
     Then the property "log" of "root" is "60,60"
+
+  Scenario: A columnSpan of 2 absorbs columnSpacing when widening the spanned columns
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Layouts
+      Item {
+        id: root; objectName: "root"; width: 300; height: 200
+        property string log: ""
+        GridLayout {
+          id: gl; objectName: "gl"; columns: 2; columnSpacing: 20; rowSpacing: 10
+          Item { id: c0; Layout.preferredWidth: 30; Layout.preferredHeight: 15 }
+          Item { id: c1; Layout.preferredWidth: 30; Layout.preferredHeight: 15 }
+          Item { id: span; Layout.columnSpan: 2; Layout.preferredWidth: 100; Layout.preferredHeight: 15 }
+        }
+        Component.onCompleted: log = c0.width + "," + c1.x + "," + c1.width + "," + span.width + "," + gl.implicitWidth
+      }
+      """
+    Then the property "log" of "root" is "30,60,30,100,100"
+
+  Scenario: Auto-placed items in row 1 skip middle column 1 occupied by a rowSpan from row 0
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Layouts
+      Item {
+        id: root; objectName: "root"; width: 300; height: 200
+        property string log: ""
+        GridLayout {
+          id: gl; columns: 3; columnSpacing: 5; rowSpacing: 5
+          Item { id: a; Layout.preferredWidth: 20; Layout.preferredHeight: 10 }
+          Item { id: b; Layout.rowSpan: 2; Layout.preferredWidth: 30; Layout.preferredHeight: 35 }
+          Item { id: c; Layout.preferredWidth: 40; Layout.preferredHeight: 10 }
+          Item { id: d; Layout.preferredWidth: 20; Layout.preferredHeight: 10 }
+          Item { id: e; Layout.preferredWidth: 40; Layout.preferredHeight: 10 }
+        }
+        Component.onCompleted: log = d.x + "," + d.y + ";" + e.x + "," + e.y + ";" + gl.implicitWidth + "," + gl.implicitHeight
+      }
+      """
+    Then the property "log" of "root" is "0,23;60,23;100,35"
