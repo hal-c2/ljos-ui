@@ -379,6 +379,9 @@ impl Dirty {
 /// the frame takes it. A value is read only while its mark is set.
 struct Marks {
     dirty: Dirty,
+    /// Adopted into the render tree, rather than only inheriting from an
+    /// adopted parent while its component is being created.
+    adopted: bool,
     /// What a Text's follow effect last read of it: its paint and its
     /// polish take it from here, so a text's inputs are read once a change
     /// and not by each. Shared with its paint, and only a Text has one, so
@@ -397,6 +400,7 @@ impl Marks {
     fn new() -> Marks {
         Marks {
             dirty: Dirty::empty(),
+            adopted: false,
             text: None,
             text_shown: false,
             inherit: Inherit::default(),
@@ -408,8 +412,9 @@ impl Marks {
 /// Dirty state written by change hooks and effects and drained by `frame`.
 #[derive(Default)]
 struct Shared {
-    /// One for each item the scene shows, made before its effects are, so
-    /// a mark for anything else is nothing.
+    /// One for each item the scene shows or is creating under an item it
+    /// shows, made before its effects are, so a mark for anything else is
+    /// nothing.
     marks: Records<Marks>,
     /// What the marks `LIST` and `CONTENT` carry, beside the marks: few
     /// items have either at once, and each is large. Kept only for an item
@@ -531,13 +536,17 @@ impl Shared {
 type SharedRc = Rc<RefCell<Shared>>;
 
 /// The scenes showing an engine's items, for the change hooks of what
-/// they read ([`moved`], [`reshaped`]). A scene that goes is let go.
+/// they read ([`moved`], [`reshaped`]). A scene that goes is let go. The
+/// pending records hold inherited state before a root's first scene exists.
 #[derive(Default)]
-struct Scenes(RefCell<Vec<std::rc::Weak<RefCell<Shared>>>>);
+struct Scenes {
+    all: RefCell<Vec<std::rc::Weak<RefCell<Shared>>>>,
+    pending: SharedRc,
+}
 
 impl Scenes {
     fn add(&self, shared: &SharedRc) {
-        let mut all = self.0.borrow_mut();
+        let mut all = self.all.borrow_mut();
         if all
             .iter()
             .any(|w| std::ptr::eq(w.as_ptr(), Rc::as_ptr(shared)))
@@ -551,11 +560,32 @@ impl Scenes {
     /// The scenes still there, taken out of the list: a mark wakes the
     /// host, which may make or drop a scene.
     fn live(&self) -> SmallVec<[SharedRc; 2]> {
-        self.0
+        self.all
             .borrow()
             .iter()
             .filter_map(std::rc::Weak::upgrade)
             .collect()
+    }
+
+    fn inheriting(&self) -> SmallVec<[SharedRc; 2]> {
+        let mut all = self.live();
+        all.push(Rc::clone(&self.pending));
+        all
+    }
+
+    fn is_pending(&self, shared: &SharedRc) -> bool {
+        Rc::ptr_eq(&self.pending, shared)
+    }
+
+    fn take(&self, obj: ObjectId) -> Option<Marks> {
+        self.pending.borrow_mut().forget(obj)
+    }
+
+    fn forget_pending(&self, gone: &[ObjectId]) {
+        let mut pending = self.pending.borrow_mut();
+        for obj in gone {
+            pending.forget(*obj);
+        }
     }
 }
 
@@ -580,7 +610,9 @@ pub(crate) fn restructured(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
 /// [`Engine::on_destroyed`]: a scene that showed one of `gone` sweeps its
 /// dead at the next frame.
 pub(crate) fn destroyed(e: &Engine, gone: &[ObjectId]) {
-    for s in e.extension::<Scenes>().live() {
+    let scenes = e.extension::<Scenes>();
+    scenes.forget_pending(gone);
+    for s in scenes.live() {
         let first = gone.iter().find(|o| s.borrow().marks.contains(**o));
         if let Some(o) = first {
             mark(&s, |s| s.dead.push(*o));
@@ -633,13 +665,19 @@ pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
 /// Qt, so this cannot wait for the frame.
 pub(crate) fn visible_changed(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
     reshaped(cx, p);
-    inherited(cx.engine, cx.this, true);
+    inherited(cx.engine, cx.this, true, false);
 }
 
 /// The change hook of an item's `enabled`: passed on at once, as
 /// [`visible_changed`] is.
 pub(crate) fn enabled_changed(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
-    inherited(cx.engine, cx.this, true);
+    inherited(cx.engine, cx.this, true, false);
+}
+
+/// A completed item takes what its parent passes on before its QML
+/// completion handlers and its owner's delegate-added signal run.
+pub(crate) fn completed(e: &Engine, obj: ObjectId) {
+    inherited(e, obj, true, true);
 }
 
 /// `obj` was given another visual parent: it takes what the new one
@@ -650,7 +688,7 @@ pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
     {
         return;
     }
-    inherited(e, obj, false);
+    inherited(e, obj, false, false);
 }
 
 /// In each scene that shows `obj`, it takes again what its parent passes
@@ -658,26 +696,66 @@ pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
 /// may be another. With `down`, so do its children. A child whose value
 /// changes tells its own children through its hook, so this goes no
 /// deeper, but for a `MouseArea`, whose `enabled` its children skip.
-fn inherited(e: &Engine, obj: ObjectId, down: bool) {
+fn inherited(e: &Engine, obj: ObjectId, down: bool, prepare: bool) {
     let _phase = e.enter_phase(ljos_engine::Phase::Inherit);
-    let mut shown = e.extension::<Scenes>().live();
-    shown.retain(|s| s.borrow().marks.contains(obj));
+    let scenes = e.extension::<Scenes>();
+    let shown = if prepare {
+        let mut live = scenes.live();
+        live.retain(|s| prepare_inherited(e, obj, s));
+        if live.is_empty() {
+            let pending = Rc::clone(&scenes.pending);
+            if prepare_inherited(e, obj, &pending) {
+                live.push(pending);
+            }
+        }
+        live
+    } else {
+        let mut all = scenes.inheriting();
+        all.retain(|s| s.borrow().marks.contains(obj));
+        all
+    };
     for s in shown {
         inherit(e, obj, &s);
         if down {
-            pass_down(e, obj, &s);
+            pass_down(e, obj, &s, prepare);
         }
     }
 }
 
-fn pass_down(e: &Engine, obj: ObjectId, shared: &SharedRc) {
+/// Gives an item under an adopted parent its inheritance state before the
+/// render tree adopts it, so creation and delegate signals read it too.
+/// Before the first scene exists, pending records follow the real parent
+/// chain even when the parent has not completed yet.
+fn prepare_inherited(e: &Engine, obj: ObjectId, shared: &SharedRc) -> bool {
+    let mut s = shared.borrow_mut();
+    if s.marks.contains(obj) {
+        return true;
+    }
+    let parent = e.visual_parent(obj);
+    let pending = e.extension::<Scenes>().is_pending(shared);
+    if (!pending && !parent.is_some_and(|p| s.marks.contains(p))) || !shows(e, obj) {
+        return false;
+    }
+    let mut marks = Marks::new();
+    marks.inherit.mouse_area = ItemClass::of(e, obj).is_some_and(|c| c.mouse_area);
+    s.marks.insert(obj, marks);
+    true
+}
+
+fn pass_down(e: &Engine, obj: ObjectId, shared: &SharedRc, prepare: bool) {
     for c in e.visual_children(obj) {
-        let Some(st) = shared.borrow().marks.get(c).map(|m| m.inherit) else {
-            continue;
+        let present = if prepare {
+            prepare_inherited(e, c, shared)
+        } else {
+            shared.borrow().marks.contains(c)
         };
+        if !present {
+            continue;
+        }
+        let st = shared.borrow().marks.get(c).map(|m| m.inherit).unwrap();
         inherit(e, c, shared);
-        if st.mouse_area {
-            pass_down(e, c, shared);
+        if prepare || st.mouse_area {
+            pass_down(e, c, shared, prepare);
         }
     }
 }
@@ -1790,10 +1868,15 @@ impl QuickScene {
         // geometry are read at the frame, and from then on as their change
         // hooks tell.
         {
+            let pending = engine.extension::<Scenes>().take(obj);
             let mut s = self.shared.borrow_mut();
-            let mut marks = Marks::new();
-            marks.inherit.mouse_area = class.mouse_area;
-            s.marks.insert(obj, marks);
+            if !s.marks.contains(obj) {
+                s.marks.insert(obj, pending.unwrap_or_else(Marks::new));
+            }
+            if let Some(marks) = s.marks.get_mut(obj) {
+                marks.adopted = true;
+                marks.inherit.mouse_area = class.mouse_area;
+            }
             s.set(obj, Dirty::GEOM, |_| ());
             s.placed.push(obj);
         }
@@ -1854,11 +1937,12 @@ impl QuickScene {
     /// Forgets `obj` and its subtree; removes the render nodes if
     /// `remove_node` (only the top of the subtree needs it).
     fn unadopt(&mut self, engine: &Engine, obj: ObjectId, remove_node: bool) {
+        // First, so nothing that follows marks it: it is not shown again.
+        // An item destroyed during creation may have only inheritance marks.
+        let marks = self.shared.borrow_mut().forget(obj);
         let Some(record) = self.items.remove(obj) else {
             return;
         };
-        // First, so nothing that follows marks it: it is not shown again.
-        let marks = self.shared.borrow_mut().forget(obj);
         self.items_gen += 1;
         if record.class.kind == Kind::Text {
             // Its effect is `effect`; this also forgets the sink.
