@@ -2958,6 +2958,29 @@ impl Engine {
         prop: PropIndex,
         content: OverrideContent,
     ) -> Result<OverrideId, EngineError> {
+        self.push_layer(obj, prop, content, false)
+    }
+
+    /// Pushes a cover: the property reads what `content` gives, and a write
+    /// from QML or JS while it is on top is the property's own value, which
+    /// nothing reads until the cover is removed (see
+    /// `ljos_reactive::Graph::push_cover`).
+    pub fn push_cover(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        content: OverrideContent,
+    ) -> Result<OverrideId, EngineError> {
+        self.push_layer(obj, prop, content, true)
+    }
+
+    fn push_layer(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        content: OverrideContent,
+        cover: bool,
+    ) -> Result<OverrideId, EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
         let ty = {
             let store = self.inner.store.borrow();
@@ -2988,7 +3011,11 @@ impl Engine {
             }
         };
         let id = g.batch(|| {
-            let id = g.push_override(n, value)?;
+            let id = if cover {
+                g.push_cover(n, value)?
+            } else {
+                g.push_override(n, value)?
+            };
             self.sync_field(obj, prop, n);
             Ok::<_, EngineError>(id)
         })?;

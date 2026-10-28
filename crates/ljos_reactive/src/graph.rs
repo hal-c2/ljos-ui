@@ -42,6 +42,9 @@ type DiagnosticHandler = Box<dyn FnMut(&Diagnostic)>;
 struct Layer<V> {
     content: Content<V>,
     provenance: Provenance,
+    /// A cover ([`Graph::push_cover`]): an imperative write while it is on
+    /// top goes to the layer below it.
+    cover: bool,
 }
 
 enum Content<V> {
@@ -126,6 +129,18 @@ impl<V> Prop<V> {
 
     fn top_mut(&mut self) -> &mut Layer<V> {
         self.overrides.last_mut().unwrap_or(&mut self.base)
+    }
+
+    /// The layer an imperative write goes to: the top, or the one under it
+    /// while a cover is on top.
+    fn written_mut(&mut self) -> (&mut Layer<V>, bool) {
+        match self.overrides.len() {
+            n if n > 0 && self.overrides[n - 1].cover => match n {
+                1 => (&mut self.base, true),
+                _ => (&mut self.overrides[n - 2], true),
+            },
+            _ => (self.top_mut(), false),
+        }
     }
 
     fn is_bound(&self) -> bool {
@@ -916,6 +931,7 @@ impl<V: Clone + 'static> Graph<V> {
                 base: Layer {
                     content: Content::Value(None),
                     provenance,
+                    cover: false,
                 },
                 overrides: Overrides::NONE,
                 animated: false,
@@ -943,6 +959,7 @@ impl<V: Clone + 'static> Graph<V> {
                     base: Layer {
                         content: Content::Binding(Some(Box::new(f))),
                         provenance: Provenance::Bound,
+                        cover: false,
                     },
                     overrides: Overrides::NONE,
                     animated: false,
@@ -1619,14 +1636,21 @@ impl<V: Clone + 'static> Graph<V> {
                 unreachable!()
             };
             match how {
-                WriteKind::Imperative => {
-                    let top = p.top_mut();
-                    dropped = std::mem::replace(&mut top.content, Content::Value(None));
-                    top.provenance = Provenance::Assigned;
-                    p.animated = false;
-                    i.make_plain(n);
-                    i.set_value(n, v);
-                }
+                WriteKind::Imperative => match p.written_mut() {
+                    // The item's own value, kept for when the cover comes
+                    // off: what reads the property sees no change.
+                    (below, true) => {
+                        dropped = std::mem::replace(&mut below.content, Content::Value(Some(v)));
+                        below.provenance = Provenance::Assigned;
+                    }
+                    (top, false) => {
+                        dropped = std::mem::replace(&mut top.content, Content::Value(None));
+                        top.provenance = Provenance::Assigned;
+                        p.animated = false;
+                        i.make_plain(n);
+                        i.set_value(n, v);
+                    }
+                },
                 WriteKind::Initial => {
                     p.animated = false;
                     if p.overrides.is_empty() {
@@ -2002,6 +2026,28 @@ impl<V: Clone + 'static> Graph<V> {
         n: NodeId,
         value: OverrideValue<V>,
     ) -> Result<OverrideId, ReactiveError> {
+        self.push_layer(n, value, false)
+    }
+
+    /// Pushes an override that covers the property's own value without
+    /// taking it over: the property reads what `value` gives, and an
+    /// imperative write while the cover is on top goes to the layer below
+    /// it, unseen until the cover is removed. Qt's `visible` and `enabled`
+    /// under an ancestor that is off keep the item's own value this way.
+    pub fn push_cover(
+        &self,
+        n: NodeId,
+        value: OverrideValue<V>,
+    ) -> Result<OverrideId, ReactiveError> {
+        self.push_layer(n, value, true)
+    }
+
+    fn push_layer(
+        &self,
+        n: NodeId,
+        value: OverrideValue<V>,
+        cover: bool,
+    ) -> Result<OverrideId, ReactiveError> {
         let id = {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
@@ -2023,6 +2069,7 @@ impl<V: Clone + 'static> Graph<V> {
                         Layer {
                             content: Content::Value(None),
                             provenance: Provenance::Assigned,
+                            cover,
                         },
                     );
                     i.make_plain(n);
@@ -2034,6 +2081,7 @@ impl<V: Clone + 'static> Graph<V> {
                         Layer {
                             content: Content::Binding(Some(f)),
                             provenance: Provenance::Bound,
+                            cover,
                         },
                     );
                     i.make_bound_dirty(n);

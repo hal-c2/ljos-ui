@@ -736,12 +736,17 @@ fn wake(shared: &SharedRc) {
     }
 }
 
-/// The override layers that make `visible`/`enabled` read false under a
-/// hidden or disabled ancestor.
+/// The covers that make `visible`/`enabled` read false under a hidden or
+/// disabled ancestor. Every item under one has them, whatever its own
+/// value: a write of its own value while covered is kept under the cover
+/// and changes nothing that reads it, as on Qt.
 #[derive(Clone, Copy, Debug, Default)]
 struct Inherit {
     visible: Option<OverrideId>,
     enabled: Option<OverrideId>,
+    /// Its own `visible` was true when the cover went on, so it stays in
+    /// the tree under it (see `apply_geometry`).
+    own_visible: bool,
     /// A `MouseArea`, whose `enabled` is its own ([`inherit`]).
     mouse_area: bool,
     /// [`inherit`] is changing the item's stack, whose change hook asks
@@ -751,6 +756,14 @@ struct Inherit {
     /// graph, and what ran in it (an ancestor shown) may have changed
     /// what the item inherits.
     again: bool,
+}
+
+impl Inherit {
+    /// Whether the item reads not visible only because an ancestor is
+    /// hidden: its own value was true when the cover went on.
+    fn covers_shown(&self) -> bool {
+        self.visible.is_some() && self.own_visible
+    }
 }
 
 /// What the scene keeps of one item it shows ([`Records`]): one record in
@@ -2043,9 +2056,8 @@ impl QuickScene {
             }
             // With whether a hidden parent covers it, which `inherit` keeps
             // in the marks; the geometry is read below.
-            let geoms: Vec<(ObjectId, (Geom, bool))> = s.take(Dirty::GEOM, |m| {
-                (Geom::default(), m.inherit.visible.is_some())
-            });
+            let geoms: Vec<(ObjectId, (Geom, bool))> =
+                s.take(Dirty::GEOM, |m| (Geom::default(), m.inherit.covers_shown()));
             (geoms, moved)
         };
         // Read where it is put, unborrowed and untracked, as the places
@@ -2534,7 +2546,7 @@ impl QuickScene {
                 continue;
             };
             let inherit =
-                (self.shared.borrow().marks.get(obj)).is_some_and(|m| m.inherit.visible.is_some());
+                (self.shared.borrow().marks.get(obj)).is_some_and(|m| m.inherit.covers_shown());
             self.tree
                 .set_visible(node, shown(&g, inherit, self.pooled.contains(&obj)));
         }
@@ -3724,8 +3736,9 @@ fn inherit_one(
         (true, None) => Ok(false),
         (true, Some(id)) => {
             set_cover(shared, obj, p, None);
-            // The layer is a binding until something assigns through it;
-            // an assignment while covered is the item's new own value.
+            // The cover is a binding until something other than QML or JS
+            // writes through it (a write from those goes under it); that
+            // value is the item's new own value.
             let assigned = e.provenance(obj, p) == Some(Provenance::Assigned);
             let mode = if assigned {
                 RestoreMode::None
@@ -3735,21 +3748,30 @@ fn inherit_one(
             e.remove_override(obj, p, id, mode).map(|()| true)
         }
         (false, None) => {
-            if own {
-                let id = push_off(e, obj, p)?;
-                set_cover(shared, obj, p, Some(id));
+            if p == Item::VISIBLE.index
+                && let Some(m) = shared.borrow_mut().marks.get_mut(obj)
+            {
+                m.inherit.own_visible = own;
             }
+            let id = push_off(e, obj, p)?;
+            set_cover(shared, obj, p, Some(id));
             Ok(own)
         }
         (false, Some(id)) => {
-            // The cover is a binding until something writes through it.
-            // One that reads true unwritten is no assignment: its item's
+            // A write from QML or JS goes under the cover; what else writes
+            // through it, a layout or the host, leaves it a value. One that
+            // reads true unwritten is no assignment: its item's
             // destruction has been told, so it gives its last value and
             // would give it again under a new cover.
             let assigned = own && e.provenance(obj, p) != Some(Provenance::Bound);
             if assigned {
-                // `true` was assigned while the parent is off: keep it as
+                // `true` was given while the parent is off: keep it as
                 // the own value, and keep reading false.
+                if p == Item::VISIBLE.index
+                    && let Some(m) = shared.borrow_mut().marks.get_mut(obj)
+                {
+                    m.inherit.own_visible = true;
+                }
                 set_cover(shared, obj, p, None);
                 e.remove_override(obj, p, id, RestoreMode::None)?;
                 let id = push_off(e, obj, p)?;
@@ -3761,7 +3783,7 @@ fn inherit_one(
 }
 
 fn push_off(e: &Engine, obj: ObjectId, p: PropIndex) -> Result<OverrideId, EngineError> {
-    e.push_override(
+    e.push_cover(
         obj,
         p,
         OverrideContent::Binding(Box::new(|_| Value::Bool(false))),

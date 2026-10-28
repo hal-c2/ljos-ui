@@ -430,6 +430,45 @@ fn override_stack_restore_modes() {
 }
 
 #[test]
+fn a_write_under_a_cover_is_kept_below_it_and_seen_once_it_comes_off() {
+    let g = Graph::new();
+    let r = g.root();
+    let src = g.property(r, 1).unwrap();
+    let x = g.binding(r, 0, move |g| g.get(src)).unwrap();
+    let seen = log();
+    let s = seen.clone();
+    g.watch(r, x, move |_, v| s.borrow_mut().push(*v)).unwrap();
+    assert_eq!(g.get(x), 1);
+
+    let c = g.push_cover(x, OverrideValue::binding(|_| 0)).unwrap();
+    assert_eq!(g.get(x), 0);
+    g.set(x, 7);
+    assert_eq!(g.get(x), 0, "the write went under the cover");
+    assert_eq!(g.provenance(x), Some(Provenance::Bound));
+    assert_eq!(g.base_provenance(x), Some(Provenance::Assigned));
+    g.set(src, 2);
+    assert_eq!(g.get(x), 0);
+
+    g.remove_override(x, c, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 7, "the write broke the base binding");
+    g.set(src, 3);
+    assert_eq!(g.get(x), 7);
+    assert_eq!(*seen.borrow(), vec![0, 7]);
+
+    // An override above the cover takes writes as before.
+    let c = g.push_cover(x, OverrideValue::binding(|_| 0)).unwrap();
+    let o = g.push_override(x, OverrideValue::Value(5)).unwrap();
+    g.set(x, 6);
+    assert_eq!(g.get(x), 6);
+    g.remove_override(x, o, RestoreMode::BindingOrValue)
+        .unwrap();
+    g.remove_override(x, c, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 7);
+}
+
+#[test]
 fn restore_binding_mode_brings_binding_back() {
     let g = Graph::new();
     let r = g.root();

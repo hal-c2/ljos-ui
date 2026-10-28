@@ -7,7 +7,7 @@
 mod common;
 
 use common::*;
-use ljos_engine::{Engine, ObjectId};
+use ljos_engine::{Engine, ObjectId, WriteKind};
 use ljos_quick::Item;
 
 fn warnings(e: &Engine) -> Vec<String> {
@@ -94,21 +94,53 @@ fn an_item_adopted_before_its_parent_is_shown_takes_what_the_parent_passes() {
     assert!(shown(&e, loose) && shown(&e, inner));
 }
 
-// A child that shows itself each time it reads hidden: on Ljós each
-// write of `true` through the cover is seen as a change, and the cover
-// put back as another, so the pass never settles (Qt returns, the child
-// told once). Bounded, it stops with a fault that names the child and
-// the property, and the write returns.
+// A child that shows itself each time it reads hidden: the write goes
+// under the cover as its own value, so it reads false, is told once and
+// shows again with its parent, as on Qt.
 const SHOWS_ITSELF: &str = r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    property int told: 0
+    Item {
+        objectName: "parent"
+        Item {
+            objectName: "child"
+            onVisibleChanged: { told++; visible = true }
+        }
+    }
+}
+"#;
+
+#[test]
+fn a_child_that_shows_itself_under_a_hidden_parent_keeps_it_as_its_own_value() {
+    let e = engine();
+    let root = load(&e, SHOWS_ITSELF);
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let [parent, child] = ["parent", "child"].map(|n| find(&e, root, n));
+    set(&e, parent, "visible", false.into());
+    frame(&mut s, &e);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+    assert!(!shown(&e, child));
+    assert_eq!(get(&e, root, "told").to_number(), 1.0);
+    set(&e, parent, "visible", true.into());
+    frame(&mut s, &e);
+    assert!(shown(&e, child));
+    assert_eq!(get(&e, root, "told").to_number(), 2.0);
+}
+
+// What writes `true` through the cover as the toolkit does, each time the
+// child reads hidden, is a new own value each time and the cover put back
+// another change, so the pass never settles. Bounded, it stops with a
+// fault that names the child and the property, and the write returns.
+const CHILD: &str = r#"
 import QtQuick
 Item {
     width: 100; height: 100
     Item {
         objectName: "parent"
-        Item {
-            objectName: "child"
-            onVisibleChanged: visible = true
-        }
+        Item { objectName: "child" }
     }
 }
 "#;
@@ -116,11 +148,19 @@ Item {
 #[test]
 fn a_pass_that_never_settles_stops_with_a_fault_that_names_the_item() {
     let e = engine();
-    let root = load(&e, SHOWS_ITSELF);
+    let root = load(&e, CHILD);
     let mut s = scene(&e, root, 100.0, 100.0);
     frame(&mut s, &e);
     assert_eq!(warnings(&e), Vec::<String>::new());
     let [parent, child] = ["parent", "child"].map(|n| find(&e, root, n));
+    let visible = Item::VISIBLE.index;
+    let _shows = e
+        .effect(move |e| {
+            if !e.read(child, visible).to_boolean() {
+                let _ = e.write_internal(child, visible, true.into(), WriteKind::Host);
+            }
+        })
+        .unwrap();
     set(&e, parent, "visible", false.into());
     frame(&mut s, &e);
     let loops: Vec<_> = e
