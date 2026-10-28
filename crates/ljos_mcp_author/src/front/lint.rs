@@ -33,7 +33,7 @@ pub(super) struct Cx<'c, 'a> {
 }
 
 pub(super) fn run<'a>(cx: &Cx<'_, 'a>, root: &QmlObject<'a>, out: &mut Vec<Diagnostic>) {
-    visit(cx, root, None, out);
+    visit(cx, root, None, false, out);
     super::design::run(cx, root, out);
     super::declarative::run(cx, root, out);
 }
@@ -42,18 +42,22 @@ fn visit<'a>(
     cx: &Cx<'_, 'a>,
     object: &QmlObject<'a>,
     parent: Option<&QmlObject<'a>>,
+    parent_is_root: bool,
     out: &mut Vec<Diagnostic>,
 ) {
     if let Some(index) = cx.tree.index_of(object) {
-        accessibility(cx, object, parent, index, out);
+        accessibility(cx, object, parent, parent_is_root, index, out);
         strings(cx, object, index, out);
     }
+    // The file's root and an inline component's are what a component's
+    // users set properties on.
+    let is_root = parent.is_none();
     for child in child_objects(object) {
-        visit(cx, child, Some(object), out);
+        visit(cx, child, Some(object), is_root, out);
     }
     for member in &object.members {
         if let QmlMember::InlineComponent(inline) = member {
-            visit(cx, &inline.object, None, out);
+            visit(cx, &inline.object, None, false, out);
         }
     }
 }
@@ -97,9 +101,15 @@ fn parent_is_button(cx: &Cx<'_, '_>, parent: Option<&QmlObject<'_>>) -> bool {
 }
 
 /// A text that shows something: what it shows is its name, links and
-/// all, so a handler in it that follows a link needs no other.
-fn parent_is_named_text(cx: &Cx<'_, '_>, parent: Option<&QmlObject<'_>>) -> bool {
-    parent.is_some_and(|p| has_binding(p, &["text"]))
+/// all, so a handler in it that follows a link needs no other. A text that
+/// is a component's root has its `text` set where the component is used;
+/// one used with none is the runtime audit's to find.
+fn parent_is_named_text(
+    cx: &Cx<'_, '_>,
+    parent: Option<&QmlObject<'_>>,
+    parent_is_root: bool,
+) -> bool {
+    (parent_is_root || parent.is_some_and(|p| has_binding(p, &["text"])))
         && parent_base(cx, parent).is_some_and(|ty| inherits(ty, TEXT))
 }
 
@@ -143,6 +153,7 @@ fn accessibility<'a>(
     cx: &Cx<'_, 'a>,
     object: &QmlObject<'a>,
     parent: Option<&QmlObject<'a>>,
+    parent_is_root: bool,
     index: usize,
     out: &mut Vec<Diagnostic>,
 ) {
@@ -156,7 +167,7 @@ fn accessibility<'a>(
         && !is_accessibly_described(object)
         && !parent_described
         && !parent_is_button(cx, parent)
-        && !parent_is_named_text(cx, parent)
+        && !parent_is_named_text(cx, parent, parent_is_root)
         && !second_way(cx.source, object, CLICK_HANDLERS)
     {
         out.push(diagnostic(
@@ -178,7 +189,7 @@ fn accessibility<'a>(
         && TAP_HANDLERS.iter().any(|h| has_binding(object, &[h]))
         && parent.is_some_and(|p| !is_accessibly_described(p))
         && !parent_is_button(cx, parent)
-        && !parent_is_named_text(cx, parent)
+        && !parent_is_named_text(cx, parent, parent_is_root)
         && !second_way(cx.source, object, TAP_HANDLERS)
     {
         out.push(diagnostic(

@@ -278,6 +278,67 @@ Feature: The design rules a file's source can show
       Then the command exits with status 0
       And the command's output does not mention "a11y-unnamed-interactive"
 
+    Scenario: A tap in a text component whose users set its text needs no name besides the text
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            id: root
+            width: 300
+            height: 200
+
+            component Page: Text {
+                id: page
+                width: root.width
+                textFormat: Text.RichText
+                wrapMode: Text.Wrap
+
+                TapHandler {
+                    onTapped: eventPoint => {
+                        const link = page.linkAt(eventPoint.position.x, eventPoint.position.y);
+                        if (link.length > 0)
+                            Qt.openUrlExternally(link);
+                    }
+                }
+            }
+            Page {
+                text: "<p>See <a href=\"https://example.com\">the docs</a>.</p>"
+            }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command exits with status 0
+      And the command's output does not mention "a11y-unnamed-interactive"
+
+    Scenario: A tap in a text that is a file's root needs no name besides the text
+      Given the file "Page.qml":
+        """qml
+        import QtQuick
+
+        Text {
+            id: page
+            textFormat: Text.RichText
+
+            TapHandler {
+                onTapped: eventPoint => Qt.openUrlExternally(page.linkAt(eventPoint.position.x, eventPoint.position.y))
+            }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 300
+            height: 200
+            Page { text: "<a href=\"https://example.com\">the docs</a>" }
+        }
+        """
+      When the author runs "ljos check ."
+      Then the command exits with status 0
+      And the command's output does not mention "a11y-unnamed-interactive"
+
     Scenario: A tap in a text that shows nothing still needs a name
       Given the file "Main.qml":
         """qml
