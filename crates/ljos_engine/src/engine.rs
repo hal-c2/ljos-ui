@@ -4007,6 +4007,7 @@ impl Wrapped {
         let _timed = engine.inner.timing.binding();
         let _profiled = engine.profile_binding(obj, prop);
         let _journaled = engine.journal_binding(obj, prop);
+        let _phase = engine.enter_phase(crate::Phase::Binding);
         let followed = if engine.inner.traces.follows_bindings() {
             engine
                 .binding_runs(obj, prop)

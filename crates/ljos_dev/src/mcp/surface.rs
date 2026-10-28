@@ -8,10 +8,11 @@
 //! connected client that asks nothing costs the application nothing.
 
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use ljos_engine::TurnMarker;
 use ljos_mcp_core::{
     CallCtx, Cap, CapSet, ErrorCode, McpSurface, ResourceContent, ResourceDef, ResourceFuture,
     ServerMeta, SurfaceError, ToolFuture, ToolRegistry, ToolReply,
@@ -95,6 +96,9 @@ pub struct InspectorSurface {
     feed: Arc<ReloadFeed>,
     changes: Arc<ChangeFeed>,
     holders: Arc<Holders>,
+    /// What the UI thread is doing, once the inspector has seen the
+    /// engine: a request it does not answer in time is answered with it.
+    marker: Arc<OnceLock<TurnMarker>>,
 }
 
 impl fmt::Debug for InspectorSurface {
@@ -153,6 +157,7 @@ impl InspectorSurface {
         timeout: Duration,
         feed: Arc<ReloadFeed>,
         changes: Arc<ChangeFeed>,
+        marker: Arc<OnceLock<TurnMarker>>,
     ) -> Self {
         let release = handle.clone();
         let holders = Holders::new(move |holder| release_holder(&release, holder));
@@ -164,6 +169,7 @@ impl InspectorSurface {
             feed,
             changes,
             holders,
+            marker,
         }
     }
 
@@ -236,15 +242,44 @@ impl InspectorSurface {
                 ErrorCode::AppFaulted,
                 "the application stopped before it answered",
             )),
-            Err(_) => Err(SurfaceError::new(
+            Err(_) => Err(self.not_answered()),
+        }
+    }
+
+    /// A request the UI thread did not answer in time, with the turn it is
+    /// in when the marker says: what started it, how long ago, and where
+    /// it is.
+    fn not_answered(&self) -> SurfaceError {
+        let waited = self.timeout.as_millis();
+        let Some(turn) = self.marker.get().and_then(TurnMarker::in_progress) else {
+            return SurfaceError::new(
                 ErrorCode::Timeout,
                 format!(
-                    "the application's UI thread did not answer within {} ms. It may be busy or \
-                     blocked; `app_logs` may say why once it answers again",
-                    self.timeout.as_millis()
+                    "the application's UI thread did not answer within {waited} ms. It may be \
+                     busy or blocked; `app_logs` may say why once it answers again"
                 ),
-            )),
-        }
+            );
+        };
+        SurfaceError::new(
+            ErrorCode::Timeout,
+            format!(
+                "the application's UI thread did not answer within {waited} ms: it is busy in \
+                 turn {}, started by {} {} ms ago, now in phase {}. `app_logs` may say more once \
+                 it answers again",
+                turn.turn,
+                turn.started_by,
+                turn.running.as_millis(),
+                turn.phase
+            ),
+        )
+        .with_details(json!({
+            "turn": {
+                "turn": turn.turn,
+                "started_by": turn.started_by,
+                "running_ms": turn.running.as_millis() as u64,
+                "phase": turn.phase.name(),
+            }
+        }))
     }
 
     /// Runs a tool on its way to the UI thread, or here when it needs not

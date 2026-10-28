@@ -1,11 +1,13 @@
-//! How long a turn of the UI thread takes: a turn past its budget warns
-//! naming what ran.
+//! How long a turn of the UI thread takes, and what it was doing: a turn
+//! past its budget warns naming what ran, and the watchdog reports a turn
+//! that has not ended while it still runs.
 
 mod support;
 
+use std::sync::mpsc;
 use std::time::Duration;
 
-use ljos_engine::{JournalKind, TurnCause, Value};
+use ljos_engine::{JournalKind, Phase, TurnCause, Value};
 use support::engine;
 
 const SRC: &str = r#"
@@ -22,6 +24,10 @@ const LOAD: TurnCause = TurnCause::Message {
     mailbox: "application",
     kind: Some("Load"),
 };
+
+/// Waits long enough for the watchdog to have spoken, and fails the test
+/// with what it waited for rather than hang.
+const PATIENCE: Duration = Duration::from_secs(30);
 
 #[test]
 fn a_turn_within_its_budget_says_nothing() {
@@ -120,4 +126,59 @@ fn the_journal_lists_host_work_with_its_time() {
     assert_eq!(host[0].type_name.as_ref() as &str, "application");
     assert_eq!(host[0].name.as_ref() as &str, "Load");
     assert!(host[0].took.unwrap() >= Duration::from_millis(2));
+}
+
+#[test]
+fn another_thread_reads_the_turn_in_progress_and_its_phase() {
+    let h = engine();
+    let marker = h.engine.turn_marker();
+    assert!(marker.in_progress().is_none(), "no turn runs yet");
+    let seen = h.engine.turn_for(LOAD, None, || {
+        let _layout = h.engine.enter_phase(Phase::Layout);
+        let m = marker.clone();
+        std::thread::spawn(move || m.in_progress())
+            .join()
+            .expect("the reader ends")
+    });
+    let turn = seen.expect("returns").expect("a turn was in progress");
+    assert_eq!(turn.phase, Phase::Layout);
+    assert_eq!(turn.started_by, "message `Load` of mailbox `application`");
+    assert!(marker.in_progress().is_none(), "the turn ended");
+    assert_eq!(marker.phase(), Phase::Idle);
+}
+
+#[test]
+fn the_watchdog_reports_a_blocked_turn_before_it_ends() {
+    let h = engine();
+    let marker = h.engine.watch_turns(Duration::from_millis(20));
+    let (tx, rx) = mpsc::channel::<String>();
+    marker.set_reporter(move |text| {
+        let _ = tx.send(text.to_owned());
+    });
+    // The turn cannot end before the watchdog spoke: it waits for that.
+    let report = h
+        .engine
+        .turn_for(LOAD, None, || {
+            let _layout = h.engine.enter_phase(Phase::Layout);
+            rx.recv_timeout(PATIENCE)
+        })
+        .expect("returns")
+        .expect("the watchdog reported the turn while it ran");
+    assert!(
+        report.starts_with("the UI thread is stuck: turn "),
+        "{report}"
+    );
+    assert!(
+        report.contains("message `Load` of mailbox `application`"),
+        "{report}"
+    );
+    assert!(report.ends_with("is in phase layout"), "{report}");
+    // And when it does end, the app's log says so with its time.
+    let warnings = h.warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].ends_with("; the watchdog reported it while it ran"),
+        "{}",
+        warnings[0]
+    );
 }

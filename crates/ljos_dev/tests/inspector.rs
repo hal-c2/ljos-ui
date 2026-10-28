@@ -24,7 +24,7 @@ use ljos_dev::{
     },
 };
 use ljos_drive::{DriveState, Driver, RealClock};
-use ljos_engine::{Engine, LogLevel, ObjectId, Value as QmlValue};
+use ljos_engine::{Engine, LogLevel, ObjectId, Phase, TurnCause, Value as QmlValue};
 use ljos_mcp_core::{
     CallCtx, Cap, CapSet, ErrorCode, McpSurface,
     glue::local::{LocalClient, LocalError, LocalReply, LocalWake},
@@ -1865,6 +1865,48 @@ fn capability_denied_a_client_without_inspect_gets_nothing() {
         matches!(&read, Err(LocalError::Refused(e)) if e.code == ErrorCode::CapabilityDenied),
         "{read:?}"
     );
+}
+
+#[test]
+fn a_request_that_times_out_names_the_turn_the_ui_thread_is_in() {
+    let mut app = app_with(
+        MAIN,
+        InspectorConfig {
+            timeout: Duration::from_millis(60),
+            ..InspectorConfig::default()
+        },
+    );
+    // Once it has seen the engine, the inspector reads its turn marker.
+    app.call("app_status", json!({}));
+    let App { client, engine, .. } = &mut app;
+    let import = TurnCause::Message {
+        mailbox: "application",
+        kind: Some("Import"),
+    };
+    // The UI thread is in a turn that lays out and does not come back to
+    // answer the request.
+    let reply = engine
+        .turn_for(import, None, || {
+            let _layout = engine.enter_phase(Phase::Layout);
+            client.call("app_status", json!({}), &mut || {})
+        })
+        .expect("the turn returns")
+        .expect("the client is answered");
+    assert_eq!(reply.error_code(), Some("timeout"));
+    let message = reply.error_message().unwrap();
+    assert!(
+        message.contains("did not answer within 60 ms: it is busy in turn ")
+            && message.contains("started by message `Import` of mailbox `application`")
+            && message.contains("now in phase layout"),
+        "{message}"
+    );
+    let turn = &reply.structured["error"]["details"]["turn"];
+    assert_eq!(turn["phase"], "layout");
+    assert_eq!(
+        turn["started_by"],
+        "message `Import` of mailbox `application`"
+    );
+    assert!(turn["running_ms"].as_u64().unwrap() >= 60, "{turn}");
 }
 
 #[test]

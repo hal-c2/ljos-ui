@@ -654,6 +654,7 @@ pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
 /// changes tells its own children through its hook, so this goes no
 /// deeper, but for a `MouseArea`, whose `enabled` its children skip.
 fn inherited(e: &Engine, obj: ObjectId, down: bool) {
+    let _phase = e.enter_phase(ljos_engine::Phase::Inherit);
     let mut shown = e.extension::<Scenes>().live();
     shown.retain(|s| s.borrow().marks.contains(obj));
     for s in shown {
@@ -1343,8 +1344,11 @@ impl QuickScene {
     /// need not share an epoch.
     pub fn frame(&mut self, engine: &Engine, now: Time) -> FrameOutput {
         use crate::frame_times::{FrameTimes, Laps, lap};
-        // A frame is a turn, timed against the budget like any other.
-        let _turn = engine.begin_turn(ljos_engine::TurnCause::Frame, None);
+        use ljos_engine::{Phase, TurnCause};
+        // A frame is a turn: one that never ends is reported while it runs,
+        // with the step it is in.
+        let _turn = engine.begin_turn(TurnCause::Frame, None);
+        let mut phase = engine.enter_phase(Phase::Frame);
         self.frame += 1;
         let mut laps = self.timing.is_some().then(Laps::start);
         let mut steps = FrameTimes::default();
@@ -1404,13 +1408,19 @@ impl QuickScene {
         STEPPING.set(false);
         lap(&mut laps, &mut steps.animations);
         // 6. Polish.
+        drop(phase);
+        phase = engine.enter_phase(Phase::Polish);
         self.polish(engine);
         lap(&mut laps, &mut steps.layout);
         // 7. Incubate. New items join the tree and are laid out in this
         // same frame, so what is shown is never half placed.
+        drop(phase);
+        phase = engine.enter_phase(Phase::Create);
         let incubating = self.incubate(engine);
         lap(&mut laps, &mut steps.create);
         // 8. Sync.
+        drop(phase);
+        phase = engine.enter_phase(Phase::Layout);
         self.reconcile(engine);
         self.apply_geometry(engine);
         self.refresh_culled(engine);
@@ -1418,6 +1428,8 @@ impl QuickScene {
         self.apply_content();
         self.draw_effect_sources(engine);
         // 9. Compose; then pull paint inputs for newly visible items.
+        drop(phase);
+        let _phase = engine.enter_phase(Phase::Render);
         let mut snap = self.tree.compose(self.viewport, self.frame);
         let mut synced = self.snapshot.clone();
         for _ in 0..3 {

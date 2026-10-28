@@ -86,7 +86,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use ljos_engine::{Engine, LogEntry, ObjectId, ReloadFault};
@@ -368,6 +368,8 @@ pub struct Inspector {
     timeline: timeline::Timeline,
     /// The UI thread's wakes `app_frames` keeps with `wakes`.
     wakes: wakes::Wakes,
+    /// The engine's turn marker, shared with the surface.
+    marker: Arc<OnceLock<ljos_engine::TurnMarker>>,
     /// Who asked the engine to profile bindings (`app_frames`' `bindings`).
     hot: hot::Hot,
     /// The components' instances sampled for `app_frames`' `growth`.
@@ -422,11 +424,13 @@ impl Inspector {
         inbox.observe_as("inspector", Some(observe::request_kind));
         let feed = ReloadFeed::new();
         let changes = ChangeFeed::new();
+        let marker = Arc::new(OnceLock::new());
         let surface = Arc::new(InspectorSurface::new(
             handle,
             cfg.timeout,
             feed.clone(),
             changes.clone(),
+            marker.clone(),
         ));
         let traces = trace::TraceLog::new(changes.clone(), cfg.redact_all);
         let changes_for_models = changes.clone();
@@ -461,6 +465,7 @@ impl Inspector {
             frames: FrameLog::default(),
             timeline: timeline::Timeline::default(),
             wakes: wakes::Wakes::default(),
+            marker,
             hot: hot::Hot::default(),
             growth: growth::Growth::default(),
             edits: edits::Edits::default(),
@@ -650,6 +655,16 @@ impl Inspector {
     /// its behalf, so a host that does not call this leaves it waiting out
     /// its time.
     pub fn observe(&mut self, engine: &Engine) {
+        if self.marker.get().is_none() {
+            // The watchdog is on while an inspector is attached, unless its
+            // variable turns it off; the marker is written either way, for
+            // a request that times out to say what the UI thread is doing.
+            let marker = match ljos_engine::watchdog_threshold(true) {
+                Some(threshold) => engine.watch_turns(threshold),
+                None => engine.turn_marker(),
+            };
+            let _ = self.marker.set(marker);
+        }
         let generation = engine.reload_generation();
         let Some((was, was_error)) = self.seen.as_mut() else {
             // The first look is the baseline: what happened before the
