@@ -103,6 +103,9 @@ pub(crate) fn step(e: &Engine, view: ObjectId, step: Step) -> bool {
         (Step::Up, true) | (Step::Left, false) => -along,
     };
     let mut to = ci + by;
+    if ci < 0 && step == Step::Previous && wraps {
+        to = rows - 1;
+    }
     if !(0..rows).contains(&to) {
         if !wraps || by.abs() != 1 {
             return false;
