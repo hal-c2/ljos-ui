@@ -25,8 +25,8 @@
 //! phase is one relaxed store, made only while a marker is attached.
 //!
 //! The watchdog never polls (rule 6): it sleeps until the deadline of the
-//! turn in progress and parks while no turn runs. The first turn after it
-//! parked unparks it, once.
+//! turn in progress and parks while no turn runs. Every new turn unparks it
+//! so that its own deadline replaces the previous turn's.
 //!
 //! [`JournalKind::Host`]: crate::JournalKind::Host
 
@@ -664,8 +664,6 @@ impl Engine {
 struct Watchdog {
     markers: Mutex<Vec<Watched>>,
     thread: OnceLock<Thread>,
-    /// The thread parked with no turn to watch: the next turn unparks it.
-    parked: AtomicBool,
 }
 
 struct Watched {
@@ -680,7 +678,6 @@ fn watchdog() -> &'static Watchdog {
     WATCHDOG.get_or_init(|| Watchdog {
         markers: Mutex::new(Vec::new()),
         thread: OnceLock::new(),
-        parked: AtomicBool::new(false),
     })
 }
 
@@ -708,13 +705,10 @@ impl Watchdog {
         thread.unpark();
     }
 
-    /// A marker's turn began: wakes the thread if it parked with nothing
-    /// to watch. Most turns find it awake and pay one load.
+    /// A marker's turn began: wakes the thread to replace any previous
+    /// turn's deadline with this turn's first deadline.
     fn turn_began(&self) {
-        if self.parked.load(Ordering::SeqCst)
-            && self.parked.swap(false, Ordering::SeqCst)
-            && let Some(t) = self.thread.get()
-        {
+        if let Some(t) = self.thread.get() {
             t.unpark();
         }
     }
@@ -724,13 +718,11 @@ impl Watchdog {
             match self.check() {
                 Some(wait) => std::thread::park_timeout(wait),
                 None => {
-                    self.parked.store(true, Ordering::SeqCst);
-                    // A turn that began before the flag was up did not
-                    // wake this thread: look again before parking.
+                    // A turn that began since the first look already has a
+                    // deadline to sleep for instead of parking here.
                     if self.check().is_none() {
                         std::thread::park();
                     }
-                    self.parked.store(false, Ordering::SeqCst);
                 }
             }
         }
@@ -790,4 +782,34 @@ fn stuck_text(t: &TurnInProgress) -> String {
         t.started_by,
         t.phase
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn a_new_turn_unparks_a_watchdog_sleeping_on_the_previous_turns_deadline() {
+        let watchdog = Watchdog {
+            markers: Mutex::new(Vec::new()),
+            thread: OnceLock::new(),
+        };
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (woke_tx, woke_rx) = mpsc::channel();
+        let sleeping = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            std::thread::park_timeout(Duration::from_secs(30));
+            woke_tx.send(()).unwrap();
+        });
+        watchdog.thread.set(sleeping.thread().clone()).unwrap();
+        ready_rx.recv().unwrap();
+
+        watchdog.turn_began();
+
+        let woke = woke_rx.recv_timeout(Duration::from_millis(100));
+        sleeping.thread().unpark();
+        sleeping.join().unwrap();
+        woke.expect("a new turn interrupts the previous turn's deadline sleep");
+    }
 }
