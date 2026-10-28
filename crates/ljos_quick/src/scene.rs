@@ -4373,4 +4373,41 @@ mod inheritance_tests {
         assert!(!s.shared.borrow().marks.contains(outside));
         assert!(pending_has(&e, outside));
     }
+
+    #[test]
+    fn a_pending_record_moves_when_its_item_is_adopted() {
+        let e = engine();
+        let hidden = item(&e, None);
+        set_visible(&e, hidden, false);
+        let child = item(&e, Some(hidden));
+        let root = item(&e, None);
+        let mut s = scene(&e, root);
+        assert!(pending_has(&e, child));
+        assert!(!s.shared.borrow().marks.contains(child));
+
+        e.set(hidden, Item::PARENT, Some(root)).unwrap();
+        s.frame(&e, Time::ZERO);
+
+        assert!(!pending_has(&e, child));
+        assert!(s.shared.borrow().marks.contains(child));
+        assert!(!visible(&e, child));
+        set_visible(&e, hidden, true);
+        assert!(visible(&e, child));
+    }
+
+    #[test]
+    fn destroying_a_pending_item_forgets_its_record() {
+        let e = engine();
+        let hidden = item(&e, None);
+        set_visible(&e, hidden, false);
+        let child = item(&e, Some(hidden));
+        let root = item(&e, None);
+        let _s = scene(&e, root);
+        assert!(pending_has(&e, child));
+
+        assert!(e.destroy_now(hidden));
+
+        assert!(!e.is_alive(child));
+        assert!(!pending_has(&e, child));
+    }
 }
