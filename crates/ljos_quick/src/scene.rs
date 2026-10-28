@@ -3678,7 +3678,11 @@ fn inherit_one(
             Ok(())
         }
         (false, Some(id)) => {
-            if own {
+            // The cover is a binding until something writes through it.
+            // One that reads true unwritten is no assignment: its item's
+            // destruction has been told, so it gives its last value and
+            // would give it again under a new cover.
+            if own && e.provenance(obj, p) != Some(Provenance::Bound) {
                 // `true` was assigned while the parent is off: keep it as
                 // the own value, and keep reading false.
                 set_cover(shared, obj, p, None);
