@@ -10,8 +10,8 @@
 
 use rquickjs::{Exception, Object, Value, qjs};
 
-use super::{SignalDef, raw_accessor, raw_entry, raw_in, raw_out};
-use crate::JsValue;
+use super::{Scope, SignalDef, raw_accessor, raw_entry, raw_in, raw_out};
+use crate::{JsRef, JsValue};
 
 /// The signal an object of the class emits: its opaque.
 struct Target {
@@ -203,6 +203,25 @@ unsafe extern "C" fn connect(
             scope.back(r.map_err(|e| e.into_js(&scope.ctx)))?;
             raw_out(scope, &JsValue::Undefined)
         })
+    }
+}
+
+impl<'js> Scope<'js> {
+    /// Whether two reads denote one signal, although each is a new function.
+    pub fn same_signal(&self, a: &JsRef, b: &JsRef) -> bool {
+        let (Ok(a), Ok(b)) = (self.restore(a), self.restore(b)) else {
+            return false;
+        };
+        // SAFETY: both values are live in this context's runtime.
+        unsafe {
+            match (
+                target(self.state.signal_class, a.as_raw()),
+                target(self.state.signal_class, b.as_raw()),
+            ) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            }
+        }
     }
 }
 

@@ -83,3 +83,53 @@ Feature: Language parity
       """
     When the method "resizeAndTruncate" of "root" is called
     Then the property "summary" of "root" is "4:true:true|after=1:a"
+
+  Scenario: Signal-to-signal connection drops trailing parameters and can be disconnected
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 100; height: 100
+        property string log: ""
+        signal fullEvent(int code, string label, bool extra)
+        signal shortEvent(int code)
+        onShortEvent: (code) => { log += "short(" + code + ");" }
+        function zeroArg() { log += "zero;" }
+        Component.onCompleted: {
+          fullEvent.connect(shortEvent)
+          fullEvent.connect(zeroArg)
+        }
+        function fireAndUnwire() {
+          fullEvent(42, "ignored", true)
+          fullEvent.disconnect(shortEvent)
+          fullEvent(7, "ignored", false)
+        }
+      }
+      """
+    When the method "fireAndUnwire" of "root" is called
+    Then the property "log" of "root" is "short(42);zero;zero;"
+
+  Scenario: Disconnecting a second handler from inside the first handler prevents the second from running
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 100; height: 100
+        property string log: ""
+        signal step(int n)
+        function first(n) {
+          log += "first(" + n + ");"
+          step.disconnect(second)
+        }
+        function second(n) {
+          log += "second(" + n + ");"
+        }
+        Component.onCompleted: {
+          step.connect(first)
+          step.connect(second)
+        }
+        function trigger() { step(1); step(2) }
+      }
+      """
+    When the method "trigger" of "root" is called
+    Then the property "log" of "root" is "first(1);first(2);"

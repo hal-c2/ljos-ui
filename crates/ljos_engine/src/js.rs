@@ -1174,7 +1174,7 @@ impl HostObjects for EngineHost {
                 .position(|c| {
                     c.sender == sender
                         && c.signal == SignalIndex(signal)
-                        && scope.same_value(&c.func, &func)
+                        && (scope.same_value(&c.func, &func) || scope.same_signal(&c.func, &func))
                 })
                 .map(|i| (i, conns[i].id))
         };
