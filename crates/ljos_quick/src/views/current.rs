@@ -13,7 +13,7 @@
 use ljos_engine::{Engine, ObjectId, Value, WriteKind};
 
 use super::state::{Geo, ViewState, follow_target};
-use super::{ItemView, ListView, Part, enrol, pass, put, state_of, warn};
+use super::{ItemView, ListView, Part, enrol, pass, put, state_of, strike, warn};
 use crate::animation::{Animation, PropertyAnimation, SmoothedAnimation};
 use crate::flickable::{self, X, Y};
 use crate::input::KeyEvent;
@@ -193,7 +193,10 @@ fn stop_movers(e: &Engine, st: &ViewState) {
 fn drop_highlight(e: &Engine, st: &ViewState) {
     if let Some((_, old)) = st.highlight.take() {
         stop_movers(e, st);
-        pass::drop_extra(e, old);
+        strike(e, old);
+        if e.is_alive(old) {
+            let _ = tree::set_parent_item(e, old, None);
+        }
     }
 }
 
