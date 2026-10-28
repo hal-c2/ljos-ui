@@ -93,3 +93,44 @@ fn an_item_adopted_before_its_parent_is_shown_takes_what_the_parent_passes() {
     assert_eq!(warnings(&e), Vec::<String>::new());
     assert!(shown(&e, loose) && shown(&e, inner));
 }
+
+// A child that shows itself each time it reads hidden: on Ljós each
+// write of `true` through the cover is seen as a change, and the cover
+// put back as another, so the pass never settles (Qt returns, the child
+// told once). Bounded, it stops with a fault that names the child and
+// the property, and the write returns.
+const SHOWS_ITSELF: &str = r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    Item {
+        objectName: "parent"
+        Item {
+            objectName: "child"
+            onVisibleChanged: visible = true
+        }
+    }
+}
+"#;
+
+#[test]
+fn a_pass_that_never_settles_stops_with_a_fault_that_names_the_item() {
+    let e = engine();
+    let root = load(&e, SHOWS_ITSELF);
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+    let [parent, child] = ["parent", "child"].map(|n| find(&e, root, n));
+    set(&e, parent, "visible", false.into());
+    frame(&mut s, &e);
+    let loops: Vec<_> = e
+        .faults()
+        .into_iter()
+        .filter(|f| f.fault.to_string().contains("Inheritance loop"))
+        .collect();
+    assert!(!loops.is_empty(), "{:?}", warnings(&e));
+    assert!(loops.iter().all(|f| f.origin == Some(child)));
+    let said = warnings(&e);
+    let want = "file:///Main.qml:7:9: internal: QML Item: Inheritance loop detected for property \"visible\"";
+    assert!(said.iter().any(|w| w.ends_with(want)), "{said:?}");
+}

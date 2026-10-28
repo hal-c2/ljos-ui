@@ -420,3 +420,34 @@ fn a_turning_transform_entry_reruns_one_effect_and_shows_what_a_fresh_scene_does
     frame(&mut s, &e);
     assert_eq!(world_of(&s, bx), [1.0, 0.0, 0.0, 1.0, 10.0, 20.0]);
 }
+
+// A child that grows its sibling each time the Row moves it marks the
+// Row for another polish pass each pass. The frame stops after
+// `MAX_POLISH_PASSES` with a warning that names the Row where it was
+// declared, and returns.
+#[test]
+fn a_polish_that_never_settles_is_named_and_the_frame_returns() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 100
+    Row {
+        objectName: "row"
+        Rectangle { id: a; width: 10; height: 10 }
+        Rectangle { width: 10; height: 10; onXChanged: a.width += 1 }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 100.0);
+    frame(&mut s, &e);
+    let said: Vec<String> = e.take_log().into_iter().map(|l| l.message).collect();
+    let want = format!(
+        "file:///Main.qml:5:5: QML Row: Possible polish loop: still dirty after {} passes",
+        ljos_quick::MAX_POLISH_PASSES
+    );
+    assert!(said.iter().any(|w| w.starts_with(&want)), "{said:?}");
+}

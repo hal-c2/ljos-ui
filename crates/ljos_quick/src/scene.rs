@@ -86,6 +86,12 @@ pub const MAX_POLISH_PASSES: usize = 100;
 /// Passes per frame in which views lay out the rows they just made, before
 /// those count as passes too.
 pub const MAX_ROW_PASSES: usize = 1024;
+/// Rounds [`inherit`] goes for one item before it gives up, beside four
+/// per ancestor. A round is asked for by a change in the flush the last
+/// one caused (an ancestor shown, the item's own value written), and each
+/// ancestor can change `visible` and `enabled` once or twice in a change;
+/// what goes on past that is a loop.
+pub const MAX_INHERIT_ROUNDS: usize = 64;
 /// Time per frame for making the items of asynchronous Loaders
 /// (ARCHITECTURE §6.3).
 pub const INCUBATION_BUDGET: Duration = Duration::from_millis(3);
@@ -1679,13 +1685,23 @@ impl QuickScene {
         POLISHING.set(false);
         crate::views::polish_ends(engine);
         let left = self.shared.borrow_mut().take(Dirty::POLISH, |_| ());
-        if !left.is_empty() {
+        // Named as a binding loop is, where it was declared: one of the
+        // items left, the same one each time.
+        if let Some(&(first, ())) = left.iter().min_by_key(|(o, ())| *o) {
+            let place = engine.declared_at(first).unwrap_or_default();
+            let ty = engine
+                .meta_of(first)
+                .map_or_else(|| "?".to_owned(), |m| m.name.to_string());
+            let others = match left.len() - 1 {
+                0 => String::new(),
+                n => format!(" (and {n} other item(s))"),
+            };
             engine.log(
                 LogLevel::Warning,
                 POLISH_CATEGORY,
                 format!(
-                    "Possible polish loop: {} item(s) still dirty after {MAX_POLISH_PASSES} passes",
-                    left.len()
+                    "{place}QML {ty}: Possible polish loop: still dirty after \
+                     {MAX_POLISH_PASSES} passes{others}"
                 ),
             );
         }
@@ -3588,6 +3604,7 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     }) else {
         return;
     };
+    let (mut rounds, mut bound, mut last) = (0, MAX_INHERIT_ROUNDS, Item::VISIBLE.index);
     let uncovered = loop {
         let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
         for p in [Item::VISIBLE.index, Item::ENABLED.index] {
@@ -3598,21 +3615,34 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
             } else {
                 parent.is_none_or(|q| e.read(q, p).to_boolean())
             };
-            if let Err(err) = inherit_one(e, obj, p, shared, parent_on) {
-                e.log(
+            match inherit_one(e, obj, p, shared, parent_on) {
+                Ok(true) => last = p,
+                Ok(false) => {}
+                Err(err) => e.log(
                     LogLevel::Warning,
                     SCENE_CATEGORY,
                     format!("inherit failed: {err}"),
-                );
+                ),
             }
+        }
+        rounds += 1;
+        if rounds == MAX_INHERIT_ROUNDS {
+            // Only a pass that has gone this far pays for the walk up.
+            bound += 4 * depth(e, obj);
         }
         let mut s = shared.borrow_mut();
         let Some(m) = s.marks.get_mut(obj) else {
             break false;
         };
-        if !std::mem::take(&mut m.inherit.again) || !e.is_alive(obj) {
+        let again = std::mem::take(&mut m.inherit.again);
+        if !again || !e.is_alive(obj) || rounds >= bound {
             m.inherit.busy = false;
-            break m.inherit.visible.is_none();
+            let uncovered = m.inherit.visible.is_none();
+            drop(s);
+            if again && rounds >= bound {
+                inherit_loop(e, obj, last);
+            }
+            break uncovered;
         }
     };
     // A covered item is kept shown in the tree (see `apply_geometry`).
@@ -3622,6 +3652,26 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     if covered && uncovered {
         mark(shared, |s| s.set(obj, Dirty::GEOM, |_| ()));
     }
+}
+
+/// [`inherit`] went round for `obj` as long as a real tree ever needs
+/// and was still asked again: a fault of the item, named as a binding
+/// loop is, and the pass stops so the turn ends.
+fn inherit_loop(e: &Engine, obj: ObjectId, p: PropIndex) {
+    let ty = e
+        .meta_of(obj)
+        .map_or_else(|| "?".to_owned(), |m| m.name.to_string());
+    let name = if p == Item::ENABLED.index {
+        "enabled"
+    } else {
+        "visible"
+    };
+    e.report_fault(
+        Some(obj),
+        ljos_runtime::Fault::Internal(format!(
+            "QML {ty}: Inheritance loop detected for property \"{name}\""
+        )),
+    );
 }
 
 /// The override that covers `p` of `obj` in this scene; `None` outside it.
@@ -3651,13 +3701,13 @@ fn inherit_one(
     p: PropIndex,
     shared: &SharedRc,
     parent_on: bool,
-) -> Result<(), EngineError> {
+) -> Result<bool, EngineError> {
     let Some(slot) = cover(shared, obj, p) else {
-        return Ok(());
+        return Ok(false);
     };
     let own = e.read(obj, p).to_boolean();
     match (parent_on, slot) {
-        (true, None) => Ok(()),
+        (true, None) => Ok(false),
         (true, Some(id)) => {
             set_cover(shared, obj, p, None);
             // The layer is a binding until something assigns through it;
@@ -3668,21 +3718,22 @@ fn inherit_one(
             } else {
                 RestoreMode::BindingOrValue
             };
-            e.remove_override(obj, p, id, mode)
+            e.remove_override(obj, p, id, mode).map(|()| true)
         }
         (false, None) => {
             if own {
                 let id = push_off(e, obj, p)?;
                 set_cover(shared, obj, p, Some(id));
             }
-            Ok(())
+            Ok(own)
         }
         (false, Some(id)) => {
             // The cover is a binding until something writes through it.
             // One that reads true unwritten is no assignment: its item's
             // destruction has been told, so it gives its last value and
             // would give it again under a new cover.
-            if own && e.provenance(obj, p) != Some(Provenance::Bound) {
+            let assigned = own && e.provenance(obj, p) != Some(Provenance::Bound);
+            if assigned {
                 // `true` was assigned while the parent is off: keep it as
                 // the own value, and keep reading false.
                 set_cover(shared, obj, p, None);
@@ -3690,7 +3741,7 @@ fn inherit_one(
                 let id = push_off(e, obj, p)?;
                 set_cover(shared, obj, p, Some(id));
             }
-            Ok(())
+            Ok(assigned)
         }
     }
 }
