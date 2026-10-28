@@ -36,8 +36,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Cx, Engine, EngineError, Font, Interception, Interceptor, ObjectId, Prop, PropIndex, QmlList,
-    QmlObject, QtObject, Value, WriteKind, qml_impl,
+    ConnectionId, Cx, Engine, EngineError, Font, Interception, Interceptor, ObjectId, Prop,
+    PropIndex, QmlList, QmlObject, QtObject, SignalIndex, Value, WriteKind, qml_impl,
 };
 use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 use ljos_quick::{Item, Passage, is_item, set_parent_item};
@@ -111,6 +111,8 @@ pub(crate) struct PopupState {
     pub dimmer: Cell<Option<ObjectId>>,
     /// Shown in an overlay: open, and its window is known.
     pub shown: Cell<bool>,
+    /// The parent whose destruction clears the popup's logical parent.
+    parent_destroyed: Cell<Option<(ObjectId, ConnectionId)>>,
     /// What had the keyboard before the popup took it.
     saved_focus: Cell<Option<ObjectId>>,
     took_focus: Cell<bool>,
@@ -707,8 +709,26 @@ fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
     item::mirror_look(e, popup, item)?;
 
     // Where the popup's item lives follows the window its parent is in.
+    let st = state.clone();
     e.effect_in(popup, move |e| {
         let parent = object(e, popup, Popup::PARENT.index);
+        if st.parent_destroyed.get().map(|(p, _)| p) != parent {
+            if let Some((_, conn)) = st.parent_destroyed.take() {
+                e.disconnect(conn);
+            }
+            let conn = parent.and_then(|p| {
+                e.connect_to(p, SignalIndex::DESTROYED, popup, move |e, _| {
+                    check(
+                        e,
+                        "parent",
+                        set_derived(e, popup, Popup::PARENT.index, Value::Null),
+                    );
+                })
+                .map_err(|err| check(e, "parent", Err(err)))
+                .ok()
+            });
+            st.parent_destroyed.set(parent.zip(conn));
+        }
         let top = parent.and_then(|p| ljos_quick::window_of(e, p));
         e.untrack(|| check(e, "popup", settle(e, popup, top)));
     })?;
