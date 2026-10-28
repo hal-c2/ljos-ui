@@ -393,6 +393,93 @@ Where A1 compiles a case, it beats Qt's compiled file as it is on c2 and c4, by 
 edit, and its compiled module is a quarter of the size. Its build is 15 to 20× cheaper per
 file.
 
+## What A2 changed
+
+A2 widened what is compiled without asking for annotations, made the two drivers do the same
+work, and took a backlog out of the memory figures. The sections above are A1's record; this
+one is where things stand after A2.
+
+- **The drivers.** Both now hold the world's objects once, so a step in either measures the
+  same writes; `aot_bench`'s lookup of `root` by `objectName` is gone. Both run the
+  deferred-delete pass after each step, outside the clock, as a host's turn does
+  (`process_deferred_deletes`; Qt: `sendPostedEvents` for `DeferredDelete`).
+- **What is compiled.** A singleton's object and the members of types written in QML; what
+  code reads of an item's `parent` (`parent.width`, `parent.parent.width`), and of any
+  object a property refers to; and a binding that gives an object (`anchors.fill: parent`,
+  `target: root`). The object is found before the code runs, so code that writes or emits
+  refuses it by name, as does a method called on it.
+
+### The cases after A2
+
+`steps`, as above: the median over three interleaved runs of each run's median / p99, in ns.
+The load average was about 30, from other builds, so single cells move by 10 to 20 % from
+run to run. Lower is better.
+
+| Case | Ljós tier 1 | **Ljós A2** | qml6 uncompiled (JIT) | qml6 compiled, file as is | qml6 compiled, annotated |
+|---|---|---|---|---|---|
+| c1 binding, 3 reads | 641 / 1,002 | **491 / 752** | 722 / 1,193 | 571 / 1,052 | 561 / 1,132 |
+| c2 handler, branch + emit | 972 / 1,734 | **341 / 551** | 641 / 2,535 | 471 / 2,114 | 401 / 1,613 |
+| c3 handler, one write | 220 / 431 | **181 / 210** | 350 / 1,994 | 331 / 2,034 | 250 / 1,613 |
+| c4 binding, switch + `qsTr` | 1,463 / 1,974 | **481 / 701** | 1,202 / 4,078 | 1,442 / 4,789 | 1,462 / 3,667 |
+| c5 binding, filter + plural | 2,584 / 4,629 | **2,495 / 4,238** | 4,198 / 10,169 | 4,799 / 12,213 | 5,421 / 13,706 |
+| c6 handler, list toggle | 1,402 / 2,134 | 1,333 / **2,054** | 992 / 5,511 | 962 / 4,639 | 1,273 / 5,801 |
+| c7 handler, keys | 882 / 1,563 | **421 / 661** | 602 / 2,534 | 591 / 2,304 | 411 / 2,165 |
+| c8 handler, model update | 5,711 / 10,981 | **5,430 / 11,051** | 5,380 / 17,624 | 5,901 / 20,288 | 5,220 / 22,513 |
+
+Against Qt compiling the file as it is, Ljós's median and p99 are lower in seven cases. c6's
+p99 is lower (2,054 against 4,639) and its median is not (1,333 against 962). Against the
+annotated copy, Ljós's p99 is lower in every case, and its median in five: it loses c6
+(1,333 against 1,273), and c7 and c8 by 2 and 4 %, less than they move between runs.
+
+c6 runs dynamically: its list is a `var`, and the corpus has few typed lists to compile
+(`list<int>` 7, `list<real>` 3, `list<string>` 2). It went from 2.2 µs to 1.3 µs in A2, in
+the dynamic tiers. What is left of its 16.5k instructions a step is spread out: QuickJS's
+array work about 5.7k, the `var` write 2.5k, the handle each stored array keeps and its
+release 2k, the read 1.4k.
+
+### Memory after A2
+
+RSS (`rss`, a fresh process each, two runs, after 2,000 steps of all eight cases), in KB:
+
+| | at start | world loaded | after the steps | growth in the steps |
+|---|---:|---:|---:|---:|
+| Ljós tier 1 | 3,884 to 4,040 | 14,388 to 14,496 | 14,880 to 14,900 | 384 to 512 |
+| Ljós A2 | 4,008 to 4,036 | 14,452 to 14,684 | 14,708 to 14,940 | 256 |
+| Qt compiled | 23,560 to 23,580 | 36,540 to 36,592 | 38,744 to 38,760 | 2,168 to 2,204 |
+| Qt compiled, annotated | 23,360 to 23,620 | 36,408 to 36,632 | 41,552 to 41,768 | 5,136 to 5,144 |
+| Qt uncompiled | 23,448 to 23,544 | 38,876 to 39,000 | 41,044 to 41,172 | 2,168 to 2,172 |
+
+A1's 3.3 to 4.0 MB of growth was the drivers', not the engine's: c8 removes model rows,
+and the `get()` objects of removed rows wait for the turn that deletes them, which
+`aot_bench` never ran. They grew by 1.6 KB a step, 31 MB over 20,000 steps. With the pass,
+20,000 steps end where 2,000 do (14,888 KB), and QuickJS's heap stays at 661 KB and 881
+objects. `aot_bench rss <mode> [steps] [case]` prints the script heap and object count
+too.
+
+### The qtdoc corpus after A2
+
+The same 495 files, and the files whose imports all resolve. A2 finds that set with
+`qmllint`, using the same import paths as the qmlcachegen runs, and gets 242 files where A1
+had 253. Qt's count on it comes from the same per-file qmlcachegen runs.
+
+| Files | Qt: bindings and functions compiled to C++ | Ljós A1 | **Ljós A2** |
+|---|---:|---:|---:|
+| all 495 | 3,974 of 11,735 (33.9 %, skipped calls counted) | 2,174 of 8,765 (24.8 %) | **4,894 of 8,735 (56.0 %)** |
+| the 242 that resolve | 2,239 of 4,084 (54.8 %) | | **2,026 of 3,477 (58.3 %)** |
+
+A2's steps on the 495: 30.6 % after the singleton and QML-type members, 33.3 % with
+`parent`, and 56.0 % with objects as values. The largest refusals left:
+
+- **Anchor lines (about 970).** These are `anchors.left: parent.right` and its kind. The
+  engine has no type for an anchor line, so they stay dynamic.
+- **Method calls (311).** On a value or an object: `.vector2d` 29, `.vector3d` 26, `.close`
+  21, `.arg` 19.
+- **Others.** Untyped parameters 264, aliases 245, and method calls of a singleton 220.
+
+Built without Qt's table (`LJOS_QT_TYPES=none`), `parent.width` runs dynamically. Ljós
+lets an item's visual parent be something other than an item, so its own table gives
+`parent` as an object of any type.
+
 ## Reproducing
 
 ```sh
@@ -401,7 +488,7 @@ target/release/aot_bench cases aot        # and tier1, quickjs
 target/release/aot_bench steps aot        # and tier1: inputs and trigger together
 target/release/aot_bench snapshot aot     # the end state, to check another driver
 target/release/aot_bench boundary aot     # and tier1
-target/release/aot_bench rss aot          # and tier1
+target/release/aot_bench rss aot          # and tier1; rss <mode> <steps> <case> for one case
 target/release/ljos-compile aot-coverage corpus/qtdoc/examples
 LJOS_AOT_OUT=corpus.rs target/release/ljos-compile aot-coverage corpus/qtdoc/examples
 QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input examples/aot_spike/qt
