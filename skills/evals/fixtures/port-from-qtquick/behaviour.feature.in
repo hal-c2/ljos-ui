@@ -1,0 +1,36 @@
+# Sources:
+#   https://doc.qt.io/qt-6/qtqml-documents-definetypes.html
+# Verified on Qt 6.11.2 (qml6, offscreen).
+
+@qt-parity
+Feature: The buttons of the components example
+  A file Button.qml makes a type Button, which application.qml uses three
+  times in a column: red, blue and moved right, red again.
+
+  Background:
+    Given the file "Button.qml":
+      """qml
+{{Button.qml}}
+      """
+    And the file "application.qml":
+      """qml
+{{application.qml}}
+      """
+
+  Scenario: The three buttons stand in a column
+    When "application.qml" is loaded
+    Then the pixel at 25, 25 of the window is "#ff0000"
+    And the pixel at 100, 75 of the window is "#0000ff"
+    And the pixel at 25, 125 of the window is "#ff0000"
+
+  Scenario: The second button is moved right of the column's edge
+    When "application.qml" is loaded
+    Then the pixel at 55, 75 of the window is "#0000ff"
+    And the pixel at 140, 75 of the window is "#0000ff"
+
+  Scenario: A click on a button leaves the column as it was
+    When "application.qml" is loaded
+    And the user presses the pointer at 100, 75
+    And the user releases the pointer at 100, 75
+    Then the pixel at 100, 75 of the window is "#0000ff"
+    And the pixel at 25, 25 of the window is "#ff0000"

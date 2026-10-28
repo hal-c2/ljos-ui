@@ -1,0 +1,17 @@
+{
+  "skills": ["embedding-qml-in-rust"],
+  "query": "Make this directory a Rust binary crate, using the ljos crate at {{LJOS_CRATE}}, that shows a QML ListView of tasks fed from a list model written in Rust, plus a native Rust type exposed to QML that holds a count of finished tasks. A background thread adds a task every second and updates the count, through UiHandle. Add a test that runs it headless and checks the list and the count.",
+  "files": [],
+  "expected_behavior": [
+    "Writes Cargo.toml with ljos as a path dependency, the QML file and src/main.rs",
+    "Implements QmlListModel for the tasks and a QmlObject type for the count",
+    "Starts the thread from the setup's UiHandle and changes the model and the object only inside the closures it sends",
+    "Writes a headless test, and ends when cargo build and cargo test pass"
+  ],
+  "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash(ljos:*)", "Bash(cargo:*)", "mcp__ljos"],
+  "graders": [
+    {"name": "build", "run": "cargo build --offline -q"},
+    {"name": "test", "run": "cargo test --offline -q 2>&1 | tee $RUN/cargo-test.log; grep -Eq 'test result: ok\\. [1-9]' $RUN/cargo-test.log && ! grep -q 'FAILED' $RUN/cargo-test.log"},
+    {"name": "content", "run": "grep -rq 'UiHandle\\|ui_handle' src && grep -rq 'QmlListModel' src && grep -rq 'QmlObject' src && grep -rq 'ListView' --include=*.qml . && grep -rq 'thread::spawn\\|task::spawn' src"}
+  ]
+}

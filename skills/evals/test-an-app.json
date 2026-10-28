@@ -1,0 +1,17 @@
+{
+  "skills": ["testing-qml-apps"],
+  "query": "Write @qt-parity Gherkin scenarios in features/stepper.feature for what Stepper.qml does, and run them on Ljós and on Qt.",
+  "files": ["fixtures/test-an-app/Stepper.qml"],
+  "expected_behavior": [
+    "Reads the step catalogue and writes the QML inline with Given the file, since a scenario only sees the files it declares",
+    "Addresses objects by objectName and checks behaviour a user sees: the count, and which button is enabled",
+    "Tags the feature @qt-parity with a # Sources: block and the Qt version it was verified on",
+    "Runs the scenarios on the ljos and the qt backend, and ends when both pass"
+  ],
+  "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash(ljos:*)", "mcp__ljos"],
+  "graders": [
+    {"name": "ljos", "run": "bash $EVALS/scenarios.sh ljos"},
+    {"name": "qt", "run": "bash $EVALS/scenarios.sh qt"},
+    {"name": "features-lint", "run": "$LJOS_FEATURES_LINT features"}
+  ]
+}

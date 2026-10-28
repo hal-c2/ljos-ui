@@ -1,0 +1,16 @@
+{
+  "skills": ["porting-from-qt-quick"],
+  "query": "application.qml and Button.qml were written for Qt Quick. Port them to Ljós: ljos check must accept them and the lint must show no errors. Keep what they do and how they look.",
+  "files": ["fixtures/port-from-qtquick/source/application.qml", "fixtures/port-from-qtquick/source/Button.qml"],
+  "expected_behavior": [
+    "Runs ljos check and qml_lint on the files first and reads what they report",
+    "Fixes each Error without changing the colours, sizes or positions the files draw",
+    "Ends when ljos check accepts the files and qml_lint reports no Error"
+  ],
+  "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash(ljos:*)", "mcp__ljos"],
+  "graders": [
+    {"name": "check", "run": "$LJOS check ."},
+    {"name": "lint", "run": "python3 -I $EVALS/mcp_lint.py $LJOS ."},
+    {"name": "behaviour", "run": "bash $EVALS/behaviour.sh"}
+  ]
+}

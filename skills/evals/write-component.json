@@ -1,0 +1,18 @@
+{
+  "skills": ["writing-qml-components"],
+  "query": "Make a settings panel for my app: a slider for the volume, a switch for notifications and a combo box to pick the theme (System, Light, Dark). Put it in SettingsPanel.qml and show it from Main.qml. Every string is translated, and the panel works with a keyboard and a screen reader.",
+  "files": [],
+  "expected_behavior": [
+    "Writes SettingsPanel.qml with a Slider, a Switch and a ComboBox, and a Main.qml whose window shows it",
+    "Wraps every string the user sees in qsTr",
+    "Names each control for assistive technology and keeps it reachable by Tab",
+    "Runs the checks and fixes what they find until ljos check, qml_lint and ljos audit report no Error"
+  ],
+  "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash(ljos:*)", "mcp__ljos"],
+  "graders": [
+    {"name": "check", "run": "$LJOS check ."},
+    {"name": "lint", "run": "python3 -I $EVALS/mcp_lint.py $LJOS ."},
+    {"name": "audit", "run": "$LJOS audit --matrix full Main.qml"},
+    {"name": "content", "run": "grep -q 'Slider' SettingsPanel.qml && grep -q 'Switch' SettingsPanel.qml && grep -q 'ComboBox' SettingsPanel.qml && grep -q 'qsTr' SettingsPanel.qml"}
+  ]
+}
