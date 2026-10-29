@@ -1026,3 +1026,83 @@ Item {
     }
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
+
+const PERSISTED_DELEGATES: &str = r##"import QtQuick
+import QtQml.Models
+Item {
+  id: root; width: 200; height: 300
+  property int gone: 0
+  ListModel {
+    id: model
+    ListElement { name: "a" }
+    ListElement { name: "b" }
+    ListElement { name: "c" }
+  }
+  DelegateModel {
+    id: dm; objectName: "dm"; model: model
+    delegate: Item {
+      required property string name
+      objectName: "r" + name; width: 200; height: 20
+      Component.onDestruction: if (name === "a") root.gone++
+    }
+  }
+  ListView { id: view; objectName: "view"; anchors.fill: parent; model: dm }
+  function hide() {
+    dm.persistedItems.insert(0); dm.items.remove(0, 1); view.forceLayout()
+  }
+  function release() { dm.persistedItems.remove(0, 1); view.forceLayout() }
+}
+"##;
+
+fn hidden_persisted_delegate(e: &Engine) -> (ObjectId, ObjectId, ObjectId, ObjectId, QuickScene) {
+    let root = load(e, PERSISTED_DELEGATES);
+    let (view, dm) = (find(e, root, "view"), find(e, root, "dm"));
+    let mut s = settled(e, root);
+    let delegate = row(e, view, "ra");
+    e.invoke_by_name(root, "hide", &[]).unwrap();
+    s.frame(e, Time::from_millis(1000));
+    assert!(e.is_alive(delegate));
+    assert_eq!(num(e, root, "gone"), 0.0);
+    assert_eq!(num(e, view, "count"), 2.0);
+    (root, view, dm, delegate, s)
+}
+
+#[test]
+fn hidden_persisted_delegate_is_destroyed_when_persistence_ends() {
+    let e = engine();
+    let (root, _view, _dm, delegate, mut s) = hidden_persisted_delegate(&e);
+    let before = e.object_count();
+    e.invoke_by_name(root, "release", &[]).unwrap();
+    assert!(e.is_alive(delegate), "deferred until the handler returns");
+    assert_eq!(num(&e, root, "gone"), 0.0);
+    s.frame(&e, Time::from_millis(2000));
+    assert!(e.is_alive(delegate), "the current settle leaves it alone");
+    assert_eq!(num(&e, root, "gone"), 0.0);
+    s.frame(&e, Time::from_millis(2016));
+    assert!(!e.is_alive(delegate));
+    assert_eq!(num(&e, root, "gone"), 1.0);
+    assert!(e.object_count() < before);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
+
+#[test]
+fn hidden_persisted_delegate_is_destroyed_with_model() {
+    let e = engine();
+    let (root, _view, dm, delegate, mut s) = hidden_persisted_delegate(&e);
+    e.destroy(dm);
+    s.frame(&e, Time::from_millis(2000));
+    assert!(e.is_alive(delegate));
+    s.frame(&e, Time::from_millis(2016));
+    assert!(!e.is_alive(delegate));
+    assert_eq!(num(&e, root, "gone"), 1.0);
+}
+
+#[test]
+fn hidden_persisted_delegate_is_destroyed_with_view() {
+    let e = engine();
+    let (root, view, _dm, delegate, mut s) = hidden_persisted_delegate(&e);
+    e.destroy(view);
+    s.frame(&e, Time::from_millis(2000));
+    assert!(!e.is_alive(delegate));
+    assert_eq!(num(&e, root, "gone"), 1.0);
+}

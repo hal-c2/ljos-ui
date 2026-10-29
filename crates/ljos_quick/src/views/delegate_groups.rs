@@ -403,6 +403,7 @@ impl GroupState {
             };
             let _ = e.emit_by_name(*object, "changed", &[list(&removed), list(&inserted)]);
         }
+        destroy_unpersisted(e, self);
     }
 
     fn sync_counts(&self, e: &Engine) {
@@ -1035,6 +1036,8 @@ type KnownDelegate = (ObjectId, Rc<GroupState>, u64);
 #[derive(Default)]
 struct Registry {
     delegates: RefCell<FxHashMap<ObjectId, KnownDelegate>>,
+    /// Released by a view but kept by persistedItems, and so not shown.
+    released: RefCell<FxHashSet<ObjectId>>,
 }
 
 pub(crate) fn register_delegate(
@@ -1044,17 +1047,76 @@ pub(crate) fn register_delegate(
     item: ObjectId,
     key: u64,
 ) {
-    e.extension::<Registry>()
+    let registry = e.extension::<Registry>();
+    registry.released.borrow_mut().remove(&item);
+    registry
         .delegates
         .borrow_mut()
         .insert(item, (dm, state.clone(), key));
 }
 
 pub(crate) fn unregister_delegate(e: &Engine, item: ObjectId) {
-    e.extension::<Registry>()
-        .delegates
-        .borrow_mut()
-        .remove(&item);
+    let registry = e.extension::<Registry>();
+    registry.delegates.borrow_mut().remove(&item);
+    registry.released.borrow_mut().remove(&item);
+}
+
+pub(crate) fn delegate_released(e: &Engine, item: ObjectId) {
+    if is_persisted(e, item) {
+        e.extension::<Registry>().released.borrow_mut().insert(item);
+    } else {
+        unregister_delegate(e, item);
+    }
+}
+
+fn destroy_unpersisted(e: &Engine, state: &Rc<GroupState>) {
+    let registry = e.extension::<Registry>();
+    let doomed: Vec<ObjectId> = {
+        let delegates = registry.delegates.borrow();
+        registry
+            .released
+            .borrow()
+            .iter()
+            .filter(|item| {
+                let Some((_, candidate, key)) = delegates.get(*item) else {
+                    return false;
+                };
+                Rc::ptr_eq(candidate, state)
+                    && !candidate.inner.borrow().entries.iter().any(|entry| {
+                        tell_key(entry) == *key && entry.groups.contains("persistedItems")
+                    })
+            })
+            .copied()
+            .collect()
+    };
+    for item in doomed {
+        unregister_delegate(e, item);
+        e.destroy_at_turn_end(item);
+    }
+}
+
+pub(crate) fn destroyed(e: &Engine, gone: &[ObjectId]) {
+    let registry = e.extension::<Registry>();
+    let mut doomed = Vec::new();
+    {
+        let mut delegates = registry.delegates.borrow_mut();
+        if delegates.is_empty() {
+            return;
+        }
+        let mut released = registry.released.borrow_mut();
+        delegates.retain(|item, (dm, _, _)| {
+            let item_gone = gone.contains(item);
+            let model_gone = gone.contains(dm);
+            if model_gone && !item_gone && released.contains(item) {
+                doomed.push(*item);
+            }
+            !(item_gone || model_gone)
+        });
+        released.retain(|item| delegates.contains_key(item));
+    }
+    for item in doomed {
+        e.destroy_at_turn_end(item);
+    }
 }
 
 fn lookup(e: &Engine, item: ObjectId) -> Option<KnownDelegate> {

@@ -567,9 +567,7 @@ impl DelegateModel {
                     }
                 })),
                 Some(Rc::new(move |e: &Engine, object| {
-                    if !delegate_groups::is_persisted(e, object) {
-                        delegate_groups::unregister_delegate(e, object);
-                    }
+                    delegate_groups::delegate_released(e, object);
                 })),
             );
         }

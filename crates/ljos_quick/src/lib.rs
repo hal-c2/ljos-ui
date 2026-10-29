@@ -233,6 +233,7 @@ pub fn register(engine: &Engine) {
     // What a scene shows of an item goes with it, and a child made in
     // slices is shown once it is whole.
     engine.on_destroyed(scene::destroyed);
+    engine.on_destroyed(views::delegate_groups::destroyed);
     engine.on_incubated(scene::incubated);
     // Idempotent, so registering twice does no harm.
     engine.on_visual_parent_changed(|e, obj, parent| {
