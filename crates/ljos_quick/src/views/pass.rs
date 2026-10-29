@@ -311,11 +311,12 @@ pub(crate) fn drop_extra(e: &Engine, item: ObjectId) {
     }
 }
 
-/// Takes an extra out of the view; its owner destroys it with the view.
+/// Takes an extra out of the view and destroys it after this turn.
 pub(crate) fn retire_extra(e: &Engine, item: ObjectId) {
     strike(e, item);
     if e.is_alive(item) {
         let _ = tree::set_parent_item(e, item, None);
+        e.destroy_at_turn_end(item);
     }
 }
 

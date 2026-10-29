@@ -750,6 +750,22 @@ impl Engine {
         true
     }
 
+    /// Schedules `obj` for [`Engine::destroy`] when the outermost turn ends.
+    /// A deferred-delete pass in the current turn therefore leaves it alone;
+    /// the next pass destroys it. Returns false if it is already gone.
+    pub fn destroy_at_turn_end(&self, obj: ObjectId) -> bool {
+        if !self.is_alive(obj) {
+            return false;
+        }
+        let mut at_end = self.inner.turns.at_end.borrow_mut();
+        if !at_end.contains(&obj) {
+            at_end.push(obj);
+            drop(at_end);
+            self.wake_host();
+        }
+        true
+    }
+
     /// Whether objects wait for [`Engine::process_deferred_deletes`].
     pub fn has_deferred_deletes(&self) -> bool {
         !self.inner.store.borrow().deferred.is_empty()

@@ -426,6 +426,7 @@ impl Drop for TurnGuard<'_> {
 #[derive(Default)]
 pub(crate) struct TurnState {
     depth: Cell<u32>,
+    pub(crate) at_end: RefCell<Vec<ObjectId>>,
     budget: Cell<Option<Duration>>,
     /// When the outermost turn began; `None` when it is not timed.
     started: Cell<Option<Instant>>,
@@ -530,7 +531,7 @@ impl Engine {
         if t.budget.get().is_none() && marker.is_none() && !journaled {
             return TurnGuard {
                 engine: self,
-                outer: false,
+                outer: true,
                 _journaled: None,
             };
         }
@@ -562,6 +563,10 @@ impl Engine {
 
     fn end_turn(&self) {
         let t = &self.inner.turns;
+        let at_end = std::mem::take(&mut *t.at_end.borrow_mut());
+        for obj in at_end {
+            self.destroy(obj);
+        }
         let Some(started) = t.started.take() else {
             return;
         };

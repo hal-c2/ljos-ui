@@ -553,6 +553,9 @@ fn settle<'f>(
     state: &mut DriveState,
     mut host: Option<&mut (dyn Host + 'f)>,
 ) -> Result<(), DriveError> {
+    // Frames within one settle nest in this turn: work for the turn's end
+    // runs only after the last frame, not between two of them.
+    let _turn = engine.begin_turn(ljos_engine::TurnCause::Host, None);
     if let Some(h) = host.as_deref_mut() {
         h.before_settle(engine, scene);
     }

@@ -923,3 +923,106 @@ Item {
     assert_eq!(passes[1..], [(1, 0); 11], "(view, tabs) passes a frame");
     assert!(num(&e, side, "width") < 800.0);
 }
+
+#[test]
+fn replaced_highlights_are_destroyed_after_the_handler_without_accumulating() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+Item {
+  id: root; width: 100; height: 100
+  property int made: 0
+  property int gone: 0
+  Component {
+    id: one
+    Item {
+      width: 100; height: 20
+      Component.onCompleted: root.made++
+      Component.onDestruction: root.gone++
+    }
+  }
+  Component {
+    id: two
+    Item {
+      width: 100; height: 20
+      Component.onCompleted: root.made++
+      Component.onDestruction: root.gone++
+    }
+  }
+  ListView {
+    id: view; anchors.fill: parent; model: 2; highlight: one; highlightMoveDuration: 0
+    delegate: Item { width: 100; height: 20 }
+  }
+  function swap(useOne) { view.highlight = useOne ? one : two }
+}
+"##,
+    );
+    let mut s = settled(&e, root);
+    let baseline = e.object_count();
+    for i in 0..32 {
+        e.invoke_by_name(root, "swap", &[Value::Bool(i % 2 == 1)])
+            .unwrap();
+        assert_eq!(num(&e, root, "gone"), i as f64, "before frame {i}");
+        s.frame(&e, Time::from_millis(1000 + i * 16));
+        assert_eq!(num(&e, root, "gone"), i as f64, "after settle {i}");
+        s.frame(&e, Time::from_millis(1008 + i * 16));
+        assert_eq!(num(&e, root, "gone"), (i + 1) as f64, "next turn {i}");
+        assert_eq!(e.object_count(), baseline, "next turn {i}");
+    }
+    assert_eq!(num(&e, root, "made"), 33.0);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
+
+#[test]
+fn merged_section_headers_are_destroyed_after_the_handler_without_accumulating() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+Item {
+  id: root; width: 100; height: 200
+  property int gone: 0
+  ListModel {
+    id: model
+    ListElement { grp: "A" }
+    ListElement { grp: "A" }
+    ListElement { grp: "A" }
+  }
+  ListView {
+    id: view; anchors.fill: parent; model: model; section.property: "grp"
+    section.delegate: Item {
+      width: 100; height: 10
+      Component.onDestruction: root.gone++
+    }
+    delegate: Item { width: 100; height: 20 }
+  }
+  function splitAndMerge() {
+    model.setProperty(1, "grp", "B"); view.forceLayout()
+    model.setProperty(1, "grp", "A"); view.forceLayout()
+  }
+}
+"##,
+    );
+    let mut s = settled(&e, root);
+    e.invoke_by_name(root, "splitAndMerge", &[]).unwrap();
+    s.frame(&e, Time::from_millis(1000));
+    let baseline = e.object_count();
+    let retired = num(&e, root, "gone");
+    for i in 0..32 {
+        e.invoke_by_name(root, "splitAndMerge", &[]).unwrap();
+        assert_eq!(
+            num(&e, root, "gone"),
+            retired + (i * 2) as f64,
+            "before frame {i}"
+        );
+        s.frame(&e, Time::from_millis(2000 + i * 16));
+        assert_eq!(
+            num(&e, root, "gone"),
+            retired + ((i + 1) * 2) as f64,
+            "after frame {i}"
+        );
+        assert_eq!(e.object_count(), baseline, "after frame {i}");
+    }
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
