@@ -374,10 +374,19 @@ pub(crate) fn flick(e: &Engine, f: ObjectId, velocity: [f64; 2]) {
 pub(crate) fn return_to_bounds(e: &Engine, f: ObjectId) {
     let Some(st) = state_of(e, f) else { return };
     let physics = scroll_physics(e);
+    let immediate = e
+        .untrack(|| e.read(f, Flickable::REBOUND.index))
+        .as_object()
+        .is_some_and(|t| animations(e, t).is_empty());
     let mut segs = [None; 2];
     for axis in [X, Y] {
         let state = virtual_position(e, f, axis);
-        match physics.return_to_bounds(&state) {
+        let motion = if immediate {
+            physics.settle(&state)
+        } else {
+            physics.return_to_bounds(&state)
+        };
+        match motion {
             Motion::Start(seg) => segs[axis] = Some(seg),
             Motion::Jump(to) => place(e, f, axis, to, 0.0),
             _ => {}
