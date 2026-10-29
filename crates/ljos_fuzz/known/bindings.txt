@@ -23,6 +23,7 @@ value:load:nan-ljos                   NaN given to height or x is ignored (featu
 value:load:text-nan-ljos              NaN given to width is ignored (features/items/geometry-nan.feature)
 value:step:text-nan-ljos              NaN given to width or x is ignored (features/items/geometry-nan.feature)
 value:step:length                     NaN given to width is ignored (features/items/geometry-nan.feature)
+value:load:length                     NaN given to width is ignored, leaving it in a list of reals (features/items/geometry-nan.feature)
 value:step:bool                       NaN given to y is ignored (features/items/geometry-nan.feature); or a list property is not an Array to Array.isArray (features/language/list-properties.feature)
 value:onChanged:empty-qt              NaN given to width is ignored, so no handler runs (features/items/geometry-nan.feature)
 
@@ -46,6 +47,9 @@ warning:assign(qt-only):Cannot_assign_[undefined]_to_QQuickText::WrapMode  a lis
 value:load-handlers:bool-vs-number    the handlers of a tree run from its last child to its root (features/bindings/errors-during-creation.feature)
 value:load-handlers:text-number       a handler runs while the object is made, before later bindings (features/bindings/creation-order.feature)
 value:load-handlers:string-vs-color   a handler run while the object is made takes a later binding away (features/bindings/creation-order.feature)
+value:load-handlers:length            a handler run while the object is made writes a list before its later binding (features/bindings/creation-order.feature)
+value:load-handlers:text              a handler run while the object is made writes text before its later binding (features/bindings/creation-order.feature)
+value:load-handlers:string-vs-bool    a handler run while the object is made writes a later binding of another type (features/bindings/creation-order.feature)
 value:load-handlers:color             a handler run while the object is made reads a binding not made yet (features/bindings/creation-order.feature)
 value:step:text-number                a handler run while the object is made takes a later binding away, read by a step (features/bindings/creation-order.feature)
 warning:assign(ljos-only):Cannot_assign_double_to_Text::WrapMode  a handler run while the object is made reads a later binding as "", which Ljós has made (features/bindings/creation-order.feature)
@@ -59,6 +63,8 @@ warning:TypeError(ljos-only):Cannot_read_property_'_'_of_undefined   a binding r
 warning:TypeError(ljos-only):not_a_function   a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
 warning:assign(ljos-only):Unable_to_assign_double_to_url    a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
 warning:assign(ljos-only):Unable_to_assign_int_to_url       a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:assign(ljos-only):Unable_to_assign_QString_to_int     a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
+warning:assign(ljos-only):Unable_to_assign_QString_to_QSizeF  a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
 warning:assign(ljos-only):Unable_to_assign_[undefined]_to_*  a binding replaced during creation is not logged (features/bindings/errors-during-creation.feature)
 
 # A Text keeps eight bits a channel of its colour (features/language/color-values.feature).
@@ -85,6 +91,11 @@ warning:TypeError(ljos-only):Cannot_call_method_'_'_of_undefined     an alias of
 warning:other(ljos-only):Invalid_alias_target_location:*    an alias of a colour channel is a valid target (features/language/color-member-aliases.feature)
 warning:other(qt-only):QColor::set*           Qt's own warning when a channel written through an alias is NaN; Ljós has no such alias yet (features/language/color-member-aliases.feature)
 
+value:onChanged:text                  the change handlers of a tree run from its last child to its root (features/bindings/creation-order.feature)
+value:onChanged+onCompleted:text      an initialized empty list given an empty list again is no change, or a built-in width given an enum tells its handler while made (features/language/list-properties.feature, features/bindings/creation-order.feature)
+
+value:alias:number                    a handler run while the object is made writes through an alias before the target's later binding (features/bindings/creation-order.feature)
+
 # Read-only properties (features/language/readonly-list-properties.feature, features/language/readonly-value-members.feature).
 error-kind:TypeError/Error:step-push-readonly push on a readonly list: Qt TypeError, list unchanged (features/language/readonly-list-properties.feature)
 value:step-readonly:*                 push on a readonly list changes it, and a script can give a readonly list another list, also through an alias (features/language/readonly-list-properties.feature)
@@ -93,6 +104,7 @@ throws:none/TypeError:step-member-write-readonly writing a member of a readonly 
 
 # A list property is not an Array to Array.isArray (features/language/list-properties.feature).
 value:load:bool                       a list property is not an Array to Array.isArray (features/language/list-properties.feature)
+value:load:number                     a list property is not an Array to Array.isArray, so a conditional reads another value (features/language/list-properties.feature)
 value:load:text                       a list property is not an Array to Array.isArray (features/language/list-properties.feature)
 value:load:color                      a list property is not an Array to Array.isArray (features/language/list-properties.feature)
 value:step:record-vs-list             a list property is not an Array to Array.isArray, so a handler runs (features/language/list-properties.feature)

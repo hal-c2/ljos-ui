@@ -29,6 +29,7 @@ value:onChanged+onCompleted:empty-qt    an initial real that cannot be converted
 value:onChanged:text                    an initial property that cannot be converted keeps its binding and is told again, an initial colour from false keeps its binding's, or a binding that makes an object is run again (features/components/create-object-converted.feature, features/components/create-object-in-binding.feature)
 value:onChanged:empty-ljos              an initial colour from another type is refused, so the change to an invalid colour is not told (features/components/create-object-converted.feature)
 value:onChanged:empty-qt                an initial point from false or a number is refused on Qt and the binding dropped; Ljós takes the origin and tells it (features/components/create-object-converted.feature)
+value:onChanged+onCompleted:text      a created object's initial change handler runs before its Component.onCompleted (features/components/create-object-in-binding.feature)
 
 # Qt says more about a point it cannot make; Ljós says only that the initial property was
 # not set.

@@ -78,3 +78,20 @@ Feature: A change handler run while the object is made
       }
       """
     Then the property "log" of "root" is "B1;B;Y;A1;W;A;X;root;Z;ZZ;V;"
+
+  # Found by ljos-fuzz (bindings), bucket value:onChanged+onCompleted:text.
+  @backlog
+  Scenario: A built-in property given an enum runs its handler while the object is made
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property string log: ""
+        width: Text.AlignLeft
+        onWidthChanged: log += "width;"
+        Component.onCompleted: log += "completed;"
+      }
+      """
+    Then the property "log" of "root" is "width;completed;"

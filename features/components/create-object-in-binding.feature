@@ -31,3 +31,28 @@ Feature: An object made by a binding
     When the method "make" of "root" is called
     Then the property "log" of "root" is "made;root;made;"
     And the log has no warning matching "Binding loop"
+
+  # Found by ljos-fuzz (creation), bucket value:onChanged+onCompleted:text.
+  # Completion currently runs before the held initial change handler on Ljós.
+  @backlog
+  Scenario: A created object's initial change handler runs before its completion
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property string log: ""
+        width: 120
+        property var made: maker.createObject(root)
+        Component {
+          id: maker
+          Item {
+            property bool ready: root.width
+            onReadyChanged: root.log += "changed;"
+            Component.onCompleted: root.log += "completed;"
+          }
+        }
+      }
+      """
+    Then the property "log" of "root" is "changed;completed;"

@@ -280,6 +280,32 @@ Feature: Which change of a property a state keeps
     Then the property "p0" of "root" is "*****"
     And the log has no warning matching "Binding loop"
 
+  # Found by ljos-fuzz (states), bucket warning:binding-loop(qt-only):step-set.
+  # Qt's own warning: entering the extending state reads and writes the property together.
+  @backlog
+  Scenario: Entering an extending state whose binding reads its property is a loop to Qt
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property color p0
+        states: [
+          State {
+            name: "s0"
+            PropertyChanges { target: root; p0: "red"; restoreEntryValues: false }
+          },
+          State {
+            name: "s1"; extend: "s0"
+            PropertyChanges { target: root; p0: Qt.lighter(root.p0); restoreEntryValues: false }
+          }
+        ]
+      }
+      """
+    When the property "state" of "root" is set to "s1"
+    Then the log has a warning matching "Binding loop detected for property .p0."
+
   @backlog
   Scenario Outline: Under a transition, a state's binding that reads what it binds reads it once
     Given the QML:

@@ -29,4 +29,5 @@ value:onChanged:text      the change handlers of the first bindings run root fir
 # Qt's own quirk, which Ljós is not to copy: a `when` that a change of its state makes false
 # again sends Qt round the loop, and Ljós stops the loop and says so.
 warning:binding-loop(qt-only):when      a when its own state makes false is a loop to Qt
+warning:binding-loop(qt-only):step-set  Qt reports a loop when an extending state's binding reads the property it writes (features/states/binding-over-value.feature)
 warning:other(ljos-only):QML_State:_property_"_"_handlers_re-ran_N_times_in_one_update      a when its own state toggles: Ljós stops the loop and says so

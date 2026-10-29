@@ -241,6 +241,23 @@ Feature: A list property declared in QML
     And the property "sizesAre" of "root" is false
     And the property "copyIs" of "root" is true
 
+  # Found by ljos-fuzz (bindings), bucket value:onChanged+onCompleted:text.
+  # The default empty list and one explicitly initialized empty need distinct provenance.
+  @backlog
+  Scenario: An initialized empty list given an empty list is no change
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<string> names: []
+        property int changes: 0
+        onNamesChanged: changes++
+        Component.onCompleted: names = []
+      }
+      """
+    Then the property "changes" of "root" is 1
+
   # Found by ljos-fuzz (bindings), bucket value:double:step-set(literal).
   Scenario: An empty list given an empty list is told as a change
     Given the QML:
