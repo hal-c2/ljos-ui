@@ -41,7 +41,7 @@ impl Kind {
             Self::Point => "Qt.point(0, 0)",
             Self::Size => "Qt.size(0, 0)",
             Self::Rect => "Qt.rect(0, 0, 0, 0)",
-            Self::Font => "Qt.font({pixelSize: 10})",
+            Self::Font => "Qt.font({pixelSize: 10, family: \"Ljos Fuzz\"})",
             Self::Url => "\"a.png\"",
             Self::Any => "null",
         };

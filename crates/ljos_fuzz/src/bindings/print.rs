@@ -13,7 +13,7 @@ use std::{
     fmt::Write,
 };
 
-use super::ast::{Decl, Expr, Func, Obj, ObjType, Program, Stmt};
+use super::ast::{Decl, Expr, Func, Kind, Obj, ObjType, PType, Program, Stmt};
 use crate::outcome::Rendered;
 
 /// The case as both sides run it.
@@ -92,7 +92,15 @@ fn obj(p: &Program, o: &Obj, depth: usize, harness: bool, out: &mut String) {
         }
     }
     for prop in &o.props {
-        let init = prop.init.as_ref().map(expr);
+        let init = match (&prop.decl, &prop.init) {
+            (
+                Decl::New {
+                    ty: PType::Font, ..
+                },
+                None,
+            ) => Some(expr(&Kind::Font.literal())),
+            (_, init) => init.as_ref().map(expr),
+        };
         let line = match &prop.decl {
             Decl::New { ty, readonly } => {
                 let ro = if *readonly { "readonly " } else { "" };
@@ -310,7 +318,11 @@ const HELPERS: &str = r#"    function __num(v) { return isFinite(v) ? v : {"$n":
     function __point(v) { return {x: __num(v.x), y: __num(v.y)}; }
     function __size(v) { return {width: __num(v.width), height: __num(v.height)}; }
     function __rect(v) { return {x: __num(v.x), y: __num(v.y), width: __num(v.width), height: __num(v.height)}; }
-    function __font(v) { return {pixelSize: v.pixelSize, bold: v.bold, italic: v.italic, underline: v.underline, strikeout: v.strikeout, weight: v.weight}; }
+    function __font(v) {
+        var o = {bold: v.bold, italic: v.italic, underline: v.underline, strikeout: v.strikeout, weight: v.weight};
+        if (v.family === "Ljos Fuzz") o.pixelSize = __num(v.pixelSize);
+        return o;
+    }
     function __url(v) { return __dir(String(v)); }
     function __dir(s) { var b = String(Qt.resolvedUrl(".")); return s.indexOf(b) === 0 ? "$DIR/" + s.slice(b.length) : s; }
     function __k(o, k, f) { try { o[k] = f(); } catch (e) { o[k] = {"$err": String(e && e.name)}; } }

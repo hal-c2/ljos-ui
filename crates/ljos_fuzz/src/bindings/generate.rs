@@ -273,13 +273,13 @@ const OPS: &[Op] = &[
     (
         Font,
         "Qt.font",
-        "Qt.font({pixelSize: $0, bold: $1})",
+        "Qt.font({pixelSize: $0, bold: $1, family: \"Ljos Fuzz\"})",
         &[Pixels, Of(Bool)],
     ),
     (
         Font,
         "Qt.font-italic",
-        "Qt.font({pixelSize: $0, italic: $1, underline: $2})",
+        "Qt.font({pixelSize: $0, italic: $1, underline: $2, family: \"Ljos Fuzz\"})",
         &[Pixels, Of(Bool), Of(Bool)],
     ),
     (Url, "string-as-url", "$0", &[Of(Str)]),
@@ -1092,7 +1092,10 @@ impl Gen<'_> {
                 Rect,
             ),
             Font => Expr::Lit(
-                format!("Qt.font({{pixelSize: {}}})", self.rng.range(8, 30)),
+                format!(
+                    "Qt.font({{pixelSize: {}, family: \"Ljos Fuzz\"}})",
+                    self.rng.range(8, 30)
+                ),
                 Font,
             ),
             Any => match self.rng.below(10) {
@@ -1246,6 +1249,39 @@ mod tests {
         let a = program(&mut Rng::for_case(9, 4));
         let b = program(&mut Rng::for_case(9, 4));
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fonts_have_explicit_platform_independent_values() {
+        for (_, _, tpl, _) in OPS.iter().filter(|(kind, ..)| *kind == Font) {
+            assert!(tpl.contains("pixelSize"), "{tpl}");
+            assert!(tpl.contains("family: \"Ljos Fuzz\""), "{tpl}");
+        }
+        let Expr::Lit(literal, _) = Kind::Font.literal() else {
+            panic!("a font literal")
+        };
+        assert!(literal.contains("pixelSize: 10"));
+        assert!(literal.contains("family: \"Ljos Fuzz\""));
+
+        let mut root = Obj::new("root".into(), ObjType::Item);
+        root.props.push(Prop {
+            name: "face".into(),
+            decl: Decl::New {
+                ty: PType::Font,
+                readonly: false,
+            },
+            init: None,
+            in_loop: false,
+        });
+        let qml = print::clean(&Program {
+            root,
+            enums: Vec::new(),
+            steps: Vec::new(),
+        });
+        assert!(
+            qml.contains("property font face: Qt.font({pixelSize: 10, family: \"Ljos Fuzz\"})"),
+            "{qml}"
+        );
     }
 
     #[test]

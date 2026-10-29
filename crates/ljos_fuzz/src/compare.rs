@@ -2,11 +2,14 @@
 //!
 //! Numbers agree within a few ULPs (the engines round intermediate results
 //! differently and neither is wrong), colours whatever the case of their
-//! hex digits, warnings by category. Anything else that differs, including
-//! a shape this module does not know, is a difference.
+//! hex digits, warnings by category. Generated object addresses, platform
+//! font defaults and local file directories compare by their stable parts.
+//! Anything else that differs, including a shape this module does not know,
+//! is a difference.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::LazyLock};
 
+use regex::Regex;
 use serde_json::Value;
 
 use crate::outcome::{Outcome, Phase, category};
@@ -190,6 +193,7 @@ pub fn same(a: &Value, b: &Value) -> bool {
             (Some(x), Some(y)) => close(x, y),
             _ => x == y,
         },
+        (Value::String(x), Value::String(y)) => same_text(x, y),
         (Value::Array(x), Value::Array(y)) => {
             x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same(a, b))
         }
@@ -203,6 +207,36 @@ pub fn same(a: &Value, b: &Value) -> bool {
         }
         _ => a == b,
     }
+}
+
+fn same_text(a: &str, b: &str) -> bool {
+    normalize_text(a) == normalize_text(b)
+}
+
+fn normalize_text(text: &str) -> String {
+    static OBJECT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r#"[A-Za-z_][A-Za-z0-9_]*_QMLTYPE_[0-9]+\(0x[0-9a-fA-F]+(?:, ("(?:[^"\\]|\\.)*"))?\)"#,
+        )
+        .expect("the generated object pattern is valid")
+    });
+    static FONT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"QFont\(([^,()]*),(-?[0-9]+),(-?[0-9]+),([^)]*)\)"#)
+            .expect("the font pattern is valid")
+    });
+    static FILE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"file://[^\s;"]*/([^/;\s"]+\.png)"#).expect("the file pattern is valid")
+    });
+    let objects = OBJECT.replace_all(text, "QMLObject($1)");
+    let fonts = FONT.replace_all(&objects, |c: &regex::Captures<'_>| {
+        let pixel = if &c[1] == "Ljos Fuzz" {
+            c[3].to_owned()
+        } else {
+            "<platform>".to_owned()
+        };
+        format!("QFont(<family>,{},{pixel},{})", &c[2], &c[4])
+    });
+    FILE.replace_all(&fonts, "file:///$$DIR/$1").into_owned()
 }
 
 fn close(x: f64, y: f64) -> bool {
@@ -458,6 +492,41 @@ mod tests {
         ));
         assert!(same(&json!(6), &json!(6.0)));
         assert!(!same(&json!(0.0), &json!(-1e-300)));
+    }
+
+    #[test]
+    fn generated_object_strings_ignore_type_ids_and_addresses() {
+        let qt = "p0:Case_QMLTYPE_3(0x60d9ee5097f0, \"root\");";
+        let ljos = "p0:Case_QMLTYPE_0(0x100000009, \"root\");";
+        assert!(same(&json!(qt), &json!(ljos)));
+        assert!(!same(
+            &json!(qt),
+            &json!("p0:Case_QMLTYPE_0(0x100000009, \"other\");")
+        ));
+        assert!(!same(
+            &json!(qt),
+            &json!("p0:Case_QMLTYPE_3(0x60d9ee5097f0);")
+        ));
+    }
+
+    #[test]
+    fn platform_dependent_font_and_file_strings_are_normalized() {
+        let qt = "p1:QFont(Adwaita Sans,-1,14,5,400,0);p2:file:///work/c0/b.png;";
+        let ljos = "p1:QFont(Sans Serif,-1,12,5,400,0);p2:file:///b.png;";
+        assert!(same(&json!(qt), &json!(ljos)));
+        assert!(same(
+            &json!("QFont(Adwaita Sans,-1,14,5,400,0)"),
+            &json!("QFont(Sans Serif,-1,12,5,400,0)")
+        ));
+        assert!(!same(
+            &json!("QFont(Ljos Fuzz,-1,14,5,400,0)"),
+            &json!("QFont(Ljos Fuzz,-1,12,5,400,0)")
+        ));
+        assert!(!same(
+            &json!("QFont(Adwaita Sans,-1,14,5,400,0)"),
+            &json!("QFont(Sans Serif,-1,12,5,700,0)")
+        ));
+        assert!(!same(&json!("file:///work/a.png"), &json!("file:///b.png")));
     }
 
     #[test]
