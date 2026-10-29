@@ -154,17 +154,12 @@ impl Loader {
                 match how {
                     Interception::Write => {
                         turned(e, me, on);
-                        // A handler run by turning it may have written a
-                        // newer value; the outer write must not restore its
-                        // stale one.
-                        if with_run(e, me, |r| r.active).flatten() == Some(on) {
-                            let _ = e.write_internal(
-                                me,
-                                Loader::ACTIVE.index,
-                                on.into(),
-                                WriteKind::Imperative,
-                            );
-                        }
+                        let _ = e.write_internal(
+                            me,
+                            Loader::ACTIVE.index,
+                            on.into(),
+                            WriteKind::Imperative,
+                        );
                     }
                     // The binding stays; what it gave goes in once it has.
                     Interception::Binding => e.after_binding(move |e| {
