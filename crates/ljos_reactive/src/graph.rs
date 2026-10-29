@@ -2779,15 +2779,13 @@ impl<V: Clone + 'static> Graph<V> {
     /// nested flushes from running its own observers before that work ends.
     pub fn hold_observers(&self, n: NodeId) -> Option<ObserverHold<'_, V>> {
         let mut i = self.inner.borrow_mut();
-        let first = {
-            let node = i.nodes.get_mut(n)?;
-            if node.flags.has(Flags::NOTE_HOLD) {
-                false
-            } else {
-                node.flags.set(Flags::NOTE_HOLD, true);
-                true
-            }
-        };
+        let node = i.nodes.get_mut(n)?;
+        // The outer hold already counts these observers; counting them
+        // again without a guard to release them would hold them forever.
+        if node.flags.has(Flags::NOTE_HOLD) {
+            return None;
+        }
+        node.flags.set(Flags::NOTE_HOLD, true);
         let mut at = 0;
         while let Some(o) = i
             .nodes
@@ -2801,7 +2799,7 @@ impl<V: Clone + 'static> Graph<V> {
                 node.note_holds = node.note_holds.saturating_add(1);
             }
         }
-        first.then_some(ObserverHold(self, n))
+        Some(ObserverHold(self, n))
     }
 
     fn release_observers(&self, n: NodeId) {

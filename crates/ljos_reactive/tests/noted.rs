@@ -102,3 +102,24 @@ fn a_nested_write_runs_its_watchers_before_the_noted_propertys_watchers() {
 
     assert_eq!(log.take(), ["child", "parent"]);
 }
+
+#[test]
+fn a_second_hold_on_a_held_property_does_not_keep_its_watchers_held() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let p = g.property(r, 0).unwrap();
+    let writes = Rc::clone(&g);
+    g.set_note_handler(move |n| {
+        let _outer = writes.hold_observers(n);
+        assert!(writes.hold_observers(n).is_none());
+    });
+    g.set_noted(p).unwrap();
+    let told = Rc::new(RefCell::new(0));
+    let t = Rc::clone(&told);
+    g.watch(r, p, move |_, _| *t.borrow_mut() += 1).unwrap();
+
+    g.set(p, 1);
+    g.set(p, 2);
+
+    assert_eq!(*told.borrow(), 2);
+}
