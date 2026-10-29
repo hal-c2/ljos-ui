@@ -8,6 +8,9 @@
 #   https://doc.qt.io/qt-6/qml-qtqml-models-delegatemodel.html#items-prop
 #   https://doc.qt.io/qt-6/qml-qtqml-models-delegatemodel.html#persistedItems-prop
 #   https://doc.qt.io/qt-6/qml-qtqml-models-delegatemodelgroup.html#move-method
+#   https://doc.qt.io/qt-6/qml-qtqml-models-listmodel.html#dynamicRoles-prop
+#   https://doc.qt.io/qt-6/qml-qtqml-models-listmodel.html#setProperty-method
+#   https://doc.qt.io/qt-6/qml-qtqml-models-listmodel.html#clear-method
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
 @qt-parity
@@ -167,3 +170,50 @@ Feature: View and model behavior matches Qt
       And the property "itemIdx" of "d-b" is 0
       When the method "releasePersisted" of "root" is called
       Then the property "log" of "root" is ""
+
+  Rule: ListModel dynamicRoles type switching, sparse roles across rows, and role schema after clear
+    With dynamicRoles true, setProperty and set can replace a role's value with one of another type
+    and delegates re-read it. A role first introduced on a later row reads as undefined on earlier
+    rows until set there. On a static ListModel, clear removes the rows but keeps the role types.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 100; height: 100
+          property string dynVal: ""
+          property string firstExtra: ""
+          property string staticAfterClear: ""
+          ListModel { id: dyn; objectName: "dyn"; dynamicRoles: true }
+          ListModel { id: stat; objectName: "stat"; ListElement { v: 10 } }
+          function readZero(role) { return typeof dyn.get(0)[role] + ":" + dyn.get(0)[role] }
+          function switchDynamicTypes() {
+            dyn.append({ v: 42 }); var s1 = readZero("v")
+            dyn.setProperty(0, "v", "hello"); var s2 = readZero("v")
+            dyn.set(0, { v: true }); dynVal = s1 + "|" + s2 + "|" + readZero("v")
+          }
+          function sparseRoleThenFill() {
+            dyn.append({ v: 1 }); dyn.append({ v: 2, extra: "tag" })
+            var before = readZero("extra")
+            dyn.setProperty(0, "extra", "filled")
+            firstExtra = before + "->" + readZero("extra")
+          }
+          function clearStaticThenAppend() {
+            stat.clear(); stat.append({ v: 99 }); stat.setProperty(0, "v", "wrong-type")
+            staticAfterClear = stat.count + ":" + stat.get(0).v
+          }
+        }
+        """
+
+    Scenario: dynamicRoles allows a role's value to change from number to string to boolean
+      When the method "switchDynamicTypes" of "root" is called
+      Then the property "dynVal" of "root" is "number:42|string:hello|boolean:true"
+
+    Scenario: A role added on the second row reads undefined on the first row until set there
+      When the method "sparseRoleThenFill" of "root" is called
+      Then the property "firstExtra" of "root" is "undefined:undefined->string:filled"
+
+    Scenario: Clearing a static ListModel keeps the role type established before clear
+      When the method "clearStaticThenAppend" of "root" is called
+      Then the property "staticAfterClear" of "root" is "1:0"

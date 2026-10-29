@@ -3,7 +3,8 @@
 //! A `ListModel` is rows of role values. A role gets the type of the
 //! first value it is given and keeps it, as in Qt: later values of
 //! another type are refused (`set`, `append`) or converted
-//! (`setProperty`), with Qt's warnings.
+//! (`setProperty`), with Qt's warnings. With `dynamicRoles`, a role may
+//! change type and a row reads a role it does not have as `undefined`.
 //!
 //! `ListElement`s are not objects with properties: the object creator
 //! reads them from the IR ([`declare_rows`]) and they become rows. A list
@@ -47,8 +48,7 @@ pub struct ListModel {
     pub object: QtObject,
     #[qml(notify, readonly)]
     pub count: i32,
-    /// Kept for source compatibility: roles here may always be added
-    /// after the fact, and keep their type as without it.
+    /// Whether roles may change type and rows may have sparse roles.
     #[qml(notify)]
     pub dynamic_roles: bool,
     #[qml(skip)]
@@ -182,6 +182,7 @@ pub(crate) struct ListState {
     /// through it.
     me: Cell<Option<ObjectId>>,
     roles: RefCell<Vec<Role>>,
+    dynamic: Cell<bool>,
     /// The shape of a `get()` object for as many roles as it says. Roles
     /// are only added, so the count tells whether it is current.
     shape: RefCell<Option<(usize, Rc<RowShape>)>>,
@@ -196,6 +197,7 @@ impl ListState {
             this: this.clone(),
             me: Cell::new(None),
             roles: RefCell::new(Vec::new()),
+            dynamic: Cell::new(false),
             shape: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
             next_key: Cell::new(0),
@@ -205,8 +207,11 @@ impl ListState {
 
     /// The state of the `ListModel` `obj`.
     fn of(engine: &Engine, obj: ObjectId) -> Option<Rc<ListState>> {
-        let state = engine.with::<ListModel, _>(obj, |m| m.state.clone()).ok()?;
+        let (state, dynamic) = engine
+            .with::<ListModel, _>(obj, |m| (m.state.clone(), m.dynamic_roles))
+            .ok()?;
         state.me.set(Some(obj));
+        state.dynamic.set(dynamic);
         Some(state)
     }
 
@@ -263,6 +268,7 @@ impl ListState {
         let rows = self.rows.borrow();
         match rows.get(row).and_then(|r| r.values.get(role)) {
             Some(v) => v.clone(),
+            None if self.dynamic.get() => Value::Undefined,
             None => self
                 .roles
                 .borrow()
@@ -310,6 +316,7 @@ impl ListState {
                     None
                 }
                 // `undefined` takes the role back to its default.
+                (Value::Undefined, _, Some(i)) if self.dynamic.get() => Some((i, Value::Undefined)),
                 (Value::Undefined, _, Some(i)) => Some((i, self.roles.borrow()[i].kind.default())),
                 _ => None,
             };
@@ -329,6 +336,10 @@ impl ListState {
         };
         let has = self.roles.borrow()[i].kind;
         if has == kind {
+            return Some((i, self.stored(engine, value)));
+        }
+        if self.dynamic.get() {
+            self.roles.borrow_mut()[i].kind = kind;
             return Some((i, self.stored(engine, value)));
         }
         if source == Source::Write {
@@ -384,10 +395,14 @@ impl ListState {
     fn put(&self, values: &mut Vec<Value>, role: usize, v: Value) {
         let roles = self.roles.borrow();
         while values.len() <= role {
-            let d = roles
-                .get(values.len())
-                .map(|r| r.kind.default())
-                .unwrap_or_default();
+            let d = if self.dynamic.get() {
+                Value::Undefined
+            } else {
+                roles
+                    .get(values.len())
+                    .map(|r| r.kind.default())
+                    .unwrap_or_default()
+            };
             values.push(d);
         }
         values[role] = v;
