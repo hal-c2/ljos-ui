@@ -1048,6 +1048,14 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(n)
     }
 
+    /// Runs an eager effect now, satisfying its pending run before a native
+    /// change hook returns. A clean effect also runs; callers use this where
+    /// they know the value it read has just changed.
+    pub fn run_effect_now(&self, n: NodeId) {
+        self.recompute(n);
+        self.flush_if_idle();
+    }
+
     /// Subscribes to changes of one property, like `onXChanged` or a Rust
     /// subscriber. Unlike [`Graph::effect`] it does not run on creation, and
     /// reads inside `handler` are not tracked. Returns the effect node;

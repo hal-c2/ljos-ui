@@ -169,8 +169,8 @@ fn start(engine: &Engine, obj: ObjectId, followed: &Followed) -> Result<(), Engi
     Ok(())
 }
 
-/// A followed item's own size changed where its anchors read it: catch up
-/// before its change signal runs. The effect leaves these reads untracked.
+/// A followed item's own size changed where its anchors read it: finish its
+/// pending effect before the change signal runs.
 pub(crate) fn size_changed(engine: &Engine, obj: ObjectId, prop: PropIndex) {
     let flag = if prop == Item::WIDTH.index {
         OWN_WIDTH_FLAG
@@ -180,13 +180,17 @@ pub(crate) fn size_changed(engine: &Engine, obj: ObjectId, prop: PropIndex) {
         return;
     };
     let followed = engine.extension::<Followed>();
-    let state = followed
-        .items
-        .borrow()
-        .get(obj)
-        .and_then(|s| s.following.as_ref().map(|f| Rc::clone(&f.state)));
-    if let Some(state) = state.filter(|st| st.flag(flag)) {
-        run(engine, obj, &state);
+    let following = followed.items.borrow().get(obj).and_then(|s| {
+        s.following
+            .as_ref()
+            .map(|f| (f.effect, Rc::clone(&f.state)))
+    });
+    if let Some((effect, state)) = following.filter(|(_, st)| st.flag(flag)) {
+        if state.flag(RUNNING_FLAG) {
+            run(engine, obj, &state);
+        } else {
+            engine.graph().run_effect_now(effect);
+        }
     }
 }
 
@@ -338,12 +342,27 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &AnchorState) {
     for _ in 0..32 {
         state.set_flag(REENTERED_FLAG, false);
         if let Some((mut cx, h, v)) = compute(engine, obj, state) {
-            let result = (|| -> Result<(), EngineError> {
+            let apply_all = || -> Result<(), EngineError> {
                 apply(engine, obj, Item::WIDTH.index, &state.w, h.len)?;
                 apply(engine, obj, Item::X.index, &state.x, h.pos)?;
                 apply(engine, obj, Item::HEIGHT.index, &state.h, v.len)?;
                 apply(engine, obj, Item::Y.index, &state.y, v.pos)
-            })();
+            };
+            // Length before position is visible to geometry handlers; with
+            // no observer, one notification round has the same result.
+            let observed = [
+                Item::WIDTH.index,
+                Item::X.index,
+                Item::HEIGHT.index,
+                Item::Y.index,
+            ]
+            .into_iter()
+            .any(|p| engine.is_observed(obj, p));
+            let result = if observed {
+                apply_all()
+            } else {
+                engine.batch(apply_all)
+            };
             if let Err(e) = result {
                 cx.warnings.push(format!("anchors: {e}"));
             }
@@ -513,7 +532,7 @@ fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<Object
         .and_then(|l| cx.edge(l.item, l.edge))
         .map(|p| p + offset_sign * num(e, obj, a.horizontal_center_offset));
     let align = e.read(obj, a.align_when_centered).to_boolean();
-    span(e, obj, Item::WIDTH.index, l, r, c, align, &mut cx.own_width)
+    span(cx, Item::WIDTH.index, l, r, c, align)
 }
 
 /// The same line on the other side of its target: left for right.
@@ -588,29 +607,28 @@ fn vertical(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<ObjectId
         .and_then(|l| cx.edge(l.item, l.edge))
         .map(|p| p + num(e, obj, a.vertical_center_offset));
     let align = e.read(obj, a.align_when_centered).to_boolean();
-    span(
-        e,
-        obj,
-        Item::HEIGHT.index,
-        t,
-        b,
-        c,
-        align,
-        &mut cx.own_height,
-    )
+    span(cx, Item::HEIGHT.index, t, b, c, align)
 }
 
 /// Resolves one axis from its start, end and centre lines (already
 /// offset by margins).
+fn own_len(cx: &mut Ctx<'_>, prop: PropIndex) -> f64 {
+    if prop == Item::WIDTH.index {
+        cx.own_width = true;
+    } else {
+        cx.own_height = true;
+    }
+    let e = cx.engine;
+    num(e, cx.obj, prop)
+}
+
 fn span(
-    e: &Engine,
-    obj: ObjectId,
+    cx: &mut Ctx<'_>,
     len_prop: PropIndex,
     start: Option<f64>,
     end: Option<f64>,
     center: Option<f64>,
     align_centered: bool,
-    reads_len: &mut bool,
 ) -> Span {
     match (start, end, center) {
         (Some(s), Some(t), _) => Span {
@@ -632,18 +650,14 @@ fn span(
             pos: Some(s),
             len: None,
         },
-        (None, Some(t), None) => {
-            *reads_len = true;
-            Span {
-                pos: Some(t - e.untrack(|| num(e, obj, len_prop))),
-                len: None,
-            }
-        }
+        (None, Some(t), None) => Span {
+            pos: Some(t - own_len(cx, len_prop)),
+            len: None,
+        },
         (None, None, Some(c)) => {
             // `alignWhenCentered` rounds the half size, not the position:
             // a 51-wide item centred on 100 lands on 74 (qml6).
-            *reads_len = true;
-            let half = e.untrack(|| num(e, obj, len_prop)) / 2.0;
+            let half = own_len(cx, len_prop) / 2.0;
             Span {
                 pos: Some(c - if align_centered { half.round() } else { half }),
                 len: None,
