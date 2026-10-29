@@ -5,6 +5,9 @@
 #   https://doc.qt.io/qt-6/qml-qtqml-models-objectmodel.html#index-attached-prop
 #   https://doc.qt.io/qt-6/qml-qtqml-models-objectmodel.html#remove-method
 #   https://doc.qt.io/qt-6/qml-qtqml-models-objectmodel.html#append-method
+#   https://doc.qt.io/qt-6/qml-qtqml-models-delegatemodel.html#items-prop
+#   https://doc.qt.io/qt-6/qml-qtqml-models-delegatemodel.html#persistedItems-prop
+#   https://doc.qt.io/qt-6/qml-qtqml-models-delegatemodelgroup.html#move-method
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
 @qt-parity
@@ -113,3 +116,54 @@ Feature: View and model behavior matches Qt
       And the property "idx" of "it-c" is 1
       And the property "idx" of "it-a" is 2
       And the property "y" of "it-a" is 40
+
+  Rule: DelegateModelGroup move without mutating the source ListModel, and persistedItems survival
+    Moving an item in DelegateModel.items reorders the view delegates and their attached
+    itemsIndex without changing the order of rows in the underlying ListModel. A delegate in
+    persistedItems stays alive when removed from the filtered group and is destroyed once taken
+    out of persistedItems.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQml.Models
+        Item {
+          id: root; objectName: "root"; width: 100; height: 100
+          property string log: ""; property string modelOrder: lm.get(0).name + "," + lm.get(1).name + "," + lm.get(2).name
+          ListModel {
+            id: lm; objectName: "lm"
+            ListElement { name: "a" }
+            ListElement { name: "b" }
+            ListElement { name: "c" }
+          }
+          DelegateModel {
+            id: dm; objectName: "dm"; model: lm
+            delegate: Item {
+              required property string name; objectName: "d-" + name; width: 100; height: 20
+              property int itemIdx: DelegateModel.itemsIndex; Component.onDestruction: root.log += "~" + name + ";"
+            }
+          }
+          ListView { id: lv; objectName: "lv"; width: 100; height: 100; model: dm }
+          function moveGroupItem() { dm.items.move(0, 2, 1); lv.forceLayout() }
+          function persistThenHide() { dm.persistedItems.insert(0); dm.items.remove(0, 1); lv.forceLayout() }
+          function releasePersisted() { dm.persistedItems.remove(0, 1); lv.forceLayout() }
+        }
+        """
+
+    Scenario: Moving in DelegateModel.items reorders delegates and itemsIndex while ListModel keeps its order
+      When the method "moveGroupItem" of "root" is called
+      Then the property "modelOrder" of "root" is "a,b,c"
+      And the property "itemIdx" of "d-b" is 0
+      And the property "itemIdx" of "d-c" is 1
+      And the property "itemIdx" of "d-a" is 2
+      And the property "y" of "d-b" is 0
+      And the property "y" of "d-a" is 40
+
+    Scenario: A delegate in persistedItems survives removal from items until removed from persistedItems
+      When the method "persistThenHide" of "root" is called
+      Then the property "count" of "lv" is 2
+      And the property "log" of "root" is ""
+      And the property "itemIdx" of "d-b" is 0
+      When the method "releasePersisted" of "root" is called
+      Then the property "log" of "root" is ""

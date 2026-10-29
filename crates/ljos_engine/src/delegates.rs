@@ -1473,6 +1473,16 @@ impl ViewDelegates {
     /// when it cannot be reused, it is destroyed.
     pub fn release(&self, engine: &Engine, object: ObjectId, reuse: bool) -> bool {
         let s = &self.shared;
+        let retained = s
+            .state
+            .borrow()
+            .model
+            .as_ref()
+            .is_some_and(|m| m.delegate_retained(engine, object));
+        if retained {
+            self.release_to_owner(engine, object);
+            return false;
+        }
         let held = {
             let mut st = s.state.borrow_mut();
             let Some(i) = st.live.iter().position(|h| h.object == Some(object)) else {

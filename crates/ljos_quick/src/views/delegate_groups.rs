@@ -1065,6 +1065,15 @@ fn lookup(e: &Engine, item: ObjectId) -> Option<KnownDelegate> {
         .cloned()
 }
 
+pub(crate) fn is_persisted(e: &Engine, item: ObjectId) -> bool {
+    let Some((_, state, key)) = lookup(e, item) else {
+        return false;
+    };
+    state.inner.borrow().entries.iter().any(|entry| {
+        tell_key(entry) == key && entry.groups.contains("persistedItems")
+    })
+}
+
 /// A delegate a view placed asked for its `DelegateModel` attached object:
 /// the values are put there, and what the author writes to the ones that
 /// can be written changes the groups.
@@ -1341,6 +1350,10 @@ impl ItemModel for GroupState {
 
     fn unsubscribe(&self, id: u64) {
         self.listeners.remove(id);
+    }
+
+    fn delegate_retained(&self, engine: &Engine, object: ObjectId) -> bool {
+        is_persisted(engine, object)
     }
 }
 

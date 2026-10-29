@@ -334,6 +334,7 @@ impl DelegateModelGroup {
         }
     }
 
+    /// `insert(index)` puts that item of `items` in this group too.
     /// `insert(data, groups?)` and `insert(index, data, groups?)`: a new
     /// item of the data, at the index in this group when one is given and
     /// after its last member when there is none, in the groups named or
@@ -347,6 +348,10 @@ impl DelegateModelGroup {
             Some(i) => (Some(i), &b, &c),
             None => (None, &a, &b),
         };
+        if let (Some(index), Value::Undefined, Value::Undefined) = (index, data, groups) {
+            state.add_groups(cx.engine, "items", index, 1, vec![name]);
+            return;
+        }
         let data = cx
             .engine
             .js_object_entries(data)
@@ -555,7 +560,9 @@ impl DelegateModel {
                     }
                 })),
                 Some(Rc::new(move |e: &Engine, object| {
-                    delegate_groups::unregister_delegate(e, object);
+                    if !delegate_groups::is_persisted(e, object) {
+                        delegate_groups::unregister_delegate(e, object);
+                    }
                 })),
             );
         }

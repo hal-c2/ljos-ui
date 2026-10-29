@@ -164,6 +164,13 @@ pub trait ItemModel {
         let _ = (engine, row, object);
     }
 
+    /// Whether a view must release `object` to its owner rather than
+    /// destroy it, as a DelegateModel does for a persisted item.
+    fn delegate_retained(&self, engine: &Engine, object: ObjectId) -> bool {
+        let _ = (engine, object);
+        false
+    }
+
     /// The delegate `object` a view made is about to be destroyed.
     fn delegate_gone(&self, engine: &Engine, object: ObjectId) {
         let _ = (engine, object);
@@ -746,6 +753,11 @@ impl ItemModel for DelegateRows {
         if let Some(made) = made {
             made(engine, row, object);
         }
+    }
+
+    fn delegate_retained(&self, engine: &Engine, object: ObjectId) -> bool {
+        self.model()
+            .is_some_and(|m| m.delegate_retained(engine, object))
     }
 
     fn delegate_gone(&self, engine: &Engine, object: ObjectId) {
