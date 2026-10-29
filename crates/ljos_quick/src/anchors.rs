@@ -610,8 +610,7 @@ fn vertical(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<ObjectId
     span(cx, Item::HEIGHT.index, t, b, c, align)
 }
 
-/// Resolves one axis from its start, end and centre lines (already
-/// offset by margins).
+/// Reads the item's own length, noting that the anchors depend on it.
 fn own_len(cx: &mut Ctx<'_>, prop: PropIndex) -> f64 {
     if prop == Item::WIDTH.index {
         cx.own_width = true;
@@ -622,6 +621,8 @@ fn own_len(cx: &mut Ctx<'_>, prop: PropIndex) -> f64 {
     num(e, cx.obj, prop)
 }
 
+/// Resolves one axis from its start, end and centre lines (already
+/// offset by margins).
 fn span(
     cx: &mut Ctx<'_>,
     len_prop: PropIndex,
