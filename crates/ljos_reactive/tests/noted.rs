@@ -75,3 +75,30 @@ fn a_property_not_noted_is_not_told() {
     g.set(p, 1);
     assert!(told.take().is_empty());
 }
+
+#[test]
+fn a_nested_write_runs_its_watchers_before_the_noted_propertys_watchers() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let parent = g.property(r, 0).unwrap();
+    let child = g.property(r, 1).unwrap();
+    let writes = Rc::clone(&g);
+    g.set_note_handler(move |n| {
+        let _hold = writes.hold_observers(n);
+        if n == parent {
+            writes.set(child, 2);
+        }
+    });
+    g.set_noted(parent).unwrap();
+    g.set_noted(child).unwrap();
+    let log = Rc::new(RefCell::new(Vec::new()));
+    for (property, name) in [(parent, "parent"), (child, "child")] {
+        let log = Rc::clone(&log);
+        g.watch(r, property, move |_, _| log.borrow_mut().push(name))
+            .unwrap();
+    }
+
+    g.set(parent, 1);
+
+    assert_eq!(log.take(), ["child", "parent"]);
+}

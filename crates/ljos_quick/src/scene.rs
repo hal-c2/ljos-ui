@@ -675,6 +675,7 @@ pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
 /// hides an item and reads a child's `visible` next reads false, as on
 /// Qt, so this cannot wait for the frame.
 pub(crate) fn visible_changed(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
+    let _hold = cx.engine.hold_change_observers(cx.this, p);
     reshaped(cx, p);
     inherited(cx.engine, cx.this, true, false);
 }

@@ -227,6 +227,8 @@ impl Flags {
     const NOTED: u16 = 1 << 12;
     /// A noted property waiting in `Inner::noted`.
     const NOTE_DUE: u16 = 1 << 13;
+    /// A noted property whose change hook is still running.
+    const NOTE_HOLD: u16 = 1 << 14;
 
     fn has(self, f: u16) -> bool {
         self.0 & f != 0
@@ -283,6 +285,8 @@ struct Node<V> {
     /// brought up to date with. One byte, in room the flags leave: a wrap
     /// only makes a long-dirty binding read as it was in a handler ahead.
     marked_by: u8,
+    /// Nested noted property hooks holding this observer back.
+    note_holds: u16,
 }
 
 impl<V> Node<V> {
@@ -495,6 +499,16 @@ impl<V: Clone + 'static> Drop for ComputeGuard<'_, V> {
         let value = self.value.take();
         self.graph
             .finish(self.node, self.gen_, compute, value, self.ok);
+    }
+}
+
+/// Keeps a property's direct observers held until this guard drops.
+#[derive(Debug)]
+pub struct ObserverHold<'g, V: Clone + 'static>(&'g Graph<V>, NodeId);
+
+impl<V: Clone + 'static> Drop for ObserverHold<'_, V> {
+    fn drop(&mut self) {
+        self.0.release_observers(self.1);
     }
 }
 
@@ -2760,6 +2774,67 @@ impl<V: Clone + 'static> Graph<V> {
         }
     }
 
+    /// Holds back `n`'s queued direct observers until the guard drops.
+    /// A native change hook that writes other properties uses this to keep
+    /// nested flushes from running its own observers before that work ends.
+    pub fn hold_observers(&self, n: NodeId) -> Option<ObserverHold<'_, V>> {
+        let mut i = self.inner.borrow_mut();
+        let first = {
+            let node = i.nodes.get_mut(n)?;
+            if node.flags.has(Flags::NOTE_HOLD) {
+                false
+            } else {
+                node.flags.set(Flags::NOTE_HOLD, true);
+                true
+            }
+        };
+        let mut at = 0;
+        while let Some(o) = i
+            .nodes
+            .get(n)
+            .and_then(|node| node.observers.get(at))
+            .map(|edge| edge.node)
+        {
+            at += 1;
+            let node = &mut i.nodes[o];
+            if node.flags.has(Flags::QUEUED) {
+                node.note_holds = node.note_holds.saturating_add(1);
+            }
+        }
+        first.then_some(ObserverHold(self, n))
+    }
+
+    fn release_observers(&self, n: NodeId) {
+        let mut i = self.inner.borrow_mut();
+        let Some(node) = i.nodes.get_mut(n) else {
+            return;
+        };
+        node.flags.set(Flags::NOTE_HOLD, false);
+        let eager = i.options.eager;
+        let mut at = 0;
+        while let Some(o) = i
+            .nodes
+            .get(n)
+            .and_then(|node| node.observers.get(at))
+            .map(|edge| edge.node)
+        {
+            at += 1;
+            let Inner { nodes, queues, .. } = &mut *i;
+            let node = &mut nodes[o];
+            if node.note_holds == 0 {
+                continue;
+            }
+            node.note_holds -= 1;
+            if node.note_holds == 0
+                && !node.flags.has(Flags::QUEUED)
+                && matches!(node.state, NodeState::Check | NodeState::Dirty)
+                && node.is_eager(eager)
+            {
+                enqueue(queues, o, node);
+            }
+        }
+    }
+
     /// Brings `n` up to date: Check walks its sources (iteratively, so long
     /// chains do not grow the call stack) and recomputes only what changed.
     fn update(&self, n: NodeId) {
@@ -3327,6 +3402,7 @@ impl<V: Clone + 'static> Inner<V> {
             run_epoch: 0,
             binding_gen: 0,
             marked_by: 0,
+            note_holds: 0,
         });
         self.scopes[scope].nodes.push(n);
         Ok(n)
@@ -3344,6 +3420,9 @@ impl<V: Clone + 'static> Inner<V> {
                 continue;
             }
             node.flags.set(Flags::QUEUED, false);
+            if node.note_holds > 0 {
+                continue;
+            }
             match node.state {
                 NodeState::Clean => continue,
                 NodeState::Computing => {

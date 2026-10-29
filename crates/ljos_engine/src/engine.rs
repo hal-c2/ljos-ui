@@ -26,8 +26,8 @@ use std::rc::{Rc, Weak};
 use std::time::Instant;
 
 use ljos_reactive::{
-    Diagnostic, Graph, NodeId, Options, OverrideId, OverrideValue, Provenance, RestoreMode,
-    ScopeId, WriteKind,
+    Diagnostic, Graph, NodeId, ObserverHold, Options, OverrideId, OverrideValue, Provenance,
+    RestoreMode, ScopeId, WriteKind,
 };
 use slotmap::{Key, SecondaryMap, SlotMap};
 use smallvec::SmallVec;
@@ -2468,6 +2468,19 @@ impl Engine {
     /// the node made here is read by whoever read the property.
     pub fn property_node(&self, obj: ObjectId, prop: PropIndex) -> Result<NodeId, EngineError> {
         self.ensure_node(obj, prop)
+    }
+
+    /// Holds a changed property's queued observers through its native
+    /// change hook, so writes the hook makes can notify their observers
+    /// first. An unobserved property has nothing to hold and makes no node.
+    pub fn hold_change_observers(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+    ) -> Option<ObserverHold<'_, Value>> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let n = self.node_if_any(obj, prop)?;
+        self.inner.graph.hold_observers(n)
     }
 
     /// The node `prop` of `obj` has, without making one. `prop` is
