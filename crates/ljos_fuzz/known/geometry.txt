@@ -18,6 +18,7 @@ value:step-positioner:int-range     a positioner's implicitHeight written takes 
 
 # A child's negative size counts in its positioner's size on Qt (features/layouts/placed-geometry-writes.feature).
 value:load-in-positioner:rounding   a Column's implicitHeight leaves out a child's negative height, read by a sibling's x (features/layouts/placed-geometry-writes.feature)
+value:step-in-positioner:rounding   a child given a size in a step joins its Row at once on Ljós, at the next polish on Qt; both settle the same (features/layouts/positioner-polish.feature)
 value:step-positioner:rounding      a Column's height leaves out a child of negative width (features/layouts/placed-geometry-writes.feature); or anchors.fill's width differs in its last bits
 value:load-positioner:rounding      a Row's implicitWidth leaves out a child's negative width, read by its right anchor (features/layouts/placed-geometry-writes.feature)
 
@@ -46,6 +47,8 @@ warning:other(ljos-only):QML_Rectangle:_property_"_"_handlers_re-ran_N_times_in_
 warning:other(ljos-only):QML_Column:_property_"_"_handlers_re-ran_N_times_in_one_update   a size bound to its own x under anchors.centerIn loops; Qt warns "Binding loop detected"
 warning:other(ljos-only):QML_Row:_property_"_"_handlers_re-ran_N_times_in_one_update   a size bound to its own x under anchors.centerIn loops; Qt warns "Binding loop detected"
 warning:other(ljos-only):Possible_polish_loop:_N_item(s)_still_dirty_after_N_passes  a size bound to its positioner's x or implicit size loops; Qt warns "Binding loop detected"
+warning:other(ljos-only):QML_Row:_Possible_polish_loop:*      a child that follows its Row's or an outer Column's size is laid out again each pass; Qt settles (@backlog in features/layouts/positioner-polish.feature)
+warning:other(ljos-only):QML_Column:_Possible_polish_loop:*   a child that follows its Column's or an outer Column's size is laid out again each pass; Qt settles (@backlog in features/layouts/positioner-polish.feature)
 warning:RangeError(qt-only):Maximum_call_stack_size_exceeded.   a handler of width that writes implicitWidth recurses on Qt; Ljós stops it
 value:load-free:int-range           a height bound through its own implicitHeight loops; Qt settles on another value
 value:load-center-in:number         a width bound to its own x under anchors.centerIn loops; Qt settles on another value

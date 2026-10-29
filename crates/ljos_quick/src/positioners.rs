@@ -859,7 +859,7 @@ fn run(engine: &Engine, obj: ObjectId, which: Which, completing: bool) -> Result
         .collect();
     let kids: Vec<Kid> = shown
         .iter()
-        .filter(|k| k.w > 0.0 && k.h > 0.0)
+        .filter(|k| k.w != 0.0 && k.h != 0.0)
         .copied()
         .collect();
     // A child that fills the positioner shrinks to nothing with it, and
