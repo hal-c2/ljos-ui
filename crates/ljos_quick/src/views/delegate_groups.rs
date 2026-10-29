@@ -1069,9 +1069,12 @@ pub(crate) fn is_persisted(e: &Engine, item: ObjectId) -> bool {
     let Some((_, state, key)) = lookup(e, item) else {
         return false;
     };
-    state.inner.borrow().entries.iter().any(|entry| {
-        tell_key(entry) == key && entry.groups.contains("persistedItems")
-    })
+    state
+        .inner
+        .borrow()
+        .entries
+        .iter()
+        .any(|entry| tell_key(entry) == key && entry.groups.contains("persistedItems"))
 }
 
 /// A delegate a view placed asked for its `DelegateModel` attached object:

@@ -97,10 +97,17 @@ fn sync(e: &Engine, model: ObjectId, rows: &ObjectRows) -> Result<(), EngineErro
         )?;
         for (index, item) in objects.iter().enumerate() {
             let att = e.attached_object(*item, &MetaRef::Static(ObjectModel::static_meta()))?;
-            write_computed(e, att, ObjectModelAttached::INDEX.index, Value::Int(index as i32))?;
+            write_computed(
+                e,
+                att,
+                ObjectModelAttached::INDEX.index,
+                Value::Int(index as i32),
+            )?;
         }
         for item in previous.into_iter().filter(|item| !objects.contains(item)) {
-            if let Some(att) = e.existing_attached_object(item, &MetaRef::Static(ObjectModel::static_meta())) {
+            if let Some(att) =
+                e.existing_attached_object(item, &MetaRef::Static(ObjectModel::static_meta()))
+            {
                 write_computed(e, att, ObjectModelAttached::INDEX.index, Value::Int(-1))?;
             }
         }
