@@ -657,7 +657,7 @@ pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
     let obj = cx.this;
     mark_shown(cx.engine, obj, |s| s.set(obj, Dirty::GEOM, |_| ()));
     if p == crate::item::Item::WIDTH.index || p == crate::item::Item::HEIGHT.index {
-        crate::anchors::size_changed(cx.engine, obj);
+        crate::anchors::size_changed(cx.engine, obj, p);
     }
 }
 

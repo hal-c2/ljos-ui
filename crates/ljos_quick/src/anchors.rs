@@ -41,6 +41,8 @@ const FILL_FLAG: u8 = 1 << 0;
 const CENTER_IN_FLAG: u8 = 1 << 1;
 const RUNNING_FLAG: u8 = 1 << 2;
 const REENTERED_FLAG: u8 = 1 << 3;
+const OWN_WIDTH_FLAG: u8 = 1 << 4;
+const OWN_HEIGHT_FLAG: u8 = 1 << 5;
 
 impl AnchorState {
     fn flag(&self, flag: u8) -> bool {
@@ -167,16 +169,23 @@ fn start(engine: &Engine, obj: ObjectId, followed: &Followed) -> Result<(), Engi
     Ok(())
 }
 
-/// A followed item's size changed: anchors that depend on it catch up
-/// before its change signal runs.
-pub(crate) fn size_changed(engine: &Engine, obj: ObjectId) {
+/// A followed item's own size changed where its anchors read it: catch up
+/// before its change signal runs. The effect leaves these reads untracked.
+pub(crate) fn size_changed(engine: &Engine, obj: ObjectId, prop: PropIndex) {
+    let flag = if prop == Item::WIDTH.index {
+        OWN_WIDTH_FLAG
+    } else if prop == Item::HEIGHT.index {
+        OWN_HEIGHT_FLAG
+    } else {
+        return;
+    };
     let followed = engine.extension::<Followed>();
     let state = followed
         .items
         .borrow()
         .get(obj)
         .and_then(|s| s.following.as_ref().map(|f| Rc::clone(&f.state)));
-    if let Some(state) = state {
+    if let Some(state) = state.filter(|st| st.flag(flag)) {
         run(engine, obj, &state);
     }
 }
@@ -206,6 +215,8 @@ struct Ctx<'a> {
     /// What [`read_lines`] read.
     lines: [Value; 9],
     warnings: Vec<String>,
+    own_width: bool,
+    own_height: bool,
 }
 
 // Where each line is in what [`read_lines`] gives.
@@ -382,6 +393,8 @@ fn compute<'a>(
     if lines.iter().all(Value::is_nullish) {
         state.set_flag(FILL_FLAG, false);
         state.set_flag(CENTER_IN_FLAG, false);
+        state.set_flag(OWN_WIDTH_FLAG, false);
+        state.set_flag(OWN_HEIGHT_FLAG, false);
         return None;
     }
     let keep = fill.is_none()
@@ -395,6 +408,8 @@ fn compute<'a>(
         parent: engine.visual_parent(obj),
         lines,
         warnings: Vec::new(),
+        own_width: false,
+        own_height: false,
     };
     let (h, v) = if keep {
         (Span::default(), Span::default())
@@ -404,6 +419,8 @@ fn compute<'a>(
             vertical(&mut cx, fill, center_in),
         )
     };
+    state.set_flag(OWN_WIDTH_FLAG, cx.own_width);
+    state.set_flag(OWN_HEIGHT_FLAG, cx.own_height);
     Some((cx, h, v))
 }
 
@@ -421,6 +438,8 @@ pub(crate) fn resolve(engine: &Engine, obj: ObjectId) -> [Option<f64>; 4] {
             parent: engine.visual_parent(obj),
             lines,
             warnings: Vec::new(),
+            own_width: false,
+            own_height: false,
         };
         let h = horizontal(&mut cx, fill, center_in);
         let v = vertical(&mut cx, fill, center_in);
@@ -494,7 +513,7 @@ fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<Object
         .and_then(|l| cx.edge(l.item, l.edge))
         .map(|p| p + offset_sign * num(e, obj, a.horizontal_center_offset));
     let align = e.read(obj, a.align_when_centered).to_boolean();
-    span(e, obj, Item::WIDTH.index, l, r, c, align)
+    span(e, obj, Item::WIDTH.index, l, r, c, align, &mut cx.own_width)
 }
 
 /// The same line on the other side of its target: left for right.
@@ -569,7 +588,16 @@ fn vertical(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<ObjectId
         .and_then(|l| cx.edge(l.item, l.edge))
         .map(|p| p + num(e, obj, a.vertical_center_offset));
     let align = e.read(obj, a.align_when_centered).to_boolean();
-    span(e, obj, Item::HEIGHT.index, t, b, c, align)
+    span(
+        e,
+        obj,
+        Item::HEIGHT.index,
+        t,
+        b,
+        c,
+        align,
+        &mut cx.own_height,
+    )
 }
 
 /// Resolves one axis from its start, end and centre lines (already
@@ -582,6 +610,7 @@ fn span(
     end: Option<f64>,
     center: Option<f64>,
     align_centered: bool,
+    reads_len: &mut bool,
 ) -> Span {
     match (start, end, center) {
         (Some(s), Some(t), _) => Span {
@@ -603,14 +632,18 @@ fn span(
             pos: Some(s),
             len: None,
         },
-        (None, Some(t), None) => Span {
-            pos: Some(t - num(e, obj, len_prop)),
-            len: None,
-        },
+        (None, Some(t), None) => {
+            *reads_len = true;
+            Span {
+                pos: Some(t - e.untrack(|| num(e, obj, len_prop))),
+                len: None,
+            }
+        }
         (None, None, Some(c)) => {
             // `alignWhenCentered` rounds the half size, not the position:
             // a 51-wide item centred on 100 lands on 74 (qml6).
-            let half = num(e, obj, len_prop) / 2.0;
+            *reads_len = true;
+            let half = e.untrack(|| num(e, obj, len_prop)) / 2.0;
             Span {
                 pos: Some(c - if align_centered { half.round() } else { half }),
                 len: None,
