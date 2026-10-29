@@ -1185,12 +1185,6 @@ const NOT_YET: &[(&str, &str)] = &[
         "QtQuick.Controls.Universal.VerticalHeaderViewDelegate",
         "a style file here, which has the default property of the control it is",
     ),
-    // `ObjectModel.index` on an item, and the rest of what Qt's models
-    // attach to the items they make.
-    (
-        "QtQml.Models.ObjectModel",
-        "attaches nothing to its items yet",
-    ),
     // An object written in a view goes where one written in a Flickable
     // goes; to Qt it is the view's own (`data`).
     (

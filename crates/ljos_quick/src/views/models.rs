@@ -12,25 +12,25 @@
 //! [`DelegateRows`], which any other reader of a model sees as rows too.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Cx, DelegateRows, Engine, EngineError, ItemModel, ModelChange, ObjectId, ObjectRows,
-    QmlList, QmlObject, QtObject, Value, qml_impl,
+    Atom, Cx, DelegateRows, Engine, EngineError, ItemModel, MetaRef, ModelChange, ObjectId,
+    ObjectRows, QmlList, QmlObject, QmlType, QtObject, Value, qml_impl,
 };
 
 use super::delegate_groups::{self, GroupState, count_of, index_of, strings_of};
-use crate::item::is_a;
+use crate::item::{is_a, write_computed};
 
 /// `ObjectModel` (QtQml.Models): a list of items that a view shows as
 /// they are.
-///
-/// Not there: the attached `ObjectModel.index`.
 #[derive(Debug, Default, QmlObject)]
 #[qml(
     module = "QtQml.Models",
     name = "ObjectModel",
     extends = QtObject,
+    attached = ObjectModelAttached,
     default = "children"
 )]
 pub struct ObjectModel {
@@ -43,6 +43,23 @@ pub struct ObjectModel {
     #[qml(skip)]
     pub(crate) rows: Rc<ObjectRows>,
 }
+
+/// `ObjectModel.index`: the row an item occupies, or -1 outside the model.
+#[derive(Debug, QmlObject)]
+#[qml(name = "ObjectModelAttached")]
+pub struct ObjectModelAttached {
+    #[qml(notify, readonly)]
+    pub index: i32,
+}
+
+impl Default for ObjectModelAttached {
+    fn default() -> Self {
+        Self { index: -1 }
+    }
+}
+
+#[derive(Default)]
+struct Memberships(RefCell<HashMap<ObjectId, Vec<ObjectId>>>);
 
 fn child_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
     let rows = cx.with(|m: &ObjectModel| m.rows.clone())?;
@@ -60,7 +77,16 @@ fn child_insert(cx: &Cx, child: ObjectId, anchor: ObjectId) -> Result<(), Engine
 
 /// Brings `children` and `count` in step with the rows.
 fn sync(e: &Engine, model: ObjectId, rows: &ObjectRows) -> Result<(), EngineError> {
-    let now: Vec<Value> = rows.objects().into_iter().map(Value::Object).collect();
+    let objects = rows.objects();
+    let previous = {
+        let memberships = e.extension::<Memberships>();
+        memberships
+            .0
+            .borrow_mut()
+            .insert(model, objects.clone())
+            .unwrap_or_default()
+    };
+    let now: Vec<Value> = objects.iter().copied().map(Value::Object).collect();
     let count = now.len() as i32;
     e.batch(|| {
         e.write_internal(
@@ -69,6 +95,15 @@ fn sync(e: &Engine, model: ObjectId, rows: &ObjectRows) -> Result<(), EngineErro
             Value::list(now),
             ljos_engine::WriteKind::Initial,
         )?;
+        for (index, item) in objects.iter().enumerate() {
+            let att = e.attached_object(*item, &MetaRef::Static(ObjectModel::static_meta()))?;
+            write_computed(e, att, ObjectModelAttached::INDEX.index, Value::Int(index as i32))?;
+        }
+        for item in previous.into_iter().filter(|item| !objects.contains(item)) {
+            if let Some(att) = e.existing_attached_object(item, &MetaRef::Static(ObjectModel::static_meta())) {
+                write_computed(e, att, ObjectModelAttached::INDEX.index, Value::Int(-1))?;
+            }
+        }
         e.set_internal(model, ObjectModel::COUNT, count)
     })
 }

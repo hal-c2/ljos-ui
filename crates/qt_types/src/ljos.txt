@@ -1383,6 +1383,7 @@ module QtQml.Models
 		method clear
 	type QtQml.Models.ObjectModel ObjectModel
 		prototype QtQml.QtObject named
+		attached QtQml.Models.ObjectModelAttached
 		default children
 		prop count QtQml.int named readonly
 		prop children QtQml.var named list
@@ -1467,6 +1468,10 @@ module QtQml.Models
 		signal inPersistedItemsChanged
 		signal itemsIndexChanged
 		signal persistedItemsIndexChanged
+	type QtQml.Models.ObjectModelAttached ObjectModelAttached
+		is uncreatable
+		prop index QtQml.int named readonly
+		signal indexChanged
 
 module QtQml.XmlListModel
 	XmlListModel QtQml.XmlListModel.XmlListModel
