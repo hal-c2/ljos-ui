@@ -575,7 +575,16 @@ impl Scenes {
     }
 
     fn take(&self, obj: ObjectId) -> Option<Marks> {
-        self.pending.borrow_mut().as_mut()?.borrow_mut().forget(obj)
+        let mut marks = self
+            .pending
+            .borrow_mut()
+            .as_mut()?
+            .borrow_mut()
+            .forget(obj)?;
+        // The pending queue this bit belonged to is gone. Adoption must
+        // queue the scene's work instead of suppressing it as already done.
+        marks.dirty = Dirty::empty();
+        Some(marks)
     }
 
     fn forget_pending(&self, gone: &[ObjectId]) {
@@ -1910,7 +1919,14 @@ impl QuickScene {
             });
             if move_pending {
                 let pending = pending.unwrap();
-                self.shared.borrow_mut().marks = std::mem::take(&mut pending.borrow_mut().marks);
+                let mut marks = std::mem::take(&mut pending.borrow_mut().marks);
+                // These bits belonged to the pending queues, not this
+                // scene's. Each item is queued as it is adopted below.
+                let ids: SmallVec<[ObjectId; 16]> = marks.keys().collect();
+                for obj in ids {
+                    marks.get_mut(obj).unwrap().dirty = Dirty::empty();
+                }
+                self.shared.borrow_mut().marks = marks;
                 scenes.pending.borrow_mut().take();
             }
         }
@@ -4396,6 +4412,41 @@ mod inheritance_tests {
         assert!(!visible(&e, child));
         set_visible(&e, hidden, true);
         assert!(visible(&e, child));
+    }
+
+    #[test]
+    fn adoption_queues_geometry_taken_from_pending() {
+        let e = engine();
+        let hidden = e.create_native_incomplete(Item::default(), None).unwrap();
+        set_visible(&e, hidden, false);
+        e.complete(hidden).unwrap();
+        let child = item(&e, Some(hidden));
+        let root = item(&e, None);
+        let mut s = scene(&e, root);
+        assert!(pending_has(&e, child));
+
+        set_visible(&e, hidden, true);
+        assert!(visible(&e, child));
+        e.set(hidden, Item::PARENT, Some(root)).unwrap();
+        s.frame(&e, Time::ZERO);
+
+        assert!(s.items.get(child).unwrap().geom.unwrap().visible);
+    }
+
+    #[test]
+    fn the_first_scene_queues_geometry_for_wholesale_pending_marks() {
+        let e = engine();
+        let root = item(&e, None);
+        let hidden = incomplete_item(&e, root);
+        set_visible(&e, hidden, false);
+        e.complete(hidden).unwrap();
+        let child = item(&e, Some(hidden));
+        set_visible(&e, hidden, true);
+        assert!(visible(&e, child));
+
+        let s = scene(&e, root);
+
+        assert!(s.items.get(child).unwrap().geom.unwrap().visible);
     }
 
     #[test]
