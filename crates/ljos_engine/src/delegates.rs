@@ -1506,7 +1506,7 @@ impl ViewDelegates {
     }
 
     /// The view is done with `object`, but its existing owner keeps it
-    /// until that owner is destroyed.
+    /// alive until destruction is scheduled.
     pub fn release_to_owner(&self, engine: &Engine, object: ObjectId) {
         let held = {
             let mut st = self.shared.state.borrow_mut();

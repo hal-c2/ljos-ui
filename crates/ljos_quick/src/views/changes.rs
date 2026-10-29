@@ -8,7 +8,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::Duration;
 
 use ljos_engine::{Engine, LogLevel, ModelChange, ObjectId, Value, ViewHost};
 
@@ -630,9 +629,7 @@ fn discard(e: &Engine, view: ObjectId, object: ObjectId, to_owner: bool) {
     if let Some(d) = state_of(e, view).and_then(|st| st.delegates()) {
         if to_owner {
             d.release_to_owner(e, object);
-            e.call_at(e.now() + Duration::from_millis(1), move |e| {
-                e.destroy(object);
-            });
+            e.destroy_at_turn_end(object);
         } else {
             d.release(e, object, false);
         }
