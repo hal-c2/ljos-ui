@@ -31,9 +31,9 @@ pub struct Item {
     pub height: f64,
     #[qml(notify)]
     pub visible: bool,
-    #[qml(list, append = item_data_append)]
+    #[qml(notify, list, append = item_data_append)]
     pub data: QmlList,
-    #[qml(list)]
+    #[qml(notify, list)]
     pub children: QmlList,
     #[qml(list)]
     pub resources: QmlList,

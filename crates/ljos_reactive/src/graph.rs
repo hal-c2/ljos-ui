@@ -1839,6 +1839,21 @@ impl<V: Clone + 'static> Graph<V> {
     /// override, not animated. Otherwise this returns `false` and the
     /// caller writes the usual way.
     pub fn modify(&self, n: NodeId, f: impl FnOnce(&mut V)) -> Result<bool, ReactiveError> {
+        self.modify_impl(n, f, true)
+    }
+
+    /// Changes a plain property where it sits without notifying observers,
+    /// under the same conditions as [`Graph::modify`].
+    pub fn modify_quietly(&self, n: NodeId, f: impl FnOnce(&mut V)) -> Result<bool, ReactiveError> {
+        self.modify_impl(n, f, false)
+    }
+
+    fn modify_impl(
+        &self,
+        n: NodeId,
+        f: impl FnOnce(&mut V),
+        notify: bool,
+    ) -> Result<bool, ReactiveError> {
         {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
@@ -1859,10 +1874,14 @@ impl<V: Clone + 'static> Graph<V> {
             if let Kind::Property(p) = &mut i.nodes[n].kind {
                 p.base.provenance = Provenance::Assigned;
             }
-            i.stats.propagations += 1;
-            i.mark_observers(n, NodeState::Dirty);
+            if notify {
+                i.stats.propagations += 1;
+                i.mark_observers(n, NodeState::Dirty);
+            }
         }
-        self.flush_if_idle();
+        if notify {
+            self.flush_if_idle();
+        }
         Ok(true)
     }
 

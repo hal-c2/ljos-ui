@@ -11,6 +11,64 @@
 @qt-parity
 Feature: Language parity
 
+  Scenario: Declarative and imperative additions to data split visual items from non-visual objects
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 100; height: 100
+        property int dataCount: data.length
+        property int childCount: children.length
+        property string childNames: ""
+        Item { objectName: "first" }
+        QtObject { id: nonVisual; objectName: "nonVisual" }
+        Item { objectName: "second" }
+        property QtObject extraObj: QtObject { objectName: "extraObj" }
+        property Item extraItem: Item { objectName: "extraItem" }
+        function record() {
+          var out = []
+          for (var i = 0; i < children.length; ++i) out.push(children[i].objectName)
+          childNames = out.join(",")
+        }
+        function pushBoth() {
+          data.push(extraObj)
+          data.push(extraItem)
+          record()
+        }
+        Component.onCompleted: record()
+      }
+      """
+    Then the property "dataCount" of "root" is 3
+    And the property "childCount" of "root" is 2
+    And the property "childNames" of "root" is "first,second"
+    When the method "pushBoth" of "root" is called
+    Then the property "dataCount" of "root" is 3
+    And the property "childCount" of "root" is 3
+    And the property "childNames" of "root" is "first,second,extraItem"
+
+# Verified on Qt 6.11.2 (qml6, offscreen).
+  Scenario: children.push notifies children; resources.push does not notify resources
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 100; height: 100
+        property int childCount: children.length
+        property int resCount: resources.length
+        Component { id: c; Item {} }
+        Component { id: q; QtObject {} }
+        function go() {
+          root.children.push(c.createObject(null))
+          root.resources.push(q.createObject(null))
+        }
+      }
+      """
+    Then the property "childCount" of "root" is 0
+    And the property "resCount" of "root" is 2
+    When the method "go" of "root" is called
+    Then the property "childCount" of "root" is 1
+    And the property "resCount" of "root" is 2
+
   Scenario: Overriding the default property in a derived component keeps base children in base data
     Given the QML:
       """qml

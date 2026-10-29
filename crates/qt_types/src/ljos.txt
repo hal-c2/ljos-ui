@@ -2340,9 +2340,7 @@ module QtQuick
 		signal scaleChanged
 		signal transformOriginChanged
 		signal parentChanged
-		signal dataChanged
 		signal childrenChanged
-		signal resourcesChanged
 		signal childrenRectChanged
 		signal baselineOffsetChanged
 		signal antialiasingChanged

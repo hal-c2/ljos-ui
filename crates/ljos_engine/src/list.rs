@@ -304,6 +304,14 @@ impl Engine {
         edit: &dyn Fn(&mut Vec<Value>),
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
+        let quiet = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .get(obj)
+                .and_then(|h| h.meta.property(prop))
+                .is_some_and(|p| p.notify.is_none())
+        };
         let apply = |v: &mut Value| match v {
             Value::List(l) => edit(Arc::make_mut(l)),
             other => {
@@ -353,7 +361,11 @@ impl Engine {
         let g = &self.inner.graph;
         // Batched so effects run after the field has the list again.
         let done = g.batch(|| -> Result<bool, EngineError> {
-            let done = g.modify(node, |v| apply(v))?;
+            let done = if quiet {
+                g.modify_quietly(node, |v| apply(v))?
+            } else {
+                g.modify(node, |v| apply(v))?
+            };
             if done && let Some(cur) = g.peek(node) {
                 let mut store = self.inner.store.borrow_mut();
                 if let Some(slot) = store.objects.get_mut(obj).and_then(|h| list_slot(h, prop)) {
@@ -363,6 +375,16 @@ impl Engine {
             Ok(done)
         })?;
         if done {
+            if quiet {
+                let change = {
+                    let store = self.inner.store.borrow();
+                    store
+                        .objects
+                        .get(obj)
+                        .and_then(|h| crate::engine::change_hook(h, prop))
+                };
+                self.tell_change(obj, prop, change);
+            }
             return Ok(());
         }
         // Bound, overridden or dirty: the usual write decides what the new
