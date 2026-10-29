@@ -690,8 +690,8 @@ fn apply(
             Ok(())
         }
         (Some(v), Some(id)) => {
-            let cur = engine.untrack(|| engine.read(obj, prop));
-            if cur.to_number() == v {
+            let cur = engine.untrack(|| engine.read(obj, prop)).to_number();
+            if cur == v || (cur.is_nan() && v.is_nan()) {
                 return Ok(());
             }
             if engine
