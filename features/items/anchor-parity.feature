@@ -102,3 +102,56 @@ Feature: Anchor parity
       """
     When the method "moveSib" of "root" is called
     Then the property "log" of "root" is "w(40,130);x(70,130);"
+
+  Scenario: A widthChanged handler that moves the anchor target leaves the final anchored geometry
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 200; height: 100
+        property string log: ""
+        property bool rec: false
+        Item { id: sib; width: 40; height: 20 }
+        Item {
+          id: box; objectName: "box"; height: 20
+          anchors.left: sib.right; anchors.right: parent.right
+          onWidthChanged: if (rec) {
+            rec = false
+            sib.width = 70
+          }
+        }
+        function moveSib() {
+          rec = true
+          sib.width = 50
+          log = box.x + "," + box.width + "," + sib.width
+        }
+      }
+      """
+    When the method "moveSib" of "root" is called
+    Then the property "log" of "root" is "70,130,70"
+
+  Scenario: An xChanged handler that resizes the anchor target does not strand stale geometry
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 200; height: 100
+        property string log: ""
+        property bool rec: false
+        Item {
+          id: box; objectName: "box"; width: 50; height: 20
+          anchors.right: parent.right
+          onXChanged: if (rec) {
+            rec = false
+            parent.width = 250
+          }
+        }
+        function resize() {
+          rec = true
+          box.width = 80
+          log = box.x + "," + box.width + "," + root.width
+        }
+      }
+      """
+    When the method "resize" of "root" is called
+    Then the property "log" of "root" is "170,80,250"

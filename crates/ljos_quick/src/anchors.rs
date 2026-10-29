@@ -10,7 +10,7 @@
 //! given, so removing an anchor leaves the item where it is (Qt keeps the
 //! geometry too) and the item's own binding is not destroyed.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
@@ -28,24 +28,38 @@ pub const CATEGORY: &str = "qt.quick.anchors";
 /// Per-item anchor bookkeeping, owned by the effect.
 #[derive(Debug, Default)]
 pub(crate) struct AnchorState {
-    x: Option<OverrideId>,
-    y: Option<OverrideId>,
-    w: Option<OverrideId>,
-    h: Option<OverrideId>,
-    fill: bool,
-    center_in: bool,
+    x: Cell<Option<OverrideId>>,
+    y: Cell<Option<OverrideId>>,
+    w: Cell<Option<OverrideId>>,
+    h: Cell<Option<OverrideId>>,
+    flags: Cell<u8>,
     /// Last warnings, so an effect re-run does not repeat them.
-    warned: Box<[String]>,
+    warned: RefCell<Box<[String]>>,
 }
 
+const FILL_FLAG: u8 = 1 << 0;
+const CENTER_IN_FLAG: u8 = 1 << 1;
+const RUNNING_FLAG: u8 = 1 << 2;
+const REENTERED_FLAG: u8 = 1 << 3;
+
 impl AnchorState {
+    fn flag(&self, flag: u8) -> bool {
+        self.flags.get() & flag != 0
+    }
+
+    fn set_flag(&self, flag: u8, value: bool) {
+        let flags = self.flags.get();
+        self.flags
+            .set(if value { flags | flag } else { flags & !flag });
+    }
+
     /// Drops every override, keeping the current geometry.
-    pub(crate) fn release(&mut self, engine: &Engine, obj: ObjectId) {
+    pub(crate) fn release(&self, engine: &Engine, obj: ObjectId) {
         for (p, slot) in [
-            (Item::X.index, &mut self.x),
-            (Item::Y.index, &mut self.y),
-            (Item::WIDTH.index, &mut self.w),
-            (Item::HEIGHT.index, &mut self.h),
+            (Item::X.index, &self.x),
+            (Item::Y.index, &self.y),
+            (Item::WIDTH.index, &self.w),
+            (Item::HEIGHT.index, &self.h),
         ] {
             if let Some(id) = slot.take() {
                 let _ = engine.remove_override(obj, p, id, RestoreMode::None);
@@ -70,7 +84,7 @@ struct Shown {
 
 struct Following {
     effect: NodeId,
-    state: Rc<RefCell<AnchorState>>,
+    state: Rc<AnchorState>,
 }
 
 /// Follows the anchors of `obj`, which a scene has started to show: now if
@@ -129,12 +143,12 @@ pub(crate) fn unfollow(engine: &Engine, obj: ObjectId) {
     };
     engine.stop_effect(f.effect);
     if engine.is_alive(obj) {
-        f.state.borrow_mut().release(engine, obj);
+        f.state.release(engine, obj);
     }
 }
 
 fn start(engine: &Engine, obj: ObjectId, followed: &Followed) -> Result<(), EngineError> {
-    let state = Rc::new(RefCell::new(AnchorState::default()));
+    let state = Rc::new(AnchorState::default());
     let runs = Rc::clone(&state);
     // Made with nothing borrowed: its first run may be now, and what it
     // writes may tell of more.
@@ -154,8 +168,7 @@ fn start(engine: &Engine, obj: ObjectId, followed: &Followed) -> Result<(), Engi
 }
 
 /// A followed item's size changed: anchors that depend on it catch up
-/// before its change signal runs. A write made by `run` itself finds the
-/// state borrowed and leaves the current pass to finish.
+/// before its change signal runs.
 pub(crate) fn size_changed(engine: &Engine, obj: ObjectId) {
     let followed = engine.extension::<Followed>();
     let state = followed
@@ -163,7 +176,7 @@ pub(crate) fn size_changed(engine: &Engine, obj: ObjectId) {
         .borrow()
         .get(obj)
         .and_then(|s| s.following.as_ref().map(|f| Rc::clone(&f.state)));
-    if let Some(state) = state.filter(|st| st.try_borrow().is_ok()) {
+    if let Some(state) = state {
         run(engine, obj, &state);
     }
 }
@@ -297,30 +310,85 @@ struct Span {
 }
 
 /// The body of an item's anchors effect.
-pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) {
+pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &AnchorState) {
     if !engine.is_alive(obj) {
         return;
     }
+    if state.flag(RUNNING_FLAG) {
+        state.set_flag(REENTERED_FLAG, true);
+        // A nested effect still follows what the new values will depend on;
+        // the active pass applies the settled geometry.
+        compute(engine, obj, state);
+        return;
+    }
+
+    state.set_flag(RUNNING_FLAG, true);
+    let mut settled = false;
+    for _ in 0..32 {
+        state.set_flag(REENTERED_FLAG, false);
+        if let Some((mut cx, h, v)) = compute(engine, obj, state) {
+            let result = (|| -> Result<(), EngineError> {
+                apply(engine, obj, Item::WIDTH.index, &state.w, h.len)?;
+                apply(engine, obj, Item::X.index, &state.x, h.pos)?;
+                apply(engine, obj, Item::HEIGHT.index, &state.h, v.len)?;
+                apply(engine, obj, Item::Y.index, &state.y, v.pos)
+            })();
+            if let Err(e) = result {
+                cx.warnings.push(format!("anchors: {e}"));
+            }
+            let previous = state.warned.borrow();
+            if cx.warnings.as_slice() != previous.as_ref() {
+                let new: Vec<String> = cx
+                    .warnings
+                    .iter()
+                    .filter(|w| !previous.contains(*w))
+                    .cloned()
+                    .collect();
+                drop(previous);
+                for w in new {
+                    engine.log(LogLevel::Warning, CATEGORY, w);
+                }
+                *state.warned.borrow_mut() = cx.warnings.into_boxed_slice();
+            }
+        } else {
+            if [state.x.get(), state.y.get(), state.w.get(), state.h.get()]
+                .iter()
+                .any(Option::is_some)
+            {
+                engine.batch(|| state.release(engine, obj));
+            }
+            *state.warned.borrow_mut() = Box::default();
+        }
+        if !state.flag(REENTERED_FLAG) {
+            settled = true;
+            break;
+        }
+    }
+    state.set_flag(RUNNING_FLAG, false);
+    if !settled {
+        engine.warn_binding_loop(obj, Item::WIDTH.index);
+    }
+}
+
+fn compute<'a>(
+    engine: &'a Engine,
+    obj: ObjectId,
+    state: &AnchorState,
+) -> Option<(Ctx<'a>, Span, Span)> {
     // Most items are anchored by nothing, and each new one runs this: the
     // lines are read in one go, and an item none is set on asks no more.
     let lines = read_lines(engine, obj);
     let (fill, center_in) = (lines[FILL].as_object(), lines[CENTER_IN].as_object());
-    let Ok(mut st) = state.try_borrow_mut() else {
-        return;
-    };
     if lines.iter().all(Value::is_nullish) {
-        if [st.x, st.y, st.w, st.h].iter().any(Option::is_some) {
-            engine.batch(|| st.release(engine, obj));
-        }
-        st.warned = Box::default();
-        st.fill = false;
-        st.center_in = false;
-        return;
+        state.set_flag(FILL_FLAG, false);
+        state.set_flag(CENTER_IN_FLAG, false);
+        return None;
     }
-    let keep = fill.is_none() && center_in.is_none() && (st.fill || st.center_in);
-    st.fill = fill.is_some();
-    st.center_in = center_in.is_some();
-    drop(st);
+    let keep = fill.is_none()
+        && center_in.is_none()
+        && (state.flag(FILL_FLAG) || state.flag(CENTER_IN_FLAG));
+    state.set_flag(FILL_FLAG, fill.is_some());
+    state.set_flag(CENTER_IN_FLAG, center_in.is_some());
     let mut cx = Ctx {
         engine,
         obj,
@@ -336,27 +404,7 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) 
             vertical(&mut cx, fill, center_in),
         )
     };
-
-    let Ok(mut st) = state.try_borrow_mut() else {
-        return;
-    };
-    let result = (|| -> Result<(), EngineError> {
-        apply(engine, obj, Item::WIDTH.index, &mut st.w, h.len)?;
-        apply(engine, obj, Item::X.index, &mut st.x, h.pos)?;
-        apply(engine, obj, Item::HEIGHT.index, &mut st.h, v.len)?;
-        apply(engine, obj, Item::Y.index, &mut st.y, v.pos)
-    })();
-    if let Err(e) = result {
-        cx.warnings.push(format!("anchors: {e}"));
-    }
-    if cx.warnings.as_slice() != st.warned.as_ref() {
-        for w in &cx.warnings {
-            if !st.warned.contains(w) {
-                engine.log(LogLevel::Warning, CATEGORY, w.clone());
-            }
-        }
-        st.warned = cx.warnings.into_boxed_slice();
-    }
+    Some((cx, h, v))
 }
 
 /// Where the anchors of `obj` put it as they are at this moment: `x`,
@@ -576,18 +624,21 @@ fn apply(
     engine: &Engine,
     obj: ObjectId,
     prop: PropIndex,
-    slot: &mut Option<OverrideId>,
+    slot: &Cell<Option<OverrideId>>,
     v: Option<f64>,
 ) -> Result<(), EngineError> {
-    match (v, *slot) {
+    match (v, slot.get()) {
         (None, None) => Ok(()),
         (None, Some(id)) => {
-            *slot = None;
+            slot.set(None);
             engine.remove_override(obj, prop, id, RestoreMode::None)
         }
         (Some(v), None) => {
-            *slot =
-                Some(engine.push_override(obj, prop, OverrideContent::Value(Value::Real(v)))?);
+            slot.set(Some(engine.push_override(
+                obj,
+                prop,
+                OverrideContent::Value(Value::Real(v)),
+            )?));
             Ok(())
         }
         (Some(v), Some(id)) => {
@@ -600,11 +651,11 @@ fn apply(
                 .is_err()
             {
                 // Someone removed the layer; start a new one.
-                *slot = Some(engine.push_override(
+                slot.set(Some(engine.push_override(
                     obj,
                     prop,
                     OverrideContent::Value(Value::Real(v)),
-                )?);
+                )?));
             }
             Ok(())
         }
