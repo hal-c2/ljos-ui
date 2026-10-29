@@ -408,8 +408,9 @@ impl Marks {
 /// Dirty state written by change hooks and effects and drained by `frame`.
 #[derive(Default)]
 struct Shared {
-    /// One for each item the scene shows, made before its effects are, so
-    /// a mark for anything else is nothing.
+    /// One for each item the scene shows or is creating under an item it
+    /// shows, made before its effects are, so a mark for anything else is
+    /// nothing.
     marks: Records<Marks>,
     /// What the marks `LIST` and `CONTENT` carry, beside the marks: few
     /// items have either at once, and each is large. Kept only for an item
@@ -531,13 +532,17 @@ impl Shared {
 type SharedRc = Rc<RefCell<Shared>>;
 
 /// The scenes showing an engine's items, for the change hooks of what
-/// they read ([`moved`], [`reshaped`]). A scene that goes is let go.
+/// they read ([`moved`], [`reshaped`]). A scene that goes is let go. The
+/// pending records hold inherited state before a root's first scene exists.
 #[derive(Default)]
-struct Scenes(RefCell<Vec<std::rc::Weak<RefCell<Shared>>>>);
+struct Scenes {
+    all: RefCell<Vec<std::rc::Weak<RefCell<Shared>>>>,
+    pending: RefCell<Option<SharedRc>>,
+}
 
 impl Scenes {
     fn add(&self, shared: &SharedRc) {
-        let mut all = self.0.borrow_mut();
+        let mut all = self.all.borrow_mut();
         if all
             .iter()
             .any(|w| std::ptr::eq(w.as_ptr(), Rc::as_ptr(shared)))
@@ -551,11 +556,35 @@ impl Scenes {
     /// The scenes still there, taken out of the list: a mark wakes the
     /// host, which may make or drop a scene.
     fn live(&self) -> SmallVec<[SharedRc; 2]> {
-        self.0
+        self.all
             .borrow()
             .iter()
             .filter_map(std::rc::Weak::upgrade)
             .collect()
+    }
+
+    fn pending(&self) -> Option<SharedRc> {
+        self.pending.borrow().clone()
+    }
+
+    fn pending_for_creation(&self) -> SharedRc {
+        self.pending
+            .borrow_mut()
+            .get_or_insert_with(SharedRc::default)
+            .clone()
+    }
+
+    fn take(&self, obj: ObjectId) -> Option<Marks> {
+        self.pending.borrow_mut().as_mut()?.borrow_mut().forget(obj)
+    }
+
+    fn forget_pending(&self, gone: &[ObjectId]) {
+        let mut pending = self.pending.borrow_mut();
+        if let Some(pending) = pending.as_mut() {
+            for obj in gone {
+                pending.borrow_mut().forget(*obj);
+            }
+        }
     }
 }
 
@@ -580,7 +609,9 @@ pub(crate) fn restructured(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
 /// [`Engine::on_destroyed`]: a scene that showed one of `gone` sweeps its
 /// dead at the next frame.
 pub(crate) fn destroyed(e: &Engine, gone: &[ObjectId]) {
-    for s in e.extension::<Scenes>().live() {
+    let scenes = e.extension::<Scenes>();
+    scenes.forget_pending(gone);
+    for s in scenes.live() {
         let first = gone.iter().find(|o| s.borrow().marks.contains(**o));
         if let Some(o) = first {
             mark(&s, |s| s.dead.push(*o));
@@ -636,13 +667,33 @@ pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
 /// Qt, so this cannot wait for the frame.
 pub(crate) fn visible_changed(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
     reshaped(cx, p);
-    inherited(cx.engine, cx.this, true);
+    inherited(cx.engine, cx.this, true, false);
 }
 
 /// The change hook of an item's `enabled`: passed on at once, as
 /// [`visible_changed`] is.
 pub(crate) fn enabled_changed(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
-    inherited(cx.engine, cx.this, true);
+    inherited(cx.engine, cx.this, true, false);
+}
+
+/// A completed item takes what its parent passes on before its QML
+/// completion handlers and its owner's delegate-added signal run.
+pub(crate) fn completed(e: &Engine, obj: ObjectId) {
+    let needed = e.untrack(|| {
+        let mut at = Some(obj);
+        while let Some(o) = at {
+            if !e.read(o, Item::VISIBLE.index).to_boolean()
+                || !e.read(o, Item::ENABLED.index).to_boolean()
+            {
+                return true;
+            }
+            at = e.visual_parent(o);
+        }
+        false
+    });
+    if needed {
+        inherited(e, obj, true, true);
+    }
 }
 
 /// `obj` was given another visual parent: it takes what the new one
@@ -653,7 +704,7 @@ pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
     {
         return;
     }
-    inherited(e, obj, false);
+    inherited(e, obj, false, false);
 }
 
 /// In each scene that shows `obj`, it takes again what its parent passes
@@ -661,26 +712,79 @@ pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
 /// may be another. With `down`, so do its children. A child whose value
 /// changes tells its own children through its hook, so this goes no
 /// deeper, but for a `MouseArea`, whose `enabled` its children skip.
-fn inherited(e: &Engine, obj: ObjectId, down: bool) {
+fn inherited(e: &Engine, obj: ObjectId, down: bool, prepare: bool) {
     let _phase = e.enter_phase(ljos_engine::Phase::Inherit);
-    let mut shown = e.extension::<Scenes>().live();
-    shown.retain(|s| s.borrow().marks.contains(obj));
-    for s in shown {
-        inherit(e, obj, &s);
+    let scenes = e.extension::<Scenes>();
+    let run = |shared: &RefCell<Shared>, pending: bool| {
+        inherit(e, obj, shared);
         if down {
-            pass_down(e, obj, &s);
+            pass_down(e, obj, shared, prepare, pending);
         }
+    };
+    let pending = scenes.pending();
+    let pending_has = pending
+        .as_ref()
+        .is_some_and(|s| s.borrow().marks.contains(obj));
+    if prepare && pending_has {
+        run(pending.as_ref().unwrap(), true);
+        return;
+    }
+    let mut live = scenes.live();
+    live.retain(|s| {
+        if prepare {
+            prepare_inherited(e, obj, s, false)
+        } else {
+            s.borrow().marks.contains(obj)
+        }
+    });
+    for s in &live {
+        run(s, false);
+    }
+    if prepare {
+        if live.is_empty() {
+            let pending = scenes.pending_for_creation();
+            if prepare_inherited(e, obj, &pending, true) {
+                run(&pending, true);
+            }
+        }
+    } else if pending_has {
+        run(pending.as_ref().unwrap(), true);
     }
 }
 
-fn pass_down(e: &Engine, obj: ObjectId, shared: &SharedRc) {
+/// Gives an item under an adopted parent its inheritance state before the
+/// render tree adopts it, so creation and delegate signals read it too.
+/// Before the first scene exists, pending records follow the real parent
+/// chain even when the parent has not completed yet.
+fn prepare_inherited(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, pending: bool) -> bool {
+    let mut s = shared.borrow_mut();
+    if s.marks.contains(obj) {
+        return true;
+    }
+    let parent = e.visual_parent(obj);
+    if (!pending && !parent.is_some_and(|p| s.marks.contains(p))) || !shows(e, obj) {
+        return false;
+    }
+    let mut marks = Marks::new();
+    marks.inherit.mouse_area = ItemClass::of(e, obj).is_some_and(|c| c.mouse_area);
+    s.marks.insert(obj, marks);
+    true
+}
+
+fn pass_down(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, prepare: bool, pending: bool) {
     for c in e.visual_children(obj) {
-        let Some(st) = shared.borrow().marks.get(c).map(|m| m.inherit) else {
-            continue;
+        let present = if prepare {
+            prepare_inherited(e, c, shared, pending)
+        } else {
+            shared.borrow().marks.contains(c)
         };
+        if !present {
+            continue;
+        }
+        let st = shared.borrow().marks.get(c).map(|m| m.inherit).unwrap();
         inherit(e, c, shared);
-        if st.mouse_area {
-            pass_down(e, c, shared);
+        if prepare || st.mouse_area {
+            pass_down(e, c, shared, prepare, pending);
         }
     }
 }
@@ -709,7 +813,7 @@ struct SourcePicture {
 }
 
 /// Records a change; calls the waker on the clean-to-dirty edge only.
-fn mark(shared: &SharedRc, f: impl FnOnce(&mut Shared)) {
+fn mark(shared: &RefCell<Shared>, f: impl FnOnce(&mut Shared)) {
     let waker = {
         let mut s = shared.borrow_mut();
         f(&mut s);
@@ -1791,14 +1895,68 @@ impl QuickScene {
         );
         // Before the effects, whose first runs mark it. Its place and
         // geometry are read at the frame, and from then on as their change
-        // hooks tell.
+        // hooks tell. The first root moves its pending record storage into
+        // the scene instead of allocating a second record for every item.
+        if parent.is_none() {
+            let scenes = engine.extension::<Scenes>();
+            let pending = scenes.pending();
+            let move_pending = pending.as_ref().is_some_and(|pending| {
+                self.shared.borrow().marks.len() == 0
+                    && pending
+                        .borrow()
+                        .marks
+                        .keys()
+                        .all(|o| shown_within(engine, o, obj))
+            });
+            if move_pending {
+                let pending = pending.unwrap();
+                self.shared.borrow_mut().marks = std::mem::take(&mut pending.borrow_mut().marks);
+                scenes.pending.borrow_mut().take();
+            }
+        }
+        let mut duplicates: SmallVec<[(PropIndex, OverrideId); 2]> = SmallVec::new();
         {
+            let pending = engine.extension::<Scenes>().take(obj);
             let mut s = self.shared.borrow_mut();
-            let mut marks = Marks::new();
-            marks.inherit.mouse_area = class.mouse_area;
-            s.marks.insert(obj, marks);
+            match pending {
+                Some(pending) if s.marks.contains(obj) => {
+                    let marks = s.marks.get_mut(obj).unwrap();
+                    for (p, id) in [
+                        (Item::VISIBLE.index, pending.inherit.visible),
+                        (Item::ENABLED.index, pending.inherit.enabled),
+                    ] {
+                        let Some(id) = id else { continue };
+                        let slot = if p == Item::VISIBLE.index {
+                            &mut marks.inherit.visible
+                        } else {
+                            &mut marks.inherit.enabled
+                        };
+                        if slot.is_some() {
+                            // Both records covered the item. Taking one off
+                            // leaves the other in place, so nothing changes.
+                            duplicates.push((p, id));
+                        } else {
+                            *slot = Some(id);
+                        }
+                    }
+                    marks.inherit.own_visible |= pending.inherit.own_visible;
+                }
+                Some(pending) => {
+                    s.marks.insert(obj, pending);
+                }
+                None if !s.marks.contains(obj) => {
+                    s.marks.insert(obj, Marks::new());
+                }
+                None => {}
+            }
+            if let Some(marks) = s.marks.get_mut(obj) {
+                marks.inherit.mouse_area = class.mouse_area;
+            }
             s.set(obj, Dirty::GEOM, |_| ());
             s.placed.push(obj);
+        }
+        for (p, id) in duplicates {
+            let _ = engine.remove_override(obj, p, id, RestoreMode::BindingOrValue);
         }
         self.by_node.insert(node, obj);
 
@@ -1857,11 +2015,12 @@ impl QuickScene {
     /// Forgets `obj` and its subtree; removes the render nodes if
     /// `remove_node` (only the top of the subtree needs it).
     fn unadopt(&mut self, engine: &Engine, obj: ObjectId, remove_node: bool) {
+        // First, so nothing that follows marks it: it is not shown again.
+        // An item destroyed during creation may have only inheritance marks.
+        let marks = self.shared.borrow_mut().forget(obj);
         let Some(record) = self.items.remove(obj) else {
             return;
         };
-        // First, so nothing that follows marks it: it is not shown again.
-        let marks = self.shared.borrow_mut().forget(obj);
         self.items_gen += 1;
         if record.class.kind == Kind::Text {
             // Its effect is `effect`; this also forgets the sink.
@@ -3620,7 +3779,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
 /// override layer and comes back when the parent turns on again. Called
 /// at adoption and by [`inherited`], not as an effect: an effect an item
 /// cost a node and a run for what changes seldom.
-fn inherit(e: &Engine, obj: ObjectId, shared: &SharedRc) {
+fn inherit(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>) {
     if !e.is_alive(obj) {
         return;
     }
@@ -3709,7 +3868,7 @@ fn inherit_loop(e: &Engine, obj: ObjectId, p: PropIndex) {
 }
 
 /// The override that covers `p` of `obj` in this scene; `None` outside it.
-fn cover(shared: &SharedRc, obj: ObjectId, p: PropIndex) -> Option<Option<OverrideId>> {
+fn cover(shared: &RefCell<Shared>, obj: ObjectId, p: PropIndex) -> Option<Option<OverrideId>> {
     let s = shared.borrow();
     let m = s.marks.get(obj)?;
     Some(if p == Item::VISIBLE.index {
@@ -3719,7 +3878,7 @@ fn cover(shared: &SharedRc, obj: ObjectId, p: PropIndex) -> Option<Option<Overri
     })
 }
 
-fn set_cover(shared: &SharedRc, obj: ObjectId, p: PropIndex, id: Option<OverrideId>) {
+fn set_cover(shared: &RefCell<Shared>, obj: ObjectId, p: PropIndex, id: Option<OverrideId>) {
     if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {
         if p == Item::VISIBLE.index {
             m.inherit.visible = id;
@@ -3733,7 +3892,7 @@ fn inherit_one(
     e: &Engine,
     obj: ObjectId,
     p: PropIndex,
-    shared: &SharedRc,
+    shared: &RefCell<Shared>,
     parent_on: bool,
 ) -> Result<bool, EngineError> {
     let Some(slot) = cover(shared, obj, p) else {
@@ -4153,5 +4312,128 @@ mod sizes {
         assert_eq!(size_of::<super::Marks>(), 56);
         assert_eq!(size_of::<super::Record>(), 264);
         assert_eq!(size_of::<super::Paint>(), 104);
+    }
+}
+
+#[cfg(test)]
+mod inheritance_tests {
+    use super::*;
+
+    fn engine() -> Engine {
+        let e = Engine::new();
+        crate::register(&e);
+        e
+    }
+
+    fn incomplete_item(e: &Engine, parent: ObjectId) -> ObjectId {
+        let o = e
+            .create_native_incomplete(Item::default(), Some(parent))
+            .unwrap();
+        crate::add_data(e, parent, o).unwrap();
+        o
+    }
+
+    fn item(e: &Engine, parent: Option<ObjectId>) -> ObjectId {
+        let o = match parent {
+            Some(parent) => incomplete_item(e, parent),
+            None => e.create_native_incomplete(Item::default(), None).unwrap(),
+        };
+        e.complete(o).unwrap();
+        o
+    }
+
+    fn scene(e: &Engine, root: ObjectId) -> QuickScene {
+        let mut s = QuickScene::new(kurbo::Size::new(100.0, 100.0));
+        s.set_root(e, root).unwrap();
+        s.frame(e, Time::ZERO);
+        s
+    }
+
+    fn pending_has(e: &Engine, obj: ObjectId) -> bool {
+        e.extension::<Scenes>()
+            .pending()
+            .is_some_and(|s| s.borrow().marks.contains(obj))
+    }
+
+    fn set_visible(e: &Engine, obj: ObjectId, visible: bool) {
+        e.set(obj, Item::VISIBLE, visible).unwrap();
+    }
+
+    fn visible(e: &Engine, obj: ObjectId) -> bool {
+        e.read(obj, Item::VISIBLE.index).to_boolean()
+    }
+
+    #[test]
+    fn completion_outside_the_only_scene_stays_pending() {
+        let e = engine();
+        let root = item(&e, None);
+        let s = scene(&e, root);
+        let hidden = item(&e, None);
+        set_visible(&e, hidden, false);
+        let outside = item(&e, Some(hidden));
+
+        assert!(!visible(&e, outside));
+        assert!(!s.shared.borrow().marks.contains(outside));
+        assert!(pending_has(&e, outside));
+    }
+
+    #[test]
+    fn a_pending_record_moves_when_its_item_is_adopted() {
+        let e = engine();
+        let hidden = item(&e, None);
+        set_visible(&e, hidden, false);
+        let child = item(&e, Some(hidden));
+        let root = item(&e, None);
+        let mut s = scene(&e, root);
+        assert!(pending_has(&e, child));
+        assert!(!s.shared.borrow().marks.contains(child));
+
+        e.set(hidden, Item::PARENT, Some(root)).unwrap();
+        s.frame(&e, Time::ZERO);
+
+        assert!(!pending_has(&e, child));
+        assert!(s.shared.borrow().marks.contains(child));
+        assert!(!visible(&e, child));
+        set_visible(&e, hidden, true);
+        assert!(visible(&e, child));
+    }
+
+    #[test]
+    fn destroying_a_pending_item_forgets_its_record() {
+        let e = engine();
+        let hidden = item(&e, None);
+        set_visible(&e, hidden, false);
+        let child = item(&e, Some(hidden));
+        let root = item(&e, None);
+        let _s = scene(&e, root);
+        assert!(pending_has(&e, child));
+
+        assert!(e.destroy_now(hidden));
+
+        assert!(!e.is_alive(child));
+        assert!(!pending_has(&e, child));
+    }
+
+    #[test]
+    fn adoption_removes_duplicate_pending_and_scene_covers() {
+        let e = engine();
+        let root = item(&e, None);
+        let mut s = scene(&e, root);
+        let hidden = incomplete_item(&e, root);
+        set_visible(&e, hidden, false);
+        let child = incomplete_item(&e, hidden);
+        e.complete(child).unwrap();
+        assert!(pending_has(&e, child));
+        assert!(!s.shared.borrow().marks.contains(child));
+
+        e.complete(hidden).unwrap();
+        assert!(pending_has(&e, child));
+        assert!(s.shared.borrow().marks.contains(child));
+        s.frame(&e, Time::ZERO);
+        assert!(!pending_has(&e, child));
+        assert!(!visible(&e, child));
+
+        set_visible(&e, hidden, true);
+        assert!(visible(&e, child));
     }
 }
