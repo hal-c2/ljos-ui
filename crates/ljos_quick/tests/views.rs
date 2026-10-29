@@ -951,22 +951,28 @@ Item {
     }
   }
   ListView {
-    id: view; anchors.fill: parent; model: 2; highlight: one; highlightMoveDuration: 0
+    id: view; objectName: "view"; anchors.fill: parent; model: 2
+    highlight: one; highlightMoveDuration: 0
     delegate: Item { width: 100; height: 20 }
   }
   function swap(useOne) { view.highlight = useOne ? one : two }
 }
 "##,
     );
+    let view = find(&e, root, "view");
     let mut s = settled(&e, root);
     let baseline = e.object_count();
     for i in 0..32 {
+        let old = get(&e, view, "highlightItem").as_object().unwrap();
         e.invoke_by_name(root, "swap", &[Value::Bool(i % 2 == 1)])
             .unwrap();
         assert_eq!(num(&e, root, "gone"), i as f64, "before frame {i}");
         s.frame(&e, Time::from_millis(1000 + i * 16));
+        assert!(e.is_alive(old), "deferred until the next turn {i}");
+        assert_eq!(e.owner(old), None, "out of the ownership tree {i}");
         assert_eq!(num(&e, root, "gone"), i as f64, "after settle {i}");
         s.frame(&e, Time::from_millis(1008 + i * 16));
+        assert!(!e.is_alive(old), "destroyed in the next turn {i}");
         assert_eq!(num(&e, root, "gone"), (i + 1) as f64, "next turn {i}");
         assert_eq!(e.object_count(), baseline, "next turn {i}");
     }

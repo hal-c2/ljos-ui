@@ -316,6 +316,7 @@ pub(crate) fn retire_extra(e: &Engine, item: ObjectId) {
     strike(e, item);
     if e.is_alive(item) {
         let _ = tree::set_parent_item(e, item, None);
+        let _ = e.set_owner(item, None);
         e.destroy_at_turn_end(item);
     }
 }
