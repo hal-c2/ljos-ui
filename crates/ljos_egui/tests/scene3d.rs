@@ -42,7 +42,10 @@ fn lit_cube(diffuse_color: Color) -> Scene {
         None,
         Node::new(NodeKind::Model(Model {
             mesh: MeshSource::Primitive(Primitive::Cube),
-            material: Material::Default(DefaultMaterial { diffuse_color }),
+            material: Material::Default(DefaultMaterial {
+                diffuse_color,
+                ..DefaultMaterial::default()
+            }),
         }))
         .with_transform(Transform {
             rotation: Quat::from_euler_degrees(Vec3::new(30.0, 45.0, 0.0)),

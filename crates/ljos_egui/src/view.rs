@@ -220,6 +220,8 @@ pub struct QmlView {
     solid_rects: bool,
     /// See [`QmlView::set_draws_shaders`].
     draws_shaders: bool,
+    /// See [`QmlView::set_draws_scenes3d`].
+    draws_scenes3d: bool,
     /// See [`QmlView::set_encodes`].
     encodes: bool,
     emitted: a11y::Emitted,
@@ -331,6 +333,7 @@ impl QmlView {
             backdrop: None,
             solid_rects: false,
             draws_shaders: false,
+            draws_scenes3d: false,
             encodes: true,
             emitted: a11y::Emitted::new(),
             emitted_runs: a11y::TextRuns::new(),
@@ -597,6 +600,15 @@ impl QmlView {
     /// default.
     pub fn set_draws_shaders(&mut self, on: bool) {
         self.draws_shaders = on;
+    }
+
+    /// Whether a `View3D` is handed to egui as a paint callback holding a
+    /// `ljos_render::scene3d::View3dPaint` (`EguiSink::scenes3d`), for a
+    /// host whose painter draws the scene on its own device. Off by
+    /// default: the view is then a picture drawn off-screen and read back,
+    /// where the renderer has the `offscreen3d` feature.
+    pub fn set_draws_scenes3d(&mut self, on: bool) {
+        self.draws_scenes3d = on;
     }
 
     /// Whether a pass hands the scene to egui to draw. Off for a host that
@@ -1027,6 +1039,7 @@ impl QmlView {
                 && painter.clip_rect().contains_rect(window);
             sink.solid_rects = self.solid_rects;
             sink.shaders = self.draws_shaders;
+            sink.scenes3d = self.draws_scenes3d;
             again = self.backend.encode(&view, &mut sink).again;
             sink.paint(&painter);
             self.backdrop = sink.backdrop;

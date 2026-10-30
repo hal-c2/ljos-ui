@@ -151,7 +151,7 @@ mod readback {
 /// where no painter draws it.
 #[cfg(not(feature = "offscreen3d"))]
 #[derive(Default)]
-pub(crate) struct Pictures;
+pub(crate) struct Pictures {}
 
 #[cfg(not(feature = "offscreen3d"))]
 impl Pictures {

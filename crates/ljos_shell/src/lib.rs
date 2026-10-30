@@ -53,6 +53,8 @@ mod platform;
 mod present;
 mod repaint;
 mod roots;
+#[cfg(feature = "quick3d")]
+mod scene3d;
 mod screen_reader;
 mod settings;
 #[cfg(gl_painter)]

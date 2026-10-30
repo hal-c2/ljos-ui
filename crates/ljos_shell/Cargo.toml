@@ -119,6 +119,9 @@ default = ["media", "media-audio"]
 media = ["dep:ljos_media"]
 # Sound through the system's output device (cpal).
 media-audio = ["media", "ljos_media/audio"]
+# QtQuick3D's views: drawn by the wgpu painter on the window's device, and
+# off-screen and read back where the painter is GL or the processor.
+quick3d = ["ljos_egui/quick3d", "ljos_render/offscreen3d"]
 # `impl eframe::App for ShellApp`. `run` does not need it: the shell has
 # its own loop (tests/no_eframe.rs keeps eframe out of it).
 eframe = ["dep:eframe"]

@@ -967,11 +967,13 @@ impl<M: Send + 'static> Desktop<M> {
         let painter = self.slots[i].painter.as_ref();
         let fills = painter.is_some_and(Painter::fills_rects);
         let shaders = painter.is_some_and(Painter::draws_shaders);
+        let scenes3d = painter.is_some_and(Painter::draws_3d);
         let encodes = !painter.is_some_and(Painter::draws_scene);
         let view = view_of_mut(&mut self.slots[i].view, &mut self.app);
         view.set_drawn(true);
         view.set_solid_rects(fills);
         view.set_draws_shaders(shaders);
+        view.set_draws_scenes3d(scenes3d);
         view.set_encodes(encodes);
     }
 

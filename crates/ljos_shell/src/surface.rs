@@ -230,6 +230,13 @@ impl Painter {
         }
     }
 
+    /// Whether the painter draws a `View3D` on its own device, in its pass
+    /// (`QmlView::set_draws_scenes3d`): egui-wgpu does, with `quick3d`.
+    /// Elsewhere the view is a picture drawn off-screen and read back.
+    pub(crate) fn draws_3d(&self) -> bool {
+        cfg!(feature = "quick3d") && matches!(self, Painter::Wgpu(_))
+    }
+
     /// Whether the painter draws the scene itself rather than what egui is
     /// handed (`QmlView::set_encodes`).
     pub(crate) fn draws_scene(&self) -> bool {
@@ -243,8 +250,19 @@ impl Painter {
         pixels_per_point: f32,
     ) -> Vec<egui::epaint::ClippedShape> {
         match self {
-            // Shader callbacks never reach it (`draws_shaders`).
-            Painter::Wgpu(_) | Painter::Cpu(_) => {
+            #[cfg(feature = "quick3d")]
+            Painter::Wgpu(painter) => {
+                let _ = pixels_per_point;
+                crate::scene3d::paint_views(painter, shapes)
+            }
+            // Shader callbacks never reach them (`draws_shaders`), nor 3D
+            // views (`draws_3d`).
+            #[cfg(not(feature = "quick3d"))]
+            Painter::Wgpu(_) => {
+                let _ = pixels_per_point;
+                shapes.to_vec()
+            }
+            Painter::Cpu(_) => {
                 let _ = pixels_per_point;
                 shapes.to_vec()
             }
