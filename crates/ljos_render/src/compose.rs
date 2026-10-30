@@ -352,7 +352,16 @@ impl RenderTree {
     /// Leaves the tree's cached snapshot and world data alone.
     pub fn compose_subtree(&mut self, node: NodeId) -> Option<FrameSnapshot> {
         let size = self.nodes.get(node)?.size;
-        let viewport = Rect::from_origin_size((0.0, 0.0), size);
+        self.compose_subtree_in(node, Rect::from_origin_size((0.0, 0.0), size))
+    }
+
+    /// [`compose_subtree`](Self::compose_subtree), cut to `area` of
+    /// `node`'s own coordinates rather than to its bounds, with `area`'s
+    /// top-left corner at the picture's: for a node whose children reach
+    /// beyond it, such as one of no size whose children are its content.
+    pub fn compose_subtree_in(&mut self, node: NodeId, area: Rect) -> Option<FrameSnapshot> {
+        self.nodes.get(node)?;
+        let viewport = Rect::from_origin_size((0.0, 0.0), area.size());
         let mut walk = Walk {
             items: Vec::new(),
             clips: Vec::new(),
@@ -362,7 +371,7 @@ impl RenderTree {
             epoch: 0,
         };
         let top = Parent {
-            world: Affine::IDENTITY,
+            world: Affine::translate((-area.x0, -area.y0)),
             stamp: 0,
             drawn: true,
             opacity: 1.0,
@@ -666,6 +675,24 @@ impl RenderTree {
 mod tests {
     use super::*;
     use crate::{ClipSpec, DisplayListBuilder, Rgba};
+
+    /// A node of no size whose child sits up and to its left: the area
+    /// given is the picture, its corner at the picture's.
+    #[test]
+    fn a_subtree_composed_in_an_area_starts_at_its_corner() {
+        let mut t = RenderTree::new();
+        let holder = t.add_child(t.root());
+        t.set_pos(holder, 300.0, 300.0);
+        let child = t.add_child(holder);
+        t.set_pos(child, -20.0, -10.0);
+        t.set_size(child, Size::new(40.0, 20.0));
+        let snap = t
+            .compose_subtree_in(holder, Rect::new(-20.0, -10.0, 20.0, 10.0))
+            .unwrap();
+        assert_eq!(snap.viewport, Rect::new(0.0, 0.0, 40.0, 20.0));
+        let item = snap.items.iter().find(|i| i.node == child).unwrap();
+        assert_eq!(item.world, Affine::IDENTITY);
+    }
 
     /// Two trees take the same changes; one composes from its previous
     /// snapshot, the other from nothing. They must agree item for item.
