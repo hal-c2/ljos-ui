@@ -778,7 +778,11 @@ impl<'s> Text<'s> {
         let nl = self.nl;
         match (self.extent(span), before) {
             (Extent::Lines { start, .. }, true) => {
-                let spaced = grouped && self.blank_line_above(start);
+                let spaced = grouped
+                    && self
+                        .spaced_above(members, at, start)
+                        .or(snippet.gaps.map(|gaps| gaps.0))
+                        .unwrap_or(false);
                 let (above, below) = snippet.gaps.map_or((spaced, spaced), |(above, below)| {
                     (above, below.unwrap_or(spaced))
                 });
@@ -796,10 +800,10 @@ impl<'s> Text<'s> {
             }
             (Extent::Lines { start, end }, false) => {
                 let gap = if grouped
-                    && snippet
-                        .gaps
-                        .map_or_else(|| self.blank_line_above(start), |gaps| gaps.0)
-                {
+                    && snippet.gaps.map_or_else(
+                        || self.spaced_above(members, at - 1, start).unwrap_or(false),
+                        |gaps| gaps.0,
+                    ) {
                     nl
                 } else {
                     ""
@@ -1133,6 +1137,27 @@ impl<'s> Text<'s> {
     }
 
     /// Whether the line above the one starting at `start` is empty.
+    /// Whether `members[at]`, which starts the line at `start`, stands apart
+    /// from what is above it as a child among spaced children. A blank line
+    /// under a binding ends the bindings: it says nothing of the children,
+    /// whose spacing the first two of them show. `None` when nothing does.
+    fn spaced_above(&self, members: &[&QmlMember<'_>], at: usize, start: usize) -> Option<bool> {
+        if at > 0 && is_child(members[at - 1]) {
+            return Some(self.blank_line_above(start));
+        }
+        let mut children = members.iter().enumerate().filter(|(_, m)| is_child(m));
+        let (Some(_), Some((second, member))) = (children.next(), children.next()) else {
+            return None;
+        };
+        Some(
+            is_child(members[second - 1])
+                && match self.extent(member_span(member)) {
+                    Extent::Lines { start, .. } => self.blank_line_above(start),
+                    Extent::Inline { .. } => false,
+                },
+        )
+    }
+
     fn blank_line_above(&self, start: usize) -> bool {
         start > 0 && {
             let previous = line_start(self.src, start - 1);

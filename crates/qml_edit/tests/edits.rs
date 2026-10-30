@@ -643,3 +643,58 @@ fn a_path_that_is_not_one_is_refused() {
         );
     }
 }
+
+const TIGHT: &str = "Item {\n    width: 200\n\n    Rectangle {}\n    Text {}\n}\n";
+
+#[test]
+fn the_blank_line_ending_the_bindings_is_not_spacing_among_children() {
+    let first = apply(
+        TIGHT,
+        &Edit::InsertObject {
+            parent: root(),
+            index: 0,
+            text: "Item {}".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        first.text,
+        "Item {\n    width: 200\n\n    Item {}\n    Rectangle {}\n    Text {}\n}\n"
+    );
+}
+
+#[test]
+fn a_child_put_first_among_spaced_children_is_spaced() {
+    let spaced = TIGHT.replace("{}\n    Text", "{}\n\n    Text");
+    let first = apply(
+        &spaced,
+        &Edit::InsertObject {
+            parent: root(),
+            index: 0,
+            text: "Item {}".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        first.text,
+        "Item {\n    width: 200\n\n    Item {}\n\n    Rectangle {}\n\n    Text {}\n}\n"
+    );
+}
+
+#[test]
+fn a_second_child_after_the_bindings_blank_line_is_not_spaced() {
+    let one = "Item {\n    width: 200\n\n    Rectangle {}\n}\n";
+    let second = apply(
+        one,
+        &Edit::InsertObject {
+            parent: root(),
+            index: 1,
+            text: "Item {}".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        second.text,
+        "Item {\n    width: 200\n\n    Rectangle {}\n    Item {}\n}\n"
+    );
+}
