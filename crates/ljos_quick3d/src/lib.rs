@@ -38,12 +38,19 @@
 //! ## What is built
 //!
 //! `docs/quick3d.md` lists the milestones. This crate has the types of
-//! M2: `Object3D`, `Node`, `Model` (`#Cube` and `#Rectangle`),
-//! `PerspectiveCamera`, `OrthographicCamera`, `DirectionalLight`,
-//! `DefaultMaterial` (`diffuseColor`, `lighting`), `SceneEnvironment`
-//! (`clearColor`, `backgroundMode` Transparent and Color) and `View3D`.
-//! `Node.pivot` and `Node.opacity` are kept but do not change the drawing
-//! yet.
+//! M2 and most of M3: `Object3D`, `Node`, `Model` (`#Cube`, `#Rectangle`,
+//! `#Sphere`, `#Cylinder` and `#Cone`), `PerspectiveCamera` (vertical or
+//! horizontal field of view), `OrthographicCamera`, a camera's
+//! `frustumCullingEnabled`, `DirectionalLight`, `PointLight` and
+//! `SpotLight` (with every light's `color`, `ambientColor` and
+//! `brightness`; up to 16 a scene), `Material.cullMode`,
+//! `DefaultMaterial` (`diffuseColor`, `lighting`, `specularAmount`,
+//! `specularRoughness`), `PrincipledMaterial` (`baseColor`, `metalness`,
+//! `roughness`, `emissiveFactor`, `opacity`, `alphaMode`, `alphaCutoff`,
+//! `lighting`), `SceneEnvironment` (`clearColor`, `backgroundMode`
+//! Transparent and Color, `antialiasingMode` MSAA with
+//! `antialiasingQuality`) and `View3D`. `Node.pivot` and `Node.opacity`
+//! are kept but do not change the drawing yet.
 //!
 //! ## Enum values
 //!
@@ -60,7 +67,8 @@ mod tests;
 
 pub use node::{
     Camera, DefaultMaterial, DirectionalLight, Light, Material, Model, Node, Object3D,
-    OrthographicCamera, PerspectiveCamera, SceneEnvironment,
+    OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
+    SpotLight,
 };
 pub use view::View3D;
 
@@ -78,8 +86,11 @@ pub fn register(engine: &Engine) {
         OrthographicCamera,
         Light,
         DirectionalLight,
+        PointLight,
+        SpotLight,
         Material,
         DefaultMaterial,
+        PrincipledMaterial,
         SceneEnvironment,
         View3D,
     ]));

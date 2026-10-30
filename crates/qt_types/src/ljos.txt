@@ -7532,18 +7532,27 @@ module QtQuick3D
 	Object3D QtQuick3D.Object3D
 	OrthographicCamera QtQuick3D.OrthographicCamera
 	PerspectiveCamera QtQuick3D.PerspectiveCamera
+	PointLight QtQuick3D.PointLight
+	PrincipledMaterial QtQuick3D.PrincipledMaterial
 	SceneEnvironment QtQuick3D.SceneEnvironment
+	SpotLight QtQuick3D.SpotLight
 	View3D QtQuick3D.View3D
 	type QtQuick3D.Camera Camera
 		prototype QtQuick3D.Node named
 		is uncreatable
+		prop frustumCullingEnabled QtQml.bool named
+		signal frustumCullingEnabledChanged
 	type QtQuick3D.DefaultMaterial DefaultMaterial
 		prototype QtQuick3D.Material named
 		enum Lighting NoLighting=0 FragmentLighting=1
 		prop diffuseColor QtQuick.color named
 		prop lighting Lighting
+		prop specularAmount QtQml.real named
+		prop specularRoughness QtQml.real named
 		signal diffuseColorChanged
 		signal lightingChanged
+		signal specularAmountChanged
+		signal specularRoughnessChanged
 	type QtQuick3D.DirectionalLight DirectionalLight
 		prototype QtQuick3D.Light named
 	type QtQuick3D.Light Light
@@ -7560,6 +7569,9 @@ module QtQuick3D
 	type QtQuick3D.Material Material
 		prototype QtQuick3D.Object3D named
 		is uncreatable
+		enum CullMode BackFaceCulling=0 FrontFaceCulling=1 NoCulling=2
+		prop cullMode CullMode
+		signal cullModeChanged
 	type QtQuick3D.Model Model
 		prototype QtQuick3D.Node named
 		prop source QtQml.url named
@@ -7621,19 +7633,62 @@ module QtQuick3D
 		signal fieldOfViewOrientationChanged
 		signal clipNearChanged
 		signal clipFarChanged
+	type QtQuick3D.PointLight PointLight
+		prototype QtQuick3D.Light named
+		prop constantFade QtQml.real named
+		prop linearFade QtQml.real named
+		prop quadraticFade QtQml.real named
+		signal constantFadeChanged
+		signal linearFadeChanged
+		signal quadraticFadeChanged
+	type QtQuick3D.PrincipledMaterial PrincipledMaterial
+		prototype QtQuick3D.Material named
+		enum Lighting NoLighting=0 FragmentLighting=1
+		enum AlphaMode Default=0 Blend=1 Opaque=2 Mask=3
+		prop baseColor QtQuick.color named
+		prop metalness QtQml.real named
+		prop roughness QtQml.real named
+		prop emissiveFactor QtQuick.vector3d named
+		prop opacity QtQml.real named
+		prop alphaMode AlphaMode
+		prop alphaCutoff QtQml.real named
+		prop lighting Lighting
+		signal baseColorChanged
+		signal metalnessChanged
+		signal roughnessChanged
+		signal emissiveFactorChanged
+		signal opacityChanged
+		signal alphaModeChanged
+		signal alphaCutoffChanged
+		signal lightingChanged
 	type QtQuick3D.SceneEnvironment SceneEnvironment
 		prototype QtQuick3D.Object3D named
 		enum BackgroundMode Transparent=0 Color=1 SkyBox=2 SkyBoxCubeMap=3 SkyMaterial=4
 		enum TonemapMode TonemapModeNone=0 TonemapModeLinear=1 TonemapModeAces=2 TonemapModeHejlDawson=3 TonemapModeFilmic=4 TonemapModeCustom=5
 		enum AntialiasingMode NoAA=0 SSAA=1 MSAA=2 ProgressiveAA=3
+		enum AntialiasingQuality Medium=0 High=1 VeryHigh=2
 		prop clearColor QtQuick.color named
 		prop backgroundMode BackgroundMode
 		prop tonemapMode TonemapMode
 		prop antialiasingMode AntialiasingMode
+		prop antialiasingQuality AntialiasingQuality
 		signal clearColorChanged
 		signal backgroundModeChanged
 		signal tonemapModeChanged
 		signal antialiasingModeChanged
+		signal antialiasingQualityChanged
+	type QtQuick3D.SpotLight SpotLight
+		prototype QtQuick3D.Light named
+		prop constantFade QtQml.real named
+		prop linearFade QtQml.real named
+		prop quadraticFade QtQml.real named
+		prop coneAngle QtQml.real named
+		prop innerConeAngle QtQml.real named
+		signal constantFadeChanged
+		signal linearFadeChanged
+		signal quadraticFadeChanged
+		signal coneAngleChanged
+		signal innerConeAngleChanged
 	type QtQuick3D.View3D View3D
 		prototype QtQuick.Item named
 		enum RenderMode Offscreen=0 Underlay=1 Overlay=2 Inline=3

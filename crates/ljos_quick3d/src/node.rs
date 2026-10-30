@@ -214,8 +214,8 @@ fn euler_changed(cx: &Cx<'_>, _: PropIndex) {
 pub struct Model {
     #[qml(base)]
     pub node: Node,
-    /// A file, or a built-in mesh: `#Cube`, `#Rectangle` (and, not drawn
-    /// yet, `#Sphere`, `#Cylinder`, `#Cone`).
+    /// A file (not drawn yet), or a built-in mesh: `#Cube`, `#Rectangle`,
+    /// `#Sphere`, `#Cylinder` or `#Cone`.
     #[qml(notify)]
     pub source: Url,
     #[qml(notify, list)]
@@ -247,6 +247,10 @@ impl Default for Model {
 pub struct Camera {
     #[qml(base)]
     pub node: Node,
+    /// Leaves out the models wholly outside what the camera sees; off by
+    /// default, as in Qt.
+    #[qml(notify)]
+    pub frustum_culling_enabled: bool,
 }
 
 fn perspective_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -356,12 +360,101 @@ pub struct DirectionalLight {
     pub light: Light,
 }
 
+pub(crate) mod cull {
+    pub const BACK: i32 = 0;
+    pub const FRONT: i32 = 1;
+    pub const NONE: i32 = 2;
+}
+
+fn material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![(
+        "CullMode",
+        vec![
+            ("BackFaceCulling", i64::from(cull::BACK)),
+            ("FrontFaceCulling", i64::from(cull::FRONT)),
+            ("NoCulling", i64::from(cull::NONE)),
+        ],
+    )]
+}
+
 /// `Material`: what every material has.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "QtQuick3D", name = "Material", extends = Object3D, uncreatable)]
+#[qml(
+    module = "QtQuick3D",
+    name = "Material",
+    extends = Object3D,
+    uncreatable,
+    enums = material_enums
+)]
 pub struct Material {
     #[qml(base)]
     pub object3d: Object3D,
+    /// Which faces are left out: a face is a front face where it winds
+    /// counter-clockwise on the screen.
+    #[qml(notify, enumeration = "CullMode")]
+    pub cull_mode: i32,
+}
+
+/// `PointLight`: light from one place in every direction, fading with
+/// the distance.
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick3D", name = "PointLight", extends = Light)]
+pub struct PointLight {
+    #[qml(base)]
+    pub light: Light,
+    #[qml(notify)]
+    pub constant_fade: f64,
+    /// Multiplied by 0.01 before use.
+    #[qml(notify)]
+    pub linear_fade: f64,
+    /// Multiplied by 0.0001 before use.
+    #[qml(notify)]
+    pub quadratic_fade: f64,
+}
+
+impl Default for PointLight {
+    fn default() -> Self {
+        PointLight {
+            light: Light::default(),
+            constant_fade: 1.0,
+            linear_fade: 0.0,
+            quadratic_fade: 1.0,
+        }
+    }
+}
+
+/// `SpotLight`: a point light that shines only inside a cone along its
+/// own axis.
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick3D", name = "SpotLight", extends = Light)]
+pub struct SpotLight {
+    #[qml(base)]
+    pub light: Light,
+    #[qml(notify)]
+    pub constant_fade: f64,
+    #[qml(notify)]
+    pub linear_fade: f64,
+    #[qml(notify)]
+    pub quadratic_fade: f64,
+    /// Degrees, edge to edge.
+    #[qml(notify)]
+    pub cone_angle: f64,
+    /// Degrees; where the light starts to fall off towards the cone's edge.
+    #[qml(notify)]
+    pub inner_cone_angle: f64,
+}
+
+impl Default for SpotLight {
+    fn default() -> Self {
+        SpotLight {
+            light: Light::default(),
+            constant_fade: 1.0,
+            linear_fade: 0.0,
+            quadratic_fade: 1.0,
+            cone_angle: 40.0,
+            inner_cone_angle: 30.0,
+        }
+    }
 }
 
 pub(crate) mod lighting {
@@ -380,7 +473,8 @@ fn default_material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
 }
 
 /// `DefaultMaterial`: a diffuse colour, lit by the scene's lights unless
-/// `lighting` is `NoLighting`.
+/// `lighting` is `NoLighting`, with a white highlight of
+/// `specularAmount`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick3D",
@@ -395,6 +489,12 @@ pub struct DefaultMaterial {
     pub diffuse_color: Color,
     #[qml(notify, enumeration = "Lighting")]
     pub lighting: i32,
+    /// 0 to 1.
+    #[qml(notify)]
+    pub specular_amount: f64,
+    /// 0 to 1: how far the highlight spreads.
+    #[qml(notify)]
+    pub specular_roughness: f64,
 }
 
 impl Default for DefaultMaterial {
@@ -403,8 +503,97 @@ impl Default for DefaultMaterial {
             material: Material::default(),
             diffuse_color: Color::WHITE,
             lighting: lighting::FRAGMENT_LIGHTING,
+            specular_amount: 0.0,
+            specular_roughness: 0.0,
         }
     }
+}
+
+pub(crate) mod alpha {
+    pub const DEFAULT: i32 = 0;
+    pub const BLEND: i32 = 1;
+    pub const OPAQUE: i32 = 2;
+    pub const MASK: i32 = 3;
+}
+
+fn principled_material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "Lighting",
+            vec![
+                ("NoLighting", i64::from(lighting::NO_LIGHTING)),
+                ("FragmentLighting", i64::from(lighting::FRAGMENT_LIGHTING)),
+            ],
+        ),
+        (
+            "AlphaMode",
+            vec![
+                ("Default", i64::from(alpha::DEFAULT)),
+                ("Blend", i64::from(alpha::BLEND)),
+                ("Opaque", i64::from(alpha::OPAQUE)),
+                ("Mask", i64::from(alpha::MASK)),
+            ],
+        ),
+    ]
+}
+
+/// `PrincipledMaterial`: the metal-roughness model.
+#[derive(Debug, QmlObject)]
+#[qml(
+    module = "QtQuick3D",
+    name = "PrincipledMaterial",
+    extends = Material,
+    enums = principled_material_enums
+)]
+pub struct PrincipledMaterial {
+    #[qml(base)]
+    pub material: Material,
+    /// Qt does not document a default; white, as `DefaultMaterial`'s
+    /// diffuse colour.
+    #[qml(notify)]
+    pub base_color: Color,
+    /// 0 a dielectric, 1 a metal.
+    #[qml(notify)]
+    pub metalness: f64,
+    /// 0 to 1.
+    #[qml(notify)]
+    pub roughness: f64,
+    /// Light the surface gives by itself, red, green and blue.
+    #[qml(notify)]
+    pub emissive_factor: Vector3d,
+    /// Qt does not document a default; 1, wholly opaque.
+    #[qml(notify)]
+    pub opacity: f64,
+    #[qml(notify, enumeration = "AlphaMode")]
+    pub alpha_mode: i32,
+    /// Where `Mask` cuts: below it nothing is drawn.
+    #[qml(notify)]
+    pub alpha_cutoff: f64,
+    #[qml(notify, enumeration = "Lighting")]
+    pub lighting: i32,
+}
+
+impl Default for PrincipledMaterial {
+    fn default() -> Self {
+        PrincipledMaterial {
+            material: Material::default(),
+            base_color: Color::WHITE,
+            metalness: 0.0,
+            roughness: 0.0,
+            emissive_factor: Vector3d::default(),
+            opacity: 1.0,
+            alpha_mode: alpha::DEFAULT,
+            alpha_cutoff: 0.5,
+            lighting: lighting::FRAGMENT_LIGHTING,
+        }
+    }
+}
+
+pub(crate) mod antialiasing {
+    pub const MSAA: i32 = 2;
+    pub const MEDIUM: i32 = 0;
+    pub const HIGH: i32 = 1;
+    pub const VERY_HIGH: i32 = 2;
 }
 
 pub(crate) mod background {
@@ -437,7 +626,20 @@ fn environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
         ),
         (
             "AntialiasingMode",
-            vec![("NoAA", 0), ("SSAA", 1), ("MSAA", 2), ("ProgressiveAA", 3)],
+            vec![
+                ("NoAA", 0),
+                ("SSAA", 1),
+                ("MSAA", i64::from(antialiasing::MSAA)),
+                ("ProgressiveAA", 3),
+            ],
+        ),
+        (
+            "AntialiasingQuality",
+            vec![
+                ("Medium", i64::from(antialiasing::MEDIUM)),
+                ("High", i64::from(antialiasing::HIGH)),
+                ("VeryHigh", i64::from(antialiasing::VERY_HIGH)),
+            ],
         ),
     ]
 }
@@ -461,9 +663,13 @@ pub struct SceneEnvironment {
     /// Kept; tone mapping is M3.
     #[qml(notify, enumeration = "TonemapMode")]
     pub tonemap_mode: i32,
-    /// Kept; anti-aliasing is M3.
+    /// MSAA is drawn; SSAA and ProgressiveAA are not built and draw
+    /// as NoAA.
     #[qml(notify, enumeration = "AntialiasingMode")]
     pub antialiasing_mode: i32,
+    /// For MSAA: 2, 4 or 8 samples a pixel, or as near as the device has.
+    #[qml(notify, enumeration = "AntialiasingQuality")]
+    pub antialiasing_quality: i32,
 }
 
 impl Default for SceneEnvironment {
@@ -474,6 +680,7 @@ impl Default for SceneEnvironment {
             background_mode: background::TRANSPARENT,
             tonemap_mode: 1,
             antialiasing_mode: 0,
+            antialiasing_quality: antialiasing::HIGH,
         }
     }
 }

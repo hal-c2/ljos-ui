@@ -62,7 +62,9 @@ fn the_nodes_declared_in_a_view_are_its_scene() {
     let NodeKind::Model(m) = &kinds[3] else {
         panic!("{:?}", kinds[3]);
     };
-    let Material::Default(d) = m.material;
+    let Material::Default(d) = m.material else {
+        panic!("{:?}", m.material);
+    };
     assert_eq!(d.lighting, Lighting::None);
     assert_eq!((d.diffuse_color.r, d.diffuse_color.g), (1.0, 0.0));
     let (_, camera) = s.active_camera().expect("a camera");
@@ -255,4 +257,171 @@ fn a_destroyed_view_lets_go_of_its_picture() {
         }
     }
     assert_eq!(e.object_count(), objects, "the views made are all gone");
+}
+
+const M3: &str = r##"
+View3D {
+    property QtObject env_: env
+    width: 100; height: 100
+    environment: SceneEnvironment {
+        id: env; antialiasingMode: SceneEnvironment.MSAA
+    }
+    PerspectiveCamera {
+        z: 300; fieldOfViewOrientation: PerspectiveCamera.Horizontal
+        frustumCullingEnabled: true
+    }
+    PointLight { linearFade: 2; brightness: 3; ambientColor: "#808080" }
+    SpotLight { coneAngle: 50; innerConeAngle: 10; quadraticFade: 0 }
+    Model {
+        source: "#Sphere"
+        materials: PrincipledMaterial {
+            baseColor: "red"; metalness: 0.5; roughness: 0.25
+            emissiveFactor: Qt.vector3d(0, 1, 0); opacity: 0.5
+            alphaMode: PrincipledMaterial.Mask; alphaCutoff: 0.3
+            cullMode: Material.NoCulling; lighting: PrincipledMaterial.NoLighting
+        }
+    }
+    Model {
+        source: "#Cone"
+        materials: DefaultMaterial {
+            specularAmount: 0.75; specularRoughness: 0.5
+            cullMode: Material.FrontFaceCulling
+        }
+    }
+    Model { source: "#Cylinder" }
+}
+"##;
+
+#[test]
+fn lights_materials_and_cameras_reach_the_scene() {
+    use ljos::item::ljos_3d::{AlphaMode, CullMode, Fade, Light, MeshSource, Primitive};
+    let (e, view) = load(M3);
+    let s = scene::build(&e, view);
+    let kinds: Vec<_> = s.walk().iter().map(|(_, n, _)| n.kind.clone()).collect();
+    assert_eq!(
+        kinds[0],
+        NodeKind::Camera(Camera::Perspective {
+            fov_degrees: 60.0,
+            fov_horizontal: true,
+            clip_near: 10.0,
+            clip_far: 10000.0,
+            frustum_culling: true,
+        })
+    );
+    let NodeKind::Light(Light::Point {
+        fade,
+        brightness,
+        ambient_color,
+        ..
+    }) = kinds[1]
+    else {
+        panic!("{:?}", kinds[1]);
+    };
+    assert_eq!(
+        fade,
+        Fade {
+            constant: 1.0,
+            linear: 2.0,
+            quadratic: 1.0
+        }
+    );
+    assert_eq!(brightness, 3.0);
+    assert!((ambient_color.r - 128.0 / 255.0).abs() < 1e-3);
+    let NodeKind::Light(Light::Spot {
+        fade,
+        cone_angle,
+        inner_cone_angle,
+        ..
+    }) = kinds[2]
+    else {
+        panic!("{:?}", kinds[2]);
+    };
+    assert_eq!(
+        (fade.quadratic, cone_angle, inner_cone_angle),
+        (0.0, 50.0, 10.0)
+    );
+
+    let NodeKind::Model(sphere) = &kinds[3] else {
+        panic!("{:?}", kinds[3]);
+    };
+    assert_eq!(sphere.mesh, MeshSource::Primitive(Primitive::Sphere));
+    let Material::Principled(p) = sphere.material else {
+        panic!("{:?}", sphere.material);
+    };
+    assert_eq!((p.base_color.r, p.base_color.g), (1.0, 0.0));
+    assert_eq!((p.metalness, p.roughness, p.opacity), (0.5, 0.25, 0.5));
+    assert_eq!(p.emissive, [0.0, 1.0, 0.0]);
+    assert_eq!((p.alpha_mode, p.alpha_cutoff), (AlphaMode::Mask, 0.3));
+    assert_eq!((p.cull_mode, p.lighting), (CullMode::None, Lighting::None));
+
+    let NodeKind::Model(cone) = &kinds[4] else {
+        panic!("{:?}", kinds[4]);
+    };
+    assert_eq!(cone.mesh, MeshSource::Primitive(Primitive::Cone));
+    let Material::Default(d) = cone.material else {
+        panic!("{:?}", cone.material);
+    };
+    assert_eq!((d.specular_amount, d.specular_roughness), (0.75, 0.5));
+    assert_eq!(d.cull_mode, CullMode::Front);
+    assert!(matches!(&kinds[5], NodeKind::Model(m)
+        if m.mesh == MeshSource::Primitive(Primitive::Cylinder)));
+
+    // High, the default quality, is 4 samples; Medium 2, VeryHigh 8.
+    assert_eq!(s.environment().msaa_samples, 4);
+    let env = named(&e, view, "env_");
+    for (quality, samples) in [(0, 2), (2, 8)] {
+        e.write_by_name(env, "antialiasingQuality", Value::from(quality))
+            .expect("quality");
+        assert_eq!(scene::build(&e, view).environment().msaa_samples, samples);
+    }
+    e.write_by_name(env, "antialiasingMode", Value::from(0))
+        .expect("mode");
+    assert_eq!(scene::build(&e, view).environment().msaa_samples, 1);
+}
+
+#[test]
+fn the_new_types_start_from_the_documented_values() {
+    let (e, root) = load(
+        r##"View3D {
+               property QtObject point_: point
+               property QtObject spot_: spot
+               property QtObject pbr_: pbr
+               property QtObject plain_: plain
+               property QtObject env_: env
+               property QtObject camera_: camera
+               environment: SceneEnvironment { id: env }
+               PerspectiveCamera { id: camera }
+               PointLight { id: point }
+               SpotLight { id: spot }
+               PrincipledMaterial { id: pbr }
+               DefaultMaterial { id: plain } }"##,
+    );
+    let point = named(&e, root, "point_");
+    assert_eq!(e.get(point, PointLight::CONSTANT_FADE).ok(), Some(1.0));
+    assert_eq!(e.get(point, PointLight::LINEAR_FADE).ok(), Some(0.0));
+    assert_eq!(e.get(point, PointLight::QUADRATIC_FADE).ok(), Some(1.0));
+    let spot = named(&e, root, "spot_");
+    assert_eq!(e.get(spot, SpotLight::CONE_ANGLE).ok(), Some(40.0));
+    assert_eq!(e.get(spot, SpotLight::INNER_CONE_ANGLE).ok(), Some(30.0));
+    assert_eq!(e.get(spot, SpotLight::QUADRATIC_FADE).ok(), Some(1.0));
+    let pbr = named(&e, root, "pbr_");
+    assert_eq!(e.get(pbr, PrincipledMaterial::METALNESS).ok(), Some(0.0));
+    assert_eq!(e.get(pbr, PrincipledMaterial::ROUGHNESS).ok(), Some(0.0));
+    assert_eq!(e.get(pbr, PrincipledMaterial::ALPHA_CUTOFF).ok(), Some(0.5));
+    assert_eq!(e.get(pbr, crate::Material::CULL_MODE).ok(), Some(0));
+    let plain = named(&e, root, "plain_");
+    assert_eq!(
+        e.get(plain, DefaultMaterial::SPECULAR_AMOUNT).ok(),
+        Some(0.0)
+    );
+    let env = named(&e, root, "env_");
+    assert_eq!(
+        e.get(env, SceneEnvironment::ANTIALIASING_QUALITY).ok(),
+        Some(1)
+    );
+    let camera = named(&e, root, "camera_");
+    assert_eq!(
+        e.get(camera, crate::Camera::FRUSTUM_CULLING_ENABLED).ok(),
+        Some(false)
+    );
 }

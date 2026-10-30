@@ -5,13 +5,15 @@ use std::collections::HashMap;
 use ljos::item::{self, ljos_3d};
 use ljos::prelude::*;
 use ljos_3d::{
-    Background, Environment, Lighting, MeshSource, NodeId, NodeKind, Primitive, Scene, Transform,
+    AlphaMode, Background, CullMode, Environment, Fade, Lighting, MeshSource, NodeId, NodeKind,
+    Primitive, Scene, Transform,
 };
 
-use crate::node::{self, background, lighting};
+use crate::node::{self, alpha, antialiasing, background, cull, lighting};
 use crate::{
-    DefaultMaterial, DirectionalLight, Light, Model, Node, Object3D, OrthographicCamera,
-    PerspectiveCamera, SceneEnvironment, View3D,
+    Camera, DefaultMaterial, DirectionalLight, Light, Material, Model, Node, Object3D,
+    OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
+    SpotLight, View3D,
 };
 
 /// The scene of the view `view`, read now. Tracked.
@@ -81,9 +83,11 @@ fn kind(e: &Engine, obj: ObjectId) -> NodeKind {
     }
     if e.is::<PerspectiveCamera>(obj) {
         return NodeKind::Camera(ljos_3d::Camera::Perspective {
-            fov_y_degrees: item::prop(e, obj, PerspectiveCamera::FIELD_OF_VIEW) as f32,
+            fov_degrees: item::prop(e, obj, PerspectiveCamera::FIELD_OF_VIEW) as f32,
+            fov_horizontal: item::prop(e, obj, PerspectiveCamera::FIELD_OF_VIEW_ORIENTATION) == 1,
             clip_near: item::prop(e, obj, PerspectiveCamera::CLIP_NEAR) as f32,
             clip_far: item::prop(e, obj, PerspectiveCamera::CLIP_FAR) as f32,
+            frustum_culling: item::prop(e, obj, Camera::FRUSTUM_CULLING_ENABLED),
         });
     }
     if e.is::<OrthographicCamera>(obj) {
@@ -97,13 +101,43 @@ fn kind(e: &Engine, obj: ObjectId) -> NodeKind {
             ) as f32,
             vertical_magnification: item::prop(e, obj, OrthographicCamera::VERTICAL_MAGNIFICATION)
                 as f32,
+            frustum_culling: item::prop(e, obj, Camera::FRUSTUM_CULLING_ENABLED),
         });
     }
+    let color_of = |p| color(item::prop(e, obj, p));
+    let (light_color, ambient_color) = (color_of(Light::COLOR), color_of(Light::AMBIENT_COLOR));
+    let brightness = item::prop(e, obj, Light::BRIGHTNESS) as f32;
     if e.is::<DirectionalLight>(obj) {
         return NodeKind::Light(ljos_3d::Light::Directional {
-            color: color(item::prop(e, obj, Light::COLOR)),
-            ambient_color: color(item::prop(e, obj, Light::AMBIENT_COLOR)),
-            brightness: item::prop(e, obj, Light::BRIGHTNESS) as f32,
+            color: light_color,
+            ambient_color,
+            brightness,
+        });
+    }
+    if e.is::<PointLight>(obj) {
+        return NodeKind::Light(ljos_3d::Light::Point {
+            color: light_color,
+            ambient_color,
+            brightness,
+            fade: Fade {
+                constant: item::prop(e, obj, PointLight::CONSTANT_FADE) as f32,
+                linear: item::prop(e, obj, PointLight::LINEAR_FADE) as f32,
+                quadratic: item::prop(e, obj, PointLight::QUADRATIC_FADE) as f32,
+            },
+        });
+    }
+    if e.is::<SpotLight>(obj) {
+        return NodeKind::Light(ljos_3d::Light::Spot {
+            color: light_color,
+            ambient_color,
+            brightness,
+            fade: Fade {
+                constant: item::prop(e, obj, SpotLight::CONSTANT_FADE) as f32,
+                linear: item::prop(e, obj, SpotLight::LINEAR_FADE) as f32,
+                quadratic: item::prop(e, obj, SpotLight::QUADRATIC_FADE) as f32,
+            },
+            cone_angle: item::prop(e, obj, SpotLight::CONE_ANGLE) as f32,
+            inner_cone_angle: item::prop(e, obj, SpotLight::INNER_CONE_ANGLE) as f32,
         });
     }
     NodeKind::Group
@@ -131,17 +165,47 @@ fn model(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Model> {
 }
 
 fn material(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Material> {
-    if !e.is::<DefaultMaterial>(obj) {
-        return None;
-    }
-    Some(ljos_3d::Material::Default(ljos_3d::DefaultMaterial {
-        diffuse_color: color(item::prop(e, obj, DefaultMaterial::DIFFUSE_COLOR)),
-        lighting: if item::prop(e, obj, DefaultMaterial::LIGHTING) == lighting::NO_LIGHTING {
+    let lighting = |l| {
+        if l == lighting::NO_LIGHTING {
             Lighting::None
         } else {
             Lighting::Fragment
-        },
-    }))
+        }
+    };
+    let cull_mode = || match item::prop(e, obj, Material::CULL_MODE) {
+        cull::FRONT => CullMode::Front,
+        cull::NONE => CullMode::None,
+        _ => CullMode::Back,
+    };
+    if e.is::<DefaultMaterial>(obj) {
+        return Some(ljos_3d::Material::Default(ljos_3d::DefaultMaterial {
+            diffuse_color: color(item::prop(e, obj, DefaultMaterial::DIFFUSE_COLOR)),
+            lighting: lighting(item::prop(e, obj, DefaultMaterial::LIGHTING)),
+            specular_amount: item::prop(e, obj, DefaultMaterial::SPECULAR_AMOUNT) as f32,
+            specular_roughness: item::prop(e, obj, DefaultMaterial::SPECULAR_ROUGHNESS) as f32,
+            cull_mode: cull_mode(),
+        }));
+    }
+    if e.is::<PrincipledMaterial>(obj) {
+        let emissive = item::prop(e, obj, PrincipledMaterial::EMISSIVE_FACTOR);
+        return Some(ljos_3d::Material::Principled(ljos_3d::PrincipledMaterial {
+            base_color: color(item::prop(e, obj, PrincipledMaterial::BASE_COLOR)),
+            metalness: item::prop(e, obj, PrincipledMaterial::METALNESS) as f32,
+            roughness: item::prop(e, obj, PrincipledMaterial::ROUGHNESS) as f32,
+            emissive: [emissive.x, emissive.y, emissive.z],
+            opacity: item::prop(e, obj, PrincipledMaterial::OPACITY) as f32,
+            alpha_mode: match item::prop(e, obj, PrincipledMaterial::ALPHA_MODE) {
+                alpha::BLEND => AlphaMode::Blend,
+                alpha::OPAQUE => AlphaMode::Opaque,
+                alpha::MASK => AlphaMode::Mask,
+                _ => AlphaMode::Default,
+            },
+            alpha_cutoff: item::prop(e, obj, PrincipledMaterial::ALPHA_CUTOFF) as f32,
+            cull_mode: cull_mode(),
+            lighting: lighting(item::prop(e, obj, PrincipledMaterial::LIGHTING)),
+        }));
+    }
+    None
 }
 
 fn environment(e: &Engine, env: ObjectId) -> Environment {
@@ -155,7 +219,21 @@ fn environment(e: &Engine, env: ObjectId) -> Environment {
         // The sky boxes are not drawn yet: the 2D scene shows through.
         _ => Background::Transparent,
     };
-    Environment { background }
+    // SSAA and progressive antialiasing are not built: they draw as none.
+    let msaa_samples =
+        if item::prop(e, env, SceneEnvironment::ANTIALIASING_MODE) == antialiasing::MSAA {
+            match item::prop(e, env, SceneEnvironment::ANTIALIASING_QUALITY) {
+                antialiasing::MEDIUM => 2,
+                antialiasing::VERY_HIGH => 8,
+                _ => 4,
+            }
+        } else {
+            1
+        };
+    Environment {
+        background,
+        msaa_samples,
+    }
 }
 
 fn color(c: Color) -> ljos_3d::Color {
