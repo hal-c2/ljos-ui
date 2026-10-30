@@ -27,6 +27,8 @@ pub mod offscreen;
 mod shadow;
 #[cfg(feature = "gpu")]
 pub mod surface;
+#[cfg(feature = "gpu")]
+mod timing;
 
 pub use geometry::{
     Attribute, ComponentType, CustomGeometry, GeometryError, PrimitiveType, Semantic,
@@ -45,3 +47,5 @@ pub use texture::{
 pub use gpu::{Renderer, Target, TextureBytes};
 #[cfg(feature = "gpu")]
 pub use surface::{SurfaceView, SurfaceViewError};
+#[cfg(feature = "gpu")]
+pub use timing::timing_features;

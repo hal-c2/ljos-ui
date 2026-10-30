@@ -67,9 +67,11 @@ impl Offscreen {
                 .request_adapter(&wgpu::RequestAdapterOptions::default())
                 .await?;
             // Asked for where the adapter has it, so multisampling can use
-            // the sample counts this adapter has beyond WebGPU's 1 and 4.
-            let required_features =
-                adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+            // the sample counts this adapter has beyond WebGPU's 1 and 4;
+            // and the timestamps a target's GPU time is read from.
+            let required_features = (adapter.features()
+                & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+                | crate::timing_features(&adapter);
             let (device, queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("ljos_3d offscreen"),

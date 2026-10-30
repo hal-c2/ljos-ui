@@ -361,3 +361,75 @@ fn cascades_split_a_directional_lights_map() {
     assert!(close(shade, SHADOWED, 10.0), "in the shadow: {shade:?}");
     assert!(close(open, LIT, 3.0), "in the open: {open:?}");
 }
+
+/// Draws `scene` into `target`, then lets the GPU finish, as the frame
+/// interval does between a host's frames.
+fn settled_frame(gpu: &mut Offscreen, scene: &Scene, target: &mut Target) {
+    assert!(frame(gpu, scene, target));
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+}
+
+#[test]
+fn a_targets_gpu_time_is_read_a_frame_or_two_later() {
+    let Some(mut gpu) = offscreen() else { return };
+    if !gpu
+        .device
+        .features()
+        .contains(wgpu::Features::TIMESTAMP_QUERY)
+    {
+        eprintln!(
+            "SKIPPED: {} has no timestamps read without waiting",
+            gpu.adapter.name
+        );
+        return;
+    }
+    for shadow in [Some(Shadow::default()), None] {
+        let mut s = sunlit(shadow);
+        let mut target = Target::new(&gpu.device, &gpu.renderer, [SIDE, SIDE]);
+        assert_eq!(target.last_gpu_time(), None, "nothing drawn yet");
+        // The first frame's timestamps are mapped when the second is
+        // drawn and read when the third is.
+        for x in 0..3 {
+            assert_eq!(target.last_gpu_time(), None, "frame {x} reads none yet");
+            s.scene.node_mut(s.cube).unwrap().transform = at(x as f32, 0.0, 100.0);
+            settled_frame(&mut gpu, &s.scene, &mut target);
+        }
+        s.scene.node_mut(s.cube).unwrap().transform = at(5.0, 0.0, 100.0);
+        settled_frame(&mut gpu, &s.scene, &mut target);
+        let took = target.last_gpu_time().expect("a frame's time read");
+        assert!(
+            took > std::time::Duration::ZERO && took < std::time::Duration::from_secs(1),
+            "{took:?}"
+        );
+        eprintln!(
+            "{} with shadows {}: {took:?} on the GPU",
+            gpu.adapter.name,
+            target.shadow_passes() > 0
+        );
+    }
+}
+
+/// Frames drawn faster than the GPU's readings come back are drawn
+/// untimed rather than waited for, and nothing goes wrong on the device.
+#[test]
+fn frames_that_outrun_their_readings_wait_for_nothing() {
+    let Some(mut gpu) = offscreen() else { return };
+    let mut s = sunlit(Some(Shadow::default()));
+    let mut target = Target::new(&gpu.device, &gpu.renderer, [SIDE, SIDE]);
+    for x in 0..12 {
+        s.scene.node_mut(s.cube).unwrap().transform = at(x as f32, 0.0, 100.0);
+        assert!(frame(&mut gpu, &s.scene, &mut target));
+    }
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    s.scene.node_mut(s.cube).unwrap().transform = at(20.0, 0.0, 100.0);
+    assert!(frame(&mut gpu, &s.scene, &mut target));
+    gpu.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    let pic = read_back(&gpu.device, &gpu.queue, target.texture()).unwrap();
+    assert!(grey(pic.pixel(OPEN.0, OPEN.1)) > 160.0);
+}

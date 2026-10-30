@@ -227,6 +227,8 @@ pub struct Target {
     shadows: Option<Shadows>,
     /// Shadow maps drawn, a pass each, since the target was made.
     shadow_passes: u64,
+    /// The GPU's timestamps of its frames, where the device has them.
+    timer: Option<crate::timing::Timer>,
 }
 
 /// A target's shadow maps and what they were last drawn from.
@@ -363,7 +365,16 @@ impl Target {
             drawn_models: 0,
             shadows: None,
             shadow_passes: 0,
+            timer: crate::timing::Timer::new(device),
         }
+    }
+
+    /// How long the GPU took to draw the picture (its shadow maps and its
+    /// scene pass) the last time that was read back: one or two drawings
+    /// behind, as nothing waits for the GPU. `None` where the device was
+    /// not asked for [`crate::timing_features`], or before a reading.
+    pub fn last_gpu_time(&self) -> Option<std::time::Duration> {
+        self.timer.as_ref().and_then(crate::timing::Timer::last)
     }
 
     /// How many shadow maps were drawn since the target was made: a
@@ -1249,6 +1260,9 @@ impl Renderer {
         if target.drawn == Some(scene.revision()) {
             return false;
         }
+        if let Some(timer) = &mut target.timer {
+            timer.begin(queue);
+        }
         let [w, h] = target.size;
         let walked = scene.walk();
         let environment = scene.environment();
@@ -1467,7 +1481,9 @@ impl Renderer {
             }
             self.shadow_pipeline(device, caster.cull);
         }
+        let passes = target.shadow_passes;
         self.draw_shadows(queue, encoder, target, &plan, &casters);
+        let shadows_drawn = target.shadow_passes != passes;
         // A geometry no scene holds is dropped with its buffers.
         self.custom.retain(|_, c| c.source.strong_count() > 0);
 
@@ -1516,6 +1532,10 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: target
+                    .timer
+                    .as_ref()
+                    .and_then(crate::timing::Timer::scene_pass),
                 ..Default::default()
             });
             pass.set_bind_group(0, &target.frame_group, &[]);
@@ -1546,6 +1566,9 @@ impl Renderer {
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.count, 0, 0..1);
             }
+        }
+        if let Some(timer) = &mut target.timer {
+            timer.end(encoder, shadows_drawn);
         }
         target.drawn_models = draws.len();
         target.drawn = Some(scene.revision());
@@ -1588,6 +1611,7 @@ impl Renderer {
             bytes[i * stride..i * stride + size].copy_from_slice(bytemuck::bytes_of(layer));
         }
         queue.write_buffer(&shadows.layer_buffer, 0, &bytes);
+        let n = plan.layers.len();
         for (i, layer) in plan.layers.iter().enumerate() {
             let planes = frustum(&Mat4(layer.view_proj));
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1601,6 +1625,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
+                timestamp_writes: target.timer.as_ref().and_then(|t| t.shadow_pass(i, n)),
                 ..Default::default()
             });
             let offset = (i as u64 * self.layer_stride) as u32;
