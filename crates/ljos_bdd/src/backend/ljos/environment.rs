@@ -48,6 +48,11 @@ impl Environment for LjosBackend {
         Ok(())
     }
 
+    fn own_log_handler(&mut self) -> Result<()> {
+        self.live()?.engine.set_log_handler(|_| {});
+        Ok(())
+    }
+
     fn js_clock_stalled(&mut self, stall: Duration) -> Result<()> {
         self.js_stall = Some(stall);
         if let Some(live) = &self.live {

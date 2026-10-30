@@ -48,6 +48,11 @@ fn js_clock(w: &mut LjosWorld, secs: u64) -> StepResult {
     })
 }
 
+#[when("the application sets a log handler of its own")]
+fn own_log_handler(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.environment()?.own_log_handler())
+}
+
 // As above, and each poll also takes `secs` in which the application does not
 // have the processor.
 #[given(

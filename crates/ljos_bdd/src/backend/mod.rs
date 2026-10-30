@@ -647,6 +647,14 @@ pub trait Environment: Backend {
         ))
     }
 
+    /// The application replaces the engine's log handler with one that
+    /// keeps nothing.
+    fn own_log_handler(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a log handler of the application's",
+        ))
+    }
+
     /// The limits on a run of JavaScript read a clock that moves ten
     /// milliseconds of the script's time each time the interrupt polls it,
     /// and `stall` in which the application does not have the processor.

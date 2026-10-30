@@ -288,16 +288,9 @@ impl Rig {
         })
     }
 
-    /// Makes the application's log the one the inspector reads, and keeps
-    /// it going to the scenario's own log as before.
+    /// Has the inspector read the application's log.
     pub(super) fn attach(&mut self, live: &Live) {
-        let sink = live.log.clone();
-        self.inspector.watch_log(&live.engine, move |e| {
-            sink.borrow_mut().push(LogEntry {
-                level: level(e.level),
-                message: e.message.clone(),
-            });
-        });
+        self.inspector.watch_log(&live.engine, |_| {});
         // A host attaches before it runs a frame; what came before is not a
         // reload to tell.
         self.inspector.observe(&live.engine);

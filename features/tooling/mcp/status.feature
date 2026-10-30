@@ -92,6 +92,13 @@ Feature: Status, log, measurements and pictures from the inspector
       And the answer's "/entries/0/file" matches "Scenario\.qml$"
       And the answer's "/entries/0/line" is 6
 
+    Scenario: A log handler the application sets takes nothing from the agent
+      When the application sets a log handler of its own
+      And the method "shout" of "root" is called
+      And the agent calls the tool "app_logs"
+      Then the answer's "/entries/0/message" is "hello from shout"
+      And the answer's "/entries/0/file" matches "Scenario\.qml$"
+
     Scenario: The agent can ask for warnings alone
       When the method "shout" of "root" is called
       And the method "slip" of "root" is called
