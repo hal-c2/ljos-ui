@@ -14,6 +14,7 @@ use std::{
 use ljos_ir::{CompiledFile, SourceSpan};
 use qml_front::{QtTypeOracle, TypeOracle};
 
+pub mod alias;
 pub mod aot;
 pub mod baseline;
 mod compile;
@@ -28,6 +29,7 @@ mod script;
 mod style;
 pub mod tier1;
 
+pub use alias::{Alias, AliasError, Aliases, Mount};
 pub use compile::compile_file;
 pub use dump::dump;
 pub use project::{Project, resources, skipped_dir};

@@ -12,6 +12,7 @@ use ljos_ir::{CompiledFile, ReloadPatch};
 use qml_front::TypeOracle;
 use qml_front::project::is_script;
 
+use crate::alias::{self, AliasError, Aliases, Mount};
 use crate::{Diagnostic, Error, Project, Severity, compile_file, reload_lint};
 
 /// The compiled files of a project, by key.
@@ -83,6 +84,11 @@ pub struct ReloadSession<O> {
     /// The import path the files are found on, earlier first: one
     /// directory, or the several an application's QML is spread over.
     roots: Vec<PathBuf>,
+    /// The modules imported from a directory of their own.
+    aliases: Aliases,
+    /// The directories outside the roots an alias may name: the ones the
+    /// session started with. Fixed, so a watcher watches them all.
+    mounts: Vec<Mount>,
     sources: BTreeMap<String, String>,
     project: Project<O>,
     /// What the application runs.
@@ -121,6 +127,8 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             project: Project::new(oracle.clone()),
             oracle,
             roots: Vec::new(),
+            aliases: Aliases::new(),
+            mounts: Vec::new(),
             sources: BTreeMap::new(),
             live: FileSet::new(),
             live_failed: BTreeSet::new(),
@@ -160,8 +168,18 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// a module of another, and where two have a file of one key the
     /// earlier root's is the one compiled.
     pub fn open_roots(roots: &[&Path], oracle: O) -> Result<Self, Error> {
+        Self::open_roots_aliased(roots, Aliases::new(), oracle)
+    }
+
+    /// As [`open_roots`](Self::open_roots), with each module of `aliases`
+    /// imported from its directory ([`set_aliases`](Self::set_aliases)).
+    /// An aliased directory under none of the roots is read under a key of
+    /// its own, and is one a later alias may name.
+    pub fn open_roots_aliased(roots: &[&Path], aliases: Aliases, oracle: O) -> Result<Self, Error> {
         let mut session = Self::in_memory(oracle);
         session.roots = roots.iter().map(|r| (*r).to_owned()).collect();
+        session.mounts = alias::mounts(&session.roots, &aliases);
+        session.aliases = aliases;
         session.rescan()?;
         Ok(session)
     }
@@ -172,11 +190,71 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// imports more reads more, and so does a file the program makes an
     /// object of when it runs ([`provide`](Self::provide)).
     pub fn open_reaching(root: &Path, entry: &str, oracle: O) -> Result<Self, Error> {
+        Self::open_reaching_aliased(root, entry, Aliases::new(), oracle)
+    }
+
+    /// As [`open_reaching`](Self::open_reaching), with each module of
+    /// `aliases` imported from its directory, as
+    /// [`open_roots_aliased`](Self::open_roots_aliased).
+    pub fn open_reaching_aliased(
+        root: &Path,
+        entry: &str,
+        aliases: Aliases,
+        oracle: O,
+    ) -> Result<Self, Error> {
         let mut session = Self::in_memory(oracle);
         session.roots = vec![root.to_owned()];
+        session.mounts = alias::mounts(&session.roots, &aliases);
+        session.aliases = aliases;
         session.reached = Some(BTreeSet::from([entry.to_owned()]));
         session.rescan()?;
         Ok(session)
+    }
+
+    /// The modules imported from a directory of their own.
+    pub fn aliases(&self) -> &Aliases {
+        &self.aliases
+    }
+
+    /// Imports each module of `aliases` from its directory, and the rest
+    /// from the import path, from the next [`rescan`](Self::rescan) on.
+    /// A directory has to be inside a root, or one the session started
+    /// with.
+    ///
+    /// # Errors
+    /// [`AliasError::Outside`] for a directory that is neither; nothing
+    /// changes then.
+    pub fn set_aliases(&mut self, aliases: Aliases) -> Result<(), AliasError> {
+        for (_, dir) in aliases.iter() {
+            let mounted = self.mounts.iter().any(|m| m.dir == dir);
+            if !mounted && alias::inside(&self.roots, dir).is_none() {
+                return Err(AliasError::Outside {
+                    dir: dir.to_owned(),
+                });
+            }
+        }
+        self.aliases = aliases;
+        Ok(())
+    }
+
+    /// Every directory the session's files may be in: the roots, earlier
+    /// first, then the directories outside them an alias may name.
+    pub fn places(&self) -> Vec<PathBuf> {
+        let mounts = self.mounts.iter().map(|m| m.dir.clone());
+        self.roots.iter().cloned().chain(mounts).collect()
+    }
+
+    /// The directories outside the roots an alias may name, with the keys
+    /// their files have while one does.
+    pub fn mounts(&self) -> &[Mount] {
+        &self.mounts
+    }
+
+    /// The mounts an alias names now.
+    fn active_mounts(&self) -> impl Iterator<Item = &Mount> {
+        self.mounts
+            .iter()
+            .filter(|m| self.aliases.iter().any(|(_, dir)| dir == m.dir))
     }
 
     /// The directory of a session made by [`open`](Self::open); the
@@ -198,7 +276,8 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         };
         self.project = match &self.reached {
             Some(reached) => {
-                let mut project = Project::open(&root, self.oracle.clone())?;
+                let mut project =
+                    Project::open_aliased(&root, &self.aliases, &self.mounts, self.oracle.clone())?;
                 for key in reached {
                     project.reach(key);
                 }
@@ -206,7 +285,12 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             }
             None => {
                 let roots: Vec<&Path> = self.roots.iter().map(PathBuf::as_path).collect();
-                Project::load_roots(&roots, self.oracle.clone())?
+                Project::load_roots_aliased(
+                    &roots,
+                    &self.aliases,
+                    &self.mounts,
+                    self.oracle.clone(),
+                )?
             }
         };
         // A broken script stays refused until it is mended or gone.
@@ -232,11 +316,17 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// without `.qml`, or with its suffix for a JavaScript file. None for
     /// a path that is neither of the project.
     pub fn key_of(&self, path: &Path) -> Option<String> {
-        let relative = self
-            .roots
-            .iter()
-            .find_map(|root| path.strip_prefix(root).ok())?;
-        let text = relative.to_string_lossy().replace('\\', "/");
+        // A directory an alias does not name now is none of the project's.
+        let text = match self.mounts.iter().find(|m| path.starts_with(&m.dir)) {
+            Some(_) => self.active_mounts().find_map(|m| m.key_of(path))?,
+            None => {
+                let relative = self
+                    .roots
+                    .iter()
+                    .find_map(|root| path.strip_prefix(root).ok())?;
+                relative.to_string_lossy().replace('\\', "/")
+            }
+        };
         if is_script(&text) {
             return Some(text);
         }
@@ -254,6 +344,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         } else {
             format!("{key}.qml")
         };
+        if let Some(path) = self.mounts.iter().find_map(|m| m.path_of(&name)) {
+            return Some(path);
+        }
         let mut paths = self.roots.iter().map(|root| root.join(&name));
         let first = paths.next()?;
         if self.roots.len() == 1 || first.exists() {

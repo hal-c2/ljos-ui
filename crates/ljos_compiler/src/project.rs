@@ -15,6 +15,7 @@ use qml_front::{
 };
 
 use crate::Error;
+use crate::alias::{Aliases, Mount};
 use crate::style::controls_style;
 
 /// A project walk stops after this many directories, so a root that is not a
@@ -60,6 +61,11 @@ struct Tree {
     module_dirs: Vec<BTreeSet<String>>,
     /// The directories read, by key.
     read: HashSet<String>,
+    /// Whether each of `modules` is one an import of its URI sees
+    /// ([`counted`]).
+    counted: Vec<bool>,
+    /// The aliased directories outside the root, read under their keys.
+    mounts: Vec<Mount>,
     /// The modules told to the front end, by their place in `modules`.
     told: HashSet<usize>,
     /// What [`resources`] finds, from the same reading.
@@ -209,9 +215,33 @@ impl<O: TypeOracle> Project<O> {
     /// roots have a file of the same key the earlier root's is kept, as
     /// the first import path that has a module is the one used.
     pub fn load_roots(roots: &[&Path], oracle: O) -> Result<Self, Error> {
+        Self::load_roots_aliased(roots, &Aliases::new(), &[], oracle)
+    }
+
+    /// As [`load_roots`](Self::load_roots), with each module of `aliases`
+    /// imported from its directory alone. `mounts` are the directories
+    /// outside the roots an alias may name; the ones `aliases` names are
+    /// read under their keys.
+    pub fn load_roots_aliased(
+        roots: &[&Path],
+        aliases: &Aliases,
+        mounts: &[Mount],
+        oracle: O,
+    ) -> Result<Self, Error> {
         let mut project = Self::new(oracle);
+        let mut found = Vec::new();
         for root in roots {
-            project.load_root(root)?;
+            project.load_root(root, "", &mut found)?;
+        }
+        for mount in active(mounts, aliases) {
+            project.load_root(&mount.dir, &mount.prefix, &mut found)?;
+        }
+        // Every file is in first: a module of one root may name a file
+        // another root has.
+        for ((dir, _, module), counted) in found.iter().zip(counted(&found, aliases)) {
+            if counted {
+                project.add_module(dir, module);
+            }
         }
         // A program chooses its style as it starts, as Qt's does; a
         // scenario or a tool that adds files itself chooses one or none.
@@ -253,20 +283,27 @@ impl<O: TypeOracle> Project<O> {
         }
     }
 
-    fn load_root(&mut self, root: &Path) -> Result<(), Error> {
+    /// Reads the files under `root`, keyed below `prefix`, and adds the
+    /// modules its directories describe to `found`.
+    fn load_root(
+        &mut self,
+        root: &Path,
+        prefix: &str,
+        found: &mut Vec<(String, PathBuf, Module)>,
+    ) -> Result<(), Error> {
         let dirs = scan(root).map_err(|source| Error::Io {
             path: root.to_owned(),
             source,
         })?;
-        self.add_place(root, "");
+        self.add_place(root, prefix);
+        let key = |path: &Path| key_under(root, prefix, path);
         // What earlier roots gave; those keys are not replaced.
         let earlier: HashSet<String> = self.sources.keys().cloned().collect();
         let earlier_scripts: HashSet<String> = self.scripts.keys().cloned().collect();
         for (dir, names) in &dirs {
             for name in names.iter().filter(|name| name.ends_with(".qml")) {
                 let path = dir.join(name);
-                let (Some(key), Ok(text)) = (key(root, &path), std::fs::read_to_string(&path))
-                else {
+                let (Some(key), Ok(text)) = (key(&path), std::fs::read_to_string(&path)) else {
                     continue;
                 };
                 if !earlier.contains(&key) {
@@ -276,8 +313,7 @@ impl<O: TypeOracle> Project<O> {
             }
             for name in names.iter().filter(|name| is_script(name)) {
                 let path = dir.join(name);
-                let (Some(key), Ok(text)) = (key(root, &path), std::fs::read_to_string(&path))
-                else {
+                let (Some(key), Ok(text)) = (key(&path), std::fs::read_to_string(&path)) else {
                     continue;
                 };
                 if !earlier_scripts.contains(&key) {
@@ -286,11 +322,11 @@ impl<O: TypeOracle> Project<O> {
             }
         }
         for (dir, names) in &dirs {
-            let Some(dir_key) = key(root, dir) else {
+            let Some(dir_key) = key(dir) else {
                 continue;
             };
-            for module in &described(dir, names).0 {
-                self.add_module(&dir_key, module);
+            for module in described(dir, names).0 {
+                found.push((dir_key.clone(), dir.clone(), module));
             }
         }
         Ok(())
@@ -303,28 +339,58 @@ impl<O: TypeOracle> Project<O> {
     /// knows the modules on its import path, and so are the JavaScript
     /// files, as a script may import one from anywhere.
     pub fn open(root: &Path, oracle: O) -> Result<Self, Error> {
-        let dirs = scan(root).map_err(|source| Error::Io {
-            path: root.to_owned(),
-            source,
-        })?;
+        Self::open_aliased(root, &Aliases::new(), &[], oracle)
+    }
+
+    /// As [`open`](Self::open), with each module of `aliases` imported
+    /// from its directory alone. `mounts` are the directories outside the
+    /// root an alias may name; the ones `aliases` names are read, as the
+    /// root is, under their keys.
+    pub fn open_aliased(
+        root: &Path,
+        aliases: &Aliases,
+        mounts: &[Mount],
+        oracle: O,
+    ) -> Result<Self, Error> {
+        let mounts: Vec<Mount> = active(mounts, aliases).cloned().collect();
         let mut project = Self::new(oracle);
-        project.add_place(root, "");
-        let mut modules = Vec::new();
+        let mut found = Vec::new();
         let mut resources = Vec::new();
-        for (dir, names) in &dirs {
-            let Some(dir_key) = key(root, dir) else {
-                continue;
-            };
-            for name in names.iter().filter(|name| is_script(name)) {
-                let path = dir.join(name);
-                if let (Some(key), Ok(text)) = (key(root, &path), std::fs::read_to_string(&path)) {
-                    project.add_script(&key, text);
+        let places = std::iter::once((root, ""))
+            .chain(mounts.iter().map(|m| (m.dir.as_path(), m.prefix.as_str())));
+        for (base, prefix) in places {
+            let dirs = scan(base).map_err(|source| Error::Io {
+                path: base.to_owned(),
+                source,
+            })?;
+            project.add_place(base, prefix);
+            for (dir, names) in &dirs {
+                let Some(dir_key) = key_under(base, prefix, dir) else {
+                    continue;
+                };
+                for name in names.iter().filter(|name| is_script(name)) {
+                    let path = dir.join(name);
+                    if let (Some(key), Ok(text)) = (
+                        key_under(base, prefix, &path),
+                        std::fs::read_to_string(&path),
+                    ) {
+                        project.add_script(&key, text);
+                    }
                 }
+                let (described, kept) = described(dir, names);
+                resources.extend(kept.into_iter().filter(|(_, path)| path.is_file()));
+                found.extend(
+                    described
+                        .into_iter()
+                        .map(|m| (dir_key.clone(), dir.clone(), m)),
+                );
             }
-            let (found, kept) = described(dir, names);
-            resources.extend(kept.into_iter().filter(|(_, path)| path.is_file()));
-            modules.extend(found.into_iter().map(|m| (dir_key.clone(), m)));
         }
+        let counted = counted(&found, aliases);
+        let modules: Vec<(String, Module)> = found
+            .into_iter()
+            .map(|(dir, _, module)| (dir, module))
+            .collect();
         let module_dirs = modules
             .iter()
             .map(|(dir, module)| {
@@ -340,6 +406,8 @@ impl<O: TypeOracle> Project<O> {
             root: root.to_owned(),
             modules,
             module_dirs,
+            counted,
+            mounts,
             read: HashSet::new(),
             told: HashSet::new(),
             resources,
@@ -376,7 +444,7 @@ impl<O: TypeOracle> Project<O> {
                 if dir.starts_with("..") || dir.starts_with('/') || !tree.read.insert(dir.clone()) {
                     continue;
                 }
-                let new = self.read_dir(&tree.root, &dir);
+                let new = self.read_dir(&tree.root, &tree.mounts, &dir);
                 follow.extend(new.iter().cloned());
                 read.extend(new);
                 for (i, at) in tree.module_dirs.iter().enumerate() {
@@ -413,7 +481,9 @@ impl<O: TypeOracle> Project<O> {
             }
         }
         for i in wanted {
-            if tree.told.insert(i) {
+            // A module of the URI that an import does not see is read, as
+            // its directory is, but its types are not the URI's.
+            if tree.counted[i] && tree.told.insert(i) {
                 let (dir, module) = &tree.modules[i];
                 self.add_module(dir, module);
             }
@@ -439,11 +509,13 @@ impl<O: TypeOracle> Project<O> {
 
     /// The QML files directly in the directory `dir` that are not in the
     /// project yet, added: their keys.
-    fn read_dir(&mut self, root: &Path, dir: &str) -> Vec<String> {
-        let at = if dir.is_empty() {
-            root.to_owned()
-        } else {
-            root.join(dir)
+    fn read_dir(&mut self, root: &Path, mounts: &[Mount], dir: &str) -> Vec<String> {
+        let mount = mounts.iter().find(|m| m.path_of(dir).is_some());
+        let (base, prefix) = mount.map_or((root, ""), |m| (m.dir.as_path(), m.prefix.as_str()));
+        let at = match mount {
+            Some(m) => m.path_of(dir).unwrap_or_else(|| m.dir.clone()),
+            None if dir.is_empty() => root.to_owned(),
+            None => root.join(dir),
         };
         let Ok(entries) = std::fs::read_dir(&at) else {
             return Vec::new();
@@ -457,7 +529,7 @@ impl<O: TypeOracle> Project<O> {
         paths.sort();
         let mut added = Vec::new();
         for path in paths {
-            let Some(key) = key(root, &path) else {
+            let Some(key) = key_under(base, prefix, &path) else {
                 continue;
             };
             if self.sources.contains_key(&key) {
@@ -556,12 +628,69 @@ fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf
     (modules, resources)
 }
 
-/// A file's key: its path from the root without `.qml`, with forward
-/// slashes.
-fn key(root: &Path, path: &Path) -> Option<String> {
+/// The modules the `qmldir` and `CMakeLists.txt` of `dir` describe.
+pub(crate) fn described_in(dir: &Path) -> Vec<Module> {
+    let names: Vec<String> = std::fs::read_dir(dir)
+        .map(|read| {
+            read.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    described(dir, &names).0
+}
+
+/// The mounts of `mounts` an alias of `aliases` names.
+fn active<'a>(mounts: &'a [Mount], aliases: &'a Aliases) -> impl Iterator<Item = &'a Mount> {
+    mounts
+        .iter()
+        .filter(|m| aliases.iter().any(|(_, dir)| dir == m.dir))
+}
+
+/// Which of the modules `found` describes (each with the key and the path
+/// of its directory, in the order the roots are read) an import of its URI
+/// sees.
+///
+/// An aliased URI is the module of its directory alone. Otherwise, where
+/// a directory is at the URI's own path from a root (`App/Media` for
+/// `App.Media`), that is where an import path finds the module, and
+/// another directory that names the same URI (a stand-in kept beside the
+/// real one) is not seen. With no such directory every description
+/// counts.
+fn counted(found: &[(String, PathBuf, Module)], aliases: &Aliases) -> Vec<bool> {
+    let home = |uri: &str| uri.replace('.', "/");
+    let at_home: HashSet<&str> = found
+        .iter()
+        .filter(|(dir, _, m)| *dir == home(&m.uri))
+        .map(|(_, _, m)| m.uri.as_str())
+        .collect();
+    let mut real: HashMap<&Path, Option<PathBuf>> = HashMap::new();
+    found
+        .iter()
+        .map(|(dir_key, dir, m)| match aliases.get(&m.uri) {
+            Some(target) => {
+                real.entry(dir.as_path())
+                    .or_insert_with(|| std::fs::canonicalize(dir).ok())
+                    .as_deref()
+                    == Some(target)
+            }
+            None if at_home.contains(m.uri.as_str()) => *dir_key == home(&m.uri),
+            None => true,
+        })
+        .collect()
+}
+
+/// A file's key: its path from `root` without `.qml`, with forward
+/// slashes, below `prefix` (`""` for a root of the import path).
+fn key_under(root: &Path, prefix: &str, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
     let text = relative.to_string_lossy().replace('\\', "/");
-    Some(text.strip_suffix(".qml").unwrap_or(&text).to_owned())
+    let text = text.strip_suffix(".qml").unwrap_or(&text);
+    Some(match (prefix, text) {
+        ("", _) => text.to_owned(),
+        (_, "") => prefix.to_owned(),
+        _ => format!("{prefix}/{text}"),
+    })
 }
 
 /// Directories a walk of a project does not enter: what tools keep for
