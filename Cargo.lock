@@ -3597,6 +3597,7 @@ name = "ljos_3d"
 version = "0.0.0"
 dependencies = [
  "bytemuck",
+ "naga",
  "png",
  "pollster 1.0.1",
  "slotmap",

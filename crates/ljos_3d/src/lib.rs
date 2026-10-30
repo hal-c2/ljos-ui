@@ -18,8 +18,9 @@ pub mod offscreen;
 pub mod surface;
 
 pub use scene::{
-    Background, Camera, Color, DefaultMaterial, Environment, Light, Lighting, Material, MeshSource,
-    Model, Node, NodeId, NodeKind, Primitive, Scene, Transform,
+    AlphaMode, Background, Camera, Color, CullMode, DefaultMaterial, Environment, Fade, Light,
+    Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive, PrincipledMaterial,
+    Scene, Transform,
 };
 
 #[cfg(feature = "gpu")]

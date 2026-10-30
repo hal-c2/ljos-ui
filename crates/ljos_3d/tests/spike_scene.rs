@@ -26,7 +26,10 @@ pub const CLEAR: [u8; 4] = [0x20, 0x20, 0x20, 0xff];
 
 pub fn lit_cube(background: Background) -> Scene {
     let mut scene = Scene::new();
-    scene.set_environment(Environment { background });
+    scene.set_environment(Environment {
+        background,
+        ..Environment::default()
+    });
     scene.add(
         None,
         Node::new(NodeKind::Camera(Camera::PERSPECTIVE)).with_transform(Transform {

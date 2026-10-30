@@ -77,12 +77,21 @@ impl Transform {
     }
 }
 
-/// Qt Quick 3D's built-in meshes (`source: "#Cube"`), in scene units: the
-/// cube is 100 a side and centred on its origin.
+/// Qt Quick 3D's built-in meshes (`source: "#Cube"`), each 100 scene
+/// units across: the cube a side, the sphere its diameter, the cylinder
+/// and the cone their height and the diameter of their base.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Primitive {
+    /// Centred on its origin.
     Cube,
+    /// In the XY plane, facing +Z, centred on its origin.
     Rectangle,
+    /// Centred on its origin.
+    Sphere,
+    /// Standing along Y, centred on its origin.
+    Cylinder,
+    /// Standing on its base at the origin, pointing up Y.
+    Cone,
 }
 
 impl Primitive {
@@ -92,7 +101,22 @@ impl Primitive {
         match source {
             "#Cube" => Some(Primitive::Cube),
             "#Rectangle" => Some(Primitive::Rectangle),
+            "#Sphere" => Some(Primitive::Sphere),
+            "#Cylinder" => Some(Primitive::Cylinder),
+            "#Cone" => Some(Primitive::Cone),
             _ => None,
+        }
+    }
+
+    /// A sphere that holds the mesh, centre and radius in model space:
+    /// what frustum culling tests.
+    pub fn bounds(self) -> (Vec3, f32) {
+        let half_diagonal = 50.0 * std::f32::consts::SQRT_2;
+        match self {
+            Primitive::Cube => (Vec3::ZERO, 50.0 * 3f32.sqrt()),
+            Primitive::Rectangle | Primitive::Cylinder => (Vec3::ZERO, half_diagonal),
+            Primitive::Sphere => (Vec3::ZERO, 50.0),
+            Primitive::Cone => (Vec3::new(0.0, 50.0, 0.0), half_diagonal),
         }
     }
 }
@@ -112,18 +136,84 @@ pub enum Lighting {
     Fragment,
 }
 
+/// `Material.cullMode`: which faces are not drawn. A face is a front face
+/// where its triangle winds counter-clockwise on the screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CullMode {
+    /// Qt's default.
+    #[default]
+    Back,
+    Front,
+    None,
+}
+
 /// `DefaultMaterial`, as far as it is built: a diffuse colour lit by the
-/// scene's lights.
+/// scene's lights, with a white highlight of `specular_amount`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DefaultMaterial {
     pub diffuse_color: Color,
     pub lighting: Lighting,
+    /// 0 to 1; 0, Qt's default, has no highlight.
+    pub specular_amount: f32,
+    /// 0 to 1: how far the highlight spreads.
+    pub specular_roughness: f32,
+    pub cull_mode: CullMode,
 }
 
 impl Default for DefaultMaterial {
     fn default() -> Self {
         DefaultMaterial {
             diffuse_color: Color::WHITE,
+            lighting: Lighting::Fragment,
+            specular_amount: 0.0,
+            specular_roughness: 0.0,
+            cull_mode: CullMode::Back,
+        }
+    }
+}
+
+/// `PrincipledMaterial.alphaMode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AlphaMode {
+    /// Blended where the opacity is less than 1, opaque where it is 1.
+    #[default]
+    Default,
+    /// Always blended.
+    Blend,
+    /// The opacity is ignored.
+    Opaque,
+    /// Not drawn below `alpha_cutoff`, opaque at or above it.
+    Mask,
+}
+
+/// `PrincipledMaterial`, the metal-roughness model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PrincipledMaterial {
+    /// Its alpha is part of the opacity.
+    pub base_color: Color,
+    /// 0 a dielectric, 1 a metal.
+    pub metalness: f32,
+    pub roughness: f32,
+    /// Linear light the surface gives by itself, whatever lights it.
+    pub emissive: [f32; 3],
+    pub opacity: f32,
+    pub alpha_mode: AlphaMode,
+    pub alpha_cutoff: f32,
+    pub cull_mode: CullMode,
+    pub lighting: Lighting,
+}
+
+impl Default for PrincipledMaterial {
+    fn default() -> Self {
+        PrincipledMaterial {
+            base_color: Color::WHITE,
+            metalness: 0.0,
+            roughness: 0.0,
+            emissive: [0.0; 3],
+            opacity: 1.0,
+            alpha_mode: AlphaMode::Default,
+            alpha_cutoff: 0.5,
+            cull_mode: CullMode::Back,
             lighting: Lighting::Fragment,
         }
     }
@@ -132,6 +222,37 @@ impl Default for DefaultMaterial {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Material {
     Default(DefaultMaterial),
+    Principled(PrincipledMaterial),
+}
+
+impl Material {
+    pub fn cull_mode(&self) -> CullMode {
+        match self {
+            Material::Default(m) => m.cull_mode,
+            Material::Principled(m) => m.cull_mode,
+        }
+    }
+
+    /// The opacity a pixel of the material has before its alpha mode.
+    pub fn alpha(&self) -> f32 {
+        match self {
+            Material::Default(m) => m.diffuse_color.a,
+            Material::Principled(m) => m.base_color.a * m.opacity,
+        }
+    }
+
+    /// Whether it is laid over what is behind it, and so drawn after the
+    /// opaque models, back to front.
+    pub fn blends(&self) -> bool {
+        match self {
+            Material::Default(_) => self.alpha() < 1.0,
+            Material::Principled(m) => match m.alpha_mode {
+                AlphaMode::Default => self.alpha() < 1.0,
+                AlphaMode::Blend => true,
+                AlphaMode::Opaque | AlphaMode::Mask => false,
+            },
+        }
+    }
 }
 
 impl Default for Material {
@@ -152,9 +273,13 @@ pub enum Camera {
     /// `PerspectiveCamera`; Qt's defaults are a 60° vertical field of view
     /// and clip planes at 10 and 10000.
     Perspective {
-        fov_y_degrees: f32,
+        /// Vertical, or horizontal where `fov_horizontal` says so.
+        fov_degrees: f32,
+        fov_horizontal: bool,
         clip_near: f32,
         clip_far: f32,
+        /// `frustumCullingEnabled`.
+        frustum_culling: bool,
     },
     /// `OrthographicCamera`: one scene unit is one pixel of the view at a
     /// magnification of 1.
@@ -163,30 +288,58 @@ pub enum Camera {
         clip_far: f32,
         horizontal_magnification: f32,
         vertical_magnification: f32,
+        frustum_culling: bool,
     },
 }
 
 impl Camera {
     pub const PERSPECTIVE: Camera = Camera::Perspective {
-        fov_y_degrees: 60.0,
+        fov_degrees: 60.0,
+        fov_horizontal: false,
         clip_near: 10.0,
         clip_far: 10000.0,
+        frustum_culling: false,
     };
+
+    /// Whether what it cannot see is left out before drawing.
+    pub fn frustum_culling(&self) -> bool {
+        match *self {
+            Camera::Perspective {
+                frustum_culling, ..
+            }
+            | Camera::Orthographic {
+                frustum_culling, ..
+            } => frustum_culling,
+        }
+    }
 
     /// View space to clip space for a view `width` by `height` pixels.
     pub fn projection(&self, width: f32, height: f32) -> Mat4 {
         let aspect = if height > 0.0 { width / height } else { 1.0 };
         match *self {
             Camera::Perspective {
-                fov_y_degrees,
+                fov_degrees,
+                fov_horizontal,
                 clip_near,
                 clip_far,
-            } => Mat4::perspective(fov_y_degrees.to_radians(), aspect, clip_near, clip_far),
+                ..
+            } => {
+                let fov = fov_degrees.to_radians();
+                // A horizontal field of view keeps the width and lets the
+                // height follow the aspect ratio.
+                let fov_y = if fov_horizontal {
+                    2.0 * ((fov * 0.5).tan() / aspect).atan()
+                } else {
+                    fov
+                };
+                Mat4::perspective(fov_y, aspect, clip_near, clip_far)
+            }
             Camera::Orthographic {
                 clip_near,
                 clip_far,
                 horizontal_magnification,
                 vertical_magnification,
+                ..
             } => Mat4::orthographic(
                 width / horizontal_magnification.max(f32::EPSILON),
                 height / vertical_magnification.max(f32::EPSILON),
@@ -197,13 +350,62 @@ impl Camera {
     }
 }
 
-/// A light shines along its local -Z axis.
+/// How a point or spot light fades with the distance `d` from it: its
+/// light is divided by `constant + linear × 0.01 × d + quadratic × 0.0001
+/// × d²`, the factors as QML gives them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fade {
+    pub constant: f32,
+    pub linear: f32,
+    pub quadratic: f32,
+}
+
+impl Default for Fade {
+    /// Qt's: the inverse square of the distance, a hundred units away
+    /// halving the light.
+    fn default() -> Self {
+        Fade {
+            constant: 1.0,
+            linear: 0.0,
+            quadratic: 1.0,
+        }
+    }
+}
+
+impl Fade {
+    /// What the light is multiplied by `d` units away.
+    pub fn at(&self, d: f32) -> f32 {
+        let divisor = self.constant + self.linear * 0.01 * d + self.quadratic * 0.0001 * d * d;
+        if divisor > 0.0 { 1.0 / divisor } else { 0.0 }
+    }
+}
+
+/// A light. Directional and spot lights shine along their local -Z axis.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Light {
     Directional {
         color: Color,
         ambient_color: Color,
         brightness: f32,
+    },
+    /// Shines from where it is in every direction.
+    Point {
+        color: Color,
+        ambient_color: Color,
+        brightness: f32,
+        fade: Fade,
+    },
+    /// A point light that shines only inside a cone.
+    Spot {
+        color: Color,
+        ambient_color: Color,
+        brightness: f32,
+        fade: Fade,
+        /// The cone, edge to edge, in degrees.
+        cone_angle: f32,
+        /// Where the light starts to fall off towards the cone's edge;
+        /// one wider than the cone is the cone.
+        inner_cone_angle: f32,
     },
 }
 
@@ -213,6 +415,29 @@ impl Light {
         ambient_color: Color::BLACK,
         brightness: 1.0,
     };
+
+    /// The colour, brightness and ambient colour every light has.
+    pub fn common(&self) -> (Color, f32, Color) {
+        match *self {
+            Light::Directional {
+                color,
+                ambient_color,
+                brightness,
+            }
+            | Light::Point {
+                color,
+                ambient_color,
+                brightness,
+                ..
+            }
+            | Light::Spot {
+                color,
+                ambient_color,
+                brightness,
+                ..
+            } => (color, brightness, ambient_color),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -269,12 +494,17 @@ pub enum Background {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Environment {
     pub background: Background,
+    /// Samples a pixel for multisample antialiasing (`antialiasingMode`
+    /// MSAA): 1 for none, else 2, 4 or 8, which a renderer may bring to a
+    /// count its device has.
+    pub msaa_samples: u32,
 }
 
 impl Default for Environment {
     fn default() -> Self {
         Environment {
             background: Background::Transparent,
+            msaa_samples: 1,
         }
     }
 }
@@ -496,9 +726,11 @@ mod tests {
         let second = s.add(
             None,
             Node::new(NodeKind::Camera(Camera::Perspective {
-                fov_y_degrees: 30.0,
+                fov_degrees: 30.0,
                 clip_near: 1.0,
+                fov_horizontal: false,
                 clip_far: 100.0,
+                frustum_culling: false,
             })),
         );
         assert_eq!(s.active_camera().unwrap().0, Camera::PERSPECTIVE);

@@ -66,15 +66,21 @@ impl Offscreen {
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions::default())
                 .await?;
+            // Asked for where the adapter has it, so multisampling can use
+            // the sample counts this adapter has beyond WebGPU's 1 and 4.
+            let required_features =
+                adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
             let (device, queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("ljos_3d offscreen"),
+                    required_features,
                     required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                         .using_resolution(adapter.limits()),
                     ..Default::default()
                 })
                 .await?;
-            let renderer = Renderer::new(&device);
+            let mut renderer = Renderer::new(&device);
+            renderer.use_adapter_sample_counts(&adapter, &device);
             Ok(Offscreen {
                 device,
                 queue,

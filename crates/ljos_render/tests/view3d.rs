@@ -28,6 +28,7 @@ fn red(key: u64) -> Arc<View3dOp> {
     let mut scene = Scene::new();
     scene.set_environment(Environment {
         background: Background::Color(Color::rgb(1.0, 0.0, 0.0)),
+        ..Environment::default()
     });
     Arc::new(View3dOp {
         key,

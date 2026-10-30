@@ -30,6 +30,8 @@ wgpu = { workspace = true, optional = true, features = ["webgpu", "webgl"] }
 
 [dev-dependencies]
 png.workspace = true
+# To check the shaders translate to WebGL2's GLSL ES 3.00 without a browser.
+naga.workspace = true
 
 [lints]
 workspace = true

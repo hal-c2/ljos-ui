@@ -23,6 +23,7 @@ fn lit_cube(diffuse_color: Color) -> Scene {
     let mut scene = Scene::new();
     scene.set_environment(Environment {
         background: Background::Transparent,
+        ..Environment::default()
     });
     scene.add(
         None,
