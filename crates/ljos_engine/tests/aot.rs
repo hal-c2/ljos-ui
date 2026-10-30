@@ -166,7 +166,17 @@ fn a_binding_that_does_not_read_what_it_depends_on_is_a_mismatch() {
     let (h, root) = world(&[(10, misses_a_read)]);
     // Bindings run when read.
     assert_eq!(h.num(root, "sum"), 0.0);
-    assert_eq!(differ(&h.engine, &h.warnings()), 1);
+    let warnings = h.warnings();
+    assert_eq!(differ(&h.engine, &warnings), 1);
+    let text = warnings
+        .iter()
+        .find(|w| w.contains("differ"))
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    // The expression's text stops at its own end: the next function's label
+    // named another property.
+    assert!(text.contains("b * 0"), "{text}");
+    assert!(!text.contains("twice"), "{text}");
 }
 
 /// `sum: a + b * 0`, as it should be.

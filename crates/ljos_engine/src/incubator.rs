@@ -1262,9 +1262,6 @@ impl Engine {
                 let mut flags = PropertyFlags::empty();
                 if p.is_readonly {
                     flags |= PropertyFlags::READONLY;
-                    if p.alias.is_none() {
-                        flags |= PropertyFlags::MADE_ONLY;
-                    }
                 }
                 if p.is_required {
                     flags |= PropertyFlags::REQUIRED;

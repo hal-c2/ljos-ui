@@ -866,7 +866,11 @@ impl Engine {
 
     fn reads_text(&self, reads: &Reads) -> String {
         let mut out = format!("{} nodes", reads.nodes.len());
-        for (o, p) in &reads.fields {
+        // A second read of one follows nothing more.
+        let mut fields = reads.fields.clone();
+        fields.sort_unstable();
+        fields.dedup();
+        for (o, p) in &fields {
             let (ty, name) = self.describe(*o, *p);
             let _ = write!(out, ", {ty}.{name}");
         }

@@ -753,8 +753,14 @@ pub(crate) fn js_text(ir: &CompiledFile, b: &Binding) -> String {
     };
     let rest = &ir.js.source[start + "export ".len()..];
     let end = rest.find("\nexport function ").unwrap_or(rest.len());
+    // The line before the next function is that function's label.
+    let text = rest[..end].trim_end();
+    let text = match text.rfind('\n') {
+        Some(line) if text[line + 1..].starts_with("// ") => &text[..line],
+        _ => text,
+    };
     let mut out = String::new();
-    for word in rest[..end].split_whitespace() {
+    for word in text.split_whitespace() {
         if out.len() + word.len() > MOST {
             out.push_str(" ...");
             break;
