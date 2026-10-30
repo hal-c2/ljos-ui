@@ -118,6 +118,29 @@ fn author_starts(w: &mut LjosWorld, line: String) -> StepResult {
     author.start(files, &line)
 }
 
+// The inspector's rate (ARCHITECTURE.md §19.7), counted by a client that
+// speaks plain HTTP so that a refusal is not asked again.
+#[rustfmt::skip]
+#[when(regex = r"^a client makes (\d+) calls to the started application's inspector within one second$")]
+fn client_makes_calls(w: &mut LjosWorld, count: usize) -> StepResult {
+    w.author().0.call_inspector(count)
+}
+
+#[then(regex = r"^the first (\d+) calls are answered$")]
+fn calls_answered(w: &mut LjosWorld, first: usize) -> StepResult {
+    w.author().0.calls_answered(first)
+}
+
+#[then(regex = r#"^call (\d+) is refused with status (\d+) and "([^"]+)"$"#)]
+fn call_refused(w: &mut LjosWorld, nth: usize, status: u16, header: String) -> StepResult {
+    w.author().0.call_refused(nth, status, &header)
+}
+
+#[then(regex = r"^the started application's token file says (\d+) calls a second$")]
+fn token_file_rate(w: &mut LjosWorld, rate: u64) -> StepResult {
+    w.author().0.token_file_rate(rate)
+}
+
 #[then(regex = r#"^the application's errors mention "(.*)"$"#)]
 fn application_errors_mention(w: &mut LjosWorld, text: String) -> StepResult {
     w.author().0.errors_mention(&unquoted(&text))

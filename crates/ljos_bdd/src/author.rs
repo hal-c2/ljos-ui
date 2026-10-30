@@ -24,6 +24,7 @@ use ljos_child::Reaped;
 use serde_json::{Value, json};
 
 mod desktop;
+mod rate;
 pub use desktop::Setting;
 
 use crate::backend::{
@@ -399,6 +400,10 @@ struct App {
     _desktop: Option<desktop::Desktop>,
     /// Each thread's wakes when they began to be counted.
     wakes_from: Option<BTreeMap<u32, (String, u64)>>,
+    /// The token file its inspector wrote.
+    token_file: PathBuf,
+    /// What the last burst of calls to its inspector came to.
+    burst: Option<rate::Burst>,
 }
 
 impl App {
@@ -677,11 +682,13 @@ impl Rig {
                 }
             });
         }
-        let app = App {
+        let mut app = App {
             child,
             errors,
             _desktop: desktop,
             wakes_from: None,
+            token_file: PathBuf::new(),
+            burst: None,
         };
         let token_file = loop {
             match lines.recv_timeout(ANSWER) {
@@ -705,8 +712,9 @@ impl Rig {
                 }
             }
         };
+        app.token_file = self.dir.path().join(token_file);
+        let (server, hello) = Server::attach(self.dir.path(), &app.token_file)?;
         self.app = Some(app);
-        let (server, hello) = Server::attach(self.dir.path(), &self.dir.path().join(token_file))?;
         self.greeted(server, &hello)
     }
 
@@ -896,6 +904,59 @@ impl Slot {
         } else {
             Err(format!(
                 "the errors do not mention {text:?}; they are:\n{errors}"
+            ))
+        }
+    }
+
+    /// Makes `count` calls to the started application's inspector within
+    /// one second, as one client makes them.
+    ///
+    /// # Errors
+    /// No application was started, a call was not answered at all, or the
+    /// calls took longer than the second.
+    pub fn call_inspector(&mut self, count: usize) -> Result<(), String> {
+        let app = self.app()?;
+        app.burst = Some(rate::burst(&app.token_file, count)?);
+        Ok(())
+    }
+
+    /// Whether the first `first` calls of the burst were answered.
+    ///
+    /// # Errors
+    /// No burst was made, or one of them was refused.
+    pub fn calls_answered(&mut self, first: usize) -> Result<(), String> {
+        self.burst()?.answered(first)
+    }
+
+    /// Whether call `nth` of the burst was refused with `status` and the
+    /// header line `header`.
+    ///
+    /// # Errors
+    /// No burst was made, or the call was answered otherwise.
+    pub fn call_refused(&mut self, nth: usize, status: u16, header: &str) -> Result<(), String> {
+        self.burst()?.refused(nth, status, header)
+    }
+
+    fn burst(&mut self) -> Result<&rate::Burst, String> {
+        self.app()?.burst.as_ref().ok_or_else(|| {
+            "no calls were made; use `When a client makes N calls to the started \
+             application's inspector within one second`"
+                .to_owned()
+        })
+    }
+
+    /// Whether the started application's token file states `rate` calls a
+    /// second.
+    ///
+    /// # Errors
+    /// No application was started, or its file states another rate.
+    pub fn token_file_rate(&mut self, rate: u64) -> Result<(), String> {
+        let stated = rate::stated(&self.app()?.token_file)?;
+        if stated.as_u64() == Some(rate) {
+            Ok(())
+        } else {
+            Err(format!(
+                "the token file states {stated} calls a second, not {rate}"
             ))
         }
     }

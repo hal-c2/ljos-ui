@@ -319,6 +319,9 @@ into the answer's structured content.
 | `When the inspector is asked to listen on "addr" with the word for a network` / `without …` | `--mcp-bind` with or without `--mcp-insecure-lan`. An address of this machine is served; one beyond it is only checked |
 | `When the inspector is asked to listen on a socket whose path is N characters long` / `… as long as the system allows` | `--mcp-socket` with a path of that length, made in a short directory of its own (never under `TMPDIR`). Too long is refused with the path, its length and the limit; the longest allowed is served |
 | `Given the inspector is served on the loopback address` | the inspector also listens on `127.0.0.1` with a token file, as `ljos run --mcp` serves it |
+| `When a client makes N calls to the started application's inspector within one second` | after `When the author starts "ljos run … --mcp…"`: the inspector's second is let pass, then N `ping`s are posted one after another with the right token as plain HTTP, so a refusal is seen and not asked again; fails, with how long they took, when they took a second or more |
+| `Then the first N calls are answered` / `Then call N is refused with status 429 and "Retry-After: 1"` | the statuses of those calls, and the header line the refused one carries |
+| `Then the started application's token file says N calls a second` | the `calls_per_second` of the token file the started application named |
 | `When the agent requests a snapshot` / `Given the agent has requested a snapshot` | `app_snapshot` |
 | `When the agent requests a snapshot of at most N nodes` / `Given the agent has requested a snapshot of at most N nodes` | `app_snapshot` with `max_nodes` |
 | `When the agent requests the next part of the snapshot` | `app_snapshot` with the cursor the cut snapshot gave |
