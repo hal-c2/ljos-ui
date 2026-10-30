@@ -994,7 +994,7 @@
     "read_only": true
   },
   {
-    "description": "Click the item `target` (a reference or locator) at its centre: a move, a press and a release through the same hit test as a mouse, so what is on top gets it. `button` is left (default), right or middle; `count` 2 is a double click. Answers once the frame settled, with what changed.",
+    "description": "Click the item `target` at its centre, or the window's point `at`: a move, a press and a release through a mouse's hit test, so what is on top gets it. `button` is left (default), right or middle; `count` 2 is a double click. Answers once the frame settled, with what changed.",
     "input_schema": {
       "$defs": {
         "Button": {
@@ -1008,6 +1008,20 @@
       },
       "additionalProperties": false,
       "properties": {
+        "at": {
+          "default": null,
+          "description": "`[x, y]` in the window's logical pixels; what is on top there gets it. Give this or `target`.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "button": {
           "$ref": "#/$defs/Button",
           "description": "`left` (default), `right` or `middle`."
@@ -1023,13 +1037,14 @@
           ]
         },
         "target": {
-          "description": "A reference (`e12`) or a locator that matches exactly one item.",
-          "type": "string"
+          "default": null,
+          "description": "A reference (`e12`) or a locator that matches exactly one item. Give this or `at`.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "required": [
-        "target"
-      ],
       "title": "ClickArgs",
       "type": "object"
     },

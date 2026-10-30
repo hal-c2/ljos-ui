@@ -90,9 +90,9 @@ pub struct MetricsArgs {
 }
 
 pub const CLICK: &str = "\
-Click the item `target` (a reference or locator) at its centre: a move, a press and a release \
-through the same hit test as a mouse, so what is on top gets it. `button` is left (default), \
-right or middle; `count` 2 is a double click. Answers once the frame settled, with what changed.";
+Click the item `target` at its centre, or the window's point `at`: a move, a press and a release \
+through a mouse's hit test, so what is on top gets it. `button` is left (default), right or \
+middle; `count` 2 is a double click. Answers once the frame settled, with what changed.";
 
 pub const TYPE: &str = "\
 Type `text` into the item that has keyboard focus, as key presses with text, like a keyboard. \
@@ -310,8 +310,12 @@ pub enum Button {
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClickArgs {
-    /// A reference (`e12`) or a locator that matches exactly one item.
-    pub target: String,
+    /// A reference (`e12`) or a locator that matches exactly one item. Give this or `at`.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// `[x, y]` in the window's logical pixels; what is on top there gets it. Give this or `target`.
+    #[serde(default)]
+    pub at: Option<[f64; 2]>,
     /// `left` (default), `right` or `middle`.
     #[serde(default)]
     pub button: Button,
@@ -825,6 +829,12 @@ fn parse_act(tool: &'static str, args: Value) -> Result<Act, SurfaceError> {
     Ok(match tool {
         "app_click" => {
             let a: ClickArgs = read(tool, args)?;
+            if a.target.is_some() == a.at.is_some() {
+                return Err(bad(
+                    tool,
+                    "give either `target` or `at`, not both or neither",
+                ));
+            }
             if !(1..=3).contains(&a.count.unwrap_or(1)) {
                 return Err(bad(tool, "`count` is 1, 2 or 3"));
             }

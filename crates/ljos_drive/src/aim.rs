@@ -45,7 +45,12 @@ pub fn aim(bounds: Rect, disabled: bool, window: Rect) -> Result<Point, Refusal>
             height: bounds.height(),
         });
     }
-    let at = bounds.center();
+    aim_at_point(bounds.center(), window)
+}
+
+/// `at`, provided it is in the window: a person's pointer can be nowhere
+/// else in it. The right and bottom edges are the next window's pixels.
+pub fn aim_at_point(at: Point, window: Rect) -> Result<Point, Refusal> {
     if at.x < window.x0 || at.y < window.y0 || at.x >= window.x1 || at.y >= window.y1 {
         return Err(Refusal::Outside {
             at,
@@ -65,6 +70,27 @@ mod tests {
     fn the_middle_of_what_can_be_reached() {
         let at = aim(Rect::new(10.0, 10.0, 30.0, 50.0), false, WINDOW);
         assert_eq!(at, Ok(Point::new(20.0, 30.0)));
+    }
+
+    #[test]
+    fn a_point_is_in_the_window_up_to_but_not_on_its_far_edges() {
+        for at in [Point::new(0.0, 0.0), Point::new(99.5, 99.5)] {
+            assert_eq!(aim_at_point(at, WINDOW), Ok(at));
+        }
+        for at in [
+            Point::new(-0.5, 0.0),
+            Point::new(0.0, -0.5),
+            Point::new(100.0, 0.0),
+            Point::new(0.0, 100.0),
+        ] {
+            assert_eq!(
+                aim_at_point(at, WINDOW),
+                Err(Refusal::Outside {
+                    at,
+                    window: WINDOW.size()
+                })
+            );
+        }
     }
 
     #[test]

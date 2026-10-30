@@ -427,6 +427,21 @@ impl Hands<'_> {
         })
     }
 
+    /// `at` when a pointer can be there.
+    fn aim_at_point(&self, at: Point) -> Result<Point, SurfaceError> {
+        ljos_drive::aim_at_point(at, self.scene.viewport()).map_err(|why| match why {
+            Refusal::Outside { at, window } => not_actionable(format!(
+                "{},{} is outside the window, which is {}x{} in logical pixels. Make the \
+                 window larger with `app_resize`",
+                num(at.x),
+                num(at.y),
+                num(window.width),
+                num(window.height)
+            )),
+            other => not_actionable(other.to_string()),
+        })
+    }
+
     /// A move, then `count` presses and releases of `button` at the point.
     fn click_at(
         &mut self,
@@ -441,7 +456,15 @@ impl Hands<'_> {
     // ----- the acts -----
 
     fn click(&mut self, a: &ClickArgs) -> Result<Done, SurfaceError> {
-        let at = self.aim(&a.target, "app_click")?;
+        let (at, what) = match (&a.target, a.at) {
+            (Some(target), _) => (self.aim(target, "app_click")?, format!("`{target}`")),
+            (None, Some([x, y])) => (self.aim_at_point(Point::new(x, y))?, "the point".to_owned()),
+            (None, None) => {
+                return Err(SurfaceError::invalid_argument(
+                    "`app_click` needs `target` or `at`",
+                ));
+            }
+        };
         let button = match a.button {
             Button::Left => MouseButtons::LEFT,
             Button::Right => MouseButtons::RIGHT,
@@ -449,13 +472,10 @@ impl Hands<'_> {
         };
         let count = a.count.unwrap_or(1);
         self.click_at(at, button, count)?;
-        Ok(Done::new(format!(
-            "clicked `{}` at {},{}",
-            a.target,
-            num(at.x),
-            num(at.y)
-        ))
-        .with("at", json!([num(at.x), num(at.y)])))
+        Ok(
+            Done::new(format!("clicked {what} at {},{}", num(at.x), num(at.y)))
+                .with("at", json!([num(at.x), num(at.y)])),
+        )
     }
 
     /// The item that has the keyboard, or why nothing does.

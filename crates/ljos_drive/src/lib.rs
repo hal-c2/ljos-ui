@@ -83,7 +83,7 @@ use ljos_render::kurbo::{self, Point};
 use ljos_render::{FrameView, RasterConfig, RgbaImage, VelloCpuReference};
 use ljos_runtime::{TIMER_GRANULARITY, Time, VirtualClock};
 
-pub use aim::{Refusal, aim};
+pub use aim::{Refusal, aim, aim_at_point};
 pub use clock::{RealClock, SETTLE_WALL, SceneClock};
 pub use keys::{Chord, MODIFIER_KEYS, parse_modifiers};
 pub use steps::{
