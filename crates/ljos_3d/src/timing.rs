@@ -62,6 +62,8 @@ pub(crate) struct Timer {
     /// Nanoseconds a timestamp tick is on this queue.
     period: f32,
     last: Option<Duration>,
+    /// The last reading has not been taken yet.
+    fresh: bool,
 }
 
 struct Read {
@@ -103,6 +105,7 @@ impl Timer {
             this: None,
             period: 1.0,
             last: None,
+            fresh: false,
         })
     }
 
@@ -132,6 +135,7 @@ impl Timer {
                     read.state.store(FREE, Ordering::Release);
                     if took.is_some() {
                         self.last = took;
+                        self.fresh = true;
                     }
                 }
                 COPIED => {
@@ -200,6 +204,13 @@ impl Timer {
     /// The GPU time of the last frame read.
     pub(crate) fn last(&self) -> Option<Duration> {
         self.last
+    }
+
+    /// The GPU time read since the last time this was asked, if any.
+    pub(crate) fn take(&mut self) -> Option<Duration> {
+        std::mem::take(&mut self.fresh)
+            .then_some(self.last)
+            .flatten()
     }
 }
 

@@ -403,6 +403,9 @@ fn a_targets_gpu_time_is_read_a_frame_or_two_later() {
             took > std::time::Duration::ZERO && took < std::time::Duration::from_secs(1),
             "{took:?}"
         );
+        assert_eq!(target.take_gpu_time(), Some(took), "a reading is taken");
+        assert_eq!(target.take_gpu_time(), None, "and taken once");
+        assert_eq!(target.last_gpu_time(), Some(took), "but stays the last");
         eprintln!(
             "{} with shadows {}: {took:?} on the GPU",
             gpu.adapter.name,

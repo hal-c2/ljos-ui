@@ -377,6 +377,13 @@ impl Target {
         self.timer.as_ref().and_then(crate::timing::Timer::last)
     }
 
+    /// [`Self::last_gpu_time`], only if it was read since the last time
+    /// this was asked: a report of frames counts each reading once, while a
+    /// view that is not drawn again keeps its last.
+    pub fn take_gpu_time(&mut self) -> Option<std::time::Duration> {
+        self.timer.as_mut().and_then(crate::timing::Timer::take)
+    }
+
     /// How many shadow maps were drawn since the target was made: a
     /// scene that keeps its casters, receivers and lights where they are
     /// draws none again.
