@@ -290,6 +290,21 @@ pub struct Model {
     pub receives_shadows: bool,
     #[qml(notify)]
     pub pickable: bool,
+    /// The table of copies drawn in place of the model itself.
+    #[qml(notify, object = "Instancing")]
+    pub instancing: Option<ObjectId>,
+    /// The node whose space the copies' entries are in; the model itself
+    /// when unset.
+    #[qml(notify, object = "Node")]
+    pub instance_root: Option<ObjectId>,
+    /// The joints that bend the mesh; wins over `skeleton`.
+    #[qml(notify, object = "Skin")]
+    pub skin: Option<ObjectId>,
+    #[qml(notify, object = "Skeleton")]
+    pub skeleton: Option<ObjectId>,
+    /// `skeleton`'s inverse bind poses, as `Qt.matrix4x4` values.
+    #[qml(notify)]
+    pub inverse_bind_poses: Value,
 }
 
 impl Default for Model {
@@ -302,6 +317,11 @@ impl Default for Model {
             casts_shadows: true,
             receives_shadows: true,
             pickable: false,
+            instancing: None,
+            instance_root: None,
+            skin: None,
+            skeleton: None,
+            inverse_bind_poses: Value::Undefined,
         }
     }
 }

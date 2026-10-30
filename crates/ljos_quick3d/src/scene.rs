@@ -19,17 +19,28 @@ use crate::{
 
 /// The scene of the view `view`, read now. Tracked.
 pub(crate) fn build(e: &Engine, view: ObjectId) -> Scene {
-    build_with_ids(e, view).0
+    build_with_ids(e, view).scene
+}
+
+/// A view's scene, and which object each of its nodes is.
+pub(crate) struct Built {
+    pub scene: Scene,
+    pub ids: HashMap<ObjectId, NodeId>,
+    /// The models a `RuntimeLoader` made of its file's meshes, a scene
+    /// node per mesh primitive: what a pick names when it hits one.
+    pub loaded: Vec<(NodeId, ObjectId)>,
 }
 
 /// [`build`], with the scene node each object became: what a pick needs
 /// to say which object it hit.
-pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> (Scene, HashMap<ObjectId, NodeId>) {
+pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> Built {
     let mut walk = Walk {
         e,
         view,
         scene: Scene::new(),
         ids: HashMap::new(),
+        loaded: Vec::new(),
+        later: Vec::new(),
     };
     for o in item::resources(e, view) {
         walk.node(None, o);
@@ -37,6 +48,7 @@ pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> (Scene, HashMap<Obje
     if let Some(imported) = item::prop(e, view, View3D::IMPORT_SCENE) {
         walk.node(None, imported);
     }
+    walk.finish();
     let env = item::prop(e, view, View3D::ENVIRONMENT)
         .map_or_else(Environment::default, |env| environment(e, view, env));
     walk.scene.set_environment(env);
@@ -44,7 +56,11 @@ pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> (Scene, HashMap<Obje
     // its first camera.
     let camera = item::prop(e, view, View3D::CAMERA).and_then(|c| walk.ids.get(&c).copied());
     walk.scene.set_camera(camera);
-    (walk.scene, walk.ids)
+    Built {
+        scene: walk.scene,
+        ids: walk.ids,
+        loaded: walk.loaded,
+    }
 }
 
 /// The camera `obj` is, as the renderer sees it; `None` when it is not one.
@@ -81,6 +97,10 @@ struct Walk<'e> {
     view: ObjectId,
     scene: Scene,
     ids: HashMap<ObjectId, NodeId>,
+    loaded: Vec<(NodeId, ObjectId)>,
+    /// Models whose instance root or joints are other nodes, which may
+    /// come later in the walk: given once every node has its place.
+    later: Vec<(ObjectId, NodeId)>,
 }
 
 impl Walk<'_> {
@@ -107,18 +127,24 @@ impl Walk<'_> {
         };
         let mut n = ljos_3d::Node::new(kind(e, self.view, obj)).with_transform(transform);
         n.visible = item::prop(e, obj, Node::VISIBLE);
-        if e.is::<Model>(obj) {
+        let is_model = e.is::<Model>(obj);
+        if is_model {
             n.casts_shadows = item::prop(e, obj, Model::CASTS_SHADOWS);
             n.receives_shadows = item::prop(e, obj, Model::RECEIVES_SHADOWS);
+            n.instancing = item::prop(e, obj, Model::INSTANCING)
+                .and_then(|t| crate::instancing::instancing(e, t));
         }
         n.shadow = shadow(e, obj);
         let id = self.scene.add(parent, n);
         self.ids.insert(obj, id);
-        // A loaded model's nodes are the loader's first children; they
-        // are not objects, so a pick does not name them.
+        if is_model {
+            self.later.push((obj, id));
+        }
+        // A loaded model's nodes are the loader's first children. Each
+        // mesh is named by the Model the loader made for it.
         #[cfg(feature = "gltf")]
         if let Some(asset) = crate::runtime_loader::asset(e, obj) {
-            asset.add_to(&mut self.scene, id);
+            self.loaded(obj, id, &asset);
         }
         for child in list(e, obj, Object3D::DATA.index) {
             self.node(Some(id), child);
@@ -129,6 +155,49 @@ impl Walk<'_> {
         {
             let q = self.scene.add(Some(id), quad);
             self.ids.insert(holder, q);
+        }
+    }
+}
+
+impl Walk<'_> {
+    /// Gives the models their instance roots and skins.
+    fn finish(&mut self) {
+        let e = self.e;
+        for (obj, id) in std::mem::take(&mut self.later) {
+            let root = item::prop(e, obj, Model::INSTANCE_ROOT).and_then(|r| self.ids.get(&r));
+            let skin = crate::skin::skin(e, obj, &self.ids);
+            if let Some(node) = self.scene.node_mut(id) {
+                if let Some(instancing) = node.instancing.as_mut() {
+                    instancing.root = root.copied();
+                }
+                node.skin = skin;
+            }
+        }
+    }
+
+    /// Adds the loader `obj`'s file under its node `id`. The loader's
+    /// table, if it has one, copies the whole file: each mesh is copied
+    /// in the loader's space.
+    #[cfg(feature = "gltf")]
+    fn loaded(&mut self, obj: ObjectId, id: NodeId, asset: &ljos_3d::gltf::Asset) {
+        let e = self.e;
+        let placed = asset.add_to(&mut self.scene, id);
+        let instancing = item::prop(e, obj, crate::RuntimeLoader::INSTANCING)
+            .and_then(|t| crate::instancing::instancing(e, t))
+            .map(|i| ljos_3d::Instancing {
+                root: Some(id),
+                ..i
+            });
+        let made = crate::runtime_loader::models(e, obj);
+        for (index, model) in placed.models {
+            if let Some(i) = &instancing
+                && let Some(node) = self.scene.node_mut(model)
+            {
+                node.instancing = Some(i.clone());
+            }
+            if let Some((_, m)) = made.iter().find(|(n, _)| *n == index) {
+                self.loaded.push((model, *m));
+            }
         }
     }
 }

@@ -41,11 +41,16 @@ pub struct RuntimeLoader {
     /// and `maximum`, each a `vector3d`.
     #[qml(notify, readonly)]
     pub bounds: Value,
-    /// Kept; the drawing does not use it yet.
-    #[qml(notify, object = "Object3D")]
+    /// Copies the whole file: each copy is the file's content placed by
+    /// an entry in this node's space.
+    #[qml(notify, object = "Instancing")]
     pub instancing: Option<ObjectId>,
     #[qml(skip)]
     generation: u64,
+    /// A `Model` for each of the file's nodes that has a mesh, named
+    /// after it, with the node's index: what a pick's `objectHit` is.
+    #[qml(skip)]
+    models: Vec<(usize, ObjectId)>,
     #[cfg(feature = "gltf")]
     #[qml(skip)]
     asset: Option<Arc<Asset>>,
@@ -78,6 +83,14 @@ impl RuntimeLoader {
         e.watch(me, RuntimeLoader::SOURCE.index, move |e, _| load(e, me))?;
         Ok(())
     }
+}
+
+/// The models made for the loader `obj`'s meshes, by the index of the
+/// file's node each is.
+#[cfg(feature = "gltf")]
+pub(crate) fn models(e: &Engine, obj: ObjectId) -> Vec<(usize, ObjectId)> {
+    e.with(obj, |l: &RuntimeLoader| l.models.clone())
+        .unwrap_or_default()
 }
 
 /// The model loaded under `obj`, if it is a loader that has one. Tracked:
@@ -122,11 +135,15 @@ fn load(e: &Engine, me: ObjectId) {
             {
                 l.asset = None;
             }
-            l.generation
+            (l.generation, std::mem::take(&mut l.models))
         })
     }) else {
         return;
     };
+    let (generation, models) = generation;
+    for (_, m) in models {
+        e.destroy(m);
+    }
     set_bounds(e, me, None);
     // Qt has no Loading status: a loader that has not loaded is Empty.
     finish(e, me, status::EMPTY, String::new());
@@ -344,10 +361,35 @@ mod gltf_load {
         let bounds = asset
             .bounds
             .map(|(min, max)| (to_value(min), to_value(max)));
+        let models = made_models(e, me, &asset);
         let asset = Arc::new(asset);
-        let _ = e.with_mut(me, |l: &mut RuntimeLoader| l.asset = Some(asset));
+        let _ = e.with_mut(me, |l: &mut RuntimeLoader| {
+            l.asset = Some(asset);
+            l.models = models;
+        });
         set_bounds(e, me, bounds);
         finish(e, me, status::SUCCESS, String::new());
+    }
+
+    /// A pickable `Model` for each node of `asset` with a mesh, owned by
+    /// the loader. They are not in its `data`, so a walk does not draw
+    /// them: the file's meshes are drawn from the asset.
+    fn made_models(e: &Engine, me: ObjectId, asset: &Asset) -> Vec<(usize, ObjectId)> {
+        asset
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.mesh.is_some())
+            .filter_map(|(i, n)| {
+                let mut model = crate::Model {
+                    pickable: true,
+                    ..Default::default()
+                };
+                model.node.object3d.object.object_name =
+                    Atom::new(n.name.as_deref().unwrap_or_default());
+                e.create_native(model, Some(me)).ok().map(|m| (i, m))
+            })
+            .collect()
     }
 
     /// `rel` resolved against the URL of the file that names it. glTF

@@ -57,7 +57,13 @@
 //! `probeOrientation` and `skyboxBlurAmount`, `tonemapMode`,
 //! `antialiasingMode` MSAA with `antialiasingQuality`), `View3D` and
 //! `RuntimeLoader` (glTF 2.0 files read on the compute pool; without the
-//! default `gltf` feature every source is an error that says so).
+//! default `gltf` feature every source is an error that says so; each of
+//! a file's meshes is a pickable `Model` named after its node). A model's
+//! `instancing` draws it once a row of an `InstanceList`, a
+//! `FileInstancing` (XML) or a `RandomInstancing` (`QtQuick3D.Helpers`,
+//! with `InstanceRange`, the only types of that module built), and
+//! `Model.skin` or `Model.skeleton` with `inverseBindPoses` (`Skin`,
+//! `Skeleton`, `Joint`) bends a mesh that has joints.
 //! `Node.pivot` and `Node.opacity` are kept but do not change the drawing
 //! yet.
 //!
@@ -71,12 +77,15 @@
 //! numbers. They are numbered here in the order the documentation lists
 //! them, from 0, and checked against Qt once qml6 has QtQuick3D.
 
+mod instancing;
 mod items;
 mod node;
 mod pick;
+mod random_instancing;
 mod repeater;
 mod runtime_loader;
 mod scene;
+mod skin;
 mod space;
 mod texture;
 mod view;
@@ -84,6 +93,7 @@ mod view;
 #[cfg(test)]
 mod tests;
 
+pub use instancing::{FileInstancing, InstanceList, InstanceListEntry, Instancing};
 pub use ljos::item::ljos_3d::{ComponentType, PrimitiveType, Semantic, math::Vec3};
 pub use node::{
     Camera, DefaultMaterial, DirectionalLight, Geometry, Light, Material, Model, Node, Object3D,
@@ -91,8 +101,10 @@ pub use node::{
     SpotLight,
 };
 pub use pick::PickResult;
+pub use random_instancing::{InstanceRange, RandomInstancing};
 pub use repeater::Repeater3D;
 pub use runtime_loader::RuntimeLoader;
+pub use skin::{Joint, Skeleton, Skin};
 pub use texture::Texture;
 pub use view::View3D;
 
@@ -122,7 +134,20 @@ pub fn register(engine: &Engine) {
         PickResult,
         Repeater3D,
         RuntimeLoader,
+        Instancing,
+        InstanceList,
+        InstanceListEntry,
+        FileInstancing,
+        Skin,
+        Skeleton,
+        Joint,
         item::QuaternionAnimation,
+    ]));
+    // Only the random table of the helpers is built; the module's other
+    // types still stand in as empty Items.
+    engine.register_module(ljos::module!("QtQuick3D.Helpers" 6.0 => [
+        InstanceRange,
+        RandomInstancing,
     ]));
     item::register_paint_item::<View3D>(engine, view::read);
     item::register_pointer_portal::<View3D>(engine, pick::item_under);

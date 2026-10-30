@@ -20,6 +20,8 @@ gltf = ["ljos/gltf"]
 ljos = { path = "../ljos", default-features = false, features = ["quick3d"] }
 # A view's key for its painter is its object id, as a number.
 slotmap = { workspace = true }
+# FileInstancing's XML tables, read with the reader ljos_xml uses.
+quick-xml.workspace = true
 
 [dev-dependencies]
 # Tests compile QML strings; the crate itself never links the compiler or

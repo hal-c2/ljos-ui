@@ -7596,7 +7596,12 @@ module QtQuick3D
 	Camera QtQuick3D.Camera
 	DefaultMaterial QtQuick3D.DefaultMaterial
 	DirectionalLight QtQuick3D.DirectionalLight
+	FileInstancing QtQuick3D.FileInstancing
 	Geometry QtQuick3D.Geometry
+	InstanceList QtQuick3D.InstanceList
+	InstanceListEntry QtQuick3D.InstanceListEntry
+	Instancing QtQuick3D.Instancing
+	Joint QtQuick3D.Joint
 	Light QtQuick3D.Light
 	Material QtQuick3D.Material
 	Model QtQuick3D.Model
@@ -7611,6 +7616,8 @@ module QtQuick3D
 	Repeater3D QtQuick3D.Repeater3D
 	RuntimeLoader QtQuick3D.RuntimeLoader
 	SceneEnvironment QtQuick3D.SceneEnvironment
+	Skeleton QtQuick3D.Skeleton
+	Skin QtQuick3D.Skin
 	SpotLight QtQuick3D.SpotLight
 	Texture QtQuick3D.Texture
 	View3D QtQuick3D.View3D
@@ -7649,11 +7656,58 @@ module QtQuick3D
 		signal csmSplit3Changed
 		signal csmBlendRatioChanged
 		signal lockShadowmapTexelsChanged
+	type QtQuick3D.FileInstancing FileInstancing
+		prototype QtQuick3D.Instancing named
+		prop source QtQml.url named
+		prop instanceCount QtQml.int named readonly
+		signal sourceChanged
+		signal instanceCountChanged
 	type QtQuick3D.Geometry Geometry
 		prototype QtQuick3D.Object3D named
 		is uncreatable
 		prop revision QtQml.int named readonly
 		signal revisionChanged
+	type QtQuick3D.InstanceList InstanceList
+		prototype QtQuick3D.Instancing named
+		default instances
+		prop instances QtQml.var named list
+		prop instanceCount QtQml.int named readonly
+		signal instancesChanged
+		signal instanceCountChanged
+	type QtQuick3D.InstanceListEntry InstanceListEntry
+		prototype QtQuick3D.Object3D named
+		prop position QtQuick.vector3d named
+		prop scale QtQuick.vector3d named
+		prop eulerRotation QtQuick.vector3d named
+		prop rotation QtQuick.quaternion named
+		prop color QtQuick.color named
+		prop customData QtQuick.vector4d named
+		signal positionChanged
+		signal scaleChanged
+		signal eulerRotationChanged
+		signal rotationChanged
+		signal colorChanged
+		signal customDataChanged
+	type QtQuick3D.Instancing Instancing
+		prototype QtQuick3D.Object3D named
+		is uncreatable
+		prop depthSortingEnabled QtQml.bool named
+		prop hasTransparency QtQml.bool named
+		prop instanceCountOverride QtQml.int named
+		signal depthSortingEnabledChanged
+		signal hasTransparencyChanged
+		signal instanceCountOverrideChanged
+		method instancePosition
+		method instanceScale
+		method instanceRotation
+		method instanceColor
+		method instanceCustomData
+	type QtQuick3D.Joint Joint
+		prototype QtQuick3D.Node named
+		prop index QtQml.int named
+		prop skeletonRoot QtQuick3D.Skeleton named pointer
+		signal indexChanged
+		signal skeletonRootChanged
 	type QtQuick3D.Light Light
 		prototype QtQuick3D.Node named
 		is uncreatable
@@ -7698,12 +7752,22 @@ module QtQuick3D
 		prop castsShadows QtQml.bool named
 		prop receivesShadows QtQml.bool named
 		prop pickable QtQml.bool named
+		prop instancing QtQuick3D.Instancing named pointer
+		prop instanceRoot QtQuick3D.Node named pointer
+		prop skin QtQuick3D.Skin named pointer
+		prop skeleton QtQuick3D.Skeleton named pointer
+		prop inverseBindPoses QtQml.var named
 		signal sourceChanged
 		signal materialsChanged
 		signal geometryChanged
 		signal castsShadowsChanged
 		signal receivesShadowsChanged
 		signal pickableChanged
+		signal instancingChanged
+		signal instanceRootChanged
+		signal skinChanged
+		signal skeletonChanged
+		signal inverseBindPosesChanged
 	type QtQuick3D.Node Node
 		prototype QtQuick3D.Object3D named
 		enum TransformSpace LocalSpace=0 ParentSpace=1 SceneSpace=2
@@ -7871,7 +7935,7 @@ module QtQuick3D
 		prop status QtQml.int named readonly
 		prop errorString QtQml.string named readonly
 		prop bounds QtQml.var named readonly
-		prop instancing QtQuick3D.Object3D named pointer
+		prop instancing QtQuick3D.Instancing named pointer
 		signal sourceChanged
 		signal statusChanged
 		signal errorStringChanged
@@ -7903,6 +7967,14 @@ module QtQuick3D
 		signal skyboxBlurAmountChanged
 		signal antialiasingModeChanged
 		signal antialiasingQualityChanged
+	type QtQuick3D.Skeleton Skeleton
+		prototype QtQuick3D.Node named
+	type QtQuick3D.Skin Skin
+		prototype QtQuick3D.Object3D named
+		prop joints QtQml.var named list
+		prop inverseBindPoses QtQml.var named
+		signal jointsChanged
+		signal inverseBindPosesChanged
 	type QtQuick3D.SpotLight SpotLight
 		prototype QtQuick3D.Light named
 		prop constantFade QtQml.real named
@@ -7979,6 +8051,37 @@ module QtQuick3D
 		method rayPickAll
 		method mapFrom3DScene
 		method mapTo3DScene
+
+module QtQuick3D.Helpers
+	InstanceRange QtQuick3D.Helpers.InstanceRange
+	RandomInstancing QtQuick3D.Helpers.RandomInstancing
+	type QtQuick3D.Helpers.InstanceRange InstanceRange
+		prototype QtQuick3D.Object3D named
+		prop from QtQml.var named
+		prop to QtQml.var named
+		prop proportional QtQml.bool named
+		signal fromChanged
+		signal toChanged
+		signal proportionalChanged
+	type QtQuick3D.Helpers.RandomInstancing RandomInstancing
+		prototype QtQuick3D.Instancing named
+		enum ColorModel RGB=0 HSV=1 HSL=2
+		prop instanceCount QtQml.int named
+		prop randomSeed QtQml.int named
+		prop position QtQuick3D.Helpers.InstanceRange named pointer
+		prop scale QtQuick3D.Helpers.InstanceRange named pointer
+		prop rotation QtQuick3D.Helpers.InstanceRange named pointer
+		prop color QtQuick3D.Helpers.InstanceRange named pointer
+		prop customData QtQuick3D.Helpers.InstanceRange named pointer
+		prop colorModel ColorModel
+		signal instanceCountChanged
+		signal randomSeedChanged
+		signal positionChanged
+		signal scaleChanged
+		signal rotationChanged
+		signal colorChanged
+		signal customDataChanged
+		signal colorModelChanged
 
 module QtSensors
 	Accelerometer QtSensors.Accelerometer

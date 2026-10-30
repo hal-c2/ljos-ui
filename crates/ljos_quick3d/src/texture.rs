@@ -88,7 +88,7 @@ pub struct Texture {
     pub flip_u: bool,
     #[qml(notify)]
     pub flip_v: bool,
-    /// Kept: every built mesh has one set of UV coordinates.
+    /// Which of a mesh's two UV sets the texture is laid out by.
     #[qml(notify, rename = "indexUV")]
     pub index_uv: i32,
     /// Kept: a material reads its maps by UV and a light probe as one.
@@ -267,7 +267,8 @@ pub(crate) fn read(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d:
         image,
         sampling,
         uv: uv_transform(e, obj),
-        uv_set: 0,
+        // QtQuick3D has two UV sets: a larger index reads the second.
+        uv_set: item::prop(e, obj, Texture::INDEX_UV).clamp(0, 1) as u32,
     })
 }
 

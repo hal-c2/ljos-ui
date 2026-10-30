@@ -59,10 +59,15 @@ struct Picking {
 impl Picking {
     fn read(e: &Engine, view: ObjectId) -> Picking {
         e.untrack(|| {
-            let (scene, ids) = crate::scene::build_with_ids(e, view);
+            let built = crate::scene::build_with_ids(e, view);
             let mut pickable = HashMap::new();
             let mut holders = HashMap::new();
-            for (obj, id) in ids {
+            for (id, obj) in built
+                .ids
+                .into_iter()
+                .map(|(obj, id)| (id, obj))
+                .chain(built.loaded)
+            {
                 if e.is::<Item>(obj) {
                     holders.insert(id, obj);
                 } else if e.is::<Model>(obj) && item::prop(e, obj, Model::PICKABLE) {
@@ -70,7 +75,7 @@ impl Picking {
                 }
             }
             Picking {
-                scene,
+                scene: built.scene,
                 pickable,
                 holders,
             }
@@ -150,7 +155,10 @@ fn result(hit: Option<(&ObjectId, &Hit)>) -> Value {
         ("sceneNormal", to_value(h.scene_normal)),
         ("normal", to_value(h.normal)),
         ("uvPosition", v2(h.uv)),
-        ("instanceIndex", Value::Int(-1)),
+        (
+            "instanceIndex",
+            Value::Int(h.instance.map_or(-1, |i| i as i32)),
+        ),
         ("hitType", Value::Int(hit_type::MODEL as i32)),
         ("itemHit", Value::Null),
     ])
