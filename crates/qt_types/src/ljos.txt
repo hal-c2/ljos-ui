@@ -7543,6 +7543,7 @@ module QtQuick3D
 	Repeater3D QtQuick3D.Repeater3D
 	SceneEnvironment QtQuick3D.SceneEnvironment
 	SpotLight QtQuick3D.SpotLight
+	Texture QtQuick3D.Texture
 	View3D QtQuick3D.View3D
 	type QtQuick3D.Camera Camera
 		prototype QtQuick3D.Node named
@@ -7556,10 +7557,12 @@ module QtQuick3D
 		prototype QtQuick3D.Material named
 		enum Lighting NoLighting=0 FragmentLighting=1
 		prop diffuseColor QtQuick.color named
+		prop diffuseMap QtQuick3D.Texture named pointer
 		prop lighting Lighting
 		prop specularAmount QtQml.real named
 		prop specularRoughness QtQml.real named
 		signal diffuseColorChanged
+		signal diffuseMapChanged
 		signal lightingChanged
 		signal specularAmountChanged
 		signal specularRoughnessChanged
@@ -7585,6 +7588,7 @@ module QtQuick3D
 		prototype QtQuick3D.Object3D named
 		is uncreatable
 		enum CullMode BackFaceCulling=0 FrontFaceCulling=1 NoCulling=2
+		enum TextureChannelMapping R=0 G=1 B=2 A=3
 		prop cullMode CullMode
 		signal cullModeChanged
 	type QtQuick3D.Model Model
@@ -7696,6 +7700,19 @@ module QtQuick3D
 		prop alphaMode AlphaMode
 		prop alphaCutoff QtQml.real named
 		prop lighting Lighting
+		prop baseColorMap QtQuick3D.Texture named pointer
+		prop metalnessMap QtQuick3D.Texture named pointer
+		prop metalnessChannel TextureChannelMapping
+		prop roughnessMap QtQuick3D.Texture named pointer
+		prop roughnessChannel TextureChannelMapping
+		prop normalMap QtQuick3D.Texture named pointer
+		prop normalStrength QtQml.real named
+		prop emissiveMap QtQuick3D.Texture named pointer
+		prop occlusionMap QtQuick3D.Texture named pointer
+		prop occlusionChannel TextureChannelMapping
+		prop occlusionAmount QtQml.real named
+		prop opacityMap QtQuick3D.Texture named pointer
+		prop opacityChannel TextureChannelMapping
 		signal baseColorChanged
 		signal metalnessChanged
 		signal roughnessChanged
@@ -7704,6 +7721,19 @@ module QtQuick3D
 		signal alphaModeChanged
 		signal alphaCutoffChanged
 		signal lightingChanged
+		signal baseColorMapChanged
+		signal metalnessMapChanged
+		signal metalnessChannelChanged
+		signal roughnessMapChanged
+		signal roughnessChannelChanged
+		signal normalMapChanged
+		signal normalStrengthChanged
+		signal emissiveMapChanged
+		signal occlusionMapChanged
+		signal occlusionChannelChanged
+		signal occlusionAmountChanged
+		signal opacityMapChanged
+		signal opacityChannelChanged
 	type QtQuick3D.QuaternionAnimation QuaternionAnimation
 		prototype QtQuick.PropertyAnimation named
 		enum Type Slerp=0 Nlerp=1
@@ -7742,11 +7772,21 @@ module QtQuick3D
 		prop clearColor QtQuick.color named
 		prop backgroundMode BackgroundMode
 		prop tonemapMode TonemapMode
+		prop lightProbe QtQuick3D.Texture named pointer
+		prop probeExposure QtQml.real named
+		prop probeHorizon QtQml.real named
+		prop probeOrientation QtQuick.vector3d named
+		prop skyboxBlurAmount QtQml.real named
 		prop antialiasingMode AntialiasingMode
 		prop antialiasingQuality AntialiasingQuality
 		signal clearColorChanged
 		signal backgroundModeChanged
 		signal tonemapModeChanged
+		signal lightProbeChanged
+		signal probeExposureChanged
+		signal probeHorizonChanged
+		signal probeOrientationChanged
+		signal skyboxBlurAmountChanged
 		signal antialiasingModeChanged
 		signal antialiasingQualityChanged
 	type QtQuick3D.SpotLight SpotLight
@@ -7761,6 +7801,53 @@ module QtQuick3D
 		signal quadraticFadeChanged
 		signal coneAngleChanged
 		signal innerConeAngleChanged
+	type QtQuick3D.Texture Texture
+		prototype QtQuick3D.Object3D named
+		enum MappingMode UV=0 Environment=1 LightProbe=2
+		enum TilingMode ClampToEdge=0 MirroredRepeat=1 Repeat=2
+		enum Filter None=0 Nearest=1 Linear=2
+		prop source QtQml.url named
+		prop sourceItem QtQuick.Item named pointer
+		prop scaleU QtQml.real named
+		prop scaleV QtQml.real named
+		prop positionU QtQml.real named
+		prop positionV QtQml.real named
+		prop rotationUV QtQml.real named
+		prop pivotU QtQml.real named
+		prop pivotV QtQml.real named
+		prop flipU QtQml.bool named
+		prop flipV QtQml.bool named
+		prop indexUV QtQml.int named
+		prop mappingMode MappingMode
+		prop tilingModeHorizontal TilingMode
+		prop tilingModeVertical TilingMode
+		prop tilingModeDepth TilingMode
+		prop minFilter Filter
+		prop magFilter Filter
+		prop mipFilter Filter
+		prop generateMipmaps QtQml.bool named
+		prop autoOrientation QtQml.bool named
+		signal sourceChanged
+		signal sourceItemChanged
+		signal scaleUChanged
+		signal scaleVChanged
+		signal positionUChanged
+		signal positionVChanged
+		signal rotationUVChanged
+		signal pivotUChanged
+		signal pivotVChanged
+		signal flipUChanged
+		signal flipVChanged
+		signal indexUVChanged
+		signal mappingModeChanged
+		signal tilingModeHorizontalChanged
+		signal tilingModeVerticalChanged
+		signal tilingModeDepthChanged
+		signal minFilterChanged
+		signal magFilterChanged
+		signal mipFilterChanged
+		signal generateMipmapsChanged
+		signal autoOrientationChanged
 	type QtQuick3D.View3D View3D
 		prototype QtQuick.Item named
 		enum RenderMode Offscreen=0 Underlay=1 Overlay=2 Inline=3
