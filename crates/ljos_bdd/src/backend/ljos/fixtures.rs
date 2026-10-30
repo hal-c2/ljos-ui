@@ -3,10 +3,10 @@
 //! does not import the module sees them.
 
 use ljos::prelude::*;
-use ljos_quick3d::{ComponentType, Geometry, PrimitiveType, Semantic};
 use ljos_engine::{
     Engine, EngineError, LogLevel, ObjectId, QmlObject, ScopedEvent, Version, qml_singleton,
 };
+use ljos_quick3d::{ComponentType, Geometry, PrimitiveType, Semantic};
 
 /// One for each window (`features/language/singletons-per-window.feature`).
 #[derive(Debug, Default, QmlObject)]
