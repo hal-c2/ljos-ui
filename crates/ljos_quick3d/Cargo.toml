@@ -1,0 +1,26 @@
+[package]
+name = "ljos_quick3d"
+description = "The QtQuick3D module for Ljós: View3D shows a scene of Nodes, Models, cameras and lights, drawn by ljos_3d, as an opt-in crate written against the ljos facade alone"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The facade alone: a module crate opens no windows. Its `quick3d`
+# feature has the painters draw the View3D draw op this crate paints.
+ljos = { path = "../ljos", default-features = false, features = ["quick3d"] }
+# A view's key for its painter is its object id, as a number.
+slotmap = { workspace = true }
+
+[dev-dependencies]
+# Tests compile QML strings; the crate itself never links the compiler or
+# the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "quick3d", "render"] }
+png = { workspace = true }
+
+[lints]
+workspace = true

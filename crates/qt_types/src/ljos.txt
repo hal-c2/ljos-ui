@@ -7521,6 +7521,131 @@ module QtQuick.Window
 	import QtQuick
 	Window QtQuick.Window
 
+module QtQuick3D
+	Camera QtQuick3D.Camera
+	DefaultMaterial QtQuick3D.DefaultMaterial
+	DirectionalLight QtQuick3D.DirectionalLight
+	Light QtQuick3D.Light
+	Material QtQuick3D.Material
+	Model QtQuick3D.Model
+	Node QtQuick3D.Node
+	Object3D QtQuick3D.Object3D
+	OrthographicCamera QtQuick3D.OrthographicCamera
+	PerspectiveCamera QtQuick3D.PerspectiveCamera
+	SceneEnvironment QtQuick3D.SceneEnvironment
+	View3D QtQuick3D.View3D
+	type QtQuick3D.Camera Camera
+		prototype QtQuick3D.Node named
+		is uncreatable
+	type QtQuick3D.DefaultMaterial DefaultMaterial
+		prototype QtQuick3D.Material named
+		enum Lighting NoLighting=0 FragmentLighting=1
+		prop diffuseColor QtQuick.color named
+		prop lighting Lighting
+		signal diffuseColorChanged
+		signal lightingChanged
+	type QtQuick3D.DirectionalLight DirectionalLight
+		prototype QtQuick3D.Light named
+	type QtQuick3D.Light Light
+		prototype QtQuick3D.Node named
+		is uncreatable
+		prop color QtQuick.color named
+		prop ambientColor QtQuick.color named
+		prop brightness QtQml.real named
+		prop castsShadow QtQml.bool named
+		signal colorChanged
+		signal ambientColorChanged
+		signal brightnessChanged
+		signal castsShadowChanged
+	type QtQuick3D.Material Material
+		prototype QtQuick3D.Object3D named
+		is uncreatable
+	type QtQuick3D.Model Model
+		prototype QtQuick3D.Node named
+		prop source QtQml.url named
+		prop materials QtQml.var named list
+		prop castsShadows QtQml.bool named
+		prop receivesShadows QtQml.bool named
+		prop pickable QtQml.bool named
+		signal sourceChanged
+		signal materialsChanged
+		signal castsShadowsChanged
+		signal receivesShadowsChanged
+		signal pickableChanged
+	type QtQuick3D.Node Node
+		prototype QtQuick3D.Object3D named
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop z QtQml.real named
+		prop position QtQuick.vector3d named
+		prop rotation QtQuick.quaternion named
+		prop eulerRotation QtQuick.vector3d named
+		prop scale QtQuick.vector3d named
+		prop pivot QtQuick.vector3d named
+		prop opacity QtQml.real named
+		prop visible QtQml.bool named
+		signal xChanged
+		signal yChanged
+		signal zChanged
+		signal positionChanged
+		signal rotationChanged
+		signal eulerRotationChanged
+		signal scaleChanged
+		signal pivotChanged
+		signal opacityChanged
+		signal visibleChanged
+	type QtQuick3D.Object3D Object3D
+		prototype QtQml.QtObject named
+		default data
+		is uncreatable
+		prop data QtQml.var named list
+		signal dataChanged
+	type QtQuick3D.OrthographicCamera OrthographicCamera
+		prototype QtQuick3D.Camera named
+		prop clipNear QtQml.real named
+		prop clipFar QtQml.real named
+		prop horizontalMagnification QtQml.real named
+		prop verticalMagnification QtQml.real named
+		signal clipNearChanged
+		signal clipFarChanged
+		signal horizontalMagnificationChanged
+		signal verticalMagnificationChanged
+	type QtQuick3D.PerspectiveCamera PerspectiveCamera
+		prototype QtQuick3D.Camera named
+		enum FieldOfViewOrientation Vertical=0 Horizontal=1
+		prop fieldOfView QtQml.real named
+		prop fieldOfViewOrientation FieldOfViewOrientation
+		prop clipNear QtQml.real named
+		prop clipFar QtQml.real named
+		signal fieldOfViewChanged
+		signal fieldOfViewOrientationChanged
+		signal clipNearChanged
+		signal clipFarChanged
+	type QtQuick3D.SceneEnvironment SceneEnvironment
+		prototype QtQuick3D.Object3D named
+		enum BackgroundMode Transparent=0 Color=1 SkyBox=2 SkyBoxCubeMap=3 SkyMaterial=4
+		enum TonemapMode TonemapModeNone=0 TonemapModeLinear=1 TonemapModeAces=2 TonemapModeHejlDawson=3 TonemapModeFilmic=4 TonemapModeCustom=5
+		enum AntialiasingMode NoAA=0 SSAA=1 MSAA=2 ProgressiveAA=3
+		prop clearColor QtQuick.color named
+		prop backgroundMode BackgroundMode
+		prop tonemapMode TonemapMode
+		prop antialiasingMode AntialiasingMode
+		signal clearColorChanged
+		signal backgroundModeChanged
+		signal tonemapModeChanged
+		signal antialiasingModeChanged
+	type QtQuick3D.View3D View3D
+		prototype QtQuick.Item named
+		enum RenderMode Offscreen=0 Underlay=1 Overlay=2 Inline=3
+		prop camera QtQuick3D.Camera named pointer
+		prop environment QtQuick3D.SceneEnvironment named pointer
+		prop importScene QtQuick3D.Node named pointer
+		prop renderMode RenderMode
+		signal cameraChanged
+		signal environmentChanged
+		signal importSceneChanged
+		signal renderModeChanged
+
 module QtSensors
 	Accelerometer QtSensors.Accelerometer
 	AccelerometerReading QtSensors.AccelerometerReading

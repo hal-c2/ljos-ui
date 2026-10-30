@@ -378,6 +378,7 @@ impl LjosBackend {
         // Sound goes nowhere: the clock is virtual.
         ljos_xml::register(&engine);
         ljos_lottie::register(&engine);
+        ljos_quick3d::register(&engine);
         ljos_folderlistmodel::register(&engine);
         ljos_positioning::register(&engine);
         ljos_media::register(&engine);
@@ -561,6 +562,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_controls::register(&snapshot);
                 ljos_xml::register(&snapshot);
                 ljos_lottie::register(&snapshot);
+                ljos_quick3d::register(&snapshot);
                 ljos_folderlistmodel::register(&snapshot);
                 ljos_positioning::register(&snapshot);
                 ljos_media::register(&snapshot);

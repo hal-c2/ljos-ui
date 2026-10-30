@@ -81,6 +81,7 @@ fn engine() -> Engine {
     ljos_localstorage::register(&engine);
     ljos_xml::register(&engine);
     ljos_lottie::register(&engine);
+    ljos_quick3d::register(&engine);
     ljos_folderlistmodel::register(&engine);
     ljos_positioning::register(&engine);
     ljos_test::qttest::register(&engine);

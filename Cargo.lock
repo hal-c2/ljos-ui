@@ -3674,6 +3674,7 @@ dependencies = [
  "ljos_platform",
  "ljos_positioning",
  "ljos_quick",
+ "ljos_quick3d",
  "ljos_ratchet",
  "ljos_render",
  "ljos_runtime",
@@ -3741,6 +3742,7 @@ dependencies = [
  "ljos_platform",
  "ljos_positioning",
  "ljos_quick",
+ "ljos_quick3d",
  "ljos_render",
  "ljos_runtime",
  "ljos_shader",
@@ -4280,6 +4282,16 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.21",
  "zune-jpeg",
+]
+
+[[package]]
+name = "ljos_quick3d"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+ "png",
+ "slotmap",
 ]
 
 [[package]]

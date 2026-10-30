@@ -22,12 +22,14 @@ ljos_compiler = { path = "../ljos_compiler" }
 ljos_i18n = { path = "../ljos_i18n" }
 # `ljos design export` writes the files of Ljos.Design.
 ljos_design = { path = "../ljos_design" }
+ljos_engine = { path = "../ljos_engine" }
 # `ljos run`: the desktop shell, with the dev loop (the watcher and the
 # reload driver) and, for `--mcp`, the read-only inspector. A development
 # tool may link them; a shipped application takes the shell without `dev`
-# and without `mcp`.
-ljos_engine = { path = "../ljos_engine" }
-ljos_shell = { path = "../ljos_shell", features = ["dev", "mcp"] }
+# and without `mcp`. With `quick3d` the wgpu painter draws a View3D
+# itself: ljos_quick3d turns that on through the facade's shell, which the
+# runner does not use.
+ljos_shell = { path = "../ljos_shell", features = ["dev", "mcp", "quick3d"] }
 # `ljos render`: a picture of a project without a window, on the R backend.
 # With `--example`, the native backends of a gallery example.
 ljos_gallery_backends = { path = "../../examples/gallery_backends" }
@@ -41,6 +43,7 @@ ljos_audit = { path = "../ljos_audit" }
 ljos_localstorage = { path = "../ljos_localstorage" }
 ljos_xml = { path = "../ljos_xml" }
 ljos_lottie = { path = "../ljos_lottie" }
+ljos_quick3d = { path = "../ljos_quick3d" }
 ljos_folderlistmodel = { path = "../ljos_folderlistmodel" }
 ljos_positioning = { path = "../ljos_positioning" }
 # The runner shows every format an Image reads, PDF documents too.
