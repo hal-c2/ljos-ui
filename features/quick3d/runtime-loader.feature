@@ -21,6 +21,9 @@ Feature: A glTF model loaded while the application runs
   - pair.gltf with pair.bin: a square 40 units across, unlit green, 50
     units left (a matrix), and the same mesh unlit blue at half the size
     50 units right (translation and scale), under one parent node;
+  - checker.gltf: an unlit white square 100 units across facing +Z whose
+    texture is four colours, read nearest: red top left, green top right,
+    blue bottom left, white bottom right;
   - cube.glb: a lit cube 100 units across with normals and a texture,
     stretched to twice its height by its node.
 
@@ -30,6 +33,7 @@ Feature: A glTF model loaded while the application runs
     Given the model file "square.gltf"
     And the model file "pair.gltf"
     And the model file "pair.bin"
+    And the model file "checker.gltf"
     And the model file "cube.glb"
 
   Rule: A new loader has loaded nothing
@@ -298,6 +302,33 @@ Feature: A glTF model loaded while the application runs
       And 100 milliseconds pass
       Then the property "status" of "loader" is 1
       And the property "errorString" of "loader" is ""
+
+  Rule: A model's textures are drawn on it
+
+    Scenario: A base colour texture colours each part of a square
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment {
+              clearColor: "#202020"; backgroundMode: SceneEnvironment.Color
+            }
+            OrthographicCamera { z: 300 }
+            RuntimeLoader { objectName: "loader"; source: "checker.gltf" }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "status" of "loader" is 1
+      And the pixel at 75, 75 of the window is within 2 of "#ff0000"
+      And the pixel at 125, 75 of the window is within 2 of "#00ff00"
+      And the pixel at 75, 125 of the window is within 2 of "#0000ff"
+      And the pixel at 125, 125 of the window is within 2 of "#ffffff"
+      And the pixel at 40, 100 of the window is "#202020"
 
   @ljos-only
   Rule: A loaded model costs nothing while it is still

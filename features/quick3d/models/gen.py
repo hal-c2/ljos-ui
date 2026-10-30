@@ -185,6 +185,36 @@ def pair_gltf():
     write(HERE / "pair.gltf", json.dumps(document, indent=1).encode())
 
 
+def checker_gltf():
+    """An unlit square 100 units across whose texture is four colours, the
+    image's top row red and green and its bottom row blue and white, read
+    nearest so each quadrant is one colour. The UVs put the image's top at
+    the square's top, as glTF lays them out."""
+    buf = Buffer()
+    attributes, indices = square(buf, 50)
+    image = png(2, 2, [[(255, 0, 0, 255), (0, 255, 0, 255)], [(0, 0, 255, 255), (255, 255, 255, 255)]])
+    data = "data:application/octet-stream;base64," + base64.b64encode(buf.data).decode()
+    picture = "data:image/png;base64," + base64.b64encode(image).decode()
+    material = unlit("checker", (1, 1, 1))
+    material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": 0}
+    document = {
+        "asset": {"version": "2.0", "generator": "features/quick3d/models/gen.py"},
+        "extensionsUsed": ["KHR_materials_unlit"],
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"name": "checker", "mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": attributes, "indices": indices, "material": 0}]}],
+        "materials": [material],
+        "textures": [{"source": 0, "sampler": 0}],
+        "samplers": [{"magFilter": 9728, "minFilter": 9728, "wrapS": 33071, "wrapT": 33071}],
+        "images": [{"uri": picture}],
+        "buffers": [{"uri": data, "byteLength": len(buf.data)}],
+        "bufferViews": buf.views,
+        "accessors": buf.accessors,
+    }
+    write(HERE / "checker.gltf", json.dumps(document, indent=1).encode())
+
+
 def cube_glb():
     buf = Buffer()
     positions, normals, uvs, tangents, indices = [], [], [], [], []
@@ -302,5 +332,6 @@ def sphere_grid_glb():
 if __name__ == "__main__":
     square_gltf()
     pair_gltf()
+    checker_gltf()
     cube_glb()
     sphere_grid_glb()
