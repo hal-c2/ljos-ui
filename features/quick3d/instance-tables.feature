@@ -84,35 +84,25 @@ Feature: Instance tables read from a file or made at random
         import QtQuick3D.Helpers
         Rectangle {
           objectName: "root"; width: 200; height: 200; color: "black"
-          property bool inside
-          property bool same
-          property bool uniform
-          property bool red
-          property bool spread
-          function check() {
-            inside = true; same = true; uniform = true; red = true; spread = false
-            for (let i = 0; i < 20; ++i) {
-              const p = a.instancePosition(i)
-              if (p.x < -50 || p.x > 50 || p.y < -50 || p.y > 50 || p.z !== 0) inside = false
-              if (!p.fuzzyEquals(b.instancePosition(i), 0.0001)) same = false
-              if (Math.abs(p.x - p.y) > 1) spread = true
-              const s = a.instanceScale(i)
-              if (Math.abs(s.x - s.y) > 0.0001 || Math.abs(s.x - s.z) > 0.0001 || s.x < 1 || s.x > 2) uniform = false
-              if (!Qt.colorEqual(a.instanceColor(i), "red")) red = false
-            }
-          }
-          RandomInstancing {
-            id: a; objectName: "a"; instanceCount: 20; randomSeed: 7
+          property bool inside: true
+          property bool same: true
+          property bool uniform: true
+          property bool red: true
+          property bool spread: false
+          function check() { for (let i = 0; i < 20; ++i) {
+            const p = a.instancePosition(i), s = a.instanceScale(i)
+            if (p.x < -50 || p.x > 50 || p.y < -50 || p.y > 50 || p.z !== 0) inside = false
+            if (!p.fuzzyEquals(b.instancePosition(i), 0.0001)) same = false
+            if (Math.abs(p.x - p.y) > 1) spread = true
+            if (Math.abs(s.x - s.y) > 0.0001 || Math.abs(s.x - s.z) > 0.0001 || s.x < 1 || s.x > 2) uniform = false
+            if (!Qt.colorEqual(a.instanceColor(i), "red")) red = false } }
+          component Table: RandomInstancing {
+            instanceCount: 20; randomSeed: 7; color: InstanceRange { from: "red"; to: "red" }
             position: InstanceRange { from: Qt.vector3d(-50, -50, 0); to: Qt.vector3d(50, 50, 0) }
             scale: InstanceRange { from: Qt.vector3d(1, 1, 1); to: Qt.vector3d(2, 2, 2); proportional: true }
-            color: InstanceRange { from: "red"; to: "red" }
           }
-          RandomInstancing {
-            id: b; objectName: "b"; instanceCount: 20; randomSeed: 7
-            position: InstanceRange { from: Qt.vector3d(-50, -50, 0); to: Qt.vector3d(50, 50, 0) }
-            scale: InstanceRange { from: Qt.vector3d(1, 1, 1); to: Qt.vector3d(2, 2, 2); proportional: true }
-            color: InstanceRange { from: "red"; to: "red" }
-          }
+          Table { id: a }
+          Table { id: b; objectName: "b" }
         }
         """
 
