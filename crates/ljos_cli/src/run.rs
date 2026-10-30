@@ -4,6 +4,7 @@
 //! to stderr. `--mcp` serves the inspector of the running application to
 //! MCP clients on this machine (§19.4, §19.7), with the capabilities it is
 //! given by name, and `--top` shows where the time of each frame went.
+//! `--headless` runs it all with no window and no display.
 
 use std::cell::RefCell;
 use std::net::SocketAddr;
@@ -48,6 +49,13 @@ pub struct Run {
     /// for a side it leaves at 0.
     #[arg(long, value_parser = parse_size, value_name = "WxH")]
     size: Option<(f32, f32)>,
+    /// Open no window and need no display: the application runs as it
+    /// would in one, at `--size` or at the root's own size, until it quits.
+    /// With `--mcp` an agent sees and drives it through the inspector
+    /// (`app_screenshot` is its picture); with `--watch` saves are applied
+    /// to it. Every `Window` is an item of the root's scene.
+    #[arg(long)]
+    headless: bool,
     /// Serve the running application to MCP clients on this machine, so
     /// that an agent can look at it and, if you say so, act on it. Each
     /// capability is granted by name: `--mcp=inspect,input,mutate,eval`.
@@ -358,6 +366,19 @@ fn socket_path(text: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Runs the application in a window, or with `headless` in none.
+fn launch(
+    headless: bool,
+    config: ShellConfig,
+    setup: impl FnOnce(&mut Setup<'_, ()>) -> Result<ljos_engine::ObjectId, SetupError> + 'static,
+) -> Result<(), ljos_shell::ShellError> {
+    if headless {
+        ljos_shell::run_headless(config, setup)
+    } else {
+        ljos_shell::run(config, setup)
+    }
+}
+
 impl Run {
     /// `Application.arguments`: as `qml6 FILE ARGS` gives them, the
     /// program, the file as it was given and the rest; `run`, its options
@@ -416,6 +437,7 @@ impl Run {
         };
         let example = self.example.clone();
         let arguments = self.arguments();
+        let headless = self.headless;
         let icon = self.icon.as_deref().map(|path| {
             let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
             ljos_engine::file_url(&path)
@@ -424,7 +446,7 @@ impl Run {
             let main = dir.join(format!("{key}.qml"));
             let project = self.project.is_some().then(|| dir.clone());
             let resources = dir.clone();
-            ljos_shell::run::<()>(config, move |setup| {
+            launch(headless, config, move |setup| {
                 // Every module qml6 would have; databases where Qt keeps them.
                 crate::render::register_modules(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
@@ -480,7 +502,7 @@ impl Run {
             let compiling = Rc::new(RefCell::new(Some(compiling)));
             let failed = Rc::new(RefCell::new(None));
             let (waiting, failing) = (Rc::clone(&compiling), Rc::clone(&failed));
-            let ran = ljos_shell::run::<()>(config, move |setup| {
+            let ran = launch(headless, config, move |setup| {
                 stop.store(true, Ordering::Relaxed);
                 let source = match waiting.borrow_mut().take().map(compiled) {
                     Some(Ok(source)) => source,
@@ -604,6 +626,17 @@ mod tests {
         let run = line(&["Main.qml", "--top"]).unwrap();
         assert!(run.top);
         assert_eq!(run.mcp, None);
+    }
+
+    #[test]
+    fn a_window_is_opened_unless_the_run_is_headless() {
+        assert!(!line(&["Main.qml"]).unwrap().headless);
+        let run = line(&["Main.qml", "--headless", "--size", "320x240", "--watch"]).unwrap();
+        assert!(run.headless);
+        assert!(run.watch);
+        assert_eq!(run.size, Some((320.0, 240.0)));
+        // A run nobody looks at is still a run: it needs no inspector.
+        assert_eq!(line(&["--headless", "Main.qml"]).unwrap().mcp, None);
     }
 
     #[test]
