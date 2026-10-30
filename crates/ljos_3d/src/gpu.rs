@@ -20,7 +20,9 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::geometry::CustomGeometry;
+use crate::gpu_extra::{self, InstanceRow, JOINT_SLOT, JointSlot, Rows};
 use crate::ibl::{self, Bound, Ibl};
+use crate::instancing::{Instancing, instance_worlds};
 use crate::maps::{self, GroupKey, Maps};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::mesh::Mesh;
@@ -96,7 +98,8 @@ struct ModelUniform {
     /// Per map, two rows taking a mesh UV to the image's.
     uv: [[f32; 4]; maps::MAPS * 2],
     /// A bit per map that is there; the channels the maps of one value
-    /// read, two bits each.
+    /// read, two bits each; a bit per map read through the second UV set;
+    /// 1 where the model's joints bend its mesh.
     maps: [u32; 4],
     /// The normal map's strength and the occlusion map's amount.
     map_params: [f32; 4],
@@ -114,6 +117,10 @@ struct Vertex {
 
 struct GpuMesh {
     vertices: wgpu::Buffer,
+    /// Whether its vertices name joints: only then does a skin bend it.
+    has_joints: bool,
+    /// The second UV set and the joints, for a mesh that has either.
+    extra: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
     count: u32,
 }
@@ -133,6 +140,8 @@ struct PipelineKey {
     /// A blended model tests depth but leaves it for what is behind it.
     depth_write: bool,
     samples: u32,
+    /// Drawn with a second vertex buffer, by `vs_extra`.
+    extra: bool,
 }
 
 /// The pipelines and meshes of one device. One per device, shared by every
@@ -166,7 +175,8 @@ pub struct Renderer {
     shadow_layout: wgpu::PipelineLayout,
     layer_layout: wgpu::BindGroupLayout,
     layer_stride: u64,
-    shadow_pipelines: HashMap<CullMode, wgpu::RenderPipeline>,
+    /// By cull mode, and whether the mesh has a second vertex buffer.
+    shadow_pipelines: HashMap<(CullMode, bool), wgpu::RenderPipeline>,
     shadow_sampler: wgpu::Sampler,
     /// What a frame without shadows binds where the maps go.
     no_shadows: shadow::Maps,
@@ -212,6 +222,12 @@ pub struct Target {
     model_buffer: wgpu::Buffer,
     model_group: wgpu::BindGroup,
     model_capacity: u64,
+    /// The copies every draw reads a range of; row 0 is the identity, a
+    /// model drawn once.
+    instances: Rows<InstanceRow>,
+    /// A slot per skinned model, bound in the model's group; slot 0 for
+    /// every other.
+    joints: Rows<JointSlot>,
     /// What the buffers hold, so a frame writes only what changed: one
     /// model moving in a hundred uploads one slot, not a hundred.
     frame_written: Option<FrameUniform>,
@@ -243,16 +259,42 @@ struct Shadows {
 
 /// Everything a scene's shadow maps show: while it stays the same, so do
 /// they, and they are not drawn again.
+/// A caster as its shadow shows it: mesh, mesh revision, world, culling
+/// and copies.
+type CasterKey = (MeshKey, u64, [[f32; 4]; 4], CullMode, Copies);
+
 #[derive(PartialEq)]
 struct ShadowKey {
     layers: Vec<ShadowLayer>,
-    casters: Vec<(MeshKey, u64, [[f32; 4]; 4], CullMode)>,
+    casters: Vec<CasterKey>,
+    /// Every copy and joint of the frame, as the casters' ranges and
+    /// slots point into them.
+    instances: Vec<InstanceRow>,
+    joints: Vec<JointSlot>,
+}
+
+/// Which rows of the instance buffer a draw reads, and which joint slot.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Copies {
+    first: u32,
+    count: u32,
+    joints: u32,
+}
+
+impl Copies {
+    const ONE: Copies = Copies {
+        first: 0,
+        count: 1,
+        joints: 0,
+    };
 }
 
 /// A model drawn into the shadow maps.
 struct Caster {
     mesh: MeshKey,
     cull: CullMode,
+    copies: Copies,
+    extra: bool,
     world: Mat4,
     centre: Vec3,
     radius: f32,
@@ -340,11 +382,14 @@ impl Target {
         });
         let frame_group = frame_group(device, renderer, &frame_buffer, &renderer.no_shadows);
         let model_capacity = 16;
+        let instances = Rows::new(device, "ljos_3d copies", wgpu::BufferUsages::VERTEX, 16);
+        let joints = Rows::new(device, "ljos_3d joints", wgpu::BufferUsages::UNIFORM, 1);
         let (model_buffer, model_group) = model_slots(
             device,
             &renderer.model_layout,
             model_capacity,
             renderer.model_stride,
+            &joints.buffer,
         );
         Target {
             size,
@@ -358,6 +403,8 @@ impl Target {
             model_buffer,
             model_group,
             model_capacity,
+            instances,
+            joints,
             frame_written: None,
             slots_written: Vec::new(),
             staging: Vec::new(),
@@ -548,6 +595,7 @@ fn model_slots(
     layout: &wgpu::BindGroupLayout,
     capacity: u64,
     stride: u64,
+    joints: &wgpu::Buffer,
 ) -> (wgpu::Buffer, wgpu::BindGroup) {
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ljos_3d models"),
@@ -555,19 +603,38 @@ fn model_slots(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let group = model_group(device, layout, &buffer, joints);
+    (buffer, group)
+}
+
+fn model_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    models: &wgpu::Buffer,
+    joints: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ljos_3d models"),
         layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: &buffer,
-                offset: 0,
-                size: wgpu::BufferSize::new(std::mem::size_of::<ModelUniform>() as u64),
-            }),
-        }],
-    });
-    (buffer, group)
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: models,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(std::mem::size_of::<ModelUniform>() as u64),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: joints,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(JOINT_SLOT),
+                }),
+            },
+        ],
+    })
 }
 
 /// The six planes of what `view_proj` sees, each `(normal, d)` with the
@@ -689,6 +756,9 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             continue;
         };
         u.maps[0] |= 1 << i;
+        if texture.uv_set > 0 {
+            u.maps[2] |= 1 << i;
+        }
         let [r0, r1] = texture.uv.rows();
         u.uv[i * 2] = [r0[0], r0[1], r0[2], 0.0];
         u.uv[i * 2 + 1] = [r1[0], r1[1], r1[2], 0.0];
@@ -787,6 +857,7 @@ struct Draw {
     maps: GroupKey,
     key: PipelineKey,
     uniform: ModelUniform,
+    copies: Copies,
     /// How far in front of the camera: blended models are drawn from the
     /// farthest.
     depth: f32,
@@ -864,7 +935,7 @@ impl Renderer {
     pub fn new(device: &wgpu::Device) -> Self {
         let frame_layout = shadow::frame_layout(device);
         let layer_layout = uniform_layout(device, "ljos_3d shadow layer", true);
-        let model_layout = uniform_layout(device, "ljos_3d model", true);
+        let model_layout = gpu_extra::model_layout(device);
         let maps = Maps::new(device);
         let ibl = Ibl::new(device);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1030,18 +1101,22 @@ impl Renderer {
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: shader,
-                    entry_point: Some("vs_main"),
+                    entry_point: Some(if key.extra { "vs_extra" } else { "vs_main" }),
                     compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3,
-                            1 => Float32x3,
-                            2 => Float32x2,
-                            3 => Float32x4,
-                        ],
-                    })],
+                    buffers: &[
+                        Some(wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<Vertex>() as u64,
+                            step_mode: wgpu::VertexStepMode::Vertex,
+                            attributes: &wgpu::vertex_attr_array![
+                                0 => Float32x3,
+                                1 => Float32x3,
+                                2 => Float32x2,
+                                3 => Float32x4,
+                            ],
+                        }),
+                        Some(gpu_extra::instance_layout()),
+                        key.extra.then(gpu_extra::extra_layout),
+                    ],
                 },
                 primitive: wgpu::PrimitiveState {
                     front_face: wgpu::FrontFace::Ccw,
@@ -1082,49 +1157,55 @@ impl Renderer {
     /// The depth pass of casters culled `cull`: the faces the picture
     /// shows are the ones the maps hold, so a surface's own depth is in
     /// them and the bias is what keeps it from shadowing itself.
-    fn shadow_pipeline(&mut self, device: &wgpu::Device, cull: CullMode) {
+    fn shadow_pipeline(&mut self, device: &wgpu::Device, cull: CullMode, extra: bool) {
         let (shader, layout) = (&self.shadow_shader, &self.shadow_layout);
-        self.shadow_pipelines.entry(cull).or_insert_with(|| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ljos_3d shadow"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                    })],
-                },
-                primitive: wgpu::PrimitiveState {
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: match cull {
-                        CullMode::Back => Some(wgpu::Face::Back),
-                        CullMode::Front => Some(wgpu::Face::Front),
-                        CullMode::None => None,
+        self.shadow_pipelines
+            .entry((cull, extra))
+            .or_insert_with(|| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("ljos_3d shadow"),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some(if extra { "vs_extra" } else { "vs_main" }),
+                        compilation_options: Default::default(),
+                        buffers: &[
+                            Some(wgpu::VertexBufferLayout {
+                                array_stride: std::mem::size_of::<Vertex>() as u64,
+                                step_mode: wgpu::VertexStepMode::Vertex,
+                                attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                            }),
+                            Some(gpu_extra::instance_layout()),
+                            extra.then(gpu_extra::extra_layout),
+                        ],
                     },
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: shadow::FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: Default::default(),
-                    targets: &[],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-        });
+                    primitive: wgpu::PrimitiveState {
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: match cull {
+                            CullMode::Back => Some(wgpu::Face::Back),
+                            CullMode::Front => Some(wgpu::Face::Front),
+                            CullMode::None => None,
+                        },
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: shadow::FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: Default::default(),
+                        bias: Default::default(),
+                    }),
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &[],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            });
     }
 
     fn gpu_mesh(&self, key: MeshKey) -> &GpuMesh {
@@ -1244,6 +1325,8 @@ fn upload(device: &wgpu::Device, mesh: &Mesh) -> GpuMesh {
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         }),
+        extra: gpu_extra::upload_extra(device, mesh),
+        has_joints: !mesh.joints.is_empty(),
         indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ljos_3d indices"),
             contents: bytemuck::cast_slice(&mesh.indices),
@@ -1251,6 +1334,52 @@ fn upload(device: &wgpu::Device, mesh: &Mesh) -> GpuMesh {
         }),
         count: mesh.indices.len() as u32,
     }
+}
+
+/// Binds a mesh's buffers and the rows of its copies.
+fn bind_mesh(pass: &mut wgpu::RenderPass<'_>, mesh: &GpuMesh, rows: &wgpu::Buffer, copies: Copies) {
+    let row = std::mem::size_of::<InstanceRow>() as u64;
+    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+    pass.set_vertex_buffer(1, rows.slice(u64::from(copies.first) * row..));
+    if let Some(extra) = &mesh.extra {
+        pass.set_vertex_buffer(2, extra.slice(..));
+    }
+    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+}
+
+/// Pushes the rows of an instanced model's copies onto `rows`, the
+/// farthest from the camera first if the instancing sorts them. A copy's
+/// alpha is 1 unless the copies blend.
+fn copy_rows(
+    scene: &Scene,
+    id: crate::scene::NodeId,
+    world: &Mat4,
+    instancing: &Instancing,
+    opaque: bool,
+    view: &Mat4,
+    rows: &mut Vec<InstanceRow>,
+) {
+    let global = instancing.global(scene, id, world);
+    let back = global.inverse().unwrap_or(Mat4::IDENTITY);
+    let first = rows.len();
+    let entries = instancing.drawn();
+    rows.extend(entries.iter().map(|e| {
+        let mut color = e.color;
+        if opaque {
+            color[3] = 1.0;
+        }
+        InstanceRow::new(&(global * e.transform * back), color)
+    }));
+    if instancing.depth_sort {
+        let origin = world.translation();
+        let depth =
+            |r: &InstanceRow| -transform_point(view, transform_point(&r.matrix(), origin)).z;
+        rows[first..].sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+    }
+    debug_assert_eq!(
+        instance_worlds(global, *world, entries).count(),
+        rows.len() - first
+    );
 }
 
 impl Renderer {
@@ -1342,9 +1471,12 @@ impl Renderer {
         let mut unseen = Vec::new();
         let mut bounds = Vec::new();
         let shadows = !shadowing.is_empty();
+        // Row 0 and joint slot 0 are what a plain model reads.
+        let mut rows = vec![InstanceRow::IDENTITY];
+        let mut joint_slots: Vec<JointSlot> = vec![gpu_extra::joint_slot(&[])];
         if let Some((camera, _)) = camera {
             let planes = camera.frustum_culling().then(|| frustum(&view_proj));
-            for (_, node, world) in &walked {
+            for (id, node, world) in &walked {
                 let NodeKind::Model(model) = &node.kind else {
                     continue;
                 };
@@ -1357,16 +1489,75 @@ impl Renderer {
                         MeshKey::Custom(g.id())
                     }
                 };
-                let (centre, radius) = model.mesh.bounds();
-                let centre = transform_point(world, centre);
-                let radius = radius * largest_scale(world);
-                let mut uniform = model_uniform(&model.material, world);
+                let (extra, has_joints) = match key {
+                    MeshKey::Primitive(_) => (false, false),
+                    MeshKey::Custom(_) => {
+                        let mesh = self.gpu_mesh(key);
+                        (mesh.extra.is_some(), mesh.has_joints)
+                    }
+                };
+                // A skinned mesh is placed by its joints alone: their
+                // matrices take it into the scene.
+                let palette = node
+                    .skin
+                    .as_ref()
+                    .filter(|_| has_joints)
+                    .map(|s| s.palette(scene));
+                let placed = if palette.is_some() {
+                    Mat4::IDENTITY
+                } else {
+                    *world
+                };
+                let (local_centre, local_radius) = model.mesh.bounds();
+                let sphere = |m: &Mat4| {
+                    (
+                        transform_point(m, local_centre),
+                        local_radius * largest_scale(m),
+                    )
+                };
+                // Each vertex is a blend of its joints' places, so it is
+                // within the spheres the joints carry the mesh's to.
+                let spheres: Vec<(Vec3, f32)> = match &palette {
+                    Some(p) if !p.is_empty() => p.iter().map(sphere).collect(),
+                    _ => vec![sphere(&placed)],
+                };
+                let mut copies = Copies::ONE;
+                let mut transparent = false;
+                let (centre, radius) = match &node.instancing {
+                    None => gpu_extra::union(spheres.iter().copied()).unwrap_or_default(),
+                    Some(instancing) => {
+                        let first = rows.len();
+                        transparent = instancing.transparent;
+                        let opaque = !(transparent || model.material.blends());
+                        copy_rows(scene, *id, world, instancing, opaque, &view, &mut rows);
+                        if rows.len() == first {
+                            continue;
+                        }
+                        copies.first = first as u32;
+                        copies.count = (rows.len() - first) as u32;
+                        let places = rows[first..].iter().map(InstanceRow::matrix);
+                        let all = places.flat_map(|m| {
+                            spheres
+                                .iter()
+                                .map(move |&(c, r)| (transform_point(&m, c), r * largest_scale(&m)))
+                        });
+                        gpu_extra::union(all).unwrap_or_default()
+                    }
+                };
+                let mut uniform = model_uniform(&model.material, &placed);
                 uniform.params2[3] = f32::from(u8::from(node.receives_shadows));
+                if let Some(palette) = &palette {
+                    copies.joints = joint_slots.len() as u32;
+                    joint_slots.push(gpu_extra::joint_slot(palette));
+                    uniform.maps[3] = 1;
+                }
                 let caster = (shadows && node.casts_shadows).then(|| {
                     casters.push(Caster {
                         mesh: key,
                         cull: model.material.cull_mode(),
-                        world: *world,
+                        copies,
+                        extra,
+                        world: placed,
                         centre,
                         radius,
                         slot: 0,
@@ -1384,7 +1575,7 @@ impl Renderer {
                     }
                     continue;
                 }
-                let blends = model.material.blends();
+                let blends = model.material.blends() || transparent;
                 let draw = Draw {
                     mesh: key,
                     maps: self.maps.prepare(device, queue, &model.material),
@@ -1392,8 +1583,10 @@ impl Renderer {
                         cull: model.material.cull_mode(),
                         depth_write: !blends,
                         samples,
+                        extra,
                     },
                     uniform,
+                    copies,
                     depth: -transform_point(&view, centre).z,
                     caster,
                 };
@@ -1464,6 +1657,15 @@ impl Renderer {
             casters[c].slot = uniforms.len();
             uniforms.push(uniform);
         }
+        target.instances.write(device, queue, &rows);
+        if target.joints.write(device, queue, &joint_slots) {
+            target.model_group = model_group(
+                device,
+                &self.model_layout,
+                &target.model_buffer,
+                &target.joints.buffer,
+            );
+        }
         if uniforms.len() as u64 > target.model_capacity {
             target.model_capacity = (uniforms.len() as u64).next_power_of_two();
             (target.model_buffer, target.model_group) = model_slots(
@@ -1471,6 +1673,7 @@ impl Renderer {
                 &self.model_layout,
                 target.model_capacity,
                 self.model_stride,
+                &target.joints.buffer,
             );
             // A new buffer holds nothing yet.
             target.slots_written.clear();
@@ -1486,10 +1689,17 @@ impl Renderer {
             if let MeshKey::Primitive(p) = caster.mesh {
                 self.mesh(device, p);
             }
-            self.shadow_pipeline(device, caster.cull);
+            self.shadow_pipeline(device, caster.cull, caster.extra);
         }
         let passes = target.shadow_passes;
-        self.draw_shadows(queue, encoder, target, &plan, &casters);
+        self.draw_shadows(
+            queue,
+            encoder,
+            target,
+            &plan,
+            &casters,
+            (&rows, &joint_slots),
+        );
         let shadows_drawn = target.shadow_passes != passes;
         // A geometry no scene holds is dropped with its buffers.
         self.custom.retain(|_, c| c.source.strong_count() > 0);
@@ -1551,7 +1761,7 @@ impl Renderer {
                 // Its layout is the materials', so every group is bound
                 // for it, though it reads only the frame and the probe.
                 pass.set_pipeline(&self.skies[&samples]);
-                pass.set_bind_group(1, &target.model_group, &[0]);
+                pass.set_bind_group(1, &target.model_group, &[0, 0]);
                 pass.set_bind_group(2, self.maps.group(&plain_maps), &[]);
                 pass.draw(0..3, 0..1);
             }
@@ -1568,10 +1778,10 @@ impl Renderer {
                 }
                 let mesh = self.gpu_mesh(draw.mesh);
                 let offset = (i as u64 * self.model_stride) as u32;
-                pass.set_bind_group(1, &target.model_group, &[offset]);
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.count, 0, 0..1);
+                let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;
+                pass.set_bind_group(1, &target.model_group, &[offset, joints]);
+                bind_mesh(&mut pass, mesh, &target.instances.buffer, draw.copies);
+                pass.draw_indexed(0..mesh.count, 0, 0..draw.copies.count);
             }
         }
         if let Some(timer) = &mut target.timer {
@@ -1591,6 +1801,7 @@ impl Renderer {
         target: &mut Target,
         plan: &Plan,
         casters: &[Caster],
+        (instances, joints): (&[InstanceRow], &[JointSlot]),
     ) {
         let Some(shadows) = target.shadows.as_mut() else {
             return;
@@ -1604,9 +1815,11 @@ impl Renderer {
                         MeshKey::Primitive(_) => 0,
                         MeshKey::Custom(id) => self.custom[&id].revision,
                     };
-                    (c.mesh, revision, c.world.0, c.cull)
+                    (c.mesh, revision, c.world.0, c.cull, c.copies)
                 })
                 .collect(),
+            instances: instances.to_vec(),
+            joints: joints.to_vec(),
         };
         if shadows.drawn.as_ref() == Some(&key) {
             return;
@@ -1642,16 +1855,16 @@ impl Renderer {
                 if outside(&planes, c.centre, c.radius) {
                     continue;
                 }
-                if bound != Some(c.cull) {
-                    pass.set_pipeline(&self.shadow_pipelines[&c.cull]);
-                    bound = Some(c.cull);
+                if bound != Some((c.cull, c.extra)) {
+                    pass.set_pipeline(&self.shadow_pipelines[&(c.cull, c.extra)]);
+                    bound = Some((c.cull, c.extra));
                 }
                 let mesh = self.gpu_mesh(c.mesh);
                 let offset = (c.slot as u64 * self.model_stride) as u32;
-                pass.set_bind_group(1, &target.model_group, &[offset]);
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.count, 0, 0..1);
+                let joints = (u64::from(c.copies.joints) * JOINT_SLOT) as u32;
+                pass.set_bind_group(1, &target.model_group, &[offset, joints]);
+                bind_mesh(&mut pass, mesh, &target.instances.buffer, c.copies);
+                pass.draw_indexed(0..mesh.count, 0, 0..c.copies.count);
             }
             target.shadow_passes += 1;
         }

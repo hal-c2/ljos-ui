@@ -19,6 +19,8 @@ pub mod texture;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 #[cfg(feature = "gpu")]
+mod gpu_extra;
+#[cfg(feature = "gpu")]
 mod ibl;
 #[cfg(feature = "gpu")]
 mod maps;

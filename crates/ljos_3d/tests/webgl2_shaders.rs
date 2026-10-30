@@ -10,13 +10,19 @@ fn translates(name: &str, source: &str) {
 }
 
 fn translates_entries(name: &str, source: &str, fragments: &[&str]) {
+    translates_stages(name, source, &["vs_main"], fragments);
+}
+
+fn translates_stages(name: &str, source: &str, vertices: &[&str], fragments: &[&str]) {
     let module = naga::front::wgsl::parse_str(source)
         .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
     // WebGL2 has none of the optional capabilities.
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
-    let stages = std::iter::once((naga::ShaderStage::Vertex, "vs_main"))
+    let stages = vertices
+        .iter()
+        .map(|v| (naga::ShaderStage::Vertex, *v))
         .chain(fragments.iter().map(|f| (naga::ShaderStage::Fragment, *f)));
     for (stage, entry) in stages {
         let options = glsl::Options {
@@ -51,7 +57,13 @@ const TONE: &str = include_str!("../src/shaders/tone.wgsl");
 #[test]
 fn the_lit_shader_runs_on_webgl2() {
     let source = include_str!("../src/shaders/lit.wgsl");
-    translates("lit", &format!("{TONE}{source}"));
+    // vs_extra draws meshes with a second UV set or joints.
+    translates_stages(
+        "lit",
+        &format!("{TONE}{source}"),
+        &["vs_main", "vs_extra"],
+        &["fs_main"],
+    );
     // Seven maps, the probe's two cubes and the shadow maps' array:
     // within the 16 textures a WebGL2 fragment shader may sample.
     let textures = source.matches(": texture_").count();
@@ -88,5 +100,10 @@ fn the_light_probes_passes_run_on_webgl2() {
 
 #[test]
 fn the_shadow_pass_runs_on_webgl2() {
-    translates("shadow", include_str!("../src/shaders/shadow.wgsl"));
+    translates_stages(
+        "shadow",
+        include_str!("../src/shaders/shadow.wgsl"),
+        &["vs_main", "vs_extra"],
+        &["fs_main"],
+    );
 }

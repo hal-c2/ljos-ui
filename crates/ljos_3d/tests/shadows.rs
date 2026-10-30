@@ -4,11 +4,14 @@
 //! stands 100 in front of it, and a light turned 45° about y throws the
 //! cube's shadow onto the wall to its left.
 
-use ljos_3d::math::{Quat, Vec3};
+use std::sync::Arc;
+
+use ljos_3d::math::{Mat4, Quat, Vec3};
 use ljos_3d::offscreen::{Offscreen, Rgba, read_back};
 use ljos_3d::{
-    Background, Camera, Color, DefaultMaterial, Environment, Fade, Light, Material, MeshSource,
-    Model, Node, NodeId, NodeKind, Primitive, Scene, Shadow, Target, Transform,
+    Background, Camera, Color, DefaultMaterial, Environment, Fade, Instance, InstanceTable,
+    Instancing, Light, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive, Scene,
+    Shadow, Target, Transform,
 };
 
 const SIDE: u32 = 200;
@@ -156,6 +159,24 @@ fn a_cube_shadows_the_wall_behind_it() {
         pic.pixel(5, 100)
     );
     assert!(close(pic.pixel(100, 30), LIT, 3.0), "above the shadow");
+}
+
+/// The cube's one copy is 200 to the right, out of the picture; its
+/// shadow, 200 wide, falls on the wall's right half.
+#[test]
+fn each_copy_of_an_instanced_caster_casts_its_own_shadow() {
+    let Some(mut gpu) = offscreen() else { return };
+    let mut s = sunlit(Some(Shadow::default()));
+    let moved = Instance {
+        transform: Mat4::from_trs(Vec3::new(200.0, 0.0, 0.0), Quat::IDENTITY, Vec3::ONE),
+        ..Instance::default()
+    };
+    let table = Arc::new(InstanceTable::new(vec![moved]));
+    s.scene.node_mut(s.cube).unwrap().instancing = Some(Instancing::new(table));
+    let pic = draw(&mut gpu, &s.scene);
+    let (open, shade) = (pic.pixel(IN.0, IN.1), pic.pixel(150, IN.1));
+    assert!(close(open, LIT, 3.0), "where the cube was: {open:?}");
+    assert!(close(shade, SHADOWED, 8.0), "where its copy is: {shade:?}");
 }
 
 #[test]

@@ -165,7 +165,10 @@ pub fn skin_point(palette: &[Mat4], joints: [u16; 4], weights: [f32; 4], p: Vec3
         if w == 0.0 {
             continue;
         }
-        let m = palette.get(usize::from(*j)).copied().unwrap_or(Mat4::IDENTITY);
+        let m = palette
+            .get(usize::from(*j))
+            .copied()
+            .unwrap_or(Mat4::IDENTITY);
         out = out + (m.transform_vector(p) + m.translation()) * w;
     }
     out

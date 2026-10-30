@@ -696,7 +696,11 @@ impl Builder<'_> {
                     .as_chunks::<16>()
                     .0
                     .iter()
-                    .map(|m| Mat4(std::array::from_fn(|c| std::array::from_fn(|r| m[c * 4 + r]))))
+                    .map(|m| {
+                        Mat4(std::array::from_fn(|c| {
+                            std::array::from_fn(|r| m[c * 4 + r])
+                        }))
+                    })
                     .collect(),
                 Err(why) => {
                     self.warnings.push(format!(
@@ -1152,7 +1156,11 @@ fn transform(t: ::gltf::scene::Transform) -> Transform {
 
 /// The box positions, three floats each, lie in.
 fn position_box(positions: &[f32]) -> Option<(Vec3, Vec3)> {
-    let mut points = positions.as_chunks::<3>().0.iter().map(|p| Vec3::new(p[0], p[1], p[2]));
+    let mut points = positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|p| Vec3::new(p[0], p[1], p[2]));
     let first = points.next()?;
     Some(points.fold((first, first), |(min, max), p| {
         (

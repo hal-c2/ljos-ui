@@ -327,10 +327,9 @@ impl CustomGeometry {
                     let b = &v[a.offset + i * size..];
                     match a.component {
                         ComponentType::U16 => u16::from_le_bytes([b[0], b[1]]),
-                        ComponentType::U32 => {
-                            u32::from_le_bytes([b[0], b[1], b[2], b[3]]).min(u32::from(u16::MAX))
-                                as u16
-                        }
+                        ComponentType::U32 => u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+                            .min(u32::from(u16::MAX))
+                            as u16,
                         ComponentType::F32 => {
                             f32::from_le_bytes([b[0], b[1], b[2], b[3]]).clamp(0.0, 65535.0) as u16
                         }
@@ -416,7 +415,10 @@ impl CustomGeometry {
             .attribute(Semantic::TexCoord1)
             .map(|_| self.read_vec::<2>(Semantic::TexCoord1))
             .transpose()?;
-        let skin = match (self.attribute(Semantic::Joint), self.attribute(Semantic::Weight)) {
+        let skin = match (
+            self.attribute(Semantic::Joint),
+            self.attribute(Semantic::Weight),
+        ) {
             (Some(joints), Some(_)) => {
                 Some((self.joints(joints)?, self.read_vec::<4>(Semantic::Weight)?))
             }

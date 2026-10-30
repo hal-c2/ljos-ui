@@ -79,7 +79,9 @@ struct Model {
     // opacity), two rows taking the mesh's UV to the image's.
     uv: array<vec4<f32>, 14>,
     // x a bit per map that is there; y the channels of metalness (bits
-    // 0-1), roughness (2-3), occlusion (4-5) and opacity (6-7).
+    // 0-1), roughness (2-3), occlusion (4-5) and opacity (6-7); z a bit per
+    // map read through the second UV set; w 1 where the joints of
+    // `skin_joints` bend the mesh.
     maps: vec4<u32>,
     // x the normal map's strength, y how much the occlusion map shades.
     map_params: vec4<f32>,
@@ -90,6 +92,9 @@ struct Model {
 @group(0) @binding(1) var shadow_maps: texture_depth_2d_array;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var<uniform> model: Model;
+// A skinned model's joints: each one's place times its inverse bind pose.
+// 256 fill WebGL2's smallest uniform block.
+@group(1) @binding(1) var<uniform> skin_joints: array<mat4x4<f32>, 256>;
 // Colour maps are sRGB textures, read as linear light; the others as they
 // are stored. A missing map is white.
 @group(2) @binding(0) var base_map: texture_2d<f32>;
@@ -117,7 +122,66 @@ struct VsOut {
     @location(2) uv: vec2<f32>,
     // xyz along the image's u in the scene; w which way its v runs.
     @location(3) tangent: vec4<f32>,
+    @location(4) uv1: vec2<f32>,
+    // Linear, not premultiplied: the copy's colour, white for a model
+    // drawn once.
+    @location(5) color: vec4<f32>,
 };
+
+// One copy of a model: where it is, as the top three rows of a matrix put
+// in front of the model's world transform, and its colour. A model drawn
+// once is drawn as the one copy of an identity entry.
+struct Instance {
+    @location(4) row0: vec4<f32>,
+    @location(5) row1: vec4<f32>,
+    @location(6) row2: vec4<f32>,
+    @location(7) color: vec4<f32>,
+};
+
+fn instance_matrix(i: Instance) -> mat4x4<f32> {
+    return transpose(mat4x4<f32>(i.row0, i.row1, i.row2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
+}
+
+// What carries a normal through `m`: its inverse transpose up to a
+// positive scale, without dividing by a determinant that may be 0.
+fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
+    let a = m[0].xyz;
+    let b = m[1].xyz;
+    let c = m[2].xyz;
+    let n = mat3x3<f32>(cross(b, c), cross(c, a), cross(a, b));
+    return n * select(1.0, -1.0, dot(a, n[0]) < 0.0);
+}
+
+fn shade_vertex(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    uv: vec2<f32>,
+    uv1: vec2<f32>,
+    tangent: vec4<f32>,
+    copy: Instance,
+    skin: mat4x4<f32>,
+) -> VsOut {
+    var out: VsOut;
+    let place = instance_matrix(copy);
+    let m = place * model.world * skin;
+    let world = m * vec4<f32>(position, 1.0);
+    out.clip = frame.view_proj * world;
+    let n = (model.normal * vec4<f32>(cofactor(skin) * normal, 0.0)).xyz;
+    out.normal = cofactor(place) * n;
+    out.world = world.xyz;
+    out.uv = uv;
+    out.uv1 = uv1;
+    out.tangent = vec4<f32>((m * vec4<f32>(tangent.xyz, 0.0)).xyz, tangent.w);
+    out.color = copy.color;
+    return out;
+}
+
+const IDENTITY: mat4x4<f32> = mat4x4<f32>(
+    vec4<f32>(1.0, 0.0, 0.0, 0.0),
+    vec4<f32>(0.0, 1.0, 0.0, 0.0),
+    vec4<f32>(0.0, 0.0, 1.0, 0.0),
+    vec4<f32>(0.0, 0.0, 0.0, 1.0),
+);
 
 @vertex
 fn vs_main(
@@ -125,19 +189,38 @@ fn vs_main(
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) tangent: vec4<f32>,
+    copy: Instance,
 ) -> VsOut {
-    var out: VsOut;
-    let world = model.world * vec4<f32>(position, 1.0);
-    out.clip = frame.view_proj * world;
-    out.normal = (model.normal * vec4<f32>(normal, 0.0)).xyz;
-    out.world = world.xyz;
-    out.uv = uv;
-    out.tangent = vec4<f32>((model.world * vec4<f32>(tangent.xyz, 0.0)).xyz, tangent.w);
-    return out;
+    return shade_vertex(position, normal, uv, uv, tangent, copy, IDENTITY);
 }
 
-fn map_uv(i: u32, uv: vec2<f32>) -> vec2<f32> {
-    let p = vec3<f32>(uv, 1.0);
+fn skin_matrix(joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
+    if model.maps.w == 0u {
+        return IDENTITY;
+    }
+    let j = min(joints, vec4<u32>(255u));
+    return skin_joints[j.x] * weights.x + skin_joints[j.y] * weights.y
+        + skin_joints[j.z] * weights.z + skin_joints[j.w] * weights.w;
+}
+
+// A mesh with a second UV set or joints: those come from a second buffer.
+@vertex
+fn vs_extra(
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
+    copy: Instance,
+    @location(8) uv1: vec2<f32>,
+    @location(9) joints: vec4<u32>,
+    @location(10) weights: vec4<f32>,
+) -> VsOut {
+    let skin = skin_matrix(joints, weights);
+    return shade_vertex(position, normal, uv, uv1, tangent, copy, skin);
+}
+
+fn map_uv(i: u32, in: VsOut) -> vec2<f32> {
+    let p = vec3<f32>(select(in.uv, in.uv1, (model.maps.z & (1u << i)) != 0u), 1.0);
     return vec2<f32>(dot(model.uv[i * 2u].xyz, p), dot(model.uv[i * 2u + 1u].xyz, p));
 }
 
@@ -296,15 +379,15 @@ fn shadowed(light: Light, p: vec3<f32>, l: vec3<f32>) -> f32 {
 fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // Every map is read here, before anything branches, as sampling with
     // derivatives must be.
-    let base_t = textureSample(base_map, base_sampler, map_uv(0u, in.uv));
-    let metal_t = textureSample(metalness_map, metalness_sampler, map_uv(1u, in.uv));
-    let rough_t = textureSample(roughness_map, roughness_sampler, map_uv(2u, in.uv));
-    let normal_t = textureSample(normal_map, normal_sampler, map_uv(3u, in.uv));
-    let emissive_t = textureSample(emissive_map, emissive_sampler, map_uv(4u, in.uv));
-    let occlusion_t = textureSample(occlusion_map, occlusion_sampler, map_uv(5u, in.uv));
-    let opacity_t = textureSample(opacity_map, opacity_sampler, map_uv(6u, in.uv));
+    let base_t = textureSample(base_map, base_sampler, map_uv(0u, in));
+    let metal_t = textureSample(metalness_map, metalness_sampler, map_uv(1u, in));
+    let rough_t = textureSample(roughness_map, roughness_sampler, map_uv(2u, in));
+    let normal_t = textureSample(normal_map, normal_sampler, map_uv(3u, in));
+    let emissive_t = textureSample(emissive_map, emissive_sampler, map_uv(4u, in));
+    let occlusion_t = textureSample(occlusion_map, occlusion_sampler, map_uv(5u, in));
+    let opacity_t = textureSample(opacity_map, opacity_sampler, map_uv(6u, in));
 
-    let base = model.base * base_t;
+    let base = model.base * base_t * in.color;
     var a = base.a * channel(opacity_t, 6u);
     let cutoff = model.params2.x;
     if cutoff >= 0.0 {

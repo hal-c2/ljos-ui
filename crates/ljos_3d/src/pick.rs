@@ -208,12 +208,14 @@ fn sphere_of(points: &[[f32; 3]]) -> (Vec3, f32) {
     let Some(first) = points.first() else {
         return (Vec3::ZERO, 0.0);
     };
-    let (min, max) = points.iter().fold((vec(*first), vec(*first)), |(lo, hi), p| {
-        (
-            Vec3::new(lo.x.min(p[0]), lo.y.min(p[1]), lo.z.min(p[2])),
-            Vec3::new(hi.x.max(p[0]), hi.y.max(p[1]), hi.z.max(p[2])),
-        )
-    });
+    let (min, max) = points
+        .iter()
+        .fold((vec(*first), vec(*first)), |(lo, hi), p| {
+            (
+                Vec3::new(lo.x.min(p[0]), lo.y.min(p[1]), lo.z.min(p[2])),
+                Vec3::new(hi.x.max(p[0]), hi.y.max(p[1]), hi.z.max(p[2])),
+            )
+        });
     let centre = (min + max) * 0.5;
     (centre, (max - centre).length())
 }

@@ -483,7 +483,10 @@ fn a_skin_s_joints_and_inverse_bind_matrices_are_read() {
     assert!(asset.warnings.is_empty(), "{:?}", asset.warnings);
     let skin = &asset.skins[0];
     assert_eq!(skin.joints, [0, 1]);
-    assert_eq!(skin.inverse_bind[1].translation(), Vec3::new(0.0, -50.0, 0.0));
+    assert_eq!(
+        skin.inverse_bind[1].translation(),
+        Vec3::new(0.0, -50.0, 0.0)
+    );
     assert_eq!(asset.nodes[2].skin, Some(0));
     let mesh = asset.meshes[0].primitives[0].geometry.to_mesh().unwrap();
     assert_eq!(mesh.joints[0], [0, 0, 0, 0]);
@@ -502,7 +505,10 @@ fn a_placed_skin_names_the_scene_nodes_of_its_joints() {
     };
     assert_eq!(node, 2);
     let skin = scene.node(model).unwrap().skin.as_ref().unwrap();
-    assert_eq!(skin.joints, [placed.nodes[0].unwrap(), placed.nodes[1].unwrap()]);
+    assert_eq!(
+        skin.joints,
+        [placed.nodes[0].unwrap(), placed.nodes[1].unwrap()]
+    );
     // The knee turned a quarter turn swings the strip's top to the left.
     let palette = skin.palette(&scene);
     let top = crate::instancing::skin_point(
