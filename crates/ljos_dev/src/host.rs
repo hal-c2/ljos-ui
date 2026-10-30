@@ -373,6 +373,10 @@ pub enum Report {
     Pictures {
         shown: usize,
     },
+    /// Data files were saved, and this many objects read them again.
+    DataFiles {
+        readers: usize,
+    },
     /// What the files the program just loaded warn of, told once as each
     /// is loaded (at the start, or when a `Loader` first reaches one), as
     /// Qt tells a file's warnings when it loads it. A reload tells only
@@ -426,7 +430,7 @@ impl std::fmt::Debug for WarningsOf {
 
 /// The watcher never has more than one message out, and the watcher's
 /// state messages replace each other.
-const INBOX: usize = 4;
+const INBOX: usize = 5;
 const DEV_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6576);
 /// The answer to a flush is not news of the files: it does not replace it.
 const IDLE_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6577);
@@ -436,6 +440,8 @@ const PICTURES_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6578);
 /// A theme is news of another file than the QML: a build of the QML saved
 /// with it must not replace it.
 const THEME_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6579);
+/// Data files saved: added to what waits, like pictures.
+const DATA_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_657a);
 
 /// An application under the watcher: its files compiled, its root made,
 /// and every save applied as it comes.
@@ -484,6 +490,8 @@ pub struct DevSession {
     /// Pictures saved and not yet shown again. A message that one waits
     /// may replace another in the inbox; the paths must not.
     pictures: Arc<Mutex<Vec<PathBuf>>>,
+    /// The data files saved, while the message that says so waits.
+    data_files: Arc<Mutex<Vec<PathBuf>>>,
     /// Why the theme file was refused, while it is: it stands until the
     /// theme is read again, whatever the QML does.
     theme_fault: Option<ReloadFault>,
@@ -822,6 +830,8 @@ impl DevSession {
         inbox.observe_as("reload", Some(DevMsg::kind));
         let pictures: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
         let saved = pictures.clone();
+        let data_files: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+        let saved_data = data_files.clone();
         let watcher = Watcher::spawn_shared(reloader, crate::debounce::QUIET, move |msg| {
             let (key, msg) = match msg {
                 DevMsg::Idle => (IDLE_KEY, msg),
@@ -830,12 +840,18 @@ impl DevSession {
                     lock(&saved).extend(paths);
                     (PICTURES_KEY, DevMsg::Pictures(Vec::new()))
                 }
+                DevMsg::DataFiles(paths) => {
+                    lock(&saved_data).extend(paths);
+                    (DATA_KEY, DevMsg::DataFiles(Vec::new()))
+                }
                 _ => (DEV_KEY, msg),
             };
             !handle
                 .send_coalesced(key, msg)
                 .is_err_and(|e| e.is_disconnected())
         })?;
+        let follower = watcher.follower();
+        ljos_engine::FollowedFiles::of(engine).set_sink(move |path| follower.follow(path));
         Ok(Self {
             watcher,
             inbox,
@@ -853,6 +869,7 @@ impl DevSession {
             flushed: false,
             texts,
             pictures,
+            data_files,
             aliases,
             set_aliases,
             project: roots[0].clone(),
@@ -989,6 +1006,16 @@ impl DevSession {
                     let shown = ljos_quick::ImageStore::of(engine).files_changed(engine, &paths);
                     if shown > 0 {
                         out.push(Report::Pictures { shown });
+                    }
+                }
+                DevMsg::DataFiles(_) => {
+                    let mut paths = std::mem::take(&mut *lock(&self.data_files));
+                    paths.sort();
+                    paths.dedup();
+                    let readers =
+                        ljos_engine::FollowedFiles::of(engine).files_changed(engine, &paths);
+                    if readers > 0 {
+                        out.push(Report::DataFiles { readers });
                     }
                 }
                 DevMsg::Theme { theme, generation } => {

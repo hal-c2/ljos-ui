@@ -365,6 +365,8 @@ pub fn describe(report: &Report) -> String {
         ),
         Report::Pictures { shown: 1 } => "1 image shows the saved picture".to_owned(),
         Report::Pictures { shown } => format!("{shown} images show the saved pictures"),
+        Report::DataFiles { readers: 1 } => "1 model reads its saved file again".to_owned(),
+        Report::DataFiles { readers } => format!("{readers} models read their saved files again"),
         // One line each, as a run that does not watch tells them.
         Report::Warnings(warnings) => warnings
             .iter()

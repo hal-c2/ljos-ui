@@ -11,7 +11,7 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
     },
@@ -72,6 +72,9 @@ pub enum DevMsg {
     /// These pictures were saved: the images that show them load them
     /// again. Comes before the news of the files saved with them.
     Pictures(Vec<PathBuf>),
+    /// These files that objects read as data were saved: those objects
+    /// read them again. Comes before the news of the files saved with them.
+    DataFiles(Vec<PathBuf>),
     /// The answer to [`Watcher::flush`], after whatever that brought: the
     /// files were read and nothing else is coming for it. It has a key of
     /// its own in the inbox, so that it never replaces the news it follows.
@@ -89,6 +92,7 @@ impl DevMsg {
             DevMsg::Cleared => "cleared",
             DevMsg::Idle => "idle",
             DevMsg::Pictures(_) => "pictures",
+            DevMsg::DataFiles(_) => "data_files",
         }
     }
 }
@@ -109,6 +113,8 @@ pub enum WatchError {
 enum Cmd {
     /// A path, whether it is a directory, and how far its save is.
     Touched(PathBuf, bool, Save),
+    /// A followed data file, and how far its save is.
+    DataFile(PathBuf, Save),
     Rescan,
     Flush,
     Ack(u64),
@@ -133,6 +139,52 @@ pub struct Watcher {
     tx: SyncSender<Cmd>,
     thread: Option<JoinHandle<()>>,
     wakes: Arc<AtomicU64>,
+    follower: Follower,
+}
+
+/// Has data files watched, from the application's thread: see
+/// [`Watcher::follower`].
+#[derive(Clone)]
+pub struct Follower {
+    // Weak: the file system's watch ends with the watcher's thread,
+    // whoever still holds this.
+    watching: Weak<Mutex<Watching>>,
+    followed: Arc<Mutex<BTreeSet<PathBuf>>>,
+}
+
+impl std::fmt::Debug for Follower {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Follower").finish_non_exhaustive()
+    }
+}
+
+impl Follower {
+    /// `path` (already [`file_identity`](ljos_engine::file_identity)) is
+    /// told of as [`DevMsg::DataFiles`] from now on, wherever it is and
+    /// whatever it is called. Its directory is watched when this returns.
+    /// A directory that cannot be watched leaves the file unfollowed: it
+    /// does not exist, or the system refused, and an explicit read is what
+    /// is left.
+    pub fn follow(&self, path: &Path) {
+        let Some(watching) = self.watching.upgrade() else {
+            return;
+        };
+        let Some(dir) = path.parent() else {
+            return;
+        };
+        // Before the watch, so that the first event of the file is seen.
+        lock(&self.followed).insert(path.to_owned());
+        let mut watching = lock(&watching);
+        let watching = &mut *watching;
+        if !watching.watched.contains(dir) {
+            if watching.fs.watch(dir, RecursiveMode::NonRecursive).is_err() {
+                lock(&self.followed).remove(path);
+                return;
+            }
+            watching.watched.insert(dir.to_owned());
+        }
+        watching.follow_dirs.insert(dir.to_owned());
+    }
 }
 
 impl std::fmt::Debug for Watcher {
@@ -194,7 +246,9 @@ impl Watcher {
         let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let overflow = Arc::new(AtomicBool::new(false));
         let theme = lock(&reloader).theme_path().map(Path::to_owned);
+        let followed: Arc<Mutex<BTreeSet<PathBuf>>> = Arc::default();
         let events = Events {
+            followed: followed.clone(),
             theme: theme.clone(),
             roots: roots.clone(),
             tx: tx.clone(),
@@ -233,11 +287,21 @@ impl Watcher {
                 })?;
         }
         let wakes = Arc::new(AtomicU64::new(0));
+        let watching = Arc::new(Mutex::new(Watching {
+            fs,
+            watched,
+            follow_dirs: BTreeSet::new(),
+        }));
+        let follower = Follower {
+            watching: Arc::downgrade(&watching),
+            followed: followed.clone(),
+        };
         let mut run = Run {
             reloader,
             sink: Box::new(sink),
-            fs,
-            watched,
+            watching,
+            followed,
+            data_saved: BTreeSet::new(),
             roots,
             overflow,
             wakes: wakes.clone(),
@@ -261,7 +325,13 @@ impl Watcher {
             tx,
             thread: Some(thread),
             wakes,
+            follower,
         })
+    }
+
+    /// What the application has data files watched with.
+    pub fn follower(&self) -> Follower {
+        self.follower.clone()
     }
 
     /// The application applied the patch of this generation.
@@ -307,6 +377,7 @@ impl Drop for Watcher {
 /// on only what a build could care about, so a build into a directory
 /// beside the project does not wake the watcher.
 struct Events {
+    followed: Arc<Mutex<BTreeSet<PathBuf>>>,
     theme: Option<PathBuf>,
     roots: Vec<PathBuf>,
     tx: SyncSender<Cmd>,
@@ -339,6 +410,9 @@ impl Events {
             _ => (false, Save::Other),
         };
         for path in event.paths {
+            if !is_dir && lock(&self.followed).contains(&path) {
+                self.post(Cmd::DataFile(path.clone(), save));
+            }
             if self.theme.as_ref() == Some(&path) {
                 self.post(Cmd::Touched(path, false, save));
                 continue;
@@ -366,11 +440,26 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// The file system's watch and what it is on. The application's thread adds
+/// to it when an object follows a file ([`Follower`]), and takes this lock
+/// only for as long as that takes: no build holds it. The thread `notify`
+/// keeps never takes it, so waiting for a watch to be set cannot deadlock.
+struct Watching {
+    fs: notify::RecommendedWatcher,
+    watched: BTreeSet<PathBuf>,
+    /// The directories of followed files: watched though the project may
+    /// not hold them.
+    follow_dirs: BTreeSet<PathBuf>,
+}
+
 struct Run<O> {
     reloader: Arc<Mutex<Reloader<O>>>,
     sink: Box<dyn FnMut(DevMsg) -> bool + Send>,
-    fs: notify::RecommendedWatcher,
-    watched: BTreeSet<PathBuf>,
+    watching: Arc<Mutex<Watching>>,
+    /// The data files followed; [`Events`] reads them too.
+    followed: Arc<Mutex<BTreeSet<PathBuf>>>,
+    /// Followed files saved since they were last told of.
+    data_saved: BTreeSet<PathBuf>,
     roots: Vec<PathBuf>,
     overflow: Arc<AtomicBool>,
     wakes: Arc<AtomicU64>,
@@ -426,13 +515,26 @@ impl<O: TypeOracle + Clone> Run<O> {
                         self.touched(self.writing.is_empty());
                     }
                 }
+                Some(Cmd::DataFile(path, save)) => {
+                    match save {
+                        Save::Writing => {
+                            self.writing.insert(path.clone());
+                        }
+                        Save::Whole => {
+                            self.writing.remove(&path);
+                        }
+                        Save::Other => {}
+                    }
+                    self.data_saved.insert(path);
+                    self.touched(self.writing.is_empty());
+                }
                 Some(Cmd::Rescan) => {
-                    lock(&self.reloader).touch_all();
+                    self.touch_all();
                     self.touched(false);
                 }
                 Some(Cmd::Flush) => {
                     // Events may be late or lost; the directory is read.
-                    lock(&self.reloader).touch_all();
+                    self.touch_all();
                     self.flushing = true;
                 }
                 Some(Cmd::Ack(generation)) => {
@@ -451,7 +553,7 @@ impl<O: TypeOracle + Clone> Run<O> {
                 None => {}
             }
             if self.overflow.swap(false, Ordering::AcqRel) {
-                lock(&self.reloader).touch_all();
+                self.touch_all();
                 self.touched(false);
             }
             if self.in_flight.is_none() {
@@ -461,6 +563,12 @@ impl<O: TypeOracle + Clone> Run<O> {
                 }
             }
         }
+    }
+
+    /// Nothing is known of what changed: everything is read again.
+    fn touch_all(&mut self) {
+        lock(&self.reloader).touch_all();
+        self.data_saved.extend(lock(&self.followed).iter().cloned());
     }
 
     /// A file event that a build has to look at: the quiet time starts
@@ -498,6 +606,10 @@ impl<O: TypeOracle + Clone> Run<O> {
         let started = Instant::now();
         let pictures = lock(&self.reloader).take_pictures();
         if !pictures.is_empty() && !(self.sink)(DevMsg::Pictures(pictures)) {
+            return false;
+        }
+        let data = std::mem::take(&mut self.data_saved);
+        if !data.is_empty() && !(self.sink)(DevMsg::DataFiles(data.into_iter().collect())) {
             return false;
         }
         // The theme first: it changes no object, so the QML saved with it
@@ -572,11 +684,21 @@ impl<O: TypeOracle + Clone> Run<O> {
     /// Watches are per directory, so a directory made after the start
     /// needs its own. One that is gone lost its watch with it.
     fn watch_new_dirs(&mut self) {
-        let now: BTreeSet<PathBuf> = self.roots.iter().flat_map(|r| project_dirs(r)).collect();
-        let fs = std::cell::RefCell::new(&mut self.fs);
-        let watched = std::mem::take(&mut self.watched);
-        self.watched = rewatch(
+        let mut watching = lock(&self.watching);
+        let Watching {
+            fs,
             watched,
+            follow_dirs,
+        } = &mut *watching;
+        let now: BTreeSet<PathBuf> = self
+            .roots
+            .iter()
+            .flat_map(|r| project_dirs(r))
+            .chain(follow_dirs.iter().cloned())
+            .collect();
+        let fs = std::cell::RefCell::new(fs);
+        *watched = rewatch(
+            std::mem::take(watched),
             now,
             |dir| {
                 fs.borrow_mut()

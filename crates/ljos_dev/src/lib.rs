@@ -53,4 +53,4 @@ pub use qml_front::{QtTypeOracle, TypeOracle};
 pub use reloader::{Build, Reloader, ThemeChange, Touch, classify};
 pub use text::{ProjectTexts, text_compiler};
 pub use top::{FrameStats, Top, TopRow, TopView};
-pub use watch::{DevMsg, WatchError, Watcher};
+pub use watch::{DevMsg, Follower, WatchError, Watcher};
