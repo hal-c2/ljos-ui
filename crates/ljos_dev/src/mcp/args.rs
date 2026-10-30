@@ -48,8 +48,8 @@ levels; a cut outline gives a `cursor` for the next part; `since` lists only wha
 
 pub const FIND: &str = "\
 Find items by locator: `role=button[name=\"Save\"]`, `text=notes`, `#objectName`, `id=qmlId`, \
-`name~=regex`, a reference `e12`; `a >> b` searches inside a, `>> nth=0` picks one. Returns a \
-reference, path, bounds and states per match. No match is an empty list, not an error.";
+`name~=regex`, `e12`; `a >> b` searches in a, `>> nth=0` picks one; `at=X,Y`: what is drawn at a \
+window point, topmost first. Each match: reference, path, bounds, states. None is not an error.";
 
 pub const INSPECT: &str = "\
 One item in depth: type, id, file and line, geometry, window singletons, properties with \
@@ -205,7 +205,10 @@ pub struct SnapshotArgs {
 #[serde(deny_unknown_fields)]
 pub struct FindArgs {
     /// What to look for, e.g. `role=button[name="Save"]`, `text=notes`,
-    /// `#objectName`, `role=list >> role=listitem >> nth=0`.
+    /// `#objectName`, `role=list >> role=listitem >> nth=0`. `at=X,Y`
+    /// lists every item drawn at that point of the window (logical
+    /// pixels), topmost first, those with no role too, with the type and
+    /// the file and line each was written at.
     pub locator: String,
     /// List at most this many matches (default 50, limit 200).
     #[serde(default)]
@@ -218,7 +221,9 @@ pub struct InspectArgs {
     /// A reference (`e12`) or a locator that matches exactly one item.
     /// `#objectName` and `id=qmlId` also reach items the outline does not
     /// list (not exposed, or not shown), such as the window; `#name` falls
-    /// back to the id when no object has that name.
+    /// back to the id when no object has that name. `at=X,Y` is the
+    /// topmost item drawn at that point of the window, `at=X,Y >> nth=1`
+    /// the one under it.
     pub target: String,
     /// List every property, including those still at their default.
     #[serde(default)]

@@ -287,15 +287,29 @@ impl Look<'_> {
 
     pub(crate) fn resolve(&mut self, what: &str, tool: &str) -> Result<Target, SurfaceError> {
         if let Some(found) = super::objects::parse_handle(self.engine, what) {
-            let obj = found?;
-            return Ok(
-                match self.capture.items.iter().position(|i| *i == Some(obj)) {
-                    Some(index) => Target::Node(index),
-                    None => Target::Unlisted(obj),
-                },
-            );
+            return Ok(self.target_of(found?));
         }
         let locator = Locator::parse(what)?;
+        if let Some(at) = locator.at() {
+            // Topmost first is an order, not a choice among equals: the
+            // item drawn last at the point is the one meant.
+            let stack = self.drawn_at(at.point);
+            return match stack.get(at.nth.unwrap_or(0)) {
+                Some(&obj) => Ok(self.target_of(obj)),
+                None if stack.is_empty() => Err(SurfaceError::not_found(format!(
+                    "nothing is drawn at {},{} of the window. `app_snapshot` gives where the \
+                     items are",
+                    at.point.x, at.point.y
+                ))),
+                None => Err(SurfaceError::not_found(format!(
+                    "{} items are drawn at {},{}, so `nth=` goes from 0 to {}",
+                    stack.len(),
+                    at.point.x,
+                    at.point.y,
+                    stack.len() - 1
+                ))),
+            };
+        }
         let found = locator.find(&self.capture.tree, self.refs)?;
         match found.as_slice() {
             [one] => Ok(Target::Node(*one)),
@@ -314,6 +328,26 @@ impl Look<'_> {
             },
             many => Err(self.ambiguous(what, tool, many)),
         }
+    }
+
+    fn target_of(&self, obj: ObjectId) -> Target {
+        match self.capture.items.iter().position(|i| *i == Some(obj)) {
+            Some(index) => Target::Node(index),
+            None => Target::Unlisted(obj),
+        }
+    }
+
+    /// The items drawn at `point` of the window, topmost first: what the
+    /// last frame painted there, so what is not visible, has opacity 0 or
+    /// is clipped away at the point is not among them.
+    fn drawn_at(&self, point: ljos_mcp_core::Point) -> Vec<ObjectId> {
+        let mut stack = self
+            .scene
+            .items_drawn_at(self.engine, kurbo::Point::new(point.x, point.y));
+        // An item may paint more than one layer; it is one item.
+        let mut seen = HashSet::new();
+        stack.retain(|o| seen.insert(*o));
+        stack
     }
 
     /// Objects the outline does not list that a plain `#objectName` or
@@ -397,6 +431,9 @@ impl Look<'_> {
 
     pub(crate) fn find(&mut self, args: &FindArgs, per_copy: usize) -> Answer {
         let locator = Locator::parse(&args.locator)?;
+        if let Some(at) = locator.at() {
+            return self.find_at(args, at, per_copy);
+        }
         let mut found = locator.find(&self.capture.tree, self.refs)?;
         if found.is_empty()
             && let Some(by_id) = locator.id_instead()
@@ -448,39 +485,131 @@ impl Look<'_> {
             }
             rows.push((Value::Object(row), line));
         }
-        loop {
-            let listed = rows.len();
-            let truncated = listed < total;
-            let value = json!({
-                "matches": rows.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>(),
-                "count": listed,
-                "total": total,
-                "truncated": truncated,
-            });
-            let mut text = String::new();
-            for (_, line) in &rows {
-                let _ = writeln!(text, "{line}");
-            }
-            let _ = match (total, truncated) {
-                (0, _) => write!(
-                    text,
-                    "(no match for `{}`; this is an answer, not an error)",
-                    args.locator
-                ),
-                (_, false) => write!(text, "({total} matches)"),
-                (_, true) => write!(
-                    text,
-                    "({listed} of {total} matches listed; narrow the locator, or add \
-                     `>> nth=N` for one of them)"
-                ),
-            };
-            if listed <= 1 || (text.len() <= per_copy && value.to_string().len() <= per_copy) {
-                return Ok(ToolReply::from(value).with_text(text));
-            }
-            rows.truncate(listed - listed.div_ceil(4));
-        }
+        listing(rows, total, &args.locator, per_copy)
     }
 
+    /// `app_find` with `at=`: every item drawn at the point, topmost
+    /// first, the role-less ones too, each with where it was written so
+    /// that a tool can go from what it points at to the QML.
+    fn find_at(&mut self, args: &FindArgs, at: ljos_mcp_core::At, per_copy: usize) -> Answer {
+        let mut stack = self.drawn_at(at.point);
+        if let Some(n) = at.nth {
+            stack = stack.get(n).copied().into_iter().collect();
+        }
+        let total = stack.len();
+        let limit = args.limit.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES);
+        let engine = self.engine;
+        let mut rows: Vec<(Value, String)> = Vec::new();
+        for &obj in stack.iter().take(limit) {
+            let mut row = Map::new();
+            let mut line = String::new();
+            // An item the outline lists is named by its reference, as
+            // everywhere else; one it does not list by its handle.
+            match self.target_of(obj) {
+                Target::Node(index) => {
+                    let reference = self.reference(index);
+                    let node = self.capture.node(index);
+                    row.insert("ref".into(), json!(reference));
+                    row.insert("role".into(), json!(node.role));
+                    row.insert("name".into(), json!(clip(&node.name, MAX_VALUE_CHARS)));
+                    line.push_str(&render_line(node, Some(&reference), LineOptions::default()));
+                }
+                Target::Unlisted(obj) => {
+                    let handle = super::objects::handle(obj);
+                    let _ = write!(line, "[{handle}]");
+                    row.insert("ref".into(), json!(handle));
+                    row.insert("role".into(), Value::Null);
+                    row.insert("name".into(), Value::Null);
+                }
+            }
+            let report = engine.inspect_object(obj);
+            let ty = report.as_ref().and_then(|r| r.types.first().cloned());
+            let id = report.as_ref().and_then(|r| r.id.clone());
+            let source = report.and_then(|r| r.declared_at);
+            let (object_name, bounds) = engine.untrack(|| {
+                (
+                    text_property(engine, obj, "objectName"),
+                    window_box(engine, obj),
+                )
+            });
+            row.insert("type".into(), json!(ty));
+            if let Some(name) = &object_name {
+                row.insert("obj".into(), json!(name));
+            }
+            if let Some(id) = &id {
+                row.insert("id".into(), json!(id));
+            }
+            row.insert(
+                "bounds".into(),
+                Value::Array(bounds.iter().map(|b| num(*b)).collect()),
+            );
+            row.insert(
+                "source".into(),
+                match &source {
+                    Some(at) => json!({ "file": at.file, "line": at.line, "column": at.column }),
+                    None => Value::Null,
+                },
+            );
+            let _ = write!(line, " {}", ty.as_deref().unwrap_or("(unknown type)"));
+            if let Some(id) = &id {
+                let _ = write!(line, " id={id}");
+            }
+            if let Some(name) = &object_name {
+                let _ = write!(line, " obj={name}");
+            }
+            let _ = write!(
+                line,
+                " [{}, {}, {}, {}]",
+                num(bounds[0]),
+                num(bounds[1]),
+                num(bounds[2]),
+                num(bounds[3])
+            );
+            if let Some(at) = &source {
+                let _ = write!(line, " at {}:{}:{}", at.file, at.line, at.column);
+            }
+            rows.push((Value::Object(row), line));
+        }
+        listing(rows, total, &args.locator, per_copy)
+    }
+}
+
+/// What `app_find` answers: the rows that fit both copies under
+/// `per_copy`, dropping from the end and saying how many were left out.
+fn listing(mut rows: Vec<(Value, String)>, total: usize, locator: &str, per_copy: usize) -> Answer {
+    loop {
+        let listed = rows.len();
+        let truncated = listed < total;
+        let value = json!({
+            "matches": rows.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>(),
+            "count": listed,
+            "total": total,
+            "truncated": truncated,
+        });
+        let mut text = String::new();
+        for (_, line) in &rows {
+            let _ = writeln!(text, "{line}");
+        }
+        let _ = match (total, truncated) {
+            (0, _) => write!(
+                text,
+                "(no match for `{locator}`; this is an answer, not an error)"
+            ),
+            (_, false) => write!(text, "({total} matches)"),
+            (_, true) => write!(
+                text,
+                "({listed} of {total} matches listed; narrow the locator, or add \
+                     `>> nth=N` for one of them)"
+            ),
+        };
+        if listed <= 1 || (text.len() <= per_copy && value.to_string().len() <= per_copy) {
+            return Ok(ToolReply::from(value).with_text(text));
+        }
+        rows.truncate(listed - listed.div_ceil(4));
+    }
+}
+
+impl Look<'_> {
     // ----- app_inspect ----------------------------------------------------
 
     pub(crate) fn inspect(

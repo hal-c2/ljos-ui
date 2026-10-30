@@ -1525,7 +1525,8 @@ Static resources carry long `ttlMs` values.
 - **Refs** (`e9`) are short and valid for one snapshot epoch. A stale ref returns `stale_ref`, or resolves itself when its role and name are still unique.
 - **Locators** are durable across hot reload (section 12.1 identity rules). They use the widely known Playwright role-selector subset:
   - `role=button[name="Delete"]`, `text=…`, `#objectName` and `ref=e9`; `#name` names the object with that QML id when no object has that object name, so a window written with only an `id` is named as `#app`;
-  - chaining with `>>`, plus `nth=` and `name~=regex`.
+  - chaining with `>>`, plus `nth=` and `name~=regex`;
+  - `at=X,Y`, a point of the window in logical pixels: the items drawn there, topmost first (the item painted last at the point comes first). It is answered from what the last frame drew, not from the outline, so items with no role are found too, and an item that is not visible, has opacity 0, or is clipped away at the point is not. A tool that needs one item takes the topmost; `at=X,Y >> nth=1` is the one under it, and no other step goes with `at=` (`invalid_argument` says why). `app_find` lists the whole stack, each with its reference (or handle, when the outline does not list it), type and source place. The source place is the item's own declaration: an item inside a component file is in that file, the root of a component file and an instance of an inline component are where they are used, and the copies a `Repeater` makes are where its delegate is written. A point outside the window is `not_found`.
 - **Handles** (`@12.3`) name any object, item or not, as `app_objects` and `app_processes` give them: the place and generation of its key, so no table is kept, the handle holds for as long as the object lives and is `stale_ref` once it is gone. Every tool that takes a target takes one.
 
 **Errors** are tool results with `isError` and a short code:

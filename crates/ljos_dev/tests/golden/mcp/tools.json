@@ -133,7 +133,7 @@
     "read_only": true
   },
   {
-    "description": "Find items by locator: `role=button[name=\"Save\"]`, `text=notes`, `#objectName`, `id=qmlId`, `name~=regex`, a reference `e12`; `a >> b` searches inside a, `>> nth=0` picks one. Returns a reference, path, bounds and states per match. No match is an empty list, not an error.",
+    "description": "Find items by locator: `role=button[name=\"Save\"]`, `text=notes`, `#objectName`, `id=qmlId`, `name~=regex`, `e12`; `a >> b` searches in a, `>> nth=0` picks one; `at=X,Y`: what is drawn at a window point, topmost first. Each match: reference, path, bounds, states. None is not an error.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -148,7 +148,7 @@
           ]
         },
         "locator": {
-          "description": "What to look for, e.g. `role=button[name=\"Save\"]`, `text=notes`,\n`#objectName`, `role=list >> role=listitem >> nth=0`.",
+          "description": "What to look for, e.g. `role=button[name=\"Save\"]`, `text=notes`,\n`#objectName`, `role=list >> role=listitem >> nth=0`. `at=X,Y`\nlists every item drawn at that point of the window (logical\npixels), topmost first, those with no role too, with the type and\nthe file and line each was written at.",
           "type": "string"
         }
       },
@@ -185,7 +185,7 @@
           ]
         },
         "target": {
-          "description": "A reference (`e12`) or a locator that matches exactly one item.\n`#objectName` and `id=qmlId` also reach items the outline does not\nlist (not exposed, or not shown), such as the window; `#name` falls\nback to the id when no object has that name.",
+          "description": "A reference (`e12`) or a locator that matches exactly one item.\n`#objectName` and `id=qmlId` also reach items the outline does not\nlist (not exposed, or not shown), such as the window; `#name` falls\nback to the id when no object has that name. `at=X,Y` is the\ntopmost item drawn at that point of the window, `at=X,Y >> nth=1`\nthe one under it.",
           "type": "string"
         }
       },
