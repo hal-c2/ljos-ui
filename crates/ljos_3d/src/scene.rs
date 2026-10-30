@@ -5,10 +5,12 @@
 //! revision at a size draws nothing again until one of the two changes:
 //! an idle 3D view costs the blit of the picture it already has.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use slotmap::{SlotMap, new_key_type};
 
+use crate::geometry::CustomGeometry;
 use crate::math::{Mat4, Quat, Vec3};
 
 new_key_type! {
@@ -124,6 +126,18 @@ impl Primitive {
 #[derive(Clone, Debug, PartialEq)]
 pub enum MeshSource {
     Primitive(Primitive),
+    /// An application's own geometry, shared with the renderer's cache.
+    Custom(Arc<CustomGeometry>),
+}
+
+impl MeshSource {
+    /// A sphere that holds the mesh: what frustum culling tests.
+    pub fn bounds(&self) -> (Vec3, f32) {
+        match self {
+            MeshSource::Primitive(p) => p.bounds(),
+            MeshSource::Custom(g) => g.bounding_sphere(),
+        }
+    }
 }
 
 /// `DefaultMaterial.lighting`.

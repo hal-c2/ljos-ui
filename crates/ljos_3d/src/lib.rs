@@ -6,6 +6,7 @@
 //! a browser's behind a `<canvas>` on the web. Without the `gpu` feature
 //! the crate is the scene alone and links no wgpu.
 
+pub mod geometry;
 pub mod math;
 pub mod mesh;
 pub mod scene;
@@ -17,6 +18,9 @@ pub mod offscreen;
 #[cfg(feature = "gpu")]
 pub mod surface;
 
+pub use geometry::{
+    Attribute, ComponentType, CustomGeometry, GeometryError, PrimitiveType, Semantic,
+};
 pub use scene::{
     AlphaMode, Background, Camera, Color, CullMode, DefaultMaterial, Environment, Fade, Light,
     Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive, PrincipledMaterial,

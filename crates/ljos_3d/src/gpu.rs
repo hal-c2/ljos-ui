@@ -14,10 +14,12 @@
 //! is drawn.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use crate::geometry::CustomGeometry;
 use crate::math::{Mat4, Vec3};
 use crate::mesh::Mesh;
 use crate::scene::{
@@ -86,6 +88,14 @@ struct GpuMesh {
     count: u32,
 }
 
+/// A custom geometry as last uploaded. `None` for one that cannot be
+/// drawn: it is not decoded again until it is revised.
+struct CustomMesh {
+    revision: u64,
+    source: Weak<CustomGeometry>,
+    mesh: Option<GpuMesh>,
+}
+
 /// What a pipeline differs by.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct PipelineKey {
@@ -105,6 +115,10 @@ pub struct Renderer {
     model_layout: wgpu::BindGroupLayout,
     model_stride: u64,
     meshes: HashMap<Primitive, GpuMesh>,
+    /// An application's geometries by id: uploaded once per revision, and
+    /// gone once no scene holds the geometry any more.
+    custom: HashMap<u64, CustomMesh>,
+    custom_uploads: u64,
     blit_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
     blits: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
@@ -117,6 +131,7 @@ impl std::fmt::Debug for Renderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Renderer")
             .field("meshes", &self.meshes.len())
+            .field("custom_meshes", &self.custom.len())
             .field("sample_counts", &self.sample_counts)
             .finish_non_exhaustive()
     }
@@ -559,8 +574,14 @@ fn write_slots(queue: &wgpu::Queue, target: &mut Target, draws: &[Draw], stride:
     written.extend(draws.iter().map(|d| d.uniform));
 }
 
+#[derive(Clone, Copy)]
+enum MeshKey {
+    Primitive(Primitive),
+    Custom(u64),
+}
+
 struct Draw {
-    mesh: Primitive,
+    mesh: MeshKey,
     key: PipelineKey,
     uniform: ModelUniform,
     /// How far in front of the camera: blended models are drawn from the
@@ -622,6 +643,8 @@ impl Renderer {
             model_layout,
             model_stride,
             meshes: HashMap::new(),
+            custom: HashMap::new(),
+            custom_uploads: 0,
             blit_layout,
             blit_sampler,
             blits: HashMap::new(),
@@ -717,33 +740,75 @@ impl Renderer {
     }
 
     fn mesh(&mut self, device: &wgpu::Device, p: Primitive) -> &GpuMesh {
-        self.meshes.entry(p).or_insert_with(|| {
-            let mesh = Mesh::primitive(p);
-            let vertices: Vec<Vertex> = mesh
-                .positions
-                .iter()
-                .zip(&mesh.normals)
-                .map(|(position, normal)| Vertex {
-                    position: *position,
-                    normal: *normal,
-                })
-                .collect();
-            GpuMesh {
-                vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("ljos_3d vertices"),
-                    contents: bytemuck::cast_slice(&vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                }),
-                indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("ljos_3d indices"),
-                    contents: bytemuck::cast_slice(&mesh.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                }),
-                count: mesh.indices.len() as u32,
-            }
-        })
+        self.meshes
+            .entry(p)
+            .or_insert_with(|| upload(device, &Mesh::primitive(p)))
     }
 
+    /// Uploads `geometry` unless this revision of it is there already.
+    /// Whether it can be drawn.
+    fn custom_mesh(&mut self, device: &wgpu::Device, geometry: &Arc<CustomGeometry>) -> bool {
+        let id = geometry.id();
+        match self.custom.get(&id) {
+            Some(c) if c.revision == geometry.revision() => return c.mesh.is_some(),
+            _ => {}
+        }
+        self.custom_uploads += 1;
+        // Nothing to draw is as good as a geometry that fails.
+        let mesh = geometry
+            .to_mesh()
+            .ok()
+            .filter(|m| !m.indices.is_empty())
+            .map(|m| upload(device, &m));
+        let drawable = mesh.is_some();
+        self.custom.insert(
+            id,
+            CustomMesh {
+                revision: geometry.revision(),
+                source: Arc::downgrade(geometry),
+                mesh,
+            },
+        );
+        drawable
+    }
+
+    /// How many custom geometries are held.
+    pub fn custom_meshes(&self) -> usize {
+        self.custom.len()
+    }
+
+    /// How many times a custom geometry was decoded and uploaded.
+    pub fn custom_uploads(&self) -> u64 {
+        self.custom_uploads
+    }
+}
+
+fn upload(device: &wgpu::Device, mesh: &Mesh) -> GpuMesh {
+    let vertices: Vec<Vertex> = mesh
+        .positions
+        .iter()
+        .zip(&mesh.normals)
+        .map(|(position, normal)| Vertex {
+            position: *position,
+            normal: *normal,
+        })
+        .collect();
+    GpuMesh {
+        vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ljos_3d vertices"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        }),
+        indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ljos_3d indices"),
+            contents: bytemuck::cast_slice(&mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        }),
+        count: mesh.indices.len() as u32,
+    }
+}
+
+impl Renderer {
     /// Records the 3D pass of `scene` into `encoder`, unless `target`
     /// already shows this revision. Returns whether it drew.
     pub fn render(
@@ -810,8 +875,16 @@ impl Renderer {
                 let NodeKind::Model(model) = &node.kind else {
                     continue;
                 };
-                let MeshSource::Primitive(p) = model.mesh;
-                let (centre, radius) = p.bounds();
+                let key = match &model.mesh {
+                    MeshSource::Primitive(p) => MeshKey::Primitive(*p),
+                    MeshSource::Custom(g) => {
+                        if !self.custom_mesh(device, g) {
+                            continue;
+                        }
+                        MeshKey::Custom(g.id())
+                    }
+                };
+                let (centre, radius) = model.mesh.bounds();
                 let centre = transform_point(world, centre);
                 if let Some(planes) = &planes
                     && outside(planes, centre, radius * largest_scale(world))
@@ -820,7 +893,7 @@ impl Renderer {
                 }
                 let blends = model.material.blends();
                 let draw = Draw {
-                    mesh: p,
+                    mesh: key,
                     key: PipelineKey {
                         cull: model.material.cull_mode(),
                         depth_write: !blends,
@@ -856,9 +929,13 @@ impl Renderer {
         }
         write_slots(queue, target, &draws, self.model_stride);
         for draw in &draws {
-            self.mesh(device, draw.mesh);
+            if let MeshKey::Primitive(p) = draw.mesh {
+                self.mesh(device, p);
+            }
             self.pipeline(device, draw.key);
         }
+        // A geometry no scene holds is dropped with its buffers.
+        self.custom.retain(|_, c| c.source.strong_count() > 0);
 
         let clear = match scene.environment().background {
             Background::Transparent => wgpu::Color::TRANSPARENT,
@@ -909,7 +986,13 @@ impl Renderer {
                     pass.set_pipeline(&self.pipelines[&draw.key]);
                     bound = Some(draw.key);
                 }
-                let mesh = &self.meshes[&draw.mesh];
+                let mesh = match draw.mesh {
+                    MeshKey::Primitive(p) => &self.meshes[&p],
+                    MeshKey::Custom(id) => self.custom[&id]
+                        .mesh
+                        .as_ref()
+                        .expect("only drawable geometries are drawn"),
+                };
                 let offset = (i as u64 * self.model_stride) as u32;
                 pass.set_bind_group(1, &target.model_group, &[offset]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
