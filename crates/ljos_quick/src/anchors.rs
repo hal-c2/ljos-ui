@@ -135,7 +135,9 @@ pub(crate) fn follow(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> 
 pub(crate) fn completed(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     let followed = engine.extension::<Followed>();
     let waiting = followed.waiting.borrow_mut().remove(&obj);
-    for child in waiting.into_iter().flatten() {
+    // Children complete last first: started in the order they were made,
+    // as a scene adopts them.
+    for child in waiting.into_iter().flatten().rev() {
         let waits = followed
             .items
             .borrow()
