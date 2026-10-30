@@ -452,6 +452,12 @@ fn type_entry(meta: &MetaObject, since: Version) -> TypeEntry {
 /// check QML against the types without the program that registers them.
 /// Group leaves are omitted; a group's type, and an attached type, that
 /// no module exports is in `unnamed`.
+///
+/// A type's `signals` follow the same rule as its properties: its own,
+/// with each argument's name and type, and what it inherits through
+/// `base`. A property's change signal is not listed: it is implied by the
+/// property's `notify`, and takes no arguments. [`TypeDump::signals_of`]
+/// gives all of them for one type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TypeDump {
@@ -479,6 +485,99 @@ impl TypeDump {
             return Err(TypeDumpError::Format { found: dump.format });
         }
         Ok(dump)
+    }
+}
+
+/// The signals [`TypeDump::signals_of`] found for a type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeSignals {
+    /// Every signal the dump knows the type has, a derived type's before
+    /// its base's: declared, and implied by a property's `notify`.
+    pub signals: Vec<SignalEntry>,
+    /// The base the dump does not describe, one of the toolkit's, and its
+    /// module where the dump says it: that type's signals are the type's
+    /// too, and the table of types has them.
+    pub toolkit_base: Option<(Option<String>, String)>,
+}
+
+impl TypeEntry {
+    /// The signals of the type itself: those it declares, and then the
+    /// change signals its properties imply.
+    pub fn own_signals(&self) -> impl Iterator<Item = SignalEntry> + '_ {
+        let implied = self.properties.iter().filter_map(|p| {
+            let name = p.notify.as_ref()?;
+            let declared = self.signals.iter().any(|s| &s.name == name);
+            (!declared).then(|| SignalEntry {
+                name: name.clone(),
+                parameters: Vec::new(),
+            })
+        });
+        self.signals.iter().cloned().chain(implied)
+    }
+}
+
+impl TypeDump {
+    /// The type `name` of the module `uri`.
+    pub fn type_entry(&self, uri: &str, name: &str) -> Option<&TypeEntry> {
+        self.modules
+            .iter()
+            .filter(|m| m.uri == uri)
+            .find_map(|m| m.types.iter().find(|t| t.name == name))
+    }
+
+    /// The base of `entry`, when this dump describes it, and its module
+    /// (empty for an unnamed type).
+    pub fn base_of(&self, entry: &TypeEntry) -> Option<(&str, &TypeEntry)> {
+        let base = entry.base.as_ref()?;
+        self.modules
+            .iter()
+            .filter(|m| entry.base_module.as_ref().is_none_or(|b| *b == m.uri))
+            .find_map(|m| {
+                let found = m.types.iter().find(|t| &t.name == base)?;
+                Some((m.uri.as_str(), found))
+            })
+            .or_else(|| {
+                let found = self.unnamed.iter().find(|t| &t.name == base)?;
+                Some(("", found))
+            })
+    }
+
+    /// Everything `onName:` may handle on the type `name` of the module
+    /// `uri`, as far as the dump describes it; `None` for a type it does
+    /// not have. A chain of bases that comes back to itself ends there.
+    pub fn signals_of(&self, uri: &str, name: &str) -> Option<TypeSignals> {
+        let mut entry = self.type_entry(uri, name)?;
+        let mut seen = vec![entry];
+        let mut signals: Vec<SignalEntry> = Vec::new();
+        loop {
+            for signal in entry.own_signals() {
+                if !signals.iter().any(|s| s.name == signal.name) {
+                    signals.push(signal);
+                }
+            }
+            match self.base_of(entry) {
+                Some((_, base)) if seen.iter().any(|s| std::ptr::eq(*s, base)) => {
+                    return Some(TypeSignals {
+                        signals,
+                        toolkit_base: None,
+                    });
+                }
+                Some((_, base)) => {
+                    seen.push(base);
+                    entry = base;
+                }
+                None => {
+                    let toolkit_base = entry
+                        .base
+                        .clone()
+                        .map(|base| (entry.base_module.clone(), base));
+                    return Some(TypeSignals {
+                        signals,
+                        toolkit_base,
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -614,6 +713,32 @@ pub struct ParamEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_type_has_its_own_implied_and_inherited_signals() {
+        let dump = TypeDump::from_json(
+            r#"{"format": 2, "modules": [{"uri": "M", "versions": ["1.0"], "types": [
+              {"name": "Base", "since": "1.0", "base": "Item", "baseModule": "QtQuick",
+               "creatable": true, "defaultProperty": null, "attached": null, "properties": [],
+               "signals": [{"name": "opened", "parameters": [{"name": "url", "type": "url"}]}],
+               "methods": []},
+              {"name": "Top", "since": "1.0", "base": "Base", "baseModule": "M",
+               "creatable": true, "defaultProperty": null, "attached": null,
+               "properties": [{"name": "v", "type": "int", "readonly": false, "final": true,
+                 "required": false, "constant": false, "group": false, "notify": "vChanged"}],
+               "signals": [], "methods": []}]}]}"#,
+        )
+        .unwrap();
+        let found = dump.signals_of("M", "Top").unwrap();
+        let names: Vec<_> = found.signals.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["vChanged", "opened"]);
+        assert_eq!(found.signals[1].parameters[0].ty, "url");
+        assert_eq!(
+            found.toolkit_base,
+            Some((Some("QtQuick".to_owned()), "Item".to_owned()))
+        );
+        assert!(dump.signals_of("M", "Nothing").is_none());
+    }
 
     #[test]
     fn versions_parse() {

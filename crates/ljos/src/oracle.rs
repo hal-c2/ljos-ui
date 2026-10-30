@@ -131,17 +131,15 @@ impl NativeType {
                 required: p.required,
             });
         }
-        for s in &entry.signals {
-            let params = s.parameters.iter().map(|p| p.name.clone()).collect();
-            ty.signals.push((s.name.clone(), params));
-        }
         // The dump leaves out the change signals the Engine makes for a
-        // property; a handler of one is as good as any other.
-        for p in &entry.properties {
-            if let Some(notify) = &p.notify
-                && !entry.signals.iter().any(|s| &s.name == notify)
-            {
-                ty.signals.push((notify.clone(), Vec::new()));
+        // property; a handler of one is as good as any other. A property
+        // may name a signal it inherits, whose arguments stay.
+        for s in entry.own_signals() {
+            let inherited = entry.signals.iter().all(|own| own.name != s.name)
+                && ty.signals.iter().any(|(name, _)| *name == s.name);
+            if !inherited {
+                let params = s.parameters.iter().map(|p| p.name.clone()).collect();
+                ty.signals.push((s.name.clone(), params));
             }
         }
         ty.methods
