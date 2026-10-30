@@ -1,7 +1,9 @@
 //! Anchor layout: eager geometry effects (ARCHITECTURE §7.4).
 //!
-//! An item a scene shows is followed ([`follow`]) and, from the first
-//! anchor line it is given, has one anchors effect. Most items are
+//! An item is followed from when it completes ([`completed`]), as Qt
+//! applies anchors before any `Component.onCompleted` handler runs, and
+//! while a scene shows it ([`follow`]); from the first anchor line it is
+//! given, it has one anchors effect. Most items are
 //! anchored by nothing: they cost the scene no effect, and the line that
 //! is given late is told ([`line_given`]) and starts one then. The effect
 //! reads the item's `anchors.*` and, when any are set, the geometry of the
@@ -14,9 +16,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Cx, Engine, EngineError, LogLevel, NodeId, ObjectId, OverrideContent, OverrideId, PropIndex,
-    RestoreMode, Value, WriteKind,
+    Cx, Engine, EngineError, LogLevel, NodeId, ObjectFlags, ObjectId, OverrideContent, OverrideId,
+    PropIndex, RestoreMode, Value, WriteKind,
 };
+use rustc_hash::FxHashMap;
 use slotmap::SecondaryMap;
 
 use crate::item::{AnchorLine, AnchorProps, Edge, Item, effective_margin, num};
@@ -76,11 +79,23 @@ impl AnchorState {
 #[derive(Default)]
 struct Followed {
     items: RefCell<SecondaryMap<ObjectId, Shown>>,
+    /// Items completed before their parent, by parent: their anchors start
+    /// as it completes. A component completes its children first, so an
+    /// anchor to the parent or a sibling read sooner would find a line not
+    /// yet there, and watch it for no use. Sparse: it holds only the
+    /// parents of one component being completed, where a dense map would
+    /// keep a slot for every object there ever was.
+    waiting: RefCell<FxHashMap<ObjectId, Vec<ObjectId>>>,
 }
 
 struct Shown {
     /// How many scenes show it: the last to stop showing it stops it.
     scenes: u32,
+    /// Followed because it completed and no scene shows it yet. The first
+    /// scene to show it takes this over; one that never does (an item
+    /// outside any window, or one made before its window) keeps its
+    /// anchors until it is destroyed.
+    completed: bool,
     following: Option<Following>,
 }
 
@@ -96,17 +111,101 @@ pub(crate) fn follow(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> 
     {
         let mut items = followed.items.borrow_mut();
         if let Some(shown) = items.get_mut(obj) {
-            shown.scenes += 1;
+            if shown.completed {
+                shown.completed = false;
+            } else {
+                shown.scenes += 1;
+            }
             return Ok(());
         }
         items.insert(
             obj,
             Shown {
                 scenes: 1,
+                completed: false,
                 following: None,
             },
         );
     }
+    start_if_anchored(engine, obj, &followed)
+}
+
+/// `obj` completed: its anchors are followed now, so what runs as the
+/// component completes reads the geometry they give.
+pub(crate) fn completed(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let followed = engine.extension::<Followed>();
+    let waiting = followed.waiting.borrow_mut().remove(&obj);
+    for child in waiting.into_iter().flatten() {
+        let waits = followed
+            .items
+            .borrow()
+            .get(child)
+            .is_some_and(|s| s.following.is_none());
+        if waits && engine.is_alive(child) {
+            start(engine, child, &followed)?;
+        }
+    }
+    // An item without anchors keeps nothing here, so most items cost none.
+    if !anchored(engine, obj) {
+        return Ok(());
+    }
+    {
+        let mut items = followed.items.borrow_mut();
+        if items.contains_key(obj) {
+            return Ok(());
+        }
+        items.insert(
+            obj,
+            Shown {
+                scenes: 0,
+                completed: true,
+                following: None,
+            },
+        );
+    }
+    let parent = engine.visual_parent(obj).filter(|p| {
+        engine
+            .flags(*p)
+            .is_some_and(|f| !f.contains(ObjectFlags::COMPLETED))
+    });
+    if let Some(p) = parent {
+        followed
+            .waiting
+            .borrow_mut()
+            .entry(p)
+            .or_default()
+            .push(obj);
+        return Ok(());
+    }
+    start(engine, obj, &followed)
+}
+
+/// [`Engine::on_destroyed`]: an item followed only for completing has no
+/// scene to tell when it goes; its effect went with it.
+pub(crate) fn destroyed(engine: &Engine, gone: &[ObjectId]) {
+    let followed = engine.extension::<Followed>();
+    let mut items = followed.items.borrow_mut();
+    let mut waiting = followed.waiting.borrow_mut();
+    for o in gone {
+        if items.get(*o).is_some_and(|s| s.completed) {
+            items.remove(*o);
+        }
+        waiting.remove(o);
+    }
+}
+
+fn start_if_anchored(
+    engine: &Engine,
+    obj: ObjectId,
+    followed: &Followed,
+) -> Result<(), EngineError> {
+    if anchored(engine, obj) {
+        start(engine, obj, followed)?;
+    }
+    Ok(())
+}
+
+fn anchored(engine: &Engine, obj: ObjectId) -> bool {
     let a = AnchorProps::get();
     let lines = [
         a.fill,
@@ -119,10 +218,7 @@ pub(crate) fn follow(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> 
         a.vertical_center,
         a.baseline,
     ];
-    if engine.authored(obj, &lines, (1 << lines.len()) - 1) != 0 {
-        start(engine, obj, &followed)?;
-    }
-    Ok(())
+    engine.authored(obj, &lines, (1 << lines.len()) - 1) != 0
 }
 
 /// Stops following `obj`'s anchors for a scene that no longer shows it;
@@ -131,7 +227,7 @@ pub(crate) fn unfollow(engine: &Engine, obj: ObjectId) {
     let followed = engine.extension::<Followed>();
     let following = {
         let mut items = followed.items.borrow_mut();
-        let Some(shown) = items.get_mut(obj) else {
+        let Some(shown) = items.get_mut(obj).filter(|s| s.scenes > 0) else {
             return;
         };
         shown.scenes -= 1;
@@ -199,15 +295,24 @@ pub(crate) fn size_changed(engine: &Engine, obj: ObjectId, prop: PropIndex) {
 pub(crate) fn line_given(cx: &Cx<'_>, _line: PropIndex) {
     let (engine, obj) = (cx.engine, cx.this);
     let followed = engine.extension::<Followed>();
-    let waits = followed
-        .items
-        .borrow()
-        .get(obj)
-        .is_some_and(|s| s.following.is_none());
-    if !waits {
+    let (known, waits) = match followed.items.borrow().get(obj) {
+        Some(s) => (true, s.following.is_none()),
+        None => (false, false),
+    };
+    // Anchors first given after the item completed, with no scene showing
+    // it, hold from now as authored ones do from completion.
+    let done = !known
+        && engine
+            .flags(obj)
+            .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
+    let started = if done {
+        completed(engine, obj)
+    } else if waits {
+        start(engine, obj, &followed)
+    } else {
         return;
-    }
-    if let Err(e) = start(engine, obj, &followed) {
+    };
+    if let Err(e) = started {
         engine.log(LogLevel::Warning, CATEGORY, format!("anchors: {e}"));
     }
 }

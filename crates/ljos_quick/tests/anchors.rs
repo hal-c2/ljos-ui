@@ -192,17 +192,20 @@ fn removing_an_anchor_keeps_the_geometry() {
 }
 
 #[test]
-fn anchors_wait_for_the_scene() {
-    // Anchors are effects the scene installs; a tree outside a scene keeps
-    // its plain geometry.
+fn anchors_hold_before_any_scene_shows_the_item() {
+    // Qt applies anchors as an item completes, so what runs as its
+    // component completes, and a tree no window shows, reads the geometry
+    // they give (features/items/anchors-on-completion.feature).
     let e = engine();
     let root = make::<Item>(&e, None);
     geom(&e, root, 0.0, 0.0, 200.0, 100.0);
     let c = make::<Item>(&e, Some(root));
     set(&e, c, "anchors.fill", Value::Object(root));
-    assert_eq!(num(&e, c, "width"), 0.0);
+    assert_eq!(num(&e, c, "width"), 200.0);
     let _s = scene(&e, root, 300.0, 300.0);
     assert_eq!(num(&e, c, "width"), 200.0);
+    geom(&e, root, 0.0, 0.0, 120.0, 100.0);
+    assert_eq!(num(&e, c, "width"), 120.0);
 }
 
 #[test]

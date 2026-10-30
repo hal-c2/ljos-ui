@@ -377,6 +377,9 @@ fn ten_listview_delegates() {
     // `parent` and `focus` are acted on by their change hooks, where each
     // item had an effect watching each, which made it a value too: four
     // effects, four values and 5.1 allocations fewer a delegate (B30).
+    // Anchors hold from an item's completion, as Qt's do, not from the
+    // first frame: an item completed before its parent waits for it in a
+    // table the delegates share (96 bytes, no allocation more).
     assert_eq!(
         b,
         Budget {
@@ -394,7 +397,7 @@ fn ten_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1208,
-            bytes: 151400,
+            bytes: 151496,
         }
     );
 }
@@ -565,12 +568,14 @@ fn bytes_a_thousand_instances_keep() {
     // 25.0 and 11.7 kB before, MEM3). MIR's smaller record, 264 bytes
     // where it was 328, leaves 0.1 kB less each (21.1, 23.3 and 11.3 kB
     // before). An item without the accessible record nothing read keeps
-    // 48 bytes less (20.9, 23.2 and 11.2 kB before). The rest is mostly
+    // 48 bytes less (20.9, 23.2 and 11.2 kB before). Anchors held from
+    // completion, not from the first frame, leave the anchored rows 90
+    // bytes less each (20.9 kB before). The rest is mostly
     // the graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 20873,
+            one_line: 20783,
             wrapped: 23147,
             plain: 11110,
         }

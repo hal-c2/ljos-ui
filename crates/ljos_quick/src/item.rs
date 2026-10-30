@@ -696,6 +696,7 @@ impl Item {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init_item(cx.engine, cx.this)?;
+        crate::anchors::completed(cx.engine, cx.this)?;
         crate::scene::completed(cx.engine, cx.this);
         crate::palette::item_palette_set(cx.engine, cx.this, false);
         crate::states::group::attach_stateless(cx.engine, cx.this);
