@@ -1,6 +1,6 @@
 //! Files changed under the running application, and what reloading them did.
 
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 use gherkin::Step;
 use regex::Regex;
 
@@ -57,6 +57,37 @@ fn image_file_saved_broken(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| {
         b.reloading()?
             .change_resource(&name, &fixture::not_an_image())
+    })
+}
+
+#[given(regex = r#"^the theme file "([^"]+\.json)" is:$"#)]
+fn theme_file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.reloading()?.change_theme(&name, Some(&text)))
+}
+
+#[when(regex = r#"^the theme file "([^"]+\.json)" is changed to:$"#)]
+fn theme_file_changed(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.reloading()?.change_theme(&name, Some(&text)))
+}
+
+#[when(regex = r#"^the theme file "([^"]+\.json)" is removed$"#)]
+fn theme_file_removed(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.reloading()?.change_theme(&name, None))
+}
+
+#[then(regex = r"^the reload generation is (\d+)$")]
+fn reload_generation_is(w: &mut LjosWorld, want: u64) -> StepResult {
+    w.each(|b| {
+        let generation = b.reloading()?.reload_generation()?;
+        if generation == want {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the reload generation is {generation}, expected {want}"
+            )))
+        }
     })
 }
 

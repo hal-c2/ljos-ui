@@ -56,6 +56,8 @@ fn changes_files(
                 text.contains("reload")
                     || text == "the files are watched"
                     || (text.starts_with("the image file ") && text.contains(" is saved as "))
+                    || (text.starts_with("the theme file ")
+                        && (text.ends_with(" is changed to:") || text.ends_with(" is removed")))
                     || (text.starts_with("the file ")
                         && (text.ends_with(" is changed to:")
                             || text.ends_with(" is saved and closed as:")

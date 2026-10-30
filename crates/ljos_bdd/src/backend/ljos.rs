@@ -149,6 +149,9 @@ pub struct LjosBackend {
     image_texts: Vec<(String, Vec<u8>)>,
     /// Whether the scenario changes files while it runs.
     watching: bool,
+    /// The theme file given before anything was loaded: its name, and
+    /// what it says.
+    theme: Option<(String, String)>,
     /// What the system prefers, said before anything was loaded.
     settings: Vec<HostSetting>,
     /// What the desktop's settings portal said.
@@ -1089,6 +1092,9 @@ impl Backend for LjosBackend {
             {
                 reload::Rig::install(live);
             }
+            if let (Some((name, text)), Some(live)) = (self.theme.take(), self.live.as_mut()) {
+                live.start_theme(&name, text);
+            }
         }
         self.live()?.load(files, entry)
     }
@@ -1616,6 +1622,20 @@ impl Reload for LjosBackend {
 
     fn reload_count(&mut self) -> Result<u64> {
         self.live()?.reload_count()
+    }
+
+    fn change_theme(&mut self, name: &str, text: Option<&str>) -> Result<()> {
+        match &mut self.live {
+            Some(live) => live.change_theme(name, text),
+            None => {
+                self.theme = text.map(|t| (name.to_owned(), t.to_owned()));
+                Ok(())
+            }
+        }
+    }
+
+    fn reload_generation(&mut self) -> Result<u64> {
+        Ok(self.live()?.engine.reload_generation())
     }
 }
 

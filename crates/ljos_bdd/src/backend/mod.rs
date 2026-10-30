@@ -1005,6 +1005,19 @@ pub trait Reload: Backend {
         Err(self.no_reload())
     }
 
+    /// The theme file `name` says `text`, or is gone (`None`). Before
+    /// anything is loaded it is what the application starts with; later
+    /// it is applied when the files have been quiet.
+    fn change_theme(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {
+        Err(self.no_reload())
+    }
+
+    /// The generation of what runs: it moves with every reload applied,
+    /// one of a theme too.
+    fn reload_generation(&mut self) -> Result<u64> {
+        Err(self.no_reload())
+    }
+
     /// Hot reload is a Ljós extension; the oracle has nothing like it.
     fn no_reload(&self) -> BackendError {
         BackendError::Unsupported {

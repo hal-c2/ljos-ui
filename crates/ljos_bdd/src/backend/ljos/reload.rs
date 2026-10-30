@@ -23,6 +23,11 @@ pub(super) struct Rig {
     count: u64,
     /// The URLs of pictures saved and not shown again yet.
     pictures: Vec<String>,
+    /// Whether a theme file is watched, and why the last one that could
+    /// not be read was refused: an error that stands while the QML
+    /// reloads, as a host keeps it.
+    theme: bool,
+    theme_fault: Option<ReloadFault>,
 }
 
 impl Rig {
@@ -36,6 +41,8 @@ impl Rig {
             started: false,
             count: 0,
             pictures: Vec::new(),
+            theme: false,
+            theme_fault: None,
         });
     }
 }
@@ -123,6 +130,44 @@ impl Live {
         Ok(())
     }
 
+    /// The application starts with the theme file `name` that says
+    /// `text`, as a host reads it before the root is made. One that is
+    /// refused leaves the module's own roles and says why.
+    pub(super) fn start_theme(&mut self, name: &str, text: String) {
+        let refused = match ljos_dev::parse_theme(name, &text) {
+            Ok(theme) => ljos_design_qml::theme::apply(&self.engine, theme.as_ref())
+                .err()
+                .and_then(|errors| errors.into_iter().next())
+                .map(|e| ReloadFault {
+                    file: e.file,
+                    line: e.line,
+                    column: e.column,
+                    message: e.message,
+                }),
+            Err(faults) => faults.first().map(fault_of),
+        };
+        if let Some(rig) = self.reloads.as_mut() {
+            rig.reloader.watch_theme(name, None, Some(text));
+            rig.theme = true;
+            rig.theme_fault.clone_from(&refused);
+        }
+        self.engine.set_last_reload_error(refused);
+    }
+
+    /// The theme file `name` is saved with new text, or removed. Nothing
+    /// happens to the application until the files have been quiet.
+    pub(super) fn change_theme(&mut self, name: &str, text: Option<&str>) -> Result<()> {
+        let now = self.clock.now();
+        let rig = self.reloads.as_mut().ok_or_else(not_watching)?;
+        if !rig.theme {
+            rig.reloader.watch_theme(name, None, None);
+            rig.theme = true;
+        }
+        rig.reloader.save_theme(text.map(str::to_owned));
+        rig.quiet.touch(now);
+        Ok(())
+    }
+
     /// When the quiet time of the last save ends.
     pub(super) fn reload_due(&self) -> Option<Time> {
         self.reloads.as_ref().and_then(|r| r.quiet.deadline())
@@ -171,6 +216,39 @@ impl Live {
             // Nothing runs yet; the next load compiles what was saved.
             return Ok(());
         }
+        // As a watcher sends it: before the QML of the same saves, and
+        // with nothing made again.
+        if let Some(change) = rig.reloader.take_theme() {
+            let set = change.and_then(|theme| {
+                let generation = rig.reloader.advance();
+                match ljos_dev::set_theme(&self.engine, theme.as_ref(), generation) {
+                    Ok(()) => {
+                        rig.reloader.ack(generation);
+                        Ok(())
+                    }
+                    Err(faults) => {
+                        rig.reloader.reject(generation);
+                        Err(faults)
+                    }
+                }
+            });
+            let was_theme = self
+                .engine
+                .last_reload_error()
+                .is_some_and(|e| rig.theme_fault.as_ref().is_some_and(|t| t.file == e.file));
+            match set {
+                Ok(()) => {
+                    rig.theme_fault = None;
+                    if was_theme {
+                        self.engine.set_last_reload_error(None);
+                    }
+                }
+                Err(faults) => {
+                    rig.theme_fault = faults.first().map(fault_of);
+                    self.engine.set_last_reload_error(rig.theme_fault.clone());
+                }
+            }
+        }
         let built = if asked {
             rig.reloader.build_now()
         } else {
@@ -184,7 +262,7 @@ impl Live {
                 return Ok(());
             }
             Build::UpToDate => {
-                self.engine.set_last_reload_error(None);
+                self.engine.set_last_reload_error(rig.theme_fault.clone());
                 return Ok(());
             }
             Build::Failed(faults) => {
@@ -220,6 +298,8 @@ impl Live {
             Ok(done) => {
                 rig.reloader.ack(patch.generation);
                 rig.count += 1;
+                // The QML runs again; a theme that was refused still is.
+                self.engine.set_last_reload_error(rig.theme_fault.clone());
                 self.roots = done.roots.iter().map(|(_, new)| *new).collect();
                 let session = rig.reloader.session();
                 self.compiled_from = session
