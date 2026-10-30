@@ -20,7 +20,7 @@
 
 use serde::Serialize;
 
-use crate::color::{Oklch, Srgb, Srgba, apca_lc, wcag_contrast};
+use crate::color::{Oklch, Srgb, Srgba, apca_lc, over, wcag_contrast};
 use crate::limits;
 
 /// Light or dark, as `Application.styleHints.colorScheme` tells it.
@@ -511,11 +511,38 @@ fn pairs() -> Vec<(&'static str, &'static [&'static str], &'static str)> {
 }
 
 fn checks(p: &Palette, text_target: f32) -> Vec<Check> {
-    let color = |name: &str| Srgb::parse(p.role(name).unwrap_or("#000")).unwrap_or(Srgb::BLACK);
+    let opaque_black = Srgb::BLACK.with_alpha(1.0);
+    check_pairs(
+        |name| Srgba::parse(p.role(name).unwrap_or("#000")).unwrap_or(opaque_black),
+        text_target,
+    )
+}
+
+/// Every role another one is read on: the grounds, and the fills text
+/// sits on. A translucent one would be checked against what is behind
+/// it, which no palette knows, so each of them has to be opaque.
+pub fn backgrounds() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for (_, bgs, _) in pairs() {
+        for &bg in bgs {
+            if !out.contains(&bg) {
+                out.push(bg);
+            }
+        }
+    }
+    out
+}
+
+/// The pairs [`Palette::checks`] lists, of the colours `color` gives by
+/// role name: what a palette with some roles of its own is held to. A
+/// translucent foreground is painted over its background first, as the
+/// screen shows it; a background is taken as opaque ([`backgrounds`]).
+pub fn check_pairs(color: impl Fn(&str) -> Srgba, text_target: f32) -> Vec<Check> {
     let mut out = Vec::new();
     for (fg, bgs, kind) in pairs() {
         for &bg in bgs {
-            let (f, b) = (color(fg), color(bg));
+            let b = color(bg).rgb();
+            let f = over(color(fg), b);
             let required = match (kind, fg) {
                 ("text", _) => text_target,
                 (_, "borderStrong") => limits::TEXT_CONTRAST,

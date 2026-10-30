@@ -19,6 +19,7 @@ pub mod module;
 pub mod motion;
 pub mod palette;
 pub mod scale;
+pub mod theme;
 pub mod words;
 
 /// How sure a check is that a finding hurts a user.

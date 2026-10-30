@@ -109,7 +109,7 @@ pub fn qml_role(role: &str) -> String {
 }
 
 /// `sheet-in` as a property name: `sheetIn`.
-fn camel(name: &str) -> String {
+pub(crate) fn camel(name: &str) -> String {
     let mut out = String::new();
     let mut up = false;
     for c in name.chars() {
@@ -125,7 +125,7 @@ fn camel(name: &str) -> String {
     out
 }
 
-fn capital(name: &str) -> String {
+pub(crate) fn capital(name: &str) -> String {
     let mut c = name.chars();
     c.next()
         .map(|f| f.to_uppercase().chain(c).collect())
