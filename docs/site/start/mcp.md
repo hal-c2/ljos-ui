@@ -100,6 +100,16 @@ Passing `--mcp` with no value enables `inspect` only, where every offered tool i
 
 When the application starts, it binds a loopback HTTP listener (or a Unix socket with `--mcp-socket <PATH>`) and writes the address and a bearer token to `target/ljos/mcp-<pid>.json` (mode `0600`). Only local clients that present this bearer token are answered; requests without the current token receive HTTP `401`.
 
+### Running with no window (`--headless`)
+
+`ljos run --headless` runs the application with no window and needs no display, so an agent can drive it on a server, in a container or in CI:
+
+```sh
+ljos run Main.qml --headless --watch --mcp=inspect,input,mutate,eval
+```
+
+The root is laid out at `--size WxH`, or else at its own size, and every inspector tool works as it does on a window: `app_screenshot` returns the scene's picture, input acts on the scene, `app_resize` sets the size of the next picture, and `--watch` applies saves and keeps the application's state. Timers and animations run on the real clock, and the process sleeps when nothing is due. The inspector line is written to standard error as usual. There is no system clipboard, file dialog, URL opener or screen reader, and a `Window` is an item of the scene, not a platform window. A run with neither `--mcp` nor `--watch` lasts until the application calls `Qt.quit()`.
+
 ### Connecting an stdio MCP client with `ljos attach`
 
 Most coding agents start MCP servers as stdio subprocesses. Point your agent's MCP configuration at `ljos attach`:
