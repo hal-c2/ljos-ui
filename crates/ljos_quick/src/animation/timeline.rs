@@ -481,9 +481,12 @@ impl Lerp {
     }
 }
 
+/// Makes a vector of one kind again from its four padded components.
+type Remake = fn([f32; 4]) -> Value;
+
 /// A vector's components, padded to four, and how to make the vector
 /// again from four.
-fn vector(v: &Value) -> Option<([f32; 4], fn([f32; 4]) -> Value)> {
+fn vector(v: &Value) -> Option<([f32; 4], Remake)> {
     use ljos_engine::{Vector2d, Vector3d, Vector4d};
     Some(match v {
         Value::Vector2d(v) => ([v.x, v.y, 0.0, 0.0], |[x, y, ..]| {
