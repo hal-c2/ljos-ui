@@ -150,6 +150,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the web server streams N bytes at "X"` | stream N zero bytes in HTTP chunks without allocating the whole response |
 | `Given the media file "X"` | make a sound or a film of `features/multimedia/media` available beside the QML files under its own name |
 | `Given the sprite sheet "X"` | make an image of `features/animation/sprites` available beside the QML files under its own name: `strip.png` is four 16 by 16 frames in a row, red, green, blue and white; `sheet.png` the same four in two rows of two |
+| `Given the model file "X"` | make a glTF file of `features/quick3d/models` available beside the QML files under its own name; `gen.py` there writes them and says what each holds |
 | `Given a file "X.ttf" that is not a font` | make a file with that name and no font inside available |
 | `Given the text file "X":` + doc string | make a text file available beside the QML files, each line trimmed of the scenario's indentation |
 | `Given the user has the text file "path":` + doc string | a text file under the user's home directory (`.config/tool.conf`), which is `/home/user` in a scenario (`@ljos-only`: the oracle's home is the real one) |

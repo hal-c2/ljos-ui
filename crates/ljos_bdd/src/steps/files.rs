@@ -241,6 +241,14 @@ fn the_sprite_sheet(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
+// A glTF model of features/quick3d/models, beside the QML under its own
+// name.
+#[given(regex = r#"^the model file "([^"]+)"$"#)]
+fn the_model_file(w: &mut LjosWorld, name: String) -> StepResult {
+    let bytes = feature_file("quick3d/models", &name)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
 // A file with a font's name and something else inside.
 #[given(regex = r#"^a file "([^"]+)" that is not a font$"#)]
 fn not_a_font(w: &mut LjosWorld, name: String) -> StepResult {
