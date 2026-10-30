@@ -250,23 +250,23 @@ impl Engine {
         })
     }
 
-    /// Like [`Engine::set_log_handler`], and the handler is also told where
+    /// Like [`Engine::add_log_listener`], and the listener is also told where
     /// the message was written when JS wrote it (`console.log`). Finding
     /// the place costs a stack trace per message, so only a tool that
     /// shows it (the inspector's `app_logs`) asks for it.
-    pub fn set_log_handler_with_origin(
+    pub fn add_log_listener_with_origin(
         &self,
         mut f: impl FnMut(&LogEntry, Option<&SourcePlace>) + 'static,
-    ) {
-        // Weak: the engine owns the handler, and a handler that owned the
+    ) -> crate::log::LogListenerId {
+        // Weak: the engine owns the listener, and a listener that owned the
         // engine would keep it alive for ever.
         let weak = Rc::downgrade(&self.inner);
-        self.set_log_handler(move |entry| {
+        self.add_log_listener(move |entry| {
             let at = weak
                 .upgrade()
                 .and_then(|inner| Engine::from_inner(inner).js_origin());
             f(entry, at.as_ref());
-        });
+        })
     }
 
     fn place_of(&self, obj: ObjectId) -> Option<SourcePlace> {

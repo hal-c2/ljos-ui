@@ -47,11 +47,17 @@ impl fmt::Display for LogEntry {
 pub(crate) type LogHandler = Box<dyn FnMut(&LogEntry)>;
 pub(crate) type WarningHandler = Box<dyn FnMut(&str)>;
 
+/// Says which listener to remove ([`Engine::remove_log_listener`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LogListenerId(u64);
+
 #[derive(Default)]
 pub(crate) struct LogState {
     pub(crate) entries: VecDeque<LogEntry>,
     pub(crate) handler: Option<LogHandler>,
     pub(crate) warning_handler: Option<WarningHandler>,
+    listeners: Vec<(LogListenerId, LogHandler)>,
+    next_listener: u64,
 }
 
 impl Engine {
@@ -64,6 +70,7 @@ impl Engine {
             category: category.to_owned(),
             message: message.into(),
         };
+        self.tell_listeners(&entry);
         if entry.level >= LogLevel::Warning {
             // Taken out while it runs, so a handler that logs does not
             // re-borrow.
@@ -96,7 +103,46 @@ impl Engine {
         }
     }
 
-    /// Routes every log entry to `f` instead of the buffer.
+    /// Taken out while they run, like the handlers: what a listener logs
+    /// goes on to the handler and not back to the listeners.
+    fn tell_listeners(&self, entry: &LogEntry) {
+        let mut listeners = std::mem::take(&mut self.inner.log.borrow_mut().listeners);
+        if listeners.is_empty() {
+            return;
+        }
+        for (_, listener) in &mut listeners {
+            listener(entry);
+        }
+        let mut log = self.inner.log.borrow_mut();
+        listeners.append(&mut log.listeners);
+        log.listeners = listeners;
+    }
+
+    /// Lets `f` hear every log entry, as well as whatever else hears it:
+    /// the handler ([`Engine::set_log_handler`]) or the buffer, and any
+    /// other listener. For a tool that watches an application, whose view
+    /// must not depend on what the application does with its log.
+    pub fn add_log_listener(&self, f: impl FnMut(&LogEntry) + 'static) -> LogListenerId {
+        let mut log = self.inner.log.borrow_mut();
+        log.next_listener += 1;
+        let id = LogListenerId(log.next_listener);
+        log.listeners.push((id, Box::new(f)));
+        id
+    }
+
+    /// Stops a listener hearing the log. Not from inside a listener, which
+    /// is not among them while it runs.
+    pub fn remove_log_listener(&self, id: LogListenerId) {
+        self.inner
+            .log
+            .borrow_mut()
+            .listeners
+            .retain(|(i, _)| *i != id);
+    }
+
+    /// Routes every log entry to `f` instead of the buffer. There is one
+    /// handler; listeners ([`Engine::add_log_listener`]) hear the entries
+    /// whatever it is.
     pub fn set_log_handler(&self, f: impl FnMut(&LogEntry) + 'static) {
         self.inner.log.borrow_mut().handler = Some(Box::new(f));
     }

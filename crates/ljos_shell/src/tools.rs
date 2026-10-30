@@ -649,9 +649,8 @@ mod inspector {
         /// can read. The server stops and the file is removed when the
         /// window closes.
         ///
-        /// The inspector reads the engine's log, and an engine has one
-        /// log handler: what the host did with a line (print it) goes in
-        /// `on_log`, and a handler set before this call is replaced.
+        /// The inspector hears the engine's log whatever log handler is
+        /// set, before or after this call. `on_log` hears each line too.
         ///
         /// # Errors
         /// The port is taken, or the token file cannot be written.

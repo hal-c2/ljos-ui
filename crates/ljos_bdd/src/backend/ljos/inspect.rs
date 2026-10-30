@@ -27,9 +27,9 @@ use ljos_mcp_core::{
 };
 use serde_json::{Value, json};
 
-use super::{Live, LjosBackend, Result, failed, level, not_loaded};
+use super::{Live, LjosBackend, Result, failed, not_loaded};
 use crate::backend::{
-    BackendError, LogEntry,
+    BackendError,
     inspector::{
         Answer, Ask, ClientAnswer, Line, Listening, Refusal, Seen, Stopped, Token, TokenFile, lines,
     },

@@ -911,13 +911,13 @@ impl Inspector {
         (self.wake)();
     }
 
-    /// Makes the engine's log the one `app_logs` reads. An engine has one
-    /// log handler, so what the host did with a line before (print it)
-    /// goes in `also`.
+    /// Has `app_logs` read the engine's log, whatever else hears it: the
+    /// feed is a listener, so a log handler set before or after does not
+    /// take it away. `also` hears each line too.
     pub fn watch_log(&self, engine: &Engine, mut also: impl FnMut(&LogEntry) + 'static) {
         let ring = self.logs.clone();
         let changes = self.changes.clone();
-        engine.set_log_handler_with_origin(move |entry, at| {
+        engine.add_log_listener_with_origin(move |entry, at| {
             ring.borrow_mut().push(entry, at);
             changes.log();
             also(entry);

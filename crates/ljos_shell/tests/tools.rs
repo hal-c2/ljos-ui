@@ -601,6 +601,40 @@ mod inspector {
         w.assert_idle();
     }
 
+    // The inspector is served before an application's setup runs.
+    #[test]
+    fn a_log_handler_set_in_setup_leaves_app_logs_its_lines() {
+        let (tx, rx) = mpsc::channel();
+        let mut w = window(move |setup| {
+            let dir = tempfile::tempdir()?.keep();
+            let address = setup.serve_inspector(
+                InspectorOptions {
+                    port: 0,
+                    token_file: dir.join("mcp.json"),
+                    redact_all: false,
+                },
+                |_| {},
+            )?;
+            setup.engine().set_log_handler(|_| {});
+            setup
+                .engine()
+                .log(ljos_engine::LogLevel::Warning, "app", "from setup");
+            let _ = tx.send(address);
+            Ok(())
+        });
+        let address: InspectorAddress = rx.recv().unwrap();
+        let (address, bearer) = (address.clone(), token(&address));
+        let client = thread::spawn(move || call(&address, &bearer, "app_logs"));
+        w.woke
+            .recv_timeout(PATIENCE)
+            .expect("the request woke the window");
+        w.h.state_mut().view_mut().scene_mut().request_frame();
+        w.h.run();
+        let (status, body) = client.join().unwrap();
+        assert_eq!(status, 200);
+        assert!(body.contains("from setup"), "{body}");
+    }
+
     #[test]
     fn the_top_overlay_charges_the_inspector_for_its_work() {
         let (tx, rx) = mpsc::channel();
