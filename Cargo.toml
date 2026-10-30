@@ -61,6 +61,11 @@ glutin = { version = "0.32.3", default-features = false, features = ["egl", "way
 # Must match egui's accesskit: its types do not interoperate across minor versions.
 accesskit = "0.25.0"
 vello_cpu = "0.3"
+# ljos_3d's renderer (QtQuick3D). The version egui-wgpu 0.37 is built on, so
+# the 3D pass draws with the device egui already has; without wgpu's default
+# backends, which ljos_3d picks per target (native, or WebGPU and WebGL2).
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
 hayro = "0.8.0"
 parley = "0.12"
 # Parley's own analysis and shaping, which ljos_text drives itself for a
