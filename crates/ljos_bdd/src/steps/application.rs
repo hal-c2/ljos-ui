@@ -78,6 +78,62 @@ fn watches_roots(w: &mut LjosWorld, roots: String, entries: String) -> StepResul
     w.each(|b| b.application()?.watch_roots(&roots, &entries))
 }
 
+#[given(regex = r#"^the application has watched the roots "([^"]+)" for the entries "([^"]+)"$"#)]
+fn has_watched_roots(w: &mut LjosWorld, roots: String, entries: String) -> StepResult {
+    watches_roots(w, roots, entries)
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^the application watches the roots "([^"]+)" for the entries "([^"]+)" with the module "([^"]+)" aliased to "([^"]+)"$"#)]
+fn watches_roots_aliased(
+    w: &mut LjosWorld,
+    roots: String,
+    entries: String,
+    module: String,
+    dir: String,
+) -> StepResult {
+    let (roots, entries) = (list(&roots), list(&entries));
+    let aliases = [(module, dir)];
+    w.each(|b| b.application()?.watch_roots_aliased(&roots, &entries, &aliases))
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^the application is asked to watch the roots "([^"]+)" for the entries "([^"]+)" with the module "([^"]+)" aliased to "([^"]+)"$"#)]
+fn asked_to_watch_roots_aliased(
+    w: &mut LjosWorld,
+    roots: String,
+    entries: String,
+    module: String,
+    dir: String,
+) -> StepResult {
+    let (roots, entries) = (list(&roots), list(&entries));
+    let aliases = [(module, dir)];
+    let mut refusals = Vec::new();
+    w.each(|b| match b.application()?.watch_roots_aliased(&roots, &entries, &aliases) {
+        Ok(()) => Err(BackendError::Failed("the application watched the roots".into())),
+        Err(BackendError::Failed(why)) => {
+            refusals.push(why);
+            Ok(())
+        }
+        Err(e) => Err(e),
+    })?;
+    w.set_refusals(refusals);
+    Ok(())
+}
+
+#[then(regex = r#"^the application is refused with a message that mentions "([^"]*)"$"#)]
+#[then(regex = r#"^the message mentions "([^"]*)"$"#)]
+fn refusal_message_mentions(w: &mut LjosWorld, text: String) -> StepResult {
+    let refusals = w.refusals();
+    if refusals.is_empty() {
+        return Err("the application was refused nothing".into());
+    }
+    match refusals.iter().find(|why| !why.contains(&text)) {
+        Some(why) => Err(format!("the refusal does not mention {text:?}: {why}")),
+        None => Ok(()),
+    }
+}
+
 #[when(regex = r#"^the file "([^"]+)" is saved on disk as:$"#)]
 fn saved_on_disk(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     let text = docstring(step)?;

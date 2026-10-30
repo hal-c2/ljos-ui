@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use ljos_dev::{DevSession, Host, QtTypeOracle};
+use ljos_dev::{Alias, AliasError, Aliases, DevSession, Host, QtTypeOracle};
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::roots::{RootSwaps, adopt};
 
@@ -74,13 +74,28 @@ fn write(path: &Path, text: &str) -> Result<()> {
 }
 
 impl Live {
-    pub(super) fn watch_roots(&mut self, roots: &[String], entries: &[String]) -> Result<()> {
+    /// `aliases`: each module and the directory it is imported from, by
+    /// the files' paths. A directory that does not hold its module fails
+    /// the step with the session's refusal.
+    pub(super) fn watch_roots(
+        &mut self,
+        roots: &[String],
+        entries: &[String],
+        aliases: &[(String, String)],
+    ) -> Result<()> {
         let dir = tempfile::tempdir().map_err(failed)?;
+        let places = roots.iter().chain(aliases.iter().map(|(_, d)| d));
+        let places: Vec<String> = places.map(|p| format!("{p}/")).collect();
         for (name, text) in &self.compiled_from {
-            if roots.iter().any(|r| name.starts_with(&format!("{r}/"))) {
+            if places.iter().any(|p| name.starts_with(p.as_str())) {
                 write(&dir.path().join(name), text)?;
             }
         }
+        let aliases = aliases
+            .iter()
+            .map(|(module, at)| Alias::new(module, &dir.path().join(at)))
+            .collect::<std::result::Result<Aliases, _>>()
+            .map_err(failed)?;
         let paths: Vec<PathBuf> = roots.iter().map(|r| dir.path().join(r)).collect();
         for path in &paths {
             std::fs::create_dir_all(path).map_err(failed)?;
@@ -88,11 +103,12 @@ impl Live {
         let paths: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
         let entries: Vec<&str> = entries.iter().map(String::as_str).collect();
         let (tx, woke) = mpsc::channel();
-        let session = DevSession::open_roots(
+        let session = DevSession::open_roots_aliased(
             &self.engine,
             &paths,
             &entries,
             Vec::new(),
+            aliases,
             QtTypeOracle,
             Arc::new(move || {
                 let _ = tx.send(());
@@ -109,6 +125,44 @@ impl Live {
         }
         self.disk = Some(Disk { session, woke, dir });
         self.settle()
+    }
+
+    /// The aliases in force, when files on disk are watched.
+    pub(super) fn disk_aliases(&self) -> Option<&Aliases> {
+        self.disk.as_ref().map(|d| d.session.aliases())
+    }
+
+    /// Imports `module` from `dir` (relative to the first root; None:
+    /// where the import path finds it) and waits for the reload that
+    /// follows to be applied, as a host waits for the watcher's wake. The
+    /// session's refusal is the inner error.
+    pub(super) fn alias_on_disk(
+        &mut self,
+        module: &str,
+        dir: Option<&Path>,
+    ) -> Result<std::result::Result<(), AliasError>> {
+        let disk = self
+            .disk
+            .as_mut()
+            .ok_or_else(|| failed("no files on disk are watched"))?;
+        if let Err(why) = disk.session.set_alias(&self.engine, module, dir) {
+            return Ok(Err(why));
+        }
+        while !disk.session.take_flushed() {
+            disk.woke.recv_timeout(PATIENCE).map_err(|_| {
+                failed(format!(
+                    "the watcher did not wake for the alias of {module}"
+                ))
+            })?;
+            let mut host = Windows {
+                shown: disk.session.root(),
+                windows: &mut self.windows,
+                roots: &mut self.roots,
+            };
+            disk.session.pump(&self.engine, &*self.clock, &mut host);
+        }
+        self.settle()?;
+        Ok(Ok(()))
     }
 
     pub(super) fn save_on_disk(&mut self, name: &str, text: Option<&str>) -> Result<()> {

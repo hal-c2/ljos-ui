@@ -866,6 +866,19 @@ pub trait Application: Backend {
         Err(BackendError::NotImplemented("a watch over files on disk"))
     }
 
+    /// As [`watch_roots`](Self::watch_roots), with each module of
+    /// `aliases` imported from its directory (by the files' paths). A
+    /// directory that does not hold its module is `Failed` with the
+    /// application's refusal.
+    fn watch_roots_aliased(
+        &mut self,
+        _roots: &[String],
+        _entries: &[String],
+        _aliases: &[(String, String)],
+    ) -> Result<()> {
+        Err(BackendError::NotImplemented("module aliases"))
+    }
+
     /// The file `name` of the watched files is written with `text` (None:
     /// it is removed), and the application takes what the watcher brings.
     fn save_on_disk(&mut self, _name: &str, _text: Option<&str>) -> Result<()> {

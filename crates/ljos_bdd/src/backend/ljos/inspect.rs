@@ -125,6 +125,11 @@ fn no_inspector() -> BackendError {
 fn pump(inspector: &mut Inspector, live: &mut Live, fault: &mut Option<BackendError>) {
     // The scenario's clock is the application's, which `app_advance` moves.
     inspector.set_virtual_clock((*live.clock).clone());
+    // A watch over files on disk is one an agent can alias modules of.
+    if let Some(aliases) = live.disk_aliases() {
+        inspector.set_watched(true);
+        inspector.set_aliases(aliases.iter());
+    }
     inspector.pump(&live.engine, &mut live.scene, &*live.clock);
     if inspector.take_reload_request() {
         // A watching host applies what was saved at once, then says how it
@@ -133,6 +138,17 @@ fn pump(inspector: &mut Inspector, live: &mut Live, fault: &mut Option<BackendEr
             fault.get_or_insert(e);
         }
         inspector.finish_reload(&live.engine);
+    }
+    if let Some(alias) = inspector.take_alias_request() {
+        match live.alias_on_disk(&alias.module, alias.dir.as_deref()) {
+            Ok(Err(why)) => inspector.refuse_alias(&why),
+            done => {
+                if let Err(e) = done {
+                    fault.get_or_insert(e);
+                }
+                inspector.finish_reload(&live.engine);
+            }
+        }
     }
     let started = Instant::now();
     if let Err(e) = live.settle() {

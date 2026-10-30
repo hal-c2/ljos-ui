@@ -1487,7 +1487,16 @@ impl Application for LjosBackend {
     }
 
     fn watch_roots(&mut self, roots: &[String], entries: &[String]) -> Result<()> {
-        self.live()?.watch_roots(roots, entries)
+        self.live()?.watch_roots(roots, entries, &[])
+    }
+
+    fn watch_roots_aliased(
+        &mut self,
+        roots: &[String],
+        entries: &[String],
+        aliases: &[(String, String)],
+    ) -> Result<()> {
+        self.live()?.watch_roots(roots, entries, aliases)
     }
 
     fn save_on_disk(&mut self, name: &str, text: Option<&str>) -> Result<()> {

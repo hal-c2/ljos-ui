@@ -25,6 +25,9 @@ pub struct LjosWorld {
     /// The scenario's web server, started by the first step that serves a
     /// file or by QML that names it.
     web: Option<crate::web::WebServer>,
+    /// Why the application refused what a step asked of it, from each
+    /// backend that did.
+    refusals: Vec<String>,
 }
 
 impl LjosWorld {
@@ -36,7 +39,17 @@ impl LjosWorld {
             test_reports: Vec::new(),
             author: crate::author::Slot::default(),
             web: None,
+            refusals: Vec::new(),
         }
+    }
+
+    pub fn set_refusals(&mut self, refusals: Vec<String>) {
+        self.refusals = refusals;
+    }
+
+    /// What [`set_refusals`](Self::set_refusals) kept.
+    pub fn refusals(&self) -> &[String] {
+        &self.refusals
     }
 
     /// The authoring side of the scenario, with the files staged so far:
