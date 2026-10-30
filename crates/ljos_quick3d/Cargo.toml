@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+build = "build.rs"
+
 [features]
 default = ["gltf"]
 # RuntimeLoader reads glTF files. Without it the type is still there and
@@ -18,10 +20,19 @@ gltf = ["ljos/gltf"]
 # The facade alone: a module crate opens no windows. Its `quick3d`
 # feature has the painters draw the View3D draw op this crate paints.
 ljos = { path = "../ljos", default-features = false, features = ["quick3d"] }
+# The module's QML, packed as IR by build.rs.
+ljos_ir = { path = "../ljos_ir" }
 # A view's key for its painter is its object id, as a number.
 slotmap = { workspace = true }
 # FileInstancing's XML tables, read with the reader ljos_xml uses.
 quick-xml.workspace = true
+
+[build-dependencies]
+# The module's QML is compiled when this crate is built; the crate never
+# links the compiler or the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_ir = { path = "../ljos_ir" }
+qt_types = { path = "../qt_types" }
 
 [dev-dependencies]
 # Tests compile QML strings; the crate itself never links the compiler or

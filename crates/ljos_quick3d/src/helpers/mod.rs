@@ -6,6 +6,7 @@
 
 mod extended_environment;
 mod geometry;
+mod library;
 mod look_at;
 mod mesh;
 mod shapes;
@@ -35,4 +36,5 @@ pub(crate) fn register(engine: &Engine) {
         RandomInstancing,
         LookAtNode,
     ]));
+    library::register(engine);
 }
