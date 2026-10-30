@@ -19,6 +19,7 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use ljos::dev::EngineOracle;
 use ljos_compiler::{Alias, Aliases};
+use ljos_design::theme::Theme;
 use ljos_engine::{Engine, LogEntry, LogLevel};
 use ljos_mcp_core::{Cap, CapSet};
 use ljos_shell::{InspectorAccess, InspectorOptions, Report, Setup, SetupError, ShellConfig};
@@ -47,6 +48,12 @@ pub struct Run {
     /// runs (`app_alias`).
     #[arg(long, value_name = "MODULE=DIR", value_parser = parse_alias)]
     alias: Vec<Alias>,
+    /// Read the roles of `Ljos.Design` (colours, spacing, type, motion)
+    /// from FILE instead of from `theme.json` beside the entry. With
+    /// `--watch` an edit of it sets the roles again and keeps the
+    /// application's state.
+    #[arg(long, value_name = "FILE")]
+    theme: Option<PathBuf>,
     /// A picture the desktop shows for the application: its windows'
     /// icon, and the Dock's on macOS. Without it the desktop's own is
     /// shown.
@@ -209,6 +216,32 @@ pub(crate) fn parse_alias(text: &str) -> Result<Alias, String> {
     Alias::parse(text).map_err(|e| e.to_string())
 }
 
+/// The theme the application starts with: `named`, or the one beside
+/// `main` when there is one.
+fn read_theme(named: Option<&Path>, main: &Path) -> anyhow::Result<Option<Theme>> {
+    let path = match named {
+        Some(path) => path.to_owned(),
+        None => {
+            let beside = main.with_file_name(ljos_design::theme::FILE);
+            if !beside.exists() {
+                return Ok(None);
+            }
+            beside
+        }
+    };
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("the theme {}", path.display()))?;
+    ljos_design::theme::parse(&path.display().to_string(), &text)
+        .map(Some)
+        .map_err(theme_refused)
+}
+
+/// Every reason a theme was refused, one line each.
+fn theme_refused(errors: Vec<ljos_design::theme::ThemeError>) -> anyhow::Error {
+    let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
+    anyhow::anyhow!("{}", lines.join("\n"))
+}
+
 pub(crate) fn parse_size(text: &str) -> Result<(f32, f32), String> {
     let wrong = || format!("{text:?} is not a size such as 800x600");
     let (w, h) = text.split_once(['x', 'X']).ok_or_else(wrong)?;
@@ -319,6 +352,10 @@ pub fn describe(report: &Report) -> String {
             format!("reload failed: {fault} (and {more} more)")
         }
         Report::Cleared => "the files are what runs again".to_owned(),
+        Report::Theme { generation, apply } => format!(
+            "the theme was set again in {:.1} ms (generation {generation}); nothing was made again",
+            ms(*apply)
+        ),
         Report::Pictures { shown: 1 } => "1 image shows the saved picture".to_owned(),
         Report::Pictures { shown } => format!("{shown} images show the saved pictures"),
         // One line each, as a run that does not watch tells them.
@@ -457,6 +494,7 @@ impl Run {
             let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
             ljos_engine::file_url(&path)
         });
+        let theme = self.theme.clone();
         if self.watch {
             let main = dir.join(format!("{key}.qml"));
             let project = self.project.is_some().then(|| dir.clone());
@@ -479,6 +517,9 @@ impl Run {
                 // The compiler knows what the engine was given above.
                 let oracle = ljos::dev::EngineOracle::from_engine(setup.engine());
                 setup.set_aliases(aliases);
+                if let Some(theme) = theme {
+                    setup.set_theme_file(theme);
+                }
                 let root = setup.watch_with(
                     &main,
                     project.as_deref(),
@@ -497,6 +538,10 @@ impl Run {
             // The project compiles while the window system and the drivers
             // start. It still stops the run before a window opens: windows
             // open after `setup`, which waits for it.
+            // A theme that cannot be read stops the run as a file that does
+            // not compile does; without --watch there is no overlay to say
+            // so in.
+            let theme = read_theme(theme.as_deref(), &dir.join(format!("{key}.qml")))?;
             let stop = Arc::new(AtomicBool::new(false));
             let compiling = {
                 let (dir, key, example) = (dir.clone(), key.clone(), example.clone());
@@ -535,6 +580,12 @@ impl Run {
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 let engine = setup.engine();
+                // Before the root is made, so nothing binds to the module's
+                // own roles first.
+                if let Err(errors) = ljos_design_qml::theme::apply(engine, theme.as_ref()) {
+                    *failing.borrow_mut() = Some(theme_refused(errors));
+                    return Err("the theme was refused".into());
+                }
                 if let Some(icon) = &icon {
                     ljos::window::load_application_icon(engine, icon);
                 }
@@ -997,6 +1048,13 @@ mod tests {
              shown 48.3 ms after the save"
         );
         assert_eq!(describe(&Report::Cleared), "the files are what runs again");
+        assert_eq!(
+            describe(&Report::Theme {
+                generation: 3,
+                apply: std::time::Duration::from_micros(400),
+            }),
+            "the theme was set again in 0.4 ms (generation 3); nothing was made again"
+        );
         assert_eq!(
             describe(&Report::Pictures { shown: 2 }),
             "2 images show the saved pictures"

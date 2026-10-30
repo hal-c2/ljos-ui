@@ -3775,6 +3775,7 @@ dependencies = [
  "ljos_compiler",
  "ljos_controls",
  "ljos_design",
+ "ljos_design_qml",
  "ljos_engine",
  "ljos_folderlistmodel",
  "ljos_gallery_backends",

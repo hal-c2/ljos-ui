@@ -121,3 +121,58 @@ fn run_offers_aliases() {
     let help = String::from_utf8_lossy(&out.stdout);
     assert!(help.contains("--alias <MODULE=DIR>"), "{help}");
 }
+
+#[test]
+fn a_theme_beside_the_entry_that_cannot_be_read_is_refused_at_its_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("Main.qml");
+    std::fs::write(&main, "import QtQuick\nItem {}\n").unwrap();
+    std::fs::write(
+        dir.path().join("theme.json"),
+        "{\n  \"Colors\": {\n    \"acent\": \"#9c4dc4\"\n  }\n}\n",
+    )
+    .unwrap();
+    let out = ljos(&["run", main.to_str().unwrap()]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("theme.json:3:"), "{err}");
+    assert!(err.contains("Colors has no role \"acent\""), "{err}");
+}
+
+#[test]
+fn a_named_theme_is_read_in_place_of_the_one_beside() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("Main.qml");
+    std::fs::write(&main, "import QtQuick\nItem {}\n").unwrap();
+    let named = dir.path().join("dim.json");
+    std::fs::write(&named, "{ \"Spacing\": { \"md\": \"wide\" } }\n").unwrap();
+    let out = ljos(&[
+        "run",
+        main.to_str().unwrap(),
+        "--theme",
+        named.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("dim.json:1:"), "{err}");
+    assert!(err.contains("Spacing.md"), "{err}");
+    // A named theme that is not there is a mistake, not the module's own.
+    let gone = dir.path().join("gone.json");
+    let out = ljos(&[
+        "run",
+        main.to_str().unwrap(),
+        "--theme",
+        gone.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("gone.json"), "{err}");
+}
+
+#[test]
+fn run_offers_a_theme() {
+    let out = ljos(&["run", "--help"]);
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("--theme <FILE>"), "{help}");
+}

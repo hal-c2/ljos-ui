@@ -30,6 +30,8 @@ pub(crate) struct DevSetup {
     qml_dirs: Vec<PathBuf>,
     /// The modules imported from a directory of the caller's choosing.
     aliases: Aliases,
+    /// The theme file named by the caller; None: the one beside the entry.
+    theme: Option<PathBuf>,
     dev: Option<Dev>,
     on_report: Option<ReportHandler>,
 }
@@ -40,6 +42,7 @@ impl DevSetup {
             wake,
             qml_dirs: Vec::new(),
             aliases: Aliases::new(),
+            theme: None,
             dev: None,
             on_report: None,
         }
@@ -122,12 +125,13 @@ impl<M> Setup<'_, M> {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
-        let session = DevSession::open_aliased(
+        let session = DevSession::open_themed(
             self.engine,
             main,
             project,
             properties,
             self.dev.aliases.clone(),
+            self.dev.theme.as_deref(),
             oracle,
             Arc::clone(&self.dev.wake),
         )?;
@@ -175,12 +179,13 @@ impl<M> Setup<'_, M> {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
-        let session = DevSession::open_roots_aliased(
+        let session = DevSession::open_roots_themed(
             self.engine,
             roots,
             entries,
             properties,
             self.dev.aliases.clone(),
+            self.dev.theme.as_deref(),
             oracle,
             Arc::clone(&self.dev.wake),
         )?;
@@ -193,6 +198,14 @@ impl<M> Setup<'_, M> {
     /// may alias a module to it again later.
     pub fn set_aliases(&mut self, aliases: Aliases) {
         self.dev.aliases = aliases;
+    }
+
+    /// Reads the roles of `Ljos.Design` from `theme` in what the `watch`
+    /// calls after this one start (`ljos run --theme`), in place of
+    /// `theme.json` beside the entry. The file is watched: an edit sets
+    /// the roles again without making anything again.
+    pub fn set_theme_file(&mut self, theme: impl Into<PathBuf>) {
+        self.dev.theme = Some(theme.into());
     }
 
     /// Tells the setup the directories the application's QML is

@@ -23,6 +23,7 @@ ljos_compiler = { path = "../ljos_compiler" }
 ljos_i18n = { path = "../ljos_i18n" }
 # `ljos design export` writes the files of Ljos.Design.
 ljos_design = { path = "../ljos_design" }
+ljos_design_qml = { path = "../ljos_design_qml" }
 ljos_engine = { path = "../ljos_engine" }
 # `ljos run`: the desktop shell, with the dev loop (the watcher and the
 # reload driver) and, for `--mcp`, the read-only inspector. A development
