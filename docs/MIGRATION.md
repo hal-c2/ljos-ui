@@ -687,14 +687,17 @@ variant field by field adds `value` (or `..`); the same holds for
   applies every save to the running application. `--mcp[=<CAPS>]`
   serves the running application to MCP clients (capabilities
   `inspect`, `input`, `mutate`, `eval`, each granted by name;
-  `--mcp` alone means `inspect`). `--icon <FILE>` gives the desktop a
+  `--mcp` alone means `inspect`; `--mcp-rate <N>` answers a client N
+  calls a second, from 1 to 1000, instead of 20, for a program that
+  drives the application it started). `--icon <FILE>` gives the desktop a
   picture for the application (`App::icon_file` in code). This runs QML on its own; an
   application with native types runs its own binary through
   `ljos::App` (section 6), whose `run_with` keeps the same shell
   setup `ljos run` builds on. Built with `ljos`'s `mcp` feature, such
   a binary serves the inspector when `LJOS_MCP=inspect,input` is set
   (the token file goes below `LJOS_MCP_DIR`, else the working
-  directory), with no code; `App::inspector` asks for it in code.
+  directory, and `LJOS_MCP_RATE` grants a rate as `--mcp-rate` does),
+  with no code; `App::inspector` asks for it in code.
 - `ljos test [PATHS]...` runs the `TestCase`s of `tst_*.qml` files on a
   virtual clock, printing results as Qt's QML test runner does; the
   exit status is the number of failed tests. `--filter <NAME>` runs

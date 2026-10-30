@@ -32,6 +32,7 @@ Arguments placed after `--` are passed to the QML application in `Application.ar
 - `--mcp-redact`: Redact all editable text fields in inspector snapshots, properties and screenshots, and refuse `app_eval`, methods and signal handlers.
 - `--mcp-bind <ADDR>`: Bind the MCP HTTP listener to `<ip>:<port>` instead of `127.0.0.1:0`. Non-loopback addresses require `--mcp-insecure-lan`.
 - `--mcp-socket <PATH>`: Listen on a Unix domain socket (created mode `0600`, maximum 107 bytes on Linux and 103 bytes on macOS) instead of TCP.
+- `--mcp-rate <N>`: Answer a client up to `N` calls per second (1 to 1000) instead of 20. For a program that starts the application and drives it as part of its own interface. Grants no capability; the token file states the rate as `calls_per_second`.
 - `--top`: Show the `top` overlay over the window with the time of the last frame by lane and by owner.
 - `--example <ID>`: Look `<ID>` up in `corpus/examples.json` and use its imports.
 
@@ -225,6 +226,7 @@ ljos observe [OPTIONS] [TARGET]
 - `--remote`: Allow connecting to a non-loopback address in the token file.
 - `--size <WxH>`: Initial observer window size in logical pixels (default: `1200x760`).
 - `--mcp[=<CAPS>]`: Serve an MCP inspector on the observer's own window (`target/ljos/mcp-observe-<pid>.json`).
+- `--mcp-rate <N>`: With `--mcp`, answer up to `N` calls per second (1 to 1000) instead of 20.
 
 ### Example
 
