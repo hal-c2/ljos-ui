@@ -19,8 +19,9 @@
 //! `Item` offers what it declares, not `Item`'s geometry.
 //!
 //! A slot is recognised by its element type's name alone, `Contribution`,
-//! whatever module that type comes from: the `Ljos.Blocks` module that
-//! will define it is a later milestone, and the name is what the ADR fixes.
+//! whatever module that type comes from: the name is what the ADR fixes,
+//! and `Ljos.Blocks` (ljos_quick) defines the type, with the `Slot` that
+//! shows a list of them.
 //!
 //! This crate depends on no runtime crate. It reads the type dump through
 //! its own mirror of the fields it needs, which ignores the rest.

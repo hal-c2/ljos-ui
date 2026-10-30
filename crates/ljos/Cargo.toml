@@ -67,6 +67,8 @@ qml_front = { path = "../qml_front" }
 # Whether the build reads QML against Qt's table (`extends_item.rs`).
 qt_types = { path = "../qt_types" }
 tempfile.workspace = true
+# Whether a block registry reads a native block's slots from the dump.
+ljos_blocks = { path = "../ljos_blocks" }
 # An application that hands QML JSON (`records.rs`).
 serde_json.workspace = true
 # A player reading a stream from a server of the test's own (`media_stream.rs`).

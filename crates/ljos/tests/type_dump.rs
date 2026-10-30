@@ -331,3 +331,32 @@ fn a_dump_without_blocks_has_no_block_key() {
     let text = ljos::types::dump(register).to_json();
     assert!(!text.contains("\"block\""), "{text}");
 }
+
+/// A native block whose slot holds `Ljos.Blocks` contributions.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Toolbar", block)]
+pub struct Toolbar {
+    #[qml(notify, list, holds = "Contribution")]
+    pub tools: QmlList,
+    #[qml(notify)]
+    pub title: Atom,
+}
+
+#[test]
+fn a_list_of_contributions_is_a_slot_to_a_block_registry() {
+    let dump = ljos::types::dump(|engine| {
+        engine.register_module(ljos::module!("Example" 1.0 => [Toolbar]));
+    });
+    let registry = ljos_blocks::BlockRegistry::from_type_dump(&dump.to_json()).unwrap();
+    let toolbar = registry
+        .get("Example", "Toolbar")
+        .expect("Toolbar is a block");
+    let slots: Vec<(&str, &str)> = toolbar
+        .slots
+        .iter()
+        .map(|s| (s.name.as_str(), s.accepts.as_str()))
+        .collect();
+    assert_eq!(slots, [("tools", "Contribution")]);
+    assert!(toolbar.inputs.iter().any(|i| i.name == "title"));
+    assert!(toolbar.inputs.iter().all(|i| i.name != "tools"));
+}
