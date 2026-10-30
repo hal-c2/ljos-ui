@@ -18,14 +18,11 @@ Feature: A mesh made from lists
       import QtQuick3D.Helpers
       Rectangle {
         id: scene; objectName: "scene"
-        property bool lines: false
-        property bool pair: false
+        property bool lines: false; property bool pair: false
         width: 200; height: 200; color: "black"
         View3D {
           anchors.fill: parent
-          environment: SceneEnvironment {
-            clearColor: "#202020"; backgroundMode: SceneEnvironment.Color
-          }
+          environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
           OrthographicCamera { z: 300 }
           Model {
             x: 0.5; y: -0.5
@@ -35,10 +32,7 @@ Feature: A mesh made from lists
               indexes: scene.pair ? [0, 1] : []
               positions: [Qt.vector3d(-40, -40, 0), Qt.vector3d(40, -40, 0), Qt.vector3d(0, 40, 0)]
             }
-            materials: DefaultMaterial {
-              lighting: DefaultMaterial.NoLighting; diffuseColor: "red"
-              cullMode: DefaultMaterial.NoCulling
-            }
+            materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "red"; cullMode: DefaultMaterial.NoCulling }
           }
         }
       }

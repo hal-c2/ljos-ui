@@ -6,7 +6,7 @@
 @ljos-only
 Feature: A panel of how the scene is drawn
   A DebugView is a panel over a View3D that shows its frame rate and time,
-  and with resourceDetailsVisible the draw calls and the shadow passes.
+  and with resourceDetailsVisible the number of drawings and the shadow passes.
 
   Background:
     Given the QML:
