@@ -18,6 +18,8 @@ use egui::emath::TSTransform;
 use egui::epaint::{ClippedPrimitive, ClippedShape, CornerRadius, Mesh, Primitive, Shape};
 use egui::{Rect, TextureId};
 use ljos_render::b0::ShaderPaint;
+#[cfg(feature = "quick3d")]
+use ljos_render::scene3d::View3dPaint;
 
 /// What a window last showed.
 #[derive(Debug, Default)]
@@ -797,6 +799,23 @@ fn same_shape(a: &Shape, b: &Shape) -> bool {
         {
             a.rect == b.rect && Arc::ptr_eq(&a.callback, &b.callback)
         }
+        // A 3D view's scene is handed out as the same `Arc` while nothing
+        // in it changes, in a new callback each frame.
+        #[cfg(feature = "quick3d")]
+        (Shape::Callback(a), Shape::Callback(b))
+            if a.callback.is::<View3dPaint>() && b.callback.is::<View3dPaint>() =>
+        {
+            let (va, vb) = (
+                a.callback.downcast_ref::<View3dPaint>(),
+                b.callback.downcast_ref::<View3dPaint>(),
+            );
+            a.rect == b.rect
+                && va.zip(vb).is_some_and(|(va, vb)| {
+                    va.key == vb.key
+                        && va.size_px == vb.size_px
+                        && Arc::ptr_eq(&va.scene, &vb.scene)
+                })
+        }
         // What another callback paints is its own; it may differ with the
         // same callback, so a window with one is always drawn.
         (Shape::Callback(_), _) | (_, Shape::Callback(_)) => false,
@@ -951,6 +970,39 @@ mod tests {
             drawn(&passes),
             2,
             "a new paint is drawn, the same one is not"
+        );
+    }
+
+    #[cfg(feature = "quick3d")]
+    #[test]
+    fn a_3d_view_whose_scene_did_not_change_is_the_same_picture() {
+        use ljos_render::scene3d::Scene;
+        let view = |scene: &Arc<Scene>, size_px| {
+            ClippedShape::new(
+                Rect::EVERYTHING,
+                Shape::Callback(egui::PaintCallback {
+                    rect: Rect::from_min_size(Pos2::ZERO, vec2(10.0, 10.0)),
+                    // B0 hands out a new paint each frame, the scene in it
+                    // the same while it is unchanged.
+                    callback: Arc::new(View3dPaint {
+                        key: 1,
+                        scene: Arc::clone(scene),
+                        size_px,
+                    }),
+                }),
+            )
+        };
+        let (a, b) = (Arc::new(Scene::new()), Arc::new(Scene::new()));
+        let passes = vec![
+            vec![view(&a, [10, 10])],
+            vec![view(&a, [10, 10])],
+            vec![view(&b, [10, 10])],
+            vec![view(&b, [20, 20])],
+        ];
+        assert_eq!(
+            drawn(&passes),
+            3,
+            "a new scene or size is drawn, the same one is not"
         );
     }
 
