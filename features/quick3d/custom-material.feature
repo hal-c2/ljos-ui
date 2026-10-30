@@ -21,38 +21,38 @@ Feature: CustomMaterial runs the author's shader snippets
   # unit is one pixel and the square covers pixels 50 to 150 in front of a
   # dark grey background.
   Background:
-    Given the file "tint.frag":
-      """glsl
+    Given the text file "tint.frag":
+      """
       void MAIN()
       {
           FRAGCOLOR = vec4(tint.rgb * level, 1.0);
       }
       """
-    And the file "shift.vert":
-      """glsl
+    And the text file "shift.vert":
+      """
       void MAIN()
       {
           VERTEX.x += offset;
           POSITION = MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0);
       }
       """
-    And the file "picture.frag":
-      """glsl
+    And the text file "picture.frag":
+      """
       void MAIN()
       {
           FRAGCOLOR = texture(picture, UV0);
       }
       """
-    And the file "glow.frag":
-      """glsl
+    And the text file "glow.frag":
+      """
       void MAIN()
       {
           BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0);
           EMISSIVE_COLOR = vec3(0.5);
       }
       """
-    And the file "flat.frag":
-      """glsl
+    And the text file "flat.frag":
+      """
       void MAIN()
       {
       }
@@ -64,8 +64,8 @@ Feature: CustomMaterial runs the author's shader snippets
       {
       }
       """
-    And the file "broken.frag":
-      """glsl
+    And the text file "broken.frag":
+      """
       void MAIN() { FRAGCOLOR = vec4(1.0 }
       """
     And a 4 by 4 image file "green.png" filled with "#00ff00"
@@ -92,7 +92,7 @@ Feature: CustomMaterial runs the author's shader snippets
               property TextureInput picture: TextureInput { objectName: "input"; texture: Texture { source: "green.png" } }
             }
           }
-          Model { objectName: "emissive"; source: "#Rectangle"; visible: false; materials: CustomMaterial { fragmentShader: "glow.frag" } }
+          Model { objectName: "emissive"; source: "#Rectangle"; visible: false; materials: CustomMaterial { objectName: "plain"; fragmentShader: "glow.frag" } }
           Model { objectName: "lit"; source: "#Rectangle"; visible: false; materials: CustomMaterial { fragmentShader: "flat.frag" } }
         }
       }
@@ -101,11 +101,11 @@ Feature: CustomMaterial runs the author's shader snippets
   Rule: A CustomMaterial starts from the values the documentation gives
 
     Scenario: A new CustomMaterial
-      Then the property "shadingMode" of "custom" is 1
-      And the property "sourceBlend" of "custom" is 0
-      And the property "destinationBlend" of "custom" is 0
-      And the property "alwaysDirty" of "custom" is false
-      And the property "depthDrawMode" of "custom" is 0
+      Then the property "shadingMode" of "plain" is 1
+      And the property "sourceBlend" of "plain" is 0
+      And the property "destinationBlend" of "plain" is 0
+      And the property "alwaysDirty" of "plain" is false
+      And the property "depthDrawMode" of "plain" is 0
       And the property "enabled" of "input" is true
 
   Rule: An unshaded material writes FRAGCOLOR as it is

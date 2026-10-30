@@ -26,30 +26,30 @@ Feature: Effects post-process the rendered scene
   # Flat squares are unlit, so each shows its colour as it is: red and blue
   # are 1 in linear light.
   Background:
-    Given the file "invert.frag":
-      """glsl
+    Given the text file "invert.frag":
+      """
       void MAIN()
       {
           vec4 c = texture(INPUT, INPUT_UV);
           FRAGCOLOR = vec4(mix(c.rgb, vec3(1.0) - c.rgb, amount), c.a);
       }
       """
-    And the file "dim.frag":
-      """glsl
+    And the text file "dim.frag":
+      """
       void MAIN()
       {
           FRAGCOLOR = texture(INPUT, INPUT_UV) * vec4(vec3(factor), 1.0);
       }
       """
-    And the file "copy.frag":
-      """glsl
+    And the text file "copy.frag":
+      """
       void MAIN()
       {
           FRAGCOLOR = texture(INPUT, INPUT_UV);
       }
       """
-    And the file "depth.frag":
-      """glsl
+    And the text file "depth.frag":
+      """
       void MAIN()
       {
           float d = texture(DEPTH_TEXTURE, INPUT_UV).r;
@@ -106,7 +106,10 @@ Feature: Effects post-process the rendered scene
                 Buffer { id: halfway; name: "halfway"; format: Buffer.RGBA16F }
                 passes: [
                   Pass { output: halfway; shaders: Shader { shader: "dim.frag" } },
-                  Pass { commands: BufferInput { buffer: halfway }; shaders: Shader { shader: "copy.frag" } }
+                  Pass {
+                    commands: BufferInput { buffer: halfway }
+                    shaders: Shader { shader: "copy.frag" }
+                  }
                 ]
               }
             ]
@@ -155,7 +158,10 @@ Feature: Effects post-process the rendered scene
                   output: once; shaders: Shader { shader: "dim.frag" }
                   commands: SetUniformValue { target: "factor"; value: 0.5 }
                 },
-                Pass { commands: BufferInput { buffer: once }; shaders: Shader { shader: "dim.frag" } }
+                Pass {
+                  commands: BufferInput { buffer: once }
+                  shaders: Shader { shader: "dim.frag" }
+                }
               ]
             }
           }
@@ -193,8 +199,8 @@ Feature: Effects post-process the rendered scene
   Rule: A snippet that does not compile leaves the effect out
 
     Background:
-      Given the file "broken.frag":
-        """glsl
+      Given the text file "broken.frag":
+        """
         void MAIN() { FRAGCOLOR = vec4(1.0 }
         """
       And the QML:
