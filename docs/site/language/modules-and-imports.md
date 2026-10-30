@@ -106,7 +106,7 @@ During ahead-of-time compilation, `TypeOracle` resolves types from three sources
 2. The optional generated Qt type table (used by `ljos check --port`).
 3. Your application's native Rust types, read either directly from `MetaObject`s in an `EngineOracle` or from a `ljostypes.json` file.
 
-Running your application with `LJOS_TYPES=write` writes out `ljostypes.json`, which you can pass to `ljos::build::compile_dir_with_types` (or let `ljos::build::compile_dir` pick up) so that unknown properties or handlers on your native Rust types are caught as compile errors at build time.
+Running your application with `LJOS_TYPES=write` writes out `ljostypes.json`, which you can pass to `ljos::build::compile_dir_with_types` (or let `ljos::build::compile_dir` pick up) so that unknown properties or handlers on your native Rust types are caught as compile errors at build time. `ljos run` reads the same file to [preview a project without its Rust](../rust/native-types.md#previewing-without-your-rust).
 
 ## See also
 

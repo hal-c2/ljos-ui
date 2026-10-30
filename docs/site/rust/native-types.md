@@ -223,6 +223,26 @@ cargo test                                   # fails, naming that command, when 
 
 With `ljostypes.json` in place, the compiler checks every member on your native types—including grouped properties, attached types and enum keys—at build time, failing the build on any unknown property or signal handler name (`onBumpd:`, `Counter.Eleven`). If your native types live in a separate library crate, your application's `build.rs` can call `ljos::build::compile_dir("qml".as_ref(), natives::register, &out)` directly without a `ljostypes.json` file.
 
+## Previewing without your Rust
+
+`ljos run` has none of your Rust, but it can show your interface from the same file. It reads the file `--types` names, otherwise `ljostypes.json` in the project directory (the entry file's directory, or `--project`). It looks nowhere else.
+
+```sh
+ljos run ui/Main.qml --project .
+```
+
+Your QML is checked against the file as your build checks it. Each type no Rust code provides stands in with what the file declares, and the run says so once:
+
+```text
+ljos: ljostypes.json: App.Media.Player, App.Media.Wave stand in: no Rust code provides them
+```
+
+A stand-in's properties hold what they are given and report changes. Its signals can be emitted and handled. Its methods do nothing and return `undefined`. Its enums and grouped properties work, and a type based on `Item` is laid out as one.
+
+- A type's attached type is not made. The run says which ones, and `Player.rank:` gives a warning that the type has no attached type.
+- A file that was found and cannot be read, has another format or names an unknown base stops the run.
+- With `--watch`, saved QML is compiled against the file, but the file itself is read once: restart after you change it.
+
 ## See also
 
 - [How a Rust and QML App Fits Together](./overview.md)

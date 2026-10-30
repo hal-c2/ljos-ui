@@ -44,7 +44,7 @@ ljos mcp --project . --caps fs,run
 | `qml_edit_apply` | Make one structured edit of a QML file (set or remove a binding; insert, move or remove an object, named by `id` or path), leaving every other byte as written; answers the splices, or writes the file when `write: true` is passed | `fs` to write |
 | `blocks_list` | List the project's functional blocks and their contracts (state, inputs, actions, events, slots), read from `# block` qmldir comments and `ljostypes.json` without running the app | — |
 | `qml_apply_fix` | Apply a diagnostic's suggested fix (dry-run by default) | `fs` |
-| `type_lookup` | Inspect a QML type's properties, signals, methods, enums, base chain, default property and attached types | — |
+| `type_lookup` | Inspect a QML type's properties, signals with each argument's name and type, methods, enums, base chain, default property and attached types, including types in the project's `ljostypes.json` | — |
 | `api_status` | Check the support status of `Module.Type[.member]` (`supported`, `partial`, `dropped` or `unsupported`), with the reason and proving `@api-` scenario | — |
 | `docs_search` | Search Ljós documentation and ledger notes (links out go only to Qt documentation, never source code) | — |
 | `binding_tier_explain` | Show which tier a binding expression runs in (`0` for property paths, `1` for the binding VM, or `JS` for JavaScript), why, and how to rewrite it for a cheaper tier | — |
