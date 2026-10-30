@@ -425,3 +425,153 @@ fn the_new_types_start_from_the_documented_values() {
         Some(false)
     );
 }
+
+/// What an application writes: a geometry type of its own, a square of
+/// `size` facing +Z, as a fan.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Test", name = "Square", extends = Geometry)]
+struct Square {
+    #[qml(base)]
+    geometry: Geometry,
+}
+
+impl Square {
+    fn fill(e: &Engine, me: ObjectId, size: f32) {
+        let h = size / 2.0;
+        e.with_mut(me, |s: &mut Square| {
+            let g = &mut s.geometry;
+            g.clear();
+            g.set_vertex_data(
+                [-h, -h, 0.0, h, -h, 0.0, h, h, 0.0, -h, h, 0.0]
+                    .iter()
+                    .flat_map(|f: &f32| f.to_le_bytes())
+                    .collect(),
+            );
+            g.set_stride(12);
+            g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+            g.set_primitive_type(PrimitiveType::TriangleFan);
+        })
+        .expect("filled");
+        Geometry::update(e, me);
+    }
+}
+
+fn load_square(qml: &str) -> (Engine, ObjectId) {
+    let e = ljos::engine();
+    register(&e);
+    e.register_module(ljos::module!("Test" 1.0 => [Square]));
+    let mut project = ljos_compiler::Project::new(ljos::dev::EngineOracle::from_engine(&e));
+    project.add(
+        "Main",
+        format!("import QtQuick\nimport QtQuick3D\nimport Test\n{qml}\n"),
+    );
+    let compiled = ljos_compiler::compile_file(&project, "Main").expect("compiles");
+    let mut source = ljos::MapSource::new();
+    source.insert("Main", compiled.file);
+    e.set_component_source(source);
+    let root = e
+        .create_from_url("Main", None, Vec::new())
+        .expect("created");
+    (e, root)
+}
+
+const SQUARE: &str = r##"
+Rectangle {
+    property QtObject square_: square
+    width: 100; height: 100; color: "black"
+    View3D {
+        anchors.fill: parent
+        environment: SceneEnvironment {
+            clearColor: "#202020"; backgroundMode: SceneEnvironment.Color
+        }
+        OrthographicCamera { z: 300 }
+        Model {
+            geometry: Square { id: square }
+            materials: DefaultMaterial {
+                lighting: DefaultMaterial.NoLighting; diffuseColor: "red"
+            }
+        }
+    }
+}
+"##;
+
+fn view_of(e: &Engine, root: ObjectId) -> ObjectId {
+    e.children(root)
+        .into_iter()
+        .find(|c| e.is::<View3D>(*c))
+        .expect("a view")
+}
+
+#[test]
+fn a_geometry_reaches_the_scene_once_it_is_updated() {
+    use ljos::item::ljos_3d::MeshSource;
+    let (e, root) = load_square(SQUARE);
+    let view = view_of(&e, root);
+    let square = named(&e, root, "square_");
+    let model_mesh = |s: &ljos::item::ljos_3d::Scene| {
+        s.walk().iter().find_map(|(_, n, _)| match &n.kind {
+            NodeKind::Model(m) => Some(m.mesh.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(
+        model_mesh(&scene::build(&e, view)),
+        None,
+        "nothing committed yet: the model is a plain node"
+    );
+
+    Square::fill(&e, square, 60.0);
+    let a = scene::build(&e, view);
+    let Some(MeshSource::Custom(first)) = model_mesh(&a) else {
+        panic!("{:?}", model_mesh(&a));
+    };
+    assert_eq!(first.vertex_data().len(), 48);
+    assert!(a.same_as(&scene::build(&e, view)), "no update, no change");
+
+    Square::fill(&e, square, 80.0);
+    let b = scene::build(&e, view);
+    assert!(!a.same_as(&b));
+    let Some(MeshSource::Custom(second)) = model_mesh(&b) else {
+        panic!();
+    };
+    assert_eq!(second.id(), first.id(), "the same geometry, revised");
+    assert_ne!(second.revision(), first.revision());
+}
+
+#[test]
+fn a_view_is_drawn_again_when_its_geometry_is_updated() {
+    use ljos_render::{FrameView, RasterConfig, VelloCpuReference};
+    if ljos::item::ljos_3d::offscreen::Offscreen::new().is_err() {
+        eprintln!("SKIPPED: no adapter");
+        return;
+    }
+    let (e, root) = load_square(SQUARE);
+    let square = named(&e, root, "square_");
+    Square::fill(&e, square, 30.0);
+    let pic = ljos::render::Picture::new(100, 100).settle(0);
+    let mut scene = pic.scene(&e, root).expect("laid out");
+    let mut r = VelloCpuReference::new(RasterConfig::default());
+    let first = scene.frame(&e, pic.now());
+    assert!(
+        !scene.frame(&e, pic.now()).changed,
+        "a still geometry costs nothing"
+    );
+    r.render(&FrameView::new(&first.snapshot, 1.0))
+        .expect("drawn");
+
+    Square::fill(&e, square, 80.0);
+    let second = scene.frame(&e, pic.now());
+    assert!(second.changed, "update() dirtied the view");
+    r.render(&FrameView::new(&second.snapshot, 1.0))
+        .expect("drawn");
+    assert_eq!(r.view3d_pictures(), 1);
+
+    let rgba = picture(&e, root, 100, 100);
+    assert_eq!(pixel(&rgba, 100, 50, 50), [255, 0, 0, 255]);
+    assert_eq!(
+        pixel(&rgba, 100, 20, 50),
+        [255, 0, 0, 255],
+        "the larger one"
+    );
+    assert_eq!(pixel(&rgba, 100, 5, 50), [0x20, 0x20, 0x20, 255]);
+}

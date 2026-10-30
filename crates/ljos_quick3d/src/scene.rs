@@ -11,7 +11,7 @@ use ljos_3d::{
 
 use crate::node::{self, alpha, antialiasing, background, cull, lighting};
 use crate::{
-    Camera, DefaultMaterial, DirectionalLight, Light, Material, Model, Node, Object3D,
+    Camera, DefaultMaterial, DirectionalLight, Geometry, Light, Material, Model, Node, Object3D,
     OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
     SpotLight, View3D,
 };
@@ -146,15 +146,26 @@ fn kind(e: &Engine, obj: ObjectId) -> NodeKind {
 /// `None` for a mesh this renderer does not build yet: the node still
 /// places its children.
 fn model(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Model> {
-    let source = item::prop(e, obj, Model::SOURCE);
-    // A relative `#Cube` comes resolved against the file's URL; the
-    // built-in meshes are named by the fragment.
-    let name = source
-        .0
-        .as_str()
-        .rfind('#')
-        .map(|i| &source.0.as_str()[i..])?;
-    let mesh = MeshSource::Primitive(Primitive::from_source(name)?);
+    let mesh = match item::prop(e, obj, Model::GEOMETRY) {
+        // The geometry wins over a source, as it is the application's
+        // own mesh. One never updated has nothing to draw yet.
+        Some(g) if e.is::<Geometry>(g) => {
+            // The revision is what a commit notifies.
+            item::prop(e, g, Geometry::REVISION);
+            MeshSource::Custom(e.with(g, Geometry::committed).ok().flatten()?)
+        }
+        _ => {
+            let source = item::prop(e, obj, Model::SOURCE);
+            // A relative `#Cube` comes resolved against the file's URL;
+            // the built-in meshes are named by the fragment.
+            let name = source
+                .0
+                .as_str()
+                .rfind('#')
+                .map(|i| &source.0.as_str()[i..])?;
+            MeshSource::Primitive(Primitive::from_source(name)?)
+        }
+    };
     // A built-in mesh has one part, drawn with the first material.
     let material = list(e, obj, Model::MATERIALS.index)
         .into_iter()

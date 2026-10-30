@@ -65,8 +65,9 @@ mod view;
 #[cfg(test)]
 mod tests;
 
+pub use ljos::item::ljos_3d::{ComponentType, PrimitiveType, Semantic, math::Vec3};
 pub use node::{
-    Camera, DefaultMaterial, DirectionalLight, Light, Material, Model, Node, Object3D,
+    Camera, DefaultMaterial, DirectionalLight, Geometry, Light, Material, Model, Node, Object3D,
     OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
     SpotLight,
 };
@@ -81,6 +82,7 @@ pub fn register(engine: &Engine) {
         Object3D,
         Node,
         Model,
+        Geometry,
         Camera,
         PerspectiveCamera,
         OrthographicCamera,

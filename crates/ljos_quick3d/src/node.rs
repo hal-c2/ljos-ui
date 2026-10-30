@@ -1,7 +1,10 @@
 //! The scene's objects: `Object3D`, `Node` and the nodes and resources
 //! derived from them.
 
+use std::sync::Arc;
+
 use ljos::item::ljos_3d::math::{Quat, Vec3};
+use ljos::item::ljos_3d::{ComponentType, CustomGeometry, PrimitiveType, Semantic};
 use ljos::ljos_engine::WriteKind;
 use ljos::prelude::*;
 
@@ -220,6 +223,9 @@ pub struct Model {
     pub source: Url,
     #[qml(notify, list)]
     pub materials: QmlList,
+    /// An application's own geometry, drawn instead of `source`'s mesh.
+    #[qml(notify, object = "Geometry")]
+    pub geometry: Option<ObjectId>,
     #[qml(notify)]
     pub casts_shadows: bool,
     #[qml(notify)]
@@ -234,10 +240,116 @@ impl Default for Model {
             node: Node::default(),
             source: Url::default(),
             materials: QmlList::default(),
+            geometry: None,
             casts_shadows: true,
             receives_shadows: true,
             pickable: false,
         }
+    }
+}
+
+/// `Geometry`: vertices an application provides, as `QQuick3DGeometry`
+/// is in Qt. An application's type embeds it as its base, sets the data
+/// from Rust and calls [`Geometry::update`] to have a `Model` whose
+/// `geometry` it is draw the new data:
+///
+/// ```ignore
+/// #[derive(Default, QmlObject)]
+/// #[qml(module = "App", name = "Triangle", extends = Geometry)]
+/// struct Triangle {
+///     #[qml(base)]
+///     geometry: Geometry,
+/// }
+///
+/// let (e, t) = (&engine, triangle_id);
+/// e.with_mut(t, |t: &mut Triangle| {
+///     let g = &mut t.geometry;
+///     g.set_vertex_data(bytes);
+///     g.set_stride(12);
+///     g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+/// })?;
+/// Geometry::update(e, t);
+/// ```
+///
+/// Vertex data is little endian. Without a normal attribute the faces
+/// are flat. Triangles, strips and fans are drawn; lines and points are
+/// not yet.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick3D", name = "Geometry", extends = Object3D, uncreatable)]
+pub struct Geometry {
+    #[qml(base)]
+    pub object3d: Object3D,
+    /// How many times the data was committed: what a model's drawing
+    /// tracks.
+    #[qml(notify, readonly)]
+    pub revision: i32,
+    #[qml(skip)]
+    data: CustomGeometry,
+    /// The data as last committed, which the scene shares with the
+    /// renderer without copying it again.
+    #[qml(skip)]
+    snapshot: Option<Arc<CustomGeometry>>,
+}
+
+impl Geometry {
+    pub fn set_vertex_data(&mut self, data: Vec<u8>) {
+        self.data.set_vertex_data(data);
+    }
+
+    pub fn set_index_data(&mut self, data: Vec<u8>) {
+        self.data.set_index_data(data);
+    }
+
+    pub fn set_stride(&mut self, stride: usize) {
+        self.data.set_stride(stride);
+    }
+
+    pub fn add_attribute(&mut self, semantic: Semantic, offset: usize, component: ComponentType) {
+        self.data.add_attribute(semantic, offset, component);
+    }
+
+    pub fn set_primitive_type(&mut self, primitive: PrimitiveType) {
+        self.data.set_primitive_type(primitive);
+    }
+
+    /// The box the geometry lies in; culling uses it. Without it the
+    /// positions are searched.
+    pub fn set_bounds(&mut self, min: Vec3, max: Vec3) {
+        self.data.set_bounds(min, max);
+    }
+
+    /// Removes the data, the attributes and the bounds. Nothing is drawn
+    /// differently until [`Geometry::update`].
+    pub fn clear(&mut self) {
+        self.data.clear();
+    }
+
+    /// Commits what was set to the geometry `obj` (an object whose base
+    /// is a `Geometry`): the models that use it are drawn again. A
+    /// geometry that cannot be drawn is reported and draws nothing.
+    pub fn update(e: &Engine, obj: ObjectId) {
+        let committed = e.with_mut(obj, |g: &mut Geometry| {
+            g.data.update();
+            g.snapshot = Some(Arc::new(g.data.clone()));
+            g.revision = g.revision.wrapping_add(1);
+            g.data.validate()
+        });
+        match committed {
+            Ok(checked) => {
+                if let Err(err) = checked {
+                    e.warn(format!("QtQuick3D Geometry: {err}"));
+                }
+                if let Err(err) = e.notify(obj, Geometry::REVISION.index) {
+                    e.warn(format!("QtQuick3D Geometry: {err}"));
+                }
+            }
+            Err(err) => e.warn(format!("QtQuick3D Geometry: {err}")),
+        }
+    }
+
+    /// The data as last committed; `None` before the first update.
+    pub(crate) fn committed(&self) -> Option<Arc<CustomGeometry>> {
+        self.snapshot.clone()
     }
 }
 
