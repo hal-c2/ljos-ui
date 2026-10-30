@@ -215,3 +215,90 @@ fn two_views_in_one_frame_keep_their_own_scenes() {
         1
     );
 }
+
+/// The textures egui's device holds for its users: wgpu counts each one
+/// handed out and not dropped yet, on every backend, where an allocator's
+/// report exists only on Vulkan and DirectX 12.
+fn live_textures(state: &egui_wgpu::RenderState) -> usize {
+    state
+        .instance
+        .generate_report()
+        .map_or(0, |r| r.hub_report().textures.num_kept_from_user)
+}
+
+/// Views that come and go, as a host's do when a `Loader` toggles one:
+/// each frame the host lets go of the pictures of the views it no longer
+/// paints (`retain`), so after any number of rounds the pictures are those
+/// of the views shown, and none once every view is gone.
+#[test]
+fn views_that_come_and_go_leave_no_pictures_behind() {
+    let Some(state) = render_state() else { return };
+    let shown: std::rc::Rc<std::cell::RefCell<Vec<u64>>> = Default::default();
+    let scene = Arc::new(lit_cube(blue()));
+    let painted = std::rc::Rc::clone(&shown);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(300.0, 100.0))
+        .renderer(WgpuTestRenderer::from_render_state(state.clone()))
+        .build_ui(move |ui| {
+            let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("scene3d"),
+            ));
+            for &view in painted.borrow().iter() {
+                let x = (view % 3) as f32 * 100.0;
+                let rect = egui::Rect::from_min_size(egui::pos2(x, 0.0), egui::vec2(100.0, 100.0));
+                painter.add(
+                    Scene3dPaint {
+                        view,
+                        scene: Arc::clone(&scene),
+                        // A size of its own for each round, as a view
+                        // laid out again has: a picture of a new size
+                        // replaces the old.
+                        size_px: [100 + (view % 7) as u32, 100],
+                    }
+                    .shape(rect),
+                );
+            }
+        });
+    let frame = |h: &mut Harness<'_>, views: &[u64]| {
+        *shown.borrow_mut() = views.to_vec();
+        // What the shell does before each frame (`paint_views`).
+        Scene3dResources::retain(&state, |k| views.contains(&k));
+        h.run();
+        h.render().expect("a picture");
+        let resources = state.renderer.read();
+        resources
+            .callback_resources
+            .get::<Scene3dResources>()
+            .unwrap()
+            .views()
+    };
+    let none = || live_textures(&state);
+    assert_eq!(frame(&mut h, &[]), 0);
+    let empty = none();
+    // The renderer makes what it shares between views (the white a
+    // material without a map reads) when it first draws, and keeps it:
+    // the level to come back to is after one view came and went.
+    assert_eq!(frame(&mut h, &[u64::MAX]), 1);
+    assert_eq!(frame(&mut h, &[]), 0);
+    let before = none();
+    let mut with_two = None;
+    // One run of fifty rounds: views appear, two at a time, with keys
+    // never seen before, and go the next round.
+    for round in 0..50u64 {
+        let views = [2 * round + 1, 2 * round + 2];
+        assert_eq!(frame(&mut h, &views), 2, "round {round}: both views drawn");
+        let textures = none();
+        assert_eq!(
+            *with_two.get_or_insert(textures),
+            textures,
+            "round {round}: two views hold as many textures as two views did in the first round"
+        );
+        assert_eq!(frame(&mut h, &[]), 0, "round {round}: the views are gone");
+        assert_eq!(none(), before, "round {round}: their textures are gone too");
+    }
+    assert!(
+        with_two.is_some_and(|t| t > before) && before >= empty,
+        "a view holds textures of its own: {with_two:?} against {before} ({empty} before any view)"
+    );
+}
