@@ -387,7 +387,7 @@ fn color(c: Color) -> ljos_3d::Color {
 }
 
 /// An object list property's live objects; tracked.
-fn list(e: &Engine, obj: ObjectId, p: PropIndex) -> Vec<ObjectId> {
+pub(crate) fn list(e: &Engine, obj: ObjectId, p: PropIndex) -> Vec<ObjectId> {
     match e.read(obj, p) {
         Value::List(l) => l
             .iter()

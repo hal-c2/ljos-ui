@@ -123,4 +123,5 @@ pub fn register(engine: &Engine) {
         item::QuaternionAnimation,
     ]));
     item::register_paint_item::<View3D>(engine, view::read);
+    item::register_pointer_portal::<View3D>(engine, pick::item_under);
 }

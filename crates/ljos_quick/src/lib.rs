@@ -51,6 +51,8 @@ mod pinch_area;
 pub use particles::{emitters_looked_at, particle_reads, particles_painted};
 mod frame_times;
 mod pointer_item;
+mod pointer_portal;
+pub use pointer_portal::{PointerPortal, register_pointer_portal};
 mod positioners;
 mod press_and_hold;
 mod rectangle;

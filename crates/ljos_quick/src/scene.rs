@@ -992,6 +992,10 @@ enum Grab {
 #[derive(Debug, Default)]
 struct PointerState {
     grab: Option<Grab>,
+    /// The item that passed the press on ([`crate::register_pointer_portal`])
+    /// and the item it showed under it: the events that follow are mapped
+    /// through it while the press is held.
+    portal: Option<(ObjectId, ObjectId)>,
     /// TapHandlers with a passive grab (`DragThreshold` policy).
     passive: Vec<ObjectId>,
     /// The same, and those of them whose tap was cancelled: as in Qt they
@@ -3106,9 +3110,37 @@ impl QuickScene {
             PointerKind::Press | PointerKind::Move | PointerKind::Release => ev.buttons,
             PointerKind::Cancel | PointerKind::Leave => MouseButtons::empty(),
         };
-        let handled = self.deliver(engine, ev);
+        let handled = match self.pointer.portal {
+            Some(through) if ev.kind != PointerKind::Press => {
+                let mapped = self.through_portal(engine, through, ev);
+                self.deliver(engine, &mapped)
+            }
+            _ => self.deliver(engine, ev),
+        };
+        if self.pointer.grab.is_none()
+            && self.pointer.passive.is_empty()
+            && self.pointer.watched.is_empty()
+        {
+            self.pointer.portal = None;
+        }
         self.pointer.cursor = self.cursor_for(engine, ev);
         handled
+    }
+
+    /// `ev` where the portal that took its press shows the item that holds
+    /// it; off every item when the pointer is off it, so that a release
+    /// there is no click.
+    fn through_portal(
+        &self,
+        engine: &Engine,
+        (portal, item): (ObjectId, ObjectId),
+        ev: &PointerEvent,
+    ) -> PointerEvent {
+        let pos = crate::pointer_portal::portal(engine, portal)
+            .filter(|_| engine.is_alive(portal))
+            .and_then(|find| crate::pointer_portal::map(engine, find, portal, Some(item), ev.pos))
+            .map_or(kurbo::Point::new(f64::MIN, f64::MIN), |(_, p)| p);
+        PointerEvent { pos, ..*ev }
     }
 
     /// The `Qt.CursorShape` the pointer shows over the scene, as of the
@@ -3312,9 +3344,46 @@ impl QuickScene {
             self.pointer.grab = Some(Grab::Item(v));
             return true;
         }
-        for &obj in &hits {
+        // A portal among them passes the press on to the items it shows
+        // there when nothing above it takes it, before what lies beneath.
+        let portal = hits
+            .iter()
+            .position(|o| crate::pointer_portal::portal(engine, *o).is_some());
+        let split = portal.unwrap_or(hits.len());
+        if self.press_hits(engine, ev, &hits[..split], button, &mut handled) {
+            return true;
+        }
+        if let Some(i) = portal
+            && self.press_through(engine, hits[i], ev, button, &mut handled)
+        {
+            return true;
+        }
+        if self.press_hits(engine, ev, &hits[split..], button, &mut handled) {
+            return true;
+        }
+        if !handled
+            && button == MouseButtons::RIGHT
+            && let Some((o, _)) = crate::context_menu::taker(engine, hits)
+        {
+            self.pointer.context = Some(o);
+            return true;
+        }
+        handled
+    }
+
+    /// Offers a press to `hits`, topmost first. True: one of them took the
+    /// pointer.
+    fn press_hits(
+        &mut self,
+        engine: &Engine,
+        ev: &PointerEvent,
+        hits: &[ObjectId],
+        button: MouseButtons,
+        handled: &mut bool,
+    ) -> bool {
+        for &obj in hits {
             // Drag and point handlers grab passively, and see it first.
-            handled |= crate::handlers::press(engine, obj, ev);
+            *handled |= crate::handlers::press(engine, obj, ev);
             // An item's pointer handlers see the event before the item.
             for h in resources(engine, obj) {
                 if !is_a::<TapHandler>(engine, h)
@@ -3349,7 +3418,7 @@ impl QuickScene {
                 if passive {
                     self.pointer.passive.push(h);
                     self.pointer.watched.push(h);
-                    handled = true;
+                    *handled = true;
                 } else {
                     self.pointer.grab = Some(Grab::Tap(h));
                     return true;
@@ -3372,14 +3441,34 @@ impl QuickScene {
                 crate::mouse_drag::filter_undo(engine);
             }
         }
-        if !handled
-            && button == MouseButtons::RIGHT
-            && let Some((o, _)) = crate::context_menu::taker(engine, hits)
-        {
-            self.pointer.context = Some(o);
+        false
+    }
+
+    /// Offers a press to the items `portal` shows under it. True: one of
+    /// them took the pointer, and the events that follow go through it.
+    fn press_through(
+        &mut self,
+        engine: &Engine,
+        portal: ObjectId,
+        ev: &PointerEvent,
+        button: MouseButtons,
+        handled: &mut bool,
+    ) -> bool {
+        let Some((item, pos)) = crate::pointer_portal::portal(engine, portal)
+            .and_then(|find| crate::pointer_portal::map(engine, find, portal, None, ev.pos))
+        else {
+            return false;
+        };
+        let mapped = PointerEvent { pos, ..*ev };
+        let hits = crate::pointer_portal::hits_in(engine, item, pos);
+        self.pointer.portal = Some((portal, item));
+        if self.press_hits(engine, &mapped, &hits, button, handled) {
             return true;
         }
-        handled
+        if self.pointer.passive.is_empty() {
+            self.pointer.portal = None;
+        }
+        false
     }
 
     fn press_mouse_area(

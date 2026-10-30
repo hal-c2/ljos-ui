@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use ljos::item::ljos_3d::{
     self, Filter, PixelEncoding, Sampling, TextureImage, TexturePixels, Tiling, UvTransform,
 };
-use ljos::item::{self, ImageEncoding, ImageHandle};
+use ljos::item::{self, ImageEncoding, ImageHandle, kurbo};
 use ljos::prelude::*;
 
 use crate::Object3D;
@@ -255,7 +255,6 @@ pub(crate) fn read(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d:
             image(e, view, obj, &url)?
         }
     };
-    let p = |prop| item::prop(e, obj, prop) as f32;
     let sampling = Sampling {
         min: self::filter(item::prop(e, obj, Texture::MIN_FILTER)),
         mag: self::filter(item::prop(e, obj, Texture::MAG_FILTER)),
@@ -264,18 +263,49 @@ pub(crate) fn read(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d:
         tiling_v: self::tiling(item::prop(e, obj, Texture::TILING_MODE_VERTICAL)),
         generate_mipmaps: item::prop(e, obj, Texture::GENERATE_MIPMAPS),
     };
-    let uv = UvTransform {
+    Some(ljos_3d::Texture {
+        image,
+        sampling,
+        uv: uv_transform(e, obj),
+    })
+}
+
+fn uv_transform(e: &Engine, obj: ObjectId) -> UvTransform {
+    let p = |prop| item::prop(e, obj, prop) as f32;
+    UvTransform {
         scale: [p(Texture::SCALE_U), p(Texture::SCALE_V)],
         position: [p(Texture::POSITION_U), p(Texture::POSITION_V)],
         rotation: p(Texture::ROTATION_UV),
         pivot: [p(Texture::PIVOT_U), p(Texture::PIVOT_V)],
         flip_u: item::prop(e, obj, Texture::FLIP_U),
         flip_v: item::prop(e, obj, Texture::FLIP_V),
-    };
-    Some(ljos_3d::Texture {
-        image,
-        sampling,
-        uv,
+    }
+}
+
+/// The `sourceItem` of the texture `obj` and the point of it the texture
+/// shows at `uv` of a mesh, where a press there lands. Untracked.
+pub(crate) fn item_at(e: &Engine, obj: ObjectId, uv: [f32; 2]) -> Option<(ObjectId, kurbo::Point)> {
+    e.untrack(|| {
+        let src = item::prop(e, obj, Texture::SOURCE_ITEM)?;
+        let [r0, r1] = uv_transform(e, obj).rows();
+        let at = |r: [f32; 3], tiling| {
+            let t = f64::from(r[0] * uv[0] + r[1] * uv[1] + r[2]);
+            // As the sampler reads it: the image the point shows.
+            match self::tiling(item::prop(e, obj, tiling)) {
+                Tiling::ClampToEdge => t.clamp(0.0, 1.0),
+                Tiling::Repeat => t.rem_euclid(1.0),
+                Tiling::MirroredRepeat => 1.0 - (t.rem_euclid(2.0) - 1.0).abs(),
+            }
+        };
+        let w: f64 = item::prop(e, src, item::Item::WIDTH);
+        let h: f64 = item::prop(e, src, item::Item::HEIGHT);
+        Some((
+            src,
+            kurbo::Point::new(
+                at(r0, Texture::TILING_MODE_HORIZONTAL) * w,
+                at(r1, Texture::TILING_MODE_VERTICAL) * h,
+            ),
+        ))
     })
 }
 

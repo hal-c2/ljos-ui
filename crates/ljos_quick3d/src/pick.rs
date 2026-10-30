@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use ljos::item::ljos_3d::pick::{self, Hit, Ray, Viewport};
 use ljos::item::ljos_3d::{NodeId, Scene};
-use ljos::item::{self, ljos_3d::math::Vec3};
+use ljos::item::{self, Item, kurbo, ljos_3d::math::Vec3};
 use ljos::prelude::*;
 
 use crate::space::{from_value, to_value};
-use crate::{Model, View3D};
+use crate::{DefaultMaterial, Model, PrincipledMaterial, View3D};
 
 fn pick_result_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![(
@@ -47,23 +47,33 @@ pub struct PickResult {
     pub object: QtObject,
 }
 
-/// The view's scene, read now without tracking, and which object each of
-/// its pickable models is.
+/// The view's scene, read now without tracking, which object each of its
+/// pickable models is, and whose items each rectangle that shows a node's
+/// items shows (by the item that holds them).
 struct Picking {
     scene: Scene,
     pickable: HashMap<NodeId, ObjectId>,
+    holders: HashMap<NodeId, ObjectId>,
 }
 
 impl Picking {
     fn read(e: &Engine, view: ObjectId) -> Picking {
         e.untrack(|| {
             let (scene, ids) = crate::scene::build_with_ids(e, view);
-            let pickable = ids
-                .into_iter()
-                .filter(|(obj, _)| e.is::<Model>(*obj) && item::prop(e, *obj, Model::PICKABLE))
-                .map(|(obj, id)| (id, obj))
-                .collect();
-            Picking { scene, pickable }
+            let mut pickable = HashMap::new();
+            let mut holders = HashMap::new();
+            for (obj, id) in ids {
+                if e.is::<Item>(obj) {
+                    holders.insert(id, obj);
+                } else if e.is::<Model>(obj) && item::prop(e, obj, Model::PICKABLE) {
+                    pickable.insert(id, obj);
+                }
+            }
+            Picking {
+                scene,
+                pickable,
+                holders,
+            }
         })
     }
 
@@ -81,6 +91,38 @@ impl Picking {
         let (w, h) = crate::view::size(e, view);
         Viewport::of_scene(&self.scene, w, h)
     }
+}
+
+/// `View3D`'s pointer portal: the item shown under a point of the view and
+/// the point of it there. Items in a node take the pointer where they are
+/// drawn; an item a pickable model shows through its first material's
+/// colour map takes it where the model shows it.
+pub(crate) fn item_under(
+    e: &Engine,
+    view: ObjectId,
+    at: kurbo::Point,
+) -> Option<(ObjectId, kurbo::Point)> {
+    let p = Picking::read(e, view);
+    let ray = p.viewport(e, view)?.ray(at.x as f32, at.y as f32)?;
+    let shown = |id| p.pickable.contains_key(&id) || p.holders.contains_key(&id);
+    let hit = pick::pick(&p.scene, &ray, shown).into_iter().next()?;
+    if let Some(&holder) = p.holders.get(&hit.node) {
+        return Some((holder, crate::items::point_at(e, view, holder, hit.uv)?));
+    }
+    let model = *p.pickable.get(&hit.node)?;
+    let texture = e.untrack(|| {
+        let material = crate::scene::list(e, model, Model::MATERIALS.index)
+            .into_iter()
+            .next()?;
+        if e.is::<DefaultMaterial>(material) {
+            item::prop(e, material, DefaultMaterial::DIFFUSE_MAP)
+        } else if e.is::<PrincipledMaterial>(material) {
+            item::prop(e, material, PrincipledMaterial::BASE_COLOR_MAP)
+        } else {
+            None
+        }
+    })?;
+    crate::texture::item_at(e, texture, hit.uv)
 }
 
 fn result(hit: Option<(&ObjectId, &Hit)>) -> Value {

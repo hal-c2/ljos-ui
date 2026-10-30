@@ -21,6 +21,8 @@
 //!   ([`PointerItem`], [`PointerEvent`]); [`register_hover_move`] adds the
 //!   moves over it with no button held, for an item with parts of its
 //!   own under the pointer (cells, a selection) or that reports motion.
+//! - [`register_pointer_portal`]: which item it shows elsewhere under a
+//!   point (a 3D view's item on a model), for a press to pass on to.
 //! - [`register_text_input_client`]: what an input method may do with it
 //!   while it has the active focus ([`TextInputClient`]): the text it
 //!   commits, what it is composing, and the cursor rectangle its
@@ -109,7 +111,8 @@ pub use ljos_quick::text_input::{
     set_highlights,
 };
 pub use ljos_quick::{
-    HoverMove, MouseButtons, PointerEvent, PointerId, PointerItem, PointerKind, contains_point,
+    HoverMove, MouseButtons, PointerEvent, PointerId, PointerItem, PointerKind, PointerPortal,
+    contains_point,
 };
 pub use ljos_quick::{
     Item, ItemPaint, KeyEvent, KeyKind, Modifiers, ReadPaint, ScrollPhase, WheelEvent,
@@ -244,6 +247,16 @@ pub fn register_wheel_item<T: QmlType>(engine: &Engine, hooks: WheelItem) {
 /// the items beneath. A later registration wins.
 pub fn register_pointer_item<T: QmlType>(engine: &Engine, hooks: PointerItem) {
     ljos_quick::register_pointer_item(engine, MetaRef::Static(T::static_meta()), hooks);
+}
+
+/// Makes items of type `T`, and of the types derived from it, pass a
+/// press on to an item they show elsewhere: `find` says which item is
+/// shown under a point of one, and at what point of it. A press nothing
+/// above it takes goes to that item's tree as a press on the window goes
+/// to what is under it, and the moves and the release that follow are
+/// mapped the same way while the press is held. Hover is not passed on.
+pub fn register_pointer_portal<T: QmlType>(engine: &Engine, find: PointerPortal) {
+    ljos_quick::register_pointer_portal(engine, MetaRef::Static(T::static_meta()), find);
 }
 
 /// Makes the scene tell a hovered item of type `T` (or of a type derived
