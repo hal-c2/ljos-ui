@@ -10,6 +10,8 @@ publish.workspace = true
 build = "build.rs"
 
 [dependencies]
+# The roles a theme may set and how they are read and checked.
+ljos_design = { path = "../ljos_design" }
 ljos_engine = { path = "../ljos_engine" }
 ljos_ir = { path = "../ljos_ir" }
 
@@ -19,10 +21,6 @@ ljos_ir = { path = "../ljos_ir" }
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_ir = { path = "../ljos_ir" }
 qt_types = { path = "../qt_types" }
-
-[dev-dependencies]
-# tests/tokens.rs holds the committed files to what ljos_design writes.
-ljos_design = { path = "../ljos_design" }
 
 [lints]
 workspace = true

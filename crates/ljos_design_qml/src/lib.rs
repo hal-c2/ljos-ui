@@ -15,6 +15,8 @@ use std::sync::Arc;
 use ljos_engine::{ComponentSource, Engine, LogLevel, Version};
 use ljos_ir::CompiledFile;
 
+pub mod theme;
+
 /// What `build.rs` packed: a count, then per file its key and its IR, each
 /// behind a little-endian `u32` length.
 static PACK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/design.bin"));
