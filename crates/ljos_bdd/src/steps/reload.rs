@@ -12,7 +12,14 @@ use super::{StepResult, docstring};
 
 #[when(regex = r#"^the file "([^"]+\.(?:qml|m?js))" is changed to:$"#)]
 fn file_changed(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
-    w.change_file(&name, Some(&docstring(step)?))
+    let text = docstring(step)?;
+    // An application the author started watches the project's files.
+    if w.author().0.started() {
+        w.stage(&name, &text);
+        let (author, files) = w.author();
+        return author.save(files);
+    }
+    w.change_file(&name, Some(&text))
 }
 
 #[when(regex = r#"^the file "([^"]+\.(?:qml|m?js))" is saved and closed as:$"#)]

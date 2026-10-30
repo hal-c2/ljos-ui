@@ -59,34 +59,48 @@ fn text_measured_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
 
 #[when("the wakes of the application's threads are counted")]
 fn wakes_are_counted(w: &mut LjosWorld) -> StepResult {
+    if w.author().0.started() {
+        return w.author().0.count_wakes();
+    }
     w.each(|b| b.probes()?.count_wakes())
 }
 
 #[then("no thread but the window's woke since they were counted")]
 fn no_other_thread_woke(w: &mut LjosWorld) -> StepResult {
-    w.each(|b| {
-        let woke = b.probes()?.wakes_counted()?;
-        if woke.is_empty() {
-            Ok(())
-        } else {
-            let said: Vec<String> = woke.iter().map(|(t, n)| format!("{t} {n} times")).collect();
-            Err(BackendError::Failed(format!("woke: {}", said.join(", "))))
-        }
-    })
+    if w.author().0.started() {
+        let woke = w.author().0.wakes_counted()?;
+        return threads_woke(&woke).map_err(|e| e.to_string());
+    }
+    w.each(|b| threads_woke(&b.probes()?.wakes_counted()?))
+}
+
+fn threads_woke(woke: &[(String, u64)]) -> Result<(), BackendError> {
+    if woke.is_empty() {
+        Ok(())
+    } else {
+        let said: Vec<String> = woke.iter().map(|(t, n)| format!("{t} {n} times")).collect();
+        Err(BackendError::Failed(format!("woke: {}", said.join(", "))))
+    }
 }
 
 #[then(regex = r"^the window's thread woke at most (\d+) times? since the wakes were counted$")]
 fn window_woke_at_most(w: &mut LjosWorld, most: u64) -> StepResult {
-    w.each(|b| {
-        let woke = b.probes()?.window_wakes_counted()?;
-        if woke <= most {
-            Ok(())
-        } else {
-            Err(BackendError::Failed(format!(
-                "the window's thread woke {woke} times, not at most {most}"
-            )))
-        }
-    })
+    // The main thread runs the loop of an application the author started.
+    if w.author().0.started() {
+        let woke = w.author().0.main_wakes_counted()?;
+        return woke_at_most(woke, most).map_err(|e| e.to_string());
+    }
+    w.each(|b| woke_at_most(b.probes()?.window_wakes_counted()?, most))
+}
+
+fn woke_at_most(woke: u64, most: u64) -> Result<(), BackendError> {
+    if woke <= most {
+        Ok(())
+    } else {
+        Err(BackendError::Failed(format!(
+            "the window's thread woke {woke} times, not at most {most}"
+        )))
+    }
 }
 
 #[when("the application is observed")]

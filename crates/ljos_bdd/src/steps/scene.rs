@@ -49,13 +49,23 @@ fn method_called_with(
 
 #[when(regex = r"^(\d+) milliseconds? pass(?:es)?$")]
 fn milliseconds_pass(w: &mut LjosWorld, ms: u64) -> StepResult {
-    w.each(|b| b.advance(ms))
+    time_passes(w, ms)
 }
 
 #[when(regex = r"^(\d+(?:\.\d+)?) seconds? pass(?:es)?$")]
 fn seconds_pass(w: &mut LjosWorld, s: f64) -> StepResult {
     // Rounded to the millisecond; sub-millisecond time has no meaning to a UI.
     let ms = (s * 1000.0).round() as u64;
+    time_passes(w, ms)
+}
+
+/// The backends' clocks move by `ms`. An application the author started
+/// runs on the machine's clock, so that much of it goes by.
+fn time_passes(w: &mut LjosWorld, ms: u64) -> StepResult {
+    if w.author().0.started() {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        return Ok(());
+    }
     w.each(|b| b.advance(ms))
 }
 

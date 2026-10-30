@@ -110,6 +110,19 @@ fn author_runs(w: &mut LjosWorld, line: String) -> StepResult {
     author.run(files, &line)
 }
 
+// The application is left running, and the scenario's agent speaks to
+// the inspector it names on its errors, as a parent process finds it.
+#[when(regex = r#"^the author starts "([^"]+)"$"#)]
+fn author_starts(w: &mut LjosWorld, line: String) -> StepResult {
+    let (author, files) = w.author();
+    author.start(files, &line)
+}
+
+#[then(regex = r#"^the application's errors mention "(.*)"$"#)]
+fn application_errors_mention(w: &mut LjosWorld, text: String) -> StepResult {
+    w.author().0.errors_mention(&unquoted(&text))
+}
+
 #[then(regex = r#"^the prompt contains "(.*)"$"#)]
 fn prompt_contains(w: &mut LjosWorld, text: String) -> StepResult {
     let text = unquoted(&text);

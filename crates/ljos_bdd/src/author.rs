@@ -13,7 +13,10 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Component, Path, PathBuf},
     process::{ChildStdin, Command, Stdio},
-    sync::mpsc::{Receiver, RecvTimeoutError, channel},
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        mpsc::{Receiver, RecvTimeoutError, channel},
+    },
     time::Duration,
 };
 
@@ -33,6 +36,9 @@ use crate::backend::{
 const ANSWER: Duration = Duration::from_secs(60);
 /// How long the server may take to leave once nobody talks to it.
 const LEAVE: Duration = Duration::from_secs(5);
+
+const NOT_COUNTED: &str =
+    "the wakes were not counted; use `When the wakes of the application's threads are counted`";
 
 /// The first line of a doc string, when it only says what the text is.
 const LABELS: [&str; 8] = [
@@ -127,8 +133,10 @@ pub fn tools_named(text: &str) -> Vec<String> {
     out
 }
 
-/// `ljos mcp`, running, and the pipe it answers on.
+/// `ljos mcp` or `ljos attach`, running, and the pipe it answers on.
 struct Server {
+    /// The command, as errors name it.
+    name: &'static str,
     child: Reaped,
     /// `None` once the pipe is closed, which is how the server is told to
     /// leave.
@@ -138,6 +146,7 @@ struct Server {
 }
 
 impl Server {
+    /// `ljos mcp` on the project.
     fn start(dir: &Path, caps: &str, runner: Option<&Path>) -> Result<(Self, Value), String> {
         let bin = testrun::ljos_bin().map_err(|e| e.to_string())?;
         let mut command = Command::new(bin);
@@ -148,17 +157,34 @@ impl Server {
         if let Some(runner) = runner {
             command.arg("--features-runner").arg(runner);
         }
+        Self::speak(command.current_dir(dir), "`ljos mcp`")
+    }
+
+    /// `ljos attach` on the inspector whose token is in `token_file`, as
+    /// an agent that starts its servers as programs reaches a running
+    /// application.
+    fn attach(dir: &Path, token_file: &Path) -> Result<(Self, Value), String> {
+        let bin = testrun::ljos_bin().map_err(|e| e.to_string())?;
+        let mut command = Command::new(bin);
+        command.arg("attach").arg(token_file);
+        Self::speak(command.current_dir(dir), "`ljos attach`")
+    }
+
+    /// Starts `command` and greets it as an MCP client does.
+    fn speak(command: &mut Command, name: &'static str) -> Result<(Self, Value), String> {
         let mut child = Reaped::spawn(
             command
-                .current_dir(dir)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 // The log is the server's own; what an agent sees is the answers.
                 .stderr(Stdio::null()),
         )
-        .map_err(|e| format!("cannot start `ljos mcp`: {e}"))?;
+        .map_err(|e| format!("cannot start {name}: {e}"))?;
         let stdin = child.stdin.take();
-        let stdout = child.stdout.take().ok_or("`ljos mcp` has no output")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("{name} has no output"))?;
         let (send, lines) = channel();
         // A read cannot be given up, so a thread reads and the requests
         // wait on the channel, where they can. It ends with the pipe.
@@ -171,6 +197,7 @@ impl Server {
             }
         });
         let mut server = Server {
+            name,
             child,
             stdin,
             lines,
@@ -185,37 +212,39 @@ impl Server {
                     "clientInfo": { "name": "ljos_bdd", "version": "0" },
                 }),
             )?
-            .map_err(|e| format!("`ljos mcp` refused the client: {e}"))?;
+            .map_err(|e| format!("{name} refused the client: {e}"))?;
         server.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?;
         Ok((server, hello))
     }
 
     fn send(&mut self, message: &Value) -> Result<(), String> {
-        let stdin = self.stdin.as_mut().ok_or("`ljos mcp` was told to leave")?;
+        let name = self.name;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| format!("{name} was told to leave"))?;
         writeln!(stdin, "{message}")
             .and_then(|()| stdin.flush())
-            .map_err(|e| format!("`ljos mcp` does not listen: {e}"))
+            .map_err(|e| format!("{name} does not listen: {e}"))
     }
 
     /// One request and its answer: the result, or the protocol's error.
     fn request(&mut self, method: &str, params: Value) -> Result<Result<Value, Value>, String> {
+        let name = self.name;
         let id = self.next;
         self.next += 1;
         self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
         loop {
             let line = self.lines.recv_timeout(ANSWER).map_err(|e| match e {
                 RecvTimeoutError::Timeout => {
-                    format!(
-                        "`ljos mcp` did not answer `{method}` in {} s",
-                        ANSWER.as_secs()
-                    )
+                    format!("{name} did not answer `{method}` in {} s", ANSWER.as_secs())
                 }
                 RecvTimeoutError::Disconnected => {
-                    format!("`ljos mcp` ended before it answered `{method}`")
+                    format!("{name} ended before it answered `{method}`")
                 }
             })?;
             let Ok(mut message) = serde_json::from_str::<Value>(&line) else {
-                return Err(format!("`ljos mcp` wrote what is not JSON: {line}"));
+                return Err(format!("{name} wrote what is not JSON: {line}"));
             };
             // Anything else on the pipe is a notification, which no step
             // asks about.
@@ -308,9 +337,16 @@ fn tool_answer(mut result: Value) -> Answer {
     let text = texts(result["content"].as_array().into_iter().flatten());
     let structured = result["structuredContent"].take();
     if result["isError"] != json!(true) {
+        let picture = result["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|block| block["type"] == "image")
+            .and_then(|block| ljos_mcp_core::base64_decode(block["data"].as_str()?));
         return Answer {
             structured,
             text,
+            picture,
             ..Answer::default()
         };
     }
@@ -348,6 +384,27 @@ struct Rig {
     ran: Option<Ran>,
     /// What the author's desktop says to the commands they run.
     settings: desktop::Settings,
+    /// The application the author started and left running.
+    app: Option<App>,
+}
+
+/// An application started in the background (`When the author starts`),
+/// which the scenario's agent reaches through its inspector.
+struct App {
+    /// Killed with the scenario.
+    child: Reaped,
+    /// What it wrote to its errors so far, line by line.
+    errors: Arc<Mutex<Vec<String>>>,
+    /// The scenario's desktop, which lives as long as the application.
+    _desktop: Option<desktop::Desktop>,
+    /// Each thread's wakes when they began to be counted.
+    wakes_from: Option<BTreeMap<u32, (String, u64)>>,
+}
+
+impl App {
+    fn errors(&self) -> String {
+        lock(&self.errors).join("\n")
+    }
 }
 
 impl Rig {
@@ -368,6 +425,7 @@ impl Rig {
             seen: Seen::default(),
             ran: None,
             settings: desktop::Settings::new(),
+            app: None,
         })
     }
 
@@ -411,7 +469,13 @@ impl Rig {
         let runner = runner.map(|name| self.path(name)).transpose()?;
         // One agent at a time: the one before goes first.
         self.server = None;
-        let (mut server, hello) = Server::start(self.dir.path(), caps, runner.as_deref())?;
+        let (server, hello) = Server::start(self.dir.path(), caps, runner.as_deref())?;
+        self.greeted(server, &hello)
+    }
+
+    /// `server` answered the greeting with `hello`: what it offers is what
+    /// the agent has seen.
+    fn greeted(&mut self, mut server: Server, hello: &Value) -> Result<(), String> {
         let tools = server.list("tools/list", "tools")?;
         self.seen = Seen {
             tools: tools
@@ -508,7 +572,9 @@ impl Rig {
             .collect())
     }
 
-    fn run(&mut self, line: &str) -> Result<(), String> {
+    /// `line` as a command run in the project, with the scenario's
+    /// desktop when it set something, which the command must keep.
+    fn command(&self, line: &str) -> Result<(Command, Option<desktop::Desktop>), String> {
         let mut words = line.split_whitespace();
         let bin = match words.next() {
             Some("ljos") => testrun::ljos_bin(),
@@ -522,7 +588,9 @@ impl Rig {
         .map_err(|e| e.to_string())?;
         // The command meets the scenario's desktop and not the developer's:
         // a bus with a portal when the scenario set something, else a bus
-        // that is not there, as on a machine without a desktop.
+        // that is not there, as on a machine without a desktop. Nor is
+        // there a display, so that nothing a scenario runs can open a
+        // window on the developer's screen.
         let desktop = if self.settings.is_empty() {
             None
         } else {
@@ -540,15 +608,34 @@ impl Rig {
             },
             |d| d.address.clone(),
         );
-        // One pipe for the output and the errors keeps them in the order
-        // they were written, which is what a terminal shows.
-        let out = Command::new("sh")
-            .args(["-c", r#"exec "$0" "$@" 2>&1"#])
-            .arg(bin)
+        let mut command = Command::new(bin);
+        command
             .args(words)
             .current_dir(self.dir.path())
             .env("DBUS_SESSION_BUS_ADDRESS", bus)
-            .stdin(Stdio::null())
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("DISPLAY")
+            .stdin(Stdio::null());
+        Ok((command, desktop))
+    }
+
+    fn run(&mut self, line: &str) -> Result<(), String> {
+        let (command, _desktop) = self.command(line)?;
+        // One pipe for the output and the errors keeps them in the order
+        // they were written, which is what a terminal shows.
+        let mut sh = Command::new("sh");
+        sh.args(["-c", r#"exec "$0" "$@" 2>&1"#])
+            .arg(command.get_program())
+            .args(command.get_args())
+            .current_dir(self.dir.path())
+            .stdin(Stdio::null());
+        for (key, value) in command.get_envs() {
+            match value {
+                Some(value) => sh.env(key, value),
+                None => sh.env_remove(key),
+            };
+        }
+        let out = sh
             .output()
             .map_err(|e| format!("cannot start `{line}`: {e}"))?;
         let status = out
@@ -561,6 +648,114 @@ impl Rig {
         });
         Ok(())
     }
+
+    /// Starts `line` and leaves it running, and connects the agent to the
+    /// inspector it names on its errors, as a parent process finds it.
+    fn start(&mut self, line: &str) -> Result<(), String> {
+        // One application at a time, and one agent: those before go first.
+        self.server = None;
+        self.app = None;
+        let (mut command, desktop) = self.command(line)?;
+        let mut child = Reaped::spawn(command.stdout(Stdio::null()).stderr(Stdio::piped()))
+            .map_err(|e| format!("cannot start `{line}`: {e}"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| format!("`{line}` has no errors to read"))?;
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let (send, lines) = channel();
+        {
+            let errors = Arc::clone(&errors);
+            // The pipe is read to its end, so that the application never
+            // waits on a full one; the lines it wrote are kept for the steps.
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines() {
+                    let Ok(line) = line else { break };
+                    lock(&errors).push(line.clone());
+                    // Nobody listens once the inspector was found.
+                    let _ = send.send(line);
+                }
+            });
+        }
+        let app = App {
+            child,
+            errors,
+            _desktop: desktop,
+            wakes_from: None,
+        };
+        let token_file = loop {
+            match lines.recv_timeout(ANSWER) {
+                Ok(said) => {
+                    if let Some(file) = inspector_token_file(&said) {
+                        break file;
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(format!(
+                        "`{line}` named no inspector in {} s; it wrote:\n{}",
+                        ANSWER.as_secs(),
+                        app.errors()
+                    ));
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(format!(
+                        "`{line}` ended before it named its inspector; it wrote:\n{}",
+                        app.errors()
+                    ));
+                }
+            }
+        };
+        self.app = Some(app);
+        let (server, hello) = Server::attach(self.dir.path(), &self.dir.path().join(token_file))?;
+        self.greeted(server, &hello)
+    }
+
+    fn app(&mut self) -> Result<&mut App, String> {
+        self.app.as_mut().ok_or_else(|| {
+            "the author has started no application; use `When the author starts`".to_owned()
+        })
+    }
+}
+
+/// Locks `m` whether or not the thread that reads into it went down.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The token file the line `ljos run` writes to its errors when it serves
+/// its inspector names: `ljos: inspector (--mcp=…) at URL, token in FILE`.
+fn inspector_token_file(line: &str) -> Option<PathBuf> {
+    let rest = line.strip_prefix("ljos: inspector (")?;
+    let (_, file) = rest.split_once(", token in ")?;
+    Some(PathBuf::from(file.trim()))
+}
+
+/// Each thread of process `pid` by its id: its name, and how many times
+/// it went to sleep or was made to give way.
+fn thread_wakes(pid: u32) -> Result<BTreeMap<u32, (String, u64)>, String> {
+    let failed = |e: std::io::Error| format!("cannot read the threads of process {pid}: {e}");
+    let mut threads = BTreeMap::new();
+    for task in fs::read_dir(format!("/proc/{pid}/task")).map_err(failed)? {
+        let task = task.map_err(failed)?;
+        let Some(tid) = task.file_name().to_str().and_then(|t| t.parse().ok()) else {
+            continue;
+        };
+        // A thread that ended between the listing and the read is gone.
+        let Ok(status) = fs::read_to_string(task.path().join("status")) else {
+            continue;
+        };
+        let field = |key: &str| {
+            status
+                .lines()
+                .find_map(|l| l.strip_prefix(key))
+                .map(str::trim)
+        };
+        let name = field("Name:").unwrap_or("?").to_owned();
+        let n = |key| field(key).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+        let woke = n("voluntary_ctxt_switches:") + n("nonvoluntary_ctxt_switches:");
+        threads.insert(tid, (name, woke));
+    }
+    Ok(threads)
 }
 
 /// The authoring side of a scenario: nothing until a step asks for it.
@@ -661,6 +856,100 @@ impl Slot {
     /// The line is not an `ljos` command, or the program cannot be run.
     pub fn run(&mut self, files: &Files, line: &str) -> Result<(), String> {
         self.rig(files)?.run(line)
+    }
+
+    /// Starts `ljos …` in the project and leaves it running, and connects
+    /// the scenario's agent to the inspector it serves.
+    ///
+    /// # Errors
+    /// The line is not an `ljos` command, or the program cannot be run,
+    /// names no inspector, or its inspector does not speak MCP.
+    pub fn start(&mut self, files: &Files, line: &str) -> Result<(), String> {
+        self.rig(files)?.start(line)
+    }
+
+    /// Whether an application the author started runs, so that what the
+    /// scenario changes or waits for is that application's.
+    #[must_use]
+    pub fn started(&self) -> bool {
+        self.0.as_ref().is_some_and(|rig| rig.app.is_some())
+    }
+
+    /// Writes the files the scenario changed into the project, as an
+    /// editor saves them.
+    ///
+    /// # Errors
+    /// A file cannot be written.
+    pub fn save(&mut self, files: &Files) -> Result<(), String> {
+        self.rig(files).map(drop)
+    }
+
+    /// Whether the application's errors have a line with `text` in it.
+    ///
+    /// # Errors
+    /// No application was started, or none of its lines has the text.
+    pub fn errors_mention(&mut self, text: &str) -> Result<(), String> {
+        let app = self.app()?;
+        let errors = app.errors();
+        if errors.contains(text) {
+            Ok(())
+        } else {
+            Err(format!(
+                "the errors do not mention {text:?}; they are:\n{errors}"
+            ))
+        }
+    }
+
+    /// Notes how often each of the application's threads has woken.
+    ///
+    /// # Errors
+    /// No application was started, or its threads cannot be read.
+    pub fn count_wakes(&mut self) -> Result<(), String> {
+        let app = self.app()?;
+        app.wakes_from = Some(thread_wakes(app.child.id())?);
+        Ok(())
+    }
+
+    /// The threads other than the main one that woke since the wakes were
+    /// counted, by name, with how many times.
+    ///
+    /// # Errors
+    /// No application was started, its wakes were not counted, or its
+    /// threads cannot be read.
+    pub fn wakes_counted(&mut self) -> Result<Vec<(String, u64)>, String> {
+        let app = self.app()?;
+        let pid = app.child.id();
+        let from = app.wakes_from.as_ref().ok_or(NOT_COUNTED)?;
+        Ok(thread_wakes(pid)?
+            .into_iter()
+            .filter(|(tid, _)| *tid != pid)
+            .filter_map(|(tid, (name, n))| {
+                let was = from.get(&tid).map_or(0, |(_, w)| *w);
+                let woke = n.saturating_sub(was);
+                (woke > 0).then_some((name, woke))
+            })
+            .collect())
+    }
+
+    /// How many times the main thread, which runs the application's
+    /// loop, woke since the wakes were counted.
+    ///
+    /// # Errors
+    /// As [`Slot::wakes_counted`].
+    pub fn main_wakes_counted(&mut self) -> Result<u64, String> {
+        let app = self.app()?;
+        let pid = app.child.id();
+        let from = app.wakes_from.as_ref().ok_or(NOT_COUNTED)?;
+        let was = from.get(&pid).map_or(0, |(_, w)| *w);
+        let now = thread_wakes(pid)?.get(&pid).map_or(0, |(_, w)| *w);
+        Ok(now.saturating_sub(was))
+    }
+
+    fn app(&mut self) -> Result<&mut App, String> {
+        self.0
+            .as_mut()
+            .ok_or_else(|| "the author has started no application".to_owned())?
+            .app()
     }
 
     /// Sets what the author's desktop says for `key` of `namespace` to
