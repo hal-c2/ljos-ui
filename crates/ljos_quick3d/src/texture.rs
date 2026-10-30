@@ -66,7 +66,7 @@ pub struct Texture {
     pub object3d: Object3D,
     #[qml(notify)]
     pub source: Url,
-    /// Kept; an item drawn into a texture is not built yet.
+    /// An item drawn into the texture, live, instead of `source`.
     #[qml(notify, object = "Item")]
     pub source_item: Option<ObjectId>,
     #[qml(notify)]
@@ -171,6 +171,16 @@ enum State {
 #[derive(Debug)]
 struct ImagePixels(ImageHandle);
 
+impl ImagePixels {
+    fn encoding_of(image: &ImageHandle) -> PixelEncoding {
+        match image.encoding() {
+            ImageEncoding::Premultiplied => PixelEncoding::Srgb8Premultiplied,
+            ImageEncoding::Straight => PixelEncoding::Srgb8Straight,
+            ImageEncoding::Rgbe => PixelEncoding::Rgbe,
+        }
+    }
+}
+
 impl TexturePixels for ImagePixels {
     fn id(&self) -> u64 {
         self.0.id()
@@ -181,11 +191,7 @@ impl TexturePixels for ImagePixels {
     }
 
     fn encoding(&self) -> PixelEncoding {
-        match self.0.encoding() {
-            ImageEncoding::Premultiplied => PixelEncoding::Srgb8Premultiplied,
-            ImageEncoding::Straight => PixelEncoding::Srgb8Straight,
-            ImageEncoding::Rgbe => PixelEncoding::Rgbe,
-        }
+        Self::encoding_of(&self.0)
     }
 
     fn opaque(&self) -> bool {
@@ -202,6 +208,33 @@ impl TexturePixels for ImagePixels {
     }
 }
 
+/// A picture of an item as the 3D renderer reads it. Kept after the upload,
+/// unlike a file's: nothing could make it again but the next picture.
+#[derive(Debug)]
+pub(crate) struct ItemPixels(pub(crate) ImageHandle);
+
+impl TexturePixels for ItemPixels {
+    fn id(&self) -> u64 {
+        self.0.id()
+    }
+
+    fn size(&self) -> [u32; 2] {
+        [self.0.width(), self.0.height()]
+    }
+
+    fn encoding(&self) -> PixelEncoding {
+        ImagePixels::encoding_of(&self.0)
+    }
+
+    fn opaque(&self) -> bool {
+        self.0.is_opaque()
+    }
+
+    fn with_pixels(&self, f: &mut dyn FnMut(&[u8])) {
+        f(&self.0.data_to_upload());
+    }
+}
+
 /// The texture `obj` as the view `view` draws it now: `None` while its
 /// picture is not ready (the view is painted again when it is), or when it
 /// has none. Tracked.
@@ -209,10 +242,19 @@ pub(crate) fn read(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d:
     if !e.is::<Texture>(obj) {
         return None;
     }
-    let source = item::prop(e, obj, Texture::SOURCE);
-    // A source a file wrote is relative to that file, as an Image's.
-    let url = e.resolve_url(obj, source.0.as_str());
-    let image = image(e, view, obj, &url)?;
+    let image = match item::prop(e, obj, Texture::SOURCE_ITEM) {
+        // "If this property is set, the source property is ignored."
+        Some(src) => {
+            let picture = item::item_picture(e, view, src, item::PictureArea::Bounds)?;
+            TextureImage::new(ItemPixels(picture.image))
+        }
+        None => {
+            let source = item::prop(e, obj, Texture::SOURCE);
+            // A source a file wrote is relative to that file, as an Image's.
+            let url = e.resolve_url(obj, source.0.as_str());
+            image(e, view, obj, &url)?
+        }
+    };
     let p = |prop| item::prop(e, obj, prop) as f32;
     let sampling = Sampling {
         min: self::filter(item::prop(e, obj, Texture::MIN_FILTER)),
