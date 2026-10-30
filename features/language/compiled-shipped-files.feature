@@ -92,6 +92,33 @@ Feature: Files compiled ahead of time
     And the property "twice" of "root" is 8
     And the file "Scenario.qml" ran compiled code
 
+  # A property only its making writes holds one value for the object's life,
+  # so no tier has anything to follow: compiled code and the script agree.
+  Scenario: A read-only constant needs no following, and a writable property read alike does
+    Given the files are compiled ahead of time
+    And the compiled code cross-check is on
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+          id: root
+          objectName: "root"
+          width: 100
+          readonly property int minimumWidth: 208
+          property int gap: 208
+          property real fromConstant: Math.min(0, root.width - root.minimumWidth)
+          property real fromWritable: Math.min(0, root.width - root.gap)
+      }
+      """
+    Then the property "fromConstant" of "root" is -108
+    And the property "fromWritable" of "root" is -108
+    When the property "gap" of "root" is set to 50
+    Then the property "fromWritable" of "root" is 0
+    When the property "width" of "root" is set to 150
+    Then the property "fromConstant" of "root" is -58
+    And the file "Scenario.qml" ran compiled code
+    And the log has no warning matching "compiled code and the dynamic tiers differ"
+
   Scenario: A signal argument is what the signal declares, compiled as dynamically
     Given the files are compiled ahead of time
     And the compiled code cross-check is on

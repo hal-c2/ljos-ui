@@ -4188,3 +4188,27 @@ Feature: What a reload changes
       And a reload happens
       Then the property "r" of "root" is 4
       And the property "twice" of "root" is 8
+
+    # Read through a script, not only the quick paths a plain product takes.
+    Scenario: A script that reads a read-only value has the new one
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          readonly property int r: 3
+          property string said: [r].join("") + "!"
+        }
+        """
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          readonly property int r: 4
+          property string said: [r].join("") + "!"
+        }
+        """
+      And a reload happens
+      Then the property "r" of "root" is 4
+      And the property "said" of "root" is "4!"
