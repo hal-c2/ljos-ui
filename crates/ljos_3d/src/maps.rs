@@ -157,6 +157,32 @@ impl Maps {
         key
     }
 
+    /// One texture a custom material or an effect samples by its own
+    /// sampler: uploaded unless it is there, and read as it is stored, as
+    /// a snippet decides itself what its channels hold. `None` for an
+    /// image with no pixels.
+    pub(crate) fn single(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &Texture,
+    ) -> Option<(wgpu::TextureView, wgpu::Sampler)> {
+        let k = TextureKey {
+            image: texture.image.id(),
+            srgb: false,
+            mipmapped: texture.sampling.mipmapped(),
+        };
+        if !self.textures.contains_key(&k) {
+            let uploaded = self.upload(device, queue, texture, k)?;
+            self.textures.insert(k, uploaded);
+        }
+        let sampler = self
+            .samplers
+            .entry(texture.sampling)
+            .or_insert_with(|| sampler(device, texture.sampling));
+        Some((self.textures[&k].view.clone(), sampler.clone()))
+    }
+
     pub(crate) fn group(&self, key: &GroupKey) -> &wgpu::BindGroup {
         &self.groups[key]
     }
@@ -255,9 +281,9 @@ impl Maps {
 }
 
 /// One level of a texture: width, height and its RGBA8 pixels.
-type Level = (u32, u32, Vec<u8>);
+pub(crate) type Level = (u32, u32, Vec<u8>);
 
-fn upload(
+pub(crate) fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     label: &str,

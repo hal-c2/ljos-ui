@@ -55,6 +55,28 @@ fn translates_stages(name: &str, source: &str, vertices: &[&str], fragments: &[&
 const TONE: &str = include_str!("../src/shaders/tone.wgsl");
 
 #[test]
+fn the_post_processing_passes_run_on_webgl2() {
+    let source = include_str!("../src/shaders/post.wgsl");
+    translates_stages(
+        "post",
+        &format!("{TONE}{source}"),
+        &["vs_full"],
+        &[
+            "fs_ao",
+            "fs_ao_apply",
+            "fs_dof",
+            "fs_bright",
+            "fs_down",
+            "fs_blur",
+            "fs_add",
+            "fs_glow",
+            "fs_final",
+            "fs_fxaa",
+        ],
+    );
+}
+
+#[test]
 fn the_lit_shader_runs_on_webgl2() {
     let source = include_str!("../src/shaders/lit.wgsl");
     // vs_extra draws meshes with a second UV set or joints.

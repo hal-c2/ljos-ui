@@ -50,3 +50,7 @@ workspace = true
 [[example]]
 name = "gltf_load"
 required-features = ["gltf"]
+
+[[test]]
+name = "programs_and_post"
+required-features = ["snippets"]

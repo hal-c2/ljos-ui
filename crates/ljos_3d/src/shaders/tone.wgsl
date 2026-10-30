@@ -1,7 +1,9 @@
 // How the light a pixel gathers becomes a colour on screen, shared by the
 // materials and the sky box. `tone` is the frame's: x the mode (0 none,
 // 1 linear, 2 ACES, 3 Hejl-Dawson, 4 filmic), y the exposure, z the white
-// point. What it returns is already encoded for display.
+// point. What it returns is already encoded for display, except in mode 5:
+// a scene drawn for post-processing keeps its light as it is, and the last
+// pass tonemaps it.
 
 fn to_srgb(c: f32) -> f32 {
     if c <= 0.0031308 {
@@ -28,6 +30,9 @@ fn hable(x: vec3<f32>) -> vec3<f32> {
 
 fn tonemap(light: vec3<f32>, tone: vec4<f32>) -> vec3<f32> {
     let mode = u32(tone.x + 0.5);
+    if mode == 5u {
+        return light;
+    }
     if mode == 0u {
         return clamp(light, vec3<f32>(0.0), vec3<f32>(1.0));
     }

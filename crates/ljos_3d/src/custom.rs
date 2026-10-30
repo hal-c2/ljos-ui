@@ -205,13 +205,13 @@ impl Program {
     }
 
     /// The bytes of its whole uniform block.
-    pub(crate) fn block_size(&self) -> usize {
+    pub fn block_size(&self) -> usize {
         HEADER_ROWS * 16 + self.size
     }
 
     /// Writes `values` after the header of `block`. A value of another
     /// kind than its uniform's (a property changed type) is left zero.
-    pub(crate) fn write_values(&self, values: &[UniformValue], block: &mut [u8]) {
+    pub fn write_values(&self, values: &[UniformValue], block: &mut [u8]) {
         let area = &mut block[HEADER_ROWS * 16..];
         area.fill(0);
         for ((value, (_, kind)), &at) in values.iter().zip(&self.uniforms).zip(&self.offsets) {
@@ -226,16 +226,16 @@ impl Program {
 /// model's, the view's and the projection's matrices, then the camera, the
 /// clip planes and frame, and the input's and output's sizes. `snippet`
 /// declares the block and the renderer fills it.
-pub(crate) const HEADER_ROWS: usize = 28;
+pub const HEADER_ROWS: usize = 28;
 
 /// The entry points a program has, by kind.
-pub(crate) const MATERIAL_VERTEX: &str = "cm_vs";
+pub const MATERIAL_VERTEX: &str = "cm_vs";
 /// Premultiplied, as the built-in materials blend.
-pub(crate) const MATERIAL_FRAGMENT: &str = "cm_fs";
+pub const MATERIAL_FRAGMENT: &str = "cm_fs";
 /// Straight, for the blend factors a CustomMaterial names.
-pub(crate) const MATERIAL_FRAGMENT_STRAIGHT: &str = "cm_fs_straight";
-pub(crate) const EFFECT_VERTEX: &str = "cm_effect_vs";
-pub(crate) const EFFECT_FRAGMENT: &str = "cm_effect_fs";
+pub const MATERIAL_FRAGMENT_STRAIGHT: &str = "cm_fs_straight";
+pub const EFFECT_VERTEX: &str = "cm_effect_vs";
+pub const EFFECT_FRAGMENT: &str = "cm_effect_fs";
 
 impl PartialEq for Program {
     fn eq(&self, other: &Self) -> bool {
@@ -318,7 +318,8 @@ impl DepthDraw {
         }
     }
 
-    pub(crate) fn writes(self, blends: bool) -> bool {
+    /// Whether a material drawn this way writes depth.
+    pub fn writes(self, blends: bool) -> bool {
         match self {
             DepthDraw::OpaqueOnly => !blends,
             DepthDraw::Always | DepthDraw::OpaquePrePass => true,
@@ -448,7 +449,8 @@ pub struct Effect {
 }
 
 impl Effect {
-    pub(crate) fn reads_depth(&self) -> bool {
+    /// Whether a pass samples DEPTH_TEXTURE.
+    pub fn reads_depth(&self) -> bool {
         self.passes.iter().any(|p| p.program.reads_depth())
     }
 }
@@ -572,7 +574,9 @@ pub struct AmbientOcclusion {
 }
 
 impl AmbientOcclusion {
-    pub(crate) fn shows(&self) -> bool {
+    /// Whether it darkens anything: neither its strength nor its distance
+    /// is 0.
+    pub fn shows(&self) -> bool {
         self.strength > 0.0 && self.distance > 0.0
     }
 }

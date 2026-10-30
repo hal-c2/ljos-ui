@@ -30,6 +30,10 @@ mod maps;
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub mod offscreen;
 #[cfg(feature = "gpu")]
+mod post;
+#[cfg(feature = "gpu")]
+mod programs;
+#[cfg(feature = "gpu")]
 mod shadow;
 #[cfg(feature = "gpu")]
 pub mod surface;

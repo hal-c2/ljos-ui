@@ -19,6 +19,7 @@ use std::sync::{Arc, Weak};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use crate::custom::CustomMaterial;
 use crate::geometry::CustomGeometry;
 use crate::gpu_extra::{self, InstanceRow, JOINT_SLOT, JointSlot, Rows};
 use crate::ibl::{self, Bound, Ibl};
@@ -26,6 +27,8 @@ use crate::instancing::{Instancing, instance_worlds};
 use crate::maps::{self, GroupKey, Maps};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::mesh::Mesh;
+use crate::post::{self, Buffers, Chain, Pipes};
+use crate::programs::{Header, MaterialKey, Programs, Slot};
 use crate::scene::{
     AlphaMode, Background, Camera, CullMode, Environment, Light, LightProbe, Lighting, Material,
     MeshSource, NodeKind, Primitive, Scene, Tonemap,
@@ -142,6 +145,9 @@ struct PipelineKey {
     samples: u32,
     /// Drawn with a second vertex buffer, by `vs_extra`.
     extra: bool,
+    /// The picture's, or the half floats a post-processed scene is drawn
+    /// into.
+    format: wgpu::TextureFormat,
 }
 
 /// The pipelines and meshes of one device. One per device, shared by every
@@ -164,7 +170,10 @@ pub struct Renderer {
     maps: Maps,
     ibl: Ibl,
     sky_shader: wgpu::ShaderModule,
-    skies: HashMap<u32, wgpu::RenderPipeline>,
+    skies: HashMap<(u32, wgpu::TextureFormat), wgpu::RenderPipeline>,
+    /// The authors' programs: custom materials and effects.
+    programs: Programs,
+    post: Pipes,
     /// Whether the device renders into and filters half floats, which the
     /// probe's maps are; without, the scene draws with no probe.
     probes: bool,
@@ -197,6 +206,7 @@ impl std::fmt::Debug for Renderer {
 /// resolved into the target's texture.
 struct Multisample {
     samples: u32,
+    format: wgpu::TextureFormat,
     color: wgpu::TextureView,
     depth: wgpu::TextureView,
 }
@@ -245,6 +255,12 @@ pub struct Target {
     shadow_passes: u64,
     /// The GPU's timestamps of its frames, where the device has them.
     timer: Option<crate::timing::Timer>,
+    /// What each custom material drawn binds, in the order drawn.
+    custom_slots: Vec<Slot>,
+    /// The pictures between the post-processing passes.
+    post: Buffers,
+    /// How many times the picture was drawn: the programs' FRAME.
+    frames: u64,
 }
 
 /// A target's shadow maps and what they were last drawn from.
@@ -413,6 +429,9 @@ impl Target {
             shadows: None,
             shadow_passes: 0,
             timer: crate::timing::Timer::new(device),
+            custom_slots: Vec::new(),
+            post: Buffers::default(),
+            frames: 0,
         }
     }
 
@@ -511,7 +530,7 @@ impl Target {
         self.multisample.as_ref().map_or(1, |m| m.samples)
     }
 
-    fn multisample(&mut self, device: &wgpu::Device, samples: u32) {
+    fn multisample(&mut self, device: &wgpu::Device, samples: u32, format: wgpu::TextureFormat) {
         if samples <= 1 {
             self.multisample = None;
             return;
@@ -519,19 +538,12 @@ impl Target {
         if self
             .multisample
             .as_ref()
-            .is_some_and(|m| m.samples == samples)
+            .is_some_and(|m| m.samples == samples && m.format == format)
         {
             return;
         }
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        let color = attachment(
-            device,
-            "ljos_3d samples",
-            self.size,
-            samples,
-            COLOR_FORMAT,
-            usage,
-        );
+        let color = attachment(device, "ljos_3d samples", self.size, samples, format, usage);
         let depth = attachment(
             device,
             "ljos_3d sampled depth",
@@ -542,6 +554,7 @@ impl Target {
         );
         self.multisample = Some(Multisample {
             samples,
+            format,
             color: color.create_view(&wgpu::TextureViewDescriptor::default()),
             depth: depth.create_view(&wgpu::TextureViewDescriptor::default()),
         });
@@ -807,6 +820,22 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
     u
 }
 
+/// The camera's near and far clip planes.
+fn clip_planes(camera: &Camera) -> (f32, f32) {
+    match *camera {
+        Camera::Perspective {
+            clip_near,
+            clip_far,
+            ..
+        }
+        | Camera::Orthographic {
+            clip_near,
+            clip_far,
+            ..
+        } => (clip_near, clip_far),
+    }
+}
+
 fn pick_samples(counts: &[u32], wanted: u32) -> u32 {
     if wanted <= 1 {
         return 1;
@@ -854,8 +883,11 @@ enum MeshKey {
     Custom(u64),
 }
 
-struct Draw {
+struct Draw<'a> {
     mesh: MeshKey,
+    /// A custom material and its pipeline, which bind in place of the
+    /// maps.
+    custom: Option<(&'a CustomMaterial, MaterialKey)>,
     maps: GroupKey,
     key: PipelineKey,
     uniform: ModelUniform,
@@ -1021,6 +1053,8 @@ impl Renderer {
             ibl,
             sky_shader,
             skies: HashMap::new(),
+            programs: Programs::new(device),
+            post: Pipes::new(device),
             // WebGPU has half floats to draw into and filter; a host on
             // another backend says whether it has with
             // `use_adapter_formats`.
@@ -1106,16 +1140,7 @@ impl Renderer {
                     entry_point: Some(if key.extra { "vs_extra" } else { "vs_main" }),
                     compilation_options: Default::default(),
                     buffers: &[
-                        Some(wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<Vertex>() as u64,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &wgpu::vertex_attr_array![
-                                0 => Float32x3,
-                                1 => Float32x3,
-                                2 => Float32x2,
-                                3 => Float32x4,
-                            ],
-                        }),
+                        Some(vertex_layout()),
                         Some(gpu_extra::instance_layout()),
                         key.extra.then(gpu_extra::extra_layout),
                     ],
@@ -1145,7 +1170,7 @@ impl Renderer {
                     entry_point: Some("fs_main"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: COLOR_FORMAT,
+                        format: key.format,
                         blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -1220,9 +1245,9 @@ impl Renderer {
         }
     }
 
-    fn sky(&mut self, device: &wgpu::Device, samples: u32) {
+    fn sky(&mut self, device: &wgpu::Device, samples: u32, format: wgpu::TextureFormat) {
         let (shader, layout) = (&self.sky_shader, &self.pipeline_layout);
-        self.skies.entry(samples).or_insert_with(|| {
+        self.skies.entry((samples, format)).or_insert_with(|| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("ljos_3d sky"),
                 layout: Some(layout),
@@ -1251,7 +1276,7 @@ impl Renderer {
                     entry_point: Some("fs_main"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: COLOR_FORMAT,
+                        format,
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -1303,6 +1328,22 @@ impl Renderer {
     /// How many times a custom geometry was decoded and uploaded.
     pub fn custom_uploads(&self) -> u64 {
         self.custom_uploads
+    }
+}
+
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Float32x3,
+    2 => Float32x2,
+    3 => Float32x4,
+];
+
+/// The vertices the lit shader and the authors' programs read.
+fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<Vertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &VERTEX_ATTRIBUTES,
     }
 }
 
@@ -1405,8 +1446,17 @@ impl Renderer {
         let walked = scene.walk();
         let environment = scene.environment();
         let samples = self.samples_for(environment.msaa_samples);
-        target.multisample(device, samples);
+        // Post-processing works on the light as it is, kept in half
+        // floats; a device without them draws the scene plain.
+        let processed = environment.post_processed() && self.probes;
+        let format = if processed { post::HDR } else { COLOR_FORMAT };
+        target.multisample(device, samples, format);
+        target.frames += 1;
+        if !processed {
+            target.post.clear();
+        }
         self.maps.sweep();
+        self.programs.sweep();
         self.ibl.sweep();
         self.ibl.ready(device, queue);
         let probe = environment.light_probe.as_ref();
@@ -1416,22 +1466,31 @@ impl Renderer {
         };
 
         let camera = scene.active_camera();
-        let (view, view_proj, sky) = match camera {
+        let (view, proj, view_proj, sky) = match camera {
             Some((camera, world)) => {
                 let view = world.inverse().unwrap_or(Mat4::IDENTITY);
                 let proj = camera.projection(w as f32, h as f32);
                 let mut turn = view;
                 turn.0[3] = [0.0, 0.0, 0.0, 1.0];
                 let sky = (proj * turn).inverse().unwrap_or(Mat4::IDENTITY);
-                (view, proj * view, sky)
+                (view, proj, proj * view, sky)
             }
-            None => (Mat4::IDENTITY, Mat4::IDENTITY, Mat4::IDENTITY),
+            None => (
+                Mat4::IDENTITY,
+                Mat4::IDENTITY,
+                Mat4::IDENTITY,
+                Mat4::IDENTITY,
+            ),
         };
         let mut frame = FrameUniform::zeroed();
         frame.view_proj = view_proj.0;
         frame.sky = sky.0;
         let last_level = self.ibl.last_level(bound);
         environment_uniforms(&mut frame, environment, probe, bound, last_level);
+        if processed {
+            // Tone mapping is the last pass's.
+            frame.tone[0] = 5.0;
+        }
         if let Some((camera, world)) = camera {
             let p = world.translation();
             let d = world.forward();
@@ -1498,12 +1557,16 @@ impl Renderer {
                         (mesh.extra.is_some(), mesh.has_joints)
                     }
                 };
+                // An author's program reads one copy and no joints (its
+                // vertex stage has no INSTANCE_ or skin built-ins yet), so
+                // it is drawn, cast and culled as one unbent model.
+                let plain = matches!(model.material, Material::Custom(_));
                 // A skinned mesh is placed by its joints alone: their
                 // matrices take it into the scene.
                 let palette = node
                     .skin
                     .as_ref()
-                    .filter(|_| has_joints)
+                    .filter(|_| has_joints && !plain)
                     .map(|s| s.palette(scene));
                 let placed = if palette.is_some() {
                     Mat4::IDENTITY
@@ -1525,7 +1588,7 @@ impl Renderer {
                 };
                 let mut copies = Copies::ONE;
                 let mut transparent = false;
-                let (centre, radius) = match &node.instancing {
+                let (centre, radius) = match node.instancing.as_ref().filter(|_| !plain) {
                     None => gpu_extra::union(spheres.iter().copied()).unwrap_or_default(),
                     Some(instancing) => {
                         let first = rows.len();
@@ -1578,14 +1641,30 @@ impl Renderer {
                     continue;
                 }
                 let blends = model.material.blends() || transparent;
+                let custom = match &model.material {
+                    Material::Custom(m) => Some((
+                        m,
+                        MaterialKey {
+                            program: m.program.id(),
+                            cull: m.cull_mode,
+                            depth_write: m.depth_draw.writes(blends),
+                            samples,
+                            format,
+                            blend: blends.then_some((m.source_blend, m.destination_blend)),
+                        },
+                    )),
+                    _ => None,
+                };
                 let draw = Draw {
                     mesh: key,
+                    custom,
                     maps: self.maps.prepare(device, queue, &model.material),
                     key: PipelineKey {
                         cull: model.material.cull_mode(),
-                        depth_write: !blends,
+                        depth_write: custom.map_or(!blends, |(_, k)| k.depth_write),
                         samples,
                         extra,
+                        format,
                     },
                     uniform,
                     copies,
@@ -1681,11 +1760,55 @@ impl Renderer {
             target.slots_written.clear();
         }
         write_slots(queue, target, &uniforms, self.model_stride);
+        let (near, far) = camera.map_or((0.0, 1.0), |(c, _)| clip_planes(&c));
+        let inverse_projection = proj.inverse().unwrap_or(Mat4::IDENTITY);
+        let mut slot = 0;
         for draw in &draws {
             if let MeshKey::Primitive(p) = draw.mesh {
                 self.mesh(device, p);
             }
-            self.pipeline(device, draw.key);
+            match draw.custom {
+                Some((material, key)) => {
+                    self.programs.material_pipeline(
+                        device,
+                        &material.program,
+                        key,
+                        [&self.frame_layout, &self.model_layout, &self.ibl.layout],
+                        vertex_layout(),
+                        DEPTH_FORMAT,
+                    );
+                    let header = Header {
+                        model: draw.uniform.world,
+                        normal: draw.uniform.normal,
+                        view: view.0,
+                        projection: proj.0,
+                        inverse_projection: inverse_projection.0,
+                        view_projection: view_proj.0,
+                        camera: frame.camera,
+                        direction: frame.camera_dir,
+                        clip: [near, far, target.frames as f32, 0.0],
+                        sizes: [w as f32, h as f32, w as f32, h as f32],
+                    };
+                    self.programs.bind_material(
+                        device,
+                        queue,
+                        &mut self.maps,
+                        &mut target.custom_slots,
+                        slot,
+                        material,
+                        &header,
+                    );
+                    slot += 1;
+                }
+                None => self.pipeline(device, draw.key),
+            }
+        }
+        target.custom_slots.truncate(slot);
+        let depth_pass = processed && post::needs_depth(environment);
+        if depth_pass {
+            for draw in draws.iter().filter(|d| d.key.depth_write) {
+                self.shadow_pipeline(device, draw.key.cull, draw.key.extra);
+            }
         }
         for caster in &casters {
             if let MeshKey::Primitive(p) = caster.mesh {
@@ -1709,10 +1832,21 @@ impl Renderer {
         let plain_maps = self.maps.plain(device, queue);
         let sky = environment.background == Background::SkyBox && bound != Bound::None;
         if sky {
-            self.sky(device, samples);
+            self.sky(device, samples, format);
         }
         let clear = match environment.background {
             Background::Transparent | Background::SkyBox => wgpu::Color::TRANSPARENT,
+            // Drawn for the tonemapper, the colour is light, as the
+            // models' are.
+            Background::Color(c) if processed => {
+                let l = c.to_linear();
+                wgpu::Color {
+                    r: f64::from(l[0] * c.a),
+                    g: f64::from(l[1] * c.a),
+                    b: f64::from(l[2] * c.a),
+                    a: f64::from(c.a),
+                }
+            }
             Background::Color(c) => wgpu::Color {
                 r: f64::from(c.r * c.a),
                 g: f64::from(c.g * c.a),
@@ -1720,13 +1854,17 @@ impl Renderer {
                 a: f64::from(c.a),
             },
         };
+        let scene_view =
+            processed.then(|| target.post.view(device, post::SCENE, [w, h], post::HDR));
         {
             // Multisampled, the picture is drawn into the samples and
             // resolved into the target's texture, which is all the blit
-            // and a read back ever see.
+            // and a read back ever see. Post-processed, it is drawn into
+            // half floats the passes read.
+            let picture = scene_view.as_ref().unwrap_or(&target.color_view);
             let (view, resolve, depth) = match &target.multisample {
-                Some(m) => (&m.color, Some(&target.color_view), &m.depth),
-                None => (&target.color_view, None, &target.depth_view),
+                Some(m) => (&m.color, Some(picture), &m.depth),
+                None => (picture, None, &target.depth_view),
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ljos_3d scene"),
@@ -1762,21 +1900,32 @@ impl Renderer {
             if sky {
                 // Its layout is the materials', so every group is bound
                 // for it, though it reads only the frame and the probe.
-                pass.set_pipeline(&self.skies[&samples]);
+                pass.set_pipeline(&self.skies[&(samples, format)]);
                 pass.set_bind_group(1, &target.model_group, &[0, 0]);
                 pass.set_bind_group(2, self.maps.group(&plain_maps), &[]);
                 pass.draw(0..3, 0..1);
             }
             let mut bound = None;
             let mut bound_maps = None;
+            let mut slot = 0;
             for (i, draw) in draws.iter().enumerate() {
-                if bound != Some(draw.key) {
-                    pass.set_pipeline(&self.pipelines[&draw.key]);
-                    bound = Some(draw.key);
-                }
-                if bound_maps != Some(&draw.maps) {
-                    pass.set_bind_group(2, self.maps.group(&draw.maps), &[]);
-                    bound_maps = Some(&draw.maps);
+                if let Some((_, key)) = draw.custom {
+                    // A program's pipeline and block are its own, so the
+                    // next lit draw binds its own again.
+                    pass.set_pipeline(self.programs.material(&key));
+                    pass.set_bind_group(2, &target.custom_slots[slot].group, &[]);
+                    slot += 1;
+                    bound = None;
+                    bound_maps = None;
+                } else {
+                    if bound != Some(draw.key) {
+                        pass.set_pipeline(&self.pipelines[&draw.key]);
+                        bound = Some(draw.key);
+                    }
+                    if bound_maps != Some(&draw.maps) {
+                        pass.set_bind_group(2, self.maps.group(&draw.maps), &[]);
+                        bound_maps = Some(&draw.maps);
+                    }
                 }
                 let mesh = self.gpu_mesh(draw.mesh);
                 let offset = (i as u64 * self.model_stride) as u32;
@@ -1786,12 +1935,110 @@ impl Renderer {
                 pass.draw_indexed(0..mesh.count, 0, 0..draw.copies.count);
             }
         }
+        if processed {
+            if depth_pass {
+                self.draw_depth(device, encoder, target, &draws, view_proj);
+            }
+            Chain {
+                device,
+                queue,
+                encoder,
+                pipes: &mut self.post,
+                programs: &mut self.programs,
+                maps: &mut self.maps,
+                buffers: &mut target.post,
+                environment,
+                view: post::View {
+                    view: view.0,
+                    projection: proj.0,
+                    inverse_projection: inverse_projection.0,
+                    view_projection: view_proj.0,
+                    camera: frame.camera,
+                    direction: frame.camera_dir,
+                    near,
+                    far,
+                },
+                size: [w, h],
+                output: &target.color_view,
+                output_format: COLOR_FORMAT,
+                frame: target.frames as f32,
+            }
+            .run();
+        }
         if let Some(timer) = &mut target.timer {
             timer.end(encoder, shadows_drawn);
         }
         target.drawn_models = draws.len();
         target.drawn = Some(scene.revision());
         true
+    }
+
+    /// Draws the depth the post-processing passes read: what writes depth
+    /// in the picture, seen from the camera.
+    fn draw_depth(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &mut Target,
+        draws: &[Draw<'_>],
+        view_proj: Mat4,
+    ) {
+        let [w, h] = target.size;
+        let depth = target
+            .post
+            .view(device, post::DEPTH_KEY, [w, h], post::DEPTH);
+        let layer = ShadowLayer {
+            view_proj: view_proj.0,
+            params: [0.0; 4],
+        };
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ljos_3d camera depth"),
+            contents: bytemuck::bytes_of(&layer),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ljos_3d camera depth"),
+            layout: &self.layer_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(std::mem::size_of::<ShadowLayer>() as u64),
+                }),
+            }],
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("ljos_3d camera depth"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        pass.set_bind_group(0, &group, &[0]);
+        let mut bound = None;
+        for (i, draw) in draws.iter().enumerate() {
+            if !draw.key.depth_write {
+                continue;
+            }
+            let pipeline = (draw.key.cull, draw.key.extra);
+            if bound != Some(pipeline) {
+                pass.set_pipeline(&self.shadow_pipelines[&pipeline]);
+                bound = Some(pipeline);
+            }
+            let mesh = self.gpu_mesh(draw.mesh);
+            let offset = (i as u64 * self.model_stride) as u32;
+            let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;
+            pass.set_bind_group(1, &target.model_group, &[offset, joints]);
+            bind_mesh(&mut pass, mesh, &target.instances.buffer, draw.copies);
+            pass.draw_indexed(0..mesh.count, 0, 0..draw.copies.count);
+        }
     }
 
     /// Draws the shadow maps, unless they already show what the plan
