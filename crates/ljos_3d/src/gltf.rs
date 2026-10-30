@@ -379,7 +379,7 @@ impl TexturePixels for TextureImage {
     }
 
     fn opaque(&self) -> bool {
-        self.rgba.chunks_exact(4).all(|p| p[3] == 255)
+        self.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255)
     }
 
     fn with_pixels(&self, f: &mut dyn FnMut(&[u8])) {

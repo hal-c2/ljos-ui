@@ -1039,6 +1039,10 @@ const NOT_YET: &[(&str, &str)] = &[
         "a byte array to Qt, which a script sees as an ArrayBuffer; Ljós has no such value, so the id is the device's name as text",
     ),
     (
+        "QtMultimedia: Camera",
+        "capture devices are not built, so QtMultimedia has no Camera; the name is here only as QtQuick3D's camera base",
+    ),
+    (
         "QtMultimedia.Video",
         "an Item to Qt that holds a VideoOutput and declares no default property; here it is a VideoOutput, and so an item with one",
     ),
