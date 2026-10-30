@@ -237,6 +237,16 @@ impl Client {
         }
     }
 
+    /// The calls a second the inspector answers this client, as its token
+    /// file says now, for a caller to budget its calls by. An inspector
+    /// whose file states none answers the default.
+    pub fn calls_per_second(&self) -> Result<u32, TokenError> {
+        Ok(self
+            .target()?
+            .calls_per_second
+            .unwrap_or(crate::DEFAULT_CALLS_PER_SECOND))
+    }
+
     /// The MCP handshake, made once: the inspector's `initialize` result
     /// (its name, version, capabilities and instructions). The calls below
     /// make it themselves when it has not been made.

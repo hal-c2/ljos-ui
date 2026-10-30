@@ -68,8 +68,12 @@ pub struct HttpConfig {
     pub caps: CapSet,
     /// Where the address and the token are written for clients to read.
     pub token_file: Option<PathBuf>,
-    /// §19.7: at most 20.
-    pub calls_per_second: usize,
+    /// The calls a second a client with the token is answered (§19.7):
+    /// [`DEFAULT_CALLS_PER_SECOND`](crate::DEFAULT_CALLS_PER_SECOND) unless
+    /// whoever started the application grants more, within
+    /// [`CALLS_PER_SECOND`](crate::CALLS_PER_SECOND). Written to the token
+    /// file.
+    pub calls_per_second: u32,
     /// More connections than this are closed as they come.
     pub max_connections: usize,
     /// The second word that an address beyond this machine needs
@@ -89,7 +93,7 @@ impl HttpConfig {
             listen: Listen::Loopback(0),
             caps,
             token_file: None,
-            calls_per_second: 20,
+            calls_per_second: crate::DEFAULT_CALLS_PER_SECOND,
             max_connections: 32,
             insecure_lan: false,
             clean_up_on_signals: false,
@@ -119,6 +123,8 @@ pub enum HttpError {
     SocketPath(#[from] crate::SocketPathError),
     #[error(transparent)]
     Token(#[from] TokenFileError),
+    #[error(transparent)]
+    Rate(#[from] crate::RateError),
     #[error("cannot start the MCP server thread: {0}")]
     Thread(std::io::Error),
     #[error("the MCP server stopped by panicking: {0}")]
@@ -206,6 +212,9 @@ impl HttpServer {
     /// Starts listening. The socket is bound before this returns, so the
     /// address in the token file is one a client can connect to at once.
     pub fn start<S: McpSurface>(surface: Arc<S>, config: HttpConfig) -> Result<Self, HttpError> {
+        // Before anything listens: a rate outside the range is the
+        // launcher's mistake, not a bound to be quietly moved.
+        crate::check_calls_per_second(config.calls_per_second)?;
         let token = Token::generate()?;
         let wanted = match &config.listen {
             Listen::Loopback(port) => Some(SocketAddr::from((Ipv4Addr::LOCALHOST, *port))),
@@ -284,7 +293,13 @@ impl HttpServer {
             None
         };
         let token_file = match &config.token_file {
-            Some(path) => Some(TokenFile::write(path, &url, &token, config.caps)?),
+            Some(path) => Some(TokenFile::write(
+                path,
+                &url,
+                &token,
+                config.caps,
+                config.calls_per_second,
+            )?),
             None => None,
         };
         let leftovers: Vec<PathBuf> = config
@@ -316,7 +331,9 @@ impl HttpServer {
                             token,
                             port,
                             lan,
-                            rate: Mutex::new(RateLimit::per_second(config.calls_per_second)),
+                            rate: Mutex::new(RateLimit::per_second(
+                                usize::try_from(config.calls_per_second).unwrap_or(usize::MAX),
+                            )),
                             service,
                         });
                         let serving = accept(listener, state, config.max_connections, shutdown);

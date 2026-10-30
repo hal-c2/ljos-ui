@@ -14,6 +14,10 @@ pub struct Target {
     pub url: String,
     pub token: String,
     pub pid: Option<u32>,
+    /// The calls a second the inspector answers this token, as the file
+    /// states it, so that a client can pace itself. `None` from an
+    /// inspector that states none.
+    pub calls_per_second: Option<u32>,
 }
 
 /// How far a token file is believed. One found by looking in a directory
@@ -56,6 +60,12 @@ pub enum TokenError {
     Missing { path: PathBuf, field: &'static str },
     #[error("{path} has no inspector's token")]
     NotAToken { path: PathBuf },
+    #[error(
+        "{path} states a rate no inspector answers at: calls_per_second is from {} to {}",
+        crate::CALLS_PER_SECOND.start(),
+        crate::CALLS_PER_SECOND.end()
+    )]
+    BadRate { path: PathBuf },
     #[error("{path} does not name the process its name does")]
     OtherProcess { path: PathBuf },
     #[error("{path} names no running process")]
@@ -151,6 +161,15 @@ pub fn read_token_file(path: &Path, trust: Trust) -> Result<Target> {
         return Err(TokenError::NotAToken { path: shown(path) });
     }
     let pid = body["pid"].as_u64().and_then(|p| u32::try_from(p).ok());
+    let calls_per_second = match &body["calls_per_second"] {
+        Json::Null => None,
+        rate => Some(
+            rate.as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .and_then(|n| crate::check_calls_per_second(n).ok())
+                .ok_or_else(|| TokenError::BadRate { path: shown(path) })?,
+        ),
+    };
     if !trust.named {
         let named = pid_in_name(path);
         if pid.is_none() || pid != named {
@@ -163,7 +182,12 @@ pub fn read_token_file(path: &Path, trust: Trust) -> Result<Target> {
     if !(trust.named && trust.remote) {
         address.check_local(&url)?;
     }
-    Ok(Target { url, token, pid })
+    Ok(Target {
+        url,
+        token,
+        pid,
+        calls_per_second,
+    })
 }
 
 /// `PID` of a file named `mcp-PID.json`.
@@ -588,6 +612,32 @@ mod tests {
         write_token(&other, &genuine("http://127.0.0.1:1/mcp"));
         let why = refused(dir.path(), &other);
         assert!(why.contains("does not name the process"), "{why}");
+    }
+
+    #[test]
+    fn the_rate_a_file_states_is_read_and_held_to_the_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = mine(dir.path());
+        write_token(&path, &genuine("http://127.0.0.1:1/mcp"));
+        let target = read_token_file(&path, Trust::FOUND).unwrap();
+        assert_eq!(target.calls_per_second, None);
+        std::fs::remove_file(&path).unwrap();
+
+        let mut body = genuine("http://127.0.0.1:1/mcp");
+        body["calls_per_second"] = json!(100);
+        write_token(&path, &body);
+        let target = read_token_file(&path, Trust::FOUND).unwrap();
+        assert_eq!(target.calls_per_second, Some(100));
+        std::fs::remove_file(&path).unwrap();
+
+        for bad in [json!(0), json!(1001), json!("100"), json!(2.5)] {
+            let mut body = genuine("http://127.0.0.1:1/mcp");
+            body["calls_per_second"] = bad.clone();
+            write_token(&path, &body);
+            let why = refused(dir.path(), &path);
+            assert!(why.contains("from 1 to 1000"), "{bad}: {why}");
+            std::fs::remove_file(&path).unwrap();
+        }
     }
 
     #[test]

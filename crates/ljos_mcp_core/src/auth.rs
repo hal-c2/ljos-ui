@@ -77,13 +77,16 @@ pub struct TokenFile {
 }
 
 impl TokenFile {
-    /// Writes `{"url", "token", "pid", "capabilities"}` to `path`, readable
-    /// and writable by the owner alone.
+    /// Writes `{"url", "token", "pid", "capabilities", "calls_per_second"}`
+    /// to `path`, readable and writable by the owner alone. The rate is
+    /// there so that a client can pace itself rather than learn it from
+    /// refusals.
     pub fn write(
         path: &Path,
         url: &str,
         token: &Token,
         caps: CapSet,
+        calls_per_second: u32,
     ) -> Result<TokenFile, TokenFileError> {
         let fail = |source| TokenFileError::Write {
             path: path.to_path_buf(),
@@ -123,6 +126,7 @@ impl TokenFile {
             "token": token.as_str(),
             "pid": std::process::id(),
             "capabilities": caps,
+            "calls_per_second": calls_per_second,
         });
         let mut text = serde_json::to_string_pretty(&body).unwrap_or_default();
         text.push('\n');
@@ -240,6 +244,52 @@ pub fn loopback_origin(header: &str) -> bool {
     authority(rest).is_some_and(|(host, _)| is_loopback_name(host))
 }
 
+/// The calls a second a token is answered when its launcher says nothing
+/// (§19.7).
+pub const DEFAULT_CALLS_PER_SECOND: u32 = 20;
+
+/// The calls a second a launcher may grant. At least one, or nothing is
+/// answered at all. At most 1000: a program driving its child as a person
+/// works makes a few calls a gesture, which a few hundred cover with room
+/// to spare, and the limit keeps one call's mark per call in its window,
+/// so 1000 is still a few kilobytes. Past that it is no longer a bound.
+pub const CALLS_PER_SECOND: std::ops::RangeInclusive<u32> = 1..=1000;
+
+/// A rate outside [`CALLS_PER_SECOND`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "{given:?} is not a rate the inspector answers at: give the calls a second as a whole \
+     number from {} to {}",
+    CALLS_PER_SECOND.start(),
+    CALLS_PER_SECOND.end()
+)]
+pub struct RateError {
+    pub given: String,
+}
+
+/// `text` as calls a second, when it is a whole number in
+/// [`CALLS_PER_SECOND`].
+pub fn parse_calls_per_second(text: &str) -> Result<u32, RateError> {
+    text.trim()
+        .parse::<u32>()
+        .ok()
+        .and_then(|n| check_calls_per_second(n).ok())
+        .ok_or_else(|| RateError {
+            given: text.to_owned(),
+        })
+}
+
+/// `n` when it is in [`CALLS_PER_SECOND`].
+pub fn check_calls_per_second(n: u32) -> Result<u32, RateError> {
+    if CALLS_PER_SECOND.contains(&n) {
+        Ok(n)
+    } else {
+        Err(RateError {
+            given: n.to_string(),
+        })
+    }
+}
+
 /// At most `max` calls in any `window`.
 #[derive(Debug)]
 pub struct RateLimit {
@@ -257,7 +307,7 @@ impl RateLimit {
         }
     }
 
-    /// 20 calls a second (§19.7).
+    /// At most `max` calls a second (§19.7).
     pub fn per_second(max: usize) -> Self {
         Self::new(max, Duration::from_secs(1))
     }
@@ -387,6 +437,18 @@ mod tests {
         assert!(!r.allow(t0 + Duration::from_millis(1016)));
     }
 
+    #[test]
+    fn a_rate_is_a_whole_number_in_the_range() {
+        assert_eq!(parse_calls_per_second("1"), Ok(1));
+        assert_eq!(parse_calls_per_second("1000"), Ok(1000));
+        assert_eq!(parse_calls_per_second(" 100 "), Ok(100));
+        for bad in ["0", "1001", "-5", "2.5", "many", ""] {
+            let e = parse_calls_per_second(bad).unwrap_err();
+            assert!(e.to_string().contains("from 1 to 1000"), "{bad}: {e}");
+        }
+        assert!(check_calls_per_second(DEFAULT_CALLS_PER_SECOND).is_ok());
+    }
+
     #[cfg(unix)]
     #[test]
     fn the_token_file_is_its_owners_alone_and_goes_with_the_server() {
@@ -403,6 +465,7 @@ mod tests {
             "http://127.0.0.1:4000/mcp",
             &token,
             CapSet::of([Cap::Inspect]),
+            35,
         )
         .unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
@@ -413,6 +476,7 @@ mod tests {
         assert_eq!(body["token"], token.as_str());
         assert_eq!(body["pid"], std::process::id());
         assert_eq!(body["capabilities"], serde_json::json!(["inspect"]));
+        assert_eq!(body["calls_per_second"], 35);
         // Only the file itself is left: the part it was written as is gone.
         let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
@@ -434,8 +498,14 @@ mod tests {
         let path = dir.path().join("mcp-test.json");
         std::os::unix::fs::symlink(&victim, &path).unwrap();
         let token = Token::generate().unwrap();
-        let _file =
-            TokenFile::write(&path, "http://127.0.0.1:4000/mcp", &token, CapSet::EMPTY).unwrap();
+        let _file = TokenFile::write(
+            &path,
+            "http://127.0.0.1:4000/mcp",
+            &token,
+            CapSet::EMPTY,
+            20,
+        )
+        .unwrap();
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
         assert!(!std::fs::symlink_metadata(&path).unwrap().is_symlink());
     }

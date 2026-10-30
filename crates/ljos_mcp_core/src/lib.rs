@@ -29,7 +29,9 @@ mod surface;
 pub use alive::{effective_uid, process_alive};
 #[cfg(feature = "http")]
 pub use auth::{
-    RateLimit, Token, TokenFile, TokenFileError, address_host, loopback_host, loopback_origin,
+    CALLS_PER_SECOND, DEFAULT_CALLS_PER_SECOND, RateError, RateLimit, Token, TokenFile,
+    TokenFileError, address_host, check_calls_per_second, loopback_host, loopback_origin,
+    parse_calls_per_second,
 };
 
 pub use caps::{Cap, CapSet, ParseCapError};

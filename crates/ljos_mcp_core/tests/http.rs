@@ -306,6 +306,21 @@ fn calls_faster_than_the_rate_are_refused() {
     assert_eq!(rig.call(&rig.bearer).status, 200);
 }
 
+#[test]
+fn a_granted_rate_is_answered_and_a_rate_outside_the_range_is_not_served() {
+    let mut cfg = config();
+    cfg.calls_per_second = 40;
+    let rig = Rig::start(cfg);
+    let statuses: Vec<u16> = (0..40).map(|_| rig.call(&rig.bearer).status).collect();
+    assert!(statuses.iter().all(|s| *s == 200), "{statuses:?}");
+    for rate in [0, 1001] {
+        let mut cfg = config();
+        cfg.calls_per_second = rate;
+        let e = HttpServer::start(Demo::new(), cfg).err().unwrap();
+        assert!(e.to_string().contains("from 1 to 1000"), "{rate}: {e}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn the_token_file_is_the_owners_and_goes_when_the_server_stops() {

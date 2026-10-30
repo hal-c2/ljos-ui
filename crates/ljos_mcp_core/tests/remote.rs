@@ -114,7 +114,17 @@ async fn an_inspector_is_called_on_its_port_and_on_its_socket() {
     let mut on_port = serve(dir.path(), Listen::Loopback(0));
     let client = Client::for_pid(dir.path(), std::process::id()).unwrap();
     the_tools_answer(&client).await;
+    // The default, which every inspector states.
+    assert_eq!(client.target().unwrap().calls_per_second, Some(20));
     on_port.stop().unwrap();
+
+    // A rate granted at launch is what the file states, read anew.
+    let mut config =
+        HttpConfig::loopback(CapSet::of([Cap::Inspect])).token_file(token_file(dir.path()));
+    config.calls_per_second = 100;
+    let mut granted = HttpServer::start(Demo::new(), config).unwrap();
+    assert_eq!(client.calls_per_second().unwrap(), 100);
+    granted.stop().unwrap();
 
     let socket = dir.path().join("m.sock");
     let mut on_socket = serve(dir.path(), Listen::Unix(socket.clone()));

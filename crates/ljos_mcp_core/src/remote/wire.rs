@@ -257,6 +257,7 @@ mod tests {
             url: format!("http://127.0.0.1:{port}/mcp"),
             token: "t".into(),
             pid: None,
+            calls_per_second: None,
         }
     }
 
