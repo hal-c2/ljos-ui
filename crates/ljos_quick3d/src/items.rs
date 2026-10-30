@@ -81,6 +81,7 @@ pub(crate) fn quad(e: &Engine, view: ObjectId, holder: ObjectId) -> Option<ljos_
             ..Sampling::default()
         },
         uv: UvTransform::default(),
+        uv_set: 0,
     };
     let material = Material::Default(DefaultMaterial {
         diffuse_map: Some(texture),

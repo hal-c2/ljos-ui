@@ -1,10 +1,9 @@
-//! `QtQuick3D.Helpers`: `ExtendedSceneEnvironment`, a SceneEnvironment
-//! with the common post-processing built in.
+//! `ExtendedSceneEnvironment`, a SceneEnvironment with the common
+//! post-processing built in.
 
 use ljos::prelude::*;
 
 use crate::SceneEnvironment;
-use crate::random_instancing::{InstanceRange, RandomInstancing};
 
 pub(crate) mod glow_blend {
     pub const ADDITIVE: i32 = 0;
@@ -207,13 +206,4 @@ impl Default for ExtendedSceneEnvironment {
             lens_flare_lens_starburst_texture: None,
         }
     }
-}
-
-/// Registers `QtQuick3D.Helpers`.
-pub(crate) fn register(engine: &Engine) {
-    engine.register_module(ljos::module!("QtQuick3D.Helpers" 6.0 => [
-        ExtendedSceneEnvironment,
-        InstanceRange,
-        RandomInstancing,
-    ]));
 }
