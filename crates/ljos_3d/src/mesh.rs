@@ -9,6 +9,13 @@ pub struct Mesh {
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
+    /// The second UV set; empty where the mesh has one, which then serves
+    /// as both.
+    pub uv1: Vec<[f32; 2]>,
+    /// Up to four joints a vertex follows, and how much of each; empty
+    /// for a mesh that is not skinned.
+    pub joints: Vec<[u16; 4]>,
+    pub weights: Vec<[f32; 4]>,
 }
 
 impl Mesh {

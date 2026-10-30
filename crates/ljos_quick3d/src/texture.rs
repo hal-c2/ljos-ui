@@ -267,6 +267,7 @@ pub(crate) fn read(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d:
         image,
         sampling,
         uv: uv_transform(e, obj),
+        uv_set: 0,
     })
 }
 

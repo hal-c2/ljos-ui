@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::geometry::{ComponentType, CustomGeometry, PrimitiveType, Semantic};
+use crate::instancing::{MAX_JOINTS, Skin};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::scene::{
     AlphaMode, Color, CullMode, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind,
@@ -261,6 +262,7 @@ pub struct Asset {
     pub roots: Vec<usize>,
     pub meshes: Vec<AssetMesh>,
     pub materials: Vec<AssetMaterial>,
+    pub skins: Vec<AssetSkin>,
     /// The box the drawn meshes fill, in the space the roots are placed
     /// in; None when nothing is drawn.
     pub bounds: Option<(Vec3, Vec3)>,
@@ -274,7 +276,26 @@ pub struct AssetNode {
     pub name: Option<String>,
     pub transform: Transform,
     pub mesh: Option<usize>,
+    /// Into [`Asset::skins`]: the joints that bend the node's mesh.
+    pub skin: Option<usize>,
     pub children: Vec<usize>,
+}
+
+/// A skin as the file gives it: its joints, as indices into
+/// [`Asset::nodes`], and their inverse bind matrices.
+#[derive(Debug, Default)]
+pub struct AssetSkin {
+    pub joints: Vec<usize>,
+    pub inverse_bind: Vec<Mat4>,
+}
+
+/// Where [`Asset::add_to`] put the file's nodes in a scene.
+#[derive(Debug, Default)]
+pub struct Placed {
+    /// Each of the asset's nodes, where it was added.
+    pub nodes: Vec<Option<NodeId>>,
+    /// Each model added, a primitive each, with the asset node it is under.
+    pub models: Vec<(usize, NodeId)>,
 }
 
 #[derive(Debug, Default)]
@@ -431,44 +452,69 @@ impl Default for Sampler {
 
 impl Asset {
     /// Adds the file's nodes under `parent`, each mesh primitive a model
-    /// of its own beneath its node.
-    pub fn add_to(&self, scene: &mut Scene, parent: NodeId) {
-        let mut seen = vec![false; self.nodes.len()];
+    /// of its own beneath its node, and says where they went.
+    pub fn add_to(&self, scene: &mut Scene, parent: NodeId) -> Placed {
+        let mut placed = Placed {
+            nodes: vec![None; self.nodes.len()],
+            models: Vec::new(),
+        };
         for &root in &self.roots {
-            self.add_node(scene, parent, root, &mut seen);
+            self.add_node(scene, parent, root, &mut placed);
         }
+        // Joints may come after the meshes they bend, so skins are given
+        // once every node has its place. A joint the scene leaves out
+        // stays where the loader is.
+        for &(index, model) in &placed.models {
+            let Some(skin) = self.nodes[index].skin.and_then(|s| self.skins.get(s)) else {
+                continue;
+            };
+            let joints = skin
+                .joints
+                .iter()
+                .map(|j| placed.nodes.get(*j).copied().flatten().unwrap_or(parent))
+                .collect();
+            if let Some(node) = scene.node_mut(model) {
+                node.skin = Some(Skin {
+                    joints,
+                    inverse_bind: skin.inverse_bind.clone(),
+                });
+            }
+        }
+        placed
     }
 
-    fn add_node(&self, scene: &mut Scene, parent: NodeId, index: usize, seen: &mut [bool]) {
+    fn add_node(&self, scene: &mut Scene, parent: NodeId, index: usize, placed: &mut Placed) {
         // A node is in the tree once; `build` has already refused cycles,
         // and this keeps a hand-made Asset from looping too.
         let Some(node) = self.nodes.get(index) else {
             return;
         };
-        if std::mem::replace(&mut seen[index], true) {
+        if placed.nodes[index].is_some() {
             return;
         }
         let id = scene.add(
             Some(parent),
             Node::new(NodeKind::Group).with_transform(node.transform),
         );
+        placed.nodes[index] = Some(id);
         if let Some(mesh) = node.mesh.and_then(|m| self.meshes.get(m)) {
             for p in &mesh.primitives {
                 let material = self
                     .materials
                     .get(p.material)
                     .map_or_else(|| Material::Principled(gltf_default()), scene_material);
-                scene.add(
+                let model = scene.add(
                     Some(id),
                     Node::new(NodeKind::Model(Model {
                         mesh: MeshSource::Custom(p.geometry.clone()),
                         material,
                     })),
                 );
+                placed.models.push((index, model));
             }
         }
         for &child in &node.children {
-            self.add_node(scene, id, child, seen);
+            self.add_node(scene, id, child, placed);
         }
     }
 }
@@ -479,16 +525,12 @@ impl Asset {
 /// glTF multiplies each factor by its texture, as QtQuick3D's maps do,
 /// keeps roughness in green and metalness in blue, which are the maps'
 /// default channels, and lays UVs out with the image's top at v = 0, as
-/// the built-in meshes do. A texture read through a second UV set is left
-/// out (its factor still draws): the renderer reads one.
+/// the built-in meshes do. Each texture reads the UV set it names; past
+/// the second, the second.
 pub fn scene_material(m: &AssetMaterial) -> Material {
     let mut material = m.material.clone();
     let t = &m.textures;
-    let map = |r: &Option<TextureRef>| {
-        r.as_ref()
-            .filter(|r| r.uv_set == 0)
-            .map(TextureRef::texture)
-    };
+    let map = |r: &Option<TextureRef>| r.as_ref().map(TextureRef::texture);
     let metal_rough = map(&t.metallic_roughness);
     material.maps = Box::new(PrincipledMaps {
         base_color: map(&t.base_color),
@@ -532,6 +574,7 @@ impl TextureRef {
                 generate_mipmaps: s.mipmap.is_some(),
             },
             uv: texture::UvTransform::default(),
+            uv_set: self.uv_set.min(1),
         }
     }
 }
@@ -571,35 +614,37 @@ impl Builder<'_> {
     fn asset(&mut self) -> Result<Asset, LoadError> {
         let doc = self.doc;
         let materials = doc.materials().map(|m| self.material(&m)).collect();
-        let mut meshes = Vec::with_capacity(doc.meshes().len());
-        for mesh in doc.meshes() {
-            let mut out = AssetMesh::default();
-            for p in mesh.primitives() {
-                let what = format!("mesh {} primitive {}", mesh.index(), p.index());
-                match self.primitive(&p) {
-                    Ok(geometry) => out.primitives.push(AssetPrimitive {
-                        geometry: Arc::new(geometry),
-                        // The last slot is the default material, added below.
-                        material: p.material().index().unwrap_or(doc.materials().len()),
-                    }),
-                    Err(why) => self.warnings.push(format!("{what} is left out: {why}")),
-                }
+        let mut meshes: Vec<AssetMesh> = doc
+            .meshes()
+            .map(|mesh| self.mesh(&mesh, mesh.weights().unwrap_or(&[])))
+            .collect();
+        let mut nodes = Vec::with_capacity(doc.nodes().len());
+        for n in doc.nodes() {
+            let mut mesh = n.mesh().map(|m| m.index());
+            // A node may weigh its mesh's morph targets its own way: it
+            // gets a mesh of its own, morphed so.
+            if let (Some(m), Some(weights)) = (n.mesh(), n.weights())
+                && m.primitives().any(|p| p.morph_targets().len() > 0)
+                && m.weights() != Some(weights)
+            {
+                meshes.push(self.mesh(&m, weights));
+                mesh = Some(meshes.len() - 1);
             }
-            meshes.push(out);
+            nodes.push(AssetNode {
+                name: n.name().map(str::to_owned),
+                transform: transform(n.transform()),
+                mesh,
+                skin: n.skin().map(|s| s.index()),
+                children: n.children().map(|c| c.index()).collect(),
+            });
         }
+        let skins = doc.skins().map(|s| self.skin(&s)).collect();
         let mut asset = Asset {
-            nodes: doc
-                .nodes()
-                .map(|n| AssetNode {
-                    name: n.name().map(str::to_owned),
-                    transform: transform(n.transform()),
-                    mesh: n.mesh().map(|m| m.index()),
-                    children: n.children().map(|c| c.index()).collect(),
-                })
-                .collect(),
+            nodes,
             roots: self.roots(),
             meshes,
             materials,
+            skins,
             bounds: None,
             warnings: Vec::new(),
         };
@@ -615,6 +660,57 @@ impl Builder<'_> {
         asset.bounds = bounds(&asset);
         asset.warnings = std::mem::take(&mut self.warnings);
         Ok(asset)
+    }
+
+    /// A mesh's primitives, their morph targets weighed by `weights`.
+    fn mesh(&mut self, mesh: &::gltf::Mesh, weights: &[f32]) -> AssetMesh {
+        let mut out = AssetMesh::default();
+        for p in mesh.primitives() {
+            let what = format!("mesh {} primitive {}", mesh.index(), p.index());
+            match self.primitive(&p, weights) {
+                Ok(geometry) => out.primitives.push(AssetPrimitive {
+                    geometry: Arc::new(geometry),
+                    // The last slot is the default material, added by
+                    // `asset`.
+                    material: p.material().index().unwrap_or(self.doc.materials().len()),
+                }),
+                Err(why) => self.warnings.push(format!("{what} is left out: {why}")),
+            }
+        }
+        out
+    }
+
+    fn skin(&mut self, skin: &::gltf::Skin) -> AssetSkin {
+        let joints: Vec<usize> = skin.joints().map(|j| j.index()).collect();
+        if joints.len() > MAX_JOINTS {
+            self.warnings.push(format!(
+                "skin {} has {} joints; those past the first {MAX_JOINTS} do not move its mesh",
+                skin.index(),
+                joints.len()
+            ));
+        }
+        let inverse_bind = match skin.inverse_bind_matrices() {
+            None => Vec::new(),
+            Some(a) => match self.floats(&a, 16) {
+                Ok(f) => f
+                    .as_chunks::<16>()
+                    .0
+                    .iter()
+                    .map(|m| Mat4(std::array::from_fn(|c| std::array::from_fn(|r| m[c * 4 + r]))))
+                    .collect(),
+                Err(why) => {
+                    self.warnings.push(format!(
+                        "skin {}'s inverse bind matrices are left out: {why}",
+                        skin.index()
+                    ));
+                    Vec::new()
+                }
+            },
+        };
+        AssetSkin {
+            joints,
+            inverse_bind,
+        }
     }
 
     /// The default scene's nodes, else the first scene's, else every node
@@ -724,9 +820,9 @@ impl Builder<'_> {
 
     fn texture(&mut self, t: &::gltf::Texture, uv_set: u32) -> Option<TextureRef> {
         let image = self.image(&t.source())?;
-        if uv_set > 0 {
+        if uv_set > 1 {
             self.warnings.push(format!(
-                "texture {} reads TEXCOORD_{uv_set}, which is not drawn: its material keeps its factor",
+                "texture {} reads TEXCOORD_{uv_set}; it is drawn with TEXCOORD_1, the last set read",
                 t.index()
             ));
         }
@@ -797,7 +893,7 @@ impl Builder<'_> {
             .ok_or_else(|| format!("buffer view {} lies outside its buffer", view.index()))
     }
 
-    fn primitive(&self, p: &::gltf::Primitive) -> Result<CustomGeometry, String> {
+    fn primitive(&self, p: &::gltf::Primitive, weights: &[f32]) -> Result<CustomGeometry, String> {
         use ::gltf::mesh::{Mode, Semantic as S};
         let primitive = match p.mode() {
             Mode::Triangles => PrimitiveType::Triangles,
@@ -814,6 +910,7 @@ impl Builder<'_> {
             (Semantic::TexCoord0, S::TexCoords(0), 2),
             (Semantic::TexCoord1, S::TexCoords(1), 2),
             (Semantic::Tangent, S::Tangents, 4),
+            (Semantic::Weight, S::Weights(0), 4),
         ] {
             if let Some(a) = p.get(&glt) {
                 if a.count() != count {
@@ -822,6 +919,13 @@ impl Builder<'_> {
                 columns.push((semantic, width, self.floats(&a, width)?));
             }
         }
+        if let Some(a) = p.get(&S::Joints(0)) {
+            if a.count() != count {
+                return Err("its joints and positions differ in number".to_owned());
+            }
+            columns.push((Semantic::Joint, 4, self.joint_indices(&a)?));
+        }
+        let morphed = self.morph(p, weights, count, &mut columns)?;
         let stride_floats: usize = columns.iter().map(|c| c.1).sum();
         let mut vertices = Vec::with_capacity(count * stride_floats * 4);
         for v in 0..count {
@@ -848,7 +952,14 @@ impl Builder<'_> {
             g.add_attribute(Semantic::Index, 0, ComponentType::U32);
         }
         g.set_primitive_type(primitive);
-        if let Some((min, max)) = accessor_box(&positions) {
+        // Morphed, the file's box is the base shape's: the moved positions
+        // are measured instead.
+        let bounds = if morphed {
+            position_box(&columns[0].2)
+        } else {
+            accessor_box(&positions)
+        };
+        if let Some((min, max)) = bounds {
             g.set_bounds(min, max);
         }
         g.update();
@@ -886,6 +997,77 @@ impl Builder<'_> {
         let mut out = Vec::with_capacity(a.count() * width);
         for e in elements {
             for c in 0..width {
+                out.push(read(&e[c * size..]));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Adds each morph target's displacements, times its weight, to the
+    /// columns they displace. Whether anything moved.
+    fn morph(
+        &self,
+        p: &::gltf::Primitive,
+        weights: &[f32],
+        count: usize,
+        columns: &mut [(Semantic, usize, Vec<f32>)],
+    ) -> Result<bool, String> {
+        let mut moved = false;
+        for (target, &weight) in p.morph_targets().zip(weights) {
+            if weight == 0.0 {
+                continue;
+            }
+            for (semantic, accessor) in [
+                (Semantic::Position, target.positions()),
+                (Semantic::Normal, target.normals()),
+                (Semantic::Tangent, target.tangents()),
+            ] {
+                let (Some(a), Some(column)) =
+                    (accessor, columns.iter_mut().find(|c| c.0 == semantic))
+                else {
+                    continue;
+                };
+                if a.count() != count {
+                    return Err("a morph target and the positions differ in number".to_owned());
+                }
+                // A tangent's target moves xyz; its w, the handedness,
+                // stays.
+                let deltas = self.floats(&a, 3)?;
+                let width = column.1;
+                for (v, d) in deltas.as_chunks::<3>().0.iter().enumerate() {
+                    for c in 0..3 {
+                        column.2[v * width + c] += weight * d[c];
+                    }
+                }
+                moved |= semantic == Semantic::Position;
+            }
+        }
+        if moved && let Some(normals) = columns.iter_mut().find(|c| c.0 == Semantic::Normal) {
+            for n in normals.2.as_chunks_mut::<3>().0 {
+                let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                if l > 0.0 {
+                    n.iter_mut().for_each(|c| *c /= l);
+                }
+            }
+        }
+        Ok(moved)
+    }
+
+    /// A JOINTS_0 accessor's indices, unsigned bytes or shorts, as whole
+    /// floats, which a geometry's joint attribute takes.
+    fn joint_indices(&self, a: &::gltf::Accessor) -> Result<Vec<f32>, String> {
+        use ::gltf::accessor::DataType;
+        if a.dimensions().multiplicity() != 4 {
+            return Err(format!("joint accessor {} is not VEC4", a.index()));
+        }
+        let (size, read): (usize, fn(&[u8]) -> f32) = match a.data_type() {
+            DataType::U8 => (1, |b| f32::from(b[0])),
+            DataType::U16 => (2, |b| f32::from(u16::from_le_bytes([b[0], b[1]]))),
+            t => return Err(format!("joint accessor {} is {t:?}", a.index())),
+        };
+        let mut out = Vec::with_capacity(a.count() * 4);
+        for e in self.elements(a, size * 4)? {
+            for c in 0..4 {
                 out.push(read(&e[c * size..]));
             }
         }
@@ -966,6 +1148,18 @@ fn transform(t: ::gltf::scene::Transform) -> Transform {
             Vec3::ZERO
         },
     }
+}
+
+/// The box positions, three floats each, lie in.
+fn position_box(positions: &[f32]) -> Option<(Vec3, Vec3)> {
+    let mut points = positions.as_chunks::<3>().0.iter().map(|p| Vec3::new(p[0], p[1], p[2]));
+    let first = points.next()?;
+    Some(points.fold((first, first), |(min, max), p| {
+        (
+            Vec3::new(min.x.min(p.x), min.y.min(p.y), min.z.min(p.z)),
+            Vec3::new(max.x.max(p.x), max.y.max(p.y), max.z.max(p.z)),
+        )
+    }))
 }
 
 /// The box glTF requires a position accessor to state.

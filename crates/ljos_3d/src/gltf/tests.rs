@@ -459,6 +459,67 @@ fn metal_roughness_occlusion_and_normal_textures_read_their_channels() {
     // Trilinear, as glTF leaves unset filters to the viewer.
     let s = maps.normal.as_ref().unwrap().sampling;
     assert!(s.mipmapped() && s.mip == texture::Filter::Linear);
-    // The renderer reads one UV set: a texture on the second is left out.
-    assert!(maps.emissive.is_none());
+    // A texture on the second UV set is drawn with it.
+    assert_eq!(maps.emissive.as_ref().unwrap().uv_set, 1);
+    assert_eq!(maps.normal.as_ref().unwrap().uv_set, 0);
+}
+
+#[test]
+fn a_texture_on_the_second_uv_set_is_drawn_with_it() {
+    let asset = load("uv2.gltf");
+    assert!(asset.warnings.is_empty(), "{:?}", asset.warnings);
+    let mesh = asset.meshes[0].primitives[0].geometry.to_mesh().unwrap();
+    assert_eq!(mesh.uvs[0], [0.25, 0.25]);
+    assert_eq!(mesh.uv1.len(), mesh.positions.len());
+    let Material::Principled(m) = scene_material(&asset.materials[0]) else {
+        unreachable!()
+    };
+    assert_eq!(m.maps.base_color.unwrap().uv_set, 1);
+}
+
+#[test]
+fn a_skin_s_joints_and_inverse_bind_matrices_are_read() {
+    let asset = load("skin.gltf");
+    assert!(asset.warnings.is_empty(), "{:?}", asset.warnings);
+    let skin = &asset.skins[0];
+    assert_eq!(skin.joints, [0, 1]);
+    assert_eq!(skin.inverse_bind[1].translation(), Vec3::new(0.0, -50.0, 0.0));
+    assert_eq!(asset.nodes[2].skin, Some(0));
+    let mesh = asset.meshes[0].primitives[0].geometry.to_mesh().unwrap();
+    assert_eq!(mesh.joints[0], [0, 0, 0, 0]);
+    assert_eq!(mesh.joints[5], [1, 0, 0, 0]);
+    assert_eq!(mesh.weights[5], [1.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn a_placed_skin_names_the_scene_nodes_of_its_joints() {
+    let asset = load("skin.gltf");
+    let mut scene = Scene::new();
+    let loader = scene.add(None, Node::new(NodeKind::Group));
+    let placed = asset.add_to(&mut scene, loader);
+    let [(node, model)] = placed.models[..] else {
+        panic!("one model: {:?}", placed.models)
+    };
+    assert_eq!(node, 2);
+    let skin = scene.node(model).unwrap().skin.as_ref().unwrap();
+    assert_eq!(skin.joints, [placed.nodes[0].unwrap(), placed.nodes[1].unwrap()]);
+    // The knee turned a quarter turn swings the strip's top to the left.
+    let palette = skin.palette(&scene);
+    let top = crate::instancing::skin_point(
+        &palette,
+        [1, 0, 0, 0],
+        [1.0, 0.0, 0.0, 0.0],
+        Vec3::new(10.0, 100.0, 0.0),
+    );
+    assert!(near(top, Vec3::new(-50.0, 60.0, 0.0)), "{top:?}");
+}
+
+#[test]
+fn morph_targets_move_the_vertices_by_their_weights() {
+    let asset = load("morph.gltf");
+    assert!(asset.warnings.is_empty(), "{:?}", asset.warnings);
+    let mesh = asset.meshes[0].primitives[0].geometry.to_mesh().unwrap();
+    assert!(mesh.positions.iter().all(|p| p[0] == 0.0 || p[0] == 100.0));
+    let (min, max) = asset.bounds.unwrap();
+    assert!(near(min, Vec3::new(0.0, -50.0, 0.0)) && near(max, Vec3::new(100.0, 50.0, 0.0)));
 }

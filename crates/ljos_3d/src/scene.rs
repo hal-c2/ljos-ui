@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use slotmap::{SlotMap, new_key_type};
 
 use crate::geometry::CustomGeometry;
+use crate::instancing::{Instancing, Skin};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::texture::{Channel, Texture};
 
@@ -600,6 +601,10 @@ pub struct Node {
     /// a light's uniforms and every model built elsewhere stay as they
     /// were, and a node that is neither ignores them.
     pub shadow: Option<Shadow>,
+    /// A model's copies, each drawn where its table's entry puts it.
+    pub instancing: Option<Instancing>,
+    /// A model's joints, which bend its mesh in place of its transform.
+    pub skin: Option<Skin>,
     parent: Option<NodeId>,
     children: Vec<NodeId>,
 }
@@ -613,6 +618,8 @@ impl Node {
             casts_shadows: true,
             receives_shadows: true,
             shadow: None,
+            instancing: None,
+            skin: None,
             parent: None,
             children: Vec::new(),
         }
@@ -807,6 +814,18 @@ impl Scene {
             self.touch();
         }
         self.nodes.get_mut(id)
+    }
+
+    /// `id`'s world transform, whether or not it is visible: what a skin's
+    /// joints and an instancing's root are placed by.
+    pub fn world(&self, id: NodeId) -> Option<Mat4> {
+        let mut node = self.nodes.get(id)?;
+        let mut world = node.transform.matrix();
+        while let Some(p) = node.parent {
+            node = &self.nodes[p];
+            world = node.transform.matrix() * world;
+        }
+        Some(world)
     }
 
     pub fn environment(&self) -> &Environment {

@@ -23,7 +23,8 @@ pub enum Semantic {
     Normal,
     /// Two `F32`.
     TexCoord0,
-    /// Kept; nothing is drawn with it yet.
+    /// Two `F32`: the second UV set, which a texture's `indexUV` of 1
+    /// reads.
     TexCoord1,
     /// Kept; nothing is drawn with it yet.
     Tangent,
@@ -31,9 +32,10 @@ pub enum Semantic {
     Binormal,
     /// Kept; nothing is drawn with it yet.
     Color,
-    /// Kept; nothing is drawn with it yet.
+    /// Four joint indices the vertex follows, as `U16`, `U32` or whole
+    /// `F32`; drawn when the model has a skin.
     Joint,
-    /// Kept; nothing is drawn with it yet.
+    /// Four `F32`: how much of each of the vertex's joints it follows.
     Weight,
 }
 
@@ -307,6 +309,37 @@ impl CustomGeometry {
             .collect())
     }
 
+    /// The vertices' four joint indices. Qt's own geometries give them as
+    /// integers or as floats holding whole numbers; both are read.
+    fn joints(&self, a: Attribute) -> Result<Vec<[u16; 4]>, GeometryError> {
+        if self.stride == 0 {
+            return Err(GeometryError::NoStride);
+        }
+        if a.offset + 4 * a.component.size() > self.stride {
+            return Err(GeometryError::OutsideStride(Semantic::Joint, self.stride));
+        }
+        let size = a.component.size();
+        Ok(self
+            .vertex_data
+            .chunks_exact(self.stride)
+            .map(|v| {
+                std::array::from_fn(|i| {
+                    let b = &v[a.offset + i * size..];
+                    match a.component {
+                        ComponentType::U16 => u16::from_le_bytes([b[0], b[1]]),
+                        ComponentType::U32 => {
+                            u32::from_le_bytes([b[0], b[1], b[2], b[3]]).min(u32::from(u16::MAX))
+                                as u16
+                        }
+                        ComponentType::F32 => {
+                            f32::from_le_bytes([b[0], b[1], b[2], b[3]]).clamp(0.0, 65535.0) as u16
+                        }
+                    }
+                })
+            })
+            .collect())
+    }
+
     fn indices(&self, vertices: usize) -> Result<Vec<u32>, GeometryError> {
         let indices: Vec<u32> = match self.attribute(Semantic::Index) {
             None => (0..vertices as u32).collect(),
@@ -379,6 +412,18 @@ impl CustomGeometry {
             .map(|_| self.read_vec::<2>(Semantic::TexCoord0))
             .transpose()?;
         let uv_of = |v: usize| uvs.as_ref().map_or([0.0; 2], |u| u[v]);
+        let uv1 = self
+            .attribute(Semantic::TexCoord1)
+            .map(|_| self.read_vec::<2>(Semantic::TexCoord1))
+            .transpose()?;
+        let skin = match (self.attribute(Semantic::Joint), self.attribute(Semantic::Weight)) {
+            (Some(joints), Some(_)) => {
+                Some((self.joints(joints)?, self.read_vec::<4>(Semantic::Weight)?))
+            }
+            _ => None,
+        };
+        // Where each vertex of the mesh came from in the geometry.
+        let mut from: Vec<u32> = Vec::new();
         let mut mesh = Mesh::default();
         match normals {
             Some(normals) => {
@@ -386,6 +431,7 @@ impl CustomGeometry {
                 mesh.normals = normals;
                 mesh.uvs = (0..mesh.positions.len()).map(uv_of).collect();
                 mesh.indices = triangles;
+                from = (0..mesh.positions.len() as u32).collect();
             }
             None => {
                 for t in triangles.as_chunks::<3>().0 {
@@ -398,9 +444,17 @@ impl CustomGeometry {
                         mesh.normals.push([n.x, n.y, n.z]);
                         mesh.uvs.push(uv_of(*v as usize));
                         mesh.indices.push(mesh.positions.len() as u32 - 1);
+                        from.push(*v);
                     }
                 }
             }
+        }
+        if let Some(uv1) = uv1 {
+            mesh.uv1 = from.iter().map(|v| uv1[*v as usize]).collect();
+        }
+        if let Some((joints, weights)) = skin {
+            mesh.joints = from.iter().map(|v| joints[*v as usize]).collect();
+            mesh.weights = from.iter().map(|v| weights[*v as usize]).collect();
         }
         Ok(mesh)
     }

@@ -9,6 +9,7 @@
 pub mod geometry;
 #[cfg(feature = "gltf")]
 pub mod gltf;
+pub mod instancing;
 pub mod math;
 pub mod mesh;
 pub mod pick;
@@ -33,6 +34,7 @@ mod timing;
 pub use geometry::{
     Attribute, ComponentType, CustomGeometry, GeometryError, PrimitiveType, Semantic,
 };
+pub use instancing::{Instance, InstanceTable, Instancing, Skin};
 pub use scene::{
     AlphaMode, Background, Camera, Cascades, Color, CullMode, DefaultMaterial, Environment, Fade,
     Light, LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive,

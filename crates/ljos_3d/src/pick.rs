@@ -10,6 +10,7 @@
 
 use std::sync::OnceLock;
 
+use crate::instancing::{instance_worlds, skin_point};
 use crate::math::{Mat4, Vec3};
 use crate::mesh::Mesh;
 use crate::scene::{Camera, CullMode, MeshSource, NodeId, NodeKind, Primitive, Scene};
@@ -53,32 +54,61 @@ pub struct Hit {
     pub normal: Vec3,
     /// The mesh's texture coordinates where it was hit.
     pub uv: [f32; 2],
+    /// Which copy of an instanced model was hit.
+    pub instance: Option<usize>,
 }
 
 /// Every visible model `pickable` accepts that `ray` meets, nearest first,
 /// each where the ray first meets it. A face the model's material culls is
-/// not met, as it is not drawn.
+/// not met, as it is not drawn. An instanced model is met where its
+/// nearest copy is; a skinned one where its joints have bent it.
 pub fn pick(scene: &Scene, ray: &Ray, pickable: impl Fn(NodeId) -> bool) -> Vec<Hit> {
     let mut hits: Vec<Hit> = scene
         .walk()
         .into_iter()
-        .filter_map(|(id, node, world)| match &node.kind {
-            NodeKind::Model(model) if pickable(id) => {
-                let cull = model.material.cull_mode();
-                let bounds = model.mesh.bounds();
-                match &model.mesh {
-                    MeshSource::Primitive(p) => {
-                        hit_mesh(id, primitive_mesh(*p), bounds, cull, &world, ray)
-                    }
-                    // Decoded for each pick: picks follow input, and keeping
-                    // a decoded copy would double what a large geometry holds.
-                    MeshSource::Custom(g) => {
-                        let mesh = g.to_mesh().ok()?;
-                        hit_mesh(id, &mesh, bounds, cull, &world, ray)
-                    }
+        .filter_map(|(id, node, world)| {
+            let NodeKind::Model(model) = &node.kind else {
+                return None;
+            };
+            if !pickable(id) {
+                return None;
+            }
+            let cull = model.material.cull_mode();
+            let mut bounds = model.mesh.bounds();
+            // Decoded for each pick: picks follow input, and keeping a
+            // decoded copy would double what a large geometry holds.
+            let custom;
+            let mut mesh = match &model.mesh {
+                MeshSource::Primitive(p) => primitive_mesh(*p),
+                MeshSource::Custom(g) => {
+                    custom = g.to_mesh().ok()?;
+                    &custom
+                }
+            };
+            let skinned;
+            let mut world = world;
+            if let Some(skin) = &node.skin
+                && !mesh.joints.is_empty()
+            {
+                skinned = skin_mesh(mesh, &skin.palette(scene));
+                mesh = &skinned;
+                world = Mat4::IDENTITY;
+                bounds = sphere_of(&mesh.positions);
+            }
+            match &node.instancing {
+                None => hit_mesh(id, mesh, bounds, cull, &world, ray),
+                Some(instancing) => {
+                    let global = instancing.global(scene, id, &world);
+                    instance_worlds(global, world, instancing.drawn())
+                        .enumerate()
+                        .filter_map(|(i, w)| {
+                            let mut hit = hit_mesh(id, mesh, bounds, cull, &w, ray)?;
+                            hit.instance = Some(i);
+                            Some(hit)
+                        })
+                        .min_by(|a, b| a.distance.total_cmp(&b.distance))
                 }
             }
-            _ => None,
         })
         .collect();
     hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));
@@ -145,7 +175,47 @@ fn hit_mesh(
         scene_normal: world.normal_matrix().transform_vector(normal).normalized(),
         normal,
         uv,
+        instance: None,
     })
+}
+
+/// The mesh as its joints have bent it, in the scene's space.
+fn skin_mesh(mesh: &Mesh, palette: &[Mat4]) -> Mesh {
+    let bend = |p: [f32; 3], j: usize, normal: bool| {
+        let (joints, weights) = (mesh.joints[j], mesh.weights[j]);
+        let q = skin_point(palette, joints, weights, vec(p));
+        if normal {
+            let o = skin_point(palette, joints, weights, Vec3::ZERO);
+            let n = (q - o).normalized();
+            [n.x, n.y, n.z]
+        } else {
+            [q.x, q.y, q.z]
+        }
+    };
+    Mesh {
+        positions: (0..mesh.positions.len())
+            .map(|i| bend(mesh.positions[i], i, false))
+            .collect(),
+        normals: (0..mesh.normals.len())
+            .map(|i| bend(mesh.normals[i], i, true))
+            .collect(),
+        ..mesh.clone()
+    }
+}
+
+/// A sphere around the points.
+fn sphere_of(points: &[[f32; 3]]) -> (Vec3, f32) {
+    let Some(first) = points.first() else {
+        return (Vec3::ZERO, 0.0);
+    };
+    let (min, max) = points.iter().fold((vec(*first), vec(*first)), |(lo, hi), p| {
+        (
+            Vec3::new(lo.x.min(p[0]), lo.y.min(p[1]), lo.z.min(p[2])),
+            Vec3::new(hi.x.max(p[0]), hi.y.max(p[1]), hi.z.max(p[2])),
+        )
+    });
+    let centre = (min + max) * 0.5;
+    (centre, (max - centre).length())
 }
 
 /// Möller–Trumbore: the ray parameter and the barycentric weights of `b`

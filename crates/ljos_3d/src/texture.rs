@@ -189,6 +189,9 @@ pub struct Texture {
     pub image: TextureImage,
     pub sampling: Sampling,
     pub uv: UvTransform,
+    /// Which of the mesh's UV sets it is laid out by: 0 or 1. A mesh with
+    /// one set reads it for both.
+    pub uv_set: u32,
 }
 
 impl Texture {
@@ -197,6 +200,7 @@ impl Texture {
             image,
             sampling: Sampling::default(),
             uv: UvTransform::default(),
+            uv_set: 0,
         }
     }
 }
