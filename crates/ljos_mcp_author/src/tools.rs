@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, api, blocks, design, docs,
+    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, api, blocks, design, docs, edit,
     features, format, runs, tiers,
 };
 
@@ -383,5 +383,17 @@ pub(crate) fn registry(
             ToolDef::new::<blocks::ListArgs>("blocks_list", blocks::DESCRIPTION)
                 .output::<blocks::ListOut>(),
             blocks::handler(&project),
+        )
+        .with(
+            ToolDef::new::<edit::EditArgs>("qml_edit_apply", edit::DESCRIPTION)
+                .output::<edit::EditOut>()
+                // Not `WRITE`: removing takes the author's text away, and
+                // inserting twice puts in two objects.
+                .annotated(ToolAnnotations {
+                    destructive: true,
+                    idempotent: false,
+                    ..ToolAnnotations::WRITE
+                }),
+            edit::handler(&project),
         )
 }

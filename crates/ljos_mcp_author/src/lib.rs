@@ -10,6 +10,7 @@ pub mod api;
 mod blocks;
 mod design;
 mod docs;
+mod edit;
 mod features;
 mod format;
 mod front;

@@ -1,0 +1,243 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": true,
+    "idempotent": false,
+    "open_world": false,
+    "read_only": false
+  },
+  "description": "Edit one QML file structurally: set_binding, remove_binding, insert_object, move_object or remove_object, by `id` or path (`root/0`). Bytes outside the edited member stay as written. Answers the splices; `write: true` changes the file and needs `fs`.",
+  "inputSchema": {
+    "$defs": {
+      "Address": {
+        "additionalProperties": false,
+        "description": "An object of the file: by its `id`, or by its path from the root object\n(`root`, `root/0/2`, `root/contentItem:`, `root/component Name`), as\ncounted when the edit is made.",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EditSpec": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Give `name` (dotted for a grouped property: `font.bold`) the QML\n`value`, written as after the `:`.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "object": {
+                "$ref": "#/$defs/Address"
+              },
+              "op": {
+                "const": "set_binding",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "object",
+              "name",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "object": {
+                "$ref": "#/$defs/Address"
+              },
+              "op": {
+                "const": "remove_binding",
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "object",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Put the object written in `text` in `parent` as child `index` (the\nnumber of children: after the last).",
+            "properties": {
+              "index": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "op": {
+                "const": "insert_object",
+                "type": "string"
+              },
+              "parent": {
+                "$ref": "#/$defs/Address"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "parent",
+              "index",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "object": {
+                "$ref": "#/$defs/Address"
+              },
+              "op": {
+                "const": "remove_object",
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "object"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Make `object` child `index` of `parent`, counted without it.",
+            "properties": {
+              "index": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "object": {
+                "$ref": "#/$defs/Address"
+              },
+              "op": {
+                "const": "move_object",
+                "type": "string"
+              },
+              "parent": {
+                "$ref": "#/$defs/Address"
+              }
+            },
+            "required": [
+              "op",
+              "object",
+              "parent",
+              "index"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "edit": {
+        "$ref": "#/$defs/EditSpec",
+        "description": "What to change, by `op`. Paths count objects as the file is before\nthe edit."
+      },
+      "path": {
+        "description": "The `.qml` file, relative to the project root.",
+        "type": "string"
+      },
+      "write": {
+        "default": false,
+        "description": "Change the file instead of only answering the changes. Needs the\n`fs` capability.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path",
+      "edit"
+    ],
+    "title": "EditArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "qml_edit_apply",
+  "outputSchema": {
+    "$defs": {
+      "ChangeOut": {
+        "properties": {
+          "end": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "replacement": {
+            "type": "string"
+          },
+          "start": {
+            "description": "Byte offsets into the file as it was.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "replacement"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "changes": {
+        "description": "Splices of the file as it was, in order, not overlapping.",
+        "items": {
+          "$ref": "#/$defs/ChangeOut"
+        },
+        "type": "array"
+      },
+      "text": {
+        "description": "The whole edited text, on a dry run when it fits in the answer.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "text_omitted": {
+        "description": "A dry run whose text did not fit: apply `changes` instead.",
+        "type": "boolean"
+      },
+      "written": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "changes",
+      "text_omitted",
+      "written"
+    ],
+    "title": "EditOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

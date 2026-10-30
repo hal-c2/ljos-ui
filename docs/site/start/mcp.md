@@ -41,6 +41,8 @@ ljos mcp --project . --caps fs,run
 | `qml_check` | Parse and compile QML files; returns structured diagnostics with file, line, column, severity, code and optional fixes | — |
 | `qml_lint` | Run accessibility, internationalisation and design lints (`a11y-unnamed-interactive`, `motion-bounce`, `i18n-qstr-non-literal` and so on) with fix guidance | — |
 | `qml_format` | Lay out QML files; returns a unified diff by default or writes files in place when `write: true` is passed | `fs` to write |
+| `qml_edit_apply` | Make one structured edit of a QML file (set or remove a binding; insert, move or remove an object, named by `id` or path), leaving every other byte as written; answers the splices, or writes the file when `write: true` is passed | `fs` to write |
+| `blocks_list` | List the project's functional blocks and their contracts (state, inputs, actions, events, slots), read from `# block` qmldir comments and `ljostypes.json` without running the app | — |
 | `qml_apply_fix` | Apply a diagnostic's suggested fix (dry-run by default) | `fs` |
 | `type_lookup` | Inspect a QML type's properties, signals, methods, enums, base chain, default property and attached types | — |
 | `api_status` | Check the support status of `Module.Type[.member]` (`supported`, `partial`, `dropped` or `unsupported`), with the reason and proving `@api-` scenario | — |

@@ -25,6 +25,8 @@ ljos_design = { path = "../ljos_design" }
 ljos_blocks = { path = "../ljos_blocks", features = ["source"] }
 # `qml_format`: the layout `ljos fmt` gives too.
 qml_fmt = { path = "../qml_fmt" }
+# `qml_edit_apply`: edits that splice the author's text.
+qml_edit = { path = "../qml_edit" }
 # `ljos://features/steps`: the step catalogue, from the steps themselves.
 ljos_bdd = { path = "../ljos_bdd" }
 # `features_list`: scenarios as the runner reads them.

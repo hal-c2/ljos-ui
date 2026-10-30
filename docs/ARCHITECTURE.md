@@ -1437,6 +1437,8 @@ ljos_test, ljos_bdd  host the inspector in-process over transport-worker.
 | `qml_check` | Parse and resolve files; structured diagnostics with optional fixes, paginated | — |
 | `qml_lint` | Lints, including the accessibility audit (section 14) and i18n lints | — |
 | `qml_format` | Format; returns a diff unless writing is allowed | `fs` to write |
+| `qml_edit_apply` | One structured edit (binding or object) through `qml_edit`; answers the splices unless writing is allowed | `fs` to write |
+| `blocks_list` | The project's functional blocks (ADR 0003) and their contracts, from qmldir `# block` comments and type dumps, paginated | — |
 | `qml_apply_fix` | Apply a diagnostic's fix (dry-run by default) | `fs` |
 | `type_lookup` | Type, property, signal, method and enum info, with the base chain, default property and attached types | — |
 | `api_status` | Ledger status of `Module.Type[.member]` (supported, partial, dropped or unsupported), with the reason and the proving `@api-` scenario | — |

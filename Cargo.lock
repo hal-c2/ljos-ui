@@ -4184,6 +4184,7 @@ dependencies = [
  "oxc_ast_visit",
  "oxc_span",
  "oxc_syntax",
+ "qml_edit",
  "qml_fmt",
  "qml_front",
  "qml_syntax",

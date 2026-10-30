@@ -78,7 +78,9 @@ fn mcp_server_answers_over_stdio() {
             "design_rules",
             "design_motion",
             "design_palette",
-            "design_contrast"
+            "design_contrast",
+            "blocks_list",
+            "qml_edit_apply"
         ]
     );
 
