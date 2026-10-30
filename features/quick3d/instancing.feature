@@ -59,12 +59,12 @@ Feature: Many copies of a model from an instance table
       And the property "instanceCount" of "table" is 2
 
     Scenario: Moving an entry moves its copy
-      When the property "position" of "left" is set to Qt.vector3d(-50, 50, 0)
+      When the property "position.y" of "left" is set to 50
       Then the pixel at 50, 50 of the window is within 2 of "#ff0000"
       And the pixel at 50, 100 of the window is "#202020"
 
     Scenario: An entry's scale and rotation shape its copy
-      When the property "scale" of "left" is set to Qt.vector3d(2, 1, 1)
+      When the property "scale.x" of "left" is set to 2
       Then the pixel at 33, 100 of the window is within 2 of "#ff0000"
       And the pixel at 50, 85 of the window is "#202020"
 
@@ -81,7 +81,7 @@ Feature: Many copies of a model from an instance table
       And the pixel at 150, 60 of the window is within 2 of "#0000ff"
 
     Scenario: The model's scale sizes each copy, not the spaces between
-      When the property "scale" of "square" is set to Qt.vector3d(0.4, 0.2, 0.2)
+      When the property "scale.x" of "square" is set to 0.4
       Then the pixel at 50, 100 of the window is within 2 of "#ff0000"
       And the pixel at 32, 100 of the window is within 2 of "#ff0000"
       And the pixel at 150, 100 of the window is within 2 of "#0000ff"

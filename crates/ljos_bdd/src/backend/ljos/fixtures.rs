@@ -126,6 +126,101 @@ impl Fan {
     }
 }
 
+/// A square 100 units across, around its origin and facing +Z, with two
+/// UV sets (`features/quick3d/uv-sets.feature`): the first puts every
+/// corner in the top left quadrant of a picture, the second spreads the
+/// whole picture over it, its top at the square's top.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Fixtures", name = "TwoUvSquare", extends = Geometry)]
+pub(super) struct TwoUvSquare {
+    #[qml(base)]
+    geometry: Geometry,
+}
+
+#[qml_impl]
+impl TwoUvSquare {
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+        let data: Vec<f32> = corners
+            .iter()
+            .flat_map(|&(x, y): &(f32, f32)| {
+                [
+                    50.0 * x,
+                    50.0 * y,
+                    0.0,
+                    0.25,
+                    0.25,
+                    (x + 1.0) / 2.0,
+                    (1.0 - y) / 2.0,
+                ]
+            })
+            .collect();
+        let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+        cx.with_mut(|s: &mut TwoUvSquare| {
+            let g = &mut s.geometry;
+            g.clear();
+            g.set_vertex_data(data.iter().flat_map(|v| v.to_le_bytes()).collect());
+            g.set_index_data(indices.iter().flat_map(|i| i.to_le_bytes()).collect());
+            g.set_stride(28);
+            g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+            g.add_attribute(Semantic::TexCoord0, 12, ComponentType::F32);
+            g.add_attribute(Semantic::TexCoord1, 20, ComponentType::F32);
+            g.add_attribute(Semantic::Index, 0, ComponentType::U16);
+            g.set_primitive_type(PrimitiveType::Triangles);
+        })?;
+        Geometry::update(cx.engine, cx.this);
+        Ok(())
+    }
+}
+
+/// A strip 20 units wide and 100 tall, from its origin up and facing +Z,
+/// for a skin of two joints (`features/quick3d/skinning.feature`): its
+/// bottom and middle follow the first joint, its top the second.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Fixtures", name = "Strip", extends = Geometry)]
+pub(super) struct Strip {
+    #[qml(base)]
+    geometry: Geometry,
+}
+
+#[qml_impl]
+impl Strip {
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let mut data = Vec::new();
+        for (y, joint) in [(0.0f32, 0u32), (50.0, 0), (100.0, 1)] {
+            for x in [-10.0f32, 10.0] {
+                for v in [x, y, 0.0, 0.0, 0.0, 1.0] {
+                    data.extend(v.to_le_bytes());
+                }
+                for j in [joint, 0, 0, 0] {
+                    data.extend(j.to_le_bytes());
+                }
+                for w in [1.0f32, 0.0, 0.0, 0.0] {
+                    data.extend(w.to_le_bytes());
+                }
+            }
+        }
+        let indices: [u16; 12] = [0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4];
+        cx.with_mut(|s: &mut Strip| {
+            let g = &mut s.geometry;
+            g.clear();
+            g.set_vertex_data(data);
+            g.set_index_data(indices.iter().flat_map(|i| i.to_le_bytes()).collect());
+            g.set_stride(56);
+            g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+            g.add_attribute(Semantic::Normal, 12, ComponentType::F32);
+            g.add_attribute(Semantic::Joint, 24, ComponentType::U32);
+            g.add_attribute(Semantic::Weight, 40, ComponentType::F32);
+            g.add_attribute(Semantic::Index, 0, ComponentType::U16);
+            g.set_primitive_type(PrimitiveType::Triangles);
+        })?;
+        Geometry::update(cx.engine, cx.this);
+        Ok(())
+    }
+}
+
 /// A `Document` the application made itself, titled `title`.
 pub(super) fn document(engine: &Engine, title: &str) -> Result<ObjectId, EngineError> {
     engine.create_native(
@@ -144,7 +239,7 @@ pub(super) fn title(engine: &Engine, obj: ObjectId) -> Result<String, EngineErro
 pub(super) fn register(engine: &Engine) {
     engine.register_singleton::<Document>("Fixtures", Version::new(1, 0));
     engine.register_singleton::<Session>("Fixtures", Version::new(1, 0));
-    engine.register_module(ljos::module!("Fixtures" 1.0 => [Browser, Fan]));
+    engine.register_module(ljos::module!("Fixtures" 1.0 => [Browser, Fan, TwoUvSquare, Strip]));
 }
 
 /// What a scenario reads in the log: when a window's `Document` is made
