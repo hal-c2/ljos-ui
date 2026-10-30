@@ -7568,6 +7568,18 @@ module QtQuick3D
 		signal specularRoughnessChanged
 	type QtQuick3D.DirectionalLight DirectionalLight
 		prototype QtQuick3D.Light named
+		prop csmNumSplits QtQml.int named
+		prop csmSplit1 QtQml.real named
+		prop csmSplit2 QtQml.real named
+		prop csmSplit3 QtQml.real named
+		prop csmBlendRatio QtQml.real named
+		prop lockShadowmapTexels QtQml.bool named
+		signal csmNumSplitsChanged
+		signal csmSplit1Changed
+		signal csmSplit2Changed
+		signal csmSplit3Changed
+		signal csmBlendRatioChanged
+		signal lockShadowmapTexelsChanged
 	type QtQuick3D.Geometry Geometry
 		prototype QtQuick3D.Object3D named
 		is uncreatable
@@ -7576,14 +7588,32 @@ module QtQuick3D
 	type QtQuick3D.Light Light
 		prototype QtQuick3D.Node named
 		is uncreatable
+		enum ShadowMapQuality ShadowMapQualityLow=0 ShadowMapQualityMedium=1 ShadowMapQualityHigh=2 ShadowMapQualityVeryHigh=3 ShadowMapQualityUltra=4
+		enum SoftShadowQuality Hard=0 PCF4=1 PCF8=2 PCF16=3 PCF32=4 PCF64=5
 		prop color QtQuick.color named
 		prop ambientColor QtQuick.color named
 		prop brightness QtQml.real named
 		prop castsShadow QtQml.bool named
+		prop shadowFactor QtQml.real named
+		prop shadowBias QtQml.real named
+		prop shadowMapQuality ShadowMapQuality
+		prop shadowMapFar QtQml.real named
+		prop softShadowQuality SoftShadowQuality
+		prop pcfFactor QtQml.real named
+		prop shadowFilter QtQml.real named
+		prop use32BitShadowmap QtQml.bool named
 		signal colorChanged
 		signal ambientColorChanged
 		signal brightnessChanged
 		signal castsShadowChanged
+		signal shadowFactorChanged
+		signal shadowBiasChanged
+		signal shadowMapQualityChanged
+		signal shadowMapFarChanged
+		signal softShadowQualityChanged
+		signal pcfFactorChanged
+		signal shadowFilterChanged
+		signal use32BitShadowmapChanged
 	type QtQuick3D.Material Material
 		prototype QtQuick3D.Object3D named
 		is uncreatable

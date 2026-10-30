@@ -107,12 +107,59 @@ impl Walk<'_> {
         };
         let mut n = ljos_3d::Node::new(kind(e, self.view, obj)).with_transform(transform);
         n.visible = item::prop(e, obj, Node::VISIBLE);
+        if e.is::<Model>(obj) {
+            n.casts_shadows = item::prop(e, obj, Model::CASTS_SHADOWS);
+            n.receives_shadows = item::prop(e, obj, Model::RECEIVES_SHADOWS);
+        }
+        n.shadow = shadow(e, obj);
         let id = self.scene.add(parent, n);
         self.ids.insert(obj, id);
         for child in list(e, obj, Object3D::DATA.index) {
             self.node(Some(id), child);
         }
     }
+}
+
+/// What the light `obj` casts shadows with, if it is a light that casts
+/// them.
+fn shadow(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Shadow> {
+    if !e.is::<Light>(obj) || !item::prop(e, obj, Light::CASTS_SHADOW) {
+        return None;
+    }
+    let quality = item::prop(e, obj, Light::SHADOW_MAP_QUALITY)
+        .clamp(node::shadow_map::LOW, node::shadow_map::ULTRA);
+    // PCF32 and PCF64 take 16 samples: past that a pixel costs more than
+    // the softer edge is worth on the slow targets.
+    let samples = match item::prop(e, obj, Light::SOFT_SHADOW_QUALITY)
+        .clamp(node::soft_shadow::HARD, node::soft_shadow::PCF64)
+    {
+        node::soft_shadow::HARD => 1,
+        q => (4u32 << (q - 1)).min(16),
+    };
+    let cascades = if e.is::<DirectionalLight>(obj) {
+        ljos_3d::Cascades {
+            splits: item::prop(e, obj, DirectionalLight::CSM_NUM_SPLITS).clamp(0, 3) as u32,
+            at: [
+                DirectionalLight::CSM_SPLIT1,
+                DirectionalLight::CSM_SPLIT2,
+                DirectionalLight::CSM_SPLIT3,
+            ]
+            .map(|p| item::prop(e, obj, p) as f32),
+            blend: item::prop(e, obj, DirectionalLight::CSM_BLEND_RATIO) as f32,
+            lock_texels: item::prop(e, obj, DirectionalLight::LOCK_SHADOWMAP_TEXELS),
+        }
+    } else {
+        ljos_3d::Cascades::default()
+    };
+    Some(ljos_3d::Shadow {
+        map_size: 256 << quality,
+        bias: item::prop(e, obj, Light::SHADOW_BIAS) as f32,
+        factor: (item::prop(e, obj, Light::SHADOW_FACTOR) as f32 / 100.0).clamp(0.0, 1.0),
+        far: item::prop(e, obj, Light::SHADOW_MAP_FAR) as f32,
+        samples,
+        pcf_radius: item::prop(e, obj, Light::PCF_FACTOR) as f32,
+        cascades,
+    })
 }
 
 fn kind(e: &Engine, view: ObjectId, obj: ObjectId) -> NodeKind {

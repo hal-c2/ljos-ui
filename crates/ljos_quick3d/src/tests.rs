@@ -575,3 +575,70 @@ fn a_view_is_drawn_again_when_its_geometry_is_updated() {
     );
     assert_eq!(pixel(&rgba, 100, 5, 50), [0x20, 0x20, 0x20, 255]);
 }
+
+const SHADOWS: &str = r##"
+View3D {
+    width: 100; height: 100
+    PerspectiveCamera { z: 300 }
+    DirectionalLight { castsShadow: false }
+    DirectionalLight {
+        castsShadow: true; shadowFactor: 50; shadowBias: 4; shadowMapFar: 800
+        shadowMapQuality: Light.ShadowMapQualityHigh
+        softShadowQuality: Light.PCF64; pcfFactor: 3
+        csmNumSplits: 2; csmSplit1: 0.2; csmBlendRatio: 0.1; lockShadowmapTexels: true
+    }
+    SpotLight { castsShadow: true; softShadowQuality: Light.Hard }
+    Model { source: "#Cube"; castsShadows: false; receivesShadows: false }
+    Model { source: "#Cube" }
+}
+"##;
+
+#[test]
+fn shadow_properties_reach_the_scene() {
+    use ljos::item::ljos_3d::{Cascades, Shadow};
+    let (e, view) = load(SHADOWS);
+    let s = scene::build(&e, view);
+    let nodes: Vec<_> = s.walk().iter().map(|(_, n, _)| (*n).clone()).collect();
+    assert_eq!(nodes[1].shadow, None, "a light that casts none");
+    assert_eq!(
+        nodes[2].shadow,
+        Some(Shadow {
+            map_size: 1024,
+            bias: 4.0,
+            factor: 0.5,
+            far: 800.0,
+            samples: 16,
+            pcf_radius: 3.0,
+            cascades: Cascades {
+                splits: 2,
+                at: [0.2, 0.25, 0.5],
+                blend: 0.1,
+                lock_texels: true,
+            },
+        })
+    );
+    let spot = nodes[3].shadow.as_ref().expect("the spot light casts");
+    assert_eq!((spot.samples, spot.map_size), (1, 256));
+    assert_eq!(spot.cascades, Cascades::default());
+    assert!(!nodes[4].casts_shadows && !nodes[4].receives_shadows);
+    assert!(nodes[5].casts_shadows && nodes[5].receives_shadows);
+}
+
+#[test]
+fn the_shadow_properties_start_from_the_documented_values() {
+    let (e, view) = load("View3D { property QtObject sun_: sun\nDirectionalLight { id: sun } }");
+    let sun = named(&e, view, "sun_");
+    assert_eq!(e.get(sun, Light::CASTS_SHADOW).ok(), Some(false));
+    assert_eq!(e.get(sun, Light::SHADOW_FACTOR).ok(), Some(75.0));
+    assert_eq!(e.get(sun, Light::SHADOW_BIAS).ok(), Some(10.0));
+    assert_eq!(e.get(sun, Light::SHADOW_MAP_FAR).ok(), Some(5000.0));
+    assert_eq!(e.get(sun, Light::PCF_FACTOR).ok(), Some(2.0));
+    assert_eq!(e.get(sun, Light::SHADOW_MAP_QUALITY).ok(), Some(0));
+    assert_eq!(e.get(sun, Light::SOFT_SHADOW_QUALITY).ok(), Some(1));
+    assert_eq!(e.get(sun, DirectionalLight::CSM_NUM_SPLITS).ok(), Some(0));
+    assert_eq!(e.get(sun, DirectionalLight::CSM_SPLIT2).ok(), Some(0.25));
+    assert_eq!(
+        e.get(sun, DirectionalLight::CSM_BLEND_RATIO).ok(),
+        Some(0.05)
+    );
+}

@@ -480,9 +480,51 @@ impl Default for OrthographicCamera {
     }
 }
 
+pub(crate) mod shadow_map {
+    pub const LOW: i32 = 0;
+    pub const ULTRA: i32 = 4;
+}
+
+pub(crate) mod soft_shadow {
+    pub const HARD: i32 = 0;
+    pub const PCF64: i32 = 5;
+}
+
+fn light_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "ShadowMapQuality",
+            vec![
+                ("ShadowMapQualityLow", i64::from(shadow_map::LOW)),
+                ("ShadowMapQualityMedium", 1),
+                ("ShadowMapQualityHigh", 2),
+                ("ShadowMapQualityVeryHigh", 3),
+                ("ShadowMapQualityUltra", i64::from(shadow_map::ULTRA)),
+            ],
+        ),
+        (
+            "SoftShadowQuality",
+            vec![
+                ("Hard", i64::from(soft_shadow::HARD)),
+                ("PCF4", 1),
+                ("PCF8", 2),
+                ("PCF16", 3),
+                ("PCF32", 4),
+                ("PCF64", i64::from(soft_shadow::PCF64)),
+            ],
+        ),
+    ]
+}
+
 /// `Light`: what every light has.
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick3D", name = "Light", extends = Node, uncreatable)]
+#[qml(
+    module = "QtQuick3D",
+    name = "Light",
+    extends = Node,
+    uncreatable,
+    enums = light_enums
+)]
 pub struct Light {
     #[qml(base)]
     pub node: Node,
@@ -492,9 +534,29 @@ pub struct Light {
     pub ambient_color: Color,
     #[qml(notify)]
     pub brightness: f64,
-    /// Kept; shadows are M5.
     #[qml(notify)]
     pub casts_shadow: bool,
+    /// 0 to 100: how much of the light a shadow keeps away.
+    #[qml(notify)]
+    pub shadow_factor: f64,
+    /// Scene units a surface is moved towards the light before it is
+    /// compared with the shadow map.
+    #[qml(notify)]
+    pub shadow_bias: f64,
+    #[qml(notify, enumeration = "ShadowMapQuality")]
+    pub shadow_map_quality: i32,
+    #[qml(notify)]
+    pub shadow_map_far: f64,
+    #[qml(notify, enumeration = "SoftShadowQuality")]
+    pub soft_shadow_quality: i32,
+    #[qml(notify)]
+    pub pcf_factor: f64,
+    /// Kept for compatibility; the documentation says it has no effect.
+    #[qml(notify)]
+    pub shadow_filter: f64,
+    /// Kept; the maps are always 32-bit depth.
+    #[qml(notify)]
+    pub use32_bit_shadowmap: bool,
 }
 
 impl Default for Light {
@@ -505,16 +567,52 @@ impl Default for Light {
             ambient_color: Color::BLACK,
             brightness: 1.0,
             casts_shadow: false,
+            shadow_factor: 75.0,
+            shadow_bias: 10.0,
+            shadow_map_quality: shadow_map::LOW,
+            shadow_map_far: 5000.0,
+            soft_shadow_quality: 1,
+            pcf_factor: 2.0,
+            shadow_filter: 5.0,
+            use32_bit_shadowmap: false,
         }
     }
 }
 
 /// `DirectionalLight`: light from far away, along the light's own axis.
-#[derive(Debug, Default, QmlObject)]
+#[derive(Debug, QmlObject)]
 #[qml(module = "QtQuick3D", name = "DirectionalLight", extends = Light)]
 pub struct DirectionalLight {
     #[qml(base)]
     pub light: Light,
+    /// 0 to 3: how many times the shadow map is split by distance from
+    /// the camera.
+    #[qml(notify)]
+    pub csm_num_splits: i32,
+    #[qml(notify)]
+    pub csm_split1: f64,
+    #[qml(notify)]
+    pub csm_split2: f64,
+    #[qml(notify)]
+    pub csm_split3: f64,
+    #[qml(notify)]
+    pub csm_blend_ratio: f64,
+    #[qml(notify)]
+    pub lock_shadowmap_texels: bool,
+}
+
+impl Default for DirectionalLight {
+    fn default() -> Self {
+        DirectionalLight {
+            light: Light::default(),
+            csm_num_splits: 0,
+            csm_split1: 0.1,
+            csm_split2: 0.25,
+            csm_split3: 0.5,
+            csm_blend_ratio: 0.05,
+            lock_shadowmap_texels: false,
+        }
+    }
 }
 
 pub(crate) mod cull {
