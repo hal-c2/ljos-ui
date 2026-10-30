@@ -1,12 +1,12 @@
 ---
 title: Models in QML
-description: Feed rows of data into views and repeaters with ListModel, numbers, arrays, ObjectModel, DelegateModel, XmlListModel, and FolderListModel.
+description: Feed rows of data into views and repeaters with ListModel, numbers, arrays, ObjectModel, DelegateModel, XmlListModel, JsonListModel, and FolderListModel.
 section: data
 order: 1
 ---
 # Models in QML
 
-Models supply rows of data to views and repeaters. You use `ListModel` when you want a mutable table of rows with named roles, plain numbers or arrays for simple lists, `ObjectModel` when the visual items already exist, `DelegateModel` when you want to bundle a model with its delegate and filter rows by group, `XmlListModel` to read XML documents, and `FolderListModel` to list files and folders on disk.
+Models supply rows of data to views and repeaters. You use `ListModel` when you want a mutable table of rows with named roles, plain numbers or arrays for simple lists, `ObjectModel` when the visual items already exist, `DelegateModel` when you want to bundle a model with its delegate and filter rows by group, `XmlListModel` to read XML documents, `JsonListModel` to read JSON, and `FolderListModel` to list files and folders on disk.
 
 ## ListModel and ListElement
 
@@ -237,6 +237,48 @@ Be aware of how `XmlListModel` handles missing data, bad queries, and document l
 - A role that an element does not have reads as empty text (`""`).
 - If an XML document is malformed part-way through, the model keeps the rows already read, becomes `Ready`, and logs `Query error`. An unknown XML entity also stops reading at that point: the model becomes `Ready` with the rows read up to the entity, and later rows are ignored.
 - An XML document is capped at 16 MiB (whether from a file, fetch, or registered resource); above that, the model becomes `Error` and keeps its old rows. XML nesting deeper than 128 levels sets the model to `Error` with no rows, even when the query matches nothing.
+
+## JsonListModel
+
+`JsonListModel` requires `import Ljos.Models`. Qt has no such type: it is Ljós's own. It is a read-only model of a JSON array of objects, read from the text of `json` or from the file or URL of `source`, relative to the QML file. If both are set, `source` wins. It works wherever a model does: `ListView`, `GridView`, `Repeater` and `TableView`.
+
+`JsonListModel` provides `json`, `source`, `count`, `roles`, `status` (`JsonListModel.Null`, `Ready`, `Loading`, or `Error`), `error`, `get(i)`, and `reload()`.
+
+With a `rows.json` file beside `Main.qml`:
+
+```json
+[{"name": "Bread", "price": 3.5}, {"name": "Honey"}]
+```
+
+```qml
+import QtQuick
+import Ljos.Models
+
+ListView {
+    width: 200
+    height: 100
+    model: JsonListModel { source: "rows.json" }
+    delegate: Text {
+        required property string name
+        text: name
+    }
+}
+```
+
+The roles are every key of every row, in the order they first appear. A key a row does not have reads as `undefined`, and a JSON `null` reads as `null`.
+
+When the data changes, the model says only what differs, so delegates of unchanged rows stay as they are:
+
+- Equal rows at the start and end of the list are left alone.
+- A row between them at the same index gets `dataChanged`, naming only the roles that differ.
+- Rows left over are inserted or removed after that. A row that moved is not recognised: it reads as a change at each index it passes.
+- A new key is added to `roles`. When no row has a key any more, the model resets.
+
+Be aware of how `JsonListModel` handles bad data and reading again:
+
+- JSON that cannot be used, or a file that cannot be read, keeps the rows, sets `status` to `Error` and `error` to the reason with its line and column, and logs it. The next good read clears it.
+- Under `ljos run --watch`, a saved `source` file is read again after the quiet time, with no reload of the QML and no `Loading` status. Elsewhere, call `reload()`: nothing polls a file.
+- A document is capped at 64 MiB.
 
 ## FolderListModel
 
