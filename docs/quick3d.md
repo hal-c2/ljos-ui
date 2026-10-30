@@ -73,7 +73,31 @@ The present comparison takes a view whose scene is the same `Arc` at the same si
 
 **The off-screen seam.** R (vello_cpu), the processor's painter, the MCP snapshot and the BDD pictures have no wgpu pass. For them `ljos_3d::Offscreen` renders on a device of its own and reads the picture back, and the view paints it as an image. The readback happens only when the revision or size changed, so idle stays free; a view not drawn in a frame lets go of its picture at the end of it.
 
-**The web seam.** `ljos_3d::SurfaceView::new(target, w, h)` makes its own instance (WebGPU if the browser has it, else WebGL2), device and surface; `resize`; `draw(&Scene) -> bool` presents only on a new revision. On the web the target is `wgpu::SurfaceTarget::Canvas`. ljos-web owns the wasm-bindgen wrapper; `ljos_3d` takes no wasm-bindgen dependency of its own.
+**The web seam.** `ljos_3d::SurfaceView` draws a scene into a surface of its own, a `<canvas>` on the web (§ The web seam (SurfaceView), below).
+
+### The web seam (SurfaceView)
+
+For a host with no egui and so no device to share: a web page, or a native window of an application's own. The whole interface is four calls.
+
+| Call | Why it is there |
+|---|---|
+| `async SurfaceView::new(target, width, height) -> Result<_, SurfaceViewError>` | The host gives a `wgpu::SurfaceTarget` (`Canvas(HtmlCanvasElement)` or `OffscreenCanvas` on the web, a window natively) and its size in device pixels (CSS size times `devicePixelRatio`). The view makes its instance, adapter, device and surface, and sets the canvas's `width` and `height`. Asynchronous because a browser answers only through promises. |
+| `backend() -> wgpu::Backend` | `BrowserWebGpu` or `Gl` (WebGL2). The choice is made inside `new`, and a host has no other way to know which it got: for its diagnostics, and to warn where WebGL2's limits matter. |
+| `resize(width, height)` | Device pixels again. The host owns layout and knows when the canvas changed size; the view does not observe it. The next `draw` draws whatever the revision. |
+| `draw(&Scene) -> bool` | Draws and presents if the scene's revision or the size changed since the last present; returns whether it did. |
+
+- **Who chooses the backend.** `new` takes WebGPU when the browser has `navigator.gpu` and an adapter answers, else WebGL2 (`wgpu::util::new_instance_with_webgpu_detection`). A host that wants WebGL2 regardless hides WebGPU from the page; the interface takes no backend option until a host needs one.
+- **When it draws.** Only when the host calls `draw`. The view has no frame loop, no `requestAnimationFrame` and no timer. An unchanged scene costs a comparison and no GPU call, so a host may call `draw` from every frame callback it already has, or only when its scene changed. Revisions are unique across scenes (`Scene::revision`), so handing it another scene draws.
+- **What the canvas keeps.** The last presented picture, until the next `draw`. A still scene costs nothing.
+- **Lost surfaces.** A surface that is lost or out of date is configured again and drawn in the same call, because a host that draws on change would not call again. A timed-out or hidden one is not drawn, and `draw` returns `false`; the next call draws it.
+- **Errors** (`SurfaceViewError`, thiserror): the surface could not be made, no adapter, no device, or no format the renderer can draw into. `draw` and `resize` do not fail.
+- **Colour.** The surface takes a format without the sRGB suffix (`Bgra8Unorm` or `Rgba8Unorm` on WebGPU, `Rgba8Unorm` on WebGL2) and the renderer's picture, already sRGB, is copied, not encoded again. The alpha is premultiplied where the surface offers it (WebGPU); WebGL2's canvas is premultiplied by default, so a transparent background shows the page on both.
+- **No wasm-bindgen in `ljos_3d`.** The JavaScript-facing wrapper belongs to the host (ljos-web), which knows its own embedding; `ljos_3d` stays a plain Rust interface that builds for `wasm32-unknown-unknown`.
+
+**Proven in a browser.** A harness outside the repository wraps `SurfaceView` with wasm-bindgen, draws the lit cube of `tests/spike_scene.rs` into a 400×300 canvas and checks it in headless Chromium, once on WebGPU and once with WebGPU hidden so it falls back to WebGL2. On both, on RADV (WebGL2 through ANGLE on Vulkan):
+- the canvas equals the native off-screen picture (`cargo run -p ljos_3d --example lit_cube -- native.png 400 300`) exactly, at 400×300 and after a resize to 200×150; the check allows 3 per channel on all but 0.5 % of the pixels;
+- an unchanged scene returns `false` and makes no WebGPU or WebGL call, counted by wrapping `GPUQueue`, `GPUCanvasContext` and `WebGL2RenderingContext`;
+- a new revision of the same scene draws again.
 
 ## General purpose versus app-specific
 
@@ -171,7 +195,7 @@ Measured on the commit that added the GL seam (`ljos_shell::gl_scene3d`); reprod
 | **M5 Shadows** | directional, point and spot shadow maps; `castsShadow`, `receivesShadow`, `shadowMapQuality`, `shadowBias` | `shadows` features within tolerance of qml6 pictures |
 | **M6 glTF** | `RuntimeLoader` (`source`, `status`, `errorString`, `bounds`), parsed on the compute pool, meshes, PBR materials and textures | `runtime-loader` features; `quick3d-gltf` load time and memory ≤ qml6 |
 | **M7 Picking and animation** | `View3D.pick`, `pickAll`, `rayPick`, `mapFrom3DScene` and `mapTo3DScene`; animations on `vector3d`/`quaternion` properties; `Repeater3D` | `picking` and `animation` features `@qt-parity`; `quick3d-spin` frame interval and CPU ≤ qml6 |
-| **M8 Web** | ljos-web draws through `SurfaceView` into a `<canvas>`; the WebGL2 fallback checked | the same scenes render in a browser with WebGPU and with WebGL2 |
+| **M8 Web** | `SurfaceView` as the web seam (done, § The web seam (SurfaceView)); ljos-web draws through it into a `<canvas>`; the WebGL2 fallback checked | the same scenes render in a browser with WebGPU and with WebGL2: done for the lit cube in a harness, equal to the native picture on both; ljos-web's embedding remains |
 | **Later** | 2D items in 3D, `CustomMaterial`, effects, Helpers | gallery's QtQuick3D examples render |
 
 ## Spike (M1): the shared device and wasm
@@ -206,3 +230,4 @@ The riskiest seam was rendering 3D with egui's own wgpu device and queue and com
 - **Target lifetime** is handled on every path: egui-wgpu's `retain` and the GL painter keep the targets of the views the frame shows, and the read-back pictures keep those drawn in the frame. `ljos_quick3d`'s `a_destroyed_view_lets_go_of_its_picture` checks the read-back path through twenty Loader rounds; the GL painter's path was checked by hand in the desktop sandbox (a `Loader` turned on and off eleven times: no fault, the area empty after, 0 ticks idle), egui-wgpu's is left to its `retain`. Neither has an automated test.
 - **MSAA and the blit:** resolving before the blit keeps composition unchanged. The cost is to be measured at M3.
 - **The web wrapper's owner** is ljos-web. Its embedding API has to agree with `SurfaceView`.
+- **The web after M3.** The harness checks one flat-shaded cube with no MSAA, which is why its pictures match exactly. MSAA (M3) on WebGL2 needs a multisampled renderbuffer and resolve, which wgpu's GL backend does but with WebGL2's own sample counts; textures (M4) and HDR need formats WebGL2 may lack (`Rgba16Float` render targets are an extension there). Each milestone's scenes go through the harness on both backends before M8 is closed.
