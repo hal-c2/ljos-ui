@@ -3880,6 +3880,7 @@ version = "0.0.0"
 dependencies = [
  "arcstr",
  "bitflags 2.13.2",
+ "libc",
  "ljos_compiler",
  "ljos_i18n",
  "ljos_ir",
@@ -3897,6 +3898,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "url",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

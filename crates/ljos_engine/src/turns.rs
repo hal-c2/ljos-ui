@@ -24,9 +24,12 @@
 //! where it ends, and nested turns, handlers and bindings read none. A
 //! phase is one relaxed store, made only while a marker is attached.
 //!
-//! The watchdog never polls (rule 6): it sleeps until the deadline of the
-//! turn in progress and parks while no turn runs. A new turn unparks it only
-//! when its first deadline is sooner than the wake already scheduled.
+//! The watchdog never polls (rule 6): on Linux, Android, macOS, iOS and
+//! Windows the UI thread arms a one-shot kernel timer for an outermost turn
+//! and disarms it when the turn ends. The watchdog blocks on those timers,
+//! waking only for a firing timer or a marker being added or removed. Other
+//! targets sleep until the deadline of the turn in progress and park while
+//! no turn runs.
 //!
 //! [`JournalKind::Host`]: crate::JournalKind::Host
 
@@ -41,6 +44,9 @@ use crate::atom::Atom;
 use crate::engine::Engine;
 use crate::ids::ObjectId;
 use crate::journal::JournalRun;
+
+#[cfg(kernel_timer)]
+mod timer;
 
 /// The budget of a debug build's shell ([`Engine::watch_turns_by_default`]).
 pub const DEFAULT_TURN_BUDGET: Duration = Duration::from_millis(100);
@@ -260,6 +266,17 @@ struct Shared {
     reporter: Mutex<Option<Reporter>>,
     /// The engine is gone.
     closed: AtomicBool,
+    #[cfg(kernel_timer)]
+    timer: OnceLock<timer::Timer>,
+}
+
+#[cfg(kernel_timer)]
+impl Drop for Shared {
+    fn drop(&mut self) {
+        if let Some(timer) = self.timer.get() {
+            timer.remove();
+        }
+    }
 }
 
 /// What the UI thread of one engine is doing, readable from any thread.
@@ -300,6 +317,8 @@ impl TurnMarker {
             threshold: AtomicU64::new(0),
             reporter: Mutex::new(None),
             closed: AtomicBool::new(false),
+            #[cfg(kernel_timer)]
+            timer: OnceLock::new(),
         }))
     }
 
@@ -336,9 +355,17 @@ impl TurnMarker {
     /// watching this marker; it is still written, for the inspector.
     pub fn set_threshold(&self, threshold: Option<Duration>) {
         let ms = threshold.map_or(0, |t| (t.as_millis() as u64).max(1));
+        #[cfg(kernel_timer)]
+        if ms > 0 {
+            self.0.timer.get_or_init(|| watchdog().waiter.timer());
+        }
         self.0.threshold.store(ms, Ordering::Release);
         if ms > 0 {
             watchdog().watch(&self.0);
+        }
+        #[cfg(kernel_timer)]
+        if ms == 0 && self.0.timer.get().is_some() {
+            watchdog().disable(&self.0);
         }
     }
 
@@ -358,14 +385,23 @@ impl TurnMarker {
         let s = &self.0;
         *lock(&s.cause) = cause;
         s.phase.store(phase as u8, Ordering::Relaxed);
+        let threshold = s.threshold.load(Ordering::Relaxed);
+        #[cfg(kernel_timer)]
+        let _watched = (threshold > 0).then(|| lock(&watchdog().markers));
         let turn = s.turn.fetch_add(1, Ordering::AcqRel) + 1;
         let ns = since_epoch(at);
         s.started.store(ns + 1, Ordering::SeqCst);
-        let threshold = s.threshold.load(Ordering::Relaxed);
         if threshold > 0 {
-            let threshold = Duration::from_millis(threshold).as_nanos();
-            let threshold = u64::try_from(threshold).unwrap_or(u64::MAX);
-            watchdog().turn_began(ns.saturating_add(threshold));
+            #[cfg(kernel_timer)]
+            if let Some(timer) = s.timer.get() {
+                timer.arm(Duration::from_millis(threshold));
+            }
+            #[cfg(not(kernel_timer))]
+            {
+                let threshold = Duration::from_millis(threshold).as_nanos();
+                let threshold = u64::try_from(threshold).unwrap_or(u64::MAX);
+                watchdog().turn_began(ns.saturating_add(threshold));
+            }
         }
         turn
     }
@@ -375,6 +411,12 @@ impl TurnMarker {
     }
 
     fn end(&self) {
+        #[cfg(kernel_timer)]
+        let _watched = self.0.timer.get().map(|timer| {
+            let watched = lock(&watchdog().markers);
+            timer.disarm();
+            watched
+        });
         self.0.started.store(0, Ordering::Release);
         self.0.phase.store(Phase::Idle as u8, Ordering::Relaxed);
     }
@@ -680,11 +722,16 @@ impl Engine {
 struct Watchdog {
     markers: Mutex<Vec<Watched>>,
     thread: OnceLock<Thread>,
+    #[cfg(kernel_timer)]
+    waiter: timer::Waiter,
+    #[cfg(not(kernel_timer))]
     /// When the thread will next wake, in nanoseconds since [`epoch`];
     /// `u64::MAX` while it is parked with no turn to watch.
     next_wake: AtomicU64,
-    #[cfg(test)]
-    unparks: AtomicU64,
+    #[cfg(all(test, kernel_timer))]
+    wakes: AtomicU64,
+    #[cfg(all(test, kernel_timer))]
+    check_points: Mutex<Vec<std::sync::mpsc::Sender<()>>>,
 }
 
 struct Watched {
@@ -692,6 +739,8 @@ struct Watched {
     /// The turn last reported, and when it is due to be again.
     turn: u64,
     again: Duration,
+    #[cfg(kernel_timer)]
+    timer: timer::Timer,
 }
 
 fn watchdog() -> &'static Watchdog {
@@ -699,12 +748,143 @@ fn watchdog() -> &'static Watchdog {
     WATCHDOG.get_or_init(|| Watchdog {
         markers: Mutex::new(Vec::new()),
         thread: OnceLock::new(),
+        #[cfg(kernel_timer)]
+        waiter: timer::Waiter::new(),
+        #[cfg(not(kernel_timer))]
         next_wake: AtomicU64::new(u64::MAX),
-        #[cfg(test)]
-        unparks: AtomicU64::new(0),
+        #[cfg(all(test, kernel_timer))]
+        wakes: AtomicU64::new(0),
+        #[cfg(all(test, kernel_timer))]
+        check_points: Mutex::new(Vec::new()),
     })
 }
 
+impl Watchdog {
+    fn start(&'static self) {
+        self.thread.get_or_init(|| {
+            std::thread::Builder::new()
+                .name("ljos-turn-watchdog".into())
+                .spawn(move || self.run())
+                .expect("the watchdog thread starts")
+                .thread()
+                .clone()
+        });
+    }
+}
+
+#[cfg(kernel_timer)]
+impl Watchdog {
+    fn watch(&'static self, marker: &Arc<Shared>) {
+        {
+            let mut all = lock(&self.markers);
+            all.retain(|w| w.marker.strong_count() > 0);
+            if !all.iter().any(|w| w.marker.as_ptr() == Arc::as_ptr(marker)) {
+                all.push(Watched {
+                    marker: Arc::downgrade(marker),
+                    turn: 0,
+                    again: Duration::ZERO,
+                    timer: marker
+                        .timer
+                        .get()
+                        .expect("a watched marker has a timer")
+                        .clone(),
+                });
+            }
+            let threshold = marker.threshold.load(Ordering::Acquire);
+            if let Some(now) = TurnMarker(Arc::clone(marker)).in_progress() {
+                let until = Duration::from_millis(threshold).saturating_sub(now.running);
+                marker
+                    .timer
+                    .get()
+                    .expect("a watched marker has a timer")
+                    .arm(until);
+            }
+        }
+        self.start();
+        self.waiter.changed();
+    }
+
+    fn disable(&self, marker: &Shared) {
+        if let Some(timer) = marker.timer.get() {
+            let _watched = lock(&self.markers);
+            timer.disarm();
+            self.waiter.changed();
+        }
+    }
+
+    fn run(&self) {
+        loop {
+            let timers: Vec<_> = lock(&self.markers)
+                .iter()
+                .map(|w| w.timer.clone())
+                .collect();
+            match self.waiter.wait(&timers) {
+                timer::Wake::Changed => self.check(),
+                timer::Wake::Fired(index) => {
+                    debug_assert!(index < timers.len());
+                    self.check();
+                }
+            }
+            #[cfg(test)]
+            {
+                self.wakes.fetch_add(1, Ordering::Relaxed);
+                for check_point in lock(&self.check_points).drain(..) {
+                    let _ = check_point.send(());
+                }
+            }
+        }
+    }
+
+    fn check(&self) {
+        let mut due: Vec<(Arc<Shared>, String)> = Vec::new();
+        {
+            let mut all = lock(&self.markers);
+            all.retain(|w| {
+                w.marker
+                    .upgrade()
+                    .is_some_and(|s| s.threshold.load(Ordering::Acquire) != 0)
+            });
+            for w in all.iter_mut() {
+                let Some(s) = w.marker.upgrade() else {
+                    continue;
+                };
+                let threshold = s.threshold.load(Ordering::Acquire);
+                let marker = TurnMarker(s);
+                let Some(now) = marker.in_progress() else {
+                    continue;
+                };
+                if w.turn != now.turn {
+                    w.turn = now.turn;
+                    w.again = Duration::from_millis(threshold);
+                }
+                if now.running >= w.again {
+                    due.push((Arc::clone(&marker.0), stuck_text(&now)));
+                    marker.0.reported.store(now.turn, Ordering::Release);
+                    w.again *= 2;
+                    w.timer.arm(w.again.saturating_sub(now.running));
+                }
+            }
+        }
+        // Reported outside the lock: a reporter is the host's code.
+        for (s, text) in due {
+            let reporter = lock(&s.reporter).clone();
+            match reporter {
+                Some(r) => r(&text),
+                None => eprintln!("warning: {text}"),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn check_point(&self) -> std::sync::mpsc::Receiver<()> {
+        let (send, receive) = std::sync::mpsc::channel();
+        lock(&self.check_points).push(send);
+        self.waiter.changed();
+        receive
+    }
+}
+
+#[cfg(not(kernel_timer))]
 impl Watchdog {
     fn watch(&'static self, marker: &Arc<Shared>) {
         {
@@ -718,15 +898,10 @@ impl Watchdog {
                 });
             }
         }
-        let thread = self.thread.get_or_init(|| {
-            std::thread::Builder::new()
-                .name("ljos-turn-watchdog".into())
-                .spawn(move || self.run())
-                .expect("the watchdog thread starts")
-                .thread()
-                .clone()
-        });
-        thread.unpark();
+        self.start();
+        if let Some(thread) = self.thread.get() {
+            thread.unpark();
+        }
     }
 
     /// A marker's turn began: wakes the thread only if its scheduled wake
@@ -735,8 +910,6 @@ impl Watchdog {
         if self.next_wake.load(Ordering::SeqCst) > deadline
             && let Some(t) = self.thread.get()
         {
-            #[cfg(test)]
-            self.unparks.fetch_add(1, Ordering::Relaxed);
             t.unpark();
         }
     }
@@ -821,55 +994,116 @@ fn stuck_text(t: &TurnInProgress) -> String {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, kernel_timer))]
 mod tests {
     use super::*;
     use std::sync::mpsc;
 
-    fn test_watchdog(next_wake: u64) -> Watchdog {
-        Watchdog {
+    const PATIENCE: Duration = Duration::from_secs(30);
+    const THRESHOLD: Duration = Duration::from_millis(20);
+
+    fn test_watchdog() -> (&'static Watchdog, TurnMarker) {
+        let watchdog = Box::leak(Box::new(Watchdog {
             markers: Mutex::new(Vec::new()),
             thread: OnceLock::new(),
-            next_wake: AtomicU64::new(next_wake),
-            unparks: AtomicU64::new(0),
-        }
+            waiter: timer::Waiter::new(),
+            wakes: AtomicU64::new(0),
+            check_points: Mutex::new(Vec::new()),
+        }));
+        let marker = TurnMarker::new();
+        marker.0.threshold.store(20, Ordering::Release);
+        marker.0.timer.get_or_init(|| watchdog.waiter.timer());
+        lock(&watchdog.markers).push(Watched {
+            marker: Arc::downgrade(&marker.0),
+            turn: 0,
+            again: Duration::ZERO,
+            timer: marker.0.timer.get().unwrap().clone(),
+        });
+        watchdog.start();
+        (watchdog, marker)
+    }
+
+    fn begin(marker: &TurnMarker) {
+        marker.begin(Instant::now(), Phase::Host, Cause::default());
     }
 
     #[test]
-    fn a_new_turn_unparks_a_watchdog_sleeping_on_the_previous_turns_deadline() {
-        let watchdog = test_watchdog(1_000);
-        let (ready_tx, ready_rx) = mpsc::channel();
-        let (woke_tx, woke_rx) = mpsc::channel();
-        let sleeping = std::thread::spawn(move || {
-            ready_tx.send(()).unwrap();
-            std::thread::park_timeout(Duration::from_secs(30));
-            woke_tx.send(()).unwrap();
-        });
-        watchdog.thread.set(sleeping.thread().clone()).unwrap();
-        ready_rx.recv().unwrap();
+    fn one_hundred_short_turns_cause_no_watchdog_wakes() {
+        let (watchdog, marker) = test_watchdog();
+        let before = watchdog.wakes.load(Ordering::Relaxed);
 
-        watchdog.turn_began(10);
+        for _ in 0..100 {
+            begin(&marker);
+            marker.end();
+        }
 
-        let woke = woke_rx.recv_timeout(Duration::from_millis(100));
-        sleeping.thread().unpark();
-        sleeping.join().unwrap();
-        woke.expect("a new turn interrupts the previous turn's deadline sleep");
+        let checked = watchdog.check_point();
+        checked
+            .recv_timeout(PATIENCE)
+            .expect("the watchdog did not reach the test checkpoint after 100 short turns");
+        let wakes = watchdog.wakes.load(Ordering::Relaxed) - before - 1;
+        assert_eq!(wakes, 0, "100 short turns caused {wakes} watchdog wakes");
     }
 
     #[test]
-    fn short_turns_do_not_unpark_the_watchdog_before_its_current_deadline() {
-        let watchdog = test_watchdog(100);
-        let sleeping = std::thread::spawn(|| {
-            std::thread::park_timeout(Duration::from_secs(30));
+    fn a_turn_past_its_threshold_is_reported_again_at_double() {
+        let (_watchdog, marker) = test_watchdog();
+        let (send, receive) = mpsc::channel();
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let reported = Arc::clone(&reports);
+        let started = Instant::now();
+        marker.set_reporter(move |text| {
+            let mut reports = lock(&reported);
+            reports.push((text.to_owned(), started.elapsed()));
+            if reports.len() == 2 {
+                let _ = send.send(reports.clone());
+            }
         });
-        watchdog.thread.set(sleeping.thread().clone()).unwrap();
 
-        for deadline in [101, 102, 103] {
-            watchdog.turn_began(deadline);
-        }
+        marker.begin(started, Phase::Host, Cause::default());
+        let reports = receive.recv_timeout(PATIENCE).unwrap_or_else(|error| {
+            panic!("a 20 ms threshold did not produce two reports while the turn ran: {error}; saw {reports:?}")
+        });
+        assert!(
+            marker.in_progress().is_some(),
+            "the turn ended before its reports"
+        );
+        assert!(
+            reports[0]
+                .0
+                .starts_with("the UI thread is stuck: turn 1 has run for "),
+            "{reports:?}"
+        );
+        assert!(
+            reports[0].1 >= THRESHOLD,
+            "the first report came before its threshold: {reports:?}"
+        );
+        assert!(
+            reports[1].1 >= THRESHOLD * 2,
+            "the second report did not wait for the doubled threshold: {reports:?}"
+        );
+        marker.end();
+    }
 
-        sleeping.thread().unpark();
-        sleeping.join().unwrap();
-        assert_eq!(watchdog.unparks.load(Ordering::Relaxed), 0);
+    #[test]
+    fn a_turn_that_ends_before_its_threshold_is_never_reported() {
+        let (watchdog, marker) = test_watchdog();
+        let (send, receive) = mpsc::channel();
+        marker.set_reporter(move |text| {
+            let _ = send.send(text.to_owned());
+        });
+
+        begin(&marker);
+        marker.end();
+
+        let checked = watchdog.check_point();
+        checked
+            .recv_timeout(PATIENCE)
+            .expect("the watchdog did not reach the test checkpoint after the short turn");
+        assert_eq!(
+            receive.try_recv().ok(),
+            None,
+            "a turn that ended before its 20 ms threshold was reported"
+        );
     }
 }
