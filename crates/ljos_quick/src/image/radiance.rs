@@ -15,6 +15,22 @@ pub(crate) fn is_radiance(bytes: &[u8]) -> bool {
     bytes.starts_with(b"#?RADIANCE") || bytes.starts_with(b"#?RGBE")
 }
 
+/// The width and height the header of a Radiance picture gives, from as
+/// much of the file as holds the header; None when it does not hold it.
+pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if !is_radiance(bytes) {
+        return None;
+    }
+    let mut lines = bytes.split(|b| *b == b'\n');
+    // The header runs to the first blank line; the resolution follows.
+    lines.by_ref().find(|l| l.is_empty())?;
+    let resolution = std::str::from_utf8(lines.next()?).ok()?;
+    match resolution.split_whitespace().collect::<Vec<_>>()[..] {
+        ["-Y" | "+Y", h, "+X", w] => Some((w.parse().ok()?, h.parse().ok()?)),
+        _ => None,
+    }
+}
+
 /// A decoded picture: its size and its RGBE pixels, top row first.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Rgbe {
@@ -223,6 +239,14 @@ mod tests {
             decode(&b, usize::MAX).unwrap().data,
             [3, 3, 3, 129, 1, 1, 2, 128]
         );
+    }
+
+    #[test]
+    fn the_header_gives_the_size() {
+        let mut b = header("-Y 2 +X 3");
+        assert_eq!(dimensions(&b), Some((3, 2)));
+        b.truncate(12);
+        assert_eq!(dimensions(&b), None);
     }
 
     #[test]

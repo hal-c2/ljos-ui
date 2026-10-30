@@ -121,7 +121,8 @@ pub use ljos_render::{
     Rgba, ShapeStyle, Spread, TextAlign, kurbo, peniko,
 };
 pub use ljos_render::{
-    ImageAlign, ImageError, ImageFit, ImageHandle, ImagePlacement, painted_size, place_image,
+    ImageAlign, ImageEncoding, ImageError, ImageFit, ImageHandle, ImagePlacement, painted_size,
+    place_image,
 };
 pub use ljos_render::{ljos_3d, scene3d};
 pub use ljos_text::{
@@ -209,6 +210,13 @@ pub fn load_texture(
     reply: impl FnOnce(&Engine, Result<ImageHandle, ImageLoadError>) + 'static,
 ) {
     ljos_quick::ImageStore::of(engine).load_texture(engine, url, reply);
+}
+
+/// The texture at `url` ([`load_texture`]) at once, as an `Image` has a
+/// picture at once: when it is cached, or a local file small enough to
+/// decode in less than a frame. None for one to [`load_texture`].
+pub fn texture_now(engine: &Engine, url: &str) -> Option<Result<ImageHandle, ImageLoadError>> {
+    ljos_quick::ImageStore::of(engine).texture_now(url)
 }
 
 /// Makes key delivery ask items of type `T`, and of the types derived

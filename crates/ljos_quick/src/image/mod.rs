@@ -664,7 +664,7 @@ fn reload(e: &Engine, me: ObjectId) {
 /// Whether Qt reads `url` on the spot: only local files are; whatever
 /// else has a scheme, a `data:` URL or a network source, arrives later
 /// whatever `asynchronous` says.
-fn is_local(url: &str) -> bool {
+pub(super) fn is_local(url: &str) -> bool {
     matches!(decode::scheme(url).as_deref(), None | Some("file" | "qrc"))
 }
 
@@ -823,7 +823,7 @@ pub(super) fn request_aside(e: &Engine, me: ObjectId, generation: u64) {
 /// A local picture with more pixels than this has them decoded in the
 /// background ([`decode_aside`]); a smaller one takes less time to decode
 /// than a frame and is decoded on the spot, so that it is in the first.
-const ASIDE_PIXELS: u64 = 512 * 512;
+pub(super) const ASIDE_PIXELS: u64 = 512 * 512;
 
 /// The item shows nothing: its source is empty (`Null`) or failed
 /// (`Error`).

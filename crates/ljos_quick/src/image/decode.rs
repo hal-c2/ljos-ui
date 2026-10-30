@@ -394,6 +394,9 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
         };
         return Some((le16(6)?, le16(8)?));
     }
+    if let Some(size) = super::radiance::dimensions(bytes) {
+        return Some(size);
+    }
     jpeg_frame(bytes).map(|f| (f.width, f.height))
 }
 

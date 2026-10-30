@@ -445,6 +445,19 @@ impl Default for ImageStore {
     }
 }
 
+/// What a 3D texture asks for: the whole picture, as the renderer reads it.
+const TEXTURE: Request = Request {
+    width: 0,
+    height: 0,
+    cover: false,
+    clip: None,
+    scale: 0,
+    animated: false,
+    limit: 0,
+    page: 0,
+    texture: true,
+};
+
 impl ImageStore {
     /// The store of `engine`, made on first use.
     pub fn of(engine: &Engine) -> Rc<ImageStore> {
@@ -1206,26 +1219,52 @@ impl ImageStore {
         url: &str,
         reply: impl FnOnce(&Engine, Result<ImageHandle, LoadError>) + 'static,
     ) {
-        self.load_as(engine, url, Request::default(), reply);
+        self.load_as(engine, url, Request::default(), false, reply);
     }
 
     /// As [`ImageStore::load`], for a texture of a 3D scene: a Radiance
     /// HDR picture decodes too, to RGBE pixels
     /// ([`ljos_render::ImageEncoding::Rgbe`]), and a raster picture keeps
-    /// its straight alpha ([`ljos_render::ImageEncoding::Straight`]). The request is a key of its own whatever the file
-    /// is (a `data:` URL or a file without a name says nothing), so a
-    /// picture both an `Image` and a texture show is decoded for each.
+    /// its straight alpha ([`ljos_render::ImageEncoding::Straight`]). The
+    /// request is a key of its own whatever the file is (a `data:` URL or
+    /// a file without a name says nothing), so a picture both an `Image`
+    /// and a texture show is decoded for each.
+    ///
+    /// Qt reads a texture before the frame that first draws it, so the
+    /// decode starts at once and the host's next frame waits for it as
+    /// for a picture `Image` decodes on the spot
+    /// ([`ImageStore::wait_for_later_frame`]).
     pub fn load_texture(
         &self,
         engine: &Engine,
         url: &str,
         reply: impl FnOnce(&Engine, Result<ImageHandle, LoadError>) + 'static,
     ) {
-        let request = Request {
-            texture: true,
-            ..Request::default()
+        self.load_as(engine, url, TEXTURE, true, reply);
+    }
+
+    /// The texture at `url` ([`ImageStore::load_texture`]) at once, as
+    /// `Image` has a picture at once: when it is cached, or a local file
+    /// small enough to decode in less than a frame. None for one to be
+    /// loaded in the background.
+    pub fn texture_now(&self, url: &str) -> Option<Result<ImageHandle, LoadError>> {
+        let key = ImageKey {
+            url: url.to_owned(),
+            request: TEXTURE,
         };
-        self.load_as(engine, url, request, reply);
+        if let Some(image) = self.cached(&key) {
+            return Some(Ok(image));
+        }
+        if !super::is_local(url) {
+            return None;
+        }
+        // What says nothing of its size (or is not there) is read in the
+        // background, where a large one does not stall a frame.
+        let (w, h) = self.header_size(&key)?;
+        if u64::from(w) * u64::from(h) > super::ASIDE_PIXELS {
+            return None;
+        }
+        Some(self.load_now(&key, true))
     }
 
     fn load_as(
@@ -1233,6 +1272,7 @@ impl ImageStore {
         engine: &Engine,
         url: &str,
         request: Request,
+        for_frame: bool,
         reply: impl FnOnce(&Engine, Result<ImageHandle, LoadError>) + 'static,
     ) {
         let key = ImageKey {
@@ -1250,7 +1290,7 @@ impl ImageStore {
             s.replies.insert(id, Box::new(reply));
             id
         };
-        self.request(engine, key, Waiter::Reply { id });
+        self.request_as(engine, key, Waiter::Reply { id }, for_frame);
     }
 
     /// Decodes `key` on the compute pool; `waiter` hears of the result in
