@@ -2,7 +2,20 @@
 
 use crate::scene::Primitive;
 
-/// Triangles, counter-clockwise when seen from outside.
+/// How a mesh's indices make shapes once decoded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Topology {
+    /// Three indices a triangle.
+    #[default]
+    Triangles,
+    /// Two indices a segment, one pixel wide.
+    Lines,
+    /// One index a point, one pixel wide.
+    Points,
+}
+
+/// Triangles, counter-clockwise when seen from outside; or the segments or
+/// points of a custom geometry, per [`Mesh::topology`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Mesh {
     pub positions: Vec<[f32; 3]>,
@@ -16,6 +29,7 @@ pub struct Mesh {
     /// for a mesh that is not skinned.
     pub joints: Vec<[u16; 4]>,
     pub weights: Vec<[f32; 4]>,
+    pub topology: Topology,
 }
 
 impl Mesh {

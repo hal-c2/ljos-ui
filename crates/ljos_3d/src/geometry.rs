@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::math::Vec3;
-use crate::mesh::Mesh;
+use crate::mesh::{Mesh, Topology};
 
 /// What an attribute of a vertex is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,11 +67,8 @@ pub struct Attribute {
 /// How the vertices, or the indices, make shapes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PrimitiveType {
-    /// Not drawn yet.
     Points,
-    /// Not drawn yet.
     LineStrip,
-    /// Not drawn yet.
     Lines,
     TriangleStrip,
     TriangleFan,
@@ -91,8 +88,6 @@ pub enum GeometryError {
     OutsideStride(Semantic, usize),
     #[error("index {index} is past the {vertices} vertices")]
     IndexOutOfRange { index: u32, vertices: usize },
-    #[error("{0:?} are not drawn yet")]
-    NotYet(PrimitiveType),
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -368,13 +363,15 @@ impl CustomGeometry {
         }
     }
 
-    /// The triangles of the geometry, as three vertex indices each.
-    fn triangles(&self, vertices: usize) -> Result<Vec<u32>, GeometryError> {
+    /// The shapes of the geometry as vertex indices: three a triangle, two
+    /// a segment, one a point.
+    fn shapes(&self, vertices: usize) -> Result<(Topology, Vec<u32>), GeometryError> {
         let i = self.indices(vertices)?;
         let mut out = Vec::new();
-        match self.primitive {
+        let topology = match self.primitive {
             PrimitiveType::Triangles => {
                 out.extend(i.as_chunks::<3>().0.iter().flatten());
+                Topology::Triangles
             }
             // Every other triangle is flipped so that all face one way.
             PrimitiveType::TriangleStrip => {
@@ -385,15 +382,30 @@ impl CustomGeometry {
                         out.extend([w[1], w[0], w[2]]);
                     }
                 }
+                Topology::Triangles
             }
             PrimitiveType::TriangleFan => {
                 for w in i.windows(2).skip(1) {
                     out.extend([i[0], w[0], w[1]]);
                 }
+                Topology::Triangles
             }
-            other => return Err(GeometryError::NotYet(other)),
-        }
-        Ok(out)
+            PrimitiveType::Lines => {
+                out.extend(i.as_chunks::<2>().0.iter().flatten());
+                Topology::Lines
+            }
+            PrimitiveType::LineStrip => {
+                for w in i.windows(2) {
+                    out.extend([w[0], w[1]]);
+                }
+                Topology::Lines
+            }
+            PrimitiveType::Points => {
+                out = i;
+                Topology::Points
+            }
+        };
+        Ok((topology, out))
     }
 
     /// Decodes the geometry for upload. Without normals each triangle gets
@@ -401,7 +413,7 @@ impl CustomGeometry {
     /// being the front, so the geometry is lit flat.
     pub fn to_mesh(&self) -> Result<Mesh, GeometryError> {
         let positions = self.read_vec::<3>(Semantic::Position)?;
-        let triangles = self.triangles(positions.len())?;
+        let (topology, triangles) = self.shapes(positions.len())?;
         let normals = self
             .attribute(Semantic::Normal)
             .map(|_| self.read_vec::<3>(Semantic::Normal))
@@ -426,7 +438,17 @@ impl CustomGeometry {
         };
         // Where each vertex of the mesh came from in the geometry.
         let mut from: Vec<u32> = Vec::new();
-        let mut mesh = Mesh::default();
+        let mut mesh = Mesh {
+            topology,
+            ..Mesh::default()
+        };
+        // A segment or a point has no face to take a normal from: they face
+        // the viewer's side of the model, +Z, unless the data says more.
+        let normals = match (topology, normals) {
+            (Topology::Triangles, n) => n,
+            (_, Some(n)) => Some(n),
+            (_, None) => Some(vec![[0.0, 0.0, 1.0]; positions.len()]),
+        };
         match normals {
             Some(normals) => {
                 mesh.positions = positions;
@@ -537,13 +559,24 @@ mod tests {
     }
 
     #[test]
-    fn what_cannot_be_drawn_is_an_error() {
+    fn lines_and_points_decode_to_segments_and_points() {
         let mut g = quad();
         g.set_primitive_type(PrimitiveType::Lines);
-        assert_eq!(
-            g.validate(),
-            Err(GeometryError::NotYet(PrimitiveType::Lines))
-        );
+        let m = g.to_mesh().unwrap();
+        assert_eq!((m.topology, m.indices), (Topology::Lines, vec![0, 1, 2, 3]));
+        assert_eq!(m.normals, vec![[0.0, 0.0, 1.0]; 4]);
+        g.set_primitive_type(PrimitiveType::LineStrip);
+        let m = g.to_mesh().unwrap();
+        assert_eq!(m.indices, vec![0, 1, 1, 2, 2, 3]);
+        g.set_primitive_type(PrimitiveType::Points);
+        let m = g.to_mesh().unwrap();
+        assert_eq!((m.topology, m.indices), (Topology::Points, vec![0, 1, 2, 3]));
+    }
+
+    #[test]
+    fn what_cannot_be_drawn_is_an_error() {
+        let g = quad();
+        assert!(g.validate().is_ok());
         assert_eq!(
             CustomGeometry::new().validate(),
             Err(GeometryError::NoPosition)

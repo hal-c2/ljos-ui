@@ -18,6 +18,7 @@ use crate::custom::{
     MATERIAL_FRAGMENT_STRAIGHT, MATERIAL_VERTEX, Program, ProgramKind,
 };
 use crate::maps::{self, Maps};
+use crate::mesh::Topology;
 use crate::scene::CullMode;
 use crate::texture::Sampling;
 
@@ -77,6 +78,7 @@ pub(crate) struct MaterialKey {
     /// The author's factors, where both are given; the picture's own
     /// premultiplied blending otherwise.
     pub blend: Option<(Blend, Blend)>,
+    pub topology: Topology,
 }
 
 /// What one custom draw binds on a target, kept while the material keeps
@@ -285,6 +287,7 @@ impl Programs {
                 buffers: &[Some(vertex)],
             },
             primitive: wgpu::PrimitiveState {
+                topology: key.topology.wgpu(),
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: match key.cull {
                     CullMode::Back => Some(wgpu::Face::Back),

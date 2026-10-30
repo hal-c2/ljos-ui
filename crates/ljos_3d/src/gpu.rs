@@ -26,7 +26,7 @@ use crate::ibl::{self, Bound, Ibl};
 use crate::instancing::{Instancing, instance_worlds};
 use crate::maps::{self, GroupKey, Maps};
 use crate::math::{Mat4, Quat, Vec3};
-use crate::mesh::Mesh;
+use crate::mesh::{Mesh, Topology};
 use crate::post::{self, Buffers, Chain, Pipes};
 use crate::programs::{Header, MaterialKey, Programs, Slot};
 use crate::scene::{
@@ -126,6 +126,7 @@ struct GpuMesh {
     extra: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
     count: u32,
+    topology: Topology,
 }
 
 /// A custom geometry as last uploaded. `None` for one that cannot be
@@ -148,6 +149,7 @@ struct PipelineKey {
     /// The picture's, or the half floats a post-processed scene is drawn
     /// into.
     format: wgpu::TextureFormat,
+    topology: Topology,
 }
 
 /// The pipelines and meshes of one device. One per device, shared by every
@@ -1146,6 +1148,7 @@ impl Renderer {
                     ],
                 },
                 primitive: wgpu::PrimitiveState {
+                    topology: key.topology.wgpu(),
                     front_face: wgpu::FrontFace::Ccw,
                     cull_mode: match key.cull {
                         CullMode::Back => Some(wgpu::Face::Back),
@@ -1233,6 +1236,15 @@ impl Renderer {
                     cache: None,
                 })
             });
+    }
+
+    /// Primitives are triangles; a custom geometry says. Only called for
+    /// geometries `custom_mesh` found drawable.
+    fn topology_of(&self, key: MeshKey) -> Topology {
+        match key {
+            MeshKey::Primitive(_) => Topology::Triangles,
+            MeshKey::Custom(id) => self.gpu_mesh(MeshKey::Custom(id)).topology,
+        }
     }
 
     fn gpu_mesh(&self, key: MeshKey) -> &GpuMesh {
@@ -1338,6 +1350,22 @@ const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
     3 => Float32x4,
 ];
 
+impl Topology {
+    pub(crate) fn wgpu(self) -> wgpu::PrimitiveTopology {
+        match self {
+            Topology::Triangles => wgpu::PrimitiveTopology::TriangleList,
+            Topology::Lines => wgpu::PrimitiveTopology::LineList,
+            Topology::Points => wgpu::PrimitiveTopology::PointList,
+        }
+    }
+}
+
+/// Whether a draw is in the depth the post-processing passes read: the
+/// depth pass draws triangles, and segments and points have no surface.
+fn writes_camera_depth(draw: &Draw<'_>) -> bool {
+    draw.key.depth_write && draw.key.topology == Topology::Triangles
+}
+
 /// The vertices the lit shader and the authors' programs read.
 fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
@@ -1376,6 +1404,7 @@ fn upload(device: &wgpu::Device, mesh: &Mesh) -> GpuMesh {
             usage: wgpu::BufferUsages::INDEX,
         }),
         count: mesh.indices.len() as u32,
+        topology: mesh.topology,
     }
 }
 
@@ -1616,7 +1645,9 @@ impl Renderer {
                     joint_slots.push(gpu_extra::joint_slot(palette));
                     uniform.maps[3] = 1;
                 }
-                let caster = (shadows && node.casts_shadows).then(|| {
+                // A segment or a point has no volume to shadow with.
+                let casts = node.casts_shadows && self.topology_of(key) == Topology::Triangles;
+                let caster = (shadows && casts).then(|| {
                     casters.push(Caster {
                         mesh: key,
                         cull: model.material.cull_mode(),
@@ -1651,6 +1682,7 @@ impl Renderer {
                             samples,
                             format,
                             blend: blends.then_some((m.source_blend, m.destination_blend)),
+                            topology: self.topology_of(key),
                         },
                     )),
                     _ => None,
@@ -1665,6 +1697,7 @@ impl Renderer {
                         samples,
                         extra,
                         format,
+                        topology: self.topology_of(key),
                     },
                     uniform,
                     copies,
@@ -1806,7 +1839,7 @@ impl Renderer {
         target.custom_slots.truncate(slot);
         let depth_pass = processed && post::needs_depth(environment);
         if depth_pass {
-            for draw in draws.iter().filter(|d| d.key.depth_write) {
+            for draw in draws.iter().filter(|d| writes_camera_depth(d)) {
                 self.shadow_pipeline(device, draw.key.cull, draw.key.extra);
             }
         }
@@ -2024,7 +2057,7 @@ impl Renderer {
         pass.set_bind_group(0, &group, &[0]);
         let mut bound = None;
         for (i, draw) in draws.iter().enumerate() {
-            if !draw.key.depth_write {
+            if !writes_camera_depth(draw) {
                 continue;
             }
             let pipeline = (draw.key.cull, draw.key.extra);

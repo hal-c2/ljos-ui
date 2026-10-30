@@ -82,12 +82,19 @@ pub fn pick(scene: &Scene, ray: &Ray, pickable: impl Fn(NodeId) -> bool) -> Vec<
                 MeshSource::Primitive(p) => primitive_mesh(*p),
                 MeshSource::Custom(g) => {
                     custom = g.to_mesh().ok()?;
+                    // Segments and points have no surface to hit.
+                    if custom.topology != crate::mesh::Topology::Triangles {
+                        return None;
+                    }
                     &custom
                 }
             };
+            // As the renderer draws it: an author's program shows one
+            // unbent copy.
+            let plain = matches!(model.material, crate::scene::Material::Custom(_));
             let skinned;
             let mut world = world;
-            if let Some(skin) = &node.skin
+            if let Some(skin) = node.skin.as_ref().filter(|_| !plain)
                 && !mesh.joints.is_empty()
             {
                 skinned = skin_mesh(mesh, &skin.palette(scene));
@@ -95,7 +102,7 @@ pub fn pick(scene: &Scene, ray: &Ray, pickable: impl Fn(NodeId) -> bool) -> Vec<
                 world = Mat4::IDENTITY;
                 bounds = sphere_of(&mesh.positions);
             }
-            match &node.instancing {
+            match node.instancing.as_ref().filter(|_| !plain) {
                 None => hit_mesh(id, mesh, bounds, cull, &world, ray),
                 Some(instancing) => {
                     let global = instancing.global(scene, id, &world);
