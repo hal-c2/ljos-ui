@@ -238,6 +238,18 @@ impl Gl {
 }
 
 #[cfg(feature = "quick3d")]
+impl Gl {
+    /// Lets wgpu delete what it still holds of pictures let go of
+    /// ([`crate::gl_scene3d::Device3d::release`]), while the context is
+    /// current; nothing when no view was ever drawn.
+    fn release_scene3d(&self) {
+        if let Some(Some(device)) = self.scene3d.borrow().as_ref() {
+            device.release();
+        }
+    }
+}
+
+#[cfg(feature = "quick3d")]
 impl Drop for Gl {
     fn drop(&mut self) {
         // wgpu deletes what it made on the context, which must be current.
@@ -748,7 +760,9 @@ impl Drop for GlPainter {
         let surface = self.window.as_ref().map(|w| (w.id, &w.surface));
         if self.gl.make_current(surface) {
             #[cfg(feature = "quick3d")]
-            self.views.clear();
+            if self.views.clear() {
+                self.gl.release_scene3d();
+            }
             self.programs.destroy(&self.gl.glow);
             self.meshes.destroy(&self.gl.glow);
             self.painter.destroy();

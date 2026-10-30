@@ -34,6 +34,10 @@ const UNITS: u32 = 16;
 
 /// A wgpu device on the GL context, made while it is current.
 pub(crate) struct Device3d {
+    /// Kept for its report of what the device holds (the tests count the
+    /// live textures by it).
+    #[cfg_attr(not(test), allow(dead_code))]
+    instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: Renderer,
@@ -86,11 +90,22 @@ impl Device3d {
         // have them, as a light probe's maps need.
         renderer.use_adapter_formats(&adapter);
         Ok(Device3d {
+            instance,
             device,
             queue,
             renderer,
             vertex_array,
         })
+    }
+
+    /// Deletes what wgpu still holds of pictures let go of. A texture a
+    /// submission drew into lives until wgpu sees that submission done,
+    /// which it looks at only when it submits or is polled; the painter's
+    /// 2D frames do neither, so without this the last views' textures
+    /// would stay until a view is drawn again. Never waits: a submission
+    /// not yet done is seen at the next one.
+    pub(crate) fn release(&self) {
+        let _ = self.device.poll(wgpu::PollType::Poll);
     }
 
     /// GL's state as wgpu left it when it opened its device.
@@ -206,8 +221,9 @@ impl Views {
         }
         // SAFETY: the caller made the context current.
         unsafe { device.enter(gl) };
+        let mut released = false;
         for k in gone.into_iter().flatten() {
-            self.pictures.remove(&k);
+            released |= self.pictures.remove(&k).is_some();
         }
         let mut encoder = device
             .device
@@ -247,6 +263,9 @@ impl Views {
         if drawn {
             device.queue.submit([encoder.finish()]);
         }
+        if released {
+            device.release();
+        }
         // SAFETY: as above.
         unsafe { device.leave(gl, px) };
         let out = primitives
@@ -276,9 +295,12 @@ impl Views {
         Some(out)
     }
 
-    /// Lets go of every picture, while the context is current.
-    pub(crate) fn clear(&mut self) {
+    /// Lets go of every picture, while the context is current; whether
+    /// there was one.
+    pub(crate) fn clear(&mut self) -> bool {
+        let had = !self.pictures.is_empty();
         self.pictures.clear();
+        had
     }
 }
 
@@ -300,5 +322,253 @@ fn texture_of(target: &Target) -> Option<glow::Texture> {
     match raw.inner {
         wgpu::hal::gles::TextureInner::Texture { raw, .. } => Some(raw),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    use egui::epaint::{ClippedShape, PaintCallback, Primitive, Shape};
+    use egui::{ClippedPrimitive, Rect, pos2, vec2};
+    use glow::HasContext;
+    use glutin::api::egl::context::PossiblyCurrentContext;
+    use glutin::api::egl::device::Device;
+    use glutin::api::egl::display::Display;
+    use glutin::config::{ConfigSurfaceTypes, ConfigTemplateBuilder};
+    use glutin::context::{ContextApi, ContextAttributesBuilder};
+    use glutin::display::GlDisplay;
+    use ljos_3d::math::Vec3;
+    use ljos_3d::{
+        Camera, Light, Material, MeshSource, Model, Node, NodeKind, Primitive as Mesh3d, Scene,
+        Transform,
+    };
+    use ljos_render::scene3d::View3dPaint;
+
+    use super::{Device3d, Views};
+
+    /// A context with no surface on an EGL device, current on this thread,
+    /// as the painter's is before its first window; Mesa has one for each
+    /// GPU and one for llvmpipe.
+    struct Headless {
+        // Field order is drop order: the context goes before its display.
+        glow: glow::Context,
+        _context: PossiblyCurrentContext,
+        display: Display,
+        name: String,
+    }
+
+    fn headless(device: &Device) -> Result<Headless, String> {
+        // SAFETY: no DRM display is handed over; the device is EGL's own.
+        let display = unsafe { Display::with_device(device, None) }.map_err(|e| e.to_string())?;
+        let template = ConfigTemplateBuilder::new()
+            .with_surface_type(ConfigSurfaceTypes::empty())
+            .build();
+        // SAFETY: the template names no window.
+        let config = unsafe { display.find_configs(template) }
+            .map_err(|e| e.to_string())?
+            .next()
+            .ok_or("no config")?;
+        let attributes = |api| {
+            ContextAttributesBuilder::new()
+                .with_context_api(api)
+                .build(None)
+        };
+        // SAFETY: the config is the display's.
+        let context = unsafe {
+            display
+                .create_context(&config, &attributes(ContextApi::OpenGl(None)))
+                .or_else(|_| display.create_context(&config, &attributes(ContextApi::Gles(None))))
+        }
+        .map_err(|e| e.to_string())?
+        .make_current_surfaceless()
+        .map_err(|e| e.to_string())?;
+        // SAFETY: the context is current and its functions are the display's.
+        let glow =
+            unsafe { glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s)) };
+        // SAFETY: a plain query on the current context.
+        let name = unsafe { glow.get_parameter_string(glow::RENDERER) };
+        Ok(Headless {
+            glow,
+            _context: context,
+            display,
+            name,
+        })
+    }
+
+    fn cube() -> Arc<Scene> {
+        let mut scene = Scene::new();
+        scene.add(
+            None,
+            Node::new(NodeKind::Camera(Camera::PERSPECTIVE)).with_transform(Transform {
+                position: Vec3::new(0.0, 0.0, 300.0),
+                ..Transform::default()
+            }),
+        );
+        scene.add(None, Node::new(NodeKind::Light(Light::DIRECTIONAL)));
+        scene.add(
+            None,
+            Node::new(NodeKind::Model(Model {
+                mesh: MeshSource::Primitive(Mesh3d::Cube),
+                material: Material::default(),
+            })),
+        );
+        Arc::new(scene)
+    }
+
+    fn live_textures(device: &Device3d) -> usize {
+        device
+            .instance
+            .generate_report()
+            .map_or(0, |r| r.hub_report().textures.num_kept_from_user)
+    }
+
+    /// One frame of the painter showing `views` (key, size), as
+    /// `GlPainter::paint` runs it: the shapes noted, then the views drawn.
+    /// The pictures kept after it, by their GL names.
+    fn frame(
+        h: &Headless,
+        device: &mut Device3d,
+        views: &mut Views,
+        scene: &Arc<Scene>,
+        shown: &[(u64, [u32; 2])],
+    ) -> Vec<glow::Texture> {
+        let callback = |key, size_px: [u32; 2]| PaintCallback {
+            rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(size_px[0] as f32, size_px[1] as f32)),
+            callback: Arc::new(View3dPaint {
+                key,
+                scene: Arc::clone(scene),
+                size_px,
+            }),
+        };
+        let shapes: Vec<_> = shown
+            .iter()
+            .map(|&(k, size)| ClippedShape {
+                clip_rect: Rect::EVERYTHING,
+                shape: Shape::Callback(callback(k, size)),
+                transform_after_tessellation: egui::emath::TSTransform::IDENTITY,
+            })
+            .collect();
+        let primitives: Vec<_> = shown
+            .iter()
+            .map(|&(k, size)| ClippedPrimitive {
+                clip_rect: Rect::EVERYTHING,
+                primitive: Primitive::Callback(callback(k, size)),
+            })
+            .collect();
+        views.shown(&shapes);
+        // SAFETY: the context is current on this thread for the test.
+        unsafe {
+            views.draw(device, &h.glow, [320, 240], &primitives);
+            // The frame is on the screen before the next is drawn, as
+            // the painter's swap and the display's interval make it.
+            h.glow.finish();
+        }
+        let mut pictures = Vec::new();
+        views.pictures_into(&mut pictures);
+        pictures.into_iter().map(|(_, t)| t).collect()
+    }
+
+    /// Views that come and go on the GL painter, as a `Loader` toggling
+    /// one makes them: each picture's GL texture is deleted once its view
+    /// is no longer shown, on the context, and wgpu holds as many textures
+    /// after any number of rounds as after the first. Runs on every EGL
+    /// device the machine has (a GPU, llvmpipe), with no window.
+    #[test]
+    fn views_that_come_and_go_leave_no_gl_textures_behind() {
+        let devices: Vec<_> = match Device::query_devices() {
+            Ok(d) => d.collect(),
+            Err(e) => {
+                eprintln!("SKIPPED: EGL lists no devices: {e}");
+                return;
+            }
+        };
+        let mut ran = 0;
+        for d in &devices {
+            let h = match headless(d) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("an EGL device ({:?}) has no context: {e}", d.name());
+                    continue;
+                }
+            };
+            // SAFETY: the context is current on this thread, and stays so
+            // while the device lives; it goes before the context.
+            let made = unsafe { Device3d::new(&h.glow, |s| h.display.get_proc_address(s)) };
+            let mut device = match made {
+                Ok(device) => device,
+                Err(e) => {
+                    eprintln!("wgpu cannot use {}: {e}", h.name);
+                    continue;
+                }
+            };
+            run_rounds(&h, &mut device);
+            drop(device);
+            eprintln!("views came and went on {}", h.name);
+            ran += 1;
+        }
+        if ran == 0 {
+            eprintln!("SKIPPED: no EGL device wgpu can draw on");
+        }
+    }
+
+    fn run_rounds(h: &Headless, device: &mut Device3d) {
+        let on = &h.name;
+        let scene = cube();
+        let mut views = Views::default();
+        // The renderer keeps what it shares between views once it first
+        // draws; the level to come back to is after one view came and went.
+        assert_eq!(
+            frame(h, device, &mut views, &scene, &[(u64::MAX, [64, 64])]).len(),
+            1
+        );
+        assert!(frame(h, device, &mut views, &scene, &[]).is_empty());
+        let before = live_textures(device);
+        let mut with_two = None;
+        let mut released = HashSet::new();
+        for round in 0..50u64 {
+            // New keys each round, and a size of their own, as views laid
+            // out again have.
+            let size = [100 + (round % 7) as u32, 80];
+            let shown = [(2 * round + 1, size), (2 * round + 2, size)];
+            let pictures = frame(h, device, &mut views, &scene, &shown);
+            assert_eq!(pictures.len(), 2, "round {round} on {on}: both views drawn");
+            for &t in &pictures {
+                // SAFETY: the context is current.
+                assert!(
+                    unsafe { h.glow.is_texture(t) },
+                    "round {round} on {on}: a shown picture is a texture"
+                );
+            }
+            let textures = live_textures(device);
+            assert_eq!(
+                *with_two.get_or_insert(textures),
+                textures,
+                "round {round} on {on}: two views hold as many textures as in the first round"
+            );
+            assert!(
+                frame(h, device, &mut views, &scene, &[]).is_empty(),
+                "round {round} on {on}: the views are gone"
+            );
+            assert_eq!(
+                live_textures(device),
+                before,
+                "round {round} on {on}: wgpu holds no texture of theirs"
+            );
+            released.extend(pictures);
+        }
+        // SAFETY: the context is current.
+        let alive: Vec<_> = released
+            .iter()
+            .filter(|&&t| unsafe { h.glow.is_texture(t) })
+            .collect();
+        assert!(
+            alive.is_empty(),
+            "on {on}: {} of the {} GL textures of views gone are still textures",
+            alive.len(),
+            released.len()
+        );
+        let _ = views.clear();
     }
 }
