@@ -40,7 +40,8 @@ QML (IR) ──▶ ljos_quick3d types ──writes──▶ ljos_3d::Scene ─�
                ┌─────────────────────────────────────────────────────┼──────────────────┐
                ▼                                                     ▼                  ▼
   ljos_egui::scene3d (egui-wgpu callback)      ljos_3d::Offscreen + readback   ljos_3d::SurfaceView
-  shell's wgpu painter                         GL painter, R, snapshots, tests  web <canvas>, own windows
+  shell's wgpu painter; the GL painter with    R, CPU painter, snapshots,       web <canvas>, own windows
+  wgpu on its own context (gl_scene3d)         tests
                └──────────────── all draw with ljos_3d::Renderer ───────────────────────┘
 ```
 
@@ -49,7 +50,7 @@ QML (IR) ──▶ ljos_quick3d types ──writes──▶ ljos_3d::Scene ─�
 | `ljos_3d` | the scene (nodes, transforms, meshes, materials, cameras, lights, environment, revision), the renderer, its shaders and GPU caches | `Scene` (`add`, `remove`, `node_mut`, `set_camera`, `set_environment`, `revision`, `walk`); with `gpu`: `Renderer::{new, render, prepare_blit, blit}`, `Target`, `Offscreen`, `SurfaceView` | slotmap, thiserror; wgpu with `gpu` |
 | `ljos_quick3d` (M2) | the QML types of `QtQuick3D`, their properties and defaults, the item that is `View3D` | `register(&mut Registry)`, like `ljos_lottie` | `ljos` facade, `ljos_3d` without `gpu` |
 | `ljos_egui`, feature `quick3d` | the egui-wgpu adapter | `Scene3dResources::{install, retain}`, `Scene3dPaint::shape(rect)` | egui-wgpu, `ljos_3d` |
-| `ljos_shell` | turning `quick3d` on and choosing the painter | none of its own | `ljos_egui[quick3d]` |
+| `ljos_shell` | turning `quick3d` on; the GL painter's 3D views (wgpu on its context) | none of its own | `ljos_egui[quick3d]`, `ljos_3d`, wgpu (`gles`) |
 | ljos-web | the wasm-bindgen wrapper and the canvas | its own, over `SurfaceView` | `ljos_3d` |
 
 **Which crates may touch wgpu:** `ljos_3d` (feature `gpu`), `ljos_egui` (feature `quick3d`) and `ljos_shell` (ARCHITECTURE.md §4, crate rules). `ljos_render`'s B1 backend joins them when it is built. The QML types never see a device: they write the scene, so they run and test with no GPU.
@@ -62,9 +63,15 @@ QML (IR) ──▶ ljos_quick3d types ──writes──▶ ljos_3d::Scene ─�
 
 So the 3D picture lands in paint order: items declared after the `View3D` are drawn over it and items before it under it, with no extra pass and no copy back to the CPU. A target is kept per view key and dropped by `retain` when the view goes.
 
-**The off-screen seam.** The GL painter, R (vello_cpu), the MCP snapshot and the BDD pictures have no wgpu pass. For them `ljos_3d::Offscreen` renders on a device of its own and reads the picture back, and the view paints it as an image. The readback happens only when the revision or size changed, so idle stays free. A window that shows a `View3D` prefers the wgpu painter:
-- the shell picks wgpu at startup when the application's IR imports `QtQuick3D`;
-- otherwise a window switches painter once, the first time a `View3D` is shown in it, as a window drawn on the processor switches to GL today.
+**The GL seam.** The GL painter stays the default where EGL is (§ The painter), and draws 3D on its own context: `ljos_shell::gl_scene3d` hands wgpu's GL backend the painter's EGL context (`wgpu::hal::gles::Adapter::new_external`, then `Instance::create_adapter_from_hal`) the first time a view is drawn. Each frame, before egui's meshes:
+- every view whose revision or size changed is drawn into its own `Target`, all in one submission;
+- the view's callback becomes a mesh over its rect that samples the target's GL texture (`Texture::as_hal`), so it is clipped, blended and drawn in part like any other mesh;
+- wgpu gets back the state it set when its device was opened (its vertex array, pack and unpack alignment of 1) before it works, and the painter gets its own back after (the window's framebuffer, no vertex array, no sampler objects, no pixel-unpack buffer, the default pixel store, the capabilities wgpu turns on off);
+- a target whose view the whole frame no longer shows is dropped, while the context is current.
+
+The present comparison takes a view whose scene is the same `Arc` at the same size and rect as unchanged, so a still view in a window where something else moves is not drawn again. A context wgpu cannot use (older than GL 3.3 or GLES 3) draws no 3D and says so once; it does not fall back to the read-back path, because wgpu's own EGL context would take the painter's off the thread.
+
+**The off-screen seam.** R (vello_cpu), the processor's painter, the MCP snapshot and the BDD pictures have no wgpu pass. For them `ljos_3d::Offscreen` renders on a device of its own and reads the picture back, and the view paints it as an image. The readback happens only when the revision or size changed, so idle stays free; a view not drawn in a frame lets go of its picture at the end of it.
 
 **The web seam.** `ljos_3d::SurfaceView::new(target, w, h)` makes its own instance (WebGPU if the browser has it, else WebGL2), device and surface; `resize`; `draw(&Scene) -> bool` presents only on a new revision. On the web the target is `wgpu::SurfaceTarget::Canvas`. ljos-web owns the wasm-bindgen wrapper; `ljos_3d` takes no wasm-bindgen dependency of its own.
 
@@ -119,7 +126,39 @@ Inside Ljós the structure keeps it there:
 - Pipelines are built once per material kind and target format, never per draw.
 - A view's target is its own size in device pixels. Nothing bigger is kept, and the target is released when the view goes.
 
-**Startup risk.** The shell paints with GL by default, so a `View3D` window brings up a wgpu (Vulkan) device as well. The NVIDIA ICD already costs startup time on machines without NVIDIA hardware (the shell leaves it out). The first bench run measures device creation on its own, against `qml6`'s RHI startup. If wgpu loses there, the fallback is wgpu on the GL painter's own EGL context (wgpu's GLES backend on an external context), still one device per process.
+**The painter.** The shell paints with GL by default. Drawing a `View3D` with a second (Vulkan) device next to GL's, or switching the window to egui-wgpu, was weighed by measuring the two painters on the 2D benches (§ The painter, below). egui-wgpu lost, so the GL painter draws 3D itself with wgpu on its own context: one driver, no second device, no Vulkan loader, and the NVIDIA ICD stays left out.
+
+## The painter
+
+Measured with `mise run bench <apps> --runtime ljos --profile desktop --warm-up --repeat 3`, `LJOS_PAINTER=gl` against `LJOS_PAINTER=wgpu`, in the headless sway sandbox. "GPU" is RADV/radeonsi on `renderD128`; "llvmpipe" is no GPU. Each figure is the median of three runs of the release build.
+
+**2D, the benches every window runs.** Processor time while animating, and settled PSS:
+
+| App | GPU, GL | GPU, wgpu | llvmpipe, GL | llvmpipe, wgpu |
+|---|---|---|---|---|
+| `animations` CPU | 2.0 % | 5.5 % | 8.4 % | 22.9 % |
+| `listview` CPU | 10.4 % | 13.5 % | 9.6 % | 27.4 % |
+| PSS, the seven apps | 91–117 MiB | 101–115 MiB | 114–143 MiB | 155–181 MiB |
+
+egui-wgpu costs an animating window up to 2.75 times the processor time on a GPU and 2.9 times on llvmpipe, and 3 to 12 MiB of PSS on a GPU, 33 to 43 MiB on llvmpipe (Vulkan's loader and lavapipe or the driver's Vulkan side, mapped next to GL's). Idle is 0 % and 0 frames on both. That decided the default: GL stays.
+
+**3D, the GL painter drawing with wgpu on its context** against egui-wgpu drawing 3D in its own pass (`bench/quick3d-cube.qml`, `bench/quick3d-spin.qml`):
+
+| App | Measure | GPU, GL | GPU, wgpu | llvmpipe, GL | llvmpipe, wgpu |
+|---|---|---|---|---|---|
+| `quick3d-cube` | first frame | 60 ms | 48 ms | 67 ms | 74 ms |
+| | settled PSS | 104 MiB | 115 MiB | 146 MiB | 161 MiB |
+| | idle | 0 %, 0 frames | 0 %, 0 frames | 0 %, 0 frames | 0 %, 0 frames |
+| `quick3d-spin` | CPU animating | 6.4 % (4.8–6.8) | 4.2 % (3.5–5.7) | 11.3 % (11.3–12.1) | 13.3 % (11.2–14.3) |
+| | frames, p50 | 57 fps, 16.2 ms | 58 fps, 16.2 ms | 57 fps, 16.1 ms | 57 fps, 16.1 ms |
+| | settled PSS | 102 MiB | 115 MiB | 145 MiB | 162 MiB |
+
+- **Memory:** GL is 11 to 16 MiB lower in PSS on both. Its anonymous PSS is about 9 MiB higher on a GPU (wgpu's GL backend and the GL driver's own heap); the shared mappings it saves are larger.
+- **CPU while turning:** within the spread of the runs on a GPU (the ranges overlap), and lower on llvmpipe. The 2D cost of egui-wgpu that every frame of every window pays is far larger than this.
+- **First frame:** GL is 12 to 27 ms slower on a GPU, because wgpu's device on the context is opened when the first view is drawn, not at startup. On llvmpipe it is faster. Opening the device before the first frame where the QML has a `View3D` is a later improvement.
+- **Idle** is 0 % CPU and 0 frames for a still view on both painters, so the "an unchanged view is not drawn again" rule holds on GL too.
+
+Measured on the commit that added the GL seam (`ljos_shell::gl_scene3d`); reproduce with the command above.
 
 ## Milestones
 
@@ -152,18 +191,18 @@ The riskiest seam was rendering 3D with egui's own wgpu device and queue and com
 - **Per-target uniforms.** `queue.write_buffer` lands before the submission, so views that shared one buffer would all see the last view's values.
 - **The egui adapter lives in `ljos_egui`, behind `quick3d`.** It names egui types, so it stays inside the three egui crates.
 - **Colour.** An `Rgba8Unorm` target, encoded to sRGB in the shader, premultiplied, so the blit matches egui's gamma-space pass with no conversion.
-- **Painter choice.** wgpu for windows that show a `View3D`. Readback for GL, R, snapshots and tests.
+- **Painter choice.** GL stays the default and draws 3D with wgpu on its own EGL context; egui-wgpu draws 3D in its own pass where it is the painter (`LJOS_PAINTER=wgpu`, or no EGL). Readback for R, the processor's painter, snapshots and tests. The numbers are in § The painter.
 - **Own small maths** instead of glam: a few dozen lines, no dependency, column-major and matching WGSL.
 - **wgpu 30.0.1,** the version egui-wgpu 0.37 is built on, with backends chosen per target.
 
 ## Open risks
 
-- **Startup with the GL default painter** (§ Performance): a second device per process, with Vulkan initialisation and the NVIDIA ICD.
+- **GL state shared with wgpu.** The GL painter and wgpu take turns on one context. What each sets for the other is listed in § The GL seam; a later wgpu that keeps more state from device creation, or a painter change that leaves more bound, shows as a broken frame, not an error. The desktop sandbox pictures (`cua-gl.png` on RADV and llvmpipe) are the check.
 - **No oracle yet:** `qt6-quick3d` is not installed. Conventions taken from the documentation are not checked against qml6:
   - which way lights point;
   - the order euler rotations apply in (the spike applies z, then x, then y);
   - the default tonemapping;
   - the strength of ambient light.
-- **Target lifetime:** a view that is destroyed must release its target. `retain` exists; the engine does not call it yet.
+- **Target lifetime** is handled on every path: egui-wgpu's `retain` and the GL painter keep the targets of the views the frame shows, and the read-back pictures keep those drawn in the frame. `ljos_quick3d`'s `a_destroyed_view_lets_go_of_its_picture` checks the read-back path through twenty Loader rounds; the GL painter's path was checked by hand in the desktop sandbox (a `Loader` turned on and off eleven times: no fault, the area empty after, 0 ticks idle), egui-wgpu's is left to its `retain`. Neither has an automated test.
 - **MSAA and the blit:** resolving before the blit keeps composition unchanged. The cost is to be measured at M3.
 - **The web wrapper's owner** is ljos-web. Its embedding API has to agree with `SurfaceView`.
