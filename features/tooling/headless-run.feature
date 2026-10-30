@@ -119,6 +119,60 @@ Feature: An application run with no window
       And the agent calls the tool "app_reload"
       Then the answer's "/outcome" is "unchanged"
 
+  # A Text is a node of the outline when it asks to be one, as on a window
+  # (features/a11y/text.feature): "plain" asks for nothing.
+  Rule: The outline is the one a window's inspector answers
+
+    Background:
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Column {
+            Rectangle { width: 10; height: 10 }
+            Text {
+                objectName: "status"
+                text: "Stopped"
+                Accessible.role: Accessible.StaticText
+            }
+            Text { objectName: "plain"; text: "Plain" }
+        }
+        """
+
+    Scenario: The snapshot lists a text by what it says
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect --size 200x100"
+      And the agent calls the tool "app_snapshot"
+      Then the answer's text contains "- label \"Stopped\""
+      And the answer does not contain "Plain"
+
+    Scenario: An item is found by its role and name
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect --size 200x100"
+      And the agent calls the tool "app_find" with:
+        """json
+        {"locator": "role=label[name=\"Stopped\"]"}
+        """
+      Then the answer's "/total" is 1
+      And the answer's "/matches/0/obj" is "status"
+
+    Scenario: The item at a point has the role and name of its line
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect --size 200x100"
+      And the agent calls the tool "app_find" with:
+        """json
+        {"locator": "at=5,15"}
+        """
+      Then the answer's "/matches/0/obj" is "status"
+      And the answer's "/matches/0/role" is "label"
+      And the answer's "/matches/0/name" is "Stopped"
+
+    Scenario: A text with no node is found at its point with no role
+      When the author starts "ljos run Main.qml --headless --watch --mcp=inspect --size 200x100"
+      And the agent calls the tool "app_find" with:
+        """json
+        {"locator": "at=5,30"}
+        """
+      Then the answer's "/matches/0/obj" is "plain"
+      And the answer's "/matches/0/role" is null
+      And the answer's "/matches/0/name" is null
+
   Rule: Saves are applied as they are on a window
 
     Scenario: A save is applied and what the application did is kept
