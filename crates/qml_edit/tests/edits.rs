@@ -322,3 +322,201 @@ fn an_object_written_on_one_line_opens_up_for_a_child_of_several_lines() {
         "Item {\n    Rectangle {\n        width: 10\n        height: 10\n        Text {\n            text: \"hi\"\n        }\n    }\n}\n"
     );
 }
+
+fn applied(source: &str, edit: Edit) -> String {
+    apply(source, &edit).expect("the edit applies").text
+}
+
+fn set(object: NodePath, name: &str, value: &str) -> Edit {
+    Edit::SetBinding {
+        object,
+        name: name.into(),
+        value: value.into(),
+    }
+}
+
+fn remove(object: NodePath, name: &str) -> Edit {
+    Edit::RemoveBinding {
+        object,
+        name: name.into(),
+    }
+}
+
+#[test]
+fn a_dotted_name_finds_its_binding_in_a_group() {
+    let source = "Text {\n    font { family: \"Sans\"; bold: false }\n}\n";
+    assert_eq!(
+        applied(source, set(root(), "font.bold", "true")),
+        "Text {\n    font { family: \"Sans\"; bold: true }\n}\n"
+    );
+}
+
+#[test]
+fn a_dotted_name_finds_its_binding_written_dotted() {
+    let source = "Text {\n    font.bold: false\n}\n";
+    assert_eq!(
+        applied(source, set(root(), "font.bold", "true")),
+        "Text {\n    font.bold: true\n}\n"
+    );
+}
+
+#[test]
+fn a_name_of_three_parts_finds_its_binding_through_nested_groups() {
+    let source = "Item {\n    a {\n        b.c: 1\n    }\n    d { e { f: 2 } }\n}\n";
+    let out = applied(source, set(root(), "a.b.c", "10"));
+    assert_eq!(out, source.replace("b.c: 1", "b.c: 10"));
+    let out = applied(source, set(root(), "d.e.f", "20"));
+    assert_eq!(out, source.replace("f: 2", "f: 20"));
+}
+
+#[test]
+fn a_new_binding_goes_into_the_group_the_object_has() {
+    let source = "Item {\n    anchors {\n        left: parent.left\n    }\n    width: 10\n}\n";
+    assert_eq!(
+        applied(source, set(root(), "anchors.right", "parent.right")),
+        "Item {\n    anchors {\n        left: parent.left\n        right: parent.right\n    }\n    width: 10\n}\n"
+    );
+}
+
+#[test]
+fn a_new_binding_goes_into_an_empty_group() {
+    let source = "Text {\n    font {}\n}\n";
+    assert_eq!(
+        applied(source, set(root(), "font.bold", "true")),
+        "Text {\n    font { bold: true }\n}\n"
+    );
+}
+
+#[test]
+fn a_new_dotted_binding_goes_next_to_the_ones_dotted_the_same_way() {
+    let source = "Text {\n    font.pixelSize: 12\n    color: \"red\"\n    text: \"hi\"\n}\n";
+    assert_eq!(
+        applied(source, set(root(), "font.bold", "true")),
+        "Text {\n    font.pixelSize: 12\n    font.bold: true\n    color: \"red\"\n    text: \"hi\"\n}\n"
+    );
+}
+
+/// The file groups the bindings of `font` and `anchors` elsewhere.
+const GROUPED: &str = r#"Item {
+    Text {
+        font {
+            family: "Sans"
+            pixelSize: 12
+        }
+        anchors {
+            left: parent.left
+            right: parent.right
+        }
+    }
+    Text {
+        text: "two"
+
+        Rectangle {}
+    }
+}
+"#;
+
+#[test]
+fn a_file_that_writes_groups_gets_a_new_group() {
+    assert_eq!(
+        applied(GROUPED, set(root().child(1), "font.bold", "true")),
+        GROUPED.replace(
+            "        text: \"two\"\n",
+            "        text: \"two\"\n        font {\n            bold: true\n        }\n"
+        )
+    );
+}
+
+#[test]
+fn an_attached_property_is_never_grouped() {
+    assert_eq!(
+        applied(GROUPED, set(root().child(1), "Layout.fillWidth", "true")),
+        GROUPED.replace(
+            "        text: \"two\"\n",
+            "        text: \"two\"\n        Layout.fillWidth: true\n"
+        )
+    );
+}
+
+#[test]
+fn a_file_that_writes_dotted_names_gets_a_dotted_one() {
+    let source = "Item {\n    Text { font.family: \"Sans\"; font.pixelSize: 12 }\n    Text {\n        text: \"two\"\n    }\n}\n";
+    assert_eq!(
+        applied(source, set(root().child(1), "font.bold", "true")),
+        source.replace(
+            "        text: \"two\"\n",
+            "        text: \"two\"\n        font.bold: true\n"
+        )
+    );
+}
+
+#[test]
+fn removing_a_binding_from_a_group_keeps_the_others() {
+    assert_eq!(
+        applied(GROUPED, remove(root().child(0), "font.pixelSize")),
+        GROUPED.replace("            pixelSize: 12\n", "")
+    );
+}
+
+#[test]
+fn removing_the_last_binding_of_a_group_removes_the_group() {
+    let source = "Text {\n    font {\n        bold: true\n    }\n    text: \"hi\"\n}\n";
+    assert_eq!(
+        applied(source, remove(root(), "font.bold")),
+        "Text {\n    text: \"hi\"\n}\n"
+    );
+    let nested = "Item {\n    a { b { c: 1 } }\n    width: 1\n}\n";
+    assert_eq!(
+        applied(nested, remove(root(), "a.b.c")),
+        "Item {\n    width: 1\n}\n"
+    );
+}
+
+#[test]
+fn a_group_with_a_comment_of_its_own_stays() {
+    let source = "Text {\n    font {\n        bold: true\n        // more to come\n    }\n}\n";
+    assert_eq!(
+        applied(source, remove(root(), "font.bold")),
+        "Text {\n    font {\n        // more to come\n    }\n}\n"
+    );
+}
+
+#[test]
+fn groups_are_not_children() {
+    let source = "Item {\n    font { bold: true }\n    Rectangle { id: a }\n    layer { effect: ShaderEffect { id: b } }\n}\n";
+    let all: Vec<String> = qml_edit::objects(source)
+        .unwrap()
+        .into_iter()
+        .map(|(path, name)| format!("{path} {name}"))
+        .collect();
+    assert_eq!(
+        all,
+        [
+            "root Item",
+            "root/0 Rectangle",
+            "root/layer.effect: ShaderEffect"
+        ]
+    );
+    assert_eq!(
+        find_id(source, "b").unwrap().unwrap().to_string(),
+        "root/layer.effect:"
+    );
+    assert_eq!(
+        applied(
+            source,
+            Edit::RemoveObject {
+                object: root().child(0)
+            }
+        ),
+        source.replace("    Rectangle { id: a }\n", "")
+    );
+    assert_eq!(
+        apply(
+            source,
+            &Edit::RemoveObject {
+                object: root().child(1)
+            }
+        ),
+        Err(Error::NotFound(root().child(1)))
+    );
+}

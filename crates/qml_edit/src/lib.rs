@@ -24,6 +24,15 @@
 //!   to its first line; a line indented less than the object (the inside of
 //!   a template literal) is copied as it is.
 //!
+//! - **Grouped and dotted** names are one member. `font { bold: true }` is
+//!   the binding `font.bold`, not an object: it is no child and has no
+//!   path of its own. A new `font.bold` goes into the object's `font { }`
+//!   if it has one, next to its `font.*` bindings if it has those, and
+//!   otherwise into a new group when the file writes groups of two or more
+//!   bindings more often than it dots them; dotted when not. A name with a
+//!   capital first part is an attached property (`Layout.fillWidth`) and is
+//!   never grouped.
+//!
 //! # What it promises
 //!
 //! The answer is checked before it is given: the new text must parse. If it
@@ -43,17 +52,19 @@ use std::ops::Range;
 
 use qml_syntax::{
     Allocator, GetSpan, Span,
-    ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject},
+    ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject, QmlQualifiedName},
 };
 
 /// One step from an object to an object written in it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Step {
-    /// The n-th object written as a member (`Rectangle { }` inside an item,
-    /// also a grouped property such as `font { }`), counted from 0.
+    /// The n-th object written as a member (`Rectangle { }` inside an
+    /// item), counted from 0. A grouped property such as `font { }` is not
+    /// an object: it is the bindings `font.*` written together.
     Child(usize),
     /// The object a binding or a property declaration holds:
-    /// `contentItem: Rectangle { }`.
+    /// `contentItem: Rectangle { }`, also `layer.effect: ShaderEffect { }`
+    /// whether written dotted or in a `layer { }` group.
     Value(String),
     /// The object of `component Name: Type { }`.
     Component(String),
@@ -103,14 +114,19 @@ impl fmt::Display for NodePath {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Edit {
     /// Give `name` the value `value` (QML as it would be written after the
-    /// `:`). An existing binding keeps its place; a new one goes after the
-    /// object's last binding or property that comes before its first child
-    /// object, function or inline component.
+    /// `:`). A dotted name is one member however it is written: `font.bold`
+    /// finds `font.bold: x` and `bold: x` in `font { }` alike. An existing
+    /// binding keeps its place. A new one follows the file's style (see
+    /// the crate docs); otherwise it goes after the object's last binding
+    /// or property that comes before its first child object, function or
+    /// inline component.
     SetBinding {
         object: NodePath,
         name: String,
         value: String,
     },
+    /// Take `name` out, found as [`SetBinding`](Self::SetBinding) finds
+    /// it. A group it leaves empty goes too, unless a comment is in it.
     RemoveBinding {
         object: NodePath,
         name: String,
@@ -249,24 +265,46 @@ fn walk<'a>(
     f: &mut impl FnMut(&QmlObject<'a>, &NodePath),
 ) {
     f(object, path);
-    let mut child = 0;
+    walk_members(object, "", &mut 0, path, f);
+}
+
+/// The objects written in `object`'s members; `prefix` is the name of the
+/// groups they are in (`layer.`), `child` counts the child objects so far.
+fn walk_members<'a>(
+    object: &QmlObject<'a>,
+    prefix: &str,
+    child: &mut usize,
+    path: &mut NodePath,
+    f: &mut impl FnMut(&QmlObject<'a>, &NodePath),
+) {
     for member in &object.members {
         let (step, inner) = match member {
-            QmlMember::Object(inner) => {
-                child += 1;
-                (Step::Child(child - 1), inner)
+            QmlMember::Object(group) if is_group(group) => {
+                let prefix = format!("{prefix}{}.", group.type_name);
+                // An object written in a group is no child of anything
+                // (QML refuses it): only its bindings' values are walked.
+                walk_members(group, &prefix, child, path, f);
+                continue;
+            }
+            QmlMember::Object(inner) if prefix.is_empty() => {
+                *child += 1;
+                (Step::Child(*child - 1), inner)
             }
             QmlMember::Binding(b) => match &b.value {
-                QmlBindingValue::Object(inner) => (Step::Value(b.name.to_string()), inner),
+                QmlBindingValue::Object(inner) => {
+                    (Step::Value(format!("{prefix}{}", b.name)), inner)
+                }
                 _ => continue,
             },
-            QmlMember::Property(p) => match &p.value {
+            QmlMember::Property(p) if prefix.is_empty() => match &p.value {
                 Some(QmlBindingValue::Object(inner)) => {
                     (Step::Value(p.name.name.to_string()), inner)
                 }
                 _ => continue,
             },
-            QmlMember::InlineComponent(c) => (Step::Component(c.name.name.to_string()), &c.object),
+            QmlMember::InlineComponent(c) if prefix.is_empty() => {
+                (Step::Component(c.name.name.to_string()), &c.object)
+            }
             _ => continue,
         };
         path.0.push(step);
@@ -407,7 +445,11 @@ impl<'s> Text<'s> {
                 value,
             } => {
                 let target = resolve(root, object)?;
-                if let Some(b) = binding(target, name) {
+                if let Some(chain) = find_binding(target, name) {
+                    let (holder, index) = chain[chain.len() - 1];
+                    let QmlMember::Binding(b) = &holder.members[index] else {
+                        unreachable!("find_binding gives bindings")
+                    };
                     let span = value_span(self.src, b);
                     let indent = self.indent_at(b.span.start as usize).to_owned();
                     let replacement = self.reindent(
@@ -423,40 +465,26 @@ impl<'s> Text<'s> {
                         replacement,
                     }]);
                 }
-                let members: Vec<&QmlMember<'_>> = target.members.iter().collect();
-                let first_structural = members
-                    .iter()
-                    .position(|m| {
-                        matches!(
-                            m,
-                            QmlMember::Object(_)
-                                | QmlMember::Function(_)
-                                | QmlMember::InlineComponent(_)
-                        )
-                    })
-                    .unwrap_or(members.len());
-                let at = members[..first_structural]
-                    .iter()
-                    .rposition(|m| matches!(m, QmlMember::Binding(_) | QmlMember::Property(_)))
-                    .map_or(0, |i| i + 1);
-                let snippet = Snippet {
-                    text: format!("{name}: {value}"),
-                    base: String::new(),
-                    gaps: None,
-                };
-                Ok(vec![self.insertion(target, &members, at, &snippet, false)?])
+                Ok(vec![self.new_binding(root, target, name, value)?])
             }
             Edit::RemoveBinding { object, name } => {
                 let target = resolve(root, object)?;
-                let index = target
-                    .members
-                    .iter()
-                    .position(|m| matches!(m, QmlMember::Binding(b) if b.name.to_string() == *name))
-                    .ok_or_else(|| Error::NoBinding {
-                        object: object.clone(),
-                        name: name.clone(),
-                    })?;
-                Ok(vec![self.removal(target, index)])
+                let chain = find_binding(target, name).ok_or_else(|| Error::NoBinding {
+                    object: object.clone(),
+                    name: name.clone(),
+                })?;
+                // A group the binding leaves empty goes with it, unless a
+                // comment of its own is in it.
+                let mut level = chain.len() - 1;
+                while level > 0 {
+                    let (group, index) = chain[level];
+                    if group.members.len() > 1 || self.has_own_comment(group, index) {
+                        break;
+                    }
+                    level -= 1;
+                }
+                let (holder, index) = chain[level];
+                Ok(vec![self.removal(holder, index)])
             }
             Edit::InsertObject {
                 parent,
@@ -523,6 +551,81 @@ impl<'s> Text<'s> {
                 Ok(vec![cut, put])
             }
         }
+    }
+
+    /// The change that writes the binding `name: value` into `object`,
+    /// which has none of that name, in the file's style: into the group of
+    /// its first part if `object` has one (`font { }` for `font.bold`), next
+    /// to the bindings dotted the same way if it has those, or else as a new
+    /// group when the file writes groups more often than dotted names.
+    /// Other bindings go after the last binding or property that comes
+    /// before the first child object, function or inline component.
+    fn new_binding(
+        &self,
+        root: &QmlObject<'_>,
+        object: &QmlObject<'_>,
+        name: &str,
+        value: &str,
+    ) -> Result<Change, Error> {
+        let members: Vec<&QmlMember<'_>> = object.members.iter().collect();
+        let line = |name: &str| Snippet {
+            text: format!("{name}: {value}"),
+            base: String::new(),
+            gaps: None,
+        };
+        let mut snippet = line(name);
+        if let Some((first, rest)) = name.split_once('.')
+            && starts_lower(first)
+        {
+            if let Some((group, rest)) = object.members.iter().find_map(|m| {
+                let rest = group_rest(m, name)?;
+                let QmlMember::Object(group) = m else {
+                    unreachable!("group_rest gives groups")
+                };
+                Some((group, rest))
+            }) {
+                return self.new_binding(root, group, rest, value);
+            }
+            if let Some(last) = members.iter().rposition(|m| {
+                matches!(m, QmlMember::Binding(b) if b.name.parts.len() > 1 && b.name.parts[0] == first)
+            }) {
+                return self.insertion(object, &members, last + 1, &snippet, false);
+            }
+            if prefers_groups(root) {
+                // The value's own lines move in with it.
+                let value = value.replace('\n', &format!("\n{}", self.unit));
+                snippet.text = format!("{first} {{\n{}{rest}: {value}\n}}", self.unit);
+            }
+        }
+        let first_structural = members
+            .iter()
+            .position(|m| {
+                is_child(m) || matches!(m, QmlMember::Function(_) | QmlMember::InlineComponent(_))
+            })
+            .unwrap_or(members.len());
+        let at = members[..first_structural]
+            .iter()
+            .rposition(|m| {
+                matches!(
+                    m,
+                    QmlMember::Binding(_) | QmlMember::Property(_) | QmlMember::Object(_)
+                )
+            })
+            .map_or(0, |i| i + 1);
+        self.insertion(object, &members, at, &snippet, false)
+    }
+
+    /// Whether a comment in `group` is not about its member `index`: one
+    /// that would be lost with the group.
+    fn has_own_comment(&self, group: &QmlObject<'_>, index: usize) -> bool {
+        let (open, close) = self.braces(group);
+        let (start, end) = match self.extent(member_span(&group.members[index])) {
+            Extent::Lines { start, end } => (start, end),
+            Extent::Inline { start, end, after } => (start, after.unwrap_or(end)),
+        };
+        self.comments
+            .iter()
+            .any(|c| c.0 > open && c.0 < close && !(c.0 >= start && c.1 <= end))
     }
 
     /// The text of a member as it would be put somewhere else.
@@ -928,6 +1031,57 @@ impl<'s> Text<'s> {
     }
 }
 
+/// Whether the file writes the bindings of a group more often together
+/// (`font { family: f; bold: true }`) than dotted (`font.family: f` and
+/// `font.bold: true` in one object). Only groups of two or more bindings
+/// count: one alone says nothing about the author's habit.
+fn prefers_groups(root: &QmlObject<'_>) -> bool {
+    fn count(object: &QmlObject<'_>, groups: &mut usize, dotted: &mut usize) {
+        let mut prefixes: Vec<(&str, usize)> = Vec::new();
+        for member in &object.members {
+            match member {
+                QmlMember::Object(inner) => {
+                    if is_group(inner) && inner.members.len() > 1 {
+                        *groups += 1;
+                    }
+                    count(inner, groups, dotted);
+                }
+                QmlMember::Binding(b) => {
+                    if b.name.parts.len() > 1 && starts_lower(b.name.parts[0]) {
+                        match prefixes.iter_mut().find(|(p, _)| *p == b.name.parts[0]) {
+                            Some((_, n)) => *n += 1,
+                            None => prefixes.push((b.name.parts[0], 1)),
+                        }
+                    }
+                    value(&b.value, groups, dotted);
+                }
+                QmlMember::Property(p) => {
+                    if let Some(v) = &p.value {
+                        value(v, groups, dotted);
+                    }
+                }
+                QmlMember::InlineComponent(c) => count(&c.object, groups, dotted),
+                _ => {}
+            }
+        }
+        *dotted += prefixes.iter().filter(|(_, n)| *n > 1).count();
+    }
+    fn value(value: &QmlBindingValue<'_>, groups: &mut usize, dotted: &mut usize) {
+        match value {
+            QmlBindingValue::Object(o) => count(o, groups, dotted),
+            QmlBindingValue::Objects(list) => {
+                for o in list {
+                    count(o, groups, dotted);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (mut groups, mut dotted) = (0, 0);
+    count(root, &mut groups, &mut dotted);
+    groups > dotted
+}
+
 fn resolve<'b, 'a>(root: &'b QmlObject<'a>, path: &NodePath) -> Result<&'b QmlObject<'a>, Error> {
     let mut object = root;
     for step in &path.0 {
@@ -936,17 +1090,26 @@ fn resolve<'b, 'a>(root: &'b QmlObject<'a>, path: &NodePath) -> Result<&'b QmlOb
                 QmlMember::Object(inner) => inner,
                 _ => unreachable!("nth_child gives objects"),
             }),
-            Step::Value(name) => object.members.iter().find_map(|m| match m {
-                QmlMember::Binding(b) if b.name.to_string() == *name => match &b.value {
-                    QmlBindingValue::Object(inner) => Some(inner),
-                    _ => None,
-                },
-                QmlMember::Property(p) if p.name.name == name.as_str() => match &p.value {
-                    Some(QmlBindingValue::Object(inner)) => Some(inner),
-                    _ => None,
-                },
-                _ => None,
-            }),
+            Step::Value(name) => find_binding(object, name)
+                .and_then(|chain| {
+                    let (holder, index) = chain[chain.len() - 1];
+                    match &holder.members[index] {
+                        QmlMember::Binding(QmlBinding {
+                            value: QmlBindingValue::Object(inner),
+                            ..
+                        }) => Some(inner),
+                        _ => None,
+                    }
+                })
+                .or_else(|| {
+                    object.members.iter().find_map(|m| match m {
+                        QmlMember::Property(p) if p.name.name == name.as_str() => match &p.value {
+                            Some(QmlBindingValue::Object(inner)) => Some(inner),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                }),
             Step::Component(name) => object.members.iter().find_map(|m| match m {
                 QmlMember::InlineComponent(c) if c.name.name == name.as_str() => Some(&c.object),
                 _ => None,
@@ -957,13 +1120,29 @@ fn resolve<'b, 'a>(root: &'b QmlObject<'a>, path: &NodePath) -> Result<&'b QmlOb
     Ok(object)
 }
 
+/// Whether a member written `name { }` is a grouped property, the bindings
+/// `name.*` written together, rather than an object: type names start with
+/// a capital, property names do not.
+fn is_group(object: &QmlObject<'_>) -> bool {
+    starts_lower(object.type_name.parts[0])
+}
+
+fn starts_lower(name: &str) -> bool {
+    name.chars().next().is_some_and(char::is_lowercase)
+}
+
+/// Whether `member` is an object of its own: a child, not a group.
+fn is_child(member: &QmlMember<'_>) -> bool {
+    matches!(member, QmlMember::Object(o) if !is_group(o))
+}
+
 /// The member index of the n-th child object.
 fn nth_child(object: &QmlObject<'_>, n: usize) -> Option<usize> {
     object
         .members
         .iter()
         .enumerate()
-        .filter(|(_, m)| matches!(m, QmlMember::Object(_)))
+        .filter(|(_, m)| is_child(m))
         .nth(n)
         .map(|(i, _)| i)
 }
@@ -973,7 +1152,7 @@ fn child_member_index(members: &[&QmlMember<'_>], n: usize) -> Option<usize> {
     let children: Vec<usize> = members
         .iter()
         .enumerate()
-        .filter(|(_, m)| matches!(m, QmlMember::Object(_)))
+        .filter(|(_, m)| is_child(m))
         .map(|(i, _)| i)
         .collect();
     match n.cmp(&children.len()) {
@@ -985,9 +1164,60 @@ fn child_member_index(members: &[&QmlMember<'_>], n: usize) -> Option<usize> {
 
 fn binding<'b, 'a>(object: &'b QmlObject<'a>, name: &str) -> Option<&'b QmlBinding<'a>> {
     object.members.iter().find_map(|m| match m {
-        QmlMember::Binding(b) if b.name.to_string() == name => Some(b),
+        QmlMember::Binding(b) if is_named(&b.name, name) => Some(b),
         _ => None,
     })
+}
+
+fn is_named(name: &QmlQualifiedName<'_>, dotted: &str) -> bool {
+    dotted.split('.').eq(name.parts.iter().copied())
+}
+
+/// Where the binding `name` (dotted: `font.bold`) is written in `object`,
+/// as `font.bold: x` or as `bold: x` in a `font { }` group: each object on
+/// the way, `object` first, with the index of the member that leads on, the
+/// binding's own last. A name that starts with a capital is an attached
+/// property (`Layout.fillWidth`), which cannot be grouped.
+fn find_binding<'b, 'a>(
+    object: &'b QmlObject<'a>,
+    name: &str,
+) -> Option<Vec<(&'b QmlObject<'a>, usize)>> {
+    if let Some(index) = object
+        .members
+        .iter()
+        .position(|m| matches!(m, QmlMember::Binding(b) if is_named(&b.name, name)))
+    {
+        return Some(vec![(object, index)]);
+    }
+    object
+        .members
+        .iter()
+        .enumerate()
+        .find_map(|(index, member)| {
+            let rest = group_rest(member, name)?;
+            let QmlMember::Object(group) = member else {
+                unreachable!("group_rest gives groups")
+            };
+            let mut chain = find_binding(group, rest)?;
+            chain.insert(0, (object, index));
+            Some(chain)
+        })
+}
+
+/// What is left of `name` inside `member` if that is the group it starts
+/// with: `bold` for `font.bold` in `font { }`.
+fn group_rest<'n>(member: &QmlMember<'_>, name: &'n str) -> Option<&'n str> {
+    let QmlMember::Object(group) = member else {
+        return None;
+    };
+    if !is_group(group) {
+        return None;
+    }
+    let mut rest = name;
+    for part in &group.type_name.parts {
+        rest = rest.strip_prefix(part)?.strip_prefix('.')?;
+    }
+    Some(rest)
 }
 
 fn member_span(member: &QmlMember<'_>) -> Span {

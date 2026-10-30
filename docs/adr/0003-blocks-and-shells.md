@@ -206,8 +206,6 @@ insertions are refused as unsupported (below).
   re-resolve each address from an `id` or from the object key hot reload
   already uses (section 12.1, `ObjectKey`). A designer should add `id`s as
   it goes.
-- **Grouped and dotted forms** (`font.bold: true` and `font { bold: true }`)
-  are different members to `qml_edit`; setting one does not find the other.
 - **Files that do not parse.** A live code view has files that are briefly
   broken. Edits wait for the file to parse; a designer shows the error and
   holds structural edits until it does.

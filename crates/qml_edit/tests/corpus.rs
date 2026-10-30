@@ -182,20 +182,24 @@ fn every_edit_on_the_repository_files_can_be_undone_byte_for_byte() {
             tally.objects += 1;
             let where_ = format!("{name} at {path}");
 
-            round_trip(
-                &mut tally,
-                &where_,
-                &source,
-                &Edit::SetBinding {
-                    object: path.clone(),
-                    name: "ljosEditProbe".into(),
-                    value: "1 + 2".into(),
-                },
-                |_| Edit::RemoveBinding {
-                    object: path.clone(),
-                    name: "ljosEditProbe".into(),
-                },
-            );
+            // A plain name, and a dotted one that goes dotted or into a
+            // group by the file's style and is found again either way.
+            for name in ["ljosEditProbe", "ljosEditProbe.value"] {
+                round_trip(
+                    &mut tally,
+                    &where_,
+                    &source,
+                    &Edit::SetBinding {
+                        object: path.clone(),
+                        name: name.into(),
+                        value: "1 + 2".into(),
+                    },
+                    |_| Edit::RemoveBinding {
+                        object: path.clone(),
+                        name: name.into(),
+                    },
+                );
+            }
 
             let count = children(&source, path);
             for index in [0, count] {
