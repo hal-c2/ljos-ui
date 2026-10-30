@@ -95,7 +95,7 @@ Passing `--mcp` with no value enables `inspect` only, where every offered tool i
 
 - `inspect`: Read application status, accessibility snapshots, object trees, properties, binding graphs, screenshots, logs, metrics, processes, mailboxes, models, traces, wakes and design audits.
 - `input`: Synthesise clicks, typing, key presses, scrolling, touch gestures, window resizing, appearance changes and virtual clock advances (`app_advance`, on hosts with a virtual clock).
-- `mutate`: Set property values, edit writable model cells, invoke methods or signals, and trigger a hot reload (`app_reload`).
+- `mutate`: Set property values, edit writable model cells, invoke methods or signals, trigger a hot reload (`app_reload`), and import a module from another directory (`app_alias`).
 - `eval`: Run JavaScript expressions in the context of an object (`app_eval`) or bind a property to a live JavaScript expression (`app_set_property` with `binding`).
 
 When the application starts, it binds a loopback HTTP listener (or a Unix socket with `--mcp-socket <PATH>`) and writes the address and a bearer token to `target/ljos/mcp-<pid>.json` (mode `0600`). Only local clients that present this bearer token are answered; requests without the current token receive HTTP `401`.
@@ -136,6 +136,7 @@ ljos attach .
 | `app_screenshot` | Render the window or a specific node to a PNG (up to 1280 px) using the R backend, even when the window is occluded or headless | `inspect` |
 | `app_resize` / `app_set_appearance` | Resize the window or switch between light/dark appearance, high contrast, reduced motion and font scale | `input` |
 | `app_reload` | Force a recompile and hot reload; returns the patch summary or compiler diagnostics | `mutate` |
+| `app_alias` | Import a module from another directory inside the project (`{module, dir}`), or go back to its own (`dir: null`), reloading and keeping state; returns the reload `generation` | `mutate` |
 | `app_logs` / `app_metrics` | Read console logs, JS errors with QML file and line, frame and paint timings, and memory breakdowns (`memory: {}`, `owners`, `mappings`) | `inspect` |
 | `app_processes` | List threads, running `Timer`s (`kind: "timer"`), animations, supervisors (`kind: "supervisor"`), recent faults (`kind: "fault"`), scheduled UI wakers (`kind: "waker"`) and bounded `UiInbox` mailboxes (`kind: "mailbox"`) | `inspect` |
 | `app_objects` | Walk every object below a root with `@handle`, type and approximate bytes; list `models` or read rows of a `model`; list loaded `components` and their instances; or `mark` live objects and check `since_mark` to find leaks after an undone action | `inspect` |

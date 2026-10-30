@@ -23,6 +23,14 @@ The old roots are destroyed only after all new roots have been created, so a rel
 
 When you also pass `--mcp=inspect,mutate`, a coding agent can trigger a reload explicitly with the `app_reload` tool or inspect the reload status in `app_status` (`/reload/watched`, `/reload/generation` and `/reload/last/outcome`).
 
+## Running against another module directory
+
+```sh
+ljos run --watch --alias App.Media=mocks/Media Main.qml
+```
+
+`--alias MODULE=DIR` (repeatable) imports `MODULE` from `DIR` rather than from the module's own directory, for example a stand-in that answers as the real module would. The directory must describe the module in a `qmldir` or `CMakeLists.txt`; otherwise Ljós refuses it and names both. Its files are watched like the project's. While the application runs, an agent can switch with `app_alias` (`{"module": "App.Media", "dir": "mocks/Media"}`, or `"dir": null` to go back); the switch reloads, the objects made from the module are made anew and the rest of the state is kept. `app_status` lists the aliases in force under `/reload/aliases`.
+
 ## How objects are matched across a save
 
 Ljós identifies each object across a reload by its `ObjectKey` (`(ComponentId, key)`), choosing the key in this priority order:

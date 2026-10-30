@@ -225,6 +225,7 @@ Launch: `ljos run --mcp` or app code `ljos_dev::mcp::attach(&engine, McpConfig{c
 | `app_screenshot` | PNG of window or ref, rendered by the `vello_cpu` reference renderer so it works when occluded/headless; `scale`, `max_px`. | inspect |
 | `app_resize` / `app_set_appearance` | Window size/DPI/orientation presets; light/dark, contrast, reduced motion, font scale (`SystemPrefs`). | input |
 | `app_reload` | Force recompile+reload (normally the watcher does); returns patch summary or errors. | mutate |
+| `app_alias` | Import a module from another directory in the project, or drop that alias, and reload keeping state; returns the generation. (Added after this report; see ARCHITECTURE.md §19.4.) | mutate |
 | `app_logs` | Tail structured log/`console.*`/JS exceptions with QML file:line, level filter, `since` cursor; ≤100 lines default. | inspect |
 | `app_metrics` | Last-N `FrameReport` summaries: per-lane time, top `ProcId` owners, bytes uploaded, draw calls, node counts, memory vs §8.5 budgets, queue depths of `UiInbox`. | inspect |
 | `app_eval` | Evaluate a JS expression in the engine context with a slice deadline; result JSON ≤64 KB wrapped as `{value}`. | eval |
