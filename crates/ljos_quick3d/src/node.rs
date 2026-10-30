@@ -523,15 +523,33 @@ pub(crate) mod cull {
     pub const NONE: i32 = 2;
 }
 
+pub(crate) mod channel {
+    pub const R: i32 = 0;
+    pub const G: i32 = 1;
+    pub const B: i32 = 2;
+    pub const A: i32 = 3;
+}
+
 fn material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
-    vec![(
-        "CullMode",
-        vec![
-            ("BackFaceCulling", i64::from(cull::BACK)),
-            ("FrontFaceCulling", i64::from(cull::FRONT)),
-            ("NoCulling", i64::from(cull::NONE)),
-        ],
-    )]
+    vec![
+        (
+            "CullMode",
+            vec![
+                ("BackFaceCulling", i64::from(cull::BACK)),
+                ("FrontFaceCulling", i64::from(cull::FRONT)),
+                ("NoCulling", i64::from(cull::NONE)),
+            ],
+        ),
+        (
+            "TextureChannelMapping",
+            vec![
+                ("R", i64::from(channel::R)),
+                ("G", i64::from(channel::G)),
+                ("B", i64::from(channel::B)),
+                ("A", i64::from(channel::A)),
+            ],
+        ),
+    ]
 }
 
 /// `Material`: what every material has.
@@ -644,6 +662,9 @@ pub struct DefaultMaterial {
     pub material: Material,
     #[qml(notify)]
     pub diffuse_color: Color,
+    /// Multiplies `diffuseColor`.
+    #[qml(notify, object = "Texture")]
+    pub diffuse_map: Option<ObjectId>,
     #[qml(notify, enumeration = "Lighting")]
     pub lighting: i32,
     /// 0 to 1.
@@ -659,6 +680,7 @@ impl Default for DefaultMaterial {
         DefaultMaterial {
             material: Material::default(),
             diffuse_color: Color::WHITE,
+            diffuse_map: None,
             lighting: lighting::FRAGMENT_LIGHTING,
             specular_amount: 0.0,
             specular_roughness: 0.0,
@@ -728,6 +750,37 @@ pub struct PrincipledMaterial {
     pub alpha_cutoff: f64,
     #[qml(notify, enumeration = "Lighting")]
     pub lighting: i32,
+    /// Multiplies `baseColor`, its alpha the opacity.
+    #[qml(notify, object = "Texture")]
+    pub base_color_map: Option<ObjectId>,
+    #[qml(notify, object = "Texture")]
+    pub metalness_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub metalness_channel: i32,
+    #[qml(notify, object = "Texture")]
+    pub roughness_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub roughness_channel: i32,
+    /// Tangent-space normals.
+    #[qml(notify, object = "Texture")]
+    pub normal_map: Option<ObjectId>,
+    /// 0 keeps the mesh's normals, 1 takes the map's.
+    #[qml(notify)]
+    pub normal_strength: f64,
+    /// Multiplies `emissiveFactor`.
+    #[qml(notify, object = "Texture")]
+    pub emissive_map: Option<ObjectId>,
+    /// Shades the light the light probe gives.
+    #[qml(notify, object = "Texture")]
+    pub occlusion_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub occlusion_channel: i32,
+    #[qml(notify)]
+    pub occlusion_amount: f64,
+    #[qml(notify, object = "Texture")]
+    pub opacity_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub opacity_channel: i32,
 }
 
 impl Default for PrincipledMaterial {
@@ -742,6 +795,19 @@ impl Default for PrincipledMaterial {
             alpha_mode: alpha::DEFAULT,
             alpha_cutoff: 0.5,
             lighting: lighting::FRAGMENT_LIGHTING,
+            base_color_map: None,
+            metalness_map: None,
+            metalness_channel: channel::B,
+            roughness_map: None,
+            roughness_channel: channel::G,
+            normal_map: None,
+            normal_strength: 1.0,
+            emissive_map: None,
+            occlusion_map: None,
+            occlusion_channel: channel::R,
+            occlusion_amount: 1.0,
+            opacity_map: None,
+            opacity_channel: channel::A,
         }
     }
 }
@@ -756,6 +822,15 @@ pub(crate) mod antialiasing {
 pub(crate) mod background {
     pub const TRANSPARENT: i32 = 0;
     pub const COLOR: i32 = 1;
+    pub const SKY_BOX: i32 = 2;
+}
+
+pub(crate) mod tonemap {
+    pub const NONE: i32 = 0;
+    pub const LINEAR: i32 = 1;
+    pub const ACES: i32 = 2;
+    pub const HEJL_DAWSON: i32 = 3;
+    pub const FILMIC: i32 = 4;
 }
 
 fn environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -765,7 +840,7 @@ fn environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
             vec![
                 ("Transparent", i64::from(background::TRANSPARENT)),
                 ("Color", i64::from(background::COLOR)),
-                ("SkyBox", 2),
+                ("SkyBox", i64::from(background::SKY_BOX)),
                 ("SkyBoxCubeMap", 3),
                 ("SkyMaterial", 4),
             ],
@@ -773,11 +848,11 @@ fn environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
         (
             "TonemapMode",
             vec![
-                ("TonemapModeNone", 0),
-                ("TonemapModeLinear", 1),
-                ("TonemapModeAces", 2),
-                ("TonemapModeHejlDawson", 3),
-                ("TonemapModeFilmic", 4),
+                ("TonemapModeNone", i64::from(tonemap::NONE)),
+                ("TonemapModeLinear", i64::from(tonemap::LINEAR)),
+                ("TonemapModeAces", i64::from(tonemap::ACES)),
+                ("TonemapModeHejlDawson", i64::from(tonemap::HEJL_DAWSON)),
+                ("TonemapModeFilmic", i64::from(tonemap::FILMIC)),
                 ("TonemapModeCustom", 5),
             ],
         ),
@@ -814,12 +889,30 @@ pub struct SceneEnvironment {
     pub object3d: Object3D,
     #[qml(notify)]
     pub clear_color: Color,
-    /// Transparent and Color are drawn; the sky boxes are M4.
+    /// Transparent, Color and SkyBox are drawn; SkyBoxCubeMap and
+    /// SkyMaterial are not built and draw as Transparent.
     #[qml(notify, enumeration = "BackgroundMode")]
     pub background_mode: i32,
-    /// Kept; tone mapping is M3.
+    /// Linear by default, as the documentation says. TonemapModeCustom is
+    /// not built and draws as Linear.
     #[qml(notify, enumeration = "TonemapMode")]
     pub tonemap_mode: i32,
+    /// An equirectangular picture of what is around the scene: it lights
+    /// every PrincipledMaterial and is the sky box.
+    #[qml(notify, object = "Texture")]
+    pub light_probe: Option<ObjectId>,
+    #[qml(notify)]
+    pub probe_exposure: f64,
+    /// 0 to 1: how much darker the probe's light from below the horizon
+    /// is on the materials it lights.
+    #[qml(notify)]
+    pub probe_horizon: f64,
+    /// Euler angles in degrees.
+    #[qml(notify)]
+    pub probe_orientation: Vector3d,
+    /// 0 to 1.
+    #[qml(notify)]
+    pub skybox_blur_amount: f64,
     /// MSAA is drawn; SSAA and ProgressiveAA are not built and draw
     /// as NoAA.
     #[qml(notify, enumeration = "AntialiasingMode")]
@@ -835,7 +928,12 @@ impl Default for SceneEnvironment {
             object3d: Object3D::default(),
             clear_color: Color::BLACK,
             background_mode: background::TRANSPARENT,
-            tonemap_mode: 1,
+            tonemap_mode: tonemap::LINEAR,
+            light_probe: None,
+            probe_exposure: 1.0,
+            probe_horizon: 0.0,
+            probe_orientation: Vector3d::default(),
+            skybox_blur_amount: 0.0,
             antialiasing_mode: 0,
             antialiasing_quality: antialiasing::HIGH,
         }

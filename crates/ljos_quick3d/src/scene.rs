@@ -5,11 +5,12 @@ use std::collections::HashMap;
 use ljos::item::{self, ljos_3d};
 use ljos::prelude::*;
 use ljos_3d::{
-    AlphaMode, Background, CullMode, Environment, Fade, Lighting, MeshSource, NodeId, NodeKind,
-    Primitive, Scene, Transform,
+    AlphaMode, Background, Channel, CullMode, Environment, Fade, LightProbe, Lighting, MeshSource,
+    NodeId, NodeKind, Primitive, PrincipledMaps, Scene, Tonemap, Transform,
 };
 
-use crate::node::{self, alpha, antialiasing, background, cull, lighting};
+use crate::node::{self, alpha, antialiasing, background, channel, cull, lighting, tonemap};
+use crate::texture;
 use crate::{
     Camera, DefaultMaterial, DirectionalLight, Geometry, Light, Material, Model, Node, Object3D,
     OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
@@ -26,6 +27,7 @@ pub(crate) fn build(e: &Engine, view: ObjectId) -> Scene {
 pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> (Scene, HashMap<ObjectId, NodeId>) {
     let mut walk = Walk {
         e,
+        view,
         scene: Scene::new(),
         ids: HashMap::new(),
     };
@@ -36,7 +38,7 @@ pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> (Scene, HashMap<Obje
         walk.node(None, imported);
     }
     let env = item::prop(e, view, View3D::ENVIRONMENT)
-        .map_or_else(Environment::default, |env| environment(e, env));
+        .map_or_else(Environment::default, |env| environment(e, view, env));
     walk.scene.set_environment(env);
     // A camera that is not in the scene leaves the choice to the scene:
     // its first camera.
@@ -47,14 +49,36 @@ pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> (Scene, HashMap<Obje
 
 /// The camera `obj` is, as the renderer sees it; `None` when it is not one.
 pub(crate) fn camera(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Camera> {
-    match kind(e, obj) {
-        NodeKind::Camera(c) => Some(c),
-        _ => None,
+    if e.is::<PerspectiveCamera>(obj) {
+        return Some(ljos_3d::Camera::Perspective {
+            fov_degrees: item::prop(e, obj, PerspectiveCamera::FIELD_OF_VIEW) as f32,
+            fov_horizontal: item::prop(e, obj, PerspectiveCamera::FIELD_OF_VIEW_ORIENTATION) == 1,
+            clip_near: item::prop(e, obj, PerspectiveCamera::CLIP_NEAR) as f32,
+            clip_far: item::prop(e, obj, PerspectiveCamera::CLIP_FAR) as f32,
+            frustum_culling: item::prop(e, obj, Camera::FRUSTUM_CULLING_ENABLED),
+        });
     }
+    if e.is::<OrthographicCamera>(obj) {
+        return Some(ljos_3d::Camera::Orthographic {
+            clip_near: item::prop(e, obj, OrthographicCamera::CLIP_NEAR) as f32,
+            clip_far: item::prop(e, obj, OrthographicCamera::CLIP_FAR) as f32,
+            horizontal_magnification: item::prop(
+                e,
+                obj,
+                OrthographicCamera::HORIZONTAL_MAGNIFICATION,
+            ) as f32,
+            vertical_magnification: item::prop(e, obj, OrthographicCamera::VERTICAL_MAGNIFICATION)
+                as f32,
+            frustum_culling: item::prop(e, obj, Camera::FRUSTUM_CULLING_ENABLED),
+        });
+    }
+    None
 }
 
 struct Walk<'e> {
     e: &'e Engine,
+    /// Painted again when a texture it asked for is ready.
+    view: ObjectId,
     scene: Scene,
     ids: HashMap<ObjectId, NodeId>,
 }
@@ -81,7 +105,7 @@ impl Walk<'_> {
                 z: 1.0,
             })),
         };
-        let mut n = ljos_3d::Node::new(kind(e, obj)).with_transform(transform);
+        let mut n = ljos_3d::Node::new(kind(e, self.view, obj)).with_transform(transform);
         n.visible = item::prop(e, obj, Node::VISIBLE);
         let id = self.scene.add(parent, n);
         self.ids.insert(obj, id);
@@ -91,32 +115,12 @@ impl Walk<'_> {
     }
 }
 
-fn kind(e: &Engine, obj: ObjectId) -> NodeKind {
+fn kind(e: &Engine, view: ObjectId, obj: ObjectId) -> NodeKind {
     if e.is::<Model>(obj) {
-        return model(e, obj).map_or(NodeKind::Group, NodeKind::Model);
+        return model(e, view, obj).map_or(NodeKind::Group, NodeKind::Model);
     }
-    if e.is::<PerspectiveCamera>(obj) {
-        return NodeKind::Camera(ljos_3d::Camera::Perspective {
-            fov_degrees: item::prop(e, obj, PerspectiveCamera::FIELD_OF_VIEW) as f32,
-            fov_horizontal: item::prop(e, obj, PerspectiveCamera::FIELD_OF_VIEW_ORIENTATION) == 1,
-            clip_near: item::prop(e, obj, PerspectiveCamera::CLIP_NEAR) as f32,
-            clip_far: item::prop(e, obj, PerspectiveCamera::CLIP_FAR) as f32,
-            frustum_culling: item::prop(e, obj, Camera::FRUSTUM_CULLING_ENABLED),
-        });
-    }
-    if e.is::<OrthographicCamera>(obj) {
-        return NodeKind::Camera(ljos_3d::Camera::Orthographic {
-            clip_near: item::prop(e, obj, OrthographicCamera::CLIP_NEAR) as f32,
-            clip_far: item::prop(e, obj, OrthographicCamera::CLIP_FAR) as f32,
-            horizontal_magnification: item::prop(
-                e,
-                obj,
-                OrthographicCamera::HORIZONTAL_MAGNIFICATION,
-            ) as f32,
-            vertical_magnification: item::prop(e, obj, OrthographicCamera::VERTICAL_MAGNIFICATION)
-                as f32,
-            frustum_culling: item::prop(e, obj, Camera::FRUSTUM_CULLING_ENABLED),
-        });
+    if let Some(camera) = camera(e, obj) {
+        return NodeKind::Camera(camera);
     }
     let color_of = |p| color(item::prop(e, obj, p));
     let (light_color, ambient_color) = (color_of(Light::COLOR), color_of(Light::AMBIENT_COLOR));
@@ -159,7 +163,7 @@ fn kind(e: &Engine, obj: ObjectId) -> NodeKind {
 
 /// `None` for a mesh this renderer does not build yet: the node still
 /// places its children.
-fn model(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Model> {
+fn model(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d::Model> {
     let mesh = match item::prop(e, obj, Model::GEOMETRY) {
         // The geometry wins over a source, as it is the application's
         // own mesh. One never updated has nothing to draw yet.
@@ -184,12 +188,20 @@ fn model(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Model> {
     let material = list(e, obj, Model::MATERIALS.index)
         .into_iter()
         .next()
-        .and_then(|m| material(e, m))
+        .and_then(|m| material(e, view, m))
         .unwrap_or_default();
     Some(ljos_3d::Model { mesh, material })
 }
 
-fn material(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Material> {
+fn material(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d::Material> {
+    let map =
+        |p: Prop<Option<ObjectId>>| item::prop(e, obj, p).and_then(|t| texture::read(e, view, t));
+    let channel = |p: Prop<i32>| match item::prop(e, obj, p) {
+        channel::G => Channel::G,
+        channel::B => Channel::B,
+        channel::A => Channel::A,
+        _ => Channel::R,
+    };
     let lighting = |l| {
         if l == lighting::NO_LIGHTING {
             Lighting::None
@@ -205,6 +217,7 @@ fn material(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Material> {
     if e.is::<DefaultMaterial>(obj) {
         return Some(ljos_3d::Material::Default(ljos_3d::DefaultMaterial {
             diffuse_color: color(item::prop(e, obj, DefaultMaterial::DIFFUSE_COLOR)),
+            diffuse_map: map(DefaultMaterial::DIFFUSE_MAP),
             lighting: lighting(item::prop(e, obj, DefaultMaterial::LIGHTING)),
             specular_amount: item::prop(e, obj, DefaultMaterial::SPECULAR_AMOUNT) as f32,
             specular_roughness: item::prop(e, obj, DefaultMaterial::SPECULAR_ROUGHNESS) as f32,
@@ -228,12 +241,27 @@ fn material(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Material> {
             alpha_cutoff: item::prop(e, obj, PrincipledMaterial::ALPHA_CUTOFF) as f32,
             cull_mode: cull_mode(),
             lighting: lighting(item::prop(e, obj, PrincipledMaterial::LIGHTING)),
+            maps: Box::new(PrincipledMaps {
+                base_color: map(PrincipledMaterial::BASE_COLOR_MAP),
+                metalness: map(PrincipledMaterial::METALNESS_MAP),
+                metalness_channel: channel(PrincipledMaterial::METALNESS_CHANNEL),
+                roughness: map(PrincipledMaterial::ROUGHNESS_MAP),
+                roughness_channel: channel(PrincipledMaterial::ROUGHNESS_CHANNEL),
+                normal: map(PrincipledMaterial::NORMAL_MAP),
+                normal_strength: item::prop(e, obj, PrincipledMaterial::NORMAL_STRENGTH) as f32,
+                emissive: map(PrincipledMaterial::EMISSIVE_MAP),
+                occlusion: map(PrincipledMaterial::OCCLUSION_MAP),
+                occlusion_channel: channel(PrincipledMaterial::OCCLUSION_CHANNEL),
+                occlusion_amount: item::prop(e, obj, PrincipledMaterial::OCCLUSION_AMOUNT) as f32,
+                opacity: map(PrincipledMaterial::OPACITY_MAP),
+                opacity_channel: channel(PrincipledMaterial::OPACITY_CHANNEL),
+            }),
         }));
     }
     None
 }
 
-fn environment(e: &Engine, env: ObjectId) -> Environment {
+fn environment(e: &Engine, view: ObjectId, env: ObjectId) -> Environment {
     if !e.is::<SceneEnvironment>(env) {
         return Environment::default();
     }
@@ -241,7 +269,9 @@ fn environment(e: &Engine, env: ObjectId) -> Environment {
         background::COLOR => {
             Background::Color(color(item::prop(e, env, SceneEnvironment::CLEAR_COLOR)))
         }
-        // The sky boxes are not drawn yet: the 2D scene shows through.
+        background::SKY_BOX => Background::SkyBox,
+        // A cube map and a sky material are not built: the 2D scene
+        // shows through.
         _ => Background::Transparent,
     };
     // SSAA and progressive antialiasing are not built: they draw as none.
@@ -255,9 +285,34 @@ fn environment(e: &Engine, env: ObjectId) -> Environment {
         } else {
             1
         };
+    let light_probe = item::prop(e, env, SceneEnvironment::LIGHT_PROBE)
+        .and_then(|t| texture::read(e, view, t))
+        .map(|texture| {
+            let orientation = item::prop(e, env, SceneEnvironment::PROBE_ORIENTATION);
+            LightProbe {
+                texture,
+                exposure: item::prop(e, env, SceneEnvironment::PROBE_EXPOSURE) as f32,
+                horizon: item::prop(e, env, SceneEnvironment::PROBE_HORIZON) as f32,
+                orientation: node::vec3(orientation),
+                skybox_blur: item::prop(e, env, SceneEnvironment::SKYBOX_BLUR_AMOUNT) as f32,
+            }
+        });
+    let tonemap = match item::prop(e, env, SceneEnvironment::TONEMAP_MODE) {
+        tonemap::NONE => Tonemap::None,
+        tonemap::ACES => Tonemap::Aces,
+        tonemap::HEJL_DAWSON => Tonemap::HejlDawson,
+        tonemap::FILMIC => Tonemap::Filmic,
+        // TonemapModeCustom is not built.
+        _ => Tonemap::Linear,
+    };
+    // Exposure and the white point are ExtendedSceneEnvironment's, which
+    // is not built: the documentation's 1 and 1.
     Environment {
         background,
         msaa_samples,
+        light_probe,
+        tonemap,
+        ..Environment::default()
     }
 }
 

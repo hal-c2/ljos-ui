@@ -62,7 +62,7 @@ fn the_nodes_declared_in_a_view_are_its_scene() {
     let NodeKind::Model(m) = &kinds[3] else {
         panic!("{:?}", kinds[3]);
     };
-    let Material::Default(d) = m.material else {
+    let Material::Default(d) = &m.material else {
         panic!("{:?}", m.material);
     };
     assert_eq!(d.lighting, Lighting::None);
@@ -345,7 +345,7 @@ fn lights_materials_and_cameras_reach_the_scene() {
         panic!("{:?}", kinds[3]);
     };
     assert_eq!(sphere.mesh, MeshSource::Primitive(Primitive::Sphere));
-    let Material::Principled(p) = sphere.material else {
+    let Material::Principled(p) = &sphere.material else {
         panic!("{:?}", sphere.material);
     };
     assert_eq!((p.base_color.r, p.base_color.g), (1.0, 0.0));
@@ -358,7 +358,7 @@ fn lights_materials_and_cameras_reach_the_scene() {
         panic!("{:?}", kinds[4]);
     };
     assert_eq!(cone.mesh, MeshSource::Primitive(Primitive::Cone));
-    let Material::Default(d) = cone.material else {
+    let Material::Default(d) = &cone.material else {
         panic!("{:?}", cone.material);
     };
     assert_eq!((d.specular_amount, d.specular_roughness), (0.75, 0.5));

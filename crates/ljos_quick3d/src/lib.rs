@@ -38,19 +38,28 @@
 //! ## What is built
 //!
 //! `docs/quick3d.md` lists the milestones. This crate has the types of
-//! M2 and most of M3: `Object3D`, `Node`, `Model` (`#Cube`, `#Rectangle`,
+//! M2 to M4: `Object3D`, `Node`, `Model` (`#Cube`, `#Rectangle`,
 //! `#Sphere`, `#Cylinder` and `#Cone`), `PerspectiveCamera` (vertical or
 //! horizontal field of view), `OrthographicCamera`, a camera's
 //! `frustumCullingEnabled`, `DirectionalLight`, `PointLight` and
 //! `SpotLight` (with every light's `color`, `ambientColor` and
 //! `brightness`; up to 16 a scene), `Material.cullMode`,
-//! `DefaultMaterial` (`diffuseColor`, `lighting`, `specularAmount`,
-//! `specularRoughness`), `PrincipledMaterial` (`baseColor`, `metalness`,
-//! `roughness`, `emissiveFactor`, `opacity`, `alphaMode`, `alphaCutoff`,
-//! `lighting`), `SceneEnvironment` (`clearColor`, `backgroundMode`
-//! Transparent and Color, `antialiasingMode` MSAA with
-//! `antialiasingQuality`) and `View3D`. `Node.pivot` and `Node.opacity`
-//! are kept but do not change the drawing yet.
+//! `DefaultMaterial` (`diffuseColor`, `diffuseMap`, `lighting`,
+//! `specularAmount`, `specularRoughness`), `PrincipledMaterial`
+//! (`baseColor`, `metalness`, `roughness`, `emissiveFactor`, `opacity`,
+//! `alphaMode`, `alphaCutoff`, `lighting`, and the base colour,
+//! metalness, roughness, normal, emissive, occlusion and opacity maps with
+//! their channels), `Texture` (every property but `sourceItem`),
+//! `SceneEnvironment` (`clearColor`, `backgroundMode` Transparent, Color
+//! and SkyBox, `lightProbe` with `probeExposure`, `probeHorizon`,
+//! `probeOrientation` and `skyboxBlurAmount`, `tonemapMode`,
+//! `antialiasingMode` MSAA with `antialiasingQuality`) and `View3D`.
+//! `Node.pivot` and `Node.opacity` are kept but do not change the drawing
+//! yet.
+//!
+//! A `Texture` reads its picture through the image cache the first time a
+//! view draws it: a small local picture at once, others in the background,
+//! the views that wanted it painted again when it arrives.
 //!
 //! ## Enum values
 //!
@@ -63,6 +72,7 @@ mod pick;
 mod repeater;
 mod scene;
 mod space;
+mod texture;
 mod view;
 
 #[cfg(test)]
@@ -76,6 +86,7 @@ pub use node::{
 };
 pub use pick::PickResult;
 pub use repeater::Repeater3D;
+pub use texture::Texture;
 pub use view::View3D;
 
 use ljos::item;
@@ -99,6 +110,7 @@ pub fn register(engine: &Engine) {
         DefaultMaterial,
         PrincipledMaterial,
         SceneEnvironment,
+        Texture,
         View3D,
         PickResult,
         Repeater3D,

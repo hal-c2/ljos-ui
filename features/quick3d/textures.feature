@@ -132,3 +132,13 @@ Feature: Textures
     Scenario: A map whose image cannot be read is left out
       When the property "source" of "tex" is set to "missing.png"
       Then the pixel at 50, 50 of the window is within 2 of "#ffffff"
+
+  # A picture too large to decode on the spot is read in the background,
+  # as an Image's is; the view is painted again when it has arrived.
+  Rule: A large image is drawn once it has been read
+
+    Scenario: The view shows a large image a moment after it is set
+      Given a 1024 by 1024 image file "large.png" filled with "#00ffff"
+      When the property "source" of "tex" is set to "large.png"
+      And 200 milliseconds pass
+      Then the pixel at 50, 50 of the window is within 2 of "#00ffff"
