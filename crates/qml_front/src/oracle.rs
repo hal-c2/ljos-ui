@@ -164,6 +164,13 @@ pub trait TypeOracle {
         true
     }
 
+    /// Whether the runtime builds `ty`: of a module that stands in, a type
+    /// it builds is itself, not an empty `Item`. An oracle that cannot tell
+    /// says it does not.
+    fn is_built(&self, _ty: Self::Type) -> bool {
+        false
+    }
+
     /// Whether the property `name` of the type holds one object, not a
     /// value: what is written for it is an object or `null`, never a
     /// number or a string. An oracle that cannot tell says it does not.
@@ -463,6 +470,10 @@ impl TypeOracle for QtTypeOracle {
 
     fn stands_in_as_item(&self, name: &str) -> bool {
         qt_types::stands_in_as_item(name)
+    }
+
+    fn is_built(&self, ty: QtType) -> bool {
+        ty.0.is_built
     }
 
     fn holds_object(&self, ty: QtType, name: &str) -> bool {

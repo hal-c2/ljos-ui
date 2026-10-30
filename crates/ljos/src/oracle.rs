@@ -639,12 +639,20 @@ impl TypeOracle for EngineOracle {
     }
 
     fn stands_in(&self, uri: &str) -> bool {
-        // An application that registers types of the module has it.
-        QtTypeOracle.stands_in(uri) && !self.natives.iter().any(|n| n.module == uri)
+        // An application that registers types of the module has those
+        // types (`is_built`); the rest still stand in.
+        QtTypeOracle.stands_in(uri)
     }
 
     fn stands_in_as_item(&self, name: &str) -> bool {
         QtTypeOracle.stands_in_as_item(name)
+    }
+
+    fn is_built(&self, ty: EngineType) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.is_built(ty),
+            EngineType::Native(_) => true,
+        }
     }
 
     fn holds_object(&self, ty: EngineType, name: &str) -> bool {

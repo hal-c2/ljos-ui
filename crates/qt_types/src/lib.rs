@@ -359,6 +359,10 @@ pub struct Type {
     /// too, which that table does not list and nothing stands behind: what
     /// it has is not known, and the runtime has no such file.
     pub is_unlisted: bool,
+    /// Ljós's own table has it: the runtime builds it. Of a module Ljós
+    /// has only part of (`QtQuick3D.Helpers`), such a type is itself and
+    /// the rest stand in.
+    pub is_built: bool,
 }
 
 impl Type {
@@ -816,6 +820,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     added: Vec::new(),
                     stands_on: None,
                     is_unlisted: false,
+                    is_built: is_own,
                 });
             }
             (1, name) => exports.push((module, name, word())),
@@ -957,10 +962,11 @@ fn read(qt: &'static str, own: &'static str) -> Table {
         }
     }
     for (module, name, class) in over.exports {
-        let (Some(own), Some(index)) = (
-            over.classes.get(class),
-            table.type_named(module, name, &mut Vec::new()),
-        ) else {
+        let Some(index) = table.type_named(module, name, &mut Vec::new()) else {
+            continue;
+        };
+        table.types[index].is_built = true;
+        let Some(own) = over.classes.get(class) else {
             continue;
         };
         let ty = &over.types[*own];

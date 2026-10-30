@@ -151,6 +151,20 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                 Source::Module(uri)
                     if self.oracle.stands_in(uri) && !self.project.has_module(uri) =>
                 {
+                    // Of a module the runtime has only part of, what it
+                    // has is itself.
+                    if let Some(ty) = self.oracle.module_type(uri, name)
+                        && self.oracle.is_built(ty)
+                    {
+                        let origin = match qualifier {
+                            Some(_) => Origin::Namespace,
+                            None => Origin::Module(uri.clone()),
+                        };
+                        return Some(Found {
+                            kind: Kind::Builtin(ty),
+                            origin,
+                        });
+                    }
                     stand_in.get_or_insert(uri);
                 }
                 Source::Module(uri) => {

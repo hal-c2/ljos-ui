@@ -16,13 +16,15 @@ Feature: Instance tables read from a file or made at random
   colour; a vector's missing trailing numbers are zeros. A RandomInstancing
   (QtQuick3D.Helpers) makes instanceCount entries, each attribute picked
   within an InstanceRange; the same randomSeed makes the same table.
+  Ljós builds no more of QtQuick3D.Helpers than these two: its other types
+  stand in as empty Items, as a module Ljós does not build does.
 
   # An orthographic camera at magnification 1 shows one scene unit as one
   # pixel, so the view's centre is the scene's origin.
   Rule: A file's table is drawn and can be read back
 
     Background:
-      Given the file "table.xml":
+      Given the text file "table.xml":
         """
         <InstanceTable>
           <Instance position="-50 0 0" color="red"/>
@@ -153,3 +155,32 @@ Feature: Instance tables read from a file or made at random
       Then the pixel at 100, 100 of the window is within 2 of "#00ff00"
       And the pixel at 20, 20 of the window is "#202020"
       And the pixel at 180, 180 of the window is "#202020"
+
+  @ljos-only
+  Rule: The helpers Ljós does not build stand in beside the ones it does
+
+    Scenario: A camera controller stands in and the random table is drawn
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { id: camera; z: 600 }
+            OrbitCameraController { camera: camera; origin: camera }
+            Model {
+              source: "#Rectangle"; scale: Qt.vector3d(0.2, 0.2, 0.2)
+              materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "white" }
+              instancing: RandomInstancing {
+                instanceCount: 1
+                color: InstanceRange { from: "lime"; to: "lime" }
+              }
+            }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 2 of "#00ff00"
