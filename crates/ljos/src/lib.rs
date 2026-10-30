@@ -159,12 +159,13 @@ pub mod prelude {
     pub use crate::task::Task;
     pub use ljos_controls::{Application, ApplicationState};
     pub use ljos_engine::{
-        Atom, Color, ConnectionId, ContextId, Cx, Engine, EngineError, Handler, ItemModel,
-        ItemTree, JsError, LogEntry, LogLevel, MetaRef, ModelChange, ModelListener, ModelListeners,
-        ModelSignals, ObjectId, Point, Prop, PropIndex, PropertyMap, QmlList, QmlListModel,
-        QmlObject, QmlType, QmlValue, QtObject, Quaternion, Rect, RowKey, ScopedEvent,
-        ScopedSingleton, SignalIndex, Size, Timer, TreeChange, TreeListener, TreeListeners, Url,
-        Value, Vector3d, Version, WindowScope, list_model, qml_impl, qml_singleton, tree_model,
+        Atom, Color, ConnectionId, ContextId, Cx, Engine, EngineError, FollowedFiles, Handler,
+        ItemModel, ItemTree, JsError, LogEntry, LogLevel, MetaRef, ModelChange, ModelListener,
+        ModelListeners, ModelSignals, ObjectId, Point, Prop, PropIndex, PropertyMap, QmlList,
+        QmlListModel, QmlObject, QmlType, QmlValue, QtObject, Quaternion, Rect, RowKey,
+        ScopedEvent, ScopedSingleton, SignalIndex, Size, Timer, TreeChange, TreeListener,
+        TreeListeners, Url, Value, Vector3d, Version, WindowScope, invalid_model_index, list_model,
+        model_index, qml_impl, qml_singleton, tree_model,
     };
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,

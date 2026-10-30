@@ -468,7 +468,7 @@ impl Engine {
     /// Whether `obj` sends or receives through any connection: none of
     /// its signals is heard when it has none, which is said without
     /// finding a signal by its name.
-    pub(crate) fn any_connection(&self, obj: ObjectId) -> bool {
+    pub fn any_connection(&self, obj: ObjectId) -> bool {
         let signals = self.inner.signals.borrow();
         signals
             .by_object

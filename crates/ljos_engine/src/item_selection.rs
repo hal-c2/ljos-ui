@@ -1180,6 +1180,18 @@ fn makers(engine: &Engine) -> Option<(Value, Value, Value)> {
 }
 
 /// The index that names no item.
+/// The invalid `QModelIndex`: the parent a row signal of a list model
+/// gives, for a native model that sends them.
+pub fn invalid_model_index(engine: &Engine) -> Value {
+    invalid_index(engine)
+}
+
+/// The `QModelIndex` of `row` of the list model `model`, as `dataChanged`
+/// gives it.
+pub fn model_index(engine: &Engine, model: ObjectId, row: i32) -> Value {
+    make_index(engine, Some(model), &[(row, 0)])
+}
+
 pub(crate) fn invalid_index(engine: &Engine) -> Value {
     makers(engine).map_or(Value::Undefined, |m| m.0)
 }
