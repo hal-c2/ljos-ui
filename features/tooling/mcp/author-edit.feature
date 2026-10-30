@@ -182,6 +182,67 @@ Feature: Editing QML with the authoring tools
         }
         """
 
+    Scenario: An object put first among the children stays below the blank line that ends the bindings
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200
+
+            Rectangle { color: "red" }
+            Text { text: "hello" }
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "insert_object", "parent": {"path": "root"}, "index": 0, "text": "Item {}"}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200
+
+            Item {}
+            Rectangle { color: "red" }
+            Text { text: "hello" }
+        }
+        """
+
+    Scenario: An object put among children with blank lines between them gets one too
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200
+
+            Rectangle { color: "red" }
+
+            Text { text: "hello" }
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "insert_object", "parent": {"path": "root"}, "index": 0, "text": "Item {}"}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+
+        Item {
+            width: 200
+
+            Item {}
+
+            Rectangle { color: "red" }
+
+            Text { text: "hello" }
+        }
+        """
+
   Rule: Without `write`, the agent is shown what would change
 
     Scenario: A dry run answers the splices and the text, and writes nothing
