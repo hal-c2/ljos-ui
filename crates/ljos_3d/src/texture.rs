@@ -37,6 +37,17 @@ pub trait TexturePixels: Send + Sync + fmt::Debug {
     fn uploaded(&self) {}
 }
 
+/// An id for pixels no cache names, such as a model file's own pictures.
+///
+/// Caches count their ids up from 1 (an image cache's are its handles');
+/// these are counted from the top half, so pixels from either are never
+/// taken for the other's by the uploads they share.
+pub fn fresh_pixels_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1 << 63);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// An image a [`Texture`] shows. Two are equal when they are the same
 /// pixels.
 #[derive(Clone, Debug)]

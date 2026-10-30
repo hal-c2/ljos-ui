@@ -38,7 +38,7 @@ pub use scene::{
 };
 pub use texture::{
     Channel, Filter, PixelEncoding, Sampling, Texture, TextureImage, TexturePixels, Tiling,
-    UvTransform,
+    UvTransform, fresh_pixels_id,
 };
 
 #[cfg(feature = "gpu")]

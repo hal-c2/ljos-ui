@@ -391,3 +391,74 @@ fn garbage_is_survived() {
             "nodes":[{"mesh":0,"matrix":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}]}"#,
     );
 }
+
+#[test]
+fn a_material_s_textures_become_its_maps_sharing_one_picture() {
+    let asset = load("cube.glb");
+    let Material::Principled(m) = scene_material(&asset.materials[0]) else {
+        panic!("a glTF material is principled");
+    };
+    let base = m.maps.base_color.as_ref().expect("the base colour map");
+    let decoded = asset.materials[0].textures.base_color.as_ref().unwrap();
+    // The same picture, not a copy: one upload for every material using it.
+    assert_eq!(base.image.id(), decoded.image.id());
+    assert_eq!(base.image.size(), [4, 4]);
+    assert_eq!(base.image.encoding(), PixelEncoding::Srgb8Straight);
+    assert!(base.image.opaque());
+    assert_eq!(
+        base.sampling,
+        Sampling {
+            min: texture::Filter::Nearest,
+            mag: texture::Filter::Nearest,
+            mip: texture::Filter::None,
+            tiling_u: Tiling::ClampToEdge,
+            tiling_v: Tiling::ClampToEdge,
+            generate_mipmaps: false,
+        }
+    );
+    assert!(m.maps.metalness.is_none() && m.maps.normal.is_none());
+    // Building the material again keeps the picture's identity.
+    let Material::Principled(again) = scene_material(&asset.materials[0]) else {
+        unreachable!()
+    };
+    assert_eq!(again.maps.base_color.unwrap().image.id(), base.image.id());
+}
+
+#[test]
+fn metal_roughness_occlusion_and_normal_textures_read_their_channels() {
+    let image = Arc::new(TextureImage::new(1, 1, vec![10, 20, 30, 255]));
+    let at = |uv_set| {
+        Some(TextureRef {
+            image: image.clone(),
+            uv_set,
+            sampler: Sampler::default(),
+        })
+    };
+    let material = AssetMaterial {
+        name: None,
+        material: gltf_default(),
+        textures: MaterialTextures {
+            metallic_roughness: at(0),
+            normal: at(0),
+            normal_scale: 0.5,
+            occlusion: at(0),
+            occlusion_strength: 0.25,
+            emissive: at(1),
+            ..MaterialTextures::default()
+        },
+    };
+    let Material::Principled(m) = scene_material(&material) else {
+        unreachable!()
+    };
+    let maps = &m.maps;
+    assert_eq!(maps.metalness_channel, Channel::B);
+    assert_eq!(maps.roughness_channel, Channel::G);
+    assert!(maps.metalness.is_some() && maps.roughness.is_some());
+    assert_eq!(maps.occlusion_channel, Channel::R);
+    assert_eq!((maps.normal_strength, maps.occlusion_amount), (0.5, 0.25));
+    // Trilinear, as glTF leaves unset filters to the viewer.
+    let s = maps.normal.as_ref().unwrap().sampling;
+    assert!(s.mipmapped() && s.mip == texture::Filter::Linear);
+    // The renderer reads one UV set: a texture on the second is left out.
+    assert!(maps.emissive.is_none());
+}

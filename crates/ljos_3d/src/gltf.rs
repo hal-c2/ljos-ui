@@ -20,8 +20,9 @@ use crate::geometry::{ComponentType, CustomGeometry, PrimitiveType, Semantic};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::scene::{
     AlphaMode, Color, CullMode, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind,
-    PrincipledMaterial, Scene, Transform,
+    PrincipledMaps, PrincipledMaterial, Scene, Transform,
 };
+use crate::texture::{self, Channel, PixelEncoding, Sampling, Texture, TexturePixels, Tiling};
 
 /// The widest or tallest picture a file's texture may be: a 8192 by 8192
 /// RGBA texture is 256 MiB, which is already more than a phone gives one.
@@ -345,6 +346,45 @@ pub struct TextureImage {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// What the renderer shares its upload by, for as long as the model
+    /// holds the picture.
+    id: u64,
+}
+
+impl TextureImage {
+    fn new(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        TextureImage {
+            width,
+            height,
+            rgba,
+            id: texture::fresh_pixels_id(),
+        }
+    }
+}
+
+/// The pixels stay after they are uploaded: the model is drawn again from
+/// them by any view or renderer that shows it later, and reading the file
+/// again is what the loader is there to spare.
+impl TexturePixels for TextureImage {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn size(&self) -> [u32; 2] {
+        [self.width, self.height]
+    }
+
+    fn encoding(&self) -> PixelEncoding {
+        PixelEncoding::Srgb8Straight
+    }
+
+    fn opaque(&self) -> bool {
+        self.rgba.chunks_exact(4).all(|p| p[3] == 255)
+    }
+
+    fn with_pixels(&self, f: &mut dyn FnMut(&[u8])) {
+        f(&self.rgba);
+    }
 }
 
 impl std::fmt::Debug for TextureImage {
@@ -433,11 +473,67 @@ impl Asset {
     }
 }
 
-/// The scene material a loaded material draws with. The textures are not
-/// in it yet: binding [`MaterialTextures`] is the renderer's to add, and
-/// until then the factors alone are drawn.
+/// The scene material a loaded material draws with: its factors, and its
+/// textures as the material's maps.
+///
+/// glTF multiplies each factor by its texture, as QtQuick3D's maps do,
+/// keeps roughness in green and metalness in blue, which are the maps'
+/// default channels, and lays UVs out with the image's top at v = 0, as
+/// the built-in meshes do. A texture read through a second UV set is left
+/// out (its factor still draws): the renderer reads one.
 pub fn scene_material(m: &AssetMaterial) -> Material {
-    Material::Principled(m.material)
+    let mut material = m.material.clone();
+    let t = &m.textures;
+    let map = |r: &Option<TextureRef>| {
+        r.as_ref()
+            .filter(|r| r.uv_set == 0)
+            .map(TextureRef::texture)
+    };
+    let metal_rough = map(&t.metallic_roughness);
+    material.maps = Box::new(PrincipledMaps {
+        base_color: map(&t.base_color),
+        metalness: metal_rough.clone(),
+        metalness_channel: Channel::B,
+        roughness: metal_rough,
+        roughness_channel: Channel::G,
+        normal: map(&t.normal),
+        normal_strength: t.normal_scale,
+        emissive: map(&t.emissive),
+        occlusion: map(&t.occlusion),
+        occlusion_channel: Channel::R,
+        occlusion_amount: t.occlusion_strength,
+        ..PrincipledMaps::default()
+    });
+    Material::Principled(material)
+}
+
+impl TextureRef {
+    /// The texture a material's map reads: the same picture, so one upload
+    /// serves every material that uses it.
+    fn texture(&self) -> Texture {
+        let tiling = |w| match w {
+            Wrap::Repeat => Tiling::Repeat,
+            Wrap::ClampToEdge => Tiling::ClampToEdge,
+            Wrap::MirroredRepeat => Tiling::MirroredRepeat,
+        };
+        let filter = |f| match f {
+            Filter::Nearest => texture::Filter::Nearest,
+            Filter::Linear => texture::Filter::Linear,
+        };
+        let s = &self.sampler;
+        Texture {
+            image: texture::TextureImage(self.image.clone()),
+            sampling: Sampling {
+                min: filter(s.min),
+                mag: filter(s.mag),
+                mip: s.mipmap.map_or(texture::Filter::None, filter),
+                tiling_u: tiling(s.wrap_s),
+                tiling_v: tiling(s.wrap_t),
+                generate_mipmaps: s.mipmap.is_some(),
+            },
+            uv: texture::UvTransform::default(),
+        }
+    }
 }
 
 /// The material glTF gives a primitive that names none.
@@ -598,6 +694,9 @@ impl Builder<'_> {
             } else {
                 Lighting::Fragment
             },
+            // The textures are kept beside the material, and made its maps
+            // by `scene_material`.
+            maps: Box::default(),
         };
         let normal = m.normal_texture();
         let occlusion = m.occlusion_texture();
@@ -625,6 +724,12 @@ impl Builder<'_> {
 
     fn texture(&mut self, t: &::gltf::Texture, uv_set: u32) -> Option<TextureRef> {
         let image = self.image(&t.source())?;
+        if uv_set > 0 {
+            self.warnings.push(format!(
+                "texture {} reads TEXCOORD_{uv_set}, which is not drawn: its material keeps its factor",
+                t.index()
+            ));
+        }
         let s = t.sampler();
         use ::gltf::texture::{MagFilter, MinFilter, WrappingMode};
         let wrap = |w| match w {
@@ -961,11 +1066,7 @@ fn decode_png(bytes: &[u8]) -> Result<TextureImage, String> {
             .collect(),
         other => return Err(format!("unexpected PNG colour type {other:?}")),
     };
-    Ok(TextureImage {
-        width: info.width,
-        height: info.height,
-        rgba,
-    })
+    Ok(TextureImage::new(info.width, info.height, rgba))
 }
 
 fn decode_jpeg(bytes: &[u8]) -> Result<TextureImage, String> {
@@ -984,11 +1085,7 @@ fn decode_jpeg(bytes: &[u8]) -> Result<TextureImage, String> {
     if rgba.len() != w as usize * h as usize * 4 {
         return Err("the JPEG decoded to the wrong size".to_owned());
     }
-    Ok(TextureImage {
-        width: w,
-        height: h,
-        rgba,
-    })
+    Ok(TextureImage::new(w, h, rgba))
 }
 
 #[cfg(test)]
