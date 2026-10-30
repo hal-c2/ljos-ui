@@ -127,7 +127,7 @@ fn tool_result(out: Result<ToolReply, SurfaceError>) -> CallToolResult {
 }
 
 /// A refusal where the protocol has no tool result to put it in (reading
-/// a resource, getting a prompt). JSON-RPC has three numbers for our twelve
+/// a resource, getting a prompt). JSON-RPC has three numbers for our fifteen
 /// codes, so `data` carries the refusal as a tool would give it: `code`,
 /// `message` and `details`. A client that knows the codes reads `busy` or
 /// `timeout` there instead of "internal error".

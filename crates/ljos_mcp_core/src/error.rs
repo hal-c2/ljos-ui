@@ -18,6 +18,12 @@ pub enum ErrorCode {
     Unavailable,
     /// A path escaped the project root.
     PathDenied,
+    /// A source file the tool must read as QML does not parse.
+    Syntax,
+    /// An edit was refused because the text it gives would not parse.
+    WouldBreak,
+    /// A request the tool understands but cannot carry out yet.
+    Unsupported,
     Internal,
 }
 
@@ -35,6 +41,9 @@ impl ErrorCode {
             ErrorCode::InvalidArgument => "invalid_argument",
             ErrorCode::Unavailable => "unavailable",
             ErrorCode::PathDenied => "path_denied",
+            ErrorCode::Syntax => "syntax",
+            ErrorCode::WouldBreak => "would_break",
+            ErrorCode::Unsupported => "unsupported",
             ErrorCode::Internal => "internal",
         }
     }
@@ -53,6 +62,9 @@ impl ErrorCode {
             ErrorCode::InvalidArgument,
             ErrorCode::Unavailable,
             ErrorCode::PathDenied,
+            ErrorCode::Syntax,
+            ErrorCode::WouldBreak,
+            ErrorCode::Unsupported,
             ErrorCode::Internal,
         ]
         .into_iter()
