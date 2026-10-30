@@ -64,8 +64,19 @@ pub fn pick(scene: &Scene, ray: &Ray, pickable: impl Fn(NodeId) -> bool) -> Vec<
         .into_iter()
         .filter_map(|(id, node, world)| match &node.kind {
             NodeKind::Model(model) if pickable(id) => {
-                let MeshSource::Primitive(p) = model.mesh;
-                hit_primitive(id, p, model.material.cull_mode(), &world, ray)
+                let cull = model.material.cull_mode();
+                let bounds = model.mesh.bounds();
+                match &model.mesh {
+                    MeshSource::Primitive(p) => {
+                        hit_mesh(id, primitive_mesh(*p), bounds, cull, &world, ray)
+                    }
+                    // Decoded for each pick: picks follow input, and keeping
+                    // a decoded copy would double what a large geometry holds.
+                    MeshSource::Custom(g) => {
+                        let mesh = g.to_mesh().ok()?;
+                        hit_mesh(id, &mesh, bounds, cull, &world, ray)
+                    }
+                }
             }
             _ => None,
         })
@@ -74,10 +85,16 @@ pub fn pick(scene: &Scene, ray: &Ray, pickable: impl Fn(NodeId) -> bool) -> Vec<
     hits
 }
 
-fn hit_primitive(id: NodeId, p: Primitive, cull: CullMode, world: &Mat4, ray: &Ray) -> Option<Hit> {
+fn hit_mesh(
+    id: NodeId,
+    mesh: &Mesh,
+    (centre, radius): (Vec3, f32),
+    cull: CullMode,
+    world: &Mat4,
+    ray: &Ray,
+) -> Option<Hit> {
     // Most models are nowhere near the ray: one test against the sphere
     // that holds the mesh leaves their triangles alone.
-    let (centre, radius) = p.bounds();
     if !meets_sphere(
         ray,
         world.transform_point(centre),
@@ -93,7 +110,6 @@ fn hit_primitive(id: NodeId, p: Primitive, cull: CullMode, world: &Mat4, ray: &R
     let direction = inverse.transform_vector(ray.direction);
     // A mirroring scale turns the winding, and with it which side is front.
     let mirrored = determinant3(world) < 0.0;
-    let mesh = primitive_mesh(p);
     let (triangles, _) = mesh.indices.as_chunks::<3>();
     let mut nearest: Option<(f32, f32, f32, [u32; 3])> = None;
     for &tri in triangles {
@@ -333,6 +349,45 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn an_application_s_geometry_is_met_where_its_triangles_are() {
+        use crate::geometry::{ComponentType, CustomGeometry, PrimitiveType, Semantic};
+        // A square of side 100 about the origin, facing +Z, as a fan: met
+        // inside it, missed beside it.
+        let mut g = CustomGeometry::new();
+        g.set_vertex_data(
+            [
+                -50.0f32, -50.0, 0.0, 50.0, -50.0, 0.0, 50.0, 50.0, 0.0, -50.0, 50.0, 0.0,
+            ]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect(),
+        );
+        g.set_stride(12);
+        g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+        g.set_primitive_type(PrimitiveType::TriangleFan);
+        g.update();
+        let mut s = Scene::new();
+        let node = Node::new(NodeKind::Model(Model {
+            mesh: MeshSource::Custom(std::sync::Arc::new(g)),
+            material: Material::Default(DefaultMaterial::default()),
+        }))
+        .with_transform(Transform {
+            position: Vec3::new(20.0, 0.0, 0.0),
+            ..Transform::default()
+        });
+        let square = s.add(None, node);
+        let towards = Vec3::new(0.0, 0.0, -1.0);
+        let inside = Ray::new(Vec3::new(65.0, 10.0, 100.0), towards).unwrap();
+        let hits = pick(&s, &inside, |_| true);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].node, square);
+        assert!(close(hits[0].distance, 100.0));
+        assert!(close(hits[0].position.x, 45.0));
+        let beside = Ray::new(Vec3::new(-35.0, 10.0, 100.0), towards).unwrap();
+        assert!(pick(&s, &beside, |_| true).is_empty());
     }
 
     #[test]
