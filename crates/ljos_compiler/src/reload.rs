@@ -608,6 +608,16 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         &self.live
     }
 
+    /// Takes a generation for a reload of no file the session compiles (a
+    /// theme), to be acknowledged or refused as a patch is: the next patch
+    /// is computed against it once acknowledged. Call it with no patch
+    /// waiting for an answer.
+    pub fn advance(&mut self) -> u64 {
+        self.last += 1;
+        self.pending = Some((self.last, self.live.clone(), self.live_failed.clone()));
+        self.last
+    }
+
     /// The application applied the patch of this generation.
     pub fn ack(&mut self, generation: u64) {
         if let Some((g, files, failed)) = self.pending.take() {

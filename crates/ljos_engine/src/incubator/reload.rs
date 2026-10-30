@@ -659,6 +659,26 @@ impl Engine {
         *self.inner.reload.last_error.borrow_mut() = fault;
     }
 
+    /// Moves the generation from `base` to `generation` for a reload that
+    /// changed no object of the tree (a theme set the roles again), so a
+    /// patch computed before it is refused as stale and whoever waits on
+    /// the generation sees it move. The error stays: it may be another
+    /// file's.
+    ///
+    /// # Errors
+    /// [`ReloadError::Stale`] when the engine is not at `base`.
+    pub fn advance_reload(&self, base: u64, generation: u64) -> Result<(), ReloadError> {
+        let st = &self.inner.reload;
+        if base != st.generation.get() {
+            return Err(ReloadError::Stale {
+                patch: base,
+                engine: st.generation.get(),
+            });
+        }
+        st.generation.set(generation);
+        Ok(())
+    }
+
     /// The stable path of an object made from QML while tracking is on:
     /// the same for the object that takes its place after a reload.
     pub fn reload_path(&self, obj: ObjectId) -> Option<String> {
