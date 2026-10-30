@@ -247,7 +247,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the log has an info matching "regex"` | some info message matches |
 | `Then the log has N infos matching "regex"` / `Then the log has no info matching "regex"` | exactly that many info messages match, or none do |
 | `Then the log has no warning matching "regex"` / `Then the log has no warnings` | none do |
-| `Then the pixel at X, Y of the window is "#rrggbb"` / `is within T of "#rrggbb"` | one pixel of the window's picture, laid over black; `T` is how far each of red, green and blue may be off (a blend is rounded differently by each painter) |
+| `Then the pixel at X, Y of the window is "#rrggbb"` / `is within T of "#rrggbb"` / `is not "#rrggbb"` | one pixel of the window's picture, laid over black; `T` is how far each of red, green and blue may be off (a blend is rounded differently by each painter); `is not` says only that something other than that colour is there, for a lit picture whose exact colours the scenario does not pin |
 | `Then the accessibility tree has a "role" named "name"` | role names are lower case: `button`, `checkbox`, `label` … |
 | `Then the accessibility tree has no "role" named "name"` | |
 | `Then the design audit finds nothing` | the design audit has no finding of any severity: the report of the last `When the design audit runs at …`, else an audit of the window as it is (`@ljos-only`) |

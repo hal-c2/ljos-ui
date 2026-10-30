@@ -2,7 +2,7 @@
 
 use cucumber::then;
 
-use crate::backend::BackendError;
+use crate::backend::{Backend, BackendError};
 use crate::world::LjosWorld;
 
 use super::StepResult;
@@ -78,20 +78,9 @@ fn over_black([r, g, b, a]: [u8; 4]) -> [u8; 3] {
 /// picture is black and Ljós's is transparent, and a half transparent pixel
 /// must read the same on both.
 fn window_pixel_near(w: &mut LjosWorld, x: u32, y: u32, tolerance: u8, colour: &str) -> StepResult {
-    let wanted = u32::from_str_radix(&colour[1..], 16)
-        .map_err(|e| format!("{colour} is not a colour as #rrggbb: {e}"))?;
-    let wanted = [(wanted >> 16) as u8, (wanted >> 8) as u8, wanted as u8];
+    let wanted = rgb(colour)?;
     w.each(|b| {
-        let png = b.grab()?;
-        let picture = ljos_render::RgbaImage::from_png(&png)
-            .map_err(|e| BackendError::Failed(format!("the picture of the window: {e}")))?;
-        if x >= picture.width || y >= picture.height {
-            return Err(BackendError::Failed(format!(
-                "{x}, {y} is outside the window's picture, which is {} by {}",
-                picture.width, picture.height
-            )));
-        }
-        let seen = over_black(picture.pixel(x, y));
+        let seen = window_pixel_seen(b, x, y)?;
         if seen
             .iter()
             .zip(wanted)
@@ -105,4 +94,39 @@ fn window_pixel_near(w: &mut LjosWorld, x: u32, y: u32, tolerance: u8, colour: &
             )))
         }
     })
+}
+
+/// For a picture whose exact colours depend on lighting the scenario does
+/// not pin: something was drawn there, over what would show otherwise.
+#[then(regex = r#"^the pixel at (\d+), (\d+) of the window is not "(#\w{6})"$"#)]
+fn window_pixel_not(w: &mut LjosWorld, x: u32, y: u32, colour: String) -> StepResult {
+    let unwanted = rgb(&colour)?;
+    w.each(|b| {
+        if window_pixel_seen(b, x, y)? == unwanted {
+            Err(BackendError::Failed(format!(
+                "the pixel at {x}, {y} is {colour}"
+            )))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+fn rgb(colour: &str) -> Result<[u8; 3], String> {
+    let c = u32::from_str_radix(&colour[1..], 16)
+        .map_err(|e| format!("{colour} is not a colour as #rrggbb: {e}"))?;
+    Ok([(c >> 16) as u8, (c >> 8) as u8, c as u8])
+}
+
+fn window_pixel_seen(b: &mut dyn Backend, x: u32, y: u32) -> Result<[u8; 3], BackendError> {
+    let png = b.grab()?;
+    let picture = ljos_render::RgbaImage::from_png(&png)
+        .map_err(|e| BackendError::Failed(format!("the picture of the window: {e}")))?;
+    if x >= picture.width || y >= picture.height {
+        return Err(BackendError::Failed(format!(
+            "{x}, {y} is outside the window's picture, which is {} by {}",
+            picture.width, picture.height
+        )));
+    }
+    Ok(over_black(picture.pixel(x, y)))
 }
