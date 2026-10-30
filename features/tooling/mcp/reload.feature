@@ -76,6 +76,32 @@ Feature: An agent that is told about reloads
       And the answer's "/generation" is 1
       And the property "title" of "root" is "second"
 
+    # The save's own reload can come first: its quiet time ends while the
+    # call is on its way, or the agent asks a moment after the file was
+    # written. The agent asked about its write, and that write is running.
+    Scenario: A reload asked for right after a write answers with that write applied
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item { objectName: "root"; property string title: "second" }
+        """
+      And a reload happens
+      And the agent calls the tool "app_reload"
+      Then the answer's "/outcome" is "applied"
+      And the answer's "/generation" is 1
+      And the property "title" of "root" is "second"
+
+    Scenario: A reload asked for again with nothing written since is unchanged
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item { objectName: "root"; property string title: "second" }
+        """
+      And the agent calls the tool "app_reload"
+      And the agent calls the tool "app_reload"
+      Then the answer's "/outcome" is "unchanged"
+      And the answer's "/generation" is 1
+
     Scenario: A reload that fails is told as one
       When the file "Scenario.qml" is changed to:
         """qml
