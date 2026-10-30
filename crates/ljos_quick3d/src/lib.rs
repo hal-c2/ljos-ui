@@ -53,7 +53,9 @@
 //! `SceneEnvironment` (`clearColor`, `backgroundMode` Transparent, Color
 //! and SkyBox, `lightProbe` with `probeExposure`, `probeHorizon`,
 //! `probeOrientation` and `skyboxBlurAmount`, `tonemapMode`,
-//! `antialiasingMode` MSAA with `antialiasingQuality`) and `View3D`.
+//! `antialiasingMode` MSAA with `antialiasingQuality`), `View3D` and
+//! `RuntimeLoader` (glTF 2.0 files read on the compute pool; without the
+//! default `gltf` feature every source is an error that says so).
 //! `Node.pivot` and `Node.opacity` are kept but do not change the drawing
 //! yet.
 //!
@@ -70,6 +72,7 @@
 mod node;
 mod pick;
 mod repeater;
+mod runtime_loader;
 mod scene;
 mod space;
 mod texture;
@@ -86,6 +89,7 @@ pub use node::{
 };
 pub use pick::PickResult;
 pub use repeater::Repeater3D;
+pub use runtime_loader::RuntimeLoader;
 pub use texture::Texture;
 pub use view::View3D;
 
@@ -114,6 +118,7 @@ pub fn register(engine: &Engine) {
         View3D,
         PickResult,
         Repeater3D,
+        RuntimeLoader,
         item::QuaternionAnimation,
     ]));
     item::register_paint_item::<View3D>(engine, view::read);

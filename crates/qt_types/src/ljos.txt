@@ -7541,6 +7541,7 @@ module QtQuick3D
 	PrincipledMaterial QtQuick3D.PrincipledMaterial
 	QuaternionAnimation QtQuick3D.QuaternionAnimation
 	Repeater3D QtQuick3D.Repeater3D
+	RuntimeLoader QtQuick3D.RuntimeLoader
 	SceneEnvironment QtQuick3D.SceneEnvironment
 	SpotLight QtQuick3D.SpotLight
 	Texture QtQuick3D.Texture
@@ -7793,6 +7794,19 @@ module QtQuick3D
 		signal objectAdded index object
 		signal objectRemoved index object
 		method objectAt
+	type QtQuick3D.RuntimeLoader RuntimeLoader
+		prototype QtQuick3D.Node named
+		enum Status Empty=0 Success=1 Error=2
+		prop source QtQml.url named
+		prop status QtQml.int named readonly
+		prop errorString QtQml.string named readonly
+		prop bounds QtQml.var named readonly
+		prop instancing QtQuick3D.Object3D named pointer
+		signal sourceChanged
+		signal statusChanged
+		signal errorStringChanged
+		signal boundsChanged
+		signal instancingChanged
 	type QtQuick3D.SceneEnvironment SceneEnvironment
 		prototype QtQuick3D.Object3D named
 		enum BackgroundMode Transparent=0 Color=1 SkyBox=2 SkyBoxCubeMap=3 SkyMaterial=4

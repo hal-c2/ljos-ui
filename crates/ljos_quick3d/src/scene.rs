@@ -114,6 +114,12 @@ impl Walk<'_> {
         n.shadow = shadow(e, obj);
         let id = self.scene.add(parent, n);
         self.ids.insert(obj, id);
+        // A loaded model's nodes are the loader's first children; they
+        // are not objects, so a pick does not name them.
+        #[cfg(feature = "gltf")]
+        if let Some(asset) = crate::runtime_loader::asset(e, obj) {
+            asset.add_to(&mut self.scene, id);
+        }
         for child in list(e, obj, Object3D::DATA.index) {
             self.node(Some(id), child);
         }
