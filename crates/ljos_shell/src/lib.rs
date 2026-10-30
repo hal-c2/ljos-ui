@@ -49,6 +49,7 @@ mod gl_mesh;
 mod gl_scene3d;
 #[cfg(gl_painter)]
 mod gl_shader;
+mod headless;
 mod native_drag;
 mod network;
 mod platform;
@@ -336,19 +337,22 @@ impl<M> std::fmt::Debug for ShellApp<M> {
     }
 }
 
-/// What [`run`] adds to a [`ShellApp`]: platform windows.
+/// What [`run`] and [`run_headless`] add to a [`ShellApp`]: the system's
+/// services and, on a display, platform windows.
 pub(crate) struct Hosting {
-    /// The AccessKit tree of the root's scene, grafted into egui's.
-    pub(crate) tree: egui::accesskit::TreeId,
+    /// The AccessKit tree of the root's scene, grafted into egui's; `None`
+    /// with no window for a screen reader to read.
+    pub(crate) tree: Option<egui::accesskit::TreeId>,
     /// Called when a QML `Window` wants something else of its platform
-    /// window than it has.
-    pub(crate) changed: Box<dyn Fn()>,
+    /// window than it has; `None` where there are no platform windows,
+    /// and every `Window` is an item of the scene.
+    pub(crate) changed: Option<Box<dyn Fn()>>,
     /// Wakes the loop for the root's window without going through egui,
     /// which the loop's own passes do not answer for
     /// ([`QmlView::set_waker`]).
     pub(crate) wake: ljos_egui::Waker,
-    /// The host speaks Wayland, which `Qt.platform.pluginName` says.
-    pub(crate) wayland: bool,
+    /// What the host shows on, which `Qt.platform.pluginName` says.
+    pub(crate) display: platform::Display,
 }
 
 impl<M: Send + 'static> ShellApp<M> {
@@ -393,14 +397,17 @@ impl<M: Send + 'static> ShellApp<M> {
         ljos_media::register(&engine);
         // Before `setup`: a window knows from its first moment whether it
         // is an item of a scene or a window of the platform.
-        let (tree, waker, changed, wayland) = match hosting {
+        let (tree, waker, changed, display) = match hosting {
             Some(h) => {
-                let changed: Rc<dyn Fn()> = Rc::from(h.changed);
-                let windows = Rc::clone(&changed);
-                ljos_controls::WindowSystem::of(&engine).set_host(move || windows());
-                (Some(h.tree), Some(h.wake), Some(changed), h.wayland)
+                let changed = h.changed.map(|changed| {
+                    let changed: Rc<dyn Fn()> = Rc::from(changed);
+                    let windows = Rc::clone(&changed);
+                    ljos_controls::WindowSystem::of(&engine).set_host(move || windows());
+                    changed
+                });
+                (h.tree, Some(h.wake), changed, Some(h.display))
             }
-            None => (None, None, None, false),
+            None => (None, None, None, None),
         };
         let wake: Arc<dyn Fn() + Send + Sync> = match &waker {
             Some(waker) => {
@@ -423,7 +430,7 @@ impl<M: Send + 'static> ShellApp<M> {
                 wake();
             });
         }
-        if tree.is_some() {
+        if let Some(display) = display {
             if config.system_locale {
                 engine.use_system_locale();
             }
@@ -436,7 +443,7 @@ impl<M: Send + 'static> ShellApp<M> {
             // Before `setup` too: a `Settings` reads its file, and a
             // binding may ask `Qt.platform`, while the root is built.
             let wake = Arc::clone(&wake);
-            platform::install(&engine, wayland, move || wake());
+            platform::install(&engine, display, move || wake());
             // Pictures fill in after the window is drawn, as they do in
             // Qt: their fetches and decodes never hold up a frame.
             ljos_quick::ImageStore::of(&engine).set_start_after_frame(true);
@@ -621,6 +628,26 @@ pub fn run<M: Send + 'static>(
     #[cfg(target_os = "linux")]
     drivers::choose();
     desktop::run(config, setup)
+}
+
+/// Runs the application as [`run`] does, with no window and no display:
+/// for an agent that drives it through the inspector, a test, or a script
+/// that does its work and quits. The root is laid out at
+/// [`ShellConfig::size`], or at its own size with
+/// [`ShellConfig::root_sized`]; every QML `Window` is an item of the
+/// scene. Timers and animations run on the system's clock, and the thread
+/// sleeps while none is due. Returns when the application quits
+/// (`Qt.quit()`).
+///
+/// `Qt.platform.pluginName` is `offscreen`, as in Qt run with no display;
+/// the clipboard and dialogs are the application's own, and
+/// `Qt.openUrlExternally` opens nothing.
+pub fn run_headless<M: Send + 'static>(
+    config: ShellConfig,
+    setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
+) -> Result<(), ShellError> {
+    large_buffers_from_the_system();
+    headless::run(config, setup)
 }
 
 /// Starts reading the system's fonts on a thread of their own, so that

@@ -691,10 +691,10 @@ mod tests {
         let setup = |setup: &mut crate::Setup<'_, ()>| setup.watch(&entry);
         let app = if hosted {
             let hosting = Hosting {
-                tree: egui::accesskit::TreeId::ROOT,
-                changed: Box::new(|| {}),
+                tree: Some(egui::accesskit::TreeId::ROOT),
+                changed: Some(Box::new(|| {})),
                 wake: Arc::new(|_| {}),
-                wayland: false,
+                display: crate::platform::Display::Other,
             };
             ShellApp::hosted(
                 &ctx,

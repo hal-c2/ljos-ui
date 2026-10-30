@@ -76,7 +76,7 @@ const STALL: Duration = Duration::from_millis(250);
 /// The shortest time between two passes that are not drawn, for the
 /// root's window: its passes run the engine's timers and deliver the
 /// messages, seen or not.
-const HEARTBEAT: Duration = Duration::from_millis(16);
+pub(crate) const HEARTBEAT: Duration = Duration::from_millis(16);
 
 /// The same for another window that is out of sight: only its own
 /// animations wait for it.
@@ -90,17 +90,17 @@ const EGUI_TEXTURE_SIDE: usize = 2048;
 /// the memory they freed is given back ([`crate::give_back_freed_heap`]):
 /// long enough that what follows at once (the first frames, the next
 /// picture) reuses it instead.
-const HEAP_TRIM_AFTER: Duration = Duration::from_secs(1);
+pub(crate) const HEAP_TRIM_AFTER: Duration = Duration::from_secs(1);
 
 /// How many objects must have gone since the heap was last given back for
 /// it to be given back again: a page replaced or a loader emptied, not a
 /// delegate scrolled out.
-const OBJECTS_GONE_BEFORE_TRIM: usize = 1024;
+pub(crate) const OBJECTS_GONE_BEFORE_TRIM: usize = 1024;
 
 /// How long the loop must have nothing to do before what the scripts left
 /// behind is collected: longer than a frame, so that an animation is not
 /// held up by it.
-const REST_BEFORE_COLLECTING: Duration = Duration::from_millis(100);
+pub(crate) const REST_BEFORE_COLLECTING: Duration = Duration::from_millis(100);
 
 /// What other threads, egui and the accessibility adapter post into the
 /// loop.
@@ -223,7 +223,7 @@ fn scaled(size: [f64; 2], by: f64) -> [f64; 2] {
     [size[0] * by, size[1] * by]
 }
 
-fn earlier(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
+pub(crate) fn earlier(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
     match (a, b) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
@@ -419,7 +419,7 @@ struct Desktop<M> {
 /// the next that the loop cannot foresee: something done at the start of
 /// every rest is done at every notch.
 #[derive(Debug, Default)]
-struct AfterRest {
+pub(crate) struct AfterRest {
     due: Option<Instant>,
 }
 
@@ -432,7 +432,13 @@ impl AfterRest {
     /// loop (a question from an agent, a timer the system ran a little
     /// early) was not work, and starting the rest over at each would wake
     /// the loop a rest later, then again, for as long as it is asked.
-    fn settled(&mut self, busy: bool, wanted: bool, now: Instant, rest: Duration) -> bool {
+    pub(crate) fn settled(
+        &mut self,
+        busy: bool,
+        wanted: bool,
+        now: Instant,
+        rest: Duration,
+    ) -> bool {
         match self.due {
             _ if busy || !wanted => {
                 self.due = None;
@@ -450,7 +456,7 @@ impl AfterRest {
         }
     }
 
-    fn next(&self) -> Option<Instant> {
+    pub(crate) fn next(&self) -> Option<Instant> {
         self.due
     }
 }
@@ -458,17 +464,17 @@ impl AfterRest {
 /// The most of something there was since it was last reset: enough of
 /// it gone says memory it held is free.
 #[derive(Debug, Default)]
-struct HighWater(usize);
+pub(crate) struct HighWater(usize);
 
 impl HighWater {
     /// There are `now`. True when at least `gone` of the most there were
     /// went, which the next reset forgets.
-    fn fell(&mut self, now: usize, gone: usize) -> bool {
+    pub(crate) fn fell(&mut self, now: usize, gone: usize) -> bool {
         self.0 = self.0.max(now);
         self.0 - now >= gone
     }
 
-    fn reset(&mut self, now: usize) {
+    pub(crate) fn reset(&mut self, now: usize) {
         self.0 = now;
     }
 }
@@ -2196,36 +2202,23 @@ pub(crate) fn run<M: Send + 'static>(
         || opaque && only_software(&host.display_handle()),
     );
     let starting = Starting::start(host.display_handle(), chosen);
-    // Before `setup`: bindings may measure text while the root is being
-    // built. They wait for the fonts; making the engine and registering
-    // its types do not.
-    match config
-        .system_fonts
-        .then(crate::system_fonts::take)
-        .flatten()
-    {
-        Some(reading) => ljos_quick::set_text_engine_later(reading),
-        None if config.system_fonts => {
-            ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
-        }
-        None => crate::system_fonts::forget(),
-    }
-    // Before the engine is built: `font` defaults to it everywhere.
-    if let Some(font) = desktop_font {
-        font.apply();
-    }
+    use_fonts(&config, desktop_font);
     let proxy: Proxy = Arc::new(Mutex::new(host.proxy()));
     let ctx = new_context(0, &proxy);
     // True from the start: the first turn of the loop opens the windows.
     let needs_sync = Rc::new(Cell::new(true));
     let hosting = Hosting {
-        wayland: host.is_wayland(),
-        tree: tree_id(0),
+        display: if host.is_wayland() {
+            crate::platform::Display::Wayland
+        } else {
+            crate::platform::Display::Other
+        },
+        tree: Some(tree_id(0)),
         wake: waker(0, &proxy),
-        changed: {
+        changed: Some({
             let needs_sync = Rc::clone(&needs_sync);
             Box::new(move || needs_sync.set(true))
-        },
+        }),
     };
     #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
     let mut app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
@@ -2277,6 +2270,27 @@ pub(crate) fn run<M: Send + 'static>(
     match failure.borrow_mut().take() {
         Some(error) => Err(error),
         None => Ok(()),
+    }
+}
+
+/// Before `setup`: bindings may measure text while the root is being
+/// built. They wait for the fonts; making the engine and registering its
+/// types do not. `desktop_font` was started as early as could be.
+pub(crate) fn use_fonts(config: &ShellConfig, desktop_font: Option<crate::desktop_font::Reading>) {
+    match config
+        .system_fonts
+        .then(crate::system_fonts::take)
+        .flatten()
+    {
+        Some(reading) => ljos_quick::set_text_engine_later(reading),
+        None if config.system_fonts => {
+            ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+        }
+        None => crate::system_fonts::forget(),
+    }
+    // Before the engine is built: `font` defaults to it everywhere.
+    if let Some(font) = desktop_font {
+        font.apply();
     }
 }
 

@@ -2,7 +2,8 @@
 //! clipboard and dialogs, the system's opener of URLs, an HTTPS fetcher,
 //! the application's badge where the desktop has one (`badge.rs`), what the
 //! system prefers beyond the colour scheme (`settings.rs`), and the window
-//! system's name for `Qt.platform`.
+//! system's name for `Qt.platform`. A run with no display (`headless`)
+//! keeps the in-process clipboard and dialogs and opens nothing.
 //!
 //! Drags from other applications are not handled here: the shell follows
 //! them per window (`drags`), and the window's `QmlView` hands them to its
@@ -17,11 +18,28 @@ use ljos_platform::{HttpFetcher, Platform};
 /// Gives a desktop application the system's services. Only the shell's
 /// own loop does this: an application shown in another host (eframe, a
 /// test) keeps the in-process ones.
-pub(crate) fn install(engine: &Engine, wayland: bool, wake: impl Fn() + Send + Sync + 'static) {
+pub(crate) fn install(engine: &Engine, display: Display, wake: impl Fn() + Send + Sync + 'static) {
     let platform = Platform::of(engine);
     // An answer from a dialog's thread wakes the loop; nothing waits for
     // one by looking.
     platform.set_waker(wake);
+    if display != Display::None {
+        install_desktop(engine, &platform);
+    }
+    platform.set_fetcher(Arc::new(HttpFetcher::new()));
+    crate::settings::install(engine);
+    crate::network::install(engine);
+    // A screen reader reads windows, and there is none to read.
+    if display != Display::None {
+        crate::screen_reader::watch(engine);
+    }
+    platform.set_plugin_name(plugin_name(display));
+}
+
+/// What only a run on the user's desktop is given: the clipboard, dialogs,
+/// opener and badge are the user's own, which a run nobody sees must not
+/// take over.
+fn install_desktop(engine: &Engine, platform: &std::rc::Rc<Platform>) {
     if let Some(clipboard) = ljos_platform::native::SystemClipboard::connect() {
         platform.set_clipboard(std::rc::Rc::new(clipboard));
     }
@@ -40,14 +58,20 @@ pub(crate) fn install(engine: &Engine, wayland: bool, wake: impl Fn() + Send + S
             ),
         );
     }
-    if let Some(badge) = crate::badge::service(&platform) {
+    if let Some(badge) = crate::badge::service(platform) {
         platform.set_badge(badge);
     }
-    platform.set_fetcher(Arc::new(HttpFetcher::new()));
-    crate::settings::install(engine);
-    crate::network::install(engine);
-    crate::screen_reader::watch(engine);
-    platform.set_plugin_name(plugin_name(wayland));
+}
+
+/// What the application is shown on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Display {
+    /// A Wayland compositor.
+    Wayland,
+    /// The platform's other window system: X11, or the only one there is.
+    Other,
+    /// None: the run is headless.
+    None,
 }
 
 /// Tells the platform that drags from other applications cannot come: on
@@ -73,8 +97,11 @@ pub(crate) fn prefers_x11(config: bool, env: Option<&str>) -> bool {
 }
 
 /// What Qt calls the window system: the name of its platform plugin.
-fn plugin_name(wayland: bool) -> &'static str {
-    if cfg!(target_os = "macos") {
+/// With no display it is Qt's `offscreen` on every system.
+fn plugin_name(display: Display) -> &'static str {
+    if display == Display::None {
+        "offscreen"
+    } else if cfg!(target_os = "macos") {
         "cocoa"
     } else if cfg!(target_os = "windows") {
         "windows"
@@ -82,7 +109,7 @@ fn plugin_name(wayland: bool) -> &'static str {
         "android"
     } else if cfg!(target_os = "ios") {
         "ios"
-    } else if wayland {
+    } else if display == Display::Wayland {
         "wayland"
     } else {
         "xcb"
@@ -112,8 +139,9 @@ mod tests {
             not(target_vendor = "apple"),
             not(target_os = "android")
         )) {
-            assert_eq!(plugin_name(true), "wayland");
-            assert_eq!(plugin_name(false), "xcb");
+            assert_eq!(plugin_name(Display::Wayland), "wayland");
+            assert_eq!(plugin_name(Display::Other), "xcb");
         }
+        assert_eq!(plugin_name(Display::None), "offscreen");
     }
 }
