@@ -26,7 +26,7 @@
 use std::path::{Path, PathBuf};
 
 use ljos_engine::Engine;
-pub use ljos_engine::{TypeDump, TypeDumpError};
+pub use ljos_engine::{BlockEntry, TypeDump, TypeDumpError};
 
 /// The environment variable that makes [`check_file`] write the file:
 /// `LJOS_TYPES=write`.

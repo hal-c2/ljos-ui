@@ -379,6 +379,15 @@ pub enum Declared {
     Object,
 }
 
+/// What declares a type a functional block (`#[qml(block)]`): a palette's
+/// grouping and one line of what it does. Its contract is the type's own
+/// members, so nothing else is kept here.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BlockInfo {
+    pub category: Option<String>,
+    pub summary: Option<String>,
+}
+
 /// The description of one QML type. See the module docs.
 pub struct MetaObject {
     pub name: Atom,
@@ -418,6 +427,8 @@ pub struct MetaObject {
     pub required_at: Vec<(PropIndex, Atom)>,
     /// Scripts see a plain object, not a QObject: it prints as one.
     pub plain_object: bool,
+    /// Declared a functional block. Boxed: nearly no type is one.
+    pub block: Option<Box<BlockInfo>>,
     lookup: OnceLock<Lookup>,
     /// What other crates worked out about the type ([`MetaObject::class`]),
     /// one entry per Rust type asked for.
@@ -948,6 +959,7 @@ impl MetaBuilder {
                 enums: Vec::new(),
                 required_at: Vec::new(),
                 plain_object: false,
+                block: None,
                 lookup: OnceLock::new(),
                 classes: RwLock::new(Vec::new()),
             }),
@@ -1354,6 +1366,17 @@ impl MetaBuilder {
     #[inline(never)]
     pub fn plain_object(mut self) -> Self {
         self.meta.plain_object = true;
+        self
+    }
+
+    /// Declares the type a functional block, with an optional palette
+    /// category and one-line summary.
+    #[inline(never)]
+    pub fn block(mut self, category: Option<&str>, summary: Option<&str>) -> Self {
+        self.meta.block = Some(Box::new(BlockInfo {
+            category: category.map(str::to_string),
+            summary: summary.map(str::to_string),
+        }));
         self
     }
 

@@ -23,6 +23,10 @@
 //!   implement `Default`, which is how the engine creates it.
 //! - `plain_object`: scripts see a plain object, not a QObject: it prints
 //!   as `[object Object]`, as what Qt makes in script (an incubator) does.
+//! - `block`: a functional block (ADR 0003): its own members are its
+//!   contract, and the type dump marks it so that a block registry lists it.
+//!   `category = "Media"` and `summary = "Plays one source"` (only with
+//!   `block`) are what a palette shows of it.
 //!
 //! - `enums = path`: a `fn() -> Vec<(&'static str, Vec<(&'static str, i64)>)>`
 //!   listing the type's enums (`Component.Ready`).

@@ -440,6 +440,10 @@ fn type_entry(meta: &MetaObject, since: Version) -> TypeEntry {
                 return_type: m.ret.name(),
             })
             .collect(),
+        block: meta.block.as_deref().map(|b| BlockEntry {
+            category: b.category.clone(),
+            summary: b.summary.clone(),
+        }),
     }
 }
 
@@ -524,6 +528,21 @@ pub struct TypeEntry {
     pub properties: Vec<PropertyEntry>,
     pub signals: Vec<SignalEntry>,
     pub methods: Vec<MethodEntry>,
+    /// Declared a functional block (`#[qml(block)]`). Absent for every
+    /// other type, so a dump without blocks reads and writes as format 2
+    /// always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<BlockEntry>,
+}
+
+/// What a type declared a functional block says of itself for a palette.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

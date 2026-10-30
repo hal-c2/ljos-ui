@@ -16,6 +16,11 @@ struct ContainerAttrs {
     attached: Option<Type>,
     uncreatable: bool,
     plain_object: bool,
+    /// `block`: a functional block; `category` and `summary` are what a
+    /// palette shows of it.
+    block: bool,
+    category: Option<String>,
+    summary: Option<String>,
     enums: Option<syn::Path>,
     /// (camelCase name, the `Reset`) for properties of the base.
     reset_inherited: Vec<(String, syn::Expr)>,
@@ -75,6 +80,12 @@ fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
                 c.uncreatable = true;
             } else if m.path.is_ident("plain_object") {
                 c.plain_object = true;
+            } else if m.path.is_ident("block") {
+                c.block = true;
+            } else if m.path.is_ident("category") {
+                c.category = Some(m.value()?.parse::<LitStr>()?.value());
+            } else if m.path.is_ident("summary") {
+                c.summary = Some(m.value()?.parse::<LitStr>()?.value());
             } else if m.path.is_ident("enums") {
                 c.enums = Some(m.value()?.parse::<syn::Path>()?);
             } else if m.path.is_ident("reset_inherited") {
@@ -86,11 +97,17 @@ fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
                 })?;
             } else {
                 return Err(m.error(
-                    "expected one of: name, module, extends, default, attached, uncreatable, plain_object, enums, reset_inherited",
+                    "expected one of: name, module, extends, default, attached, uncreatable, plain_object, block, category, summary, enums, reset_inherited",
                 ));
             }
             Ok(())
         })?;
+        if !c.block && (c.category.is_some() || c.summary.is_some()) {
+            return Err(Error::new(
+                a.span(),
+                "`category` and `summary` describe a block: add `block`",
+            ));
+        }
     }
     Ok(c)
 }
@@ -666,6 +683,14 @@ pub(crate) fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         .as_ref()
         .map(|a| quote!(.attached(|| #e::MetaRef::Static(<#a as #e::QmlType>::static_meta()))));
     let plain_call = c.plain_object.then(|| quote!(.plain_object()));
+    let block_call = c.block.then(|| {
+        let some = |v: &Option<String>| match v {
+            Some(v) => quote!(#p::Option::Some(#v)),
+            None => quote!(#p::Option::None),
+        };
+        let (category, summary) = (some(&c.category), some(&c.summary));
+        quote!(.block(#category, #summary))
+    });
     let create_call = if c.uncreatable {
         quote!(.uncreatable())
     } else {
@@ -705,6 +730,7 @@ pub(crate) fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                         #attached_call
                         #create_call
                         #plain_call
+                        #block_call
                         .impl_info((&#p::Probe::<#ty>::new()).qml_impl_info())
                         .build();
                     debug_assert_eq!(

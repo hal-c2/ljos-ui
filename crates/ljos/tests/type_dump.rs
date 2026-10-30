@@ -272,3 +272,62 @@ fn check_file_accepts_a_current_dump_and_names_a_stale_one() {
     );
     assert!(err.to_string().contains("LJOS_TYPES=write"), "{err}");
 }
+
+/// A functional block (ADR 0003): its members are a type's like any other,
+/// and the dump marks it so a block registry can list it.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "Example",
+    name = "Player",
+    block,
+    category = "Media",
+    summary = "Plays one source"
+)]
+pub struct Player {
+    #[qml(notify, readonly)]
+    pub playing: bool,
+}
+
+/// A block that says nothing of itself for a palette.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Clock", block)]
+pub struct Clock {
+    #[qml(notify, readonly)]
+    pub now: i32,
+}
+
+#[test]
+fn a_block_is_marked_in_the_dump_and_no_other_type_is() {
+    let dump = ljos::types::dump(|engine| {
+        engine.register_module(ljos::module!("Example" 1.0 => [Counter, Player, Clock]));
+    });
+    let blocks: Vec<(&str, Option<&ljos::types::BlockEntry>)> = dump.modules[0]
+        .types
+        .iter()
+        .map(|t| (t.name.as_str(), t.block.as_ref()))
+        .collect();
+    let player = ljos::types::BlockEntry {
+        category: Some("Media".into()),
+        summary: Some("Plays one source".into()),
+    };
+    assert_eq!(
+        blocks,
+        [
+            ("Counter", None),
+            ("Player", Some(&player)),
+            ("Clock", Some(&ljos::types::BlockEntry::default())),
+        ]
+    );
+    let text = dump.to_json();
+    assert_eq!(ljos::types::TypeDump::from_json(&text).unwrap(), dump);
+    // Only the blocks carry the key, so a dump without blocks is the text
+    // it always was.
+    assert_eq!(text.matches("\"block\"").count(), 2, "{text}");
+    assert!(text.contains("\"block\": {}"), "{text}");
+}
+
+#[test]
+fn a_dump_without_blocks_has_no_block_key() {
+    let text = ljos::types::dump(register).to_json();
+    assert!(!text.contains("\"block\""), "{text}");
+}

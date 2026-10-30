@@ -157,9 +157,9 @@ pub use lookups::Lookups;
 pub use lookups::lookups;
 pub use memory::{CompiledMemory, OwnerMemory, TypeMemory};
 pub use meta::{
-    AttachedTypeId, ChangeHook, CompleteThunk, Declared, EnumInfo, Getter, GivenHook, GroupGet,
-    GroupGetMut, ImplInfo, ListAppend, ListField, ListInsert, ListRemove, MetaBuilder, MetaObject,
-    MetaRef, MethodDecl, MethodInfo, MethodThunk, Prop, PropertyAccess, PropertyFlags,
+    AttachedTypeId, BlockInfo, ChangeHook, CompleteThunk, Declared, EnumInfo, Getter, GivenHook,
+    GroupGet, GroupGetMut, ImplInfo, ListAppend, ListField, ListInsert, ListRemove, MetaBuilder,
+    MetaObject, MetaRef, MethodDecl, MethodInfo, MethodThunk, Prop, PropertyAccess, PropertyFlags,
     PropertyInfo, QmlImplInfo, Reset, ResetApply, ResetValue, Setter, SignalDecl, SignalInfo,
     WriteFilter,
 };
@@ -176,8 +176,8 @@ pub use profile::{BindingLoopSeen, HotCause, HotEntry, HotKind, HotRun, MAX_RUNS
 pub use property_map::PropertyMap;
 pub use qtqml::{Component, ComponentAttached, Connections, RunningTimer, Timer, handler_name};
 pub use registry::{
-    EnumEntry, MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry, PropertyKind,
-    Registry, SignalEntry, TypeDump, TypeDumpError, TypeEntry, Version,
+    BlockEntry, EnumEntry, MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry,
+    PropertyKind, Registry, SignalEntry, TypeDump, TypeDumpError, TypeEntry, Version,
 };
 pub use script_owned::ScriptMemory;
 pub use signal::Handler;
