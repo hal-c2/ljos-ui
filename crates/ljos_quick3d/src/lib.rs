@@ -60,6 +60,7 @@
 
 mod node;
 mod pick;
+mod repeater;
 mod scene;
 mod space;
 mod view;
@@ -74,6 +75,7 @@ pub use node::{
     SpotLight,
 };
 pub use pick::PickResult;
+pub use repeater::Repeater3D;
 pub use view::View3D;
 
 use ljos::item;
@@ -99,6 +101,7 @@ pub fn register(engine: &Engine) {
         SceneEnvironment,
         View3D,
         PickResult,
+        Repeater3D,
     ]));
     item::register_paint_item::<View3D>(engine, view::read);
 }
