@@ -28,7 +28,7 @@ Arguments placed after `--` are passed to the QML application in `Application.ar
 - `--project <DIR>`: Project root for module discovery (defaults to the directory of `<FILE>`).
 - `--watch`: Watch the project directory and hot-reload on changes.
 - `--size <WxH>`: Initial window size in logical pixels, such as `1280x800`. Without `--size`, a root item opens at its own width and height (`800` by `600` for any side left at `0`).
-- `--mcp[=<CAPS>]`: Start the live MCP inspector with a comma-separated list of capabilities (`inspect`, `input`, `mutate`, `eval`). Passing `--mcp` alone enables `inspect`. Writes the listener address and bearer token to `target/ljos/mcp-<pid>.json` (mode `0600`) and removes it on exit.
+- `--mcp[=<CAPS>]`: Start the live MCP inspector with a comma-separated list of capabilities (`inspect`, `input`, `mutate`, `eval`). Passing `--mcp` alone enables `inspect`. Writes the listener address and bearer token to `target/ljos/mcp-<pid>.json` (mode `0600`) and removes it on exit. The directory it goes in is made `0700`; a link, one that another user owns, or one that group or others can get into is refused.
 - `--mcp-redact`: Redact all editable text fields in inspector snapshots, properties and screenshots, and refuse `app_eval`, methods and signal handlers.
 - `--mcp-bind <ADDR>`: Bind the MCP HTTP listener to `<ip>:<port>` instead of `127.0.0.1:0`. Non-loopback addresses require `--mcp-insecure-lan`.
 - `--mcp-socket <PATH>`: Listen on a Unix domain socket (created mode `0600`, maximum 107 bytes on Linux and 103 bytes on macOS) instead of TCP.
