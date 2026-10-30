@@ -115,6 +115,9 @@ pub use ljos_quick::{
     Item, ItemPaint, KeyEvent, KeyKind, Modifiers, ReadPaint, ScrollPhase, WheelEvent,
     flickable::WheelItem,
 };
+/// An item drawn off the screen for another (a 3D texture of it): see
+/// [`item_picture`].
+pub use ljos_quick::{ItemPicture, PictureArea, item_picture};
 pub use ljos_render::{
     Border, Brush, BrushGradient, Decorations, DisplayList, DisplayListBuilder, DrawOp, FillRule,
     GlyphRun, GradientGeometry, GradientStop, LinearGradient, Paint, PathStyle, PositionedGlyph,

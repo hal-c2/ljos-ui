@@ -33,6 +33,7 @@ mod image;
 mod incubation;
 mod input;
 mod item;
+mod item_picture;
 pub mod keys;
 mod layer;
 mod layouts;
@@ -126,6 +127,7 @@ pub use item::{
     AnchorLine, AnchorProps, Anchors, Edge, Item, ItemLayer, WindowPosition, effective_margin,
     init_item, is_item, local_transform, map_to_scene, register_window_position, scene_transform,
 };
+pub use item_picture::{ItemPicture, PictureArea, item_picture};
 pub use layer::{
     LayerHooks, LayerTake, layer_host, layer_of, set_layer, set_layer_hooks, set_layer_take,
     tab_scope, window_item, window_of,

@@ -66,6 +66,7 @@ use crate::enums::gesture_policy;
 use crate::handlers::{grab_transition, point_state};
 use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKind, TapHandler};
 use crate::item::{Item, init_item, is_a, is_item, num, scene_transform, write_computed};
+use crate::item_picture::PictureArea;
 use crate::loader::{Loader, shown_children};
 #[allow(deprecated)]
 use crate::positioners::{self, Column, Row, Which};
@@ -597,6 +598,28 @@ impl Scenes {
     }
 }
 
+/// An item's picture is wanted that was not ([`crate::item_picture`]):
+/// each scene looks at its next frame whether it shows the reader. One at
+/// work now sees the want as its frame ends.
+pub(crate) fn pictures_wanted(e: &Engine) {
+    for s in e.extension::<Scenes>().live() {
+        let waker = {
+            let Ok(mut s) = s.try_borrow_mut() else {
+                continue;
+            };
+            s.pictures = true;
+            if std::mem::replace(&mut s.dirty, true) {
+                None
+            } else {
+                s.waker.clone()
+            }
+        };
+        if let Some(w) = waker {
+            w();
+        }
+    }
+}
+
 /// Marks `obj` with `f` in each scene that shows it.
 fn mark_shown(e: &Engine, obj: ObjectId, f: impl Fn(&mut Shared)) {
     for s in e.extension::<Scenes>().live() {
@@ -1070,6 +1093,13 @@ pub struct QuickScene {
     under_sources: (u64, Vec<ObjectId>, FxHashSet<ObjectId>),
     /// The items with children, and the item generation they were read at.
     parents: (u64, FxHashSet<ObjectId>),
+    /// Item pictures ([`crate::item_picture`]) drawn here: the hidden node
+    /// that holds the trees not in the window, their top items, the items
+    /// drawn, and the count of wants last looked at.
+    picture_holder: Option<NodeId>,
+    picture_roots: Vec<ObjectId>,
+    picture_items: Vec<ObjectId>,
+    pictures_seen: u64,
     /// The UI thread's text engine, and the font generation the Texts
     /// were last laid out under.
     text: SharedTextEngine,
@@ -1165,6 +1195,10 @@ impl QuickScene {
             content_shown: FxHashSet::default(),
             under_sources: (0, Vec::new(), FxHashSet::default()),
             parents: (0, FxHashSet::default()),
+            picture_holder: None,
+            picture_roots: Vec::new(),
+            picture_items: Vec::new(),
+            pictures_seen: 0,
             text_generation: text::text_engine().borrow().generation(),
             text: text::text_engine(),
             timers: None,
@@ -1542,6 +1576,7 @@ impl QuickScene {
         // Focus asked for while objects were being made.
         crate::focus::tree::settle(engine);
         self.sync_layer(engine);
+        self.sync_pictures(engine);
         lap(&mut laps, &mut steps.other);
         // 5. Animations, from the frame's time and nothing else.
         STEPPING.set(true);
@@ -1572,6 +1607,7 @@ impl QuickScene {
         self.journal_content(engine);
         self.apply_content();
         self.draw_effect_sources(engine);
+        self.draw_item_pictures(engine);
         // 9. Compose; then pull paint inputs for newly visible items.
         drop(phase);
         let _phase = engine.enter_phase(Phase::Render);
@@ -1589,6 +1625,7 @@ impl QuickScene {
             self.journal_content(engine);
             self.apply_content();
             self.draw_effect_sources(engine);
+            self.draw_item_pictures(engine);
             snap = self.tree.compose(self.viewport, self.frame);
         }
         let changed = !self
@@ -1609,7 +1646,9 @@ impl QuickScene {
         }
         let pending = {
             let mut s = self.shared.borrow_mut();
-            let p = s.pending() || self.a11y.pending();
+            let p = s.pending()
+                || self.a11y.pending()
+                || crate::item_picture::wanted_since(engine, self.pictures_seen);
             // Unfinished jobs need the next frame although nothing they
             // made shows yet.
             s.dirty = p || incubating;
@@ -2503,6 +2542,147 @@ impl QuickScene {
         });
     }
 
+    /// Shows the items whose pictures are wanted by items of this scene
+    /// ([`crate::item_picture`]): one outside the window joins it under a
+    /// hidden node, with the tree it hangs in, and leaves when no longer
+    /// wanted. Nothing to do while nothing is wanted.
+    fn sync_pictures(&mut self, engine: &Engine) {
+        let reg = engine.extension::<crate::item_picture::Pictures>();
+        let wants = reg.wants.get();
+        if wants == self.pictures_seen
+            && self.picture_roots.is_empty()
+            && self.picture_items.is_empty()
+        {
+            return;
+        }
+        self.pictures_seen = wants;
+        let mut items = Vec::new();
+        {
+            let mut entries = reg.entries.borrow_mut();
+            entries.retain(|item, e| {
+                e.readers.retain(|r| engine.is_alive(*r));
+                engine.is_alive(*item) && !e.readers.is_empty() && engine.graph().is_alive(e.node)
+            });
+            for (item, e) in entries.iter() {
+                if e.readers.iter().any(|r| self.items.contains(*r)) {
+                    items.push(*item);
+                }
+            }
+        }
+        items.sort_unstable();
+        let mut roots: Vec<ObjectId> = Vec::new();
+        for item in &items {
+            let top = match self.items.get(*item) {
+                Some(_) => self.top_of(*item),
+                None => engine.untrack(|| {
+                    let mut at = *item;
+                    while let Some(p) = engine.visual_parent(at) {
+                        at = p;
+                    }
+                    at
+                }),
+            };
+            if Some(top) == self.root || Some(top) == self.layer {
+                continue;
+            }
+            // Under an item of the scene that does not show it: a hidden
+            // child the scene never took in, drawn with its parent or not
+            // at all.
+            if !self.picture_roots.contains(&top) && self.items.contains(top) {
+                continue;
+            }
+            roots.push(top);
+        }
+        roots.sort_unstable();
+        roots.dedup();
+        for old in std::mem::take(&mut self.picture_roots) {
+            // Taken into the window meanwhile: no longer this module's.
+            let detached = self.items.get(old).is_some_and(|r| r.parent.is_none());
+            if roots.binary_search(&old).is_err() && detached {
+                self.unadopt(engine, old, true);
+            }
+        }
+        for top in &roots {
+            if self.items.contains(*top) || !shows(engine, *top) {
+                continue;
+            }
+            let holder = match self.picture_holder {
+                Some(h) => h,
+                None => {
+                    let top_node = self.tree.root();
+                    let h = self.tree.insert_child(top_node, usize::MAX);
+                    // Neither drawn in the window nor under its pointer:
+                    // only its pictures show it.
+                    self.tree.set_visible(h, false);
+                    self.picture_holder = Some(h);
+                    h
+                }
+            };
+            if let Err(e) = self.adopt(engine, *top, None, holder, usize::MAX) {
+                self.unadopt(engine, *top, true);
+                engine.log(
+                    LogLevel::Warning,
+                    SCENE_CATEGORY,
+                    format!("adopt failed: {e}"),
+                );
+            }
+        }
+        roots.retain(|r| self.items.contains(*r));
+        items.retain(|i| self.items.contains(*i));
+        if items != self.picture_items {
+            self.items_gen += 1;
+        }
+        self.picture_roots = roots;
+        self.picture_items = items;
+    }
+
+    /// The top of the scene's tree that `obj` is in.
+    fn top_of(&self, obj: ObjectId) -> ObjectId {
+        let mut at = obj;
+        while let Some(p) = self.items.get(at).and_then(|e| e.parent) {
+            at = p;
+        }
+        at
+    }
+
+    /// Draws the wanted pictures of items whose look changed since they
+    /// were last drawn, and repaints their readers.
+    fn draw_item_pictures(&mut self, engine: &Engine) {
+        if self.picture_items.is_empty() {
+            return;
+        }
+        let reg = engine.extension::<crate::item_picture::Pictures>();
+        let mut drawn = Vec::new();
+        for item in &self.picture_items {
+            let Some(node) = self.items.get(*item).map(|e| e.node) else {
+                continue;
+            };
+            let Some(area) = reg.entries.borrow().get(item).map(|e| e.area) else {
+                continue;
+            };
+            let rect = picture_area(&self.tree, node, area);
+            let Some(snap) = self.tree.compose_subtree_in(node, rect) else {
+                continue;
+            };
+            let print = fingerprint(&snap);
+            let mut entries = reg.entries.borrow_mut();
+            let Some(entry) = entries.get_mut(item) else {
+                continue;
+            };
+            if entry.print == Some(print) {
+                continue;
+            }
+            entry.print = Some(print);
+            entry.shown = crate::effects::picture_at(&snap, self.scale_factor)
+                .map(|image| crate::item_picture::ItemPicture { image, area: rect });
+            drawn.push(entry.node);
+        }
+        // Unborrowed: a reader may run at once and ask again.
+        for node in drawn {
+            let _ = engine.graph().notify(node);
+        }
+    }
+
     /// Gives each `MultiEffect` whose source has children a picture of
     /// the source with them, as Qt renders the whole item into the
     /// texture the effect samples. The source itself stays where it is:
@@ -2534,6 +2714,7 @@ impl QuickScene {
         let sampled: FxHashSet<NodeId> = (self.source_base.values())
             .filter_map(|(s, _)| s.source)
             .chain(self.layer_base.keys().copied())
+            .chain(self.picture_items.iter().copied())
             .filter_map(|o| self.items.get(o).map(|e| e.node))
             .collect();
         let mut redrawn = redrawn;
@@ -2762,6 +2943,7 @@ impl QuickScene {
             .filter_map(|(b, _)| b.source())
             .chain(self.source_base.values().filter_map(|(b, _)| b.source))
             .chain(self.layer_base.keys().copied())
+            .chain(self.picture_items.iter().copied())
             .collect();
         sources.sort_unstable();
         sources.dedup();
@@ -4264,6 +4446,32 @@ pub(crate) fn emit_mouse_event(
 
 /// Whether `node` and the nodes it is in are shown, or one of them is
 /// `sampled`.
+/// What of `node` a picture of `area` shows, in its own coordinates, at
+/// least a logical pixel a side so that an empty item still has one.
+fn picture_area(tree: &RenderTree, node: NodeId, area: PictureArea) -> kurbo::Rect {
+    let Some(n) = tree.node(node) else {
+        return kurbo::Rect::ZERO;
+    };
+    let rect = match area {
+        PictureArea::Bounds => kurbo::Rect::from_origin_size((0.0, 0.0), n.size()),
+        PictureArea::Children => n
+            .children()
+            .iter()
+            .filter_map(|c| tree.node(*c))
+            .filter(|c| !c.is_pruned())
+            .map(|c| {
+                c.local()
+                    .transform_rect_bbox(kurbo::Rect::from_origin_size((0.0, 0.0), c.size()))
+            })
+            .reduce(|a, b| a.union(b))
+            .unwrap_or(kurbo::Rect::ZERO),
+    };
+    kurbo::Rect::from_origin_size(
+        rect.origin(),
+        (rect.width().ceil().max(1.0), rect.height().ceil().max(1.0)),
+    )
+}
+
 fn in_view(tree: &RenderTree, node: NodeId, sampled: &FxHashSet<NodeId>) -> bool {
     let mut at = Some(node);
     while let Some(id) = at {
