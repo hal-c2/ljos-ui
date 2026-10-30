@@ -155,12 +155,19 @@ pub fn has_qt_table() -> bool {
 pub const WITHOUT_QT_TABLE: &str = "this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it";
 
 /// Qt's modules Ljós does not build (ARCHITECTURE.md §1), with the modules
-/// below them: what they draw (a 3D scene, a web page, a map, a chart) is
-/// one part of a window, and the rest of an application that shows one
-/// still loads. Then the ones it has not built yet: an application that
-/// animates with a timeline (Qt Design Studio's) shows where it starts.
+/// below them: what they draw (a web page, a map, a chart) is one part of
+/// a window, and the rest of an application that shows one still loads.
+/// Then the ones it has not built yet: the modules below `QtQuick3D`
+/// (which itself is built, `ljos_quick3d`), and a timeline (Qt Design
+/// Studio's), with which an application shows where it starts.
 const STANDING_IN: &[&str] = &[
-    "QtQuick3D",
+    "QtQuick3D.AssetUtils",
+    "QtQuick3D.Effects",
+    "QtQuick3D.Helpers",
+    "QtQuick3D.Particles3D",
+    "QtQuick3D.Physics",
+    "QtQuick3D.SpatialAudio",
+    "QtQuick3D.Xr",
     "Qt3D",
     "QtWebEngine",
     "QtLocation",
@@ -182,7 +189,6 @@ pub fn stands_in(uri: &str) -> bool {
 /// keeps nothing of the Item it stands in as but its name, its children
 /// and what the file declares on it.
 const STANDING_IN_ITEMS: &[&str] = &[
-    "View3D",
     "WebEngineView",
     "MapView",
     "Map",

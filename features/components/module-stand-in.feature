@@ -1,20 +1,22 @@
 # Sources:
-#   https://doc.qt.io/qt-6/qtquick3d-index.html
-#   https://doc.qt.io/qt-6/qml-qtquick3d-view3d.html
+#   https://doc.qt.io/qt-6/qtgraphs-index.html
+#   https://doc.qt.io/qt-6/qml-qtgraphs-graphsview.html
+#   https://doc.qt.io/qt-6/qtlocation-index.html
 #   docs/ARCHITECTURE.md §1 Goals and non-goals
-# Qt Quick 3D, Qt 3D, WebEngine, QtLocation and QtGraphs are non-goals;
-# QtQuick.Timeline is not built yet.
-# Under Qt a View3D is an Item that shows a scene; here the application
-# around it is what matters.
+# Qt 3D, WebEngine, QtLocation and QtGraphs are non-goals; QtQuick.Timeline
+# is not built yet. Qt Quick 3D is built (features/quick3d), but not its
+# Helpers, Effects, Particles3D and other add-on modules.
+# Under Qt a GraphsView is an Item that shows a chart; here the
+# application around it is what matters.
 
 @ljos-only
 Feature: The types of a Qt module Ljós does not have stand in as empty items
-  An application that shows a 3D scene in one corner (Qt Quick 3D) is
-  still mostly an application of buttons, lists and text. Ljós does not
-  draw 3D, so a type of such a module stands in as an empty Item: where
+  An application that shows a chart in one corner (Qt Graphs) is still
+  mostly an application of buttons, lists and text. Ljós does not draw
+  charts, so a type of such a module stands in as an empty Item: where
   it is placed, the size it is given, its ids, its children and the
   properties, signals and functions the file declares on it are kept,
-  and what only the missing type has (a camera, a material, a mesh) is
+  and what only the missing type has (an axis, a series, a map plugin) is
   left out. The rest of the application loads and runs around it. The
   log says once, for each such module, that it is not drawn. A timeline
   (QtQuick.Timeline), which Ljós has not built yet, is left out the same
@@ -24,18 +26,16 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
     Given the file "Scene.qml":
       """qml
       import QtQuick
-      import QtQuick3D
-      View3D {
+      import QtGraphs
+      GraphsView {
         id: view
         property int turns: 3
-        environment: SceneEnvironment { clearColor: "skyblue" }
-        PerspectiveCamera { id: camera; position: Qt.vector3d(0, 0, 600) }
-        camera: camera
-        Model { source: "#Cube"; materials: PrincipledMaterial { baseColor: "red" } }
+        axisX: ValueAxis { id: axis; max: 10 }
+        LineSeries { XYPoint { x: 0; y: 0 } XYPoint { x: 10; y: 5 } }
       }
       """
 
-  Scenario: The rest of the window loads around a 3D view
+  Scenario: The rest of the window loads around a chart
     Given the QML:
       """qml
       import QtQuick
@@ -54,14 +54,14 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
     And the property "turns" of "scene" is 3
     And the property "x" of "side" is 120
     And the pixel at 160, 50 of the window is "#2060a0"
-    And the log has 1 warnings matching "QtQuick3D"
+    And the log has 1 warnings matching "QtGraphs"
 
   Scenario: One warning for a module however many files import it
     Given the file "Other.qml":
       """qml
       import QtQuick
-      import QtQuick3D
-      Node { property string label: "other" }
+      import QtGraphs
+      BarSet { property string label: "other" }
       """
     And the QML:
       """qml
@@ -73,7 +73,7 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
       }
       """
     Then the property "label" of "other" is "other"
-    And the log has 1 warnings matching "QtQuick3D"
+    And the log has 1 warnings matching "QtGraphs"
 
   Scenario: An application animated by a timeline shows where it starts
     Given the QML:
@@ -102,14 +102,14 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
     Given the QML:
       """qml
       import QtQuick
-      import QtQuick3D
+      import QtLocation
       Item {
         id: root
         objectName: "root"; width: 100; height: 100
         property int made: 0
-        Repeater3D {
+        MapItemView {
           model: 3
-          delegate: Node {
+          delegate: MapCircle {
             required property int index
             Component.onCompleted: root.made++
           }
@@ -117,7 +117,7 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
       }
       """
     Then the property "made" of "root" is 0
-    And the log has 1 warnings matching "QtQuick3D"
+    And the log has 1 warnings matching "QtLocation"
     And the log has no warning matching "Required property"
 
   # Qt names a property that takes a Component `delegate`, or ends it in
@@ -127,32 +127,32 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
     Given the QML:
       """qml
       import QtQuick
-      import QtQuick3D
+      import QtLocation
       Item {
         id: root
         objectName: "root"
         property int made: 0
-        Node {
-          Repeater3D {
+        MapCircle {
+          MapItemView {
             model: 2
-            delegate: Node { Component.onCompleted: root.made += 1 }
+            delegate: MapCircle { Component.onCompleted: root.made += 1 }
           }
         }
       }
       """
     Then the property "made" of "root" is 0
-    And the log has 1 warnings matching "QtQuick3D"
+    And the log has 1 warnings matching "QtLocation"
 
   Scenario: A property declared with a missing type holds what stands in for it
     Given the QML:
       """qml
       import QtQuick
-      import QtQuick3D
+      import QtLocation
       Item {
         objectName: "root"
-        View3D { id: view; width: 30; height: 20 }
-        property View3D shown: view
-        property list<Node> nodes: [ Node { }, Node { } ]
+        Map { id: view; width: 30; height: 20 }
+        property Map shown: view
+        property list<MapCircle> nodes: [ MapCircle { }, MapCircle { } ]
         property real shownWidth: shown ? shown.width : -1
         property int nodeCount: nodes.length
       }

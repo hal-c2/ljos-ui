@@ -472,7 +472,7 @@ pub(crate) struct LoaderState {
     /// changes. Made at the first read; until then nobody follows it.
     pub(crate) modules_node: Option<ljos_reactive::NodeId>,
     /// The modules whose types stand in as empty Items that the log has
-    /// said so of, by the first part of their name (`QtQuick3D`): once
+    /// said so of, by the first part of their name (`QtGraphs`): once
     /// each, however many files import them.
     pub(crate) stood_in: HashSet<String>,
 }
@@ -945,7 +945,7 @@ impl Engine {
 
     /// The modules the application imports that Ljós does not have, whose
     /// types stand in as empty Items, by the first part of their name
-    /// (`QtQuick3D`), sorted: what they would show is not in the scene.
+    /// (`QtGraphs`), sorted: what they would show is not in the scene.
     pub fn stood_in_modules(&self) -> Vec<String> {
         let mut out: Vec<String> = self
             .inner
@@ -1052,10 +1052,11 @@ impl Engine {
                     "{url}: module \"{uri}\" is not installed"
                 )));
             }
-            // `QtQuick3D.Helpers` comes with `QtQuick3D`: one word for both.
-            // `QtQuick.Timeline` is a module of its own all the same.
+            // `QtWebEngine.Controls` comes with `QtWebEngine`: one word for
+            // both. `QtQuick.Timeline` and `QtQuick3D.Helpers` are modules of
+            // their own all the same: Ljós has `QtQuick` and `QtQuick3D`.
             let family = match uri.split_once('.') {
-                Some(("QtQuick", _)) | None => uri.as_str(),
+                Some(("QtQuick" | "QtQuick3D", _)) | None => uri.as_str(),
                 Some((first, _)) => first,
             };
             if self

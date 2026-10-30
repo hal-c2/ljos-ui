@@ -106,7 +106,7 @@ pub struct Report {
     pub points: Vec<MatrixPoint>,
     /// How many findings `max_findings` left out.
     pub left_out: usize,
-    /// The modules standing in as empty Items (`QtQuick3D`): what they
+    /// The modules standing in as empty Items (`QtGraphs`): what they
     /// show is not audited, and nothing is held against what lies on it.
     pub unseen: Vec<String>,
     /// The scene's clock when the audit was done: `now`, or later when

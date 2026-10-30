@@ -952,21 +952,21 @@ fn text_over_a_view_ljos_does_not_have_is_left_alone() {
         &e,
         r##"
 import QtQuick
-import QtQuick3D
+import QtGraphs
 Item {
     width: 400; height: 300
-    View3D { anchors.fill: parent }
+    GraphsView { anchors.fill: parent }
     Text { text: "Tap to throw"; color: "white" }
 }
 "##,
     );
     let report = audit(&e, &mut s, Time::ZERO, &Options::desktop()).without(&BARE);
     assert!(report.is_clean(), "\n{report}");
-    assert_eq!(report.unseen, ["QtQuick3D"]);
+    assert_eq!(report.unseen, ["QtGraphs"]);
     assert!(
         report
             .by_rule("")
-            .contains("Not audited: what the items of QtQuick3D show")
+            .contains("Not audited: what the items of QtGraphs show")
     );
 }
 
