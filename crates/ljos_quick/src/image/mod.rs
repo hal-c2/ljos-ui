@@ -21,6 +21,7 @@
 mod animated;
 mod border;
 mod decode;
+mod radiance;
 mod store;
 mod tint;
 mod vector;
@@ -548,6 +549,7 @@ fn request_of(e: &Engine, me: ObjectId) -> Request {
                 let frame = e.read(me, Image::CURRENT_FRAME.index).to_number();
                 if frame > 0.0 { frame as u32 } else { 0 }
             },
+            hdr: false,
         }
     })
 }

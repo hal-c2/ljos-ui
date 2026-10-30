@@ -57,11 +57,25 @@ struct Pixels {
     /// after an upload, until something reads them.
     data: Mutex<Option<Arc<Vec<u8>>>>,
     opaque: bool,
+    encoding: ImageEncoding,
     /// How to make `data` again once it is let go.
     again: OnceLock<MakeAgain>,
     /// Something other than an upload read the pixels after they were let
     /// go: it may again, so they are not let go twice.
     read_back: AtomicBool,
+}
+
+/// What the four bytes of a pixel mean.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ImageEncoding {
+    /// sRGB red, green and blue premultiplied by alpha: every picture an
+    /// item draws.
+    #[default]
+    Premultiplied,
+    /// Radiance's RGBE: three mantissas and a shared exponent (biased by
+    /// 128) of linear light that may go far beyond 1. Only a renderer of
+    /// light (a 3D light probe) reads these; no item draws them.
+    Rgbe,
 }
 
 /// How the premultiplied RGBA8 pixels of an image are made again, as they
@@ -217,9 +231,30 @@ impl ImageHandle {
             height,
             data: Mutex::new(Some(Arc::new(data))),
             opaque,
+            encoding: ImageEncoding::Premultiplied,
             again: OnceLock::new(),
             read_back: AtomicBool::new(false),
         })))
+    }
+
+    /// Wrap Radiance RGBE pixels ([`ImageEncoding::Rgbe`]), opaque light.
+    pub fn from_rgbe(width: u32, height: u32, data: Vec<u8>) -> Result<Self, ImageError> {
+        check(width, height, data.len())?;
+        Ok(Self(Arc::new(Pixels {
+            id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
+            width,
+            height,
+            data: Mutex::new(Some(Arc::new(data))),
+            opaque: true,
+            encoding: ImageEncoding::Rgbe,
+            again: OnceLock::new(),
+            read_back: AtomicBool::new(false),
+        })))
+    }
+
+    /// What the bytes of a pixel mean.
+    pub fn encoding(&self) -> ImageEncoding {
+        self.0.encoding
     }
 
     /// Wrap straight-alpha RGBA8 pixels, premultiplying them.

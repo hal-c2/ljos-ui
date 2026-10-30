@@ -1206,9 +1206,38 @@ impl ImageStore {
         url: &str,
         reply: impl FnOnce(&Engine, Result<ImageHandle, LoadError>) + 'static,
     ) {
+        self.load_as(engine, url, Request::default(), reply);
+    }
+
+    /// As [`ImageStore::load`], for a texture of a 3D scene: a Radiance
+    /// HDR picture decodes too, to RGBE pixels
+    /// ([`ljos_render::ImageEncoding::Rgbe`]); everything else decodes as
+    /// `load` makes it. The request is a key of its own whatever the file
+    /// is (a `data:` URL or a file without a name says nothing), so a
+    /// picture both an `Image` and a texture show is decoded for each.
+    pub fn load_texture(
+        &self,
+        engine: &Engine,
+        url: &str,
+        reply: impl FnOnce(&Engine, Result<ImageHandle, LoadError>) + 'static,
+    ) {
+        let request = Request {
+            hdr: true,
+            ..Request::default()
+        };
+        self.load_as(engine, url, request, reply);
+    }
+
+    fn load_as(
+        &self,
+        engine: &Engine,
+        url: &str,
+        request: Request,
+        reply: impl FnOnce(&Engine, Result<ImageHandle, LoadError>) + 'static,
+    ) {
         let key = ImageKey {
             url: url.to_owned(),
-            request: Request::default(),
+            request,
         };
         if let Some(image) = self.cached(&key) {
             engine.call_at(engine.now(), move |e| reply(e, Ok(image)));

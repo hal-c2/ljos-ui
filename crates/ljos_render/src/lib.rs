@@ -47,8 +47,8 @@ pub use display_list::{
 };
 pub use glyph::{FontTables, Os2Table, font_tables, glyph_advances, glyph_ink_bounds};
 pub use image::{
-    ImageAlign, ImageBlit, ImageError, ImageFit, ImageHandle, ImagePlacement, MakeAgain, PixelData,
-    WeakImage, image_blit, nine_patch_blits, painted_size, place_image,
+    ImageAlign, ImageBlit, ImageEncoding, ImageError, ImageFit, ImageHandle, ImagePlacement,
+    MakeAgain, PixelData, WeakImage, image_blit, nine_patch_blits, painted_size, place_image,
 };
 pub use ljos_3d;
 /// The programs a [`ShaderOp`] runs.

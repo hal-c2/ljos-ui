@@ -199,6 +199,17 @@ pub fn load_image(
     ljos_quick::ImageStore::of(engine).load(engine, url, reply);
 }
 
+/// As [`load_image`], for a texture of a 3D scene: a Radiance HDR picture
+/// (`.hdr`) loads too, as RGBE pixels of light beyond 1
+/// ([`ljos_render::ImageEncoding::Rgbe`]).
+pub fn load_texture(
+    engine: &Engine,
+    url: &str,
+    reply: impl FnOnce(&Engine, Result<ImageHandle, ImageLoadError>) + 'static,
+) {
+    ljos_quick::ImageStore::of(engine).load_texture(engine, url, reply);
+}
+
 /// Makes key delivery ask items of type `T`, and of the types derived
 /// from it, through `hooks` while one has the active focus. Each hook
 /// says whether the item took the key; one it did not take goes on to

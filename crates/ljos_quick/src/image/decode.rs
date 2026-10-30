@@ -41,6 +41,10 @@ pub struct Request {
     /// The page of a document asked for (`currentFrame`): 0, the first,
     /// for whatever has no pages.
     pub page: u32,
+    /// Light beyond what a byte holds is wanted as it is: a Radiance
+    /// picture decodes to RGBE pixels. What a 3D texture asks for; an
+    /// item, which shows sRGB, does not take such a picture.
+    pub hdr: bool,
 }
 
 impl Request {
@@ -405,6 +409,19 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
         });
     }
     within_budget(url, bytes, request)?;
+    if request.hdr && super::radiance::is_radiance(bytes) {
+        let p = super::radiance::decode(bytes, MOST_PIXEL_BYTES)
+            .map_err(|reason| LoadError::decode(url, reason))?;
+        let image = ImageHandle::from_rgbe(p.width, p.height, p.data)
+            .map_err(|err| LoadError::decode(url, err.to_string()))?;
+        return Ok(Loaded {
+            natural: (image.width(), image.height()),
+            image,
+            vector: false,
+            frames: None,
+            pages: 1,
+        });
+    }
     if request.animated && bytes.starts_with(GIF) {
         let (width, height, frames) =
             decode_gif(bytes, true).map_err(|reason| LoadError::decode(url, reason))?;
@@ -1707,7 +1724,24 @@ mod tests {
             animated: false,
             limit: 0,
             page: 0,
+            hdr: false,
         }
+    }
+
+    #[test]
+    fn a_radiance_picture_decodes_only_for_a_request_of_light() {
+        let mut hdr = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n".to_vec();
+        hdr.extend([128, 64, 0, 129, 128, 64, 0, 129]);
+        let light = Request {
+            hdr: true,
+            ..Request::default()
+        };
+        let loaded = load_bytes("sky.hdr", &hdr, light).unwrap();
+        assert_eq!(loaded.image.encoding(), ljos_render::ImageEncoding::Rgbe);
+        assert_eq!(loaded.natural, (2, 1));
+        assert_eq!(loaded.image.data(), [128, 64, 0, 129, 128, 64, 0, 129]);
+        // An item shows sRGB: to it the file is no picture it can read.
+        assert!(load_bytes("sky.hdr", &hdr, Request::default()).is_err());
     }
 
     /// A PDF document with a page of each size in points, each filled red
