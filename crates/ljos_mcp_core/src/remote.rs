@@ -13,7 +13,8 @@ mod client;
 mod token;
 mod wire;
 
-pub use client::{BlockingClient, Client, Image, PATIENCE, ToolError, ToolResult};
+pub use crate::protocol::{Image, ToolResult};
+pub use client::{BlockingClient, Client, PATIENCE, ToolError};
 pub use token::{
     MAX_TOKEN_FILE, Target, TokenError, Trust, find_token_file, read_token_file, token_file_of,
     wait_for_token, wait_for_token_blocking,

@@ -9,13 +9,18 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-default = []
+default = ["server"]
+# `rmcp` and `tokio`: the glue that serves or calls a surface. Without it the
+# crate is the protocol alone (`protocol`, the tool descriptions), for a program
+# with a transport of its own, and builds for wasm32-unknown-unknown.
+server = ["dep:rmcp", "dep:tokio"]
 # The engine-neutral half of the live inspector (§19.4): the snapshot
 # outline, the ref table and locators.
 inspect = ["dep:regex"]
 # Streamable HTTP on loopback or a 0600 Unix socket, behind a bearer token
 # (§19.7). Only the inspector listens; the authoring server is stdio.
 http = [
+    "server",
     "rmcp/transport-streamable-http-server",
     "tokio/net",
     "tokio/rt",
@@ -32,19 +37,19 @@ http = [
 ]
 # A client in the same process, for tests and for hosts that drive a
 # surface themselves (§19.2: "host the inspector in-process").
-client = ["rmcp/client", "tokio/rt"]
+client = ["server", "rmcp/client", "tokio/rt"]
 # A client of an inspector in another process, through its token file
 # (§19.7): what `ljos observe` and `ljos attach` use, and any program that
 # drives a running application.
 remote = ["http", "hyper/client", "tokio/time", "tokio/sync"]
 
 [dependencies]
-rmcp = { workspace = true, features = ["server", "transport-io"] }
+rmcp = { workspace = true, features = ["server", "transport-io"], optional = true }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true }
+tokio = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 # Only the `http` feature needs these.
 hyper = { workspace = true, features = ["server", "http1"], optional = true }

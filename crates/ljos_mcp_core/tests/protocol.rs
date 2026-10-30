@@ -1,5 +1,6 @@
 //! In-process protocol test: an rmcp client talks to a tiny surface over a
 //! duplex pipe, so the glue, capability gate and size cap run end to end.
+#![cfg(feature = "server")]
 
 use std::sync::Arc;
 

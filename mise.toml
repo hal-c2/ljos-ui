@@ -1,6 +1,6 @@
 # Tooling for Ljós. `mise install` installs it; tasks live in mise-tasks/.
 [tools]
-rust = { version = "1.98.1", components = "rustfmt,clippy" }
+rust = { version = "1.98.1", components = "rustfmt,clippy", targets = "wasm32-unknown-unknown" }
 
 [env]
 CARGO_TERM_COLOR = "always"

@@ -3,3 +3,12 @@
 set -euo pipefail
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+# The protocol half of ljos_mcp_core stays free of rmcp and tokio, and so builds
+# for the web without tokio's unstable cfg. Neither builds there otherwise.
+if cargo tree -p ljos_mcp_core --no-default-features --features inspect -e normal \
+    --target wasm32-unknown-unknown | grep -E '\b(rmcp|tokio) '; then
+    echo "ljos_mcp_core without its default features links rmcp or tokio" >&2
+    exit 1
+fi
+cargo check -p ljos_mcp_core --no-default-features --target wasm32-unknown-unknown
+cargo check -p ljos_mcp_core --no-default-features --features inspect --target wasm32-unknown-unknown

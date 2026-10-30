@@ -3,6 +3,11 @@
 //! Everything a server implements is expressed against [`McpSurface`] and the
 //! SDK-neutral types in this crate. Only [`glue`] names `rmcp`, so swapping the
 //! SDK or absorbing a breaking release touches one file. No egui, no engine.
+//!
+//! The feature `server` (on by default) brings `rmcp` and `tokio`, and [`glue`]
+//! with them. Without it the crate is the protocol alone: requests and answers
+//! ([`protocol`]), the tool descriptions and capabilities, and it builds for
+//! `wasm32-unknown-unknown`.
 
 #[cfg(feature = "http")]
 mod alive;
@@ -10,9 +15,11 @@ mod alive;
 mod auth;
 mod caps;
 mod error;
+#[cfg(feature = "server")]
 pub mod glue;
 #[cfg(feature = "inspect")]
 mod locator;
+pub mod protocol;
 #[cfg(feature = "inspect")]
 mod refs;
 mod registry;
@@ -29,8 +36,10 @@ mod surface;
 pub use alive::{effective_uid, process_alive};
 #[cfg(feature = "http")]
 pub use auth::{
-    CALLS_PER_SECOND, DEFAULT_CALLS_PER_SECOND, RateError, RateLimit, Token, TokenFile,
-    TokenFileError, address_host, check_calls_per_second, loopback_host, loopback_origin,
+    RateLimit, Token, TokenFile, TokenFileError, address_host, loopback_host, loopback_origin,
+};
+pub use protocol::{
+    CALLS_PER_SECOND, DEFAULT_CALLS_PER_SECOND, RateError, check_calls_per_second,
     parse_calls_per_second,
 };
 

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::CapSet;
+use crate::protocol::TokenFileBody;
 
 /// A 256-bit bearer token.
 #[derive(Clone, PartialEq, Eq)]
@@ -214,15 +215,14 @@ impl TokenFile {
             // even for the moment before a `chmod`.
             options.mode(0o600);
         }
-        let body = serde_json::json!({
-            "url": url,
-            "token": token.as_str(),
-            "pid": std::process::id(),
-            "capabilities": caps,
-            "calls_per_second": calls_per_second,
-        });
-        let mut text = serde_json::to_string_pretty(&body).unwrap_or_default();
-        text.push('\n');
+        let text = TokenFileBody {
+            url: url.to_owned(),
+            token: token.as_str().to_owned(),
+            pid: Some(std::process::id()),
+            capabilities: caps,
+            calls_per_second: Some(calls_per_second),
+        }
+        .to_text();
         let written = options
             .open(&staged)
             .and_then(|mut file| file.write_all(text.as_bytes()))
@@ -337,52 +337,6 @@ pub fn loopback_origin(header: &str) -> bool {
     authority(rest).is_some_and(|(host, _)| is_loopback_name(host))
 }
 
-/// The calls a second a token is answered when its launcher says nothing
-/// (§19.7).
-pub const DEFAULT_CALLS_PER_SECOND: u32 = 20;
-
-/// The calls a second a launcher may grant. At least one, or nothing is
-/// answered at all. At most 1000: a program driving its child as a person
-/// works makes a few calls a gesture, which a few hundred cover with room
-/// to spare, and the limit keeps one call's mark per call in its window,
-/// so 1000 is still a few kilobytes. Past that it is no longer a bound.
-pub const CALLS_PER_SECOND: std::ops::RangeInclusive<u32> = 1..=1000;
-
-/// A rate outside [`CALLS_PER_SECOND`].
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "{given:?} is not a rate the inspector answers at: give the calls a second as a whole \
-     number from {} to {}",
-    CALLS_PER_SECOND.start(),
-    CALLS_PER_SECOND.end()
-)]
-pub struct RateError {
-    pub given: String,
-}
-
-/// `text` as calls a second, when it is a whole number in
-/// [`CALLS_PER_SECOND`].
-pub fn parse_calls_per_second(text: &str) -> Result<u32, RateError> {
-    text.trim()
-        .parse::<u32>()
-        .ok()
-        .and_then(|n| check_calls_per_second(n).ok())
-        .ok_or_else(|| RateError {
-            given: text.to_owned(),
-        })
-}
-
-/// `n` when it is in [`CALLS_PER_SECOND`].
-pub fn check_calls_per_second(n: u32) -> Result<u32, RateError> {
-    if CALLS_PER_SECOND.contains(&n) {
-        Ok(n)
-    } else {
-        Err(RateError {
-            given: n.to_string(),
-        })
-    }
-}
-
 /// At most `max` calls in any `window`.
 #[derive(Debug)]
 pub struct RateLimit {
@@ -425,6 +379,7 @@ impl RateLimit {
 mod tests {
     use super::*;
     use crate::Cap;
+    use crate::{DEFAULT_CALLS_PER_SECOND, check_calls_per_second, parse_calls_per_second};
 
     #[test]
     fn a_server_beyond_this_machine_answers_to_an_address_and_not_to_a_name() {

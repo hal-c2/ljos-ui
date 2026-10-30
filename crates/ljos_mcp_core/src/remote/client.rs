@@ -12,77 +12,13 @@ use serde_json::{Value as Json, json};
 use super::token::{Target, TokenError, Trust, read_token_file, token_file_of};
 use super::wire::{self, Answer};
 use crate::ErrorCode;
+use crate::protocol::{self, BadImage, Refusal, ToolResult};
 
 /// How long a call may take beyond the wait it asks for.
 pub const PATIENCE: Duration = Duration::from_secs(30);
 
 /// The longest wait a call may ask for: `app_watch`'s own limit.
 const LONGEST_WAIT: Duration = Duration::from_secs(3600);
-
-/// The protocol revision this client speaks; the inspector answers with
-/// the one it will.
-const PROTOCOL: &str = "2025-06-18";
-
-/// A picture a tool answered with, as it came: its MIME type and its
-/// bytes, decoded from the base64 the protocol carries them in.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Image {
-    pub mime: String,
-    pub data: Vec<u8>,
-}
-
-impl std::fmt::Debug for Image {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The bytes of a screenshot would drown any log.
-        f.debug_struct("Image")
-            .field("mime", &self.mime)
-            .field("bytes", &self.data.len())
-            .finish()
-    }
-}
-
-/// A tool's whole answer: what a model reads, the pictures, and the
-/// structured value beside them, as the inspector gave them.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ToolResult {
-    /// `structuredContent`; `Null` when the tool gave none.
-    pub structured: Json,
-    /// The text blocks, one line apart; `None` when there were none.
-    pub text: Option<String>,
-    pub images: Vec<Image>,
-}
-
-impl ToolResult {
-    fn of(result: &Json) -> Result<ToolResult, ToolError> {
-        let mut texts = Vec::new();
-        let mut images = Vec::new();
-        for block in result["content"].as_array().into_iter().flatten() {
-            match block["type"].as_str() {
-                Some("text") => texts.push(block["text"].as_str().unwrap_or("")),
-                Some("image") => {
-                    let mime = block["mimeType"].as_str().unwrap_or("").to_owned();
-                    let data = block["data"]
-                        .as_str()
-                        .and_then(crate::base64_decode)
-                        .ok_or_else(|| {
-                            ToolError::BadAnswer(format!("an image ({mime}) that is not base64"))
-                        })?;
-                    images.push(Image { mime, data });
-                }
-                // Audio and resources are kept in the result, not read here.
-                _ => {}
-            }
-        }
-        Ok(ToolResult {
-            structured: result
-                .get("structuredContent")
-                .cloned()
-                .unwrap_or(Json::Null),
-            text: (!texts.is_empty()).then(|| texts.join("\n")),
-            images,
-        })
-    }
-}
 
 /// Why a call gave no result.
 #[derive(Debug, thiserror::Error)]
@@ -148,22 +84,11 @@ impl ToolError {
             _ => None,
         }
     }
+}
 
-    fn of_refusal(result: &Json) -> ToolError {
-        let parsed = ToolResult::of(result);
-        let error = &result["structuredContent"]["error"];
-        let message = error["message"].as_str().map(str::to_owned);
-        match parsed {
-            Ok(parsed) => ToolError::Tool {
-                code: error["code"].as_str().map(str::to_owned),
-                message: message
-                    .or_else(|| parsed.text.clone())
-                    .unwrap_or_else(|| "refused".to_owned()),
-                details: error.get("details").cloned(),
-                result: Box::new(parsed),
-            },
-            Err(bad) => bad,
-        }
+impl From<BadImage> for ToolError {
+    fn from(bad: BadImage) -> ToolError {
+        ToolError::BadAnswer(bad.to_string())
     }
 }
 
@@ -253,11 +178,7 @@ impl Client {
     pub async fn initialize(&self) -> Result<&Json, ToolError> {
         self.server
             .get_or_try_init(|| async {
-                let params = json!({
-                    "protocolVersion": PROTOCOL,
-                    "capabilities": {},
-                    "clientInfo": { "name": &self.name, "version": &self.version },
-                });
+                let params = protocol::initialize_params(&self.name, &self.version);
                 let server = self.request("initialize", params, PATIENCE).await?;
                 self.notify("notifications/initialized").await?;
                 Ok(server)
@@ -273,12 +194,18 @@ impl Client {
             .as_u64()
             .map_or(Duration::ZERO, Duration::from_millis)
             .min(LONGEST_WAIT);
-        let params = json!({ "name": name, "arguments": args });
+        let params = protocol::tool_call_params(name, &args);
         let result = self.request("tools/call", params, wait + PATIENCE).await?;
         if result["isError"] == json!(true) {
-            return Err(ToolError::of_refusal(&result));
+            let refusal = Refusal::of(&result)?;
+            return Err(ToolError::Tool {
+                code: refusal.code,
+                message: refusal.message,
+                details: refusal.details,
+                result: Box::new(refusal.result),
+            });
         }
-        ToolResult::of(&result)
+        Ok(ToolResult::of(&result)?)
     }
 
     /// Every tool the inspector offers this client, as `tools/list` gives
@@ -288,10 +215,7 @@ impl Client {
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
-            let params = match &cursor {
-                Some(cursor) => json!({ "cursor": cursor }),
-                None => json!({}),
-            };
+            let params = protocol::tool_list_params(cursor.as_deref());
             let page = self.request("tools/list", params, PATIENCE).await?;
             tools.extend(page["tools"].as_array().into_iter().flatten().cloned());
             match page["nextCursor"].as_str() {
@@ -310,7 +234,7 @@ impl Client {
         limit: Duration,
     ) -> Result<Json, ToolError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let body = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+        let body = protocol::request(id, method, &params);
         let answer = wire::post(&self.target()?, body.to_string(), limit).await?;
         let mut reply = read_reply(&answer, id)?;
         if let Some(error) = reply.get_mut("error") {
@@ -329,7 +253,7 @@ impl Client {
     }
 
     async fn notify(&self, method: &str) -> Result<(), ToolError> {
-        let body = json!({ "jsonrpc": "2.0", "method": method });
+        let body = protocol::notification(method);
         let answer = wire::post(&self.target()?, body.to_string(), PATIENCE).await?;
         status(&answer)
     }

@@ -4,9 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use serde_json::Value as Json;
-
 use crate::TokenFile;
+use crate::protocol::{TokenFileBody, TokenFormatError};
 
 /// What a token file says of the inspector that wrote it.
 #[derive(Debug, Clone)]
@@ -138,38 +137,24 @@ fn shown(path: &Path) -> PathBuf {
 
 pub fn read_token_file(path: &Path, trust: Trust) -> Result<Target> {
     let text = read_bounded(path, trust)?;
-    let body: Json = serde_json::from_str(&text).map_err(|error| TokenError::NotJson {
-        path: shown(path),
-        error,
+    let body = TokenFileBody::parse(&text).map_err(|why| {
+        let path = shown(path);
+        match why {
+            TokenFormatError::NotJson(error) => TokenError::NotJson { path, error },
+            TokenFormatError::Missing(field) => TokenError::Missing { path, field },
+            TokenFormatError::NotAToken => TokenError::NotAToken { path },
+            TokenFormatError::BadRate => TokenError::BadRate { path },
+        }
     })?;
-    let field = |field: &'static str| {
-        body[field]
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| TokenError::Missing {
-                path: shown(path),
-                field,
-            })
-    };
-    let url = field("url")?;
+    let TokenFileBody {
+        url,
+        token,
+        pid,
+        calls_per_second,
+        ..
+    } = body;
     // Said now rather than as a connection that fails on every call.
     let address = Address::of(&url)?;
-    let token = field("token")?;
-    // An inspector's token is 256 random bits in hex; anything else was
-    // not written by one.
-    if token.len() != 64 || !token.bytes().all(|c| c.is_ascii_hexdigit()) {
-        return Err(TokenError::NotAToken { path: shown(path) });
-    }
-    let pid = body["pid"].as_u64().and_then(|p| u32::try_from(p).ok());
-    let calls_per_second = match &body["calls_per_second"] {
-        Json::Null => None,
-        rate => Some(
-            rate.as_u64()
-                .and_then(|n| u32::try_from(n).ok())
-                .and_then(|n| crate::check_calls_per_second(n).ok())
-                .ok_or_else(|| TokenError::BadRate { path: shown(path) })?,
-        ),
-    };
     if !trust.named {
         let named = pid_in_name(path);
         if pid.is_none() || pid != named {
@@ -493,6 +478,7 @@ impl Address {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value as Json;
     use serde_json::json;
 
     pub(crate) const TOKEN: &str =
