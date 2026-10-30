@@ -146,7 +146,7 @@ matches its block's, and a mismatch is a lint.
 - **Theme tokens** are `Ljos.Design` (`Colors`, `Spacing`, `Typography`,
   `Motion`). A theme file (`theme.json`: roles to values, light and dark)
   overrides them live; on a bad file the last good one stays, as section
-  12.1 asks. Theme files become watched files (they are not yet).
+  12.1 asks. The file is watched; section 12.1 gives its format.
 - **Plugins** contribute through `Contribution` under their own `ProcId`
   with `PluginSup` (section 16): a failing plugin's contributions are
   removed and its slot shows its default, nothing else changes.

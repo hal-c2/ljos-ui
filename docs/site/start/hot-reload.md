@@ -31,6 +31,20 @@ ljos run --watch --alias App.Media=mocks/Media Main.qml
 
 `--alias MODULE=DIR` (repeatable) imports `MODULE` from `DIR` rather than from the module's own directory, for example a stand-in that answers as the real module would. The directory must describe the module in a `qmldir` or `CMakeLists.txt`; otherwise Ljós refuses it and names both. Its files are watched like the project's. While the application runs, an agent can switch with `app_alias` (`{"module": "App.Media", "dir": "mocks/Media"}`, or `"dir": null` to go back); the switch reloads, the objects made from the module are made anew and the rest of the state is kept. `app_status` lists the aliases in force under `/reload/aliases`.
 
+## A theme file
+
+A `theme.json` beside the entry sets the roles of `Ljos.Design` without a change to the QML; `--theme FILE` names another file:
+
+```json
+{
+  "Colors": { "accent": { "light": "#6a1b9a", "dark": "#9c4dc4" } },
+  "Spacing": { "md": 20 },
+  "Typography": { "bodySize": 15 }
+}
+```
+
+A colour is one string for light and dark, or an object with any of `light`, `dark`, `lightHigh` and `darkHigh`; a variant it leaves out is the module's own. Under `--watch` an edit of the file sets the roles again and makes nothing again, so the application keeps its state. A file that cannot be read, names a role the module does not have, or makes text too faint to read (below WCAG's 4.5:1) is refused with its file and line, and the theme before stays. Removing the file gives the module's own values back. The roles and their values are listed in ARCHITECTURE.md section 12.1.
+
 ## How objects are matched across a save
 
 Ljós identifies each object across a reload by its `ObjectKey` (`(ComponentId, key)`), choosing the key in this priority order:
