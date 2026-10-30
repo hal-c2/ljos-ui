@@ -59,6 +59,8 @@ pub(crate) fn slots(material: &Material) -> [Option<(&Texture, bool)>; MAPS] {
             out[OCCLUSION] = maps.occlusion.as_ref().map(|t| (t, false));
             out[OPACITY] = maps.opacity.as_ref().map(|t| (t, false));
         }
+        // A custom material's textures are its own samplers, bound apart.
+        Material::Custom(_) => {}
     }
     out
 }

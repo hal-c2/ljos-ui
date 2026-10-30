@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use slotmap::{SlotMap, new_key_type};
 
+use crate::custom::{AmbientOcclusion, CustomMaterial, Effect, PostProcess};
 use crate::geometry::CustomGeometry;
 use crate::instancing::{Instancing, Skin};
 use crate::math::{Mat4, Quat, Vec3};
@@ -289,6 +290,8 @@ impl Default for PrincipledMaterial {
 pub enum Material {
     Default(DefaultMaterial),
     Principled(PrincipledMaterial),
+    /// An author's shader snippets (`CustomMaterial`).
+    Custom(CustomMaterial),
 }
 
 impl Material {
@@ -296,6 +299,7 @@ impl Material {
         match self {
             Material::Default(m) => m.cull_mode,
             Material::Principled(m) => m.cull_mode,
+            Material::Custom(m) => m.cull_mode,
         }
     }
 
@@ -304,6 +308,8 @@ impl Material {
         match self {
             Material::Default(m) => m.diffuse_color.a,
             Material::Principled(m) => m.base_color.a * m.opacity,
+            // What the snippet writes is not known here.
+            Material::Custom(_) => 1.0,
         }
     }
 
@@ -322,6 +328,7 @@ impl Material {
                 AlphaMode::Blend => true,
                 AlphaMode::Opaque | AlphaMode::Mask => false,
             },
+            Material::Custom(m) => m.blends(),
         }
     }
 }
@@ -711,6 +718,20 @@ pub struct Environment {
     /// The light that maps to white under the filmic curves (ACES,
     /// Hejl-Dawson, filmic).
     pub white_point: f32,
+    /// `effects`, run over the picture in their order.
+    pub effects: Vec<Effect>,
+    /// ExtendedSceneEnvironment's built-in post-processing.
+    pub post: PostProcess,
+    /// `None` while its strength or distance is 0.
+    pub ambient_occlusion: Option<AmbientOcclusion>,
+}
+
+impl Environment {
+    /// Whether the picture is drawn in high dynamic range and finished by
+    /// passes over it, rather than tone mapped as it is drawn.
+    pub fn post_processed(&self) -> bool {
+        !self.effects.is_empty() || self.post.on || self.ambient_occlusion.is_some()
+    }
 }
 
 impl Default for Environment {
@@ -722,6 +743,9 @@ impl Default for Environment {
             tonemap: Tonemap::Linear,
             exposure: 1.0,
             white_point: 1.0,
+            effects: Vec::new(),
+            post: PostProcess::default(),
+            ambient_occlusion: None,
         }
     }
 }

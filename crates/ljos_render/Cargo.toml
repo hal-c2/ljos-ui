@@ -17,8 +17,9 @@ b0 = ["dep:egui", "dep:lyon_tessellation"]
 threads = ["vello_cpu/multithreading"]
 # A 3D view drawn where no painter draws it (R, B0 for a painter without
 # 3D) is a picture `ljos_3d` draws off-screen and reads back. The crate
-# itself names no wgpu: `ljos_3d` does.
-offscreen3d = ["ljos_3d/gpu"]
+# itself names no wgpu: `ljos_3d` does. Snippets come with it, as a
+# CustomMaterial or an Effect is drawn only by the renderer.
+offscreen3d = ["ljos_3d/gpu", "ljos_3d/snippets"]
 # glTF files read into a 3D scene (QtQuick3D's RuntimeLoader).
 gltf = ["ljos_3d/gltf"]
 

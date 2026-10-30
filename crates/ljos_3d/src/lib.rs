@@ -6,6 +6,7 @@
 //! a browser's behind a `<canvas>` on the web. Without the `gpu` feature
 //! the crate is the scene alone and links no wgpu.
 
+pub mod custom;
 pub mod geometry;
 #[cfg(feature = "gltf")]
 pub mod gltf;
@@ -14,6 +15,8 @@ pub mod math;
 pub mod mesh;
 pub mod pick;
 pub mod scene;
+#[cfg(feature = "snippets")]
+pub mod snippet;
 pub mod texture;
 
 #[cfg(feature = "gpu")]
@@ -33,6 +36,11 @@ pub mod surface;
 #[cfg(feature = "gpu")]
 mod timing;
 
+pub use custom::{
+    Adjustments, AmbientOcclusion, Blend, BufferFormat, CustomMaterial, DepthDraw, DepthOfField,
+    Effect, EffectBuffer, Glow, GlowBlend, Lut, Pass, PassTexture, PostProcess, Program,
+    ProgramKind, UniformKind, UniformValue, Vignette,
+};
 pub use geometry::{
     Attribute, ComponentType, CustomGeometry, GeometryError, PrimitiveType, Semantic,
 };

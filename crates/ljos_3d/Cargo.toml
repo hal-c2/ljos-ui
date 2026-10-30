@@ -17,6 +17,9 @@ gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 # images decoded to plain pixels (`gltf`). No GPU state: binding textures
 # is the renderer's business.
 gltf = ["dep:gltf", "dep:png", "dep:zune-jpeg"]
+# CustomMaterial's and Effect's GLSL snippets translated into the
+# renderer's WGSL (`snippet`), with the naga wgpu already links.
+snippets = ["dep:naga"]
 
 [dependencies]
 slotmap.workspace = true
@@ -25,6 +28,7 @@ bytemuck = { workspace = true, optional = true }
 gltf = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
 zune-jpeg = { workspace = true, optional = true }
+naga = { workspace = true, optional = true, features = ["wgsl-out"] }
 
 # Native: the backends egui-wgpu's default build has, so the two agree on
 # one device. The web: WebGPU, and WebGL2 where a browser has no WebGPU.
@@ -38,7 +42,7 @@ wgpu = { workspace = true, optional = true, features = ["webgpu", "webgl"] }
 [dev-dependencies]
 png.workspace = true
 # To check the shaders translate to WebGL2's GLSL ES 3.00 without a browser.
-naga.workspace = true
+naga = { workspace = true, features = ["wgsl-out"] }
 
 [lints]
 workspace = true

@@ -801,6 +801,8 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
                 0.0,
             ];
         }
+        // Its snippets read only the matrices and whether it takes shadows.
+        Material::Custom(_) => u.base = [1.0; 4],
     }
     u
 }
