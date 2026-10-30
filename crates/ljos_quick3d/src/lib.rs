@@ -67,6 +67,16 @@
 //! `Node.pivot` and `Node.opacity` are kept but do not change the drawing
 //! yet.
 //!
+//! `CustomMaterial` (unshaded and shaded, with light processors and
+//! `TextureInput` samplers) and `SceneEnvironment.effects` (`Effect`,
+//! `Pass`, `Shader`, `Buffer`, `BufferInput` and `SetUniformValue`) run
+//! the author's GLSL snippets, translated to WGSL when first drawn; the
+//! snippet files are read at that point, so only local and resource
+//! files are read. `SceneEnvironment.ao*` draws screen-space ambient
+//! occlusion. `QtQuick3D.Helpers` has `ExtendedSceneEnvironment`, with
+//! exposure, white point, glow, depth of field, colour adjustments, a
+//! vignette, a look-up table, FXAA and dithering.
+//!
 //! A `Texture` reads its picture through the image cache the first time a
 //! view draws it: a small local picture at once, others in the background,
 //! the views that wanted it painted again when it arrives.
@@ -77,6 +87,8 @@
 //! numbers. They are numbered here in the order the documentation lists
 //! them, from 0, and checked against Qt once qml6 has QtQuick3D.
 
+mod custom;
+mod helpers;
 mod instancing;
 mod items;
 mod node;
@@ -93,6 +105,11 @@ mod view;
 #[cfg(test)]
 mod tests;
 
+pub use custom::{
+    Buffer, BufferInput, Command, CustomMaterial, Effect, Pass, SetUniformValue, Shader,
+    TextureInput,
+};
+pub use helpers::ExtendedSceneEnvironment;
 pub use instancing::{FileInstancing, InstanceList, InstanceListEntry, Instancing};
 pub use ljos::item::ljos_3d::{ComponentType, PrimitiveType, Semantic, math::Vec3};
 pub use node::{
@@ -128,7 +145,16 @@ pub fn register(engine: &Engine) {
         Material,
         DefaultMaterial,
         PrincipledMaterial,
+        CustomMaterial,
+        TextureInput,
         SceneEnvironment,
+        Effect,
+        Pass,
+        Shader,
+        Buffer,
+        Command,
+        BufferInput,
+        SetUniformValue,
         Texture,
         View3D,
         PickResult,
@@ -143,12 +169,7 @@ pub fn register(engine: &Engine) {
         Joint,
         item::QuaternionAnimation,
     ]));
-    // Only the random table of the helpers is built; the module's other
-    // types still stand in as empty Items.
-    engine.register_module(ljos::module!("QtQuick3D.Helpers" 6.0 => [
-        InstanceRange,
-        RandomInstancing,
-    ]));
+    helpers::register(engine);
     item::register_paint_item::<View3D>(engine, view::read);
     item::register_pointer_portal::<View3D>(engine, pick::item_under);
 }

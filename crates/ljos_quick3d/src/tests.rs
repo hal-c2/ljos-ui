@@ -642,3 +642,30 @@ fn the_shadow_properties_start_from_the_documented_values() {
         Some(0.05)
     );
 }
+
+// A string is not a uniform: a snippet has no string type to read it as.
+#[test]
+fn a_custom_material_s_own_properties_are_its_uniforms() {
+    let (e, view) = load(
+        r##"
+View3D {
+    property QtObject m_: m
+    Model { source: "#Rectangle"
+        materials: CustomMaterial { id: m
+            property color tint: "red"; property real level: 0.5; property string note: ""
+            property TextureInput picture: TextureInput {}
+        }
+    }
+}
+"##,
+    );
+    let m = named(&e, view, "m_");
+    assert_eq!(e.read_by_name(m, "shadingMode").to_number(), 1.0);
+    let names: Vec<String> = custom::inputs(&e, m, CustomMaterial::PROPERTY_COUNT)
+        .iter()
+        .map(|i| match i {
+            custom::Input::Uniform(n, ..) | custom::Input::Texture(n, _) => n.clone(),
+        })
+        .collect();
+    assert_eq!(names, ["tint", "level", "picture"]);
+}

@@ -3,19 +3,21 @@
 use std::collections::HashMap;
 
 use ljos::item::{self, ljos_3d};
+use ljos::ljos_engine::Provenance;
 use ljos::prelude::*;
 use ljos_3d::{
-    AlphaMode, Background, Channel, CullMode, Environment, Fade, LightProbe, Lighting, MeshSource,
-    NodeId, NodeKind, Primitive, PrincipledMaps, Scene, Tonemap, Transform,
+    Adjustments, AlphaMode, AmbientOcclusion, Background, Channel, CullMode, DepthOfField,
+    Environment, Fade, Glow, GlowBlend, LightProbe, Lighting, Lut, MeshSource, NodeId, NodeKind,
+    PostProcess, Primitive, PrincipledMaps, Scene, Tonemap, Transform, Vignette,
 };
 
 use crate::node::{self, alpha, antialiasing, background, channel, cull, lighting, tonemap};
-use crate::texture;
 use crate::{
     Camera, DefaultMaterial, DirectionalLight, Geometry, Light, Material, Model, Node, Object3D,
     OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
     SpotLight, View3D,
 };
+use crate::{CustomMaterial, ExtendedSceneEnvironment, custom, texture};
 
 /// The scene of the view `view`, read now. Tracked.
 pub(crate) fn build(e: &Engine, view: ObjectId) -> Scene {
@@ -314,11 +316,14 @@ fn model(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d::Model> {
         }
     };
     // A built-in mesh has one part, drawn with the first material.
-    let material = list(e, obj, Model::MATERIALS.index)
-        .into_iter()
-        .next()
-        .and_then(|m| material(e, view, m))
-        .unwrap_or_default();
+    let first = list(e, obj, Model::MATERIALS.index).into_iter().next();
+    let material = match first {
+        // Snippets that make no program leave the model out, as Qt does.
+        Some(m) if e.is::<CustomMaterial>(m) => {
+            ljos_3d::Material::Custom(custom::material(e, view, m)?)
+        }
+        _ => first.and_then(|m| material(e, view, m)).unwrap_or_default(),
+    };
     Some(ljos_3d::Model { mesh, material })
 }
 
@@ -434,18 +439,92 @@ fn environment(e: &Engine, view: ObjectId, env: ObjectId) -> Environment {
         // TonemapModeCustom is not built.
         _ => Tonemap::Linear,
     };
-    // Exposure and the white point are ExtendedSceneEnvironment's, which
-    // is not built: the documentation's 1 and 1.
-    Environment {
+    // An effect whose snippets make no program is left out; the others
+    // still run.
+    let effects = list(e, env, SceneEnvironment::EFFECTS.index)
+        .into_iter()
+        .filter_map(|fx| custom::effect(e, view, fx))
+        .collect();
+    let num = |p: Prop<f64>| item::prop(e, env, p) as f32;
+    // Code written before `aoEnabled` sets only the strength; once given,
+    // `aoEnabled` decides.
+    let ao_on = item::prop(e, env, SceneEnvironment::AO_ENABLED)
+        || !matches!(
+            e.provenance(env, SceneEnvironment::AO_ENABLED.index),
+            Some(Provenance::Assigned | Provenance::Bound)
+        );
+    let ambient_occlusion = Some(AmbientOcclusion {
+        strength: num(SceneEnvironment::AO_STRENGTH).clamp(0.0, 100.0),
+        distance: num(SceneEnvironment::AO_DISTANCE),
+        softness: num(SceneEnvironment::AO_SOFTNESS).clamp(0.0, 50.0),
+        sample_rate: item::prop(e, env, SceneEnvironment::AO_SAMPLE_RATE).clamp(2, 4) as u32,
+        bias: num(SceneEnvironment::AO_BIAS),
+        dither: item::prop(e, env, SceneEnvironment::AO_DITHER),
+    })
+    .filter(|ao| ao_on && ao.shows());
+    let mut environment = Environment {
         background,
         msaa_samples,
         light_probe,
         tonemap,
+        effects,
+        ambient_occlusion,
         ..Environment::default()
+    };
+    if e.is::<ExtendedSceneEnvironment>(env) {
+        extended(e, view, env, &mut environment);
     }
+    environment
 }
 
-fn color(c: Color) -> ljos_3d::Color {
+/// ExtendedSceneEnvironment's exposure, white point and built-in effects.
+fn extended(e: &Engine, view: ObjectId, env: ObjectId, out: &mut Environment) {
+    type X = ExtendedSceneEnvironment;
+    let num = |p: Prop<f64>| item::prop(e, env, p) as f32;
+    let on = |p: Prop<bool>| item::prop(e, env, p);
+    out.exposure = num(X::EXPOSURE);
+    out.white_point = num(X::WHITE_POINT);
+    let vignette_color = color(item::prop(e, env, X::VIGNETTE_COLOR)).to_linear();
+    out.post = PostProcess {
+        on: true,
+        glow: on(X::GLOW_ENABLED).then(|| Glow {
+            strength: num(X::GLOW_STRENGTH),
+            intensity: num(X::GLOW_INTENSITY),
+            bloom: num(X::GLOW_BLOOM),
+            hdr_minimum: num(X::GLOW_HDR_MINIMUM_VALUE),
+            hdr_maximum: num(X::GLOW_HDR_MAXIMUM_VALUE),
+            hdr_scale: num(X::GLOW_HDR_SCALE),
+            levels: item::prop(e, env, X::GLOW_LEVEL).clamp(0, 127) as u32,
+            blend: GlowBlend::from_index(i64::from(item::prop(e, env, X::GLOW_BLEND_MODE))),
+            quality_high: on(X::GLOW_QUALITY_HIGH),
+        }),
+        depth_of_field: on(X::DEPTH_OF_FIELD_ENABLED).then(|| DepthOfField {
+            focus_distance: num(X::DEPTH_OF_FIELD_FOCUS_DISTANCE),
+            focus_range: num(X::DEPTH_OF_FIELD_FOCUS_RANGE),
+            blur_amount: num(X::DEPTH_OF_FIELD_BLUR_AMOUNT),
+        }),
+        adjustments: on(X::COLOR_ADJUSTMENTS_ENABLED).then(|| Adjustments {
+            brightness: num(X::ADJUSTMENT_BRIGHTNESS),
+            contrast: num(X::ADJUSTMENT_CONTRAST),
+            saturation: num(X::ADJUSTMENT_SATURATION),
+        }),
+        vignette: on(X::VIGNETTE_ENABLED).then(|| Vignette {
+            color: [vignette_color[0], vignette_color[1], vignette_color[2]],
+            radius: num(X::VIGNETTE_RADIUS),
+            strength: num(X::VIGNETTE_STRENGTH),
+        }),
+        lut: on(X::LUT_ENABLED).then(|| Lut {
+            texture: item::prop(e, env, X::LUT_TEXTURE).and_then(|t| texture::read(e, view, t)),
+            size: num(X::LUT_SIZE),
+            alpha: num(X::LUT_FILTER_ALPHA),
+        }),
+        fxaa: on(X::FXAA_ENABLED),
+        dithering: on(X::DITHERING_ENABLED),
+        sharpness: num(X::SHARPNESS_AMOUNT).clamp(0.0, 1.0),
+    };
+}
+
+pub(crate) fn color(c: Color) -> ljos_3d::Color {
     let [r, g, b, a] = c.to_rgba_f();
     ljos_3d::Color {
         r: r as f32,

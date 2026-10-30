@@ -654,6 +654,13 @@ pub(crate) mod cull {
     pub const NONE: i32 = 2;
 }
 
+pub(crate) mod depth_draw {
+    pub const OPAQUE_ONLY: i32 = 0;
+    pub const ALWAYS: i32 = 1;
+    pub const NEVER: i32 = 2;
+    pub const OPAQUE_PRE_PASS: i32 = 3;
+}
+
 pub(crate) mod channel {
     pub const R: i32 = 0;
     pub const G: i32 = 1;
@@ -669,6 +676,18 @@ fn material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
                 ("BackFaceCulling", i64::from(cull::BACK)),
                 ("FrontFaceCulling", i64::from(cull::FRONT)),
                 ("NoCulling", i64::from(cull::NONE)),
+            ],
+        ),
+        (
+            "DepthDrawMode",
+            vec![
+                ("OpaqueOnlyDepthDraw", i64::from(depth_draw::OPAQUE_ONLY)),
+                ("AlwaysDepthDraw", i64::from(depth_draw::ALWAYS)),
+                ("NeverDepthDraw", i64::from(depth_draw::NEVER)),
+                (
+                    "OpaquePrePassDepthDraw",
+                    i64::from(depth_draw::OPAQUE_PRE_PASS),
+                ),
             ],
         ),
         (
@@ -699,6 +718,11 @@ pub struct Material {
     /// counter-clockwise on the screen.
     #[qml(notify, enumeration = "CullMode")]
     pub cull_mode: i32,
+    /// Whether the material writes depth. A CustomMaterial follows it;
+    /// the built-in materials keep their own rule (an opaque one writes,
+    /// a blended one does not).
+    #[qml(notify, enumeration = "DepthDrawMode")]
+    pub depth_draw_mode: i32,
 }
 
 /// `PointLight`: light from one place in every direction, fading with
@@ -1051,6 +1075,46 @@ pub struct SceneEnvironment {
     /// For MSAA: 2, 4 or 8 samples a pixel, or as near as the device has.
     #[qml(notify, enumeration = "AntialiasingQuality")]
     pub antialiasing_quality: i32,
+    /// `Effect`s run over the picture in the list's order.
+    #[qml(notify, list)]
+    pub effects: QmlList,
+    /// Turning it on gives a strength or distance that is 0 a value
+    /// that shows; once given, it says whether ambient occlusion shows.
+    #[qml(notify, change = ao_enabled_changed)]
+    pub ao_enabled: bool,
+    /// 0 to 100; 0 is none.
+    #[qml(notify)]
+    pub ao_strength: f64,
+    #[qml(notify)]
+    pub ao_distance: f64,
+    /// 0 to 50.
+    #[qml(notify)]
+    pub ao_softness: f64,
+    /// 2 to 4.
+    #[qml(notify)]
+    pub ao_sample_rate: i32,
+    #[qml(notify)]
+    pub ao_bias: f64,
+    #[qml(notify)]
+    pub ao_dither: bool,
+}
+
+/// The values the documentation's note promises: strong enough to see.
+fn ao_enabled_changed(cx: &Cx<'_>, _: PropIndex) {
+    let (e, me) = (cx.engine, cx.this);
+    if !e.get(me, SceneEnvironment::AO_ENABLED).unwrap_or(false) {
+        return;
+    }
+    if e.get(me, SceneEnvironment::AO_STRENGTH)
+        .is_ok_and(|s| s == 0.0)
+    {
+        host_write(e, me, SceneEnvironment::AO_STRENGTH, 100.0);
+    }
+    if e.get(me, SceneEnvironment::AO_DISTANCE)
+        .is_ok_and(|d| d == 0.0)
+    {
+        host_write(e, me, SceneEnvironment::AO_DISTANCE, 5.0);
+    }
 }
 
 impl Default for SceneEnvironment {
@@ -1067,6 +1131,14 @@ impl Default for SceneEnvironment {
             skybox_blur_amount: 0.0,
             antialiasing_mode: 0,
             antialiasing_quality: antialiasing::HIGH,
+            effects: QmlList::default(),
+            ao_enabled: false,
+            ao_strength: 0.0,
+            ao_distance: 5.0,
+            ao_softness: 50.0,
+            ao_sample_rate: 2,
+            ao_bias: 0.0,
+            ao_dither: false,
         }
     }
 }
