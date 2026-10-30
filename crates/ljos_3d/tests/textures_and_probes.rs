@@ -2,15 +2,18 @@
 //! device of its own and read back. The orthographic scenes show one scene
 //! unit as one pixel, the origin in the middle of the picture.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use ljos_3d::math::Vec3;
+use ljos_3d::mesh::Mesh;
 use ljos_3d::offscreen::Offscreen;
 use ljos_3d::{
-    Background, Camera, Color, DefaultMaterial, Environment, LightProbe, Lighting, Material,
-    MeshSource, Model, Node, NodeKind, PixelEncoding, Primitive, PrincipledMaterial, Scene,
-    Texture, TextureImage, TexturePixels, Tiling, Tonemap, Transform,
+    Background, Camera, Color, ComponentType, CustomGeometry, DefaultMaterial, Environment,
+    LightProbe, Lighting, Material, MeshSource, Model, Node, NodeKind, PixelEncoding, Primitive,
+    PrincipledMaterial, Scene, Semantic, Texture, TextureImage, TexturePixels, Tiling, Tonemap,
+    Transform,
 };
 
 const SIDE: u32 = 200;
@@ -177,6 +180,62 @@ fn a_diffuse_map_lies_upright_on_a_rectangle() {
         p.pixel(50, 150)
     );
     assert!(near(p.pixel(150, 150), [255, 255, 255], 2));
+}
+
+/// The built-in rectangle again, as an application's geometry with its
+/// UVs: an application's texture coordinates reach the material as the
+/// built-in mesh's do.
+fn rectangle_as_geometry() -> CustomGeometry {
+    let mesh = Mesh::primitive(Primitive::Rectangle);
+    let mut vertices = Vec::new();
+    for (p, uv) in mesh.positions.iter().zip(&mesh.uvs) {
+        vertices.extend(p.iter().chain(uv).flat_map(|f| f.to_le_bytes()));
+    }
+    let mut g = CustomGeometry::new();
+    g.set_vertex_data(vertices);
+    g.set_stride(20);
+    g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+    g.add_attribute(Semantic::TexCoord0, 12, ComponentType::F32);
+    g.set_index_data(mesh.indices.iter().flat_map(|i| i.to_le_bytes()).collect());
+    g.add_attribute(Semantic::Index, 0, ComponentType::U32);
+    g.update();
+    g
+}
+
+#[test]
+fn an_application_s_geometry_is_mapped_by_its_own_uvs() {
+    let Some(mut gpu) = offscreen() else { return };
+    let mut built_in = ortho();
+    square(&mut built_in, mapped(Texture::new(quadrants(64))));
+    let want = gpu.render(&built_in, SIDE, SIDE).unwrap();
+
+    let mut s = ortho();
+    s.add(
+        None,
+        Node::new(NodeKind::Model(Model {
+            mesh: MeshSource::Custom(Arc::new(rectangle_as_geometry())),
+            material: mapped(Texture::new(quadrants(64))),
+        }))
+        .with_transform(Transform {
+            scale: Vec3::new(2.0, 2.0, 1.0),
+            ..Transform::default()
+        }),
+    );
+    let got = gpu.render(&s, SIDE, SIDE).unwrap();
+    for (x, y) in [(50, 50), (150, 50), (50, 150), (150, 150)] {
+        assert!(
+            near(
+                got.pixel(x, y),
+                want.pixel(x, y)[..3].try_into().unwrap(),
+                2
+            ),
+            "at {x},{y}: {:?}, the built-in mesh drew {:?}",
+            got.pixel(x, y),
+            want.pixel(x, y)
+        );
+    }
+    // Not one colour everywhere, as a geometry whose UVs were lost would be.
+    assert_ne!(got.pixel(50, 50), got.pixel(150, 150));
 }
 
 #[test]
