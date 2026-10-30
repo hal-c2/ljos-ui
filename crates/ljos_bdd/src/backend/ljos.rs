@@ -174,6 +174,7 @@ pub struct LjosBackend {
     /// What native work takes on the clock of JavaScript's time limits,
     /// when the scenario gave them one.
     js_native: Option<Duration>,
+    js_stall: Option<Duration>,
     /// The platform whose key bindings the scenario asked for.
     key_bindings: Option<ljos_quick::keys::Platform>,
     /// The thread's text engine reads the machine's fonts for this scenario.
@@ -497,6 +498,9 @@ impl LjosBackend {
         }
         if let Some(native) = self.js_native {
             set_js_clock(&live.engine, native)?;
+        }
+        if let Some(stall) = self.js_stall {
+            set_js_clock_stalled(&live.engine, stall)?;
         }
         // A scenario is not told which desktop ran it: with none asked
         // for, the build's platform, and on Linux no desktop's own keys.
@@ -1810,6 +1814,28 @@ fn set_js_clock(engine: &Engine, native: Duration) -> Result<()> {
                 _ => {}
             }
             now.get()
+        })))
+        .map_err(|e| failed(format!("the JS clock is not set: {e}")))
+}
+
+/// The clock of `Given JavaScript is timed by a clock ... loses the
+/// processor ...`: a poll of the interrupt moves the thread's own time ten
+/// milliseconds, and the wall clock `stall` more.
+fn set_js_clock_stalled(engine: &Engine, stall: Duration) -> Result<()> {
+    use ljos_engine::JsTiming;
+    let wall = Rc::new(Cell::new(std::time::Instant::now()));
+    let thread = Rc::new(Cell::new(wall.get()));
+    engine
+        .set_js_clock(Some(Rc::new(move |t| {
+            if t == JsTiming::Poll {
+                wall.set(wall.get() + Duration::from_millis(10) + stall);
+                thread.set(thread.get() + Duration::from_millis(10));
+            }
+            if t == JsTiming::Thread {
+                thread.get()
+            } else {
+                wall.get()
+            }
         })))
         .map_err(|e| failed(format!("the JS clock is not set: {e}")))
 }

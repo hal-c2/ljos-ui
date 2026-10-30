@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use qml_front::project::ControlsStyle;
 
-use super::{HostSetting, LjosBackend, application_font, failed, set_js_clock};
+use super::{
+    HostSetting, LjosBackend, application_font, failed, set_js_clock, set_js_clock_stalled,
+};
 use crate::backend::{Environment, Result};
 
 impl Environment for LjosBackend {
@@ -42,6 +44,14 @@ impl Environment for LjosBackend {
         self.tier1_check = Some(on);
         if let Some(live) = &self.live {
             live.engine.set_tier1_check(on);
+        }
+        Ok(())
+    }
+
+    fn js_clock_stalled(&mut self, stall: Duration) -> Result<()> {
+        self.js_stall = Some(stall);
+        if let Some(live) = &self.live {
+            set_js_clock_stalled(&live.engine, stall)?;
         }
         Ok(())
     }

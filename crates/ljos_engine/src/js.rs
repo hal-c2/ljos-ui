@@ -1363,8 +1363,19 @@ impl Engine {
         }
     }
 
+    /// Runs native work that may happen under a script by way of something
+    /// it wrote (a Loader making its item): its time is not the script's,
+    /// and what it reads is left as it is.
+    pub(crate) fn not_script_time<R>(&self, f: impl FnOnce() -> R) -> R {
+        let js = self.inner.js.borrow().clone();
+        match js {
+            Some(js) => js.host.native(f),
+            None => f(),
+        }
+    }
+
     /// Sets the clock the limits on a dispatch into JS read, in place of
-    /// the wall clock: a test that has native work take a set time, or a
+    /// the system's: a test that has native work take a set time, or a
     /// script take a set time a poll. `None` is the wall clock again.
     pub fn set_js_clock(&self, clock: Option<ljos_js::JsClock>) -> Result<(), EngineError> {
         self.js()?.host.set_clock(clock);

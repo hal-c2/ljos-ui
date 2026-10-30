@@ -48,6 +48,18 @@ fn js_clock(w: &mut LjosWorld, secs: u64) -> StepResult {
     })
 }
 
+// As above, and each poll also takes `secs` in which the application does not
+// have the processor.
+#[given(
+    regex = r"^JavaScript is timed by a clock on which the application loses the processor for (\d+) seconds at every poll$"
+)]
+fn js_clock_stalled(w: &mut LjosWorld, secs: u64) -> StepResult {
+    w.each(|b| {
+        b.environment()?
+            .js_clock_stalled(std::time::Duration::from_secs(secs))
+    })
+}
+
 #[given(
     regex = r#"^the application uses the key bindings of "(Linux|GNOME|KDE Plasma|Windows|macOS)"$"#
 )]

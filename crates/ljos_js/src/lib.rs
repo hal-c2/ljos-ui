@@ -34,6 +34,7 @@ mod fault;
 mod heap;
 mod host;
 mod objects;
+mod thread_time;
 mod value;
 
 pub use ahead::compile_ahead;

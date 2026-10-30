@@ -258,6 +258,39 @@ const TENTH: Slice = Slice {
 const SHORT: &str =
     "(() => { let s = 0; for (let i = 0; i < 300000; i++) s += i; return s > 0 })()";
 
+/// The real clocks: a sleep is time the thread does not have the processor,
+/// however it comes about.
+#[test]
+fn time_off_the_processor_is_not_the_scripts() {
+    let host = JsHost::new(JsConfig::default()).unwrap();
+    let nap: ljos_js::HostFn = Rc::new(|_, _| {
+        std::thread::sleep(Duration::from_millis(300));
+        Ok(JsValue::Undefined)
+    });
+    host.set_global_function("nap", nap).unwrap();
+    // Sleeps through its limit before the first poll and after it.
+    let out = host.enter("run", TENTH, |s| {
+        s.eval::<bool, _>(format!("nap(); {SHORT}; nap(); {SHORT}"))
+    });
+    assert_eq!(out, Ok(true));
+}
+
+/// Time off the processor is excused and not more: a script that keeps
+/// sleeping and running is stopped when what it ran comes to its limit.
+#[test]
+fn a_script_that_also_sleeps_is_stopped_at_its_own_time() {
+    let host = JsHost::new(JsConfig::default()).unwrap();
+    let nap: ljos_js::HostFn = Rc::new(|_, _| {
+        std::thread::sleep(Duration::from_millis(1));
+        Ok(JsValue::Undefined)
+    });
+    host.set_global_function("nap", nap).unwrap();
+    let out = host.enter("run", TENTH, |s| {
+        s.eval::<(), _>("for (;;) { nap(); for (let i = 0; i < 1000; i++) ; }")
+    });
+    assert!(matches!(out, Err(JsFault::JsInterrupted { .. })), "{out:?}");
+}
+
 #[test]
 fn native_work_is_not_the_scripts_time() {
     let host = plain();

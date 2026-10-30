@@ -647,6 +647,15 @@ pub trait Environment: Backend {
         ))
     }
 
+    /// The limits on a run of JavaScript read a clock that moves ten
+    /// milliseconds of the script's time each time the interrupt polls it,
+    /// and `stall` in which the application does not have the processor.
+    fn js_clock_stalled(&mut self, _stall: std::time::Duration) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a clock for JavaScript's time limits",
+        ))
+    }
+
     /// The application takes its standard keys (`StandardKey`, the keys
     /// of an entry) from `platform`'s key bindings, whatever the machine.
     fn key_bindings(&mut self, _platform: ljos_quick::keys::Platform) -> Result<()> {

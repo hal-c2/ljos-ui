@@ -407,7 +407,7 @@ impl Engine {
         initial_props: Vec<(String, Value)>,
         scope: Option<ObjectId>,
     ) -> Result<ObjectId, EngineError> {
-        let mut template = self.file_template(url)?;
+        let mut template = self.not_script_time(|| self.file_template(url))?;
         let ctx = scope.map(|s| self.scope_context(s));
         template.context = ctx;
         // Kept for a reload to make the file again with.
@@ -511,10 +511,12 @@ impl Engine {
         how: Initial,
         allocated: impl FnOnce(ObjectId),
     ) -> Result<ObjectId, EngineError> {
-        let errors = self.open_creation();
-        let made = self.create_from_template_held(template, parent, props, how, allocated);
-        self.close_creation(errors);
-        made
+        self.not_script_time(|| {
+            let errors = self.open_creation();
+            let made = self.create_from_template_held(template, parent, props, how, allocated);
+            self.close_creation(errors);
+            made
+        })
     }
 
     fn create_from_template_held(
@@ -640,10 +642,12 @@ impl Engine {
         owner: Option<ObjectId>,
         setup: impl FnOnce(&Engine, ObjectId, ContextId),
     ) -> Result<ObjectId, EngineError> {
-        let errors = self.open_creation();
-        let made = self.create_delegate_held(component, owner, setup);
-        self.close_creation(errors);
-        made
+        self.not_script_time(|| {
+            let errors = self.open_creation();
+            let made = self.create_delegate_held(component, owner, setup);
+            self.close_creation(errors);
+            made
+        })
     }
 
     fn create_delegate_held(

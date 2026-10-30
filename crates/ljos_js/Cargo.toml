@@ -20,9 +20,13 @@ smallvec.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-# The runtime's allocator asks the C library how large a block is.
+# The runtime's allocator asks the C library how large a block is, and a
+# script's time limit how much time the thread has used.
 [target.'cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))'.dependencies]
 libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [features]
 # Generates the QuickJS bindings at build time instead of using the bundled

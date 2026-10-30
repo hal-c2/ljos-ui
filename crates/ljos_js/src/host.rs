@@ -55,7 +55,14 @@ struct FnEntry {
 /// slice, and the time it took is given back to the runs it is in. Native
 /// work a script asks for ([`JsHost::native`]) is given back to all of
 /// them. Two limits are never given time back for nested runs: `cap`, on
-/// the dispatch's JavaScript as a whole, and `ceiling`, on its wall time.
+/// the dispatch's JavaScript as a whole, and `ceiling`, on its time with
+/// native work included.
+///
+/// The deadlines are on the wall clock, which costs almost nothing to read,
+/// and time the thread did not have the processor is excused from all of
+/// them. The thread's own clock can be a system call, and most runs end
+/// before the first poll, so it is read at the first poll of a dispatch and
+/// again only when a deadline looks passed.
 #[derive(Default)]
 struct InterruptState {
     /// The earliest of the innermost run's deadline, `cap` and `ceiling`:
@@ -76,6 +83,12 @@ struct InterruptState {
     /// The nested run an interrupt stopped, named for the dispatch's fault.
     stopped_in: RefCell<Option<String>>,
     clock: RefCell<Option<JsClock>>,
+    /// When the dispatch began, until its first poll.
+    began: Cell<Option<Instant>>,
+    /// The wall clock and the thread's clock at the dispatch's first poll.
+    polled: Cell<Option<(Instant, Instant)>>,
+    /// The time off the processor excused since `polled`.
+    excused: Cell<Duration>,
 }
 
 /// What the time is, for the limits on a run of JavaScript; a test sets
@@ -96,12 +109,15 @@ pub enum Timing {
     NativeBegin,
     /// That native work ends.
     NativeEnd,
+    /// The time the thread has had the processor, read in place of the
+    /// system's clock for it, to tell the time it lost from the time it
+    /// used. Only differences between two readings mean anything.
+    Thread,
 }
 
 /// How many slices one dispatch's JavaScript may take with its nested runs.
 const CAP: u32 = 4;
-/// How many slices one dispatch may take on the wall clock, its native
-/// work included.
+/// How many slices one dispatch may take with its native work included.
 const CEILING: u32 = 50;
 
 impl InterruptState {
@@ -110,6 +126,52 @@ impl InterruptState {
             Some(clock) => clock(at),
             None => Instant::now(),
         }
+    }
+
+    /// The thread's clock; `None` on a target that has none, where the
+    /// limits count all the time that passes.
+    fn thread_now(&self) -> Option<Instant> {
+        match &*self.clock.borrow() {
+            Some(clock) => Some(clock(Timing::Thread)),
+            None => crate::thread_time::now(),
+        }
+    }
+
+    /// What the interrupt handler asks, about every 10k opcodes.
+    fn overdue(&self) -> bool {
+        if self.due.get().is_none() {
+            return false;
+        }
+        let now = self.now(Timing::Poll);
+        if let Some(began) = self.began.take() {
+            // Only 10k opcodes at most ran before this poll: what took time
+            // until now was native work or the processor being away, and
+            // with no earlier reading nothing tells them apart. Neither is
+            // the script's.
+            if let Some(thread) = self.thread_now() {
+                self.polled.set(Some((now, thread)));
+                self.excuse((now - began).saturating_sub(self.given.get()));
+            }
+        } else if self.due.get().is_some_and(|due| now >= due)
+            && let Some((wall, thread)) = self.polled.get()
+            && let Some(thread_now) = self.thread_now()
+        {
+            let off = (now - wall).saturating_sub(thread_now - thread);
+            self.excuse(off.saturating_sub(self.excused.replace(off)));
+        }
+        self.due.get().is_some_and(|due| now >= due)
+    }
+
+    /// Moves every limit on by time that was nobody's work.
+    fn excuse(&self, off: Duration) {
+        let on = |d: Option<Instant>| d.map(|d| d + off);
+        self.deadline.set(on(self.deadline.get()));
+        for d in self.outer.borrow_mut().iter_mut() {
+            *d += off;
+        }
+        self.cap.set(on(self.cap.get()));
+        self.ceiling.set(on(self.ceiling.get()));
+        self.settle();
     }
 
     fn settle(&self) {
@@ -128,6 +190,9 @@ impl InterruptState {
         self.deadline.set(slice.map(|s| start + s.hard));
         self.cap.set(slice.map(|s| start + s.hard * CAP));
         self.ceiling.set(slice.map(|s| start + s.hard * CEILING));
+        self.began.set(slice.map(|_| start));
+        self.polled.set(None);
+        self.excused.set(Duration::ZERO);
         self.settle();
     }
 
@@ -1647,12 +1712,12 @@ impl JsHost {
             let st = interrupt.clone();
             // QuickJS calls this about every 10k opcodes (roughly 266 us), so
             // one clock read per call costs well under 0.5 %.
-            rt.set_interrupt_handler(Some(Box::new(move || match st.due.get() {
-                Some(d) if st.now(Timing::Poll) >= d => {
+            rt.set_interrupt_handler(Some(Box::new(move || {
+                let overdue = st.overdue();
+                if overdue {
                     st.fired.set(true);
-                    true
                 }
-                _ => false,
+                overdue
             })));
         }
         rt.set_host_promise_rejection_tracker(Some(Box::new(|_ctx, _promise, reason, handled| {
@@ -2325,6 +2390,7 @@ impl JsHost {
         self.interrupt.arm(now, None);
         self.interrupt.deadline.set(Some(until));
         self.interrupt.ceiling.set(Some(until));
+        self.interrupt.began.set(Some(now));
         self.interrupt.settle();
         let mut n = 0;
         while self.interrupt.now(Timing::Poll) < until {
@@ -2354,21 +2420,28 @@ impl JsHost {
     /// objects): its time is not the script's, and is given back to every
     /// run of the dispatch. JavaScript it runs itself (a new object's
     /// `Component.onCompleted`) is a nested run, with a slice of its own.
-    /// Outside a dispatch it only runs `f`.
+    /// What it gives back is the time it used: what it lost off the
+    /// processor is excused from every limit at the next poll, and a limit
+    /// is not moved twice for it. Outside a dispatch it only runs `f`.
     pub fn native<R>(&self, f: impl FnOnce() -> R) -> R {
         if !self.state.entered.get() {
             return f();
         }
         let st = &self.interrupt;
         let start = st.now(Timing::NativeBegin);
+        let thread = st.thread_now();
         let before = st.given.get();
         let r = f();
-        let took = st.now(Timing::NativeEnd) - start;
+        let mut took = st.now(Timing::NativeEnd) - start;
+        if let (Some(thread), Some(thread_now)) = (thread, st.thread_now()) {
+            took = took.min(thread_now - thread);
+        }
         st.give_back(took, before, true);
         r
     }
 
-    /// Sets the clock the limits on a run read; `None` is the wall clock.
+    /// Sets the clock the limits on a run read; `None` is the system's
+    /// clocks. It is also read for the thread's time ([`Timing::Thread`]).
     pub fn set_clock(&self, clock: Option<JsClock>) {
         *self.interrupt.clock.borrow_mut() = clock;
     }
