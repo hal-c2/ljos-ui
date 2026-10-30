@@ -242,7 +242,7 @@ fn views_that_come_and_go_leave_no_pictures_behind() {
         .build_ui(move |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
-                egui::Id::new("scene3d"),
+                egui::Id::unique("scene3d"),
             ));
             for &view in painted.borrow().iter() {
                 let x = (view % 3) as f32 * 100.0;
