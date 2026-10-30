@@ -98,6 +98,9 @@ use ljos_engine::{Engine, MetaRef, ObjectId, Prop, QmlType, QmlValue};
 
 pub use ljos_engine::Font;
 pub use ljos_quick::LoadError as ImageLoadError;
+/// Runs with QtQuick's animations but belongs to QtQuick3D: the module
+/// crate that has QtQuick3D registers it.
+pub use ljos_quick::QuaternionAnimation;
 pub use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 pub use ljos_quick::keys::{KeyItem, key};
 pub use ljos_quick::keys::{Surrounding, TextInputClient};

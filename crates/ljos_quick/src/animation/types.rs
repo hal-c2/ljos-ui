@@ -354,6 +354,51 @@ pub struct RotationAnimation {
     pub direction: i32,
 }
 
+/// `Vector3dAnimation` (QtQuick): a PropertyAnimation on a `vector3d`,
+/// each component moving on its own.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "Vector3dAnimation", extends = PropertyAnimation)]
+pub struct Vector3dAnimation {
+    #[qml(base)]
+    pub base: PropertyAnimation,
+}
+
+pub(crate) fn quaternion_enums() -> EnumTable {
+    vec![("Type", vec![("Slerp", 0), ("Nlerp", 1)])]
+}
+
+/// `QuaternionAnimation` (QtQuick3D): turns a `quaternion` property
+/// along an arc. Its type lives here, beside the other animations it
+/// runs with, and the QtQuick3D module crate registers it.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "QtQuick3D",
+    name = "QuaternionAnimation",
+    extends = PropertyAnimation,
+    enums = quaternion_enums
+)]
+pub struct QuaternionAnimation {
+    #[qml(base)]
+    pub base: PropertyAnimation,
+    /// `QuaternionAnimation.Type`: Slerp or Nlerp.
+    #[qml(notify, rename = "type", enumeration = "Type")]
+    pub kind: i32,
+    /// `from` as turns in degrees about X, Y and Z, when `from` is not
+    /// given.
+    #[qml(notify)]
+    pub from_x_rotation: f64,
+    #[qml(notify)]
+    pub from_y_rotation: f64,
+    #[qml(notify)]
+    pub from_z_rotation: f64,
+    #[qml(notify)]
+    pub to_x_rotation: f64,
+    #[qml(notify)]
+    pub to_y_rotation: f64,
+    #[qml(notify)]
+    pub to_z_rotation: f64,
+}
+
 /// `Animator` (QtQuick): moves one property of an item as a
 /// NumberAnimation would, but the property keeps its old value until the
 /// animator ends; only the picture moves on the way

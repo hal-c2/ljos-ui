@@ -102,6 +102,7 @@ pub fn register(engine: &Engine) {
         View3D,
         PickResult,
         Repeater3D,
+        item::QuaternionAnimation,
     ]));
     item::register_paint_item::<View3D>(engine, view::read);
 }

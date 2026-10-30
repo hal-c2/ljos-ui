@@ -29,8 +29,9 @@ use super::spring;
 use super::types::{
     AnchorAnimation, Animation, Animator, ColorAnimation, EasingGroup, NumberAnimation,
     OpacityAnimator, ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction,
-    PropertyAnimation, RotationAnimation, RotationAnimator, ScaleAnimator, ScriptAction,
-    SequentialAnimation, SmoothedAnimation, SpringAnimation, UniformAnimator, XAnimator, YAnimator,
+    PropertyAnimation, QuaternionAnimation, RotationAnimation, RotationAnimator, ScaleAnimator,
+    ScriptAction, SequentialAnimation, SmoothedAnimation, SpringAnimation, UniformAnimator,
+    XAnimator, YAnimator,
 };
 use crate::item::{Item, is_a, is_item, is_unset};
 
@@ -191,6 +192,11 @@ enum Kind {
     Color,
     /// An angle in degrees, turning the way [`Turn`] says.
     Rotation(Turn),
+    /// `QuaternionAnimation`: a turn along the shortest arc, at an even
+    /// speed, or along the straight line between the ends, normalized.
+    Quaternion {
+        nlerp: bool,
+    },
     /// `PropertyAnimation`: whatever the property holds.
     Any,
 }
@@ -344,6 +350,19 @@ enum Lerp {
         from: Rect,
         to: Rect,
     },
+    /// A `vector2d`, `vector3d` or `vector4d`, component by component;
+    /// `make` builds the value back from the four.
+    Vector {
+        from: [f32; 4],
+        to: [f32; 4],
+        make: fn([f32; 4]) -> Value,
+    },
+    /// A `quaternion`, scalar first, `to` on the near side of `from`.
+    Quaternion {
+        from: [f32; 4],
+        to: [f32; 4],
+        nlerp: bool,
+    },
     /// Values without anything in between (a string, a bool): the end
     /// value, from the first moment.
     Jump {
@@ -386,12 +405,20 @@ impl Lerp {
                 },
                 _ => Lerp::None,
             },
+            (Kind::Quaternion { nlerp }, _) => quaternions(from, to, nlerp),
             (Kind::Color, _) | (Kind::Any, TypeTag::Color) => colors(),
             (Kind::Number, _) | (Kind::Any, TypeTag::Int | TypeTag::Real) => numbers(),
             (Kind::Any, _) => match (from, to) {
                 (Value::Point(a), Value::Point(b)) => Lerp::Point { from: **a, to: **b },
                 (Value::Size(a), Value::Size(b)) => Lerp::Size { from: **a, to: **b },
                 (Value::Rect(a), Value::Rect(b)) => Lerp::Rect { from: **a, to: **b },
+                (Value::Quaternion(_), Value::Quaternion(_)) => quaternions(from, to, false),
+                (Value::Vector2d(_) | Value::Vector3d(_) | Value::Vector4d(_), _) => {
+                    match (vector(from), vector(to)) {
+                        (Some((from, make)), Some((to, _))) => Lerp::Vector { from, to, make },
+                        _ => Lerp::Jump { to: to.clone() },
+                    }
+                }
                 (Value::Color(_), _) | (_, Value::Color(_)) => colors(),
                 (Value::Int(_) | Value::Real(_), Value::Int(_) | Value::Real(_)) => numbers(),
                 _ => Lerp::Jump { to: to.clone() },
@@ -442,9 +469,107 @@ impl Lerp {
                 width: mix(from.width, to.width),
                 height: mix(from.height, to.height),
             })),
+            Lerp::Vector { from, to, make } => {
+                let p = p as f32;
+                make(std::array::from_fn(|i| from[i] + (to[i] - from[i]) * p))
+            }
+            Lerp::Quaternion { from, to, nlerp } => {
+                quaternion_value(turn_between(*from, *to, p as f32, *nlerp))
+            }
             Lerp::Jump { to } => to.clone(),
         })
     }
+}
+
+/// A vector's components, padded to four, and how to make the vector
+/// again from four.
+fn vector(v: &Value) -> Option<([f32; 4], fn([f32; 4]) -> Value)> {
+    use ljos_engine::{Vector2d, Vector3d, Vector4d};
+    Some(match v {
+        Value::Vector2d(v) => ([v.x, v.y, 0.0, 0.0], |[x, y, ..]| {
+            Value::Vector2d(Vector2d { x, y })
+        }),
+        Value::Vector3d(v) => ([v.x, v.y, v.z, 0.0], |[x, y, z, _]| {
+            Value::Vector3d(Vector3d { x, y, z })
+        }),
+        Value::Vector4d(v) => ([v.x, v.y, v.z, v.w], |[x, y, z, w]| {
+            Value::Vector4d(std::sync::Arc::new(Vector4d { x, y, z, w }))
+        }),
+        _ => return None,
+    })
+}
+
+fn quaternion_parts(v: &Value) -> Option<[f32; 4]> {
+    match TypeTag::Quaternion.coerce(v) {
+        Ok(Value::Quaternion(q)) => Some([q.scalar, q.x, q.y, q.z]),
+        _ => None,
+    }
+}
+
+fn quaternion_value([scalar, x, y, z]: [f32; 4]) -> Value {
+    Value::Quaternion(std::sync::Arc::new(ljos_engine::Quaternion {
+        scalar,
+        x,
+        y,
+        z,
+    }))
+}
+
+fn quaternions(from: &Value, to: &Value, nlerp: bool) -> Lerp {
+    let (Some(from), Some(mut to)) = (quaternion_parts(from), quaternion_parts(to)) else {
+        return Lerp::None;
+    };
+    // q and -q are the same turn: the one nearer `from` is the short way.
+    if dot(from, to) < 0.0 {
+        to = to.map(|c| -c);
+    }
+    Lerp::Quaternion { from, to, nlerp }
+}
+
+fn dot(a: [f32; 4], b: [f32; 4]) -> f32 {
+    a.iter().zip(b).map(|(a, b)| a * b).sum()
+}
+
+fn normalized(q: [f32; 4]) -> [f32; 4] {
+    let n = dot(q, q).sqrt();
+    if n > 0.0 { q.map(|c| c / n) } else { q }
+}
+
+/// The turn a fraction `p` of the way from `a` to `b`, which are on the
+/// same side.
+fn turn_between(a: [f32; 4], b: [f32; 4], p: f32, nlerp: bool) -> [f32; 4] {
+    let (a, b) = (normalized(a), normalized(b));
+    let cos = dot(a, b).min(1.0);
+    // Nearly the same turn: the arc is the line, and its sine is too
+    // small to divide by.
+    let (wa, wb) = if nlerp || cos > 0.9995 {
+        (1.0 - p, p)
+    } else {
+        let angle = cos.acos();
+        let sin = angle.sin();
+        (((1.0 - p) * angle).sin() / sin, (p * angle).sin() / sin)
+    };
+    normalized(std::array::from_fn(|i| a[i] * wa + b[i] * wb))
+}
+
+/// The turn of `degrees` about X, Y and Z, as `eulerRotation` gives it:
+/// Z first, then X, then Y.
+fn euler_turn([x, y, z]: [f64; 3]) -> [f32; 4] {
+    let about = |axis: usize, degrees: f64| {
+        let half = (degrees.to_radians() / 2.0) as f32;
+        let mut q = [half.cos(), 0.0, 0.0, 0.0];
+        q[axis + 1] = half.sin();
+        q
+    };
+    let times = |[aw, ax, ay, az]: [f32; 4], [bw, bx, by, bz]: [f32; 4]| {
+        [
+            aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+        ]
+    };
+    times(times(about(1, y), about(0, x)), about(2, z))
 }
 
 impl Slot {
@@ -543,10 +668,35 @@ fn property_ends(
         Value::Undefined => None,
         v => Some(v),
     };
-    (
+    let (mut from, mut to) = (
         at(PropertyAnimation::FROM.index),
-        at(PropertyAnimation::TO.index).or_else(|| defaults.and_then(|d| d.to.clone())),
-    )
+        at(PropertyAnimation::TO.index),
+    );
+    if is_a::<QuaternionAnimation>(engine, anim) {
+        let euler = |props: [PropIndex; 3]| {
+            let parts = props.map(|p| given(engine, anim, p).map(|v| v.to_number()));
+            // Turns about the axes not given are none.
+            parts
+                .iter()
+                .any(Option::is_some)
+                .then(|| quaternion_value(euler_turn(parts.map(|p| p.unwrap_or(0.0)))))
+        };
+        from = from.or_else(|| {
+            euler([
+                QuaternionAnimation::FROM_X_ROTATION.index,
+                QuaternionAnimation::FROM_Y_ROTATION.index,
+                QuaternionAnimation::FROM_Z_ROTATION.index,
+            ])
+        });
+        to = to.or_else(|| {
+            euler([
+                QuaternionAnimation::TO_X_ROTATION.index,
+                QuaternionAnimation::TO_Y_ROTATION.index,
+                QuaternionAnimation::TO_Z_ROTATION.index,
+            ])
+        });
+    }
+    (from, to.or_else(|| defaults.and_then(|d| d.to.clone())))
 }
 
 /// What a PropertyAnimation moves between.
@@ -557,6 +707,10 @@ fn property_kind(engine: &Engine, anim: ObjectId) -> Kind {
         Kind::Number
     } else if is_a::<ColorAnimation>(engine, anim) {
         Kind::Color
+    } else if is_a::<QuaternionAnimation>(engine, anim) {
+        let nlerp = given(engine, anim, QuaternionAnimation::KIND.index)
+            .is_some_and(|v| v.to_number() == 1.0);
+        Kind::Quaternion { nlerp }
     } else {
         Kind::Any
     }
@@ -739,6 +893,7 @@ fn of_changes(
             match kind {
                 Kind::Number => matches!(slot.ty, TypeTag::Int | TypeTag::Real),
                 Kind::Color => matches!(slot.ty, TypeTag::Color),
+                Kind::Quaternion { .. } => matches!(slot.ty, TypeTag::Quaternion),
                 Kind::Rotation(_) | Kind::Any => true,
             }
         } else {
@@ -1831,7 +1986,7 @@ impl PropNode {
                     // Kept as written: a whole-number property passes
                     // through the fractions on its way.
                     Kind::Number | Kind::Rotation(_) => Some(v.clone()),
-                    Kind::Any => slot.ty.coerce(v).ok(),
+                    Kind::Any | Kind::Quaternion { .. } => slot.ty.coerce(v).ok(),
                 };
                 let own = self.to.as_ref();
                 let to = own
