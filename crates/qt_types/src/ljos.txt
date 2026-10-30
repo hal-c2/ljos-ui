@@ -7753,7 +7753,9 @@ module QtQuick3D
 		default data
 		is uncreatable
 		prop data QtQml.var named list
+		prop parent QtQuick3D.Object3D named pointer
 		signal dataChanged
+		signal parentChanged
 	type QtQuick3D.OrthographicCamera OrthographicCamera
 		prototype QtQuick3D.Camera named
 		prop clipNear QtQml.real named

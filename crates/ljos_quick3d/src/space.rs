@@ -1,17 +1,21 @@
 //! Where a node is in the scene, and the mappings between spaces: a
 //! node's own, the scene's, and a camera's viewport.
 //!
-//! A node's parent is the node that owns it, as a node declared in
-//! another is its child (and a `Repeater3D`'s nodes are its children).
+//! A node's parent is its `parent`: the object it is declared in (a
+//! `Repeater3D`'s nodes are its children) until it is set to another,
+//! which moves the node into that one's `data`, where the scene is walked.
 //! The transforms are read, and so tracked, all the way up: a binding on
-//! `scenePosition` follows every parent's move.
+//! `scenePosition` follows every parent's move and every reparenting.
 
 use ljos::item::ljos_3d::math::{Mat4, Quat, Vec3};
 use ljos::item::ljos_3d::pick::Viewport;
 use ljos::prelude::*;
 
-use crate::node::{IDENTITY, host_write, quat, vec3};
-use crate::{Camera, Node, View3D};
+use ljos::item::Item;
+use ljos::ljos_engine::WriteKind;
+
+use crate::node::{Held, IDENTITY, host_write, quat, vec3};
+use crate::{Camera, Node, Object3D, View3D};
 
 /// A node's transform in scene space.
 #[derive(Clone, Copy)]
@@ -29,9 +33,121 @@ impl Place {
     };
 }
 
-/// The node that owns `obj`, if a node does: its parent in the scene.
+/// `obj`'s parent node, if its parent is one. Tracked.
 pub(crate) fn parent_node(e: &Engine, obj: ObjectId) -> Option<ObjectId> {
-    e.owner(obj).filter(|p| e.is::<Node>(*p))
+    parent(e, obj).filter(|p| e.is::<Node>(*p))
+}
+
+/// What `obj` is in: what holds it once it completed, its owner before
+/// and for what is not a 3D object. Tracked: a move writes `parent`.
+fn parent(e: &Engine, obj: ObjectId) -> Option<ObjectId> {
+    match e.with(obj, |o: &Object3D| o.held) {
+        Ok(Some(Held(at))) => {
+            e.read(obj, Object3D::PARENT.index);
+            at
+        }
+        _ => e.owner(obj),
+    }
+}
+
+/// What `parent` says of the holder `at`. A view holds its scene's top
+/// nodes, but is no `Object3D`: their `parent` is empty, as Qt's names a
+/// scene root no QML declares.
+fn as_parent(e: &Engine, at: Option<ObjectId>) -> Option<ObjectId> {
+    at.filter(|p| e.is::<Object3D>(*p))
+}
+
+/// `obj` completed: what it was declared in, or the parent it was given,
+/// holds it from now on.
+pub(crate) fn hold(e: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let owner = e.owner(obj);
+    let given = e
+        .untrack(|| e.read(obj, Object3D::PARENT.index))
+        .as_object();
+    e.with_mut(obj, |o: &mut Object3D| o.held = Some(Held(owner)))?;
+    match given {
+        Some(p) if Some(p) != owner => move_to(e, obj, Some(p)),
+        Some(_) => Ok(()),
+        None => {
+            let p = as_parent(e, owner);
+            if p.is_some() {
+                e.write(obj, Object3D::PARENT.index, object(p), WriteKind::Host)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// [`Object3D::parent`] written: a completed object moves to its new
+/// parent.
+pub(crate) fn parent_written(cx: &Cx<'_>, _: PropIndex) {
+    let (e, obj) = (cx.engine, cx.this);
+    let Ok(Some(Held(at))) = e.with(obj, |o: &Object3D| o.held) else {
+        return;
+    };
+    // Read, so a bound `parent` is brought up to date and its next change
+    // is told too.
+    let p = e.read(obj, Object3D::PARENT.index).as_object();
+    let now = as_parent(e, at);
+    if p == now {
+        return;
+    }
+    if let Err(err) = move_to(e, obj, p) {
+        e.warn(format!("QtQuick3D Object3D: cannot set parent: {err}"));
+        // What holds it is still its parent.
+        let _ = e.write(obj, Object3D::PARENT.index, object(now), WriteKind::Host);
+    }
+}
+
+/// Moves `obj` from the `data` of what holds it to the end of `to`'s.
+fn move_to(e: &Engine, obj: ObjectId, to: Option<ObjectId>) -> Result<(), EngineError> {
+    // Into itself or what it holds would make a loop of the scene.
+    let mut at = to;
+    while let Some(p) = at {
+        if p == obj {
+            return Err(EngineError::WrongType {
+                ty: "Object3D".into(),
+                expected: "a parent outside the object's own subtree".into(),
+            });
+        }
+        at = e.untrack(|| parent(e, p));
+    }
+    let Some(Held(from)) = e.with(obj, |o: &Object3D| o.held)? else {
+        return Ok(());
+    };
+    e.batch(|| {
+        if let Some(f) = from.filter(|f| e.is_alive(*f)) {
+            for list in data_lists(e, f) {
+                e.list_remove(f, list, obj)?;
+            }
+        }
+        if let Some(t) = to {
+            for list in data_lists(e, t) {
+                e.list_push(t, list, obj)?;
+            }
+        }
+        // Before `parent` is written, so its hook finds nothing to move.
+        e.with_mut(obj, |o: &mut Object3D| o.held = Some(Held(to)))?;
+        e.write(obj, Object3D::PARENT.index, object(to), WriteKind::Host)?;
+        Ok(())
+    })
+}
+
+fn object(o: Option<ObjectId>) -> Value {
+    o.map_or(Value::Null, Value::Object)
+}
+
+/// The lists of `holder` a scene object it holds is in: a 3D object's
+/// `data`, or an item's `data` and `resources` (a view's nodes are its
+/// resources).
+fn data_lists(e: &Engine, holder: ObjectId) -> Vec<PropIndex> {
+    if e.is::<Object3D>(holder) {
+        vec![Object3D::DATA.index]
+    } else if e.is::<Item>(holder) {
+        vec![Item::DATA.index, Item::RESOURCES.index]
+    } else {
+        Vec::new()
+    }
 }
 
 /// `obj`'s place in the scene; the scene's own for an object that is not
@@ -126,6 +242,7 @@ fn inverse(m: Mat4) -> Mat4 {
 impl Node {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
+        hold(cx.engine, cx.this)?;
         bind_scene_properties(cx.engine, cx.this)
     }
 
@@ -212,14 +329,14 @@ impl Node {
     }
 }
 
-/// The view a camera is declared in, walking up its owners.
+/// The view a camera is in, walking up its parents.
 fn view_of(e: &Engine, camera: ObjectId) -> Option<ObjectId> {
-    let mut at = e.owner(camera);
+    let mut at = parent(e, camera);
     while let Some(o) = at {
         if e.is::<View3D>(o) {
             return Some(o);
         }
-        at = e.owner(o);
+        at = parent(e, o);
     }
     None
 }

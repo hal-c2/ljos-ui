@@ -23,7 +23,20 @@ pub struct Object3D {
     pub object: QtObject,
     #[qml(notify, list)]
     pub data: QmlList,
+    /// The object this one is in: the one it was declared in until it is
+    /// set. Setting it moves the object into the new parent's `data`
+    /// (`space.rs`).
+    #[qml(notify, object = "Object3D", change = crate::space::parent_written)]
+    pub parent: Option<ObjectId>,
+    /// Whose `data` holds it, once it completed; `parent` before that is
+    /// only what was declared.
+    #[qml(skip)]
+    pub(crate) held: Option<Held>,
 }
+
+/// Where a completed object is held. `None` inside: set to no parent.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Held(pub(crate) Option<ObjectId>);
 
 /// `Node`: a place in the scene, relative to its parent node.
 ///
