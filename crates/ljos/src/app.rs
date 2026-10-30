@@ -680,7 +680,7 @@ impl<M> App<M> {
 fn inspector_to_serve(
     caps: Option<crate::mcp::CapSet>,
 ) -> Result<Option<crate::mcp::Inspector>, crate::ShellError> {
-    use crate::mcp::{CAPS_VAR, DIR_VAR, Inspector};
+    use crate::mcp::{CAPS_VAR, DIR_VAR, Inspector, RATE_VAR};
     let refused = |e: crate::mcp::InspectorError| crate::ShellError::Setup(e.to_string().into());
     if let Some(inspector) = Inspector::from_env()
         .map_err(|e| crate::ShellError::Setup(format!("{CAPS_VAR}: {e}").into()))?
@@ -690,7 +690,9 @@ fn inspector_to_serve(
     let Some(caps) = caps else {
         return Ok(None);
     };
-    let inspector = Inspector::new(caps).map_err(refused)?;
+    let inspector = Inspector::new(caps)
+        .and_then(|i| i.rate_var(std::env::var_os(RATE_VAR).as_deref()))
+        .map_err(refused)?;
     Ok(Some(
         match std::env::var_os(DIR_VAR).filter(|d| !d.is_empty()) {
             Some(dir) => inspector.below(dir),

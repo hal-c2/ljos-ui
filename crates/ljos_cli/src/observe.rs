@@ -67,6 +67,10 @@ pub struct Observe {
         value_parser = crate::run::parse_caps
     )]
     mcp: Option<CapSet>,
+    /// With `--mcp`: answer a client of the observer's own inspector this
+    /// many calls a second, from 1 to 1000, as `ljos run --mcp-rate` does.
+    #[arg(long, requires = "mcp", value_name = "N", value_parser = crate::run::calls_per_second)]
+    mcp_rate: Option<u32>,
 }
 
 impl Observe {
@@ -87,6 +91,9 @@ impl Observe {
         let config = ShellConfig::new(format!("{KEY}.qml")).with_size(self.size.0, self.size.1);
         let file = token_file.display().to_string();
         let mcp = self.mcp;
+        let rate = self
+            .mcp_rate
+            .unwrap_or(ljos_mcp_core::DEFAULT_CALLS_PER_SECOND);
         ljos_shell::run::<()>(config, move |setup| {
             // The inspector prints the log as it keeps it.
             if let Some(caps) = mcp {
@@ -94,6 +101,7 @@ impl Observe {
                 let access = InspectorAccess {
                     caps,
                     clean_up_on_signals: true,
+                    calls_per_second: rate,
                     ..InspectorAccess::default()
                 };
                 let at = setup.serve_inspector_as(options, access, crate::run::print_log)?;

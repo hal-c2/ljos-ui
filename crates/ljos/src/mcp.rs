@@ -14,19 +14,27 @@
 //! code, [`App::inspector`](crate::App::inspector) asks for it; the
 //! variable, when set, wins, so that whoever runs the program decides.
 //! A program built without the feature says so when the variable is set.
+//! `LJOS_MCP_RATE` grants more calls a second than the default, as
+//! `ljos run --mcp-rate` does, for a program that starts the application
+//! as its own child and drives it as part of its own interface.
 
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
 
-pub use ljos_dev::mcp::{Cap, CapSet, ParseCapError};
+pub use ljos_dev::mcp::{
+    CALLS_PER_SECOND, Cap, CapSet, DEFAULT_CALLS_PER_SECOND, ParseCapError, RateError,
+};
 pub use ljos_shell::{InspectorAccess, InspectorAddress, InspectorOptions};
 
 /// The capabilities, as `ljos run --mcp=` takes them.
 pub const CAPS_VAR: &str = "LJOS_MCP";
 /// The directory the token file goes below.
 pub const DIR_VAR: &str = "LJOS_MCP_DIR";
+/// The calls a second a client is answered, as `ljos run --mcp-rate`
+/// takes them.
+pub const RATE_VAR: &str = "LJOS_MCP_RATE";
 
 /// Why an inspector cannot be served as asked.
 #[derive(Debug, thiserror::Error)]
@@ -45,6 +53,8 @@ pub enum InspectorError {
     NoInspect,
     #[error("the working directory, for the token file: {0}")]
     Dir(#[from] std::io::Error),
+    #[error(transparent)]
+    Rate(#[from] RateError),
 }
 
 /// An inspector to serve: who may do what, and where the token goes.
@@ -52,6 +62,7 @@ pub enum InspectorError {
 pub struct Inspector {
     caps: CapSet,
     dir: Option<PathBuf>,
+    calls_per_second: u32,
 }
 
 impl Inspector {
@@ -70,7 +81,11 @@ impl Inspector {
         if !caps.contains(Cap::Inspect) {
             return Err(InspectorError::NoInspect);
         }
-        Ok(Self { caps, dir: None })
+        Ok(Self {
+            caps,
+            dir: None,
+            calls_per_second: DEFAULT_CALLS_PER_SECOND,
+        })
     }
 
     /// As [`new`](Self::new), from names: `inspect,input`.
@@ -78,13 +93,15 @@ impl Inspector {
         Self::new(CapSet::parse_list(list)?)
     }
 
-    /// What [`CAPS_VAR`] and [`DIR_VAR`] ask for; `None` when the first is
-    /// unset or empty.
+    /// What [`CAPS_VAR`], [`DIR_VAR`] and [`RATE_VAR`] ask for; `None`
+    /// when the first is unset or empty.
     pub fn from_env() -> Result<Option<Self>, InspectorError> {
         Self::from_vars(
             std::env::var_os(CAPS_VAR).as_deref(),
             std::env::var_os(DIR_VAR).as_deref(),
-        )
+        )?
+        .map(|i| i.rate_var(std::env::var_os(RATE_VAR).as_deref()))
+        .transpose()
     }
 
     /// [`from_env`](Self::from_env) with the values of the variables given.
@@ -109,8 +126,29 @@ impl Inspector {
         self
     }
 
+    /// Clients are answered `n` calls a second rather than the default,
+    /// `n` within [`CALLS_PER_SECOND`]. It grants no capability.
+    pub fn calls_per_second(mut self, n: u32) -> Result<Self, InspectorError> {
+        self.calls_per_second = ljos_dev::mcp::check_calls_per_second(n)?;
+        Ok(self)
+    }
+
+    /// The rate [`RATE_VAR`]'s value `rate` asks for, when it is set and
+    /// not empty; the rate given before otherwise.
+    pub fn rate_var(mut self, rate: Option<&OsStr>) -> Result<Self, InspectorError> {
+        if let Some(rate) = rate.filter(|r| !r.is_empty()) {
+            self.calls_per_second = ljos_dev::mcp::parse_calls_per_second(&rate.to_string_lossy())?;
+        }
+        Ok(self)
+    }
+
     pub fn caps(&self) -> CapSet {
         self.caps
+    }
+
+    /// The calls a second a client is answered.
+    pub fn rate(&self) -> u32 {
+        self.calls_per_second
     }
 
     /// What the shell is handed: a loopback port the system picks, the
@@ -124,6 +162,7 @@ impl Inspector {
             InspectorOptions::below(dir),
             InspectorAccess {
                 caps: self.caps,
+                calls_per_second: self.calls_per_second,
                 ..InspectorAccess::default()
             },
         ))

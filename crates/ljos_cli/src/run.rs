@@ -117,6 +117,13 @@ pub struct Run {
     /// macOS); a longer one is refused, never moved.
     #[arg(long, requires = "mcp", value_name = "PATH", value_parser = socket_path)]
     mcp_socket: Option<PathBuf>,
+    /// With `--mcp`: answer a client this many calls a second, from 1 to
+    /// 1000, instead of 20. For a program that starts the application as
+    /// its own child and drives it as part of its own interface (a live
+    /// preview, a test harness), which makes a few calls for each thing a
+    /// person does. It grants no capability; the token file states it.
+    #[arg(long, requires = "mcp", value_name = "N", value_parser = calls_per_second)]
+    mcp_rate: Option<u32>,
     /// Show the `top` overlay: the time of the last frame by lane and by
     /// owner. It is updated by the frames the application runs and keeps
     /// none coming.
@@ -409,6 +416,11 @@ fn style_argument(args: &[String]) -> (Option<String>, Vec<String>) {
     (style, rest)
 }
 
+/// Refuses a rate the inspector does not answer at before a window opens.
+pub(crate) fn calls_per_second(text: &str) -> Result<u32, String> {
+    ljos_mcp_core::parse_calls_per_second(text).map_err(|e| e.to_string())
+}
+
 /// Refuses a socket path the system cannot bind before a window opens,
 /// with the words of the inspector's own refusal.
 fn socket_path(text: &str) -> Result<PathBuf, String> {
@@ -481,6 +493,9 @@ impl Run {
                         // This process is the application's: a signal
                         // must not leave a token file naming a dead port.
                         clean_up_on_signals: true,
+                        calls_per_second: self
+                            .mcp_rate
+                            .unwrap_or(ljos_mcp_core::DEFAULT_CALLS_PER_SECOND),
                     },
                 )),
                 None => None,
@@ -748,6 +763,23 @@ mod tests {
         let run = line(&["Main.qml", "--mcp", "--mcp-redact"]).unwrap();
         assert!(run.mcp_redact);
         let e = line(&["Main.qml", "--mcp-redact"]).err().unwrap();
+        assert!(e.contains("--mcp"), "{e}");
+    }
+
+    #[test]
+    fn a_rate_is_granted_with_the_inspector_and_within_the_range() {
+        assert_eq!(line(&["Main.qml", "--mcp"]).unwrap().mcp_rate, None);
+        let run = line(&["Main.qml", "--mcp", "--mcp-rate", "100"]).unwrap();
+        assert_eq!(run.mcp_rate, Some(100));
+        let run = line(&["Main.qml", "--mcp", "--mcp-rate=1000"]).unwrap();
+        assert_eq!(run.mcp_rate, Some(1000));
+        for bad in ["0", "1001", "many"] {
+            let e = line(&["Main.qml", "--mcp", "--mcp-rate", bad])
+                .err()
+                .unwrap();
+            assert!(e.contains("from 1 to 1000"), "{bad}: {e}");
+        }
+        let e = line(&["Main.qml", "--mcp-rate", "100"]).err().unwrap();
         assert!(e.contains("--mcp"), "{e}");
     }
 

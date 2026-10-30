@@ -1,12 +1,12 @@
 //! The MCP inspector as an application asks for it (the `mcp` feature):
 //! in code with `App::inspector`, or with no code through `LJOS_MCP` and
-//! `LJOS_MCP_DIR`, as `ljos run --mcp` grants it.
+//! `LJOS_MCP_DIR` (and `LJOS_MCP_RATE`), as `ljos run --mcp` grants it.
 #![cfg(feature = "mcp")]
 
 use std::{ffi::OsStr, path::Path};
 
 use ljos::App;
-use ljos::mcp::{Cap, CapSet, Inspector, InspectorError};
+use ljos::mcp::{Cap, CapSet, DEFAULT_CALLS_PER_SECOND, Inspector, InspectorError};
 
 #[test]
 fn an_application_grants_capabilities_by_name() {
@@ -57,6 +57,34 @@ fn the_variable_grants_what_it_names_and_the_token_goes_below_the_directory() {
     let (options, access) = inspector.options().unwrap();
     assert!(options.token_file.starts_with(dir), "{options:?}");
     assert_eq!(access.caps, inspector.caps());
+}
+
+#[test]
+fn the_rate_is_the_default_unless_granted_within_the_range() {
+    let inspector = Inspector::parse("inspect").unwrap();
+    assert_eq!(inspector.rate(), DEFAULT_CALLS_PER_SECOND);
+    let inspector = inspector.rate_var(None).unwrap();
+    assert_eq!(inspector.rate(), DEFAULT_CALLS_PER_SECOND);
+    let inspector = inspector.rate_var(Some(OsStr::new("100"))).unwrap();
+    assert_eq!(inspector.rate(), 100);
+    assert_eq!(inspector.options().unwrap().1.calls_per_second, 100);
+    let inspector = inspector.calls_per_second(1000).unwrap();
+    assert_eq!(inspector.rate(), 1000);
+    for bad in ["0", "1001", "many"] {
+        let e = Inspector::parse("inspect")
+            .unwrap()
+            .rate_var(Some(OsStr::new(bad)))
+            .err()
+            .unwrap();
+        assert!(matches!(e, InspectorError::Rate(_)), "{bad}: {e}");
+        assert!(e.to_string().contains("from 1 to 1000"), "{bad}: {e}");
+    }
+    assert!(
+        Inspector::parse("inspect")
+            .unwrap()
+            .calls_per_second(0)
+            .is_err()
+    );
 }
 
 #[test]

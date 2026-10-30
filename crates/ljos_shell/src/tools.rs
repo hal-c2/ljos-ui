@@ -505,6 +505,11 @@ mod inspector {
         /// Remove the token file and the socket when SIGINT or SIGTERM
         /// ends the process. For an application's own process.
         pub clean_up_on_signals: bool,
+        /// The calls a second a client is answered (`--mcp-rate`). More
+        /// than the default is for a program that starts the application
+        /// and drives it as part of its own interface; it grants no
+        /// capability.
+        pub calls_per_second: u32,
     }
 
     impl Default for InspectorAccess {
@@ -515,6 +520,7 @@ mod inspector {
                 socket: None,
                 insecure_lan: false,
                 clean_up_on_signals: false,
+                calls_per_second: mcp::DEFAULT_CALLS_PER_SECOND,
             }
         }
     }
@@ -688,6 +694,7 @@ mod inspector {
             };
             config.insecure_lan = access.insecure_lan;
             config.clean_up_on_signals = access.clean_up_on_signals;
+            config.calls_per_second = access.calls_per_second;
             let server = mcp::serve_with(surface, config, &options.token_file)?;
             let address = InspectorAddress {
                 url: server.url().to_owned(),

@@ -109,7 +109,9 @@ pub use ljos_mcp_core::glue::http::{
     HttpConfig, HttpError, HttpServer, LAN_WARNING, Listen, bind_policy,
 };
 pub use ljos_mcp_core::{
-    Cap, CapSet, ParseCapError, SOCKET_PATH_MAX, SocketPathError, check_socket_path,
+    CALLS_PER_SECOND, Cap, CapSet, DEFAULT_CALLS_PER_SECOND, ParseCapError, RateError,
+    SOCKET_PATH_MAX, SocketPathError, check_calls_per_second, check_socket_path,
+    parse_calls_per_second,
 };
 pub use memory::WindowMemory;
 pub use observe::ProcessSource;
