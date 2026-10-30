@@ -219,7 +219,7 @@ struct Native {
     scope: SingletonScope,
 }
 
-type Make = Rc<dyn Fn(&Engine) -> Box<dyn QmlObject>>;
+pub(crate) type Make = Rc<dyn Fn(&Engine) -> Box<dyn QmlObject>>;
 
 impl Engine {
     /// Registers `T` as a singleton type of the module `uri`. The engine's
@@ -265,17 +265,24 @@ impl Engine {
         version: Version,
         make: impl Fn(&Engine) -> T + 'static,
     ) {
-        let meta = T::static_meta();
+        let make: Make = Rc::new(move |engine| Box::new(make(engine)));
+        self.register_singleton_meta(uri, version, T::static_meta(), make, T::SCOPE);
+    }
+
+    /// Registers `meta` as a singleton type whose object `make` makes.
+    pub(crate) fn register_singleton_meta(
+        &self,
+        uri: &str,
+        version: Version,
+        meta: &'static MetaObject,
+        make: Make,
+        scope: SingletonScope,
+    ) {
         self.register_type(uri, version, MetaRef::Static(meta));
         let all = self.extension::<Singletons>();
-        let make: Make = Rc::new(move |engine| Box::new(make(engine)));
         all.natives.borrow_mut().insert(
             (uri.to_owned(), meta.name.to_string()),
-            Native {
-                meta,
-                make,
-                scope: T::SCOPE,
-            },
+            Native { meta, make, scope },
         );
         // A script may have asked for the name before the type was there.
         let mut entries = all.entries.borrow_mut();

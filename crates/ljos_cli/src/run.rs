@@ -20,11 +20,14 @@ use clap::Args;
 use ljos::dev::EngineOracle;
 use ljos_compiler::{Alias, Aliases};
 use ljos_design::theme::Theme;
-use ljos_engine::{Engine, LogEntry, LogLevel};
+use ljos_engine::{Engine, LogEntry, LogLevel, TypeDump};
 use ljos_mcp_core::{Cap, CapSet};
 use ljos_shell::{InspectorAccess, InspectorOptions, Report, Setup, SetupError, ShellConfig};
 
 use crate::demand::{OnDemand, Say};
+
+/// The type dump a project keeps beside its entry.
+const TYPES_FILE: &str = "ljostypes.json";
 
 #[derive(Args)]
 pub struct Run {
@@ -138,6 +141,16 @@ pub struct Run {
     /// not know them.
     #[arg(long, value_name = "ID")]
     example: Option<String>,
+    /// The type dump that describes the project's native types. Without
+    /// it, `ljostypes.json` in the project's directory is read if it is
+    /// there, and nothing is looked for anywhere else. Every type it
+    /// describes that no Rust code provides stands in with the members it
+    /// declares, its methods doing nothing, and the run says which; what
+    /// such a type attaches is not made, and the run says that too. A
+    /// file that cannot be read, or describes a type on a base nothing
+    /// has, stops the run. It is read once: `--watch` does not follow it.
+    #[arg(long, value_name = "FILE", conflicts_with = "example")]
+    types: Option<PathBuf>,
     /// What the application is given after `--`, in `Application.arguments`
     /// after the program and the entry file. `-style NAME` among them
     /// chooses the controls style before `QT_QUICK_CONTROLS_STYLE` and the
@@ -302,23 +315,80 @@ fn entry(file: &Path) -> anyhow::Result<(PathBuf, String)> {
     }
 }
 
+/// The file a run reads its native types from: the one named, else the
+/// project directory's if it has one.
+fn types_file(named: Option<&Path>, dir: &Path) -> Option<(PathBuf, String)> {
+    if let Some(named) = named {
+        return Some((named.to_owned(), named.display().to_string()));
+    }
+    let found = dir.join(TYPES_FILE);
+    found.is_file().then(|| (found, TYPES_FILE.to_owned()))
+}
+
+/// What `file` says, and the name to call it by when saying anything of it.
+fn read_types(file: Option<(PathBuf, String)>) -> anyhow::Result<Option<(TypeDump, String)>> {
+    let Some((path, label)) = file else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(&path).with_context(|| label.clone())?;
+    let dump = TypeDump::from_json(&text).with_context(|| label.clone())?;
+    Ok(Some((dump, label)))
+}
+
+/// Makes the dump's types the Engine has none of, and says which they are:
+/// what such a run shows of them is not what the application does.
+fn stand_in(engine: &Engine, types: Option<&(TypeDump, String)>) -> Result<(), SetupError> {
+    let Some((dump, label)) = types else {
+        return Ok(());
+    };
+    let standing = engine
+        .register_stand_ins(dump)
+        .map_err(|e| format!("{label}: {e}"))?;
+    if !standing.types.is_empty() {
+        crate::stderr::line(&format!(
+            "ljos: {label}: {} stand in: no Rust code provides them",
+            standing.types.join(", ")
+        ));
+    }
+    for (name, attached) in &standing.attaching {
+        crate::stderr::line(&format!(
+            "ljos: {label}: {name} attaches {attached}, which does not stand in"
+        ));
+    }
+    Ok(())
+}
+
+/// What the compiler is told of the dump's types: they are checked as a
+/// build that has the application's Rust checks them.
+fn oracle_for_types((dump, label): &(TypeDump, String)) -> anyhow::Result<EngineOracle> {
+    let engine = Engine::new();
+    ljos_quick::register(&engine);
+    ljos_controls::register(&engine);
+    ljos_media::register(&engine);
+    crate::render::register_modules(&engine);
+    EngineOracle::from_dump(dump, &engine).with_context(|| label.clone())
+}
+
 /// The project of a run that does not watch, as a program loads it: the
 /// entry is compiled now, and each other file when the program first
 /// makes an object of it, which tells `say` its warnings then. A file the
 /// entry never reaches is not compiled and says nothing. A file with a
 /// mistake is said to be one to whatever makes an object of it, so only
 /// the entry's own mistake stops the run. With an example, its registered
-/// backends are types of the project too (see `ljos render --example`).
+/// backends are types of the project too (see `ljos render --example`),
+/// and so are a type dump's types.
 fn compile(
     dir: &Path,
     key: &str,
     example: Option<&str>,
+    types: Option<&(TypeDump, String)>,
     aliases: &Aliases,
     say: Say,
 ) -> anyhow::Result<OnDemand<EngineOracle>> {
-    let oracle = match example {
-        Some(id) => crate::render::oracle_for_example(id),
-        None => EngineOracle::table_only(),
+    let oracle = match (example, types) {
+        (Some(id), _) => crate::render::oracle_for_example(id),
+        (None, Some(types)) => oracle_for_types(types)?,
+        (None, None) => EngineOracle::table_only(),
     };
     OnDemand::open(dir, key, aliases, oracle, say)
 }
@@ -512,6 +582,11 @@ impl Run {
             ljos_engine::file_url(&path)
         });
         let theme = self.theme.clone();
+        // An example's types are its backends'; a file beside it says nothing.
+        let types = match (&self.example, &self.types) {
+            (Some(_), _) => None,
+            (None, named) => read_types(types_file(named.as_deref(), &dir))?,
+        };
         if self.watch {
             let main = dir.join(format!("{key}.qml"));
             let project = self.project.is_some().then(|| dir.clone());
@@ -520,6 +595,7 @@ impl Run {
                 // Every module qml6 would have; databases where Qt keeps them.
                 crate::render::register_modules(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
+                stand_in(setup.engine(), types.as_ref())?;
                 tools.start(setup)?;
                 if let Some(icon) = &icon {
                     ljos::window::load_application_icon(setup.engine(), icon);
@@ -562,6 +638,7 @@ impl Run {
             let stop = Arc::new(AtomicBool::new(false));
             let compiling = {
                 let (dir, key, example) = (dir.clone(), key.clone(), example.clone());
+                let types = types.clone();
                 let aliases = aliases.clone();
                 let stop = Arc::clone(&stop);
                 std::thread::Builder::new()
@@ -571,6 +648,7 @@ impl Run {
                             &dir,
                             &key,
                             example.as_deref(),
+                            types.as_ref(),
                             &aliases,
                             Box::new(crate::stderr::line),
                         )?;
@@ -595,6 +673,7 @@ impl Run {
                 // Every module qml6 would have; databases where Qt keeps them.
                 crate::render::register_modules(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
+                stand_in(setup.engine(), types.as_ref())?;
                 tools.start(setup)?;
                 let engine = setup.engine();
                 // Before the root is made, so nothing binds to the module's
@@ -650,6 +729,28 @@ mod tests {
         Line::try_parse_from([&["ljos-run"], args].concat())
             .map(|l| l.run)
             .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn a_type_dump_is_named_or_found_beside_the_entry() {
+        assert_eq!(
+            line(&["Main.qml", "--types", "own.json"]).unwrap().types,
+            Some(PathBuf::from("own.json"))
+        );
+        assert!(line(&["Main.qml", "--types", "t", "--example", "e"]).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        assert!(types_file(None, dir.path()).is_none());
+        std::fs::write(dir.path().join(TYPES_FILE), "{}").unwrap();
+        assert_eq!(
+            types_file(None, dir.path())
+                .map(|(_, label)| label)
+                .as_deref(),
+            Some(TYPES_FILE)
+        );
+        // Named, it need not exist to be the one read.
+        let named = types_file(Some(Path::new("absent.json")), dir.path()).unwrap();
+        assert_eq!(named.1, "absent.json");
+        assert!(read_types(Some(named)).is_err());
     }
 
     #[test]
@@ -907,6 +1008,7 @@ mod tests {
             dir.path(),
             "Main",
             None,
+            None,
             &Aliases::new(),
             Box::new(move |line| to.lock().unwrap().push(line.to_owned())),
         )
@@ -964,7 +1066,7 @@ mod tests {
                 ),
             ],
         );
-        let stopped = compile(dir.path(), "Main", None, &Aliases::new(), quiet()).unwrap();
+        let stopped = compile(dir.path(), "Main", None, None, &Aliases::new(), quiet()).unwrap();
         stopped.compile_ahead("Main", &AtomicBool::new(true));
         assert!(stopped.ahead().is_empty());
 
@@ -973,6 +1075,7 @@ mod tests {
         let source = compile(
             dir.path(),
             "Main",
+            None,
             None,
             &Aliases::new(),
             Box::new(move |line| to.lock().unwrap().push(line.to_owned())),
@@ -1020,24 +1123,25 @@ mod tests {
             "import QtQuick\nItem {\n  width: 20 +\n}\n",
         )
         .unwrap();
-        let e = compile(dir.path(), "Main", None, &Aliases::new(), quiet())
+        let e = compile(dir.path(), "Main", None, None, &Aliases::new(), quiet())
             .unwrap_err()
             .to_string();
         assert!(e.contains("Main.qml:"), "{e}");
         std::fs::write(dir.path().join("Main.qml"), "import QtQuick\nItem {}\n").unwrap();
-        assert!(compile(dir.path(), "Main", None, &Aliases::new(), quiet()).is_ok());
+        assert!(compile(dir.path(), "Main", None, None, &Aliases::new(), quiet()).is_ok());
         // An example without a backend compiles as before.
         assert!(
             compile(
                 dir.path(),
                 "Main",
                 Some("no-such-example"),
+                None,
                 &Aliases::new(),
                 quiet()
             )
             .is_ok()
         );
-        assert!(compile(dir.path(), "Gone", None, &Aliases::new(), quiet()).is_err());
+        assert!(compile(dir.path(), "Gone", None, None, &Aliases::new(), quiet()).is_err());
     }
 
     #[test]
@@ -1049,7 +1153,7 @@ mod tests {
             "import QtQuick\nItem {\n  NoSuchThing { }\n}\n",
         )
         .unwrap();
-        let source = compile(dir.path(), "Main", None, &Aliases::new(), quiet()).unwrap();
+        let source = compile(dir.path(), "Main", None, None, &Aliases::new(), quiet()).unwrap();
         let engine = Engine::new();
         ljos_quick::register(&engine);
         engine.set_component_source(source);

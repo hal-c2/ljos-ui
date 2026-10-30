@@ -1148,6 +1148,28 @@ impl MetaBuilder {
         self
     }
 
+    /// A grouped property with no native struct behind it: `name` and
+    /// `name.leaf` for each of `leaves`, stored in dynamic slots.
+    #[inline(never)]
+    pub fn dynamic_group(
+        mut self,
+        name: &str,
+        group: &str,
+        leaves: impl IntoIterator<Item = (String, TypeTag, PropertyFlags)>,
+    ) -> Self {
+        self.push_property(
+            Atom::intern(name),
+            TypeTag::Group(Atom::intern(group)),
+            PropertyFlags::GROUP | PropertyFlags::FINAL | PropertyFlags::READONLY,
+            false,
+            PropertyAccess::GroupRoot,
+        );
+        for (leaf, ty, flags) in leaves {
+            self = self.property(&format!("{name}.{leaf}"), ty, flags, false);
+        }
+        self
+    }
+
     /// A property declared in QML, stored in a dynamic slot.
     #[inline(never)]
     pub fn property(mut self, name: &str, ty: TypeTag, flags: PropertyFlags, notify: bool) -> Self {

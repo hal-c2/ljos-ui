@@ -101,6 +101,7 @@ mod script_owned;
 mod signal;
 mod slow;
 mod sort_filter;
+mod stand_in;
 mod synchronizer;
 mod table_model;
 mod timing;
@@ -179,7 +180,7 @@ pub use property_map::PropertyMap;
 pub use qtqml::{Component, ComponentAttached, Connections, RunningTimer, Timer, handler_name};
 pub use registry::{
     BlockEntry, EnumEntry, MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry,
-    PropertyKind, Registry, SignalEntry, TypeDump, TypeDumpError, TypeEntry, Version,
+    PropertyKind, Registry, SignalEntry, TypeDump, TypeDumpError, TypeEntry, TypeSignals, Version,
 };
 pub use script_owned::ScriptMemory;
 pub use signal::Handler;
@@ -187,6 +188,7 @@ pub use slow::SlowCall;
 pub use sort_filter::{
     FilterBase, RoleFilter, RoleSorter, SortFilterProxyModel, SorterBase, StringSorter, ValueFilter,
 };
+pub use stand_in::{StandInError, StandIns};
 pub use table_model::TableModel;
 pub use timing::EngineTimes;
 pub use trace::{TraceSink, Traced};

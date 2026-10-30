@@ -14,7 +14,8 @@ Feature: Running a project whose types are described by its ljostypes.json
   the build checks them, and each one no Rust code provides stands in with
   the members it declares: its properties hold what they are given, its
   signals can be emitted and handled, and its methods do nothing and return
-  `undefined`. The run says once which types stand in.
+  `undefined`. The run says once which types stand in. What a type attaches
+  does not stand in, and the run says that too.
 
   Background:
     Given the file "ljostypes.json":
@@ -48,6 +49,7 @@ Feature: Running a project whose types are described by its ljostypes.json
           objectName: "root"
           width: 200; height: 100
           property int heard: 0
+          property int playing: Player.Playing
           property real position: 0
           Player {
               id: player
@@ -95,7 +97,7 @@ Feature: Running a project whose types are described by its ljostypes.json
       When the author starts "ljos run Main.qml --headless --mcp=inspect,eval"
       And the agent calls the tool "app_eval" with:
         """json
-        {"target": "#player", "source": "Player.Playing"}
+        {"target": "#root", "source": "playing"}
         """
       Then the answer's "/value" is 7
 
@@ -117,18 +119,81 @@ Feature: Running a project whose types are described by its ljostypes.json
 
     Scenario: A save compiled against the file keeps knowing its types
       When the author starts "ljos run Main.qml --headless --watch --mcp=inspect,eval"
-      And the file "Main.qml" is saved as:
+      And the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#player", "source": "volume"}
+        """
+      And the file "Main.qml" is changed to:
         """qml
         import QtQuick
         import App.Media
 
-        Player { objectName: "saved"; volume: 12 }
+        Item { Player { objectName: "saved"; volume: 12 } }
         """
-      And the agent calls the tool "app_eval" with:
+      And the agent calls the tool "app_status" with:
+        """json
+        {"after_reload": 0, "wait_ms": 20000}
+        """
+      Then the answer's "/reload/last/outcome" is "applied"
+      When the agent calls the tool "app_eval" with:
         """json
         {"target": "#saved", "source": "volume"}
         """
       Then the answer's "/value" is 12
+
+    Scenario: A grouped property holds what its members are given
+      Given the file "ljostypes.json":
+        """json
+        {"format": 2, "modules": [{"uri": "App.Media", "versions": ["1.0"], "types": [
+          {"name": "Player", "since": "1.0", "base": "QtObject", "baseModule": "QtQml",
+           "creatable": true, "defaultProperty": null, "attached": null,
+           "properties": [{"name": "codec", "type": "Codec", "kind": "group", "readonly": true,
+             "final": true, "required": false, "constant": false, "group": true, "notify": null}],
+           "signals": [], "methods": []}]}],
+         "unnamed": [{"name": "Codec", "since": "1.0", "base": null, "baseModule": null,
+           "creatable": false, "defaultProperty": null, "attached": null,
+           "properties": [{"name": "rate", "type": "int", "kind": "value", "readonly": false,
+             "final": true, "required": false, "constant": false, "group": false, "notify": null}],
+           "signals": [], "methods": []}]}
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import App.Media
+
+        Item {
+            Player { objectName: "player"; codec.rate: 44 }
+        }
+        """
+      When the author starts "ljos run Main.qml --headless --mcp=inspect,eval"
+      And the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#player", "source": "codec.rate"}
+        """
+      Then the answer's "/value" is 44
+
+    Scenario: What a type attaches does not stand in, and the run says so
+      Given the file "ljostypes.json":
+        """json
+        {"format": 2, "modules": [{"uri": "App.Media", "versions": ["1.0"], "types": [
+          {"name": "Player", "since": "1.0", "base": "QtObject", "baseModule": "QtQml",
+           "creatable": true, "defaultProperty": null, "attached": "PlayerInfo",
+           "properties": [], "signals": [], "methods": []}]}],
+         "unnamed": [{"name": "PlayerInfo", "since": "1.0", "base": "QtObject", "baseModule": "QtQml",
+           "creatable": false, "defaultProperty": null, "attached": null,
+           "properties": [{"name": "rank", "type": "int", "kind": "value", "readonly": false,
+             "final": true, "required": false, "constant": false, "group": false, "notify": null}],
+           "signals": [], "methods": []}]}
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import App.Media
+
+        Item { objectName: "root"; Player {} }
+        """
+      When the author starts "ljos run Main.qml --headless --mcp=inspect"
+      Then the application's errors mention "ljos: ljostypes.json: App.Media.Player attaches PlayerInfo, which does not stand in"
 
   Rule: What the file does not describe is a mistake, as in a build
 
@@ -146,10 +211,13 @@ Feature: Running a project whose types are described by its ljostypes.json
     Scenario: A change signal is one the file implies through its property
       Given the file "Main.qml":
         """qml
-        import QtQml
+        import QtQuick
         import App.Media
 
-        Player { onVolumeChanged: 0; Component.onCompleted: Qt.quit() }
+        Item {
+            Player { onVolumeChanged: 0 }
+            Component.onCompleted: Qt.quit()
+        }
         """
       When the author runs "ljos run Main.qml --headless"
       Then the command exits with status 0
@@ -197,7 +265,7 @@ Feature: Running a project whose types are described by its ljostypes.json
         """
       When the author runs "ljos run ui/Main.qml --headless"
       Then the command exits with status 1
-      And the command's output mentions "App.Media"
+      And the command's output mentions "Wave"
       And the command's output does not mention "stand in"
 
   Rule: A file that was found and cannot be used stops the run
