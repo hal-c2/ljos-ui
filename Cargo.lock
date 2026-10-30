@@ -3593,6 +3593,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_3d"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "png",
+ "pollster 1.0.1",
+ "slotmap",
+ "thiserror 2.0.21",
+ "wgpu",
+]
+
+[[package]]
 name = "ljos_a11y"
 version = "0.0.0"
 dependencies = [
@@ -3861,7 +3873,9 @@ version = "0.0.0"
 dependencies = [
  "accesskit_consumer",
  "egui",
+ "egui-wgpu",
  "egui_kittest",
+ "ljos_3d",
  "ljos_a11y",
  "ljos_compiler",
  "ljos_engine",

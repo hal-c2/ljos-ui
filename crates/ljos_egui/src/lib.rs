@@ -11,6 +11,8 @@
 mod a11y;
 mod input;
 mod keys;
+#[cfg(feature = "quick3d")]
+pub mod scene3d;
 mod text;
 mod view;
 

@@ -17,6 +17,13 @@ ljos_runtime = { path = "../ljos_runtime" }
 ljos_text = { path = "../ljos_text" }
 egui.workspace = true
 thiserror.workspace = true
+# Only with `quick3d`: a 3D view drawn on egui-wgpu's device, in its pass.
+# The version ljos_shell draws with.
+egui-wgpu = { version = "0.37.0", optional = true }
+ljos_3d = { path = "../ljos_3d", optional = true }
+
+[features]
+quick3d = ["dep:egui-wgpu", "dep:ljos_3d"]
 
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["wgpu"] }
@@ -28,6 +35,10 @@ png.workspace = true
 # tests/scripts.rs compiles a QML string; the crate never links the parser.
 ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
+
+[[test]]
+name = "scene3d"
+required-features = ["quick3d"]
 
 [lints]
 workspace = true
