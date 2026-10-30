@@ -5991,6 +5991,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qml_edit"
+version = "0.0.0"
+dependencies = [
+ "qml_fmt",
+ "qml_syntax",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "qml_fmt"
 version = "0.0.0"
 dependencies = [

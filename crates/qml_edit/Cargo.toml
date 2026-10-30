@@ -1,0 +1,19 @@
+[package]
+name = "qml_edit"
+description = "Structured edits of a QML file that leave every byte outside the edited member as it was: what a visual designer writes back with."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+qml_syntax = { path = "../qml_syntax" }
+thiserror.workspace = true
+
+[dev-dependencies]
+qml_fmt = { path = "../qml_fmt" }
+
+[lints]
+workspace = true

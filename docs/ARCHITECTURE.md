@@ -185,6 +185,7 @@ ljos-ui/
 │   ├── qmltypes/               generator CLI (.qmltypes + qmldir only)            [shared, tool]
 │   ├── qml_compare/            pixelmatch port, content score, ratchet, report    [shared, tool]
 │   ├── qml_fmt/                QML formatter behind `ljos fmt` and `qml_format`    [tool]
+│   ├── qml_edit/               structured edits that keep every untouched byte     [tool]
 │   ├── ljos_ir/                owned IR: ComponentDef, ObjectKey, bindings, signatures
 │   ├── ljos_compiler/          lowering, tier-0 resolution, tier-1 codegen, JS codegen,
 │   │                           IR diff → ReloadPatch, i18n extraction, lints (salsa)

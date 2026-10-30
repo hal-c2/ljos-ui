@@ -277,8 +277,8 @@ lto = "thin"
 
 # What the `ljos` command carries that an application never runs: the
 # feature catalogue and its runner, the authoring server, the bench, the
-# formatter and the QtTest runner. Built for size; their work is a
-# developer's, not a frame's.
+# formatter, the structured editor and the QtTest runner. Built for size;
+# their work is a developer's, not a frame's.
 [profile.release.package]
 ljos_bdd.opt-level = "s"
 cucumber.opt-level = "s"
@@ -288,6 +288,7 @@ rmcp.opt-level = "s"
 schemars.opt-level = "s"
 ljos_bench.opt-level = "s"
 qml_fmt.opt-level = "s"
+qml_edit.opt-level = "s"
 ljos_test.opt-level = "s"
 
 # What is handed out: one LLVM module, so code that is generic over the
