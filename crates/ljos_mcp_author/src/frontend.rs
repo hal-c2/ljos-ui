@@ -43,7 +43,9 @@ pub struct TypeInfo {
     pub default_property: Option<String>,
     /// `name: type`, with `list`, `readonly` or `required` when they apply.
     pub properties: Vec<String>,
-    /// `name(argument, ...)`: a handler is `on` plus the name, capitalised.
+    /// `name(argument: type, ...)`, a type left out where it is not known:
+    /// a handler is `on` plus the name, capitalised, and is given the
+    /// arguments by these names. A property's change signal is one of them.
     pub signals: Vec<String>,
     pub methods: Vec<String>,
     /// `Name: Key, Key`; flags are marked `(flags)`.

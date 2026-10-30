@@ -132,11 +132,14 @@ impl FrontEnd for QmlFrontEnd {
     }
 
     fn type_lookup(&self, module: &str, name: &str) -> Result<TypeInfo, SurfaceError> {
-        lookup::type_info(module, name)
+        lookup::type_info(module, name).or_else(|absent| {
+            lookup::project_type_info(&self.root, module, name).unwrap_or(Err(absent))
+        })
     }
 
     fn module_types(&self, module: &str) -> Result<ModuleInfo, SurfaceError> {
         lookup::module_info(module)
+            .or_else(|absent| lookup::project_module_info(&self.root, module).ok_or(absent))
     }
 }
 

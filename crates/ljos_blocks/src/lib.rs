@@ -36,6 +36,9 @@ mod qmldir;
 #[cfg(feature = "source")]
 mod source;
 
+pub use dump::{
+    DumpParam, DumpedEnum, DumpedMethod, DumpedProperty, DumpedSignal, DumpedType, DumpedTypes,
+};
 pub use qmldir::{BlockDecl, DeclError, QmldirBlocks, read_qmldir};
 #[cfg(feature = "source")]
 pub use source::qml_contract;

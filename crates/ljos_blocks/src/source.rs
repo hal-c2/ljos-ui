@@ -1,7 +1,7 @@
 //! Blocks written in QML, read from their files, and a project's registry
 //! read from its directory.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use qml_syntax::ast::{QmlMember, QmlTypeName};
 use qml_syntax::{Allocator, GetSpan, text};
@@ -125,16 +125,15 @@ fn relative(root: &Path, path: &Path) -> String {
         .join("/")
 }
 
-pub(crate) fn from_project(root: &Path) -> Result<BlockRegistry, BlocksError> {
-    let io = |path: &Path, source| BlocksError::Io {
+fn io(path: &Path, source: std::io::Error) -> BlocksError {
+    BlocksError::Io {
         path: path.display().to_string(),
         source,
-    };
-    // Canonical, so that a file a link or a `..` takes out of the project
-    // is seen to be outside it: a tool confined to the project reads
-    // nothing else through a block.
-    let root = &root.canonicalize().map_err(|e| io(root, e))?;
-    let mut registry = BlockRegistry::new();
+    }
+}
+
+/// The project's `qmldir` and `ljostypes.json` files, each list sorted.
+fn project_files(root: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>), BlocksError> {
     let mut dirs = vec![root.to_path_buf()];
     let mut qmldirs = Vec::new();
     let mut dumps = Vec::new();
@@ -165,6 +164,32 @@ pub(crate) fn from_project(root: &Path) -> Result<BlockRegistry, BlocksError> {
     }
     qmldirs.sort();
     dumps.sort();
+    Ok((qmldirs, dumps))
+}
+
+impl crate::DumpedTypes {
+    /// What the `ljostypes.json` files of the project at `root` describe,
+    /// found as [`BlockRegistry::from_project`] finds them. A file that
+    /// cannot be read adds nothing: the registry's problems say why.
+    pub fn from_project(root: &Path) -> Result<Self, BlocksError> {
+        let root = root.canonicalize().map_err(|e| io(root, e))?;
+        let mut types = Self::default();
+        for path in project_files(&root)?.1 {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let _ = types.add_dump(&text);
+            }
+        }
+        Ok(types)
+    }
+}
+
+pub(crate) fn from_project(root: &Path) -> Result<BlockRegistry, BlocksError> {
+    // Canonical, so that a file a link or a `..` takes out of the project
+    // is seen to be outside it: a tool confined to the project reads
+    // nothing else through a block.
+    let root = &root.canonicalize().map_err(|e| io(root, e))?;
+    let mut registry = BlockRegistry::new();
+    let (qmldirs, dumps) = project_files(root)?;
     for path in &dumps {
         let file = relative(root, path);
         let text = std::fs::read_to_string(path).map_err(|e| io(path, e))?;

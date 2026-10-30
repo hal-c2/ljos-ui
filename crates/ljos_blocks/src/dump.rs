@@ -16,30 +16,69 @@ pub(crate) const FORMAT: u32 = 2;
 struct Dump {
     format: u32,
     modules: Vec<Module>,
+    #[serde(default)]
+    unnamed: Vec<DumpedType>,
 }
 
 #[derive(Deserialize)]
 struct Module {
     uri: String,
-    types: Vec<Type>,
+    types: Vec<DumpedType>,
 }
 
-#[derive(Deserialize)]
+/// One type as a type dump describes it: its own members, as the dump
+/// keeps them, with what it inherits through `base`.
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Type {
-    name: String,
-    since: String,
+pub struct DumpedType {
+    pub name: String,
+    pub since: String,
     #[serde(default)]
-    properties: Vec<Property>,
+    pub base: Option<String>,
     #[serde(default)]
-    signals: Vec<Signal>,
+    pub base_module: Option<String>,
     #[serde(default)]
-    methods: Vec<Method>,
+    pub default_property: Option<String>,
+    #[serde(default)]
+    pub attached: Option<String>,
+    #[serde(default)]
+    pub properties: Vec<DumpedProperty>,
+    #[serde(default)]
+    pub signals: Vec<DumpedSignal>,
+    #[serde(default)]
+    pub methods: Vec<DumpedMethod>,
+    #[serde(default)]
+    pub enums: Vec<DumpedEnum>,
     #[serde(default)]
     block: Option<Block>,
 }
 
-#[derive(Deserialize)]
+impl DumpedType {
+    /// The signals of the type itself: those it declares, and then the
+    /// change signals its properties imply, which the dump does not list.
+    pub fn own_signals(&self) -> Vec<DumpedSignal> {
+        let implied = self.properties.iter().filter_map(|p| {
+            let name = p.notify.as_ref()?;
+            let declared = self.signals.iter().any(|s| &s.name == name);
+            (!declared).then(|| DumpedSignal {
+                name: name.clone(),
+                parameters: Vec::new(),
+            })
+        });
+        let mut signals = self.signals.clone();
+        signals.extend(implied);
+        signals
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct DumpedEnum {
+    pub name: String,
+    #[serde(default)]
+    pub keys: Vec<(String, i64)>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 struct Block {
     #[serde(default)]
     category: Option<String>,
@@ -47,41 +86,97 @@ struct Block {
     summary: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct Property {
-    name: String,
+#[derive(Clone, Debug, Deserialize)]
+pub struct DumpedProperty {
+    pub name: String,
     #[serde(rename = "type")]
-    ty: String,
+    pub ty: String,
     #[serde(default)]
-    list: bool,
+    pub list: bool,
     #[serde(default)]
-    readonly: bool,
+    pub readonly: bool,
     #[serde(default)]
-    notify: Option<String>,
+    pub required: bool,
+    #[serde(default)]
+    pub notify: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct Signal {
-    name: String,
+#[derive(Clone, Debug, Deserialize)]
+pub struct DumpedSignal {
+    pub name: String,
     #[serde(default)]
-    parameters: Vec<DumpParam>,
+    pub parameters: Vec<DumpParam>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Method {
-    name: String,
+pub struct DumpedMethod {
+    pub name: String,
     #[serde(default)]
-    parameters: Vec<DumpParam>,
+    pub parameters: Vec<DumpParam>,
     #[serde(default)]
-    return_type: Option<String>,
+    pub return_type: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct DumpParam {
-    name: String,
+#[derive(Clone, Debug, Deserialize)]
+pub struct DumpParam {
+    pub name: String,
     #[serde(rename = "type")]
-    ty: String,
+    pub ty: String,
+}
+
+/// The types of the type dumps of a project, or of one dump.
+#[derive(Clone, Debug, Default)]
+pub struct DumpedTypes {
+    modules: Vec<(String, Vec<DumpedType>)>,
+    unnamed: Vec<DumpedType>,
+}
+
+impl DumpedTypes {
+    /// Adds what one dump describes.
+    pub fn add_dump(&mut self, json: &str) -> Result<(), BlocksError> {
+        let dump: Dump = serde_json::from_str(json)?;
+        if dump.format != FORMAT {
+            return Err(BlocksError::Format { found: dump.format });
+        }
+        self.modules
+            .extend(dump.modules.into_iter().map(|m| (m.uri, m.types)));
+        self.unnamed.extend(dump.unnamed);
+        Ok(())
+    }
+
+    /// The type `name` of the module `uri`.
+    pub fn type_named(&self, uri: &str, name: &str) -> Option<&DumpedType> {
+        self.modules
+            .iter()
+            .filter(|(m, _)| m == uri)
+            .find_map(|(_, types)| types.iter().find(|t| t.name == name))
+    }
+
+    /// The names of the module `uri`'s types, sorted; `None` for a module
+    /// no dump describes.
+    pub fn module_types(&self, uri: &str) -> Option<Vec<String>> {
+        let mut found = None;
+        for (_, types) in self.modules.iter().filter(|(m, _)| m == uri) {
+            let names: &mut Vec<String> = found.get_or_insert_default();
+            names.extend(types.iter().map(|t| t.name.clone()));
+        }
+        if let Some(names) = &mut found {
+            names.sort();
+            names.dedup();
+        }
+        found
+    }
+
+    /// The base of `ty`, when a dump describes it.
+    pub fn base_of(&self, ty: &DumpedType) -> Option<&DumpedType> {
+        let base = ty.base.as_deref()?;
+        self.modules
+            .iter()
+            .filter(|(uri, _)| ty.base_module.as_ref().is_none_or(|m| m == uri))
+            .find_map(|(_, types)| types.iter().find(|t| t.name == base))
+            .or_else(|| self.unnamed.iter().find(|t| t.name == base))
+    }
 }
 
 pub(crate) fn blocks(json: &str) -> Result<Vec<BlockContract>, BlocksError> {
@@ -102,14 +197,14 @@ pub(crate) fn blocks(json: &str) -> Result<Vec<BlockContract>, BlocksError> {
 
 /// The element type of a list property: the dump writes `list<T>`, or `T`
 /// with `list` set for a native list that says what it holds.
-fn element(p: &Property) -> Option<&str> {
+fn element(p: &DumpedProperty) -> Option<&str> {
     if let Some(inner) = p.ty.strip_prefix("list<").and_then(|t| t.strip_suffix('>')) {
         return Some(inner);
     }
     p.list.then_some(p.ty.as_str())
 }
 
-fn contract(module: &str, ty: &Type, block: &Block) -> BlockContract {
+fn contract(module: &str, ty: &DumpedType, block: &Block) -> BlockContract {
     let mut state = Vec::new();
     let mut inputs = Vec::new();
     let mut slots = Vec::new();

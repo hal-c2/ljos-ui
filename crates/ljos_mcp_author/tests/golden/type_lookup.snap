@@ -82,7 +82,7 @@ expression: value
         "type": "array"
       },
       "signals": {
-        "description": "`name(argument, ...)`: a handler is `on` plus the name, capitalised.",
+        "description": "`name(argument: type, ...)`, a type left out where it is not known:\na handler is `on` plus the name, capitalised, and is given the\narguments by these names. A property's change signal is one of them.",
         "items": {
           "type": "string"
         },
