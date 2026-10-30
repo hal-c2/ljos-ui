@@ -131,7 +131,7 @@ ljos attach .
 | `app_binding_graph` | Read the sources and dependents of a property and why it last evaluated | `inspect` |
 | `app_get_property` / `app_set_property` | Read or write a property, set a live `binding` expression (with `eval`), cover an existing binding with `keep_binding`, `revert` a devtools edit, or write a cell of a model with `row` | `inspect` / `mutate` (+ `eval` for `binding`) |
 | `app_invoke` | Emit a signal or call an invokable QML/Rust method on an object | `mutate` |
-| `app_click`, `app_type`, `app_press`, `app_scroll`, `app_touch` | Send pointer, keyboard, wheel and touch input through the scene's real input router and focus tree; returns a snapshot delta after the next frame | `input` |
+| `app_click`, `app_type`, `app_press`, `app_scroll`, `app_touch` | Send pointer, keyboard, wheel and touch input through the scene's real input router and focus tree; returns a snapshot delta after the next frame. `app_click` takes an item (`target`, its centre) or a point of the window (`at: [x, y]` in logical pixels) | `input` |
 | `app_batch` | Run a sequence of tool steps in one call, stopping at the first error and returning one combined outline delta at the end | per step |
 | `app_screenshot` | Render the window or a specific node to a PNG (up to 1280 px) using the R backend, even when the window is occluded or headless | `inspect` |
 | `app_resize` / `app_set_appearance` | Resize the window or switch between light/dark appearance, high contrast, reduced motion and font scale | `input` |
