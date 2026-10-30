@@ -30,6 +30,7 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `hot-reload/`, `network/`, `mobile/` | dev loop, network, phones |
 | `runtime/` | faults (a script's exception, a panic in a native type, a script that is interrupted), `ErrorBoundary` and `Loader` as the boundaries that contain them, `Component.incubateObject` |
 | `tooling/` | MCP servers (`tooling/mcp/`), CLI |
+| `quick3d/` | `QtQuick3D`: `View3D` and the scene in it (nodes, models, cameras, lights, materials, the scene environment), how it is drawn among other items, and that a still scene costs nothing |
 | `design/` | the module `Ljos.Design`: its colours, motion, spacing and type, and the transitions and behaviours made of them |
 | `parity/` | generated outlines (API ledger); never hand edited |
 
