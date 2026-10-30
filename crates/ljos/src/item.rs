@@ -120,6 +120,7 @@ pub use ljos_render::{
 pub use ljos_render::{
     ImageAlign, ImageError, ImageFit, ImageHandle, ImagePlacement, painted_size, place_image,
 };
+pub use ljos_render::{ljos_3d, scene3d};
 pub use ljos_text::{
     ElideMode, FontMetrics, LayoutParams, Line, LineRun, TextEngine, TextLayout, TextStyle,
     WrapMode,
@@ -137,6 +138,12 @@ pub fn prop<T: QmlValue + Default>(engine: &Engine, obj: ObjectId, p: Prop<T>) -
 /// The visual children of `item`, in order: the last is drawn on top.
 pub fn child_items(engine: &Engine, item: ObjectId) -> Vec<ObjectId> {
     ljos_quick::child_items(engine, item)
+}
+
+/// The non-visual children of `item` (`Timer`, `TapHandler`, a 3D
+/// scene's nodes …), in order; tracked inside a paint item's `read`.
+pub fn resources(engine: &Engine, item: ObjectId) -> Vec<ObjectId> {
+    ljos_quick::resources(engine, item)
 }
 
 /// The overlay of the window `item` is in: the item its open popups (and

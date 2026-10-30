@@ -109,6 +109,11 @@ build = ["dep:ljos_compiler", "dep:qml_front", "dep:ljos_aot"]
 # and font readers of its own). Off by default: without it a PDF source is
 # an unsupported format, as in a Qt without its PDF plugin.
 pdf = ["ljos_quick/pdf"]
+# QtQuick3D's View3D drawn: by the wgpu painter on its own device, and
+# everywhere else (headless pictures, the GL and CPU painters) as a
+# picture read back from an off-screen device. `ljos_quick3d` turns it on;
+# without it a View3D's draw op is skipped.
+quick3d = ["ljos_shell?/quick3d", "ljos_render/offscreen3d"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG
 # on a virtual clock, for screenshot tests and documentation.
 render = ["dep:ljos_drive"]
