@@ -7,8 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, api, design, docs, features,
-    format, runs, tiers,
+    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, api, blocks, design, docs,
+    features, format, runs, tiers,
 };
 
 const PAGE: usize = 100;
@@ -378,5 +378,10 @@ pub(crate) fn registry(
             ToolDef::new::<design::ContrastArgs>("design_contrast", design::CONTRAST)
                 .output::<design::ContrastOut>(),
             design::contrast_handler(),
+        )
+        .with(
+            ToolDef::new::<blocks::ListArgs>("blocks_list", blocks::DESCRIPTION)
+                .output::<blocks::ListOut>(),
+            blocks::handler(&project),
         )
 }

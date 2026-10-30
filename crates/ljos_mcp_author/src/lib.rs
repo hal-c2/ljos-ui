@@ -7,6 +7,7 @@
 //! its tools answer with an `unavailable` tool error.
 
 pub mod api;
+mod blocks;
 mod design;
 mod docs;
 mod features;

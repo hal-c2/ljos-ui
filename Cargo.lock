@@ -4174,6 +4174,7 @@ dependencies = [
  "gherkin",
  "insta",
  "ljos_bdd",
+ "ljos_blocks",
  "ljos_compiler",
  "ljos_design",
  "ljos_ir",

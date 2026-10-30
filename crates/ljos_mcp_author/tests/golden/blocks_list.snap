@@ -1,0 +1,77 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "List the project's functional blocks (`# block` qmldir comments, `#[qml(block)]` types in ljostypes.json) with their contracts: state, inputs, actions, events and slots. Declarations that could not be read are in `errors`. Paginated.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "description": "`next_cursor` of the previous answer.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "module": {
+        "description": "Only the blocks of this module, for example `App.Media`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "ListArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "blocks_list",
+  "outputSchema": {
+    "properties": {
+      "blocks": {
+        "description": "Ordered by module, then name. Each has `module`, `name`, `version`,\n`origin` (`{\"kind\": \"rust\"}` or `{\"kind\": \"qml\", \"file\": ...}`),\noptional `category` and `summary`, and the lists `state`, `inputs`\n(`name`, `type`, `notify`), `actions` (`name`, `params`, `returns`),\n`events` (`name`, `params`) and `slots` (`name`, `accepts`).",
+        "items": true,
+        "type": "array"
+      },
+      "errors": {
+        "description": "Declarations that could not be read (`file`, `line`, `message`):\na malformed `# block` comment, a missing file, a file that does not\nparse, a block declared twice. On the first page only, as many as\nfit a quarter of the answer's budget.",
+        "items": true,
+        "type": "array"
+      },
+      "errors_total": {
+        "description": "How many declarations could not be read, listed or not.",
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "format": {
+        "description": "The registry's format, as `ljos_blocks` writes it: 1.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "next_cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "format",
+      "blocks",
+      "errors",
+      "errors_total"
+    ],
+    "title": "ListOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

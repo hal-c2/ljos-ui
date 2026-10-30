@@ -20,6 +20,9 @@ ljos_ir = { path = "../ljos_ir" }
 # The design tools (rules, motion tokens, palettes and contrast), and the
 # rules the lints implement: their codes, severities and limits.
 ljos_design = { path = "../ljos_design" }
+# `blocks_list`: the project's functional blocks, QML ones read from their
+# files.
+ljos_blocks = { path = "../ljos_blocks", features = ["source"] }
 # `qml_format`: the layout `ljos fmt` gives too.
 qml_fmt = { path = "../qml_fmt" }
 # `ljos://features/steps`: the step catalogue, from the steps themselves.

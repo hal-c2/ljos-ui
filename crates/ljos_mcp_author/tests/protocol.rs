@@ -200,7 +200,7 @@ fn distinct(items: &[Value], key: impl Fn(&Value) -> String) -> BTreeSet<String>
     all
 }
 
-const TOOLS: [&str; 16] = [
+const TOOLS: [&str; 17] = [
     "qml_check",
     "qml_lint",
     "type_lookup",
@@ -217,6 +217,7 @@ const TOOLS: [&str; 16] = [
     "design_motion",
     "design_palette",
     "design_contrast",
+    "blocks_list",
 ];
 
 async fn tool_names(c: &Client) -> Vec<String> {
