@@ -1429,7 +1429,7 @@
     "read_only": false
   },
   {
-    "description": "Reload the changed files now instead of waiting for them to be quiet. Answers `applied`, `failed` (with the message; the application goes on as it was) or `unchanged`. Needs an application that is watched (`--watch`).",
+    "description": "Reload the changed files now instead of waiting for them to be quiet. Answers `applied` when one was applied since the last `app_reload` answer (a save's own too), `failed` (with the message; the application goes on as it was) or `unchanged`. Needs `--watch`.",
     "input_schema": {
       "additionalProperties": false,
       "description": "No arguments.",

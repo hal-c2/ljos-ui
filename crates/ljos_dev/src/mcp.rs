@@ -302,8 +302,6 @@ fn timed_out() -> SurfaceError {
 struct Parked {
     reply: oneshot::Sender<Answer>,
     deadline: Instant,
-    /// The reload count when it was asked for, to tell whether one happened.
-    seq: u64,
 }
 
 /// What an `app_alias` asks the host to set.
@@ -358,6 +356,13 @@ pub struct Inspector {
     /// The reload generation and error as of the last [`observe`](Self::observe).
     seen: Option<(u64, Option<ReloadFault>)>,
     parked: Option<Parked>,
+    /// The reload count when the last `app_reload` or `app_alias` was
+    /// answered. A reload since then is what the next one answers with,
+    /// even when the host applied it before taking that call up: a save
+    /// whose quiet time ends while the call is on its way, or in the
+    /// moment between the file being written and the call made, is the
+    /// agent's own write, not "unchanged".
+    reload_answered: u64,
     reload_wanted: bool,
     alias_wanted: Option<AliasRequest>,
     /// The host gives the primary window the size `app_resize` asks for.
@@ -463,6 +468,7 @@ impl Inspector {
             changes,
             seen: None,
             parked: None,
+            reload_answered: 0,
             reload_wanted: false,
             alias_wanted: None,
             resizes_window: false,
@@ -760,7 +766,7 @@ impl Inspector {
         };
         let now = self.feed.state();
         let value = match &now.last {
-            Some(o) if now.seq != parked.seq => {
+            Some(o) if now.seq != self.reload_answered => {
                 if o.applied {
                     json!({ "outcome": "applied", "generation": now.generation })
                 } else {
@@ -790,9 +796,15 @@ impl Inspector {
             ),
             _ => "no file changed; nothing was reloaded".to_string(),
         };
-        let _ = parked
+        // A client that stopped waiting was told nothing: what it missed is
+        // still the next call's to tell.
+        if parked
             .reply
-            .send(Ok(ToolReply::from(value).with_text(text)));
+            .send(Ok(ToolReply::from(value).with_text(text)))
+            .is_ok()
+        {
+            self.reload_answered = now.seq;
+        }
     }
 
     /// The size an agent asked the primary window to have, that the host
@@ -888,11 +900,7 @@ impl Inspector {
             )));
             return;
         }
-        self.parked = Some(Parked {
-            reply,
-            deadline,
-            seq: state.seq,
-        });
+        self.parked = Some(Parked { reply, deadline });
         match alias {
             Some(alias) => self.alias_wanted = Some(alias),
             None => self.reload_wanted = true,

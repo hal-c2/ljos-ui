@@ -145,9 +145,9 @@ run. Answers with the result and what changed. A method that throws is an `app_f
 with the message.";
 
 pub const RELOAD: &str = "\
-Reload the changed files now instead of waiting for them to be quiet. Answers `applied`, `failed` \
-(with the message; the application goes on as it was) or `unchanged`. Needs an application that \
-is watched (`--watch`).";
+Reload the changed files now instead of waiting for them to be quiet. Answers `applied` when one \
+was applied since the last `app_reload` answer (a save's own too), `failed` (with the message; \
+the application goes on as it was) or `unchanged`. Needs `--watch`.";
 
 pub const ALIAS: &str = "\
 Import `module` from `dir`, a directory in the project (or one the application was started with) \
