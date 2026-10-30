@@ -1,7 +1,8 @@
 # ADR 0003: Functional blocks, shells that skin them, and edits that keep the file
 
 - **Status:** proposed, 2026-10-30. `qml_edit` (part 4) is built as a spike
-  on this branch; the rest is design.
+  on this branch; `ljos_blocks` and the `Ljos.Blocks` module of section 4
+  are built (ARCHITECTURE.md section 16); the rest is design.
 - **Terms:** [CONTEXT.md](../../CONTEXT.md); ARCHITECTURE.md sections 3.3
   (messages), 10.2 (app core), 12 (hot code update), 16 (plugins and module
   aliases) and 19 (MCP).
@@ -193,8 +194,27 @@ moves give the same document with a blank line or a binding order shifted
   names an application.
 - **No new runtime dependency on the parser.** `qml_edit` links only where
   `qml_fmt` does (tools, and an app that opts into the compiler, goal 9).
-- **A Qt-only author loses nothing:** the `# block` qmldir comment is a
-  comment to Qt's tools, `Ljos.Blocks` is plain QML, and a skin is ordinary QML.
+- **A Qt-only author loses little:** the `# block` qmldir comment is a
+  comment to Qt's tools, and a skin is ordinary QML.
+- **Where the build differs:**
+  - `Ljos.Blocks` is a native module of `ljos_quick`, not plain QML. A
+    Slot finds its contributions in a registry the Engine keeps, with a
+    reactive node per name, and a contribution leaves the registry when it
+    is destroyed. A ShellLoader needs the compile error and the faults
+    raised while its shell is made, with their file and line. Plain QML
+    reaches none of these. So a Qt-only author cannot import it under
+    `qml6`; a QML copy for that is not written.
+  - `ShellLoader` also has `item` and `status` (`Null`, `Ready`, `Fallback`,
+    `Error`). It is not a `Loader`. It falls back on a fault in the
+    user's shell after the shell is made too, not only while it is made.
+    A shell already shown that an edit breaks keeps the running generation
+    and reports through the reload error (section 12.1), not through
+    `error`. There is no application-wide `Runtime.lastError`.
+  - `PluginSup` is not built for QML plugins. A Contribution goes from
+    every Slot whatever destroys it, so a plugin's boundary that discards
+    its content already takes the plugin's contributions away and gives
+    the slot back its default. A plugin's own `ProcId` under `PluginSup`
+    is the next piece.
 
 ## Open questions
 
