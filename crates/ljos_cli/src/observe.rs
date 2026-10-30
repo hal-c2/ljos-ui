@@ -8,7 +8,7 @@
 //! so there is nothing the window knows that an agent cannot ask. Its one
 //! native type, `InspectorClient`, posts a tool call to the inspector's
 //! port or Unix socket from the one client thread of the process
-//! (`crate::inspector`) and answers on the Engine thread. Nothing is
+//! (`ljos_mcp_core::remote`) and answers on the Engine thread. Nothing is
 //! asked on a timer: neither the window nor its target does work while
 //! nobody touches the window.
 
@@ -25,7 +25,7 @@ use ljos_mcp_core::CapSet;
 use ljos_shell::{InspectorAccess, InspectorOptions, ShellConfig};
 use serde_json::{Value as Json, json};
 
-use crate::inspector::{self, Answer, Trust, find_token_file, read_token_file};
+use ljos_mcp_core::remote::{self as inspector, Answer, Trust, find_token_file, read_token_file};
 
 /// How far the token file `ljos observe` was started on is believed, kept
 /// for every call `InspectorClient` reads its file again for. Before it is
@@ -211,13 +211,15 @@ impl InspectorClient {
         let name = cx.get(InspectorClient::CLIENT_NAME)?;
         let (e, me) = (cx.engine, cx.this);
         let trust = TRUST.get().copied().unwrap_or(Trust::FOUND);
-        let request = read_token_file(Path::new(&file), trust).and_then(|target| {
-            let args: Json = match arguments.trim() {
-                "" => json!({}),
-                text => serde_json::from_str(text).context("the arguments are not JSON")?,
-            };
-            Ok((target, args))
-        });
+        let request = read_token_file(Path::new(&file), trust)
+            .map_err(anyhow::Error::from)
+            .and_then(|target| {
+                let args: Json = match arguments.trim() {
+                    "" => json!({}),
+                    text => serde_json::from_str(text).context("the arguments are not JSON")?,
+                };
+                Ok((target, args))
+            });
         let (target, args) = match request {
             Ok(r) => r,
             Err(why) => {
@@ -252,13 +254,13 @@ impl InspectorClient {
         let job = async move {
             let got = match inspector::post(&target, body.to_string(), limit).await {
                 Ok(answer) => read_answer(&answer),
-                Err(why) => Err(Unreached(why)),
+                Err(why) => Err(Unreached(why.0)),
             };
             reply.send(move |e| answer_reached(e, me, serial, &tool, got));
         };
         if let Err(why) = inspector::spawn(job) {
             e.call_at(e.now(), move |e| {
-                answer_reached(e, me, serial, &tool_name, Err(Unreached(why)));
+                answer_reached(e, me, serial, &tool_name, Err(Unreached(why.0)));
             });
         }
         Ok(serial)

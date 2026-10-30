@@ -24,7 +24,6 @@ mod heap;
 #[global_allocator]
 static ALLOC: ljos_shell::CountingAlloc = ljos_shell::CountingAlloc;
 mod i18n;
-mod inspector;
 mod observe;
 mod render;
 mod run;

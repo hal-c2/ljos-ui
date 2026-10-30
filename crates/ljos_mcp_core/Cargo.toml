@@ -33,6 +33,10 @@ http = [
 # A client in the same process, for tests and for hosts that drive a
 # surface themselves (§19.2: "host the inspector in-process").
 client = ["rmcp/client", "tokio/rt"]
+# A client of an inspector in another process, through its token file
+# (§19.7): what `ljos observe` and `ljos attach` use, and any program that
+# drives a running application.
+remote = ["http", "hyper/client", "tokio/time", "tokio/sync"]
 
 [dependencies]
 rmcp = { workspace = true, features = ["server", "transport-io"] }

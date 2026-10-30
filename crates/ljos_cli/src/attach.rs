@@ -15,7 +15,7 @@ use serde_json::{Value as Json, json};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::Mutex;
 
-use crate::inspector::{self, Answer, Trust, find_token_file, read_token_file};
+use ljos_mcp_core::remote::{self as inspector, Answer, Trust, find_token_file, read_token_file};
 
 #[derive(Args)]
 pub struct Attach {
@@ -165,7 +165,9 @@ async fn relay(token_file: &std::path::Path, trust: Trust, message: String) -> V
     let id = parsed.get("id").cloned();
     let limit = request_limit(&parsed);
     let got = match read_token_file(token_file, trust) {
-        Ok(target) => inspector::post(&target, message, limit).await,
+        Ok(target) => inspector::post(&target, message, limit)
+            .await
+            .map_err(|why| why.0),
         Err(why) => Err(format!("{why:#}")),
     };
     answer_lines(id, got)

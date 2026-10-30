@@ -16,6 +16,8 @@ mod locator;
 #[cfg(feature = "inspect")]
 mod refs;
 mod registry;
+#[cfg(feature = "remote")]
+pub mod remote;
 mod reply;
 mod size;
 #[cfg(feature = "inspect")]
