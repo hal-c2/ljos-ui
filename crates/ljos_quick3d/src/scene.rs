@@ -51,8 +51,14 @@ pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> Built {
         walk.node(None, imported);
     }
     walk.finish();
-    let env = item::prop(e, view, View3D::ENVIRONMENT)
-        .map_or_else(Environment::default, |env| environment(e, view, env));
+    let env_object = item::prop(e, view, View3D::ENVIRONMENT);
+    if let Some(env) = env_object.filter(|&env| e.is::<SceneEnvironment>(env)) {
+        // Declared among the environment's data, drawn in the scene.
+        for grid in list(e, env, Object3D::DATA.index) {
+            walk.infinite_grid(grid);
+        }
+    }
+    let env = env_object.map_or_else(Environment::default, |env| environment(e, view, env));
     walk.scene.set_environment(env);
     // A camera that is not in the scene leaves the choice to the scene:
     // its first camera.
@@ -106,6 +112,38 @@ struct Walk<'e> {
 }
 
 impl Walk<'_> {
+    /// The lines of an `InfiniteGrid` in the environment: the grid in
+    /// grey and, with `gridAxes`, the X axis in red and the Z axis in blue.
+    fn infinite_grid(&mut self, obj: ObjectId) {
+        let Some((meshes, axes)) = crate::helpers::infinite_grid(self.e, obj) else {
+            return;
+        };
+        let line = |mesh: &std::sync::Arc<ljos_3d::CustomGeometry>, rgb: [f32; 3]| {
+            ljos_3d::Node::new(NodeKind::Model(ljos_3d::Model {
+                mesh: MeshSource::Custom(mesh.clone()),
+                material: ljos_3d::Material::Default(ljos_3d::DefaultMaterial {
+                    diffuse_color: ljos_3d::Color {
+                        r: rgb[0],
+                        g: rgb[1],
+                        b: rgb[2],
+                        a: 1.0,
+                    },
+                    lighting: Lighting::None,
+                    cull_mode: CullMode::None,
+                    ..ljos_3d::DefaultMaterial::default()
+                }),
+            }))
+        };
+        self.scene.add(None, line(&meshes.grid, [0.5, 0.5, 0.5]));
+        let (x, z) = if axes {
+            ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0])
+        } else {
+            ([0.5; 3], [0.5; 3])
+        };
+        self.scene.add(None, line(&meshes.x_axis, x));
+        self.scene.add(None, line(&meshes.z_axis, z));
+    }
+
     fn node(&mut self, parent: Option<NodeId>, obj: ObjectId) {
         let e = self.e;
         // Materials, environments and anything else declared among the

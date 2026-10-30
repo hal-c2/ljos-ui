@@ -7,6 +7,7 @@
 mod extended_environment;
 mod geometry;
 mod height_field;
+mod infinite_grid;
 mod library;
 mod look_at;
 mod mesh;
@@ -19,6 +20,8 @@ use geometry::{
     SphereGeometry, TorusGeometry,
 };
 use height_field::HeightFieldGeometry;
+use infinite_grid::InfiniteGrid;
+pub(crate) use infinite_grid::read as infinite_grid;
 use ljos::prelude::*;
 use look_at::LookAtNode;
 use procedural_mesh::{ProceduralMesh, ProceduralMeshSubset};
@@ -41,6 +44,7 @@ pub(crate) fn register(engine: &Engine) {
         InstanceRange,
         RandomInstancing,
         HeightFieldGeometry,
+        InfiniteGrid,
         ProceduralMesh,
         ProceduralMeshSubset,
         RenderStatistics,

@@ -425,6 +425,13 @@ impl Geometry {
         }
     }
 
+    /// This geometry's data, committed: for a mesh that belongs to an
+    /// object that is no `Geometry` itself, and keeps what it gets.
+    pub(crate) fn into_snapshot(mut self) -> Arc<CustomGeometry> {
+        self.data.update();
+        Arc::new(self.data)
+    }
+
     /// The data as last committed; `None` before the first update.
     pub(crate) fn committed(&self) -> Option<Arc<CustomGeometry>> {
         self.snapshot.clone()

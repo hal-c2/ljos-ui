@@ -8297,6 +8297,7 @@ module QtQuick3D.Helpers
 	DebugView QtQuick3D/Helpers/DebugView.qml
 	GridGeometry QtQuick3D.Helpers.GridGeometry
 	HeightFieldGeometry QtQuick3D.Helpers.HeightFieldGeometry
+	InfiniteGrid QtQuick3D.Helpers.InfiniteGrid
 	LookAtNode QtQuick3D.Helpers.LookAtNode
 	OrbitCameraController QtQuick3D/Helpers/OrbitCameraController.qml
 	PlaneGeometry QtQuick3D.Helpers.PlaneGeometry
@@ -8422,6 +8423,14 @@ module QtQuick3D.Helpers
 		signal extentsChanged
 		signal smoothShadingChanged
 		signal sourceChanged
+	type QtQuick3D.Helpers.InfiniteGrid InfiniteGrid
+		prototype QtQuick3D.Object3D named
+		prop gridAxes QtQml.bool named
+		prop gridInterval QtQml.real named
+		prop visible QtQml.bool named
+		signal gridAxesChanged
+		signal gridIntervalChanged
+		signal visibleChanged
 	type QtQuick3D.Helpers.LookAtNode LookAtNode
 		prototype QtQuick3D.Node named
 		prop target QtQml.QtObject named pointer
