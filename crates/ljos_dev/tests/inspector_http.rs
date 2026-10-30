@@ -445,6 +445,7 @@ fn the_token_files_of_starts_that_were_killed_are_removed_by_the_next() {
     let token_file = mcp::default_token_file(tmp.path());
     let dir = token_file.parent().unwrap().to_owned();
     fs::create_dir_all(&dir).unwrap();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
     // A process that has ended: its number is nobody's now.
     let mut child = std::process::Command::new("true").spawn().unwrap();
     let gone = child.id();

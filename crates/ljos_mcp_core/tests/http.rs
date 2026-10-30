@@ -348,7 +348,9 @@ fn a_granted_rate_is_answered_and_a_rate_outside_the_range_is_not_served() {
 fn the_token_file_is_the_owners_and_goes_when_the_server_stops() {
     use std::os::unix::fs::PermissionsExt as _;
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("mcp-1.json");
+    // A directory the server makes itself, so it is the user's alone whatever
+    // the temporary directory's mode.
+    let path = dir.path().join("ljos").join("mcp-1.json");
     let mut rig = Rig::start(config().token_file(&path));
     assert_eq!(rig.server.token_file(), Some(path.as_path()));
     let mode = std::fs::metadata(&path).unwrap().permissions().mode();
@@ -391,8 +393,11 @@ fn stopping_closes_a_connection_that_was_left_open() {
 /// longer than the system allows, so these tests do not use it.
 #[cfg(unix)]
 fn short_dir() -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt as _;
     tempfile::Builder::new()
         .prefix("lj")
+        // A token file may go in it, and has to be the user's alone.
+        .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir_in("/tmp")
         .expect("/tmp holds the socket")
 }

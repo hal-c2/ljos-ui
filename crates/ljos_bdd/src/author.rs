@@ -725,6 +725,45 @@ impl Rig {
     }
 }
 
+#[cfg(unix)]
+fn link_dir(to: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(to, link)
+}
+
+#[cfg(not(unix))]
+fn link_dir(_to: &Path, _link: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+fn octal(mode: &str) -> Result<u32, String> {
+    u32::from_str_radix(mode, 8).map_err(|e| format!("the mode {mode} is not octal: {e}"))
+}
+
+#[cfg(unix)]
+fn permissions(bits: u32) -> std::fs::Permissions {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::Permissions::from_mode(bits)
+}
+
+#[cfg(unix)]
+fn has_mode(path: &Path, mode: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let want = octal(mode)?;
+    let got = std::fs::metadata(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .permissions()
+        .mode()
+        & 0o777;
+    if got == want {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} has the mode {got:o}, not {mode}",
+            path.display()
+        ))
+    }
+}
+
 /// Locks `m` whether or not the thread that reads into it went down.
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -959,6 +998,68 @@ impl Slot {
                 "the token file states {stated} calls a second, not {rate}"
             ))
         }
+    }
+
+    /// Makes a directory of the project with `mode` (octal), whatever the
+    /// process's umask would have made of it.
+    ///
+    /// # Errors
+    /// The mode is not octal, or the directory cannot be made.
+    pub fn make_dir(&mut self, files: &Files, dir: &str, mode: &str) -> Result<(), String> {
+        let bits = octal(mode)?;
+        let path = self.rig(files)?.dir.path().join(dir);
+        std::fs::create_dir_all(&path)
+            .and_then(|()| std::fs::set_permissions(&path, permissions(bits)))
+            .map_err(|e| format!("cannot make {}: {e}", path.display()))
+    }
+
+    /// Makes `dir` of the project a link to `to`, another of its directories.
+    ///
+    /// # Errors
+    /// The link cannot be made, or this is not a Unix.
+    pub fn make_dir_link(&mut self, files: &Files, dir: &str, to: &str) -> Result<(), String> {
+        let root = self.rig(files)?.dir.path().to_path_buf();
+        let path = root.join(dir);
+        let made = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| link_dir(&root.join(to), &path));
+        made.map_err(|e| format!("cannot link {}: {e}", path.display()))
+    }
+
+    /// Whether a directory of the project has nothing in it.
+    ///
+    /// # Errors
+    /// It cannot be read, or something is in it.
+    pub fn dir_holds_no_file(&mut self, files: &Files, dir: &str) -> Result<(), String> {
+        let path = self.rig(files)?.dir.path().join(dir);
+        let held: Vec<_> = std::fs::read_dir(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?
+            .flatten()
+            .map(|entry| entry.file_name())
+            .collect();
+        if held.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("{} holds {held:?}", path.display()))
+        }
+    }
+
+    /// Whether a directory of the project has `mode` (octal).
+    ///
+    /// # Errors
+    /// It is not there, or has another mode.
+    pub fn dir_has_mode(&mut self, files: &Files, dir: &str, mode: &str) -> Result<(), String> {
+        let path = self.rig(files)?.dir.path().join(dir);
+        has_mode(&path, mode)
+    }
+
+    /// Whether the started application's token file has `mode` (octal).
+    ///
+    /// # Errors
+    /// No application was started, or the file has another mode.
+    pub fn token_file_has_mode(&mut self, mode: &str) -> Result<(), String> {
+        has_mode(&self.app()?.token_file, mode)
     }
 
     /// Notes how often each of the application's threads has woken.

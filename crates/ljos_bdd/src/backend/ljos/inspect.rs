@@ -306,7 +306,7 @@ impl Rig {
     fn serve(&mut self, on_socket: bool) -> Result<()> {
         // The token file of an application is below its own directory; a
         // scenario has none, so it gets one that is removed with it.
-        let dir = tempfile::Builder::new().prefix("ljos-bdd-mcp-").tempdir()?;
+        let dir = token_dir()?;
         let token_file = dir.path().join("mcp.json");
         let socket_dir = if on_socket { Some(short_dir()?) } else { None };
         let socket = socket_dir.as_ref().map(|d| d.path().join("i.sock"));
@@ -350,7 +350,7 @@ impl Rig {
                 ))
             })?;
         let path = base.join("s".repeat(room));
-        let dir = tempfile::Builder::new().prefix("ljos-bdd-mcp-").tempdir()?;
+        let dir = token_dir()?;
         let token_file = dir.path().join("mcp.json");
         let mut config = HttpConfig::loopback(CapSet::of([Cap::Inspect]));
         config.listen = Listen::Unix(path.clone());
@@ -385,7 +385,7 @@ impl Rig {
             Ok(warning) => {
                 listening.warning = warning.map(str::to_owned);
                 if addr.ip().is_loopback() {
-                    let dir = tempfile::Builder::new().prefix("ljos-bdd-mcp-").tempdir()?;
+                    let dir = token_dir()?;
                     let token_file = dir.path().join("mcp.json");
                     let mut config = HttpConfig::loopback(CapSet::of([Cap::Inspect]));
                     config.listen = Listen::Address(addr);
@@ -835,6 +835,18 @@ impl LjosBackend {
             .seen
             .clone())
     }
+}
+
+/// A directory for a token file, which has to be the user's alone.
+fn token_dir() -> std::io::Result<tempfile::TempDir> {
+    let mut dir = tempfile::Builder::new();
+    dir.prefix("ljos-bdd-mcp-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        dir.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    dir.tempdir()
 }
 
 #[cfg(test)]

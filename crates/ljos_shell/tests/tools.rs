@@ -242,7 +242,7 @@ mod inspector {
     fn served_of(main: &str) -> (Window, InspectorAddress) {
         let (tx, rx) = mpsc::channel();
         let w = window_of(main, move |setup| {
-            let dir = tempfile::tempdir()?.keep();
+            let dir = token_dir()?;
             let address = setup.serve_inspector(
                 InspectorOptions {
                     port: 0,
@@ -347,7 +347,7 @@ mod inspector {
         let (tx, rx) = mpsc::channel();
         let caps = CapSet::of(caps.iter().copied());
         let w = window(move |setup| {
-            let dir = tempfile::tempdir()?.keep();
+            let dir = token_dir()?;
             let address = setup.serve_inspector_as(
                 InspectorOptions {
                     port: 0,
@@ -542,7 +542,7 @@ mod inspector {
     fn a_window_serves_the_capabilities_it_was_given_and_no_other() {
         let (tx, rx) = mpsc::channel();
         let mut w = window(move |setup| {
-            let dir = tempfile::tempdir()?.keep();
+            let dir = token_dir()?;
             let address = setup.serve_inspector_as(
                 InspectorOptions {
                     port: 0,
@@ -606,7 +606,7 @@ mod inspector {
         let (tx, rx) = mpsc::channel();
         let mut w = window(move |setup| {
             setup.show_top();
-            let dir = tempfile::tempdir()?.keep();
+            let dir = token_dir()?;
             let address = setup.serve_inspector(
                 InspectorOptions {
                     port: 0,
@@ -644,4 +644,15 @@ mod inspector {
         w.forget_wakes();
         w.assert_idle();
     }
+}
+
+/// A directory for a token file, which has to be the user's alone.
+fn token_dir() -> std::io::Result<std::path::PathBuf> {
+    let dir = tempfile::tempdir()?.keep();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(dir)
 }

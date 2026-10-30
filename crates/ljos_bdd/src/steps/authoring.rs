@@ -141,6 +141,37 @@ fn token_file_rate(w: &mut LjosWorld, rate: u64) -> StepResult {
     w.author().0.token_file_rate(rate)
 }
 
+// Who may get at the token (ARCHITECTURE.md §19.7): the mode is read from
+// the system, as somebody else trying the directory would meet it.
+#[given(regex = r#"^the project's directory "([^"]+)" was made with the mode (\d+)$"#)]
+fn project_dir_made_with_mode(w: &mut LjosWorld, dir: String, mode: String) -> StepResult {
+    let (author, files) = w.author();
+    author.make_dir(files, &dir, &mode)
+}
+
+#[then(regex = r#"^the project's directory "([^"]+)" has the mode (\d+)$"#)]
+fn project_dir_has_mode(w: &mut LjosWorld, dir: String, mode: String) -> StepResult {
+    let (author, files) = w.author();
+    author.dir_has_mode(files, &dir, &mode)
+}
+
+#[given(regex = r#"^the project's directory "([^"]+)" is a link to "([^"]+)"$"#)]
+fn project_dir_is_link(w: &mut LjosWorld, dir: String, to: String) -> StepResult {
+    let (author, files) = w.author();
+    author.make_dir_link(files, &dir, &to)
+}
+
+#[then(regex = r#"^the project's directory "([^"]+)" holds no file$"#)]
+fn project_dir_holds_no_file(w: &mut LjosWorld, dir: String) -> StepResult {
+    let (author, files) = w.author();
+    author.dir_holds_no_file(files, &dir)
+}
+
+#[then(regex = r"^the started application's token file has the mode (\d+)$")]
+fn token_file_mode(w: &mut LjosWorld, mode: String) -> StepResult {
+    w.author().0.token_file_has_mode(&mode)
+}
+
 #[then(regex = r#"^the application's errors mention "(.*)"$"#)]
 fn application_errors_mention(w: &mut LjosWorld, text: String) -> StepResult {
     w.author().0.errors_mention(&unquoted(&text))

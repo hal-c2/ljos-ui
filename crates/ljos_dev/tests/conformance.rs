@@ -110,6 +110,12 @@ struct Rig {
 
 fn rig() -> Rig {
     let tmp = tempfile::tempdir().unwrap();
+    // A token file goes in it, and that has to be the user's alone.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
     let dir = tmp.path().canonicalize().unwrap();
     fs::write(dir.join("Main.qml"), MAIN).unwrap();
     let engine = Engine::new();

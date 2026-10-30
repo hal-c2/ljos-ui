@@ -83,7 +83,22 @@ fn token_file(dir: &Path) -> PathBuf {
     dir.join(format!("mcp-{}.json", std::process::id()))
 }
 
+/// Makes a directory that exists the user's alone, as a token file's has to
+/// be. One that does not exist yet is made so by the server.
+fn private(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if dir.exists() {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
 fn serve(dir: &Path, listen: Listen) -> HttpServer {
+    private(dir);
     let mut config = HttpConfig::loopback(CapSet::of([Cap::Inspect])).token_file(token_file(dir));
     config.listen = listen;
     HttpServer::start(Demo::new(), config).unwrap()
@@ -119,6 +134,7 @@ async fn an_inspector_is_called_on_its_port_and_on_its_socket() {
     on_port.stop().unwrap();
 
     // A rate granted at launch is what the file states, read anew.
+    private(dir.path());
     let mut config =
         HttpConfig::loopback(CapSet::of([Cap::Inspect])).token_file(token_file(dir.path()));
     config.calls_per_second = 100;

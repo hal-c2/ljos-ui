@@ -67,6 +67,97 @@ pub enum TokenFileError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error(
+        "will not put a token in {dir}: the directory belongs to another user, who could read \
+         it. Name a directory of your own",
+        dir = .dir.display()
+    )]
+    DirectoryOfAnotherUser { dir: PathBuf },
+    #[error(
+        "will not put a token in {dir}: others can get into it (mode {mode:o}), so they could \
+         reach the token. Make it yours alone with `chmod 700 {dir}`, or remove it",
+        dir = .dir.display()
+    )]
+    DirectoryOpenToOthers { dir: PathBuf, mode: u32 },
+    #[error(
+        "will not put a token in {dir}: it is a link, and whoever can change a link decides \
+         where the token goes. Remove the link, or name the directory it leads to",
+        dir = .dir.display()
+    )]
+    DirectoryIsALink { dir: PathBuf },
+}
+
+/// Whether `meta` is of a directory that only `user` can get into: what a
+/// directory has to be before a token is put in it. Others who can list or
+/// enter it could reach the file by name, or replace it between one start
+/// and the next, whatever the mode of the file itself.
+#[cfg(unix)]
+fn check_own_directory(
+    dir: &Path,
+    meta: &std::fs::Metadata,
+    user: Option<u32>,
+) -> Result<(), TokenFileError> {
+    use std::os::unix::fs::MetadataExt as _;
+    if meta.is_symlink() {
+        return Err(TokenFileError::DirectoryIsALink {
+            dir: dir.to_path_buf(),
+        });
+    }
+    if !meta.is_dir() {
+        return Err(TokenFileError::Write {
+            path: dir.to_path_buf(),
+            source: std::io::ErrorKind::NotADirectory.into(),
+        });
+    }
+    if Some(meta.uid()) != user {
+        return Err(TokenFileError::DirectoryOfAnotherUser {
+            dir: dir.to_path_buf(),
+        });
+    }
+    let mode = meta.mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(TokenFileError::DirectoryOpenToOthers {
+            dir: dir.to_path_buf(),
+            mode,
+        });
+    }
+    Ok(())
+}
+
+/// Makes the directory a token file goes in, or checks the one that is
+/// there. Only the directory itself is the token's: what is above it (a
+/// project's `target`, say) is made as anything else there is, and keeps
+/// its mode, for other tools use it.
+fn token_directory(dir: &Path) -> Result<(), TokenFileError> {
+    let fail = |source| TokenFileError::Write {
+        path: dir.to_path_buf(),
+        source,
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        if let Some(above) = dir.parent()
+            && !above.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(above).map_err(fail)?;
+        }
+        // Given at creation, so that it is never open to others, not even
+        // for the moment before a `chmod`. Asked of the system rather than
+        // looked at first: another process may be making it at this moment.
+        match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(fail(e)),
+        }
+        // Not followed: the file is written by name after this, so what a
+        // link led to now says nothing of where the token would end up.
+        let meta = std::fs::symlink_metadata(dir).map_err(fail)?;
+        check_own_directory(dir, &meta, crate::effective_uid())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir).map_err(fail)
+    }
 }
 
 /// The file a client reads the address and the token from. It is removed
@@ -78,9 +169,10 @@ pub struct TokenFile {
 
 impl TokenFile {
     /// Writes `{"url", "token", "pid", "capabilities", "calls_per_second"}`
-    /// to `path`, readable and writable by the owner alone. The rate is
-    /// there so that a client can pace itself rather than learn it from
-    /// refusals.
+    /// to `path`, readable and writable by the owner alone, in a directory
+    /// nobody else can get into: made so when it is not there, refused when
+    /// it is there and is not. The rate is there so that a client can pace
+    /// itself rather than learn it from refusals.
     pub fn write(
         path: &Path,
         url: &str,
@@ -92,11 +184,12 @@ impl TokenFile {
             path: path.to_path_buf(),
             source,
         };
-        if let Some(dir) = path.parent()
-            && !dir.as_os_str().is_empty()
-        {
-            std::fs::create_dir_all(dir).map_err(fail)?;
-        }
+        // A bare name goes in the working directory, which counts as any.
+        let dir = match path.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir,
+            _ => Path::new("."),
+        };
+        token_directory(dir)?;
         // A client waits for the file to appear and reads it at once, so
         // it must appear whole: it is written beside its name and renamed
         // into place. The rename replaces whatever a dead process left
@@ -457,7 +550,12 @@ mod tests {
         let path = dir.path().join("nested").join("mcp-test.json");
         let token = Token::generate().unwrap();
         // Something is in the way: a file anyone may read.
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::create_dir(path.parent().unwrap()).unwrap();
+        std::fs::set_permissions(
+            path.parent().unwrap(),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
         std::fs::write(&path, "old").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let file = TokenFile::write(
@@ -492,7 +590,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_link_in_the_way_is_replaced_not_followed() {
+        use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let victim = dir.path().join("victim");
         std::fs::write(&victim, "keep").unwrap();
         let path = dir.path().join("mcp-test.json");
@@ -508,5 +608,110 @@ mod tests {
         .unwrap();
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
         assert!(!std::fs::symlink_metadata(&path).unwrap().is_symlink());
+    }
+
+    #[cfg(unix)]
+    fn write_in(dir: &Path) -> Result<TokenFile, TokenFileError> {
+        TokenFile::write(
+            &dir.join("mcp-test.json"),
+            "http://127.0.0.1:4000/mcp",
+            &Token::generate().unwrap(),
+            CapSet::EMPTY,
+            20,
+        )
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_it_makes_is_its_users_alone_and_those_above_are_left() {
+        let root = tempfile::tempdir().unwrap();
+        let above = root.path().join("target");
+        let dir = above.join("ljos");
+        let file = write_in(&dir).unwrap();
+        assert_eq!(mode_of(&dir), 0o700);
+        assert_eq!(mode_of(file.path()), 0o600);
+        assert_ne!(mode_of(&above), 0o700, "only the token's own directory");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_others_can_get_into_is_refused_and_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+        for open in [0o755, 0o750, 0o770, 0o707, 0o701, 0o710] {
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("ljos");
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(open)).unwrap();
+            let refused = write_in(&dir).unwrap_err();
+            assert!(
+                matches!(refused, TokenFileError::DirectoryOpenToOthers { mode, .. } if mode == open),
+                "{open:o}: {refused}"
+            );
+            assert!(refused.to_string().contains("chmod 700"), "{refused}");
+            assert_eq!(mode_of(&dir), open);
+            assert_eq!(
+                std::fs::read_dir(&dir).unwrap().count(),
+                0,
+                "nothing written"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_of_another_user_is_refused() {
+        use std::os::unix::fs::MetadataExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let meta = std::fs::metadata(root.path()).unwrap();
+        // Nobody here can give a directory away, so the check is asked as
+        // another user would be.
+        let refused = check_own_directory(root.path(), &meta, Some(meta.uid() + 1)).unwrap_err();
+        assert!(
+            matches!(refused, TokenFileError::DirectoryOfAnotherUser { .. }),
+            "{refused}"
+        );
+        assert!(
+            refused
+                .to_string()
+                .contains(&*root.path().to_string_lossy()),
+            "{refused}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_directory_is_refused_and_nothing_goes_where_it_leads() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let refused = write_in(&link).unwrap_err();
+        assert!(
+            matches!(refused, TokenFileError::DirectoryIsALink { .. }),
+            "{refused}"
+        );
+        assert!(refused.to_string().contains("link"), "{refused}");
+        assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_where_the_directory_should_be_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let in_the_way = root.path().join("ljos");
+        std::fs::write(&in_the_way, "").unwrap();
+        assert!(matches!(
+            write_in(&in_the_way).unwrap_err(),
+            TokenFileError::Write { .. }
+        ));
     }
 }
