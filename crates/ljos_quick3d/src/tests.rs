@@ -218,3 +218,41 @@ fn a_view_is_drawn_in_the_picture() {
     assert_eq!(pixel(&rgba, 100, 2, 2), [0x20, 0x20, 0x20, 255]);
     assert_eq!(pixel(&rgba, 100, 50, 50), [255, 0, 0, 255]);
 }
+
+/// A view that goes lets go of its picture, so a window that makes and
+/// drops views over and over keeps one picture, not one for each.
+#[test]
+fn a_destroyed_view_lets_go_of_its_picture() {
+    use ljos_render::{FrameView, RasterConfig, VelloCpuReference};
+    let (e, root) = load(
+        r##"Item { width: 40; height: 40
+               property bool shown: true
+               Loader { active: shown; anchors.fill: parent
+                        sourceComponent: View3D {
+                            PerspectiveCamera { z: 300 }
+                            Model { source: "#Cube" } } } }"##,
+    );
+    if ljos::item::ljos_3d::offscreen::Offscreen::new().is_err() {
+        eprintln!("SKIPPED: no adapter");
+        return;
+    }
+    let pic = ljos::render::Picture::new(40, 40).settle(0);
+    let mut scene = pic.scene(&e, root).expect("laid out");
+    let mut r = VelloCpuReference::new(RasterConfig::default());
+    let objects = e.object_count();
+    for round in 0..20 {
+        for shown in [false, true] {
+            e.write_by_name(root, "shown", Value::from(shown))
+                .expect("shown");
+            let out = scene.frame(&e, pic.now());
+            r.render(&FrameView::new(&out.snapshot, 1.0))
+                .expect("drawn");
+            assert_eq!(
+                r.view3d_pictures(),
+                usize::from(shown),
+                "round {round}, shown {shown}"
+            );
+        }
+    }
+    assert_eq!(e.object_count(), objects, "the views made are all gone");
+}

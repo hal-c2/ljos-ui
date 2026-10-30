@@ -21,6 +21,8 @@ slotmap = { workspace = true }
 ljos_compiler = { path = "../ljos_compiler" }
 ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "quick3d", "render"] }
 png = { workspace = true }
+# A renderer kept across frames, to see what it keeps of views that went.
+ljos_render = { path = "../ljos_render", features = ["offscreen3d"] }
 
 [lints]
 workspace = true

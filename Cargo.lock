@@ -4290,6 +4290,7 @@ version = "0.0.0"
 dependencies = [
  "ljos",
  "ljos_compiler",
+ "ljos_render",
  "png",
  "slotmap",
 ]
