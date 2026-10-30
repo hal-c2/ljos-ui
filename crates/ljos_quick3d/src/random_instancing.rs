@@ -252,12 +252,15 @@ fn color_of(v: &Value) -> Option<Color> {
     }
 }
 
+/// Into a colour model's parts, or back to RGBA.
+type Convert = fn([f64; 4]) -> [f64; 4];
+
 /// A colour picked between two, part by part in the colour model.
 fn color_in(rng: &mut Rng, r: &Range, model: i32) -> Color {
     let (Some(from), Some(to)) = (color_of(&r.from), color_of(&r.to)) else {
         return Entry::default().color;
     };
-    let (into, back): (fn([f64; 4]) -> [f64; 4], fn([f64; 4]) -> [f64; 4]) = match model {
+    let (into, back): (Convert, Convert) = match model {
         color_model::HSV => (to_hsv, from_hsv),
         color_model::HSL => (to_hsl, from_hsl),
         _ => (|c| c, |c| c),

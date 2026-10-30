@@ -1039,8 +1039,8 @@ impl Builder<'_> {
                 let deltas = self.floats(&a, 3)?;
                 let width = column.1;
                 for (v, d) in deltas.as_chunks::<3>().0.iter().enumerate() {
-                    for c in 0..3 {
-                        column.2[v * width + c] += weight * d[c];
+                    for (to, d) in column.2[v * width..][..3].iter_mut().zip(d) {
+                        *to += weight * d;
                     }
                 }
                 moved |= semantic == Semantic::Position;
