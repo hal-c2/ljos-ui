@@ -645,6 +645,10 @@ impl GlPainter {
         let primitives = views.as_deref().unwrap_or(primitives);
         #[cfg(feature = "quick3d")]
         self.views.pictures_into(&mut self.meshes.pictures);
+        #[cfg(feature = "quick3d")]
+        let gpu_3d = self.views.take_gpu_time();
+        #[cfg(not(feature = "quick3d"))]
+        let gpu_3d = None;
         // As egui_glow's own paint does: the pictures first, and those
         // freed only once the frame that may still use them is drawn.
         for (id, deltas) in pending.set.drain() {
@@ -663,6 +667,7 @@ impl GlPainter {
                 free_pending(&mut self.painter, &mut self.sizes, pending);
                 return Steps {
                     upload,
+                    gpu_3d,
                     ..Steps::default()
                 };
             }
@@ -731,6 +736,7 @@ impl GlPainter {
             upload,
             draw: Some(drawn - uploaded),
             present: Some(drawn.elapsed()),
+            gpu_3d,
             moved: moved.is_some(),
         }
     }

@@ -62,6 +62,18 @@ impl Scene3dResources {
         }
     }
 
+    /// How long the GPU took to draw the views, added up over the readings
+    /// that came back since the last time this was asked; `None` when none
+    /// did, or the device cannot time ([`ljos_3d::timing_features`]).
+    pub fn take_gpu_time(state: &RenderState) -> Option<std::time::Duration> {
+        let mut renderer = state.renderer.write();
+        let r = renderer.callback_resources.get_mut::<Scene3dResources>()?;
+        r.targets
+            .values_mut()
+            .filter_map(Target::take_gpu_time)
+            .reduce(|a, b| a + b)
+    }
+
     pub fn views(&self) -> usize {
         self.targets.len()
     }

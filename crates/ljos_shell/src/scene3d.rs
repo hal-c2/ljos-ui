@@ -52,3 +52,9 @@ pub(crate) fn paint_views(
     Scene3dResources::retain(&state, |k| drawn.contains(&k));
     out
 }
+
+/// The GPU time of the drawings of `painter`'s views read since the last
+/// time this was asked.
+pub(crate) fn take_gpu_time(painter: &egui_wgpu::winit::Painter) -> Option<std::time::Duration> {
+    Scene3dResources::take_gpu_time(&painter.render_state()?)
+}

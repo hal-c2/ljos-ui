@@ -88,6 +88,11 @@ pub struct PaintReport {
     pub upload: Option<Duration>,
     pub draw: Option<Duration>,
     pub present: Option<Duration>,
+    /// How long the GPU took to draw the 3D views, from the timings read
+    /// back during the pass: those of an earlier pass's drawing, as
+    /// nothing waits for the GPU. `None` when none came back, or the device
+    /// cannot time without waiting.
+    pub gpu_3d: Option<Duration>,
     /// Pictures handed to the device in the pass, glyph atlas included.
     pub uploads: usize,
     pub upload_bytes: usize,
@@ -208,6 +213,7 @@ pub(crate) struct PaintStats {
     upload: Option<Cost>,
     draw: Option<Cost>,
     present: Option<Cost>,
+    gpu_3d: Option<Cost>,
     uploads: u64,
     upload_bytes: u64,
     asked: Option<Cost>,
@@ -240,6 +246,10 @@ impl PaintStats {
                 self.asked.get_or_insert_with(Cost::default).add(since);
             }
         }
+        // A reading can come back with any pass, drawn or not.
+        if let Some(t) = report.gpu_3d {
+            self.gpu_3d.get_or_insert_with(Cost::default).add(t);
+        }
         // A pass that presents nothing still hands pictures over.
         self.uploads += report.uploads as u64;
         self.upload_bytes += report.upload_bytes as u64;
@@ -256,6 +266,7 @@ impl PaintStats {
             "upload_us": self.upload.as_ref().map_or(Value::Null, Cost::json),
             "draw_us": self.draw.as_ref().map_or(Value::Null, Cost::json),
             "present_us": self.present.as_ref().map_or(Value::Null, Cost::json),
+            "gpu_3d_us": self.gpu_3d.as_ref().map_or(Value::Null, Cost::json),
             "uploads": self.uploads,
             "upload_bytes": self.upload_bytes,
             "asked_to_presented_us": self.asked.as_ref().map_or(Value::Null, Cost::json),
@@ -286,6 +297,7 @@ impl PaintStats {
             ("uploading", &self.upload),
             ("drawing", &self.draw),
             ("presenting", &self.present),
+            ("drawing 3D on the GPU", &self.gpu_3d),
         ]
         .into_iter()
         .filter_map(|(name, cost)| {

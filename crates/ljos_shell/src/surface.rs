@@ -383,10 +383,15 @@ impl Painter {
                 );
                 let all = started.elapsed();
                 let waited = std::time::Duration::from_secs_f32(waited.max(0.0)).min(all);
+                #[cfg(feature = "quick3d")]
+                let gpu_3d = crate::scene3d::take_gpu_time(painter);
+                #[cfg(not(feature = "quick3d"))]
+                let gpu_3d = None;
                 Steps {
                     upload,
                     draw: Some(all - waited),
                     present: Some(waited),
+                    gpu_3d,
                     moved: false,
                 }
             }
@@ -574,6 +579,17 @@ fn create_new(display: OwnedDisplayHandle) -> WgpuSetupCreateNew {
         new.instance_descriptor
             .flags
             .remove(wgpu::InstanceFlags::VALIDATION);
+    }
+    // 3D views time their drawing where the device can do it without
+    // waiting; what egui-wgpu asks for otherwise stays as it is.
+    #[cfg(feature = "quick3d")]
+    {
+        let asked = std::sync::Arc::clone(&new.device_descriptor);
+        new.device_descriptor = std::sync::Arc::new(move |adapter| {
+            let mut d = asked(adapter);
+            d.required_features |= ljos_3d::timing_features(adapter);
+            d
+        });
     }
     new
 }

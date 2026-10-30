@@ -79,6 +79,7 @@ impl Meter {
             upload: steps.upload,
             draw: steps.draw,
             present: steps.present,
+            gpu_3d: steps.gpu_3d,
             moved: steps.moved,
         }
     }

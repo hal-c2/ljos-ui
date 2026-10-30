@@ -1649,6 +1649,42 @@ fn a_painter_that_does_not_time_its_steps_apart_says_none() {
     assert_eq!(p["upload_us"], Value::Null);
     assert_eq!(p["draw_us"], Value::Null);
     assert_eq!(p["present_us"], Value::Null);
+    assert_eq!(p["gpu_3d_us"], Value::Null);
+}
+
+#[test]
+fn the_gpu_time_of_3d_views_is_counted_as_it_comes_back() {
+    let mut app = app();
+    let inspector = app.inspector.as_mut().unwrap();
+    let us = Duration::from_micros;
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        gpu_3d: Some(us(300)),
+        ..PaintReport::default()
+    });
+    // A reading of an earlier drawing comes back with a pass that draws
+    // nothing new.
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Unchanged,
+        gpu_3d: Some(us(500)),
+        ..PaintReport::default()
+    });
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        ..PaintReport::default()
+    });
+    let reply = app.call("app_metrics", json!({}));
+    let g = &reply.structured["paint"]["gpu_3d_us"];
+    assert_eq!(g["last"], 500, "{g}");
+    assert_eq!(g["max"], 500);
+    assert_eq!(g["total"], 800);
+    assert!(
+        reply
+            .text
+            .contains("drawing 3D on the GPU last 0.50 ms, longest 0.50 ms"),
+        "{}",
+        reply.text
+    );
 }
 
 // ---------------------------------------------------------------- resources

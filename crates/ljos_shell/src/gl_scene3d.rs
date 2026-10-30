@@ -79,6 +79,7 @@ impl Device3d {
         let adapter = unsafe { instance.create_adapter_from_hal::<wgpu::hal::api::Gles>(exposed) };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("ljos_shell 3D on GL"),
+            required_features: ljos_3d::timing_features(&adapter),
             required_limits:
                 wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
             ..Default::default()
@@ -305,6 +306,15 @@ impl Views {
         Some(out)
     }
 
+    /// The GPU time of the views' drawings read since the last time this
+    /// was asked, added up.
+    pub(crate) fn take_gpu_time(&mut self) -> Option<std::time::Duration> {
+        self.pictures
+            .values_mut()
+            .filter_map(|p| p.target.take_gpu_time())
+            .reduce(|a, b| a + b)
+    }
+
     /// Lets go of every picture, while the context is current; whether
     /// there was one.
     pub(crate) fn clear(&mut self) -> bool {
@@ -408,11 +418,16 @@ mod tests {
     }
 
     fn cube() -> Arc<Scene> {
+        cube_from(300.0)
+    }
+
+    /// The cube seen from `z` away, a scene drawn again whenever `z` moves.
+    fn cube_from(z: f32) -> Arc<Scene> {
         let mut scene = Scene::new();
         scene.add(
             None,
             Node::new(NodeKind::Camera(Camera::PERSPECTIVE)).with_transform(Transform {
-                position: Vec3::new(0.0, 0.0, 300.0),
+                position: Vec3::new(0.0, 0.0, z),
                 ..Transform::default()
             }),
         );
@@ -539,6 +554,7 @@ mod tests {
                 }
             };
             run_rounds(&h, &mut device);
+            time_a_view(&h, &mut device);
             drop(device);
             eprintln!("views came and went on {}", h.name);
             ran += 1;
@@ -546,6 +562,37 @@ mod tests {
         if ran == 0 {
             eprintln!("SKIPPED: no EGL device wgpu can draw on");
         }
+    }
+
+    /// A view drawn frame after frame has its GPU time read back a frame or
+    /// two later, where the device could be asked to time it: the painter
+    /// never polls, and the readings come back with its submits.
+    fn time_a_view(h: &Headless, device: &mut Device3d) {
+        let timed = device
+            .device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY);
+        let mut views = Views::default();
+        let mut took = None;
+        for x in 0..8 {
+            let scene = cube_from(300.0 + x as f32);
+            frame(h, device, &mut views, &scene, &[(7, [64, 64])]);
+            took = took.or(views.take_gpu_time());
+        }
+        if timed {
+            let took = took.unwrap_or_else(|| panic!("on {}: no GPU time came back", h.name));
+            assert!(
+                took > std::time::Duration::ZERO && took < std::time::Duration::from_secs(1),
+                "on {}: {took:?}",
+                h.name
+            );
+            eprintln!("a view took {took:?} on the GPU on {}", h.name);
+        } else {
+            assert_eq!(took, None, "on {}: timed without the feature", h.name);
+            eprintln!("SKIPPED: {} times nothing without waiting", h.name);
+        }
+        assert!(frame(h, device, &mut views, &cube(), &[]).is_empty());
+        let _ = views.clear();
     }
 
     fn run_rounds(h: &Headless, device: &mut Device3d) {
