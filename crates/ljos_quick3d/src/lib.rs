@@ -49,7 +49,9 @@
 //! (`baseColor`, `metalness`, `roughness`, `emissiveFactor`, `opacity`,
 //! `alphaMode`, `alphaCutoff`, `lighting`, and the base colour,
 //! metalness, roughness, normal, emissive, occlusion and opacity maps with
-//! their channels), `Texture` (every property but `sourceItem`),
+//! their channels), `Texture` (every property; `sourceItem` drawn live
+//! and taking presses on a pickable model), Items declared in a `Node`
+//! (drawn in its plane, taking presses),
 //! `SceneEnvironment` (`clearColor`, `backgroundMode` Transparent, Color
 //! and SkyBox, `lightProbe` with `probeExposure`, `probeHorizon`,
 //! `probeOrientation` and `skyboxBlurAmount`, `tonemapMode`,
