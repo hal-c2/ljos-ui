@@ -26,8 +26,8 @@ Feature: Mapping between the view, the scene and a node
       View3D {
         id: view; objectName: "view"; width: 200; height: 100
         property vector3d out
-        function from3D(x, y, z) { out = mapFrom3DScene(Qt.vector3d(x, y, z)) }
-        function to3D(x, y, z) { out = mapTo3DScene(Qt.vector3d(x, y, z)) }
+        function from3D(x, y, z) { out = view.mapFrom3DScene(Qt.vector3d(x, y, z)) }
+        function to3D(x, y, z) { out = view.mapTo3DScene(Qt.vector3d(x, y, z)) }
         function toViewport(x, y, z) { out = cam.mapToViewport(Qt.vector3d(x, y, z)) }
         function fromViewport(x, y, z) { out = cam.mapFromViewport(Qt.vector3d(x, y, z)) }
         function toScene(x, y, z) { out = hand.mapPositionToScene(Qt.vector3d(x, y, z)) }

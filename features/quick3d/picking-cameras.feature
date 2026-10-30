@@ -25,7 +25,7 @@ Feature: Picking through each kind of camera
         property bool ortho: false
         property string hit: ""
         function pickAt(x, y) {
-          const r = pick(x, y)
+          const r = view.pick(x, y)
           hit = r.objectHit ? r.objectHit.objectName : "nothing"
         }
         camera: ortho ? flat : deep

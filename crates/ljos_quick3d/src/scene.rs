@@ -18,6 +18,12 @@ use crate::{
 
 /// The scene of the view `view`, read now. Tracked.
 pub(crate) fn build(e: &Engine, view: ObjectId) -> Scene {
+    build_with_ids(e, view).0
+}
+
+/// [`build`], with the scene node each object became: what a pick needs
+/// to say which object it hit.
+pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> (Scene, HashMap<ObjectId, NodeId>) {
     let mut walk = Walk {
         e,
         scene: Scene::new(),
@@ -36,7 +42,15 @@ pub(crate) fn build(e: &Engine, view: ObjectId) -> Scene {
     // its first camera.
     let camera = item::prop(e, view, View3D::CAMERA).and_then(|c| walk.ids.get(&c).copied());
     walk.scene.set_camera(camera);
-    walk.scene
+    (walk.scene, walk.ids)
+}
+
+/// The camera `obj` is, as the renderer sees it; `None` when it is not one.
+pub(crate) fn camera(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Camera> {
+    match kind(e, obj) {
+        NodeKind::Camera(c) => Some(c),
+        _ => None,
+    }
 }
 
 struct Walk<'e> {

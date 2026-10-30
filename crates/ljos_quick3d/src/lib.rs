@@ -59,7 +59,9 @@
 //! them, from 0, and checked against Qt once qml6 has QtQuick3D.
 
 mod node;
+mod pick;
 mod scene;
+mod space;
 mod view;
 
 #[cfg(test)]
@@ -71,6 +73,7 @@ pub use node::{
     OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
     SpotLight,
 };
+pub use pick::PickResult;
 pub use view::View3D;
 
 use ljos::item;
@@ -95,6 +98,7 @@ pub fn register(engine: &Engine) {
         PrincipledMaterial,
         SceneEnvironment,
         View3D,
+        PickResult,
     ]));
     item::register_paint_item::<View3D>(engine, view::read);
 }

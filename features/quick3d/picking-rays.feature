@@ -25,10 +25,10 @@ Feature: Picking everything on a ray, and rays from anywhere
         property real distance: -1
         property bool twoSided: false
         function names(all) { return all.map(r => r.objectHit.objectName).join(",") }
-        function pickAllAt(x, y) { hits = names(pickAll(x, y)) }
-        function rayAll(z, dz) { hits = names(rayPickAll(Qt.vector3d(0, 0, z), Qt.vector3d(0, 0, dz))) }
+        function pickAllAt(x, y) { hits = names(view.pickAll(x, y)) }
+        function rayAll(z, dz) { hits = names(view.rayPickAll(Qt.vector3d(0, 0, z), Qt.vector3d(0, 0, dz))) }
         function ray(y, z, dz) {
-          const r = rayPick(Qt.vector3d(0, y, z), Qt.vector3d(0, 0, dz))
+          const r = view.rayPick(Qt.vector3d(0, y, z), Qt.vector3d(0, 0, dz))
           hits = r.objectHit ? r.objectHit.objectName : ""; distance = r.distance
         }
         PerspectiveCamera { z: 600 }

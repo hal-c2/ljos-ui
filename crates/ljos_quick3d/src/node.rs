@@ -32,7 +32,7 @@ pub struct Object3D {
 /// counterpart is written as the toolkit's own value
 /// ([`WriteKind::Host`]), so a binding on it stays.
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick3D", name = "Node", extends = Object3D)]
+#[qml(module = "QtQuick3D", name = "Node", extends = Object3D, enums = node_enums)]
 pub struct Node {
     #[qml(base)]
     pub object3d: Object3D,
@@ -58,6 +58,29 @@ pub struct Node {
     pub opacity: f64,
     #[qml(notify)]
     pub visible: bool,
+    /// Where the node is in the scene: its own place through its parents'
+    /// transforms. This and the five below are made when first read
+    /// (`space.rs`), so a node nobody asks holds no binding for them.
+    #[qml(notify, readonly)]
+    pub scene_position: Vector3d,
+    #[qml(notify, readonly)]
+    pub scene_rotation: Quaternion,
+    #[qml(notify, readonly)]
+    pub scene_scale: Vector3d,
+    /// Unit length, in scene space: where the node's -Z, +Y and +X point.
+    #[qml(notify, readonly)]
+    pub forward: Vector3d,
+    #[qml(notify, readonly)]
+    pub up: Vector3d,
+    #[qml(notify, readonly)]
+    pub right: Vector3d,
+}
+
+fn node_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![(
+        "TransformSpace",
+        vec![("LocalSpace", 0), ("ParentSpace", 1), ("SceneSpace", 2)],
+    )]
 }
 
 impl Default for Node {
@@ -78,18 +101,40 @@ impl Default for Node {
             pivot: Vector3d::default(),
             opacity: 1.0,
             visible: true,
+            scene_position: Vector3d::default(),
+            scene_rotation: IDENTITY,
+            scene_scale: Vector3d {
+                x: 1.0,
+                y: 1.0,
+                z: 1.0,
+            },
+            forward: Vector3d {
+                x: 0.0,
+                y: 0.0,
+                z: -1.0,
+            },
+            up: Vector3d {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            },
+            right: Vector3d {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         }
     }
 }
 
-const IDENTITY: Quaternion = Quaternion {
+pub(crate) const IDENTITY: Quaternion = Quaternion {
     scalar: 1.0,
     x: 0.0,
     y: 0.0,
     z: 0.0,
 };
 
-fn host_write<T: QmlValue>(e: &Engine, me: ObjectId, p: Prop<T>, v: T) {
+pub(crate) fn host_write<T: QmlValue>(e: &Engine, me: ObjectId, p: Prop<T>, v: T) {
     if let Err(err) = e.write(me, p.index, v.to_value(), WriteKind::Host) {
         e.warn(format!("QtQuick3D Node: {err}"));
     }

@@ -76,3 +76,10 @@ pub(crate) fn read(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
         scene,
     })))
 }
+
+/// The view's size in logical pixels: what a point of it is measured in.
+pub(crate) fn size(e: &Engine, view: ObjectId) -> (f32, f32) {
+    let w = ljos::item::prop(e, view, Item::WIDTH);
+    let h = ljos::item::prop(e, view, Item::HEIGHT);
+    (w as f32, h as f32)
+}
