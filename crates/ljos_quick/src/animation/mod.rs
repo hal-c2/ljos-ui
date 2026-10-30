@@ -52,9 +52,68 @@ pub use transition::{
 pub use types::{
     AnchorAnimation, Animation, Animator, ColorAnimation, Easing, EasingGroup, NumberAnimation,
     OpacityAnimator, ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction,
-    PropertyAnimation, RotationAnimation, RotationAnimator, ScaleAnimator, ScriptAction,
-    SequentialAnimation, SmoothedAnimation, SpringAnimation, UniformAnimator, XAnimator, YAnimator,
+    PropertyAnimation, QuaternionAnimation, RotationAnimation, RotationAnimator, ScaleAnimator,
+    ScriptAction, SequentialAnimation, SmoothedAnimation, SpringAnimation, UniformAnimator,
+    Vector3dAnimation, XAnimator, YAnimator,
 };
+
+/// `NumberAnimation on eulerRotation.y { }`: the animation moves a
+/// number of its own, kept equal to the member and written into the
+/// whole value as it moves, the way a Behavior on a member does.
+fn animate_member(
+    e: &Engine,
+    anim: ObjectId,
+    target: ObjectId,
+    prop: ljos_engine::PropIndex,
+    member: &str,
+) -> bool {
+    use behavior::MemberValue;
+    use ljos_engine::{Atom, Value};
+    use ljos_reactive::WriteKind;
+    let Some(ty) = e
+        .meta_of(target)
+        .and_then(|m| m.property(prop).map(|p| p.ty.clone()))
+    else {
+        return false;
+    };
+    let member = Atom::new(member);
+    let now = |e: &Engine| e.peek(target, prop).member(&member).map(|v| v.to_number());
+    let start = now(e).unwrap_or(0.0);
+    let Ok(proxy) = e.create_native(
+        MemberValue {
+            value: start,
+            ..Default::default()
+        },
+        Some(anim),
+    ) else {
+        return false;
+    };
+    let m = member.clone();
+    let _ = e.watch(proxy, MemberValue::VALUE.index, move |e, v| {
+        let whole = e.peek(target, prop);
+        if let Some(w) = whole.with_member(&ty, &m, v)
+            && w != whole
+        {
+            let _ = e.write_internal(target, prop, w, WriteKind::Animation);
+        }
+    });
+    // Anything else that moves the member moves the number too, so an
+    // animation without `from` starts where the member is.
+    let _ = e.watch(target, prop, move |e, v| {
+        if let Some(n) = v.member(&member).map(|v| v.to_number())
+            && e.peek(proxy, MemberValue::VALUE.index).to_number() != n
+        {
+            let _ = e.write_internal(
+                proxy,
+                MemberValue::VALUE.index,
+                Value::Real(n),
+                WriteKind::Animation,
+            );
+        }
+    });
+    e.with_mut::<Animation, _>(anim, |a| a.on = Some((proxy, MemberValue::VALUE.index)))
+        .is_ok()
+}
 
 /// Hooks the animation types into the engine. Once per engine; more calls
 /// do nothing.
@@ -70,7 +129,7 @@ pub(crate) fn register(engine: &Engine) {
         ParallelAnimation, PauseAnimation, ScriptAction, PropertyAction, Behavior,
         AnimationController, FrameAnimation, Easing, RotationAnimation, SmoothedAnimation, Transition,
         AnchorAnimation, ParentAnimation, SpringAnimation, Animator, OpacityAnimator, XAnimator,
-        YAnimator, ScaleAnimator, RotationAnimator, UniformAnimator,
+        YAnimator, ScaleAnimator, RotationAnimator, UniformAnimator, Vector3dAnimation,
     ]));
     // A transition's animations are made when it first runs, in Qt: what
     // they are given is not worked out before then.
@@ -91,7 +150,11 @@ pub(crate) fn register(engine: &Engine) {
     });
     // `Behavior on font.pixelSize { }`.
     engine.on_member_value_source(|e, source, target, prop, member| {
-        is_a::<Behavior>(e, source) && behavior::attach_member(e, source, target, prop, member)
+        if is_a::<Behavior>(e, source) {
+            behavior::attach_member(e, source, target, prop, member)
+        } else {
+            is_a::<Animation>(e, source) && animate_member(e, source, target, prop, member)
+        }
     });
 }
 
