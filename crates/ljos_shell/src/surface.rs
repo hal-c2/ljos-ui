@@ -230,11 +230,30 @@ impl Painter {
         }
     }
 
-    /// Whether the painter draws a `View3D` on its own device, in its pass
-    /// (`QmlView::set_draws_scenes3d`): egui-wgpu does, with `quick3d`.
-    /// Elsewhere the view is a picture drawn off-screen and read back.
+    /// Whether the painter draws a `View3D` on its own device, in paint
+    /// order (`QmlView::set_draws_scenes3d`): egui-wgpu does, and GL with
+    /// wgpu on its context, with `quick3d`. The processor's view is a
+    /// picture drawn off-screen and read back.
     pub(crate) fn draws_3d(&self) -> bool {
-        cfg!(feature = "quick3d") && matches!(self, Painter::Wgpu(_))
+        match self {
+            Painter::Wgpu(_) => cfg!(feature = "quick3d"),
+            Painter::Cpu(_) => false,
+            #[cfg(gl_painter)]
+            Painter::Gl(_) => cfg!(feature = "quick3d"),
+        }
+    }
+
+    /// Notes the 3D views the whole frame `shapes` shows, before it is cut
+    /// to where it changed: the pictures of the others are let go of.
+    pub(crate) fn views_shown(&mut self, shapes: &[egui::epaint::ClippedShape]) {
+        match self {
+            #[cfg(all(gl_painter, feature = "quick3d"))]
+            Painter::Gl(painter) => painter.views_shown(shapes),
+            // egui-wgpu's frames are drawn whole (`scene3d::paint_views`).
+            _ => {
+                let _ = shapes;
+            }
+        }
     }
 
     /// Whether the painter draws the scene itself rather than what egui is

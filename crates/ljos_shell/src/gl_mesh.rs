@@ -96,6 +96,9 @@ pub(crate) struct Meshes {
     ebo: glow::Buffer,
     srgb_framebuffer: bool,
     vertex_array: Option<glow::VertexArray>,
+    /// Pictures that are not egui_glow's (a 3D view's), by the ids meshes
+    /// sample them by; set before each paint.
+    pub(crate) pictures: Vec<(egui::TextureId, glow::Texture)>,
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     draws: Vec<Draw>,
@@ -179,6 +182,7 @@ impl Meshes {
                 } else {
                     None
                 },
+                pictures: Vec::new(),
                 vertices: Vec::new(),
                 indices: Vec::new(),
                 draws: Vec::new(),
@@ -340,7 +344,13 @@ impl Meshes {
                 _ if flat => None,
                 Some((id, t)) if id == mesh.texture_id => Some(t),
                 _ => {
-                    let Some(t) = painter.texture(mesh.texture_id) else {
+                    let own = || {
+                        self.pictures
+                            .iter()
+                            .find(|(id, _)| *id == mesh.texture_id)
+                            .map(|(_, t)| *t)
+                    };
+                    let Some(t) = painter.texture(mesh.texture_id).or_else(own) else {
                         continue;
                     };
                     last = Some((mesh.texture_id, t));

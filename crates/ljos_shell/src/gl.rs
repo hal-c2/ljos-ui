@@ -84,6 +84,10 @@ pub(crate) struct Clear(pub(crate) [f32; 4]);
 
 /// The display, the context and GL's functions all windows share.
 pub(crate) struct Gl {
+    /// wgpu on this context, for 3D views: made with the first view drawn
+    /// (`None` until then, `Some(None)` if wgpu could not use it).
+    #[cfg(feature = "quick3d")]
+    scene3d: std::cell::RefCell<Option<Option<crate::gl_scene3d::Device3d>>>,
     // Field order is drop order: the context goes before its display.
     glow: Arc<glow::Context>,
     context: PossiblyCurrentContext,
@@ -186,6 +190,8 @@ impl Gl {
         // SAFETY: a plain query of a string on the current context.
         let software = is_software(&unsafe { glow.get_parameter_string(glow::RENDERER) });
         Ok(Rc::new(Gl {
+            #[cfg(feature = "quick3d")]
+            scene3d: std::cell::RefCell::new(None),
             glow: Arc::new(glow),
             context,
             config,
@@ -210,6 +216,35 @@ impl Gl {
         self.current.set(if made.is_ok() { id } else { u64::MAX });
         made.is_ok()
     }
+
+    /// Runs `f` with wgpu's device on this context, made the first time,
+    /// while the context is current; `None` where wgpu cannot use it.
+    #[cfg(feature = "quick3d")]
+    fn with_scene3d<R>(&self, f: impl FnOnce(&mut crate::gl_scene3d::Device3d) -> R) -> Option<R> {
+        let mut device = self.scene3d.borrow_mut();
+        let device = device.get_or_insert_with(|| {
+            // SAFETY: the caller made the context current, and the device
+            // goes before the context does (`Drop for Gl`), with it current.
+            let made = unsafe {
+                crate::gl_scene3d::Device3d::new(&self.glow, |name| {
+                    self.display.get_proc_address(name)
+                })
+            };
+            made.inspect_err(|e| eprintln!("View3D: 3D views are not drawn: {e}"))
+                .ok()
+        });
+        device.as_mut().map(f)
+    }
+}
+
+#[cfg(feature = "quick3d")]
+impl Drop for Gl {
+    fn drop(&mut self) {
+        // wgpu deletes what it made on the context, which must be current.
+        if self.scene3d.get_mut().is_some() && self.make_current(None) {
+            drop(self.scene3d.get_mut().take());
+        }
+    }
 }
 
 /// The painter of one window's pictures, and the surface of the window
@@ -227,6 +262,9 @@ pub(crate) struct GlPainter {
     /// The size of each picture handed over, for where a part of one
     /// handed over again lies in it.
     sizes: HashMap<egui::TextureId, [usize; 2]>,
+    /// The pictures of the window's 3D views.
+    #[cfg(feature = "quick3d")]
+    views: crate::gl_scene3d::Views,
 }
 
 struct GlWindow {
@@ -273,6 +311,8 @@ impl GlPainter {
             blits,
             warmed: false,
             sizes: HashMap::new(),
+            #[cfg(feature = "quick3d")]
+            views: crate::gl_scene3d::Views::default(),
         })
     }
 
@@ -288,6 +328,12 @@ impl GlPainter {
     /// The `ShaderEffect` programs this painter links.
     pub(crate) fn programs(&self) -> &crate::gl_shader::Programs {
         &self.programs
+    }
+
+    /// Notes the 3D views a whole frame shows ([`crate::gl_scene3d::Views::shown`]).
+    #[cfg(feature = "quick3d")]
+    pub(crate) fn views_shown(&mut self, shapes: &[ClippedShape]) {
+        self.views.shown(shapes);
     }
 
     pub(crate) fn max_texture_side(&self) -> usize {
@@ -567,6 +613,21 @@ impl GlPainter {
             return Steps::default();
         }
         let started = Instant::now();
+        // The 3D views first, so that what wgpu leaves bound is set again
+        // before egui's pictures go up.
+        #[cfg(feature = "quick3d")]
+        let views = {
+            let (gl, views) = (&self.gl, &mut self.views);
+            gl.with_scene3d(|device| {
+                // SAFETY: the context was made current above.
+                unsafe { views.draw(device, &gl.glow, gw.px, primitives) }
+            })
+            .flatten()
+        };
+        #[cfg(feature = "quick3d")]
+        let primitives = views.as_deref().unwrap_or(primitives);
+        #[cfg(feature = "quick3d")]
+        self.views.pictures_into(&mut self.meshes.pictures);
         // As egui_glow's own paint does: the pictures first, and those
         // freed only once the frame that may still use them is drawn.
         for (id, deltas) in pending.set.drain() {
@@ -686,6 +747,8 @@ impl Drop for GlPainter {
     fn drop(&mut self) {
         let surface = self.window.as_ref().map(|w| (w.id, &w.surface));
         if self.gl.make_current(surface) {
+            #[cfg(feature = "quick3d")]
+            self.views.clear();
             self.programs.destroy(&self.gl.glow);
             self.meshes.destroy(&self.gl.glow);
             self.painter.destroy();

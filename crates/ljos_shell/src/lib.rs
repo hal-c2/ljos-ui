@@ -45,6 +45,8 @@ mod drivers;
 mod gl;
 #[cfg(gl_painter)]
 mod gl_mesh;
+#[cfg(all(gl_painter, feature = "quick3d"))]
+mod gl_scene3d;
 #[cfg(gl_painter)]
 mod gl_shader;
 mod native_drag;

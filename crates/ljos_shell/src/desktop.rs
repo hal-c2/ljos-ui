@@ -1465,6 +1465,7 @@ impl<M: Send + 'static> Desktop<M> {
             return;
         }
         let kept = slot.shown.keep(shapes, pixels_per_point, clear);
+        painter.views_shown(kept);
         let shapes = if let Frame::Part(areas) = &frame {
             let mut part = kept.to_vec();
             present::clip_to(&mut part, areas, pixels_per_point);
