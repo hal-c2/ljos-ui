@@ -63,6 +63,28 @@ Feature: LayoutMirroring
         | f    | -4  |
         | raw  | 12  |
 
+  Rule: Anchors to a sibling declared later
+
+    Scenario: An item anchored to a later sibling follows mirroring both ways
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "top"
+          width: 200; height: 100
+          property bool flip: true
+          LayoutMirroring.enabled: flip
+          LayoutMirroring.childrenInherit: true
+          Item { objectName: "e"; width: 30; anchors.right: c.left; anchors.rightMargin: 2 }
+          Item { id: c; width: 40; anchors.left: parent.left; anchors.leftMargin: 7 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "e" is 195
+      When the property "flip" of "top" is set to false
+      And 100 milliseconds pass
+      Then the property "x" of "e" is -25
+
   Rule: Who is mirrored
 
     Scenario Outline: Children inherit mirroring only through childrenInherit, and their own setting wins
