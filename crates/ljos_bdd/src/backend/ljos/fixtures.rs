@@ -3,6 +3,7 @@
 //! does not import the module sees them.
 
 use ljos::prelude::*;
+use ljos_quick3d::{ComponentType, Geometry, PrimitiveType, Semantic};
 use ljos_engine::{
     Engine, EngineError, LogLevel, ObjectId, QmlObject, ScopedEvent, Version, qml_singleton,
 };
@@ -73,6 +74,58 @@ impl Browser {
     }
 }
 
+/// A geometry an application provides (`features/quick3d/custom-geometry.feature`):
+/// a flat disc of `corners` corners and `radius`, around its origin and
+/// facing +Z, as a triangle fan with no indices and no normals.
+#[derive(Debug, QmlObject)]
+#[qml(module = "Fixtures", name = "Fan", extends = Geometry)]
+pub(super) struct Fan {
+    #[qml(base)]
+    geometry: Geometry,
+    #[qml(notify, change = Self::rebuild)]
+    corners: i32,
+    #[qml(notify, change = Self::rebuild)]
+    radius: f64,
+}
+
+impl Default for Fan {
+    fn default() -> Self {
+        Fan {
+            geometry: Geometry::default(),
+            corners: 6,
+            radius: 50.0,
+        }
+    }
+}
+
+impl Fan {
+    fn rebuild(cx: &Cx, _: PropIndex) {
+        let (Ok(corners), Ok(radius)) = (cx.get(Self::CORNERS), cx.get(Self::RADIUS)) else {
+            return;
+        };
+        let rim = (0..corners.max(0)).flat_map(|k| {
+            let a = std::f32::consts::TAU * k as f32 / corners as f32;
+            let (s, c) = a.sin_cos();
+            [radius as f32 * c, radius as f32 * s, 0.0]
+        });
+        let mut data: Vec<f32> = vec![0.0; 3];
+        data.extend(rim);
+        // The fan runs round the rim and shuts on its first corner.
+        if corners >= 3 {
+            data.extend([radius as f32, 0.0, 0.0]);
+        }
+        let _ = cx.with_mut(|f: &mut Fan| {
+            let g = &mut f.geometry;
+            g.clear();
+            g.set_vertex_data(data.iter().flat_map(|v| v.to_le_bytes()).collect());
+            g.set_stride(12);
+            g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+            g.set_primitive_type(PrimitiveType::TriangleFan);
+        });
+        Geometry::update(cx.engine, cx.this);
+    }
+}
+
 /// A `Document` the application made itself, titled `title`.
 pub(super) fn document(engine: &Engine, title: &str) -> Result<ObjectId, EngineError> {
     engine.create_native(
@@ -91,7 +144,7 @@ pub(super) fn title(engine: &Engine, obj: ObjectId) -> Result<String, EngineErro
 pub(super) fn register(engine: &Engine) {
     engine.register_singleton::<Document>("Fixtures", Version::new(1, 0));
     engine.register_singleton::<Session>("Fixtures", Version::new(1, 0));
-    engine.register_module(ljos::module!("Fixtures" 1.0 => [Browser]));
+    engine.register_module(ljos::module!("Fixtures" 1.0 => [Browser, Fan]));
 }
 
 /// What a scenario reads in the log: when a window's `Document` is made

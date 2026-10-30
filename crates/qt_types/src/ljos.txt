@@ -7525,6 +7525,7 @@ module QtQuick3D
 	Camera QtQuick3D.Camera
 	DefaultMaterial QtQuick3D.DefaultMaterial
 	DirectionalLight QtQuick3D.DirectionalLight
+	Geometry QtQuick3D.Geometry
 	Light QtQuick3D.Light
 	Material QtQuick3D.Material
 	Model QtQuick3D.Model
@@ -7555,6 +7556,11 @@ module QtQuick3D
 		signal specularRoughnessChanged
 	type QtQuick3D.DirectionalLight DirectionalLight
 		prototype QtQuick3D.Light named
+	type QtQuick3D.Geometry Geometry
+		prototype QtQuick3D.Object3D named
+		is uncreatable
+		prop revision QtQml.int named readonly
+		signal revisionChanged
 	type QtQuick3D.Light Light
 		prototype QtQuick3D.Node named
 		is uncreatable
@@ -7576,11 +7582,13 @@ module QtQuick3D
 		prototype QtQuick3D.Node named
 		prop source QtQml.url named
 		prop materials QtQml.var named list
+		prop geometry QtQuick3D.Geometry named pointer
 		prop castsShadows QtQml.bool named
 		prop receivesShadows QtQml.bool named
 		prop pickable QtQml.bool named
 		signal sourceChanged
 		signal materialsChanged
+		signal geometryChanged
 		signal castsShadowsChanged
 		signal receivesShadowsChanged
 		signal pickableChanged
