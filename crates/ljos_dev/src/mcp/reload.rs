@@ -32,6 +32,9 @@ pub(crate) struct ReloadState {
     /// though the generation does not move.
     pub(crate) seq: u64,
     pub(crate) last: Option<Outcome>,
+    /// The modules imported from a directory of their own, by module, as
+    /// the host compiles against them: each module and its directory.
+    pub(crate) aliases: Vec<(String, String)>,
 }
 
 impl ReloadState {
@@ -52,6 +55,11 @@ impl ReloadState {
             "watched": self.watched,
             "generation": self.generation,
             "last": last,
+            "aliases": self
+                .aliases
+                .iter()
+                .map(|(module, dir)| json!({ "module": module, "dir": dir }))
+                .collect::<Vec<_>>(),
             "waited": waited,
         })
     }
@@ -81,6 +89,14 @@ impl ReloadFeed {
         self.tx.send_if_modified(|s| {
             let changed = s.watched != watched;
             s.watched = watched;
+            changed
+        });
+    }
+
+    pub(crate) fn set_aliases(&self, aliases: Vec<(String, String)>) {
+        self.tx.send_if_modified(|s| {
+            let changed = s.aliases != aliases;
+            s.aliases = aliases;
             changed
         });
     }

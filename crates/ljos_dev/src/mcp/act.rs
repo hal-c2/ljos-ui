@@ -971,7 +971,7 @@ impl Hands<'_> {
             Act::SetProperty(a) => self.set_property(a),
             Act::Invoke(a) => self.invoke(a),
             Act::Eval(a) => self.eval(a),
-            Act::Reload | Act::Batch(_) => Err(SurfaceError::new(
+            Act::Reload | Act::Alias(_) | Act::Batch(_) => Err(SurfaceError::new(
                 ErrorCode::Internal,
                 "this act is not run by itself",
             )),

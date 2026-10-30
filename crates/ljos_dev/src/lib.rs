@@ -46,6 +46,7 @@ pub use host::{
     DevError, DevSession, Host, ReloadStats, Report, STATE_PROPERTIES, apply, component_source,
     fault_of, prepare,
 };
+pub use ljos_compiler::{Alias, AliasError, Aliases};
 pub use overlay::Overlay;
 /// What the watched files are compiled against.
 pub use qml_front::{QtTypeOracle, TypeOracle};

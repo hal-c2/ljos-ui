@@ -297,12 +297,22 @@ fn timed_out() -> SurfaceError {
     )
 }
 
-/// An `app_reload` waiting for the host to read the changed files.
+/// An `app_reload` or an `app_alias` waiting for the host to read the
+/// changed files.
 struct Parked {
     reply: oneshot::Sender<Answer>,
     deadline: Instant,
     /// The reload count when it was asked for, to tell whether one happened.
     seq: u64,
+}
+
+/// What an `app_alias` asks the host to set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AliasRequest {
+    pub module: String,
+    /// None: the module is imported from the import path again. A
+    /// relative directory is from the project's.
+    pub dir: Option<PathBuf>,
 }
 
 /// An `app_resize` waiting for the platform to give the window its size.
@@ -349,6 +359,7 @@ pub struct Inspector {
     seen: Option<(u64, Option<ReloadFault>)>,
     parked: Option<Parked>,
     reload_wanted: bool,
+    alias_wanted: Option<AliasRequest>,
     /// The host gives the primary window the size `app_resize` asks for.
     resizes_window: bool,
     resize_wanted: Option<[f64; 2]>,
@@ -453,6 +464,7 @@ impl Inspector {
             seen: None,
             parked: None,
             reload_wanted: false,
+            alias_wanted: None,
             resizes_window: false,
             resize_wanted: None,
             parked_resize: None,
@@ -489,6 +501,18 @@ impl Inspector {
     /// it `app_reload` is `unavailable`.
     pub fn set_watched(&mut self, watched: bool) {
         self.feed.set_watched(watched);
+    }
+
+    /// Says which modules the host imports from a directory of their own
+    /// (`DevSession::aliases`), by module: each module and its directory.
+    /// `app_status` lists them. Tell it at the start and after every
+    /// alias an agent set.
+    pub fn set_aliases<'a>(&mut self, aliases: impl IntoIterator<Item = (&'a str, &'a Path)>) {
+        let aliases = aliases
+            .into_iter()
+            .map(|(module, dir)| (module.to_owned(), dir.display().to_string()))
+            .collect();
+        self.feed.set_aliases(aliases);
     }
 
     /// Says that the host has a platform window and gives it the size
@@ -703,6 +727,31 @@ impl Inspector {
         std::mem::take(&mut self.reload_wanted)
     }
 
+    /// The alias an agent asked for that the host has not set. The host
+    /// sets it ([`DevSession::set_alias`](crate::DevSession::set_alias)),
+    /// which reloads as [`take_reload_request`](Self::take_reload_request)'s
+    /// reload does, and answers as for that one with
+    /// [`finish_reload`](Self::finish_reload); when the alias is not taken,
+    /// with [`refuse_alias`](Self::refuse_alias).
+    pub fn take_alias_request(&mut self) -> Option<AliasRequest> {
+        self.alias_wanted.take()
+    }
+
+    /// Answers the `app_alias` that was waiting with why the host did not
+    /// take the alias; nothing was reloaded.
+    pub fn refuse_alias(&mut self, why: &ljos_compiler::AliasError) {
+        let Some(parked) = self.parked.take() else {
+            return;
+        };
+        let code = match why {
+            ljos_compiler::AliasError::Outside { .. } => ErrorCode::PathDenied,
+            _ => ErrorCode::InvalidArgument,
+        };
+        let _ = parked
+            .reply
+            .send(Err(SurfaceError::new(code, why.to_string())));
+    }
+
     /// Answers the `app_reload` that was waiting, with how the reload went.
     pub fn finish_reload(&mut self, engine: &Engine) {
         self.observe(engine);
@@ -811,7 +860,14 @@ impl Inspector {
         (self.wake)();
     }
 
-    fn start_reload(&mut self, reply: oneshot::Sender<Answer>, deadline: Instant) {
+    /// Parks the call until the host has read the files again: an
+    /// `app_reload`, or an `app_alias` with what it asks.
+    fn start_reload(
+        &mut self,
+        reply: oneshot::Sender<Answer>,
+        deadline: Instant,
+        alias: Option<AliasRequest>,
+    ) {
         let state = self.feed.state();
         if !state.watched {
             let _ = reply.send(Err(SurfaceError::unavailable(
@@ -827,7 +883,8 @@ impl Inspector {
         {
             let _ = reply.send(Err(SurfaceError::new(
                 ErrorCode::Busy,
-                "another `app_reload` is waiting for the application; ask again when it is answered",
+                "another `app_reload` or `app_alias` is waiting for the application; ask again \
+                 when it is answered",
             )));
             return;
         }
@@ -836,7 +893,10 @@ impl Inspector {
             deadline,
             seq: state.seq,
         });
-        self.reload_wanted = true;
+        match alias {
+            Some(alias) => self.alias_wanted = Some(alias),
+            None => self.reload_wanted = true,
+        }
         // The host reads the files the next time it runs.
         (self.wake)();
     }
@@ -1069,7 +1129,15 @@ impl Inspector {
         };
         if let Kind::Act(act) = &kind {
             if matches!(act, Act::Reload) {
-                self.start_reload(reply, deadline);
+                self.start_reload(reply, deadline, None);
+                return;
+            }
+            if let Act::Alias(a) = act {
+                let alias = AliasRequest {
+                    module: a.module.clone(),
+                    dir: a.dir.as_ref().map(PathBuf::from),
+                };
+                self.start_reload(reply, deadline, Some(alias));
                 return;
             }
             if let Act::Resize(a) = act
@@ -1592,7 +1660,7 @@ fn needs_scene(kind: &Kind) -> bool {
         Kind::Trace(args) => trace::needs_scene(args),
         Kind::Resource(r) => *r == Resource::Tree,
         Kind::Snapshot(args) => args.cursor.is_none() || args.image,
-        Kind::Act(act) => !matches!(act, Act::Reload),
+        Kind::Act(act) => !matches!(act, Act::Reload | Act::Alias(_)),
         Kind::Status(_) | Kind::Find(_) | Kind::Inspect(_) | Kind::Screenshot(_) => true,
     }
 }

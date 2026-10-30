@@ -50,6 +50,7 @@ Feature: What the inspector lets an agent do
       | app_set_property | mutate     |
       | app_invoke       | mutate     |
       | app_reload       | mutate     |
+      | app_alias        | mutate     |
       | app_eval         | eval       |
 
   Scenario Outline: A refusal says how to grant what was missing
@@ -94,7 +95,7 @@ Feature: What the inspector lets an agent do
 
     Scenario: Mutate offers the tools that change the application
       Given the inspector is connected with the capabilities "inspect, mutate"
-      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames, app_audit, app_set_property, app_invoke, app_reload"
+      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames, app_audit, app_set_property, app_invoke, app_reload, app_alias"
 
     Scenario: Eval offers the tool that runs script
       Given the inspector is connected with the capabilities "inspect, eval"
@@ -102,7 +103,7 @@ Feature: What the inspector lets an agent do
 
     Scenario: Every capability offers every tool
       Given the inspector is connected with the capabilities "inspect, input, mutate, eval"
-      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames, app_audit, app_click, app_type, app_press, app_scroll, app_touch, app_advance, app_resize, app_set_appearance, app_batch, app_set_property, app_invoke, app_reload, app_eval"
+      Then the agent is offered the tools "app_status, app_snapshot, app_find, app_inspect, app_screenshot, app_logs, app_metrics, app_processes, app_watch, app_objects, app_trace, app_frames, app_audit, app_click, app_type, app_press, app_scroll, app_touch, app_advance, app_resize, app_set_appearance, app_batch, app_set_property, app_invoke, app_reload, app_alias, app_eval"
 
     Scenario: Input and mutate together do not grant eval
       Given the inspector is connected with the capabilities "inspect, input, mutate"

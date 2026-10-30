@@ -131,6 +131,7 @@ pub(crate) fn request_kind(req: &DevReq) -> &'static str {
             Act::SetProperty(_) => "app_set_property",
             Act::Invoke(_) => "app_invoke",
             Act::Reload => "app_reload",
+            Act::Alias(_) => "app_alias",
             Act::Eval(_) => "app_eval",
             Act::Batch(_) => "app_batch",
         },

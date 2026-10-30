@@ -60,7 +60,7 @@ const ALL: [Cap; 4] = [Cap::Inspect, Cap::Input, Cap::Mutate, Cap::Eval];
 /// the registry says it too, and the two must agree.
 fn needs(tool: &str) -> Cap {
     match tool {
-        "app_set_property" | "app_invoke" | "app_reload" => Cap::Mutate,
+        "app_set_property" | "app_invoke" | "app_reload" | "app_alias" => Cap::Mutate,
         "app_eval" => Cap::Eval,
         "app_status" | "app_snapshot" | "app_find" | "app_inspect" | "app_screenshot"
         | "app_logs" | "app_metrics" | "app_processes" | "app_watch" | "app_objects"

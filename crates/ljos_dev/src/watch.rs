@@ -173,7 +173,10 @@ impl Watcher {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
-        let roots = lock(&reloader).roots().to_vec();
+        // The directories outside the roots an alias may name are
+        // watched as the roots are, aliased or not, so naming one needs no
+        // new watch.
+        let roots = lock(&reloader).places();
         let root = roots.first().ok_or(WatchError::NoRoot)?.clone();
         let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let overflow = Arc::new(AtomicBool::new(false));

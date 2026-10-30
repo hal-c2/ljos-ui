@@ -322,7 +322,7 @@ const OUTLINE: &str = r#"- window [e1] 400x400
 /// What each tool that acts needs, by the capability's name.
 fn needs(tool: &str) -> Cap {
     match tool {
-        "app_set_property" | "app_invoke" | "app_reload" => Cap::Mutate,
+        "app_set_property" | "app_invoke" | "app_reload" | "app_alias" => Cap::Mutate,
         "app_eval" => Cap::Eval,
         _ => Cap::Input,
     }

@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use ljos_compiler::{CompileFault, FileSet, ReloadSession};
+use ljos_compiler::{AliasError, Aliases, CompileFault, FileSet, ReloadSession};
 use ljos_ir::{CompiledFile, ReloadPatch};
 use qml_front::TypeOracle;
 
@@ -110,6 +110,32 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         )?))
     }
 
+    /// As [`open_roots`](Self::open_roots), with each module of `aliases`
+    /// imported from its directory: [`ReloadSession::open_roots_aliased`].
+    pub fn open_roots_aliased(
+        roots: &[&Path],
+        aliases: Aliases,
+        oracle: O,
+    ) -> Result<Self, ljos_compiler::Error> {
+        Ok(Self::over(ReloadSession::open_roots_aliased(
+            roots, aliases, oracle,
+        )?))
+    }
+
+    /// As [`open_reaching`](Self::open_reaching), with each module of
+    /// `aliases` imported from its directory:
+    /// [`ReloadSession::open_reaching_aliased`].
+    pub fn open_reaching_aliased(
+        root: &Path,
+        entry: &str,
+        aliases: Aliases,
+        oracle: O,
+    ) -> Result<Self, ljos_compiler::Error> {
+        Ok(Self::over(ReloadSession::open_reaching_aliased(
+            root, entry, aliases, oracle,
+        )?))
+    }
+
     fn over(session: ReloadSession<O>) -> Self {
         Self {
             session,
@@ -144,6 +170,26 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// Every directory the files are found in, earlier first.
     pub fn roots(&self) -> &[PathBuf] {
         self.session.roots()
+    }
+
+    /// Every directory a file of the project may be in, and so every one
+    /// a watcher watches: [`ReloadSession::places`].
+    pub fn places(&self) -> Vec<PathBuf> {
+        self.session.places()
+    }
+
+    /// Imports each module of `aliases` from its directory from the next
+    /// build on, which reads the directories again and compiles every
+    /// file, as a changed `qmldir` does: [`ReloadSession::set_aliases`].
+    ///
+    /// # Errors
+    /// A directory neither inside a root nor one the reloader started
+    /// with; nothing changes then.
+    pub fn set_aliases(&mut self, aliases: Aliases) -> Result<(), AliasError> {
+        self.session.set_aliases(aliases)?;
+        self.rescan = true;
+        self.force = true;
+        Ok(())
     }
 
     /// Whether the next build reads the directory again: there may be
@@ -183,7 +229,8 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// wait for the quiet time. A picture is no build's, but it waits for
     /// the quiet time too: [`take_pictures`](Self::take_pictures).
     pub fn touch(&mut self, path: &Path, is_dir: bool) -> bool {
-        let Some(root) = root_of(self.session.roots(), path) else {
+        let places = self.session.places();
+        let Some(root) = root_of(&places, path) else {
             return false;
         };
         match classify(root, path, is_dir) {

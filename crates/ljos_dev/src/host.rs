@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ljos_compiler::{CompileFault, ReloadSession};
+use ljos_compiler::{Alias, AliasError, Aliases, CompileFault, ReloadSession};
 use ljos_engine::{
     ComponentSource, Engine, MapSource, ObjectId, ReloadError, ReloadFault, ReloadOutcome, Value,
 };
@@ -111,6 +111,9 @@ struct DevSource<O> {
     /// With more than one root, each with its `file://` URL: a file's
     /// URL is beside it, in whichever root has it.
     roots: Vec<(PathBuf, String)>,
+    /// The key prefix of each directory outside the roots an alias may
+    /// name, with its `file://` URL: a file's URL is beside it there too.
+    mounts: Vec<(String, String)>,
     reloader: Arc<Mutex<Reloader<O>>>,
     /// The keys the engine loaded and whose warnings are not yet told:
     /// the next pump tells them. No frame is asked for, as the objects
@@ -130,6 +133,13 @@ impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
     }
 
     fn url(&self, key: &str) -> String {
+        let mounted = self.mounts.iter().find_map(|(prefix, base)| {
+            let rest = key.strip_prefix(prefix.as_str())?.strip_prefix('/')?;
+            Some(format!("{base}/{}", file_of(rest)))
+        });
+        if let Some(url) = mounted {
+            return url;
+        }
         // One root has nothing to choose between, so asks no file.
         if self.roots.len() > 1 {
             let name = file_of(key);
@@ -145,6 +155,16 @@ impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
     }
 
     fn key(&self, url: &str) -> String {
+        let mounted = self.mounts.iter().find_map(|(prefix, base)| {
+            let rest = url.strip_prefix(base.as_str())?.strip_prefix('/')?;
+            Some(format!(
+                "{prefix}/{}",
+                rest.strip_suffix(".qml").unwrap_or(rest)
+            ))
+        });
+        if let Some(key) = mounted {
+            return key;
+        }
         let below = self.roots.iter().find_map(|(_, base)| {
             url.strip_prefix(base.as_str())
                 .and_then(|rest| rest.strip_prefix('/'))
@@ -170,6 +190,21 @@ fn key_of(file: &str) -> Option<&str> {
 
 /// The URL of the directory `dir`, escaped as every file URL the engine
 /// makes is: a `#`, `?` or `%` in a directory's name is part of it.
+/// `path` with `.` and `..` taken out by its words alone.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 fn base_url(dir: &Path) -> String {
     ljos_engine::file_url(dir)
 }
@@ -280,6 +315,15 @@ pub enum DevError {
 /// them before it is answered.
 struct Runs(Rc<dyn Fn(&str) -> bool>);
 
+/// Gives the reloader new aliases, or says why it did not take them.
+struct SetAliases(Box<dyn Fn(Aliases) -> Result<(), AliasError>>);
+
+impl std::fmt::Debug for SetAliases {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SetAliases")
+    }
+}
+
 impl std::fmt::Debug for Runs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Runs")
@@ -341,6 +385,16 @@ pub struct DevSession {
     flushed: bool,
     /// What `Qt.createQmlObject` compiles against.
     texts: Rc<ProjectTexts>,
+    /// The modules imported from a directory of their own.
+    aliases: Aliases,
+    /// Gives the reloader new aliases: the reloader's type is not the
+    /// session's.
+    set_aliases: SetAliases,
+    /// What a relative directory of an alias is from: the first root.
+    project: PathBuf,
+    /// The roots and the directories outside them the session started
+    /// with, links followed: where an alias may point.
+    places: Vec<PathBuf>,
     /// Pictures saved and not yet shown again. A message that one waits
     /// may replace another in the inbox; the paths must not.
     pictures: Arc<Mutex<Vec<PathBuf>>>,
@@ -390,6 +444,34 @@ impl DevSession {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
+        Self::open_aliased(
+            engine,
+            main,
+            project,
+            properties,
+            Aliases::new(),
+            oracle,
+            wake,
+        )
+    }
+
+    /// As [`open_with`](Self::open_with), with each module of `aliases`
+    /// imported from its directory (`ljos run --alias`). A directory
+    /// outside the project is watched as the project is, and is one
+    /// [`set_alias`](Self::set_alias) may name again later.
+    pub fn open_aliased<O>(
+        engine: &Engine,
+        main: &Path,
+        project: Option<&Path>,
+        properties: Vec<(String, Value)>,
+        aliases: Aliases,
+        oracle: O,
+        wake: WakeHook,
+    ) -> Result<Self, DevError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
         // The watcher is told absolute paths; with the same root they
         // are the project's.
         let main = std::fs::canonicalize(main).map_err(|_| DevError::NotQml(main.to_owned()))?;
@@ -409,7 +491,7 @@ impl DevSession {
         else {
             return Err(DevError::NotQml(main));
         };
-        let reloader = Reloader::open_reaching(&dir, &entry, oracle)?;
+        let reloader = Reloader::open_reaching_aliased(&dir, &entry, aliases, oracle)?;
         Self::start(engine, reloader, vec![dir], vec![entry], properties, wake)
     }
 
@@ -441,6 +523,32 @@ impl DevSession {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
+        Self::open_roots_aliased(
+            engine,
+            roots,
+            entries,
+            properties,
+            Aliases::new(),
+            oracle,
+            wake,
+        )
+    }
+
+    /// As [`open_roots`](Self::open_roots), with each module of `aliases`
+    /// imported from its directory, as [`open_aliased`](Self::open_aliased).
+    pub fn open_roots_aliased<O>(
+        engine: &Engine,
+        roots: &[&Path],
+        entries: &[&str],
+        properties: Vec<(String, Value)>,
+        aliases: Aliases,
+        oracle: O,
+        wake: WakeHook,
+    ) -> Result<Self, DevError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
         if entries.is_empty() || roots.is_empty() {
             return Err(DevError::NoEntry);
         }
@@ -449,7 +557,7 @@ impl DevSession {
             .map(|r| std::fs::canonicalize(r).map_err(|_| DevError::NotDir((*r).to_owned())))
             .collect::<Result<Vec<_>, _>>()?;
         let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
-        let reloader = Reloader::open_roots(&dirs, oracle)?;
+        let reloader = Reloader::open_roots_aliased(&dirs, aliases, oracle)?;
         let entries = entries.iter().map(|e| (*e).to_owned()).collect();
         Self::start(engine, reloader, roots, entries, properties, wake)
     }
@@ -480,11 +588,26 @@ impl DevSession {
             .filter(|e| reloader.session().source(e).is_some())
             .cloned()
             .collect();
+        let aliases = reloader.session().aliases().clone();
+        let places = reloader.places();
+        let mounts = reloader
+            .session()
+            .mounts()
+            .iter()
+            .map(|m| (m.prefix.clone(), base_url(&m.dir)))
+            .collect();
         let reloader = Arc::new(Mutex::new(reloader));
+        let set_aliases = {
+            let reloader = reloader.clone();
+            SetAliases(Box::new(move |aliases| {
+                lock(&reloader).set_aliases(aliases)
+            }))
+        };
         let loaded: Arc<Mutex<Vec<String>>> = Arc::default();
         engine.set_component_source(DevSource {
             urls: MapSource::new().with_base_url(base_url(&roots[0])),
             roots: roots.iter().map(|r| (r.clone(), base_url(r))).collect(),
+            mounts,
             reloader: reloader.clone(),
             loaded: loaded.clone(),
         });
@@ -570,6 +693,10 @@ impl DevSession {
             flushed: false,
             texts,
             pictures,
+            aliases,
+            set_aliases,
+            project: roots[0].clone(),
+            places,
         })
     }
 
@@ -607,6 +734,51 @@ impl DevSession {
             }));
             self.flushed = true;
         }
+    }
+
+    /// The modules imported from a directory of their own, by module.
+    pub fn aliases(&self) -> &Aliases {
+        &self.aliases
+    }
+
+    /// Imports `module` from `dir`, or from the import path again for
+    /// None, and reloads as [`reload_now`](Self::reload_now) does: the
+    /// application keeps its state as a reload keeps it, and a build that
+    /// fails leaves it as it was. A relative `dir` is from the project's
+    /// directory. The directory has to describe the module, and be inside
+    /// the project or one the session started with.
+    ///
+    /// # Errors
+    /// Why the alias was not taken; nothing is reloaded then.
+    pub fn set_alias(
+        &mut self,
+        engine: &Engine,
+        module: &str,
+        dir: Option<&Path>,
+    ) -> Result<(), AliasError> {
+        let mut aliases = self.aliases.clone();
+        match dir {
+            Some(dir) => {
+                // Refused by its words before anything is looked up: what
+                // is outside is not the agent's to learn about, not even
+                // whether it is there. The session checks again with
+                // links followed.
+                let wanted = lexical(&self.project.join(dir));
+                if !self.places.iter().any(|p| wanted.starts_with(p)) {
+                    return Err(AliasError::Outside {
+                        dir: dir.to_owned(),
+                    });
+                }
+                aliases.set(Alias::new(module, &wanted)?);
+            }
+            None => {
+                aliases.remove(module);
+            }
+        }
+        (self.set_aliases.0)(aliases.clone())?;
+        self.aliases = aliases;
+        self.reload_now(engine);
+        Ok(())
     }
 
     /// True once after a [`reload_now`](Self::reload_now) was answered and

@@ -31,7 +31,8 @@ locator such as `role=button[name=\"Save\"]` or `#objectName`, to the other tool
 valid while the item exists; on `stale_ref` take a new snapshot. The tools you are offered are the \
 ones this connection may use: reading is `inspect`; `app_click`, `app_type`, `app_press`, \
 `app_scroll`, `app_touch`, `app_advance`, `app_resize`, `app_set_appearance` and `app_batch` are \
-`input`; `app_set_property`, `app_invoke` and `app_reload` are `mutate`; `app_eval` is `eval`. \
+`input`; `app_set_property`, `app_invoke`, `app_reload` and `app_alias` are `mutate`; `app_eval` \
+is `eval`. \
 `app_status` lists the capabilities. `app_processes` shows what does work \
 and the mailboxes it reaches the UI thread through; `app_trace` writes down what an object is told. A tool asked for without its capability is refused and the \
 refusal says how to grant it.
@@ -147,6 +148,11 @@ pub const RELOAD: &str = "\
 Reload the changed files now instead of waiting for them to be quiet. Answers `applied`, `failed` \
 (with the message; the application goes on as it was) or `unchanged`. Needs an application that \
 is watched (`--watch`).";
+
+pub const ALIAS: &str = "\
+Import `module` from `dir`, a directory in the project (or one the application was started with) \
+whose qmldir names it, and reload keeping state; `dir: null` drops the alias. Answers as \
+`app_reload` does, with the generation. Needs `--watch`; `app_status` lists the aliases.";
 
 pub const EVAL: &str = "\
 Run JavaScript in the context of `target` (default: global scope): its properties are named bare, \
@@ -508,6 +514,18 @@ pub const MAX_STEPS: usize = 32;
 // its doc comment is the schema's description every client is sent, and
 // these tools have always said this one's. (A doc comment here would be
 // sent as well.)
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AliasArgs {
+    /// The module, as an import names it: `App.Media`.
+    pub module: String,
+    /// The directory to import it from, relative to the project; null
+    /// drops the alias.
+    // Required and nullable: dropping is asked for in so many words.
+    #[schemars(required, extend("type" = ["string", "null"]))]
+    pub dir: Option<String>,
+}
+
 /// No arguments.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -610,6 +628,7 @@ pub enum Act {
     SetProperty(SetPropertyArgs),
     Invoke(InvokeArgs),
     Reload,
+    Alias(AliasArgs),
     Eval(EvalArgs),
     Batch(Vec<(&'static str, Act)>),
 }
@@ -620,7 +639,7 @@ impl Act {
     pub fn needs(&self) -> &'static [Cap] {
         match self {
             Act::SetProperty(a) if a.binding.is_some() => &[Cap::Mutate, Cap::Eval],
-            Act::SetProperty(_) | Act::Invoke(_) | Act::Reload => &[Cap::Mutate],
+            Act::SetProperty(_) | Act::Invoke(_) | Act::Reload | Act::Alias(_) => &[Cap::Mutate],
             Act::Eval(_) => &[Cap::Eval],
             _ => &[Cap::Input],
         }
@@ -639,7 +658,7 @@ impl Kind {
 pub const FIRST_ACT: usize = 13;
 
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 26] = [
+pub const TOOLS: [&str; 27] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -665,6 +684,7 @@ pub const TOOLS: [&str; 26] = [
     "app_set_property",
     "app_invoke",
     "app_reload",
+    "app_alias",
     "app_eval",
 ];
 
@@ -730,6 +750,7 @@ pub fn registry() -> ToolRegistry {
         )))
         .declare(mutate(ToolDef::new::<InvokeArgs>("app_invoke", INVOKE)))
         .declare(mutate(ToolDef::new::<Nothing>("app_reload", RELOAD)))
+        .declare(mutate(ToolDef::new::<AliasArgs>("app_alias", ALIAS)))
         .declare(
             ToolDef::new::<EvalArgs>("app_eval", EVAL)
                 .requires(Cap::Eval)
@@ -927,6 +948,14 @@ fn parse_act(tool: &'static str, args: Value) -> Result<Act, SurfaceError> {
             read::<Nothing>(tool, args)?;
             Act::Reload
         }
+        "app_alias" => {
+            // A missing `dir` is not taken as null: dropping an alias is
+            // asked for in so many words.
+            if args.get("dir").is_none() {
+                return Err(bad(tool, "missing field `dir` (null drops the alias)"));
+            }
+            Act::Alias(read(tool, args)?)
+        }
         "app_eval" => {
             let a: EvalArgs = read(tool, args)?;
             if a.source.len() > MAX_SCRIPT_BYTES {
@@ -957,16 +986,18 @@ fn parse_act(tool: &'static str, args: Value) -> Result<Act, SurfaceError> {
             }
             let mut steps = Vec::new();
             for (i, step) in a.steps.into_iter().enumerate() {
-                let Some(name) =
-                    act_name(&step.tool).filter(|n| *n != "app_batch" && *n != "app_reload")
+                let Some(name) = act_name(&step.tool)
+                    .filter(|n| !matches!(*n, "app_batch" | "app_reload" | "app_alias"))
                 else {
                     let why = if step.tool == "app_batch" {
                         "a batch cannot hold a batch".to_string()
-                    } else if step.tool == "app_reload" {
+                    } else if step.tool == "app_reload" || step.tool == "app_alias" {
                         // A reload waits for the files to be read by the host,
                         // which is not a thing a step can wait for.
-                        "`app_reload` waits for the host and is called by itself, not in a batch"
-                            .to_string()
+                        format!(
+                            "`{}` waits for the host and is called by itself, not in a batch",
+                            step.tool
+                        )
                     } else if TOOLS.contains(&step.tool.as_str()) {
                         format!(
                             "`{}` only reads: call it by itself, not in a batch",
@@ -1213,7 +1244,7 @@ mod tests {
         let reg = registry();
         for def in reg.all() {
             let want = match def.name {
-                "app_set_property" | "app_invoke" | "app_reload" => Cap::Mutate,
+                "app_set_property" | "app_invoke" | "app_reload" | "app_alias" => Cap::Mutate,
                 "app_eval" => Cap::Eval,
                 n if TOOLS[..FIRST_ACT].contains(&n) => Cap::Inspect,
                 _ => Cap::Input,

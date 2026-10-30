@@ -1440,6 +1440,33 @@
     "read_only": false
   },
   {
+    "description": "Import `module` from `dir`, a directory in the project (or one the application was started with) whose qmldir names it, and reload keeping state; `dir: null` drops the alias. Answers as `app_reload` does, with the generation. Needs `--watch`; `app_status` lists the aliases.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "description": "The directory to import it from, relative to the project; null\ndrops the alias.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "module": {
+          "description": "The module, as an import names it: `App.Media`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "dir"
+      ],
+      "title": "AliasArgs",
+      "type": "object"
+    },
+    "name": "app_alias",
+    "read_only": false
+  },
+  {
     "description": "Run JavaScript in the context of `target` (default: global scope): its properties are named bare, as in a binding. Stopped after `timeout_ms` (default 1000, at most 10000). The result is written bounded (depth, items, text); it can be as much as the application can do, so it is its own capability.",
     "input_schema": {
       "additionalProperties": false,
