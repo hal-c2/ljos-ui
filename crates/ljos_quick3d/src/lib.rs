@@ -69,6 +69,7 @@
 //! numbers. They are numbered here in the order the documentation lists
 //! them, from 0, and checked against Qt once qml6 has QtQuick3D.
 
+mod items;
 mod node;
 mod pick;
 mod repeater;

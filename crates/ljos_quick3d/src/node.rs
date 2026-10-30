@@ -21,7 +21,7 @@ use ljos::prelude::*;
 pub struct Object3D {
     #[qml(base)]
     pub object: QtObject,
-    #[qml(notify, list)]
+    #[qml(notify, list, append = crate::items::data_append)]
     pub data: QmlList,
     /// The object this one is in: the one it was declared in until it is
     /// set. Setting it moves the object into the new parent's `data`

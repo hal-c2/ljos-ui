@@ -123,6 +123,13 @@ impl Walk<'_> {
         for child in list(e, obj, Object3D::DATA.index) {
             self.node(Some(id), child);
         }
+        // Its items, as one picture; the pick finds them by their holder.
+        if let Some(holder) = crate::items::holder_of(e, obj)
+            && let Some(quad) = crate::items::quad(e, self.view, holder)
+        {
+            let q = self.scene.add(Some(id), quad);
+            self.ids.insert(holder, q);
+        }
     }
 }
 
