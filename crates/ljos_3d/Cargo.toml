@@ -13,11 +13,18 @@ default = ["gpu"]
 # The renderer. Without it the crate is the scene alone, which the QML
 # types build without linking wgpu (ARCHITECTURE.md §7.8).
 gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
+# glTF files read into a scene's nodes, meshes and materials, and their
+# images decoded to plain pixels (`gltf`). No GPU state: binding textures
+# is the renderer's business.
+gltf = ["dep:gltf", "dep:png", "dep:zune-jpeg"]
 
 [dependencies]
 slotmap.workspace = true
 thiserror.workspace = true
 bytemuck = { workspace = true, optional = true }
+gltf = { workspace = true, optional = true }
+png = { workspace = true, optional = true }
+zune-jpeg = { workspace = true, optional = true }
 
 # Native: the backends egui-wgpu's default build has, so the two agree on
 # one device. The web: WebGPU, and WebGL2 where a browser has no WebGPU.

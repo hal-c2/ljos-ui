@@ -19,6 +19,8 @@ threads = ["vello_cpu/multithreading"]
 # 3D) is a picture `ljos_3d` draws off-screen and reads back. The crate
 # itself names no wgpu: `ljos_3d` does.
 offscreen3d = ["ljos_3d/gpu"]
+# glTF files read into a 3D scene (QtQuick3D's RuntimeLoader).
+gltf = ["ljos_3d/gltf"]
 
 [dependencies]
 # MemoryPressure is defined once, beside Evictable.

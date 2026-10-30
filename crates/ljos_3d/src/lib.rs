@@ -7,6 +7,8 @@
 //! the crate is the scene alone and links no wgpu.
 
 pub mod geometry;
+#[cfg(feature = "gltf")]
+pub mod gltf;
 pub mod math;
 pub mod mesh;
 pub mod pick;

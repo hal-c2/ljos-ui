@@ -222,6 +222,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4.6", features = ["derive"] }
 blake3 = "1.8"
 png = "0.18"
+# glTF 2.0 for QtQuick3D's RuntimeLoader: the document model and its
+# validation only. No `import` (it pulls the `image` crate, base64 and
+# file reading, and the loader reads and decodes through Ljós's own
+# platform and decoders), so nothing here touches a file or the network.
+gltf = { version = "1.4.1", default-features = false, features = ["names", "KHR_materials_unlit"] }
 # GIF, still and animated (Image shows the first frame, AnimatedImage
 # plays them all); the encoder is only for test fixtures.
 gif = { version = "0.14.1", default-features = false, features = ["std"] }

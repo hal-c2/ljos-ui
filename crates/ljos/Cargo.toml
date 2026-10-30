@@ -114,6 +114,9 @@ pdf = ["ljos_quick/pdf"]
 # painter) as a picture read back from an off-screen device. `ljos_quick3d` turns it on;
 # without it a View3D's draw op is skipped.
 quick3d = ["ljos_shell?/quick3d", "ljos_render/offscreen3d"]
+# glTF files read into a 3D scene (`item::ljos_3d::gltf`), for QtQuick3D's
+# RuntimeLoader. `ljos_quick3d` turns it on unless told not to.
+gltf = ["ljos_render/gltf"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG
 # on a virtual clock, for screenshot tests and documentation.
 render = ["dep:ljos_drive"]

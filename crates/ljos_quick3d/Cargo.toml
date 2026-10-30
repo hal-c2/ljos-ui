@@ -8,6 +8,12 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["gltf"]
+# RuntimeLoader reads glTF files. Without it the type is still there and
+# every source is an error that says so.
+gltf = ["ljos/gltf"]
+
 [dependencies]
 # The facade alone: a module crate opens no windows. Its `quick3d`
 # feature has the painters draw the View3D draw op this crate paints.
