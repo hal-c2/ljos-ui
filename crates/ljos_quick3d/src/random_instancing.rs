@@ -26,7 +26,10 @@ pub struct InstanceRange {
     #[qml(notify)]
     pub to: Value,
     /// Every component moves by the same share of its range: a scale
-    /// stays uniform. The documentation says true is the default.
+    /// stays uniform. The documentation's text gives true as the default,
+    /// meaning independent, but its examples set true to keep a scale
+    /// uniform and leave it out for a range over all colours: the examples
+    /// are followed, so a range left alone is independent.
     #[qml(notify)]
     pub proportional: bool,
 }
@@ -37,7 +40,7 @@ impl Default for InstanceRange {
             object3d: Object3D::default(),
             from: Value::Undefined,
             to: Value::Undefined,
-            proportional: true,
+            proportional: false,
         }
     }
 }

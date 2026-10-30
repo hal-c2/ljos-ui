@@ -15,7 +15,10 @@ Feature: Instance tables read from a file or made at random
   the copy's position, scale, eulerRotation, quaternion, custom data and
   colour; a vector's missing trailing numbers are zeros. A RandomInstancing
   (QtQuick3D.Helpers) makes instanceCount entries, each attribute picked
-  within an InstanceRange; the same randomSeed makes the same table.
+  within an InstanceRange; the same randomSeed makes the same table. A
+  proportional range moves every component by the same share, as a scale
+  that keeps its shape; a range left alone moves each by its own, as the
+  documentation's examples have it (its text calls true the default).
   Ljós builds no more of QtQuick3D.Helpers than these two: its other types
   stand in as empty Items, as a module Ljós does not build does.
 
@@ -85,12 +88,14 @@ Feature: Instance tables read from a file or made at random
           property bool same
           property bool uniform
           property bool red
+          property bool spread
           function check() {
-            inside = true; same = true; uniform = true; red = true
+            inside = true; same = true; uniform = true; red = true; spread = false
             for (let i = 0; i < 20; ++i) {
               const p = a.instancePosition(i)
               if (p.x < -50 || p.x > 50 || p.y < -50 || p.y > 50 || p.z !== 0) inside = false
               if (!p.fuzzyEquals(b.instancePosition(i), 0.0001)) same = false
+              if (Math.abs(p.x - p.y) > 1) spread = true
               const s = a.instanceScale(i)
               if (Math.abs(s.x - s.y) > 0.0001 || Math.abs(s.x - s.z) > 0.0001 || s.x < 1 || s.x > 2) uniform = false
               if (!Qt.colorEqual(a.instanceColor(i), "red")) red = false
@@ -115,6 +120,7 @@ Feature: Instance tables read from a file or made at random
       When the method "check" of "root" is called
       Then the property "inside" of "root" is true
       And the property "uniform" of "root" is true
+      And the property "spread" of "root" is true
       And the property "red" of "root" is true
 
     Scenario: The same seed makes the same table
