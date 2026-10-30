@@ -5,6 +5,8 @@
 //! revision at a size draws nothing again until one of the two changes:
 //! an idle 3D view costs the blit of the picture it already has.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use slotmap::{SlotMap, new_key_type};
 
 use crate::math::{Mat4, Quat, Vec3};
@@ -284,8 +286,27 @@ impl Scene {
         self.revision
     }
 
+    // One counter for every scene: a view handed a scene built anew must
+    // not take it for the one it drew because both counted to the same
+    // number.
     fn touch(&mut self) {
-        self.revision = self.revision.wrapping_add(1);
+        static REVISIONS: AtomicU64 = AtomicU64::new(1);
+        self.revision = REVISIONS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Whether `other` draws the same: the same nodes under the same ids,
+    /// environment and camera, whatever the revisions. A host that builds
+    /// its scene again from its items keeps the one it had when nothing
+    /// changed, so the picture is not drawn again.
+    pub fn same_as(&self, other: &Scene) -> bool {
+        self.roots == other.roots
+            && self.environment == other.environment
+            && self.camera == other.camera
+            && self.nodes.len() == other.nodes.len()
+            && self
+                .nodes
+                .iter()
+                .all(|(id, n)| other.nodes.get(id) == Some(n))
     }
 
     /// Adds `node` as the last child of `parent`, or as a root. A parent
@@ -424,6 +445,19 @@ mod tests {
             .unwrap()
             .2;
         assert_eq!(world.translation(), Vec3::new(100.0, 50.0, 0.0));
+    }
+
+    #[test]
+    fn scenes_built_apart_never_share_a_revision() {
+        let mut a = Scene::new();
+        let mut b = Scene::new();
+        a.add(None, Node::new(NodeKind::Group));
+        b.add(None, Node::new(NodeKind::Light(Light::DIRECTIONAL)));
+        assert_ne!(a.revision(), b.revision());
+        assert!(!a.same_as(&b));
+        let mut c = Scene::new();
+        c.add(None, Node::new(NodeKind::Group));
+        assert!(a.same_as(&c), "the same nodes draw the same");
     }
 
     #[test]
