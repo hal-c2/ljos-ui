@@ -26,7 +26,7 @@ pub(crate) struct Place {
 }
 
 impl Place {
-    const SCENE: Place = Place {
+    pub(crate) const SCENE: Place = Place {
         world: Mat4::IDENTITY,
         rotation: Quat::IDENTITY,
         scale: Vec3::ONE,
@@ -386,23 +386,30 @@ impl Camera {
             Value::Object(o) => place(e, *o).world.translation(),
             v => from_value(v),
         };
-        let parent = parent_node(e, me).map_or(Place::SCENE, |p| place(e, p));
         let from = place(e, me).world.translation();
-        let d = parent.rotation.conjugate().rotate(at - from);
-        if d.length() <= f32::EPSILON {
-            return;
-        }
-        let yaw = (-d.x).atan2(-d.z).to_degrees();
-        let pitch = d.y.atan2((d.x * d.x + d.z * d.z).sqrt()).to_degrees();
-        host_write(
-            e,
-            me,
-            Node::EULER_ROTATION,
-            Vector3d {
-                x: pitch,
-                y: yaw,
-                z: 0.0,
-            },
-        );
+        aim(e, me, from, at);
     }
+}
+
+/// Turns `me`, which stands at `from` in the scene, to look along -Z at
+/// `at`, keeping its up towards the scene's +Y: a rotation about X and Y
+/// only.
+pub(crate) fn aim(e: &Engine, me: ObjectId, from: Vec3, at: Vec3) {
+    let parent = parent_node(e, me).map_or(Place::SCENE, |p| place(e, p));
+    let d = parent.rotation.conjugate().rotate(at - from);
+    if d.length() <= f32::EPSILON {
+        return;
+    }
+    let yaw = (-d.x).atan2(-d.z).to_degrees();
+    let pitch = d.y.atan2((d.x * d.x + d.z * d.z).sqrt()).to_degrees();
+    host_write(
+        e,
+        me,
+        Node::EULER_ROTATION,
+        Vector3d {
+            x: pitch,
+            y: yaw,
+            z: 0.0,
+        },
+    );
 }

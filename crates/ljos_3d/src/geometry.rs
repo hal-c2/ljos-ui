@@ -570,7 +570,10 @@ mod tests {
         assert_eq!(m.indices, vec![0, 1, 1, 2, 2, 3]);
         g.set_primitive_type(PrimitiveType::Points);
         let m = g.to_mesh().unwrap();
-        assert_eq!((m.topology, m.indices), (Topology::Points, vec![0, 1, 2, 3]));
+        assert_eq!(
+            (m.topology, m.indices),
+            (Topology::Points, vec![0, 1, 2, 3])
+        );
     }
 
     #[test]

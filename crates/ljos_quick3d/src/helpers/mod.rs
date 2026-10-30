@@ -6,6 +6,7 @@
 
 mod extended_environment;
 mod geometry;
+mod look_at;
 mod mesh;
 mod shapes;
 
@@ -14,6 +15,7 @@ use geometry::{
     SphereGeometry, TorusGeometry,
 };
 use ljos::prelude::*;
+use look_at::LookAtNode;
 
 use crate::random_instancing::{InstanceRange, RandomInstancing};
 pub use extended_environment::ExtendedSceneEnvironment;
@@ -31,5 +33,6 @@ pub(crate) fn register(engine: &Engine) {
         ExtendedSceneEnvironment,
         InstanceRange,
         RandomInstancing,
+        LookAtNode,
     ]));
 }
