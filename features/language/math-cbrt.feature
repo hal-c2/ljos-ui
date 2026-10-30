@@ -7,7 +7,9 @@
 @qt-parity
 Feature: Math.cbrt
 
-  # Rust and QuickJS return one ulp below Qt for this input; the exact digits are observable.
+  # Qt calls the platform's cbrt (glibc's here). Ljós's QuickJS links Rust's compiler_builtins
+  # cbrt instead, the only inexact libm function it takes from there, which is an ulp below
+  # glibc's for this input; writing the number out shows the ulp.
   @backlog
   Scenario: Math.cbrt(255) matches Qt when written out
     Given the QML:
