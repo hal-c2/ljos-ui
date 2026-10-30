@@ -24,7 +24,7 @@ Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/h
 
 **Non-goals (for now)**
 
-- QtQuick3D, Qt3D, WebEngine, QtLocation, QtGraphs and Qt.labs modules. These appear in the qtdoc corpus (08) but not in HAL-C2. In the API ledger they are `dropped` with a reason. QtQuick.Particles was on this list; the part the corpus uses first (systems, emitters, image particles, a seeded simulation) is built (`features/items/particles.feature`), and affectors, trails and sprite particles are not yet. ShaderEffect with custom shaders was on this list too; it is built from the shaders' GLSL source, drawn by the GL painter only (section 7.1, "As built: shader effects").
+- Qt3D, WebEngine, QtLocation, QtGraphs and Qt.labs modules. These appear in the qtdoc corpus (08) but not in HAL-C2. In the API ledger they are `dropped` with a reason. QtQuick3D was on this list; it is being built, drawn with wgpu natively and on the web (section 7.8). QtQuick.Particles was on this list; the part the corpus uses first (systems, emitters, image particles, a seeded simulation) is built (`features/items/particles.feature`), and affectors, trails and sprite particles are not yet. ShaderEffect with custom shaders was on this list too; it is built from the shaders' GLSL source, drawn by the GL painter only (section 7.1, "As built: shader effects").
 - Source compatibility with C++ `QObject` code. Native types are written in Rust (section 5.5).
 - A JS debugger in v1. quickjs-ng has no debugger API (03 §4.2). Logging, stack traces with QML file and line, and the dev overlays come first.
 - Non-QtQuick QML dialects, such as HAL-C2's TUI dialect (`import OpenTUI`) (D6).
@@ -219,6 +219,9 @@ ljos-ui/
 │   ├── ljos_media/             QtMultimedia playback: players, outputs, SoundEffect,
 │   │                           media clock, null sink [features decode, audio] (7.6)
 │   ├── ljos_lottie/            Qt.labs.lottieqt: LottieAnimation, own Lottie model (7.7)
+│   ├── ljos_3d/                the scene a View3D shows and its wgpu renderer [feature gpu];
+│   │                           no egui, no engine (7.8)
+│   ├── ljos_quick3d/           QtQuick3D types writing an ljos_3d scene (7.8; to come)
 │   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit loop, GL or wgpu (M2)
 │   ├── ljos_dev/               watcher, devtools WebSocket, error and `top` overlays,
 │   │                           MCP inspector [feature "mcp"]
@@ -247,6 +250,7 @@ ljos-ui/
 - **The parser is the application's choice.** Runtime crates depend on `ljos_ir`, never on `qml_syntax` or `qml_front`: the engine runs IR, whoever compiled it. An application that does not let its user change it loads compiled IR and links no parser and none of its roughly 106 dependency crates (06 §4.6). One that does (goal 9) links `ljos_compiler` through an opt-in feature, and compiles its user's changes to IR on the device. Today that feature is for dev builds and plugins only (`ljos`'s `dev-qml`, `ljos_shell`'s `dev`); a feature for shipped applications that their users can change is still to come.
 - **MCP never ships by accident.** `ljos_mcp_author` is linked only by `ljos_cli`. The inspector is a feature of `ljos_dev` that release builds refuse (section 19.7).
 - **egui stays in three crates.** Only `ljos_egui`, `ljos_shell` and `ljos_render`'s B0 backend name egui types. `ljos_test` and `ljos_bdd` use egui_kittest, but scenarios never see it.
+- **wgpu stays in three crates too.** `ljos_3d` (its `gpu` feature), `ljos_egui` (its `quick3d` feature) and `ljos_shell` name wgpu types. The QtQuick3D types write a scene and never see a device (section 7.8).
 - **Start small and split later.** M0 creates the crates on its own critical path. The rest begin as modules and get their own crate when the boundary has proven itself. The tree above is the target.
 
 **Sharing with qml-solid.** ljos-ui is the home repo for `qml_syntax`, `qml_front`, `qt_types`, `qmltypes` and `qml_compare`. qml-solid depends on them by git `rev` and keeps only its Solid/web lowering. There is never a second copy of the oxc fork. The fork is rebased every 4–8 oxc releases, and `mise run oxc:check` shows drift (06 §3.4). This is decision D7.
@@ -723,6 +727,25 @@ DECISION: a hold keyframe holds, as the format says. Qt 6.11.2 does not hold it,
 - Hidden, a finite animation keeps a single deadline, at the moment it finishes, so `finished` comes on time. An endless one keeps none and catches up when shown.
 - Paused, stopped, finished or not loaded, nothing is armed.
 - A file over 256 KiB, a remote file and a resource are parsed on the compute pool (`ljos::task::spawn`). The answer comes back through the engine's message path, and a generation counter drops the answer to an older `source`.
+
+
+### 7.8 3D (`ljos_3d`, `ljos_quick3d`)
+
+QtQuick3D, to the Qt 6 documentation and how `qml6` behaves (`features/quick3d/`). One wgpu renderer draws the scene natively and on the web. The design, milestones and performance budget are in `docs/quick3d.md`.
+
+**Crates.**
+- `ljos_3d` is the scene and its renderer, and knows neither egui nor the engine. The scene is a slotmap of nodes (groups, models, cameras, lights) with local transforms, plus the scene environment. Every change bumps the scene's revision. Its `gpu` feature is the renderer: it draws the scene into a texture of its own and blits that texture into a pass the host gives it. Without `gpu` the crate is the scene alone and links no wgpu. It builds for `wasm32-unknown-unknown`, with WebGPU and WebGL2 there.
+- `ljos_quick3d` (to come) holds the QML types of the module `QtQuick3D`: `View3D`, `Node`, `Model`, the cameras, the lights, the materials and `SceneEnvironment`. They are written against the `ljos` facade, like `ljos_lottie`. They depend on `ljos_3d` without `gpu`: a type writes the scene and never touches a device.
+- `ljos_egui` (feature `quick3d`) is the adapter for egui-wgpu. `ljos_shell` turns it on.
+
+**The seam.** `View3D` paints a `DrawOp` that carries its scene (an `Arc`, the same while the revision is) and a key for the view. Each renderer handles it its own way:
+- **The wgpu painter.** B0 turns the op into a `PaintCallback` (`ljos_egui::scene3d::Scene3dPaint`). In `prepare` it renders the scene into the view's target, on egui-wgpu's device and encoder. In `paint` it blits the target in egui's pass, in paint order, clipped to the item. 2D items above and below the view compose as they would around an image. Each view keeps its own target and uniforms, so two views in one window do not share them.
+- **The GL painter, R, snapshots and tests.** These have no wgpu device in their pass. A 3D view draws the scene off-screen with `ljos_3d`'s own device, reads it back and paints it as an image. A window that shows a `View3D` therefore prefers the wgpu painter, chosen when the application's IR imports `QtQuick3D`. Otherwise the window switches painter once, as a window drawn on the processor switches to GL.
+- **The web.** `ljos_3d::SurfaceView` draws into a surface of its own, for a host that has no egui. On the web that is a `<canvas>`, with WebGPU where the browser has it and WebGL2 where it does not.
+
+**Idle.** A target remembers the revision it shows, and an unchanged scene at an unchanged size is not drawn again: the blit costs one textured triangle. Nothing polls. A property change on a 3D type bumps the revision and marks the `View3D`'s node `CONTENT`-dirty, which schedules a repaint as any other item does. A running animation on a 3D property asks for frames through `FrameScheduler` like any animation, and when it stops, the frames stop.
+
+**Colour.** The scene is lit in linear space and written as premultiplied sRGB into an `Rgba8Unorm` target, so the blit copies it into egui's premultiplied gamma-space pass without converting it again (section 7.1, colour).
 
 ---
 
