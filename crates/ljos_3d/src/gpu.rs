@@ -20,11 +20,13 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::geometry::CustomGeometry;
-use crate::math::{Mat4, Vec3};
+use crate::ibl::{self, Bound, Ibl};
+use crate::maps::{self, GroupKey, Maps};
+use crate::math::{Mat4, Quat, Vec3};
 use crate::mesh::Mesh;
 use crate::scene::{
-    AlphaMode, Background, Camera, CullMode, Light, Lighting, Material, MeshSource, NodeKind,
-    Primitive, Scene,
+    AlphaMode, Background, Camera, CullMode, Environment, Light, LightProbe, Lighting, Material,
+    MeshSource, NodeKind, Primitive, Scene, Tonemap,
 };
 
 /// What the picture is kept in: sRGB values written by the shader, so the
@@ -59,6 +61,16 @@ struct FrameUniform {
     camera_dir: [f32; 4],
     ambient: [f32; 4],
     counts: [u32; 4],
+    /// The inverse of the camera's projection and turn: a pixel's ray.
+    sky: [[f32; 4]; 4],
+    /// Turns a direction in the scene into the probe's.
+    probe_rot: [[f32; 4]; 4],
+    /// The probe's exposure, its horizon, the prefiltered map's last level
+    /// and 1 where there is a probe.
+    env: [f32; 4],
+    /// The tone mapping mode, the exposure, the white point and the sky
+    /// box's blur.
+    tone: [f32; 4],
     lights: [LightUniform; MAX_LIGHTS],
 }
 
@@ -73,6 +85,13 @@ struct ModelUniform {
     params: [f32; 4],
     /// Mask cutoff (below 0 for none), specular amount and roughness.
     params2: [f32; 4],
+    /// Per map, two rows taking a mesh UV to the image's.
+    uv: [[f32; 4]; maps::MAPS * 2],
+    /// A bit per map that is there; the channels the maps of one value
+    /// read, two bits each.
+    maps: [u32; 4],
+    /// The normal map's strength and the occlusion map's amount.
+    map_params: [f32; 4],
 }
 
 #[repr(C)]
@@ -80,6 +99,9 @@ struct ModelUniform {
 struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
+    uv: [f32; 2],
+    /// Along the image's u; w says which way its v runs.
+    tangent: [f32; 4],
 }
 
 struct GpuMesh {
@@ -122,6 +144,13 @@ pub struct Renderer {
     blit_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
     blits: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    maps: Maps,
+    ibl: Ibl,
+    sky_shader: wgpu::ShaderModule,
+    skies: HashMap<u32, wgpu::RenderPipeline>,
+    /// Whether the device renders into and filters half floats, which the
+    /// probe's maps are; without, the scene draws with no probe.
+    probes: bool,
     /// Sample counts both the picture's and the depth's format take,
     /// ascending; 1 always among them.
     sample_counts: Vec<u32>,
@@ -132,6 +161,7 @@ impl std::fmt::Debug for Renderer {
         f.debug_struct("Renderer")
             .field("meshes", &self.meshes.len())
             .field("custom_meshes", &self.custom.len())
+            .field("probes", &self.probes)
             .field("sample_counts", &self.sample_counts)
             .finish_non_exhaustive()
     }
@@ -501,7 +531,19 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
         emissive: [0.0; 4],
         params: [0.0; 4],
         params2: [-1.0, 0.0, 0.0, 0.0],
+        uv: [[0.0; 4]; maps::MAPS * 2],
+        maps: [0; 4],
+        map_params: [1.0, 1.0, 0.0, 0.0],
     };
+    for (i, slot) in maps::slots(material).iter().enumerate() {
+        let Some((texture, _)) = slot else {
+            continue;
+        };
+        u.maps[0] |= 1 << i;
+        let [r0, r1] = texture.uv.rows();
+        u.uv[i * 2] = [r0[0], r0[1], r0[2], 0.0];
+        u.uv[i * 2 + 1] = [r1[0], r1[1], r1[2], 0.0];
+    }
     let lit = |l: Lighting| f32::from(u8::from(l == Lighting::Fragment));
     match material {
         Material::Default(m) => {
@@ -509,6 +551,7 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.params[0] = lit(m.lighting);
             u.params2[1] = m.specular_amount.clamp(0.0, 1.0);
             u.params2[2] = m.specular_roughness.clamp(0.0, 1.0);
+            u.maps[1] = 3 << 6;
         }
         Material::Principled(m) => {
             let c = m.base_color.to_linear();
@@ -527,6 +570,17 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             if m.alpha_mode == AlphaMode::Mask {
                 u.params2[0] = m.alpha_cutoff.max(0.0);
             }
+            let maps = &m.maps;
+            u.maps[1] = maps.metalness_channel.index()
+                | maps.roughness_channel.index() << 2
+                | maps.occlusion_channel.index() << 4
+                | maps.opacity_channel.index() << 6;
+            u.map_params = [
+                maps.normal_strength,
+                maps.occlusion_amount.clamp(0.0, 1.0),
+                0.0,
+                0.0,
+            ];
         }
     }
     u
@@ -582,6 +636,7 @@ enum MeshKey {
 
 struct Draw {
     mesh: MeshKey,
+    maps: GroupKey,
     key: PipelineKey,
     uniform: ModelUniform,
     /// How far in front of the camera: blended models are drawn from the
@@ -589,17 +644,95 @@ struct Draw {
     depth: f32,
 }
 
+/// The lit shader, with the tone mapping it shares with the sky box.
+const LIT_WGSL: &str = concat!(
+    include_str!("shaders/tone.wgsl"),
+    include_str!("shaders/lit.wgsl")
+);
+const SKY_WGSL: &str = concat!(
+    include_str!("shaders/tone.wgsl"),
+    include_str!("shaders/sky.wgsl")
+);
+
+/// Bytes a [`Renderer`]'s textures take on its device.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextureBytes {
+    /// The materials' maps, mipmaps included.
+    pub maps: u64,
+    /// The light probes' prefiltered radiance and irradiance.
+    pub probes: u64,
+}
+
+fn environment_uniforms(
+    frame: &mut FrameUniform,
+    environment: &Environment,
+    probe: Option<&LightProbe>,
+    bound: Bound,
+    last_level: f32,
+) {
+    let mode = match environment.tonemap {
+        Tonemap::None => 0.0,
+        Tonemap::Linear => 1.0,
+        Tonemap::Aces => 2.0,
+        Tonemap::HejlDawson => 3.0,
+        Tonemap::Filmic => 4.0,
+    };
+    // Without tone mapping the light is written as it is: no exposure,
+    // the probe's included.
+    frame.tone = [
+        mode,
+        environment.exposure.max(0.0),
+        environment.white_point,
+        0.0,
+    ];
+    frame.probe_rot = Mat4::IDENTITY.0;
+    let Some(probe) = probe else {
+        return;
+    };
+    let exposure = if environment.tonemap == Tonemap::None {
+        1.0
+    } else {
+        probe.exposure.max(0.0)
+    };
+    frame.env = [
+        exposure,
+        probe.horizon.clamp(0.0, 1.0),
+        last_level,
+        f32::from(u8::from(bound != Bound::None)),
+    ];
+    frame.tone[3] = probe.skybox_blur.clamp(0.0, 1.0);
+    let turn = Mat4::from_trs(
+        Vec3::ZERO,
+        Quat::from_euler_degrees(probe.orientation),
+        Vec3::ONE,
+    );
+    frame.probe_rot = turn.inverse().unwrap_or(Mat4::IDENTITY).0;
+}
+
 impl Renderer {
     pub fn new(device: &wgpu::Device) -> Self {
         let frame_layout = uniform_layout(device, "ljos_3d frame", false);
         let model_layout = uniform_layout(device, "ljos_3d model", true);
+        let maps = Maps::new(device);
+        let ibl = Ibl::new(device);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ljos_3d lit"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/lit.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(LIT_WGSL.into()),
         });
+        let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ljos_3d sky"),
+            source: wgpu::ShaderSource::Wgsl(SKY_WGSL.into()),
+        });
+        // The sky box shares the layout, so that switching to it and back
+        // keeps every group bound.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ljos_3d lit"),
-            bind_group_layouts: &[Some(&frame_layout), Some(&model_layout)],
+            bind_group_layouts: &[
+                Some(&frame_layout),
+                Some(&model_layout),
+                Some(&maps.layout),
+                Some(&ibl.layout),
+            ],
             immediate_size: 0,
         });
         let align = u64::from(device.limits().min_uniform_buffer_offset_alignment);
@@ -648,6 +781,14 @@ impl Renderer {
             blit_layout,
             blit_sampler,
             blits: HashMap::new(),
+            maps,
+            ibl,
+            sky_shader,
+            skies: HashMap::new(),
+            // WebGPU has half floats to draw into and filter; a host on
+            // another backend says whether it has with
+            // `use_adapter_formats`.
+            probes: true,
             // What WebGPU promises every device for these formats.
             sample_counts: vec![1, 4],
         }
@@ -679,6 +820,30 @@ impl Renderer {
             .collect();
     }
 
+    /// Takes whether `adapter` renders into and filters the half floats a
+    /// light probe's maps are made of. WebGPU always does; WebGL2 only
+    /// with `EXT_color_buffer_float`. Without them a light probe neither
+    /// lights the scene nor shows as its sky box. Returns whether probes
+    /// are drawn, for the host to say so where they are not.
+    pub fn use_adapter_formats(&mut self, adapter: &wgpu::Adapter) -> bool {
+        let f = adapter.get_texture_format_features(ibl::FORMAT);
+        self.probes = f.allowed_usages.contains(
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        ) && f
+            .flags
+            .contains(wgpu::TextureFormatFeatureFlags::FILTERABLE);
+        self.probes
+    }
+
+    /// Bytes the renderer's textures take on the device: the materials'
+    /// maps and the light probes'.
+    pub fn texture_bytes(&self) -> TextureBytes {
+        TextureBytes {
+            maps: self.maps.bytes(),
+            probes: self.ibl.bytes(),
+        }
+    }
+
     /// The samples a pixel gets for a scene that asks for `wanted`: the
     /// most the device has up to it, or, where it has none between 1 and
     /// it, the fewest above 1, so that asking for antialiasing never draws
@@ -700,7 +865,12 @@ impl Renderer {
                     buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3,
+                            1 => Float32x3,
+                            2 => Float32x2,
+                            3 => Float32x4,
+                        ],
                     })],
                 },
                 primitive: wgpu::PrimitiveState {
@@ -730,6 +900,48 @@ impl Renderer {
                     targets: &[Some(wgpu::ColorTargetState {
                         format: COLOR_FORMAT,
                         blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        });
+    }
+
+    fn sky(&mut self, device: &wgpu::Device, samples: u32) {
+        let (shader, layout) = (&self.sky_shader, &self.pipeline_layout);
+        self.skies.entry(samples).or_insert_with(|| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("ljos_3d sky"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: Default::default(),
+                // Behind everything, as it is drawn first and leaves the
+                // depth as it was cleared.
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    ..Default::default()
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: COLOR_FORMAT,
+                        blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -784,13 +996,18 @@ impl Renderer {
 }
 
 fn upload(device: &wgpu::Device, mesh: &Mesh) -> GpuMesh {
+    let tangents = mesh.tangents();
     let vertices: Vec<Vertex> = mesh
         .positions
         .iter()
         .zip(&mesh.normals)
-        .map(|(position, normal)| Vertex {
+        .zip(&tangents)
+        .enumerate()
+        .map(|(i, ((position, normal), tangent))| Vertex {
             position: *position,
             normal: *normal,
+            uv: mesh.uvs.get(i).copied().unwrap_or_default(),
+            tangent: *tangent,
         })
         .collect();
     GpuMesh {
@@ -824,19 +1041,35 @@ impl Renderer {
         }
         let [w, h] = target.size;
         let walked = scene.walk();
-        let samples = self.samples_for(scene.environment().msaa_samples);
+        let environment = scene.environment();
+        let samples = self.samples_for(environment.msaa_samples);
         target.multisample(device, samples);
+        self.maps.sweep();
+        self.ibl.sweep();
+        self.ibl.ready(device, queue);
+        let probe = environment.light_probe.as_ref();
+        let bound = match probe {
+            Some(p) if self.probes => self.ibl.prepare(device, queue, encoder, p),
+            _ => Bound::None,
+        };
 
         let camera = scene.active_camera();
-        let (view, view_proj) = match camera {
+        let (view, view_proj, sky) = match camera {
             Some((camera, world)) => {
                 let view = world.inverse().unwrap_or(Mat4::IDENTITY);
-                (view, camera.projection(w as f32, h as f32) * view)
+                let proj = camera.projection(w as f32, h as f32);
+                let mut turn = view;
+                turn.0[3] = [0.0, 0.0, 0.0, 1.0];
+                let sky = (proj * turn).inverse().unwrap_or(Mat4::IDENTITY);
+                (view, proj * view, sky)
             }
-            None => (Mat4::IDENTITY, Mat4::IDENTITY),
+            None => (Mat4::IDENTITY, Mat4::IDENTITY, Mat4::IDENTITY),
         };
         let mut frame = FrameUniform::zeroed();
         frame.view_proj = view_proj.0;
+        frame.sky = sky.0;
+        let last_level = self.ibl.last_level(bound);
+        environment_uniforms(&mut frame, environment, probe, bound, last_level);
         if let Some((camera, world)) = camera {
             let p = world.translation();
             let d = world.forward();
@@ -894,6 +1127,7 @@ impl Renderer {
                 let blends = model.material.blends();
                 let draw = Draw {
                     mesh: key,
+                    maps: self.maps.prepare(device, queue, &model.material),
                     key: PipelineKey {
                         cull: model.material.cull_mode(),
                         depth_write: !blends,
@@ -937,8 +1171,13 @@ impl Renderer {
         // A geometry no scene holds is dropped with its buffers.
         self.custom.retain(|_, c| c.source.strong_count() > 0);
 
-        let clear = match scene.environment().background {
-            Background::Transparent => wgpu::Color::TRANSPARENT,
+        let plain_maps = self.maps.plain(device, queue);
+        let sky = environment.background == Background::SkyBox && bound != Bound::None;
+        if sky {
+            self.sky(device, samples);
+        }
+        let clear = match environment.background {
+            Background::Transparent | Background::SkyBox => wgpu::Color::TRANSPARENT,
             Background::Color(c) => wgpu::Color {
                 r: f64::from(c.r * c.a),
                 g: f64::from(c.g * c.a),
@@ -980,11 +1219,25 @@ impl Renderer {
                 ..Default::default()
             });
             pass.set_bind_group(0, &target.frame_group, &[]);
+            pass.set_bind_group(3, self.ibl.group(bound), &[]);
+            if sky {
+                // Its layout is the materials', so every group is bound
+                // for it, though it reads only the frame and the probe.
+                pass.set_pipeline(&self.skies[&samples]);
+                pass.set_bind_group(1, &target.model_group, &[0]);
+                pass.set_bind_group(2, self.maps.group(&plain_maps), &[]);
+                pass.draw(0..3, 0..1);
+            }
             let mut bound = None;
+            let mut bound_maps = None;
             for (i, draw) in draws.iter().enumerate() {
                 if bound != Some(draw.key) {
                     pass.set_pipeline(&self.pipelines[&draw.key]);
                     bound = Some(draw.key);
+                }
+                if bound_maps != Some(&draw.maps) {
+                    pass.set_bind_group(2, self.maps.group(&draw.maps), &[]);
+                    bound_maps = Some(&draw.maps);
                 }
                 let mesh = match draw.mesh {
                     MeshKey::Primitive(p) => &self.meshes[&p],

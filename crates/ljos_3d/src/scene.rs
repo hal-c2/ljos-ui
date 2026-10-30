@@ -12,6 +12,7 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::geometry::CustomGeometry;
 use crate::math::{Mat4, Quat, Vec3};
+use crate::texture::{Channel, Texture};
 
 new_key_type! {
     /// A node of one [`Scene`].
@@ -163,9 +164,11 @@ pub enum CullMode {
 
 /// `DefaultMaterial`, as far as it is built: a diffuse colour lit by the
 /// scene's lights, with a white highlight of `specular_amount`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DefaultMaterial {
     pub diffuse_color: Color,
+    /// Multiplies `diffuse_color`; only once its image is loaded.
+    pub diffuse_map: Option<Texture>,
     pub lighting: Lighting,
     /// 0 to 1; 0, Qt's default, has no highlight.
     pub specular_amount: f32,
@@ -178,6 +181,7 @@ impl Default for DefaultMaterial {
     fn default() -> Self {
         DefaultMaterial {
             diffuse_color: Color::WHITE,
+            diffuse_map: None,
             lighting: Lighting::Fragment,
             specular_amount: 0.0,
             specular_roughness: 0.0,
@@ -201,7 +205,7 @@ pub enum AlphaMode {
 }
 
 /// `PrincipledMaterial`, the metal-roughness model.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PrincipledMaterial {
     /// Its alpha is part of the opacity.
     pub base_color: Color,
@@ -215,6 +219,52 @@ pub struct PrincipledMaterial {
     pub alpha_cutoff: f32,
     pub cull_mode: CullMode,
     pub lighting: Lighting,
+    /// Boxed: seven maps would make every material, and every node, as
+    /// large as one that has them all.
+    pub maps: Box<PrincipledMaps>,
+}
+
+/// The maps of a [`PrincipledMaterial`]; each only once its image is
+/// loaded. The colour maps multiply their value, the single-value maps
+/// multiply it by one channel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrincipledMaps {
+    pub base_color: Option<Texture>,
+    pub metalness: Option<Texture>,
+    pub metalness_channel: Channel,
+    pub roughness: Option<Texture>,
+    pub roughness_channel: Channel,
+    /// Tangent-space normals, as RGB from 0 to 1.
+    pub normal: Option<Texture>,
+    /// 0 leaves the normals as the mesh has them, 1 takes the map's.
+    pub normal_strength: f32,
+    pub emissive: Option<Texture>,
+    /// Shades the light the environment gives, not the lights'.
+    pub occlusion: Option<Texture>,
+    pub occlusion_channel: Channel,
+    pub occlusion_amount: f32,
+    pub opacity: Option<Texture>,
+    pub opacity_channel: Channel,
+}
+
+impl Default for PrincipledMaps {
+    fn default() -> Self {
+        PrincipledMaps {
+            base_color: None,
+            metalness: None,
+            metalness_channel: Channel::B,
+            roughness: None,
+            roughness_channel: Channel::G,
+            normal: None,
+            normal_strength: 1.0,
+            emissive: None,
+            occlusion: None,
+            occlusion_channel: Channel::R,
+            occlusion_amount: 1.0,
+            opacity: None,
+            opacity_channel: Channel::A,
+        }
+    }
 }
 
 impl Default for PrincipledMaterial {
@@ -229,11 +279,12 @@ impl Default for PrincipledMaterial {
             alpha_cutoff: 0.5,
             cull_mode: CullMode::Back,
             lighting: Lighting::Fragment,
+            maps: Box::default(),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Material {
     Default(DefaultMaterial),
     Principled(PrincipledMaterial),
@@ -258,10 +309,15 @@ impl Material {
     /// Whether it is laid over what is behind it, and so drawn after the
     /// opaque models, back to front.
     pub fn blends(&self) -> bool {
+        let see_through = |map: &Option<Texture>| map.as_ref().is_some_and(|t| !t.image.opaque());
         match self {
-            Material::Default(_) => self.alpha() < 1.0,
+            Material::Default(m) => self.alpha() < 1.0 || see_through(&m.diffuse_map),
             Material::Principled(m) => match m.alpha_mode {
-                AlphaMode::Default => self.alpha() < 1.0,
+                AlphaMode::Default => {
+                    self.alpha() < 1.0
+                        || m.maps.opacity.is_some()
+                        || see_through(&m.maps.base_color)
+                }
                 AlphaMode::Blend => true,
                 AlphaMode::Opaque | AlphaMode::Mask => false,
             },
@@ -503,15 +559,72 @@ pub enum Background {
     /// Qt's default: the 2D scene shows through where nothing is drawn.
     Transparent,
     Color(Color),
+    /// The light probe, around the scene; transparent without one.
+    SkyBox,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// `SceneEnvironment.tonemapMode`: how the linear light a pixel gathers
+/// becomes a colour on screen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tonemap {
+    /// The light as it is, neither exposed nor gamma corrected.
+    None,
+    /// Qt's default: exposed, clamped and encoded as sRGB.
+    #[default]
+    Linear,
+    /// Narkowicz's fit of the ACES filmic curve.
+    Aces,
+    /// Hejl and Burgess-Dawson's curve, which has the gamma in it.
+    HejlDawson,
+    /// Hable's filmic curve.
+    Filmic,
+}
+
+/// `SceneEnvironment.lightProbe` and how it is laid around the scene.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LightProbe {
+    /// An equirectangular image: longitude across, the zenith at its top.
+    pub texture: Texture,
+    /// `probeExposure`: multiplies its light.
+    pub exposure: f32,
+    /// `probeHorizon`, 0 to 1: how much darker the light from below the
+    /// horizon is on the materials it lights; the sky box is not darkened.
+    pub horizon: f32,
+    /// `probeOrientation`: Euler angles in degrees, as a node's rotation.
+    pub orientation: Vec3,
+    /// `skyboxBlurAmount`, 0 to 1.
+    pub skybox_blur: f32,
+}
+
+impl LightProbe {
+    /// `texture` laid around the scene as the documentation's defaults
+    /// lay it: exposure 1, no horizon, not turned, not blurred.
+    pub fn new(texture: Texture) -> Self {
+        LightProbe {
+            texture,
+            exposure: 1.0,
+            horizon: 0.0,
+            orientation: Vec3::ZERO,
+            skybox_blur: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Environment {
     pub background: Background,
     /// Samples a pixel for multisample antialiasing (`antialiasingMode`
     /// MSAA): 1 for none, else 2, 4 or 8, which a renderer may bring to a
     /// count its device has.
     pub msaa_samples: u32,
+    pub light_probe: Option<LightProbe>,
+    pub tonemap: Tonemap,
+    /// Multiplies the light before it is tone mapped; ignored by
+    /// [`Tonemap::None`].
+    pub exposure: f32,
+    /// The light that maps to white under the filmic curves (ACES,
+    /// Hejl-Dawson, filmic).
+    pub white_point: f32,
 }
 
 impl Default for Environment {
@@ -519,6 +632,10 @@ impl Default for Environment {
         Environment {
             background: Background::Transparent,
             msaa_samples: 1,
+            light_probe: None,
+            tonemap: Tonemap::Linear,
+            exposure: 1.0,
+            white_point: 1.0,
         }
     }
 }

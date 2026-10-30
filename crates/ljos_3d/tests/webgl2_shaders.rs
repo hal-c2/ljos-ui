@@ -6,16 +6,19 @@ use naga::back::glsl;
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
 fn translates(name: &str, source: &str) {
+    translates_entries(name, source, &["fs_main"]);
+}
+
+fn translates_entries(name: &str, source: &str, fragments: &[&str]) {
     let module = naga::front::wgsl::parse_str(source)
         .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
     // WebGL2 has none of the optional capabilities.
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
-    for (stage, entry) in [
-        (naga::ShaderStage::Vertex, "vs_main"),
-        (naga::ShaderStage::Fragment, "fs_main"),
-    ] {
+    let stages = std::iter::once((naga::ShaderStage::Vertex, "vs_main"))
+        .chain(fragments.iter().map(|f| (naga::ShaderStage::Fragment, *f)));
+    for (stage, entry) in stages {
         let options = glsl::Options {
             version: glsl::Version::Embedded {
                 version: 300,
@@ -43,10 +46,16 @@ fn translates(name: &str, source: &str) {
     }
 }
 
+const TONE: &str = include_str!("../src/shaders/tone.wgsl");
+
 #[test]
 fn the_lit_shader_runs_on_webgl2() {
     let source = include_str!("../src/shaders/lit.wgsl");
-    translates("lit", source);
+    translates("lit", &format!("{TONE}{source}"));
+    // Seven maps and the probe's two cubes: within the 16 textures a
+    // WebGL2 fragment shader may sample.
+    let textures = source.matches(": texture_").count();
+    assert!(textures <= 16, "{textures} textures");
     // Every light lives in one bounded array; WebGL2's smallest uniform
     // block (16 KiB) holds the frame many times over.
     assert!(source.contains("array<Light, MAX_LIGHTS>"));
@@ -55,4 +64,24 @@ fn the_lit_shader_runs_on_webgl2() {
 #[test]
 fn the_blit_shader_runs_on_webgl2() {
     translates("blit", include_str!("../src/shaders/blit.wgsl"));
+}
+
+#[test]
+fn the_sky_box_runs_on_webgl2() {
+    let source = include_str!("../src/shaders/sky.wgsl");
+    translates("sky", &format!("{TONE}{source}"));
+}
+
+#[test]
+fn the_light_probes_passes_run_on_webgl2() {
+    translates_entries(
+        "ibl",
+        include_str!("../src/shaders/ibl.wgsl"),
+        &[
+            "fs_equirect",
+            "fs_downsample",
+            "fs_specular",
+            "fs_irradiance",
+        ],
+    );
 }

@@ -124,6 +124,7 @@ impl<'w> SurfaceView<'w> {
         };
         surface.configure(&device, &config);
         let mut renderer = Renderer::new(&device);
+        renderer.use_adapter_formats(&adapter);
         renderer.prepare_blit(&device, view_format);
         let target = Target::new(&device, &renderer, [config.width, config.height]);
         Ok(SurfaceView {

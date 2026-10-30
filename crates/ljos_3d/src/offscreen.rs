@@ -81,6 +81,7 @@ impl Offscreen {
                 .await?;
             let mut renderer = Renderer::new(&device);
             renderer.use_adapter_sample_counts(&adapter, &device);
+            renderer.use_adapter_formats(&adapter);
             Ok(Offscreen {
                 device,
                 queue,

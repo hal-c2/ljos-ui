@@ -11,9 +11,14 @@ pub mod math;
 pub mod mesh;
 pub mod pick;
 pub mod scene;
+pub mod texture;
 
 #[cfg(feature = "gpu")]
 pub mod gpu;
+#[cfg(feature = "gpu")]
+mod ibl;
+#[cfg(feature = "gpu")]
+mod maps;
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub mod offscreen;
 #[cfg(feature = "gpu")]
@@ -24,11 +29,15 @@ pub use geometry::{
 };
 pub use scene::{
     AlphaMode, Background, Camera, Color, CullMode, DefaultMaterial, Environment, Fade, Light,
-    Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive, PrincipledMaterial,
-    Scene, Transform,
+    LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive,
+    PrincipledMaps, PrincipledMaterial, Scene, Tonemap, Transform,
+};
+pub use texture::{
+    Channel, Filter, PixelEncoding, Sampling, Texture, TextureImage, TexturePixels, Tiling,
+    UvTransform,
 };
 
 #[cfg(feature = "gpu")]
-pub use gpu::{Renderer, Target};
+pub use gpu::{Renderer, Target, TextureBytes};
 #[cfg(feature = "gpu")]
 pub use surface::{SurfaceView, SurfaceViewError};

@@ -22,6 +22,82 @@ impl Mesh {
         }
     }
 
+    /// A tangent a vertex, for normal maps: `xyz` along increasing u,
+    /// `w` the sign that makes `w × (normal × tangent)` point up the image
+    /// (decreasing v, as v runs down from the image's top row).
+    pub fn tangents(&self) -> Vec<[f32; 4]> {
+        let n = self.positions.len();
+        let mut t = vec![[0.0f32; 3]; n];
+        let mut b = vec![[0.0f32; 3]; n];
+        if self.uvs.len() != n {
+            return vec![[1.0, 0.0, 0.0, 1.0]; n];
+        }
+        let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+        for &[i0, i1, i2] in self.indices.as_chunks::<3>().0 {
+            let [i0, i1, i2] = [i0 as usize, i1 as usize, i2 as usize];
+            if i0.max(i1).max(i2) >= n {
+                continue;
+            }
+            let (e1, e2) = (
+                sub(self.positions[i1], self.positions[i0]),
+                sub(self.positions[i2], self.positions[i0]),
+            );
+            let (du1, dv1) = (
+                self.uvs[i1][0] - self.uvs[i0][0],
+                self.uvs[i1][1] - self.uvs[i0][1],
+            );
+            let (du2, dv2) = (
+                self.uvs[i2][0] - self.uvs[i0][0],
+                self.uvs[i2][1] - self.uvs[i0][1],
+            );
+            let det = du1 * dv2 - du2 * dv1;
+            if det.abs() < 1e-12 {
+                continue;
+            }
+            let r = 1.0 / det;
+            for k in [i0, i1, i2] {
+                for c in 0..3 {
+                    t[k][c] += (e1[c] * dv2 - e2[c] * dv1) * r;
+                    b[k][c] += (e2[c] * du1 - e1[c] * du2) * r;
+                }
+            }
+        }
+        (0..n)
+            .map(|i| {
+                let nm = self.normals.get(i).copied().unwrap_or([0.0, 0.0, 1.0]);
+                let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+                // Gram-Schmidt against the normal; a vertex with no u
+                // direction (a pole) takes any direction across the normal.
+                let d = dot(nm, t[i]);
+                let mut tt = [
+                    t[i][0] - nm[0] * d,
+                    t[i][1] - nm[1] * d,
+                    t[i][2] - nm[2] * d,
+                ];
+                let mut len = dot(tt, tt).sqrt();
+                if len < 1e-6 {
+                    let any = if nm[0].abs() < 0.9 {
+                        [1.0, 0.0, 0.0]
+                    } else {
+                        [0.0, 1.0, 0.0]
+                    };
+                    let d = dot(nm, any);
+                    tt = [any[0] - nm[0] * d, any[1] - nm[1] * d, any[2] - nm[2] * d];
+                    len = dot(tt, tt).sqrt();
+                }
+                let tt = [tt[0] / len, tt[1] / len, tt[2] / len];
+                let cross = [
+                    nm[1] * tt[2] - nm[2] * tt[1],
+                    nm[2] * tt[0] - nm[0] * tt[2],
+                    nm[0] * tt[1] - nm[1] * tt[0],
+                ];
+                // b runs down the image; up is its opposite.
+                let w = if dot(cross, b[i]) > 0.0 { -1.0 } else { 1.0 };
+                [tt[0], tt[1], tt[2], w]
+            })
+            .collect()
+    }
+
     fn vertex(&mut self, position: [f32; 3], normal: [f32; 3], uv: [f32; 2]) -> u32 {
         self.positions.push(position);
         self.normals.push(normal);
@@ -193,6 +269,17 @@ fn cone() -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rectangles_tangent_runs_along_x_and_up_the_image_is_up_y() {
+        let m = Mesh::primitive(Primitive::Rectangle);
+        for (t, n) in m.tangents().iter().zip(&m.normals) {
+            assert!((t[0] - 1.0).abs() < 1e-5 && t[1].abs() < 1e-5, "{t:?}");
+            // w (n × t) is +Y, where the image's top row lies.
+            let up = n[2] * t[0] - n[0] * t[2];
+            assert!((t[3] * up - 1.0).abs() < 1e-5, "{t:?}");
+        }
+    }
 
     #[test]
     fn every_cube_face_winds_outwards() {

@@ -383,7 +383,7 @@ fn alpha_modes_blend_ignore_or_cut_the_opacity() {
         opacity: 0.5,
         ..PrincipledMaterial::default()
     };
-    let blended = red_over_blue(&mut gpu, half);
+    let blended = red_over_blue(&mut gpu, half.clone());
     assert!(blended[0] > 100 && blended[2] > 100, "{blended:?}");
     let opaque = PrincipledMaterial {
         alpha_mode: AlphaMode::Opaque,
@@ -485,7 +485,7 @@ fn frustum_culling_leaves_out_what_the_camera_cannot_see() {
     } = gpu;
     let mut s = scene();
     let white = Material::Default(DefaultMaterial::default());
-    model(&mut s, Primitive::Cube, white, Transform::default());
+    model(&mut s, Primitive::Cube, white.clone(), Transform::default());
     model(&mut s, Primitive::Cube, white, at(2000.0, 0.0, 0.0));
     let mut target = Target::new(&device, &renderer, [SIDE, SIDE]);
     let mut drawn = |s: &Scene, target: &mut Target| {
@@ -525,6 +525,7 @@ fn multisampling_softens_an_edge_and_resolves_into_the_picture() {
         s.set_environment(Environment {
             background: Background::Color(CLEAR),
             msaa_samples: samples,
+            ..Environment::default()
         });
         model(
             &mut s,
@@ -577,7 +578,7 @@ fn a_moved_model_moves_in_a_kept_target() {
         .map(|i| {
             let mut place = at(-95.0 + i as f32 * 10.0, -80.0, 0.0);
             place.scale = Vec3::new(0.08, 0.08, 0.08);
-            model(&mut s, Primitive::Cube, red, place)
+            model(&mut s, Primitive::Cube, red.clone(), place)
         })
         .collect();
     let mut target = Target::new(&device, &renderer, [SIDE, SIDE]);
