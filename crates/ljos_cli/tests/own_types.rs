@@ -80,6 +80,7 @@ fn engine() -> Engine {
     // What `render::register_modules` gives `run`, `render` and `test`.
     ljos_localstorage::register(&engine);
     ljos_xml::register(&engine);
+    ljos_jsonmodel::register(&engine);
     ljos_lottie::register(&engine);
     ljos_quick3d::register(&engine);
     ljos_folderlistmodel::register(&engine);

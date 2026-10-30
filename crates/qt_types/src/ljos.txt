@@ -491,6 +491,33 @@ module Ljos.Design
 		signal displayLineHeightChanged
 		signal displayWeightChanged
 
+module Ljos.Models
+	JsonListModel Ljos.Models.JsonListModel
+	type Ljos.Models.JsonListModel JsonListModel
+		prototype QtQml.QtObject named
+		enum Status Null=0 Ready=1 Loading=2 Error=3
+		prop json QtQml.string named
+		prop source QtQml.url named
+		prop count QtQml.int named readonly
+		prop roles QtQml.var named readonly
+		prop status Status readonly
+		prop error QtQml.string named readonly
+		signal jsonChanged
+		signal sourceChanged
+		signal countChanged
+		signal rolesChanged
+		signal statusChanged
+		signal errorChanged
+		signal dataChanged topLeft bottomRight roles
+		signal modelAboutToBeReset
+		signal modelReset
+		signal rowsAboutToBeInserted parent first last
+		signal rowsInserted parent first last
+		signal rowsAboutToBeRemoved parent first last
+		signal rowsRemoved parent first last
+		method reload
+		method get
+
 module Qt.labs.folderlistmodel
 	FolderListModel Qt.labs.folderlistmodel.FolderListModel
 	type Qt.labs.folderlistmodel.FolderListModel FolderListModel

@@ -266,6 +266,7 @@ pub(crate) fn stage(engine: &Engine, files: &[(String, std::path::PathBuf)]) {
 pub(crate) fn register_modules(engine: &Engine) {
     ljos_localstorage::register(engine);
     ljos_xml::register(engine);
+    ljos_jsonmodel::register(engine);
     ljos_lottie::register(engine);
     ljos_quick3d::register(engine);
     ljos_folderlistmodel::register(engine);

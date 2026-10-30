@@ -153,6 +153,7 @@ impl App {
             ljos_localstorage::register(setup.engine());
             ljos_localstorage::set_storage(setup.engine(), ljos_localstorage::Storage::Memory);
             ljos_xml::register(setup.engine());
+            ljos_jsonmodel::register(setup.engine());
             ljos_folderlistmodel::register(setup.engine());
             let root = setup.watch(main)?;
             setup.on_reload(move |r| heard.borrow_mut().push(r.clone()));

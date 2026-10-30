@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use ljos_dev::{Alias, AliasError, Aliases, DevSession, Host, QtTypeOracle};
+use ljos_dev::{Alias, AliasError, Aliases, DevSession, Host};
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::roots::{RootSwaps, adopt};
 
@@ -102,6 +102,10 @@ impl Live {
         }
         let paths: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
         let entries: Vec<&str> = entries.iter().map(String::as_str).collect();
+        // These files are on the real disk, under real paths, as they are for
+        // an application: the scenario's sandbox would look elsewhere for
+        // whatever the QML reads beside itself.
+        ljos_platform::Platform::of(&self.engine).set_env(ljos_platform::PathEnv::default());
         let (tx, woke) = mpsc::channel();
         let session = DevSession::open_roots_aliased(
             &self.engine,
@@ -109,7 +113,8 @@ impl Live {
             &entries,
             Vec::new(),
             aliases,
-            QtTypeOracle,
+            // As the runner: the opt-in modules are types of the engine.
+            super::oracle(),
             Arc::new(move || {
                 let _ = tx.send(());
             }),

@@ -380,6 +380,7 @@ impl LjosBackend {
         // QtMultimedia, QtQuick.LocalStorage).
         // Sound goes nowhere: the clock is virtual.
         ljos_xml::register(&engine);
+        ljos_jsonmodel::register(&engine);
         ljos_lottie::register(&engine);
         ljos_quick3d::register(&engine);
         ljos_folderlistmodel::register(&engine);
@@ -564,6 +565,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_quick::register(&snapshot);
                 ljos_controls::register(&snapshot);
                 ljos_xml::register(&snapshot);
+                ljos_jsonmodel::register(&snapshot);
                 ljos_lottie::register(&snapshot);
                 ljos_quick3d::register(&snapshot);
                 ljos_folderlistmodel::register(&snapshot);

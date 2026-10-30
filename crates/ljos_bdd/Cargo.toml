@@ -69,6 +69,7 @@ ljos_quick = { path = "../ljos_quick", features = ["pdf"] }
 # Opt-in modules scenarios may import (QtQml.XmlListModel,
 # Qt.labs.folderlistmodel, Qt.labs.lottieqt, QtPositioning, QtMultimedia).
 ljos_xml = { path = "../ljos_xml" }
+ljos_jsonmodel = { path = "../ljos_jsonmodel" }
 ljos_lottie = { path = "../ljos_lottie" }
 ljos_quick3d = { path = "../ljos_quick3d" }
 ljos_folderlistmodel = { path = "../ljos_folderlistmodel" }

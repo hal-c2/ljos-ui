@@ -1,0 +1,25 @@
+[package]
+name = "ljos_jsonmodel"
+description = "The Ljos.Models module: JsonListModel, a read-only list model over JSON text or a JSON file, as an opt-in crate written against the ljos facade alone"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The facade alone (no shell: a module crate opens no windows).
+ljos = { path = "../ljos", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# Tests compile QML strings; the crate itself never links the compiler or
+# the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
+ljos = { path = "../ljos", features = ["dev-qml"] }
+
+[lints]
+workspace = true

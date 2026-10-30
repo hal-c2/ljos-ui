@@ -44,6 +44,7 @@ ljos_audit = { path = "../ljos_audit" }
 # `ljos run`, `render` and `test` offer them all, as `qml6` does.
 ljos_localstorage = { path = "../ljos_localstorage" }
 ljos_xml = { path = "../ljos_xml" }
+ljos_jsonmodel = { path = "../ljos_jsonmodel" }
 ljos_lottie = { path = "../ljos_lottie" }
 ljos_quick3d = { path = "../ljos_quick3d" }
 ljos_folderlistmodel = { path = "../ljos_folderlistmodel" }

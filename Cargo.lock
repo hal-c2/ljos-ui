@@ -3708,6 +3708,7 @@ dependencies = [
  "ljos_folderlistmodel",
  "ljos_i18n",
  "ljos_ir",
+ "ljos_jsonmodel",
  "ljos_localstorage",
  "ljos_lottie",
  "ljos_mcp_core",
@@ -3782,6 +3783,7 @@ dependencies = [
  "ljos_gallery_backends",
  "ljos_i18n",
  "ljos_ir",
+ "ljos_jsonmodel",
  "ljos_localstorage",
  "ljos_lottie",
  "ljos_mcp_author",
@@ -4007,6 +4009,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_example_jsonrows"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+ "ljos_jsonmodel",
+]
+
+[[package]]
 name = "ljos_example_mediaplayer"
 version = "0.0.0"
 dependencies = [
@@ -4136,6 +4147,17 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "ljos_jsonmodel"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+ "qml_front",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4454,6 +4476,7 @@ dependencies = [
  "ljos_engine",
  "ljos_folderlistmodel",
  "ljos_host",
+ "ljos_jsonmodel",
  "ljos_localstorage",
  "ljos_media",
  "ljos_platform",
