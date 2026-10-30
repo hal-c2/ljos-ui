@@ -255,7 +255,7 @@ Feature: A glTF model loaded while the application runs
   Rule: A file that cannot be loaded is an error that says why
 
     Scenario Outline: <what> is an error
-      Given the text file "broken.gltf":
+      Given the file "broken.gltf":
         """
         {"asset": {"version": "2.0"}, "nodes": [
         """
@@ -284,7 +284,7 @@ Feature: A glTF model loaded while the application runs
         | A buffer that is not there | lost.gltf   | gone.bin    |
 
     Scenario: A good file after a broken one loads
-      Given the text file "broken.gltf":
+      Given the file "broken.gltf":
         """
         {"asset":
         """

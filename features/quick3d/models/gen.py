@@ -19,7 +19,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BENCH = HERE.parent.parent.parent / "bench" / "quick3d"
 
-FLOAT, USHORT = 5126, 5123
+FLOAT, UBYTE, USHORT = 5126, 5121, 5123
 ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER = 34962, 34963
 
 
@@ -57,6 +57,26 @@ class Buffer:
             accessor["min"] = [min(r[i] for r in rows) for i in range(width)]
             accessor["max"] = [max(r[i] for r in rows) for i in range(width)]
         self.accessors.append(accessor)
+        return len(self.accessors) - 1
+
+    def ubytes(self, rows, kind):
+        raw = b"".join(bytes(r) for r in rows)
+        self.accessors.append(
+            {
+                "bufferView": self.view(raw, ARRAY_BUFFER),
+                "componentType": UBYTE,
+                "count": len(rows),
+                "type": kind,
+            }
+        )
+        return len(self.accessors) - 1
+
+    def matrices(self, items):
+        """MAT4 accessors are not vertex data, so their view has no target."""
+        raw = b"".join(struct.pack("<16f", *m) for m in items)
+        self.accessors.append(
+            {"bufferView": self.view(raw), "componentType": FLOAT, "count": len(items), "type": "MAT4"}
+        )
         return len(self.accessors) - 1
 
     def indices(self, items):
@@ -329,9 +349,121 @@ def sphere_grid_glb():
     write(BENCH / "sphere-grid.glb", glb(document, bytes(buf.data)))
 
 
+def embedded(buf):
+    return [{"uri": "data:application/octet-stream;base64," + base64.b64encode(buf.data).decode(), "byteLength": len(buf.data)}]
+
+
+def quadrants_png():
+    """Four quadrants of one colour each, as the uv-sets scenarios read
+    them: red top left, green top right, blue bottom left, white bottom
+    right."""
+    red, green, blue, white = (255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255), (255, 255, 255, 255)
+    return png(2, 2, [[red, green], [blue, white]])
+
+
+def uv2_gltf():
+    """An unlit square 100 units across whose texture is read through its
+    second UV set. Every corner's first UV is in the red quadrant, so a
+    reader that ignores TEXCOORD_1 draws it all red."""
+    buf = Buffer()
+    attributes, indices = square(buf, 50)
+    attributes["TEXCOORD_1"] = attributes["TEXCOORD_0"]
+    attributes["TEXCOORD_0"] = buf.floats([(0.25, 0.25)] * 4, "VEC2")
+    material = unlit("quadrants", (1, 1, 1))
+    material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": 0, "texCoord": 1}
+    picture = "data:image/png;base64," + base64.b64encode(quadrants_png()).decode()
+    document = {
+        "asset": {"version": "2.0", "generator": "features/quick3d/models/gen.py"},
+        "extensionsUsed": ["KHR_materials_unlit"],
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"name": "square", "mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": attributes, "indices": indices, "material": 0}]}],
+        "materials": [material],
+        "textures": [{"source": 0, "sampler": 0}],
+        "samplers": [{"magFilter": 9728, "minFilter": 9728, "wrapS": 33071, "wrapT": 33071}],
+        "images": [{"uri": picture}],
+        "buffers": embedded(buf),
+        "bufferViews": buf.views,
+        "accessors": buf.accessors,
+    }
+    write(HERE / "uv2.gltf", json.dumps(document, indent=1).encode())
+
+
+def skin_gltf():
+    """A strip 20 units wide and 100 tall, from the origin up, skinned to
+    two joints as an exporter writes it: joint indices as unsigned bytes,
+    weights as floats, inverse bind matrices in their own view. Its lower
+    two rows follow "hip" at the origin, its top row "knee", 50 units up
+    and turned a quarter turn about Z, which swings the top over to the
+    left. The mesh's node is moved 500 units right: a skinned mesh's own
+    node is ignored."""
+    buf = Buffer()
+    rows = (0, 50, 100)
+    positions = [(x, y, 0) for y in rows for x in (-10, 10)]
+    attributes = {
+        "POSITION": buf.floats(positions, "VEC3", bounds=True),
+        "NORMAL": buf.floats([(0, 0, 1)] * len(positions), "VEC3"),
+        "JOINTS_0": buf.ubytes([(0 if y < 100 else 1, 0, 0, 0) for (_, y, _) in positions], "VEC4"),
+        "WEIGHTS_0": buf.floats([(1, 0, 0, 0)] * len(positions), "VEC4"),
+    }
+    indices = buf.indices([0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4])
+    # Column-major: the translation is the last four numbers.
+    identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    down = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -50, 0, 1]
+    half = math.sqrt(0.5)
+    document = {
+        "asset": {"version": "2.0", "generator": "features/quick3d/models/gen.py"},
+        "extensionsUsed": ["KHR_materials_unlit"],
+        "scene": 0,
+        "scenes": [{"nodes": [0, 2]}],
+        "nodes": [
+            {"name": "hip", "children": [1]},
+            {"name": "knee", "translation": [0, 50, 0], "rotation": [0, 0, half, half]},
+            {"name": "strip", "mesh": 0, "skin": 0, "translation": [500, 0, 0]},
+        ],
+        "skins": [{"joints": [0, 1], "inverseBindMatrices": buf.matrices([identity, down]), "skeleton": 0}],
+        "meshes": [{"primitives": [{"attributes": attributes, "indices": indices, "material": 0}]}],
+        "materials": [unlit("red", (1, 0, 0))],
+        "buffers": embedded(buf),
+        "bufferViews": buf.views,
+        "accessors": buf.accessors,
+    }
+    write(HERE / "skin.gltf", json.dumps(document, indent=1).encode())
+
+
+def morph_gltf():
+    """An unlit red square 100 units across with one morph target that
+    moves every vertex 100 units right, weighted 0.5 by the mesh."""
+    buf = Buffer()
+    attributes, indices = square(buf, 50)
+    target = {"POSITION": buf.floats([(100, 0, 0)] * 4, "VEC3", bounds=True)}
+    document = {
+        "asset": {"version": "2.0", "generator": "features/quick3d/models/gen.py"},
+        "extensionsUsed": ["KHR_materials_unlit"],
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"name": "square", "mesh": 0}],
+        "meshes": [
+            {
+                "primitives": [{"attributes": attributes, "indices": indices, "material": 0, "targets": [target]}],
+                "weights": [0.5],
+            }
+        ],
+        "materials": [unlit("red", (1, 0, 0))],
+        "buffers": embedded(buf),
+        "bufferViews": buf.views,
+        "accessors": buf.accessors,
+    }
+    write(HERE / "morph.gltf", json.dumps(document, indent=1).encode())
+
+
 if __name__ == "__main__":
     square_gltf()
     pair_gltf()
     checker_gltf()
     cube_glb()
     sphere_grid_glb()
+    uv2_gltf()
+    skin_gltf()
+    morph_gltf()
