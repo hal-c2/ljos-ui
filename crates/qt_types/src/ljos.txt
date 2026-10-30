@@ -68,6 +68,47 @@ module Ljos
 		signal fileChanged
 		signal lineChanged
 
+module Ljos.Blocks
+	Contribution Ljos.Blocks.Contribution
+	ShellLoader Ljos.Blocks.ShellLoader
+	Slot Ljos.Blocks.Slot
+	type Ljos.Blocks.Contribution Contribution
+		prototype QtQml.QtObject named
+		default delegate
+		enum Mode Append=0 Replace=1 Prepend=2
+		prop slot QtQml.string named
+		prop mode Mode
+		prop delegate QtQml.Component named pointer
+		prop order QtQml.int named
+		signal slotChanged
+		signal modeChanged
+		signal delegateChanged
+		signal orderChanged
+	type Ljos.Blocks.ShellLoader ShellLoader
+		prototype QtQuick.Item named
+		enum Status Null=0 Ready=1 Fallback=2 Error=3
+		prop source QtQml.url named
+		prop fallback QtQml.url named
+		prop error QtQml.string named readonly
+		prop item QtQml.QtObject named pointer readonly
+		prop status Status readonly
+		signal sourceChanged
+		signal fallbackChanged
+		signal errorChanged
+		signal itemChanged
+		signal statusChanged
+	type Ljos.Blocks.Slot Slot
+		prototype QtQuick.Item named
+		default delegate
+		prop name QtQml.string named
+		prop contributions Ljos.Blocks.Contribution named list pointer
+		prop delegate QtQml.Component named pointer
+		prop count QtQml.int named readonly
+		signal nameChanged
+		signal contributionsChanged
+		signal delegateChanged
+		signal countChanged
+
 module Ljos.Design
 	Colors Ljos/Design/Colors.qml
 	EnterTransition Ljos/Design/EnterTransition.qml

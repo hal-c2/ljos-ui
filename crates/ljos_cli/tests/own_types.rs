@@ -441,6 +441,9 @@ impl<'a, 'c> Module<'a, 'c> {
                 (TypeTag::Object(None), Some(class)) => {
                     self.value(&TypeTag::Object(Some(class.clone())))
                 }
+                (TypeTag::List(None), Some(class)) => {
+                    self.value(&TypeTag::List(Some(class.clone())))
+                }
                 // A group whose type a module exports is that type, which
                 // is described there and not again as a class of this one.
                 (TypeTag::Group(_), _) => match groups

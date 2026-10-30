@@ -154,7 +154,7 @@ impl DelegateHost for Host {
 
 /// Moves `items`, which are children of `parent`, so that they sit in
 /// this order right before `anchor` in `parent`'s `children` and `data`.
-fn place_before(
+pub(crate) fn place_before(
     e: &Engine,
     parent: ObjectId,
     items: &[ObjectId],
