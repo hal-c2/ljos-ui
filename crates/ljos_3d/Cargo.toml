@@ -42,3 +42,7 @@ naga.workspace = true
 
 [lints]
 workspace = true
+
+[[example]]
+name = "gltf_load"
+required-features = ["gltf"]
