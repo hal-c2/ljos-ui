@@ -1070,3 +1070,12 @@ fn an_enums_name_is_an_enum_name() {
     assert!(is_enum_name("TransformOrigin"));
     assert!(!is_enum_name("NoSuchEnumOfAnyType"));
 }
+
+#[test]
+fn a_module_ljos_has_built_since_does_not_stand_in() {
+    // Ljós's own table lists `QtQuick3D.Helpers` once a type of it is
+    // native; the add-on modules beside it still stand in.
+    assert!(!stands_in("QtQuick3D.Helpers"));
+    assert!(stands_in("QtQuick3D.Effects"));
+    assert!(stands_in("QtGraphs"));
+}
