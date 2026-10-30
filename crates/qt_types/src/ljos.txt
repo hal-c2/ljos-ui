@@ -8289,6 +8289,152 @@ module QtQuick3D.Helpers
 		signal lensFlareLensColorTextureChanged
 		signal lensFlareLensDirtTextureChanged
 		signal lensFlareLensStarburstTextureChanged
+	CapsuleGeometry QtQuick3D.Helpers.CapsuleGeometry
+	ConeGeometry QtQuick3D.Helpers.ConeGeometry
+	CuboidGeometry QtQuick3D.Helpers.CuboidGeometry
+	CylinderGeometry QtQuick3D.Helpers.CylinderGeometry
+	GridGeometry QtQuick3D.Helpers.GridGeometry
+	LookAtNode QtQuick3D.Helpers.LookAtNode
+	PlaneGeometry QtQuick3D.Helpers.PlaneGeometry
+	SphereGeometry QtQuick3D.Helpers.SphereGeometry
+	TorusGeometry QtQuick3D.Helpers.TorusGeometry
+	type QtQuick3D.Helpers.CapsuleGeometry CapsuleGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		enum UVProfile Fixed=0 Aspect=1 Uniform=2
+		prop asynchronous QtQml.bool named
+		prop status Status readonly
+		prop height QtQml.real named
+		prop diameter QtQml.real named
+		prop latitudes QtQml.int named
+		prop longitudes QtQml.int named
+		prop rings QtQml.int named
+		prop enableNormals QtQml.bool named
+		prop enableUV QtQml.bool named
+		prop uvProfile UVProfile
+		signal asynchronousChanged
+		signal statusChanged
+		signal heightChanged
+		signal diameterChanged
+		signal latitudesChanged
+		signal longitudesChanged
+		signal ringsChanged
+		signal enableNormalsChanged
+		signal enableUVChanged
+		signal uvProfileChanged
+	type QtQuick3D.Helpers.ConeGeometry ConeGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		prop asynchronous QtQml.bool named
+		prop status Status readonly
+		prop topRadius QtQml.real named
+		prop bottomRadius QtQml.real named
+		prop length QtQml.real named
+		prop rings QtQml.int named
+		prop segments QtQml.int named
+		signal asynchronousChanged
+		signal statusChanged
+		signal topRadiusChanged
+		signal bottomRadiusChanged
+		signal lengthChanged
+		signal ringsChanged
+		signal segmentsChanged
+	type QtQuick3D.Helpers.CuboidGeometry CuboidGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		prop asynchronous QtQml.bool named
+		prop status Status readonly
+		prop xExtent QtQml.real named
+		prop yExtent QtQml.real named
+		prop zExtent QtQml.real named
+		prop xyMeshResolution QtQml.size named
+		prop xzMeshResolution QtQml.size named
+		prop yzMeshResolution QtQml.size named
+		signal asynchronousChanged
+		signal statusChanged
+		signal xExtentChanged
+		signal yExtentChanged
+		signal zExtentChanged
+		signal xyMeshResolutionChanged
+		signal xzMeshResolutionChanged
+		signal yzMeshResolutionChanged
+	type QtQuick3D.Helpers.CylinderGeometry CylinderGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		prop asynchronous QtQml.bool named
+		prop status Status readonly
+		prop radius QtQml.real named
+		prop length QtQml.real named
+		prop rings QtQml.int named
+		prop segments QtQml.int named
+		signal asynchronousChanged
+		signal statusChanged
+		signal radiusChanged
+		signal lengthChanged
+		signal ringsChanged
+		signal segmentsChanged
+	type QtQuick3D.Helpers.GridGeometry GridGeometry
+		prototype QtQuick3D.Geometry named
+		prop horizontalLines QtQml.int named
+		prop horizontalStep QtQml.real named
+		prop verticalLines QtQml.int named
+		prop verticalStep QtQml.real named
+		signal horizontalLinesChanged
+		signal horizontalStepChanged
+		signal verticalLinesChanged
+		signal verticalStepChanged
+	type QtQuick3D.Helpers.LookAtNode LookAtNode
+		prototype QtQuick3D.Node named
+		prop target QtQml.QtObject named pointer
+		signal targetChanged
+	type QtQuick3D.Helpers.PlaneGeometry PlaneGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		enum Plane XY=0 XZ=1 ZY=2
+		prop asynchronous QtQml.bool named
+		prop status Status readonly
+		prop width QtQml.real named
+		prop height QtQml.real named
+		prop meshResolution QtQml.size named
+		prop plane Plane
+		prop reversed QtQml.bool named
+		prop mirrored QtQml.bool named
+		signal asynchronousChanged
+		signal statusChanged
+		signal widthChanged
+		signal heightChanged
+		signal meshResolutionChanged
+		signal planeChanged
+		signal reversedChanged
+		signal mirroredChanged
+	type QtQuick3D.Helpers.SphereGeometry SphereGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		prop asynchronous QtQml.bool named
+		prop status Status readonly
+		prop radius QtQml.real named
+		prop rings QtQml.int named
+		prop segments QtQml.int named
+		signal asynchronousChanged
+		signal statusChanged
+		signal radiusChanged
+		signal ringsChanged
+		signal segmentsChanged
+	type QtQuick3D.Helpers.TorusGeometry TorusGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		prop asynchronous QtQml.bool named
+		prop status Status readonly
+		prop radius QtQml.real named
+		prop tubeRadius QtQml.real named
+		prop rings QtQml.int named
+		prop segments QtQml.int named
+		signal asynchronousChanged
+		signal statusChanged
+		signal radiusChanged
+		signal tubeRadiusChanged
+		signal ringsChanged
+		signal segmentsChanged
 
 module QtSensors
 	Accelerometer QtSensors.Accelerometer
