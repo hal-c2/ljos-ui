@@ -5,10 +5,15 @@
 //! role=button[name="Delete"]     #objectName        text=notes
 //! role=toolbar >> role=button    name~=^Row \d+$    ref=e9
 //! role=button[disabled] >> nth=0
+//! at=40,40                       at=40,40 >> nth=1
 //! ```
 //!
 //! A locator describes; it does not remember. It finds the item again after
 //! a hot reload made it anew, which a reference may not.
+//!
+//! `at=X,Y` is not answered from the outline: it names the items drawn at
+//! a point of the window, topmost first, which only the server that draws
+//! them knows (see [`Locator::at`]).
 
 use regex::Regex;
 
@@ -53,7 +58,7 @@ impl From<LocatorError> for SurfaceError {
             serde_json::json!({
                 "locator": e.locator,
                 "examples": ["role=button[name=\"Save\"]", "#objectName", "text=Save", "ref=e3",
-                             "role=list >> role=listitem >> nth=0"],
+                             "role=list >> role=listitem >> nth=0", "at=40,40"],
             }),
         )
     }
@@ -122,6 +127,23 @@ pub enum Step {
     Nth(usize),
     /// Every node that meets all the conditions.
     Match(Vec<StepFilter>),
+    /// `at=40,40`: the items drawn at that point of the window.
+    At(Point),
+}
+
+/// A point of the window in logical pixels, as `at=X,Y` gives it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// What an `at=` locator asks for: the items drawn at `point`, topmost
+/// first, or only the `nth` of them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct At {
+    pub point: Point,
+    pub nth: Option<usize>,
 }
 
 /// A parsed locator.
@@ -228,6 +250,27 @@ impl Parser<'_> {
             })
     }
 
+    /// `40,40` or `12.5, 7`: finite numbers, the window's own pixels.
+    fn point(&self, text: &str) -> Result<Point, LocatorError> {
+        if text.contains('[') {
+            return Err(self.err(format!(
+                "`at={text}` takes no `[…]` condition: it names what is drawn at a point, \
+                 whatever it is"
+            )));
+        }
+        let number = |n: &str| n.trim().parse::<f64>().ok().filter(|n| n.is_finite());
+        match text.split_once(',') {
+            Some((x, y)) => match (number(x), number(y)) {
+                (Some(x), Some(y)) => Ok(Point { x, y }),
+                _ => Err(self.err(format!(
+                    "`at={text}` needs two numbers, x and y in the window's logical pixels, \
+                     as in `at=40,40`"
+                ))),
+            },
+            None => Err(self.err(format!("`at={text}` needs x and y, as in `at=40,40`"))),
+        }
+    }
+
     /// `name*="all"` is (`name`, `*=`, `"all"`).
     fn condition<'t>(&self, text: &'t str) -> Option<(&'t str, &'static str, &'t str)> {
         let key_end = text
@@ -255,7 +298,7 @@ impl Parser<'_> {
                 ))),
                 _ => Err(self.err(format!(
                     "`{text}` is not a step. A step is `role=…`, `name=…`, `text=…`, `value=…`, \
-                     `id=…`, `obj=…`, `#objectName`, `ref=e3` or `nth=0`"
+                     `id=…`, `obj=…`, `#objectName`, `ref=e3`, `nth=0` or `at=40,40`"
                 ))),
             };
         };
@@ -318,6 +361,9 @@ impl Parser<'_> {
                 )));
             }
             return Ok(Step::Ref(r.to_string()));
+        }
+        if let Some(point) = text.strip_prefix("at=") {
+            return self.point(point.trim()).map(Step::At);
         }
         if let Some(n) = text.strip_prefix("nth=") {
             return match n.trim().parse::<usize>() {
@@ -417,6 +463,29 @@ impl Locator {
             .into_iter()
             .map(|s| p.step(s))
             .collect::<Result<Vec<_>, _>>()?;
+        // The items at a point are a stack, not a part of the outline: no
+        // step before it narrows what is drawn, and no step after it but a
+        // place in the stack means anything for items that may have no
+        // role, name or text.
+        let starts_at = matches!(steps.first(), Some(Step::At(_)));
+        for (i, step) in steps.iter().enumerate().skip(1) {
+            match step {
+                Step::At(_) => {
+                    return Err(p.err(
+                        "`at=` is the first step: it names the items drawn at a point of the \
+                         window, which no step before it can narrow",
+                    ));
+                }
+                Step::Nth(_) if i == 1 => {}
+                _ if starts_at => {
+                    return Err(p.err(
+                        "after `at=` only `nth=` may follow: the items at a point are taken \
+                         topmost first, and `nth=1` is the one under the topmost",
+                    ));
+                }
+                _ => {}
+            }
+        }
         Ok(Locator {
             source: source.trim().to_string(),
             steps,
@@ -435,6 +504,23 @@ impl Locator {
     pub fn as_ref_only(&self) -> Option<&str> {
         match self.steps.as_slice() {
             [Step::Ref(r)] => Some(r),
+            _ => None,
+        }
+    }
+
+    /// The point, when the locator names what is drawn there. Such a
+    /// locator is answered by the server that draws, not by
+    /// [`Locator::find`].
+    pub fn at(&self) -> Option<At> {
+        match self.steps.as_slice() {
+            [Step::At(point)] => Some(At {
+                point: *point,
+                nth: None,
+            }),
+            [Step::At(point), Step::Nth(n)] => Some(At {
+                point: *point,
+                nth: Some(*n),
+            }),
             _ => None,
         }
     }
@@ -495,6 +581,13 @@ impl Locator {
                     None => (*n < tree.len()).then_some(*n).into_iter().collect(),
                     Some(f) => f.get(*n).copied().into_iter().collect(),
                 },
+                Step::At(_) => {
+                    return Err(SurfaceError::invalid_argument(format!(
+                        "`{}`: `at=` names what is drawn at a point, which the outline does \
+                         not say",
+                        self.source
+                    )));
+                }
                 Step::Match(filters) => {
                     let fits = |i: &usize| filters.iter().all(|f| f.fits(&tree.nodes()[*i]));
                     match &found {
@@ -688,6 +781,49 @@ mod tests {
         assert!(Locator::parse(&long).unwrap_err().reason.contains("256"));
         let many = ["role=a"; 9].join(" >> ");
         assert!(Locator::parse(&many).unwrap_err().reason.contains("steps"));
+    }
+
+    #[test]
+    fn a_point_is_read_and_goes_with_nth_alone() {
+        let at = |l: &str| Locator::parse(l).unwrap_or_else(|e| panic!("{e}")).at();
+        let p = |x, y| Point { x, y };
+        assert_eq!(
+            at("at=40,40"),
+            Some(At {
+                point: p(40.0, 40.0),
+                nth: None
+            })
+        );
+        assert_eq!(
+            at(" at= 12.5 , -3 >> nth=1"),
+            Some(At {
+                point: p(12.5, -3.0),
+                nth: Some(1)
+            })
+        );
+        assert_eq!(at("role=button"), None);
+        for (locator, part) in [
+            ("at=40", "needs x and y"),
+            ("at=forty,40", "two numbers"),
+            ("at=1,NaN", "two numbers"),
+            ("at=1,inf", "two numbers"),
+            ("at=1,2,3", "two numbers"),
+            ("at=40,40[disabled]", "no `[…]` condition"),
+            ("role=button >> at=40,40", "first step"),
+            ("at=1,1 >> at=2,2", "first step"),
+            ("at=40,40 >> #chip", "only `nth=`"),
+            ("at=40,40 >> nth=0 >> nth=0", "only `nth=`"),
+        ] {
+            let e = Locator::parse(locator).expect_err(locator);
+            assert!(e.reason.contains(part), "{locator}: {}", e.reason);
+            assert!(e.reason.contains("at="), "{locator}: {}", e.reason);
+        }
+        // The outline cannot answer it: the server that draws does.
+        let e = Locator::parse("at=1,1")
+            .unwrap()
+            .find(&tree(), &mut RefTable::new(4))
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
     }
 
     #[test]

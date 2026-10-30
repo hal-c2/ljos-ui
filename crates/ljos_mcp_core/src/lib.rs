@@ -35,7 +35,7 @@ pub use auth::{
 pub use caps::{Cap, CapSet, ParseCapError};
 pub use error::{ErrorCode, SurfaceError};
 #[cfg(feature = "inspect")]
-pub use locator::{Locator, LocatorError, NameTest, STATES, Step, StepFilter};
+pub use locator::{At, Locator, LocatorError, NameTest, Point, STATES, Step, StepFilter};
 #[cfg(feature = "inspect")]
 pub use refs::RefTable;
 pub use registry::{
