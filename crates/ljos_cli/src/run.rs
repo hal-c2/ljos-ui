@@ -18,6 +18,7 @@ use std::sync::{
 use anyhow::{Context as _, bail};
 use clap::Args;
 use ljos::dev::EngineOracle;
+use ljos_compiler::{Alias, Aliases};
 use ljos_engine::{Engine, LogEntry, LogLevel};
 use ljos_mcp_core::{Cap, CapSet};
 use ljos_shell::{InspectorAccess, InspectorOptions, Report, Setup, SetupError, ShellConfig};
@@ -39,6 +40,13 @@ pub struct Run {
     /// application, keeping its state.
     #[arg(long)]
     watch: bool,
+    /// Import MODULE from DIR, whose `qmldir` names it, instead of from
+    /// where the import path finds it: `--alias App.Media=mocks/Media`.
+    /// May be given more than once. With `--watch` DIR is watched too, and
+    /// an agent with `mutate` may switch the alias while the application
+    /// runs (`app_alias`).
+    #[arg(long, value_name = "MODULE=DIR", value_parser = parse_alias)]
+    alias: Vec<Alias>,
     /// A picture the desktop shows for the application: its windows'
     /// icon, and the Dock's on macOS. Without it the desktop's own is
     /// shown.
@@ -196,6 +204,11 @@ impl Tools {
     }
 }
 
+/// `MODULE=DIR`, refused unless DIR describes MODULE.
+pub(crate) fn parse_alias(text: &str) -> Result<Alias, String> {
+    Alias::parse(text).map_err(|e| e.to_string())
+}
+
 pub(crate) fn parse_size(text: &str) -> Result<(f32, f32), String> {
     let wrong = || format!("{text:?} is not a size such as 800x600");
     let (w, h) = text.split_once(['x', 'X']).ok_or_else(wrong)?;
@@ -260,13 +273,14 @@ fn compile(
     dir: &Path,
     key: &str,
     example: Option<&str>,
+    aliases: &Aliases,
     say: Say,
 ) -> anyhow::Result<OnDemand<EngineOracle>> {
     let oracle = match example {
         Some(id) => crate::render::oracle_for_example(id),
         None => EngineOracle::table_only(),
     };
-    OnDemand::open(dir, key, oracle, say)
+    OnDemand::open(dir, key, aliases, oracle, say)
 }
 
 /// What the compile thread made; its panic goes on here.
@@ -436,6 +450,7 @@ impl Run {
             },
         };
         let example = self.example.clone();
+        let aliases: Aliases = self.alias.iter().cloned().collect();
         let arguments = self.arguments();
         let headless = self.headless;
         let icon = self.icon.as_deref().map(|path| {
@@ -463,6 +478,7 @@ impl Run {
                 });
                 // The compiler knows what the engine was given above.
                 let oracle = ljos::dev::EngineOracle::from_engine(setup.engine());
+                setup.set_aliases(aliases);
                 let root = setup.watch_with(
                     &main,
                     project.as_deref(),
@@ -484,6 +500,7 @@ impl Run {
             let stop = Arc::new(AtomicBool::new(false));
             let compiling = {
                 let (dir, key, example) = (dir.clone(), key.clone(), example.clone());
+                let aliases = aliases.clone();
                 let stop = Arc::clone(&stop);
                 std::thread::Builder::new()
                     .name("ljos-compile".into())
@@ -492,6 +509,7 @@ impl Run {
                             &dir,
                             &key,
                             example.as_deref(),
+                            &aliases,
                             Box::new(crate::stderr::line),
                         )?;
                         source.compile_ahead(&key, &stop);
@@ -804,6 +822,7 @@ mod tests {
             dir.path(),
             "Main",
             None,
+            &Aliases::new(),
             Box::new(move |line| to.lock().unwrap().push(line.to_owned())),
         )
         .unwrap();
@@ -860,7 +879,7 @@ mod tests {
                 ),
             ],
         );
-        let stopped = compile(dir.path(), "Main", None, quiet()).unwrap();
+        let stopped = compile(dir.path(), "Main", None, &Aliases::new(), quiet()).unwrap();
         stopped.compile_ahead("Main", &AtomicBool::new(true));
         assert!(stopped.ahead().is_empty());
 
@@ -870,6 +889,7 @@ mod tests {
             dir.path(),
             "Main",
             None,
+            &Aliases::new(),
             Box::new(move |line| to.lock().unwrap().push(line.to_owned())),
         )
         .unwrap();
@@ -915,15 +935,24 @@ mod tests {
             "import QtQuick\nItem {\n  width: 20 +\n}\n",
         )
         .unwrap();
-        let e = compile(dir.path(), "Main", None, quiet())
+        let e = compile(dir.path(), "Main", None, &Aliases::new(), quiet())
             .unwrap_err()
             .to_string();
         assert!(e.contains("Main.qml:"), "{e}");
         std::fs::write(dir.path().join("Main.qml"), "import QtQuick\nItem {}\n").unwrap();
-        assert!(compile(dir.path(), "Main", None, quiet()).is_ok());
+        assert!(compile(dir.path(), "Main", None, &Aliases::new(), quiet()).is_ok());
         // An example without a backend compiles as before.
-        assert!(compile(dir.path(), "Main", Some("no-such-example"), quiet()).is_ok());
-        assert!(compile(dir.path(), "Gone", None, quiet()).is_err());
+        assert!(
+            compile(
+                dir.path(),
+                "Main",
+                Some("no-such-example"),
+                &Aliases::new(),
+                quiet()
+            )
+            .is_ok()
+        );
+        assert!(compile(dir.path(), "Gone", None, &Aliases::new(), quiet()).is_err());
     }
 
     #[test]
@@ -935,7 +964,7 @@ mod tests {
             "import QtQuick\nItem {\n  NoSuchThing { }\n}\n",
         )
         .unwrap();
-        let source = compile(dir.path(), "Main", None, quiet()).unwrap();
+        let source = compile(dir.path(), "Main", None, &Aliases::new(), quiet()).unwrap();
         let engine = Engine::new();
         ljos_quick::register(&engine);
         engine.set_component_source(source);

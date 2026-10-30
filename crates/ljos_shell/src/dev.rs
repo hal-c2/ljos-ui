@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos_dev::{DevSession, Host, Overlay, QtTypeOracle, Reloader, Report, TypeOracle};
+use ljos_dev::{Aliases, DevSession, Host, Overlay, QtTypeOracle, Reloader, Report, TypeOracle};
 use ljos_egui::QmlView;
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::Item;
@@ -28,6 +28,8 @@ pub(crate) struct DevSetup {
     wake: WakeHook,
     /// The application's import path, as [`Setup::set_qml_dirs`] gave it.
     qml_dirs: Vec<PathBuf>,
+    /// The modules imported from a directory of the caller's choosing.
+    aliases: Aliases,
     dev: Option<Dev>,
     on_report: Option<ReportHandler>,
 }
@@ -37,6 +39,7 @@ impl DevSetup {
         Self {
             wake,
             qml_dirs: Vec::new(),
+            aliases: Aliases::new(),
             dev: None,
             on_report: None,
         }
@@ -60,6 +63,14 @@ pub(crate) struct Dev {
     /// Reloads applied in this pass, told once the frame that shows them
     /// is painted, with the time from the save to it.
     unshown: Vec<Report>,
+}
+
+impl Dev {
+    /// The modules imported from a directory of the caller's choosing.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn aliases(&self) -> &Aliases {
+        self.session.aliases()
+    }
 }
 
 impl<M> Setup<'_, M> {
@@ -111,11 +122,12 @@ impl<M> Setup<'_, M> {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
-        let session = DevSession::open_with(
+        let session = DevSession::open_aliased(
             self.engine,
             main,
             project,
             properties,
+            self.dev.aliases.clone(),
             oracle,
             Arc::clone(&self.dev.wake),
         )?;
@@ -163,15 +175,24 @@ impl<M> Setup<'_, M> {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
-        let session = DevSession::open_roots(
+        let session = DevSession::open_roots_aliased(
             self.engine,
             roots,
             entries,
             properties,
+            self.dev.aliases.clone(),
             oracle,
             Arc::clone(&self.dev.wake),
         )?;
         self.watched(session)
+    }
+
+    /// Imports each module of `aliases` from its directory in what the
+    /// `watch` calls after this one compile (`ljos run --alias`). A
+    /// directory outside the project is watched with it, and an agent
+    /// may alias a module to it again later.
+    pub fn set_aliases(&mut self, aliases: Aliases) {
+        self.dev.aliases = aliases;
     }
 
     /// Tells the setup the directories the application's QML is
@@ -293,6 +314,21 @@ impl<M> ShellApp<M> {
     pub(crate) fn reload_now(&mut self) {
         if let Some(dev) = &mut self.dev {
             dev.session.reload_now(self.view.engine());
+        }
+    }
+
+    /// Imports `module` from `dir` (relative to the project), or from
+    /// where the import path finds it when `dir` is None, and asks for a
+    /// reload as [`reload_now`](Self::reload_now) does.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn set_alias(
+        &mut self,
+        module: &str,
+        dir: Option<&Path>,
+    ) -> Result<(), ljos_dev::AliasError> {
+        match &mut self.dev {
+            Some(dev) => dev.session.set_alias(self.view.engine(), module, dir),
+            None => Ok(()),
         }
     }
 

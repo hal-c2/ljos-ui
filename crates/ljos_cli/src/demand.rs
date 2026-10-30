@@ -26,7 +26,9 @@ use std::{
 };
 
 use anyhow::Context as _;
-use ljos_compiler::{Compiled, Diagnostic, Project, Severity, compile_file, failure_reason};
+use ljos_compiler::{
+    Aliases, Compiled, Diagnostic, Project, Severity, compile_file, failure_reason,
+};
 use ljos_engine::{ComponentSource, MapSource};
 use ljos_ir::{CompiledFile, TypeRef};
 use qml_front::TypeOracle;
@@ -41,6 +43,9 @@ pub(crate) struct OnDemand<O> {
     project: RefCell<Project<O>>,
     /// What was compiled, or why it did not compile, with the URLs.
     done: RefCell<MapSource>,
+    /// The key prefix of each aliased directory outside the project, with
+    /// its `file://` URL: a file's URL is beside it there.
+    mounts: Vec<(String, String)>,
     asked: RefCell<HashSet<String>>,
     /// Compiled ahead of the engine's asking, and not yet told.
     ahead: RefCell<HashMap<String, Result<Compiled, Vec<Diagnostic>>>>,
@@ -51,9 +56,18 @@ impl<O: TypeOracle> OnDemand<O> {
     /// The project under `dir` with its entry `entry` compiled: an entry
     /// that is not there or does not compile stops the run before a window
     /// opens, as anything else stops only what makes an object of it.
-    pub(crate) fn open(dir: &Path, entry: &str, oracle: O, say: Say) -> anyhow::Result<Self> {
-        let mut project =
-            Project::open(dir, oracle).with_context(|| format!("{}", dir.display()))?;
+    /// Each module of `aliases` is imported from its directory (`ljos run
+    /// --alias`).
+    pub(crate) fn open(
+        dir: &Path,
+        entry: &str,
+        aliases: &Aliases,
+        oracle: O,
+        say: Say,
+    ) -> anyhow::Result<Self> {
+        let mounts = ljos_compiler::alias::mounts(&[dir.to_owned()], aliases);
+        let mut project = Project::open_aliased(dir, aliases, &mounts, oracle)
+            .with_context(|| format!("{}", dir.display()))?;
         project.reach(entry);
         if project.source(entry).is_none() {
             anyhow::bail!("{entry}.qml is not in {}", dir.display());
@@ -62,6 +76,10 @@ impl<O: TypeOracle> OnDemand<O> {
         let source = Self {
             project: RefCell::new(project),
             done: RefCell::new(MapSource::new().with_base_url(base)),
+            mounts: mounts
+                .iter()
+                .map(|m| (m.prefix.clone(), ljos_engine::file_url(&m.dir)))
+                .collect(),
             asked: RefCell::new(HashSet::new()),
             ahead: RefCell::new(HashMap::new()),
             say,
@@ -199,10 +217,21 @@ impl<O: TypeOracle> ComponentSource for OnDemand<O> {
     }
 
     fn url(&self, key: &str) -> String {
-        self.done.borrow().url(key)
+        let mounted = self.mounts.iter().find_map(|(prefix, base)| {
+            let rest = key.strip_prefix(prefix.as_str())?.strip_prefix('/')?;
+            Some(format!("{base}/{rest}.qml"))
+        });
+        mounted.unwrap_or_else(|| self.done.borrow().url(key))
     }
 
     fn key(&self, url: &str) -> String {
-        self.done.borrow().key(url)
+        let mounted = self.mounts.iter().find_map(|(prefix, base)| {
+            let rest = url.strip_prefix(base.as_str())?.strip_prefix('/')?;
+            Some(format!(
+                "{prefix}/{}",
+                rest.strip_suffix(".qml").unwrap_or(rest)
+            ))
+        });
+        mounted.unwrap_or_else(|| self.done.borrow().key(url))
     }
 }

@@ -96,3 +96,28 @@ fn an_entry_with_a_mistake_is_refused_without_watch() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("Main.qml:4:"), "{err}");
 }
+
+#[test]
+fn an_alias_to_a_directory_without_the_module_is_refused_naming_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("Main.qml");
+    std::fs::write(&main, "import QtQuick\nItem {}\n").unwrap();
+    let other = dir.path().join("Other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(other.join("qmldir"), "module App.Other\n").unwrap();
+    let alias = format!("App.Media={}", other.display());
+    let out = ljos(&["run", main.to_str().unwrap(), "--watch", "--alias", &alias]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("App.Media"), "{err}");
+    assert!(err.contains(&other.display().to_string()), "{err}");
+    assert!(err.contains("App.Other"), "{err}");
+}
+
+#[test]
+fn run_offers_aliases() {
+    let out = ljos(&["run", "--help"]);
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("--alias <MODULE=DIR>"), "{help}");
+}

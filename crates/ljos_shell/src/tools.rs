@@ -50,6 +50,8 @@ impl ToolSetup {
             started: None,
             #[cfg(feature = "mcp")]
             inspector: self.inspector,
+            #[cfg(feature = "mcp")]
+            aliases_told: false,
         }
     }
 }
@@ -67,6 +69,9 @@ pub(crate) struct Tools {
     started: Option<Instant>,
     #[cfg(feature = "mcp")]
     inspector: Option<inspector::Served>,
+    /// Whether the inspector was told the aliases in force.
+    #[cfg(feature = "mcp")]
+    aliases_told: bool,
 }
 
 impl Tools {
@@ -153,6 +158,31 @@ impl<M> ShellApp<M> {
                 .is_some_and(|served| served.take_reload_request());
             if asked {
                 self.reload_now();
+            }
+            // An agent changed an alias: the same reload, after the
+            // session took it. One it refuses is answered at once.
+            let alias = self
+                .tools
+                .inspector
+                .as_mut()
+                .and_then(|served| served.take_alias_request());
+            if let Some(alias) = alias {
+                match self.set_alias(&alias.module, alias.dir.as_deref()) {
+                    Ok(()) => self.tools.aliases_told = false,
+                    Err(why) => {
+                        if let Some(served) = self.tools.inspector.as_mut() {
+                            served.refuse_alias(&why);
+                        }
+                    }
+                }
+            }
+            // Told at the start and after each change, not every pass.
+            if !self.tools.aliases_told {
+                self.tools.aliases_told = true;
+                let Self { tools, dev, .. } = self;
+                if let (Some(served), Some(dev)) = (tools.inspector.as_mut(), dev.as_ref()) {
+                    served.set_aliases(dev.aliases().iter());
+                }
             }
             if self.take_flushed() {
                 let Self { view, tools, .. } = self;
@@ -532,6 +562,24 @@ mod inspector {
         /// Whether an agent asked for a reload that nobody has started.
         pub(crate) fn take_reload_request(&mut self) -> bool {
             self.inspector.take_reload_request()
+        }
+
+        /// What an agent asked an alias to be, when nobody has taken it.
+        pub(crate) fn take_alias_request(&mut self) -> Option<ljos_dev::mcp::AliasRequest> {
+            self.inspector.take_alias_request()
+        }
+
+        /// Answers the agent whose alias the session would not take.
+        pub(crate) fn refuse_alias(&mut self, why: &ljos_dev::AliasError) {
+            self.inspector.refuse_alias(why);
+        }
+
+        /// Tells the inspector the aliases in force, for `app_status`.
+        pub(crate) fn set_aliases<'a>(
+            &mut self,
+            aliases: impl IntoIterator<Item = (&'a str, &'a std::path::Path)>,
+        ) {
+            self.inspector.set_aliases(aliases);
         }
 
         /// Answers the agent that waits for a reload, with how it went.
