@@ -467,6 +467,30 @@ fn the_token_files_of_starts_that_were_killed_are_removed_by_the_next() {
     assert!(!token_file.exists());
 }
 
+/// Nothing answers the stopped server's token at `addr`. A refused connection
+/// is not asked of it: the port is free again, so a server another test starts
+/// may have it already, and a connect to a free ephemeral port can even meet
+/// itself. Neither knows this token.
+fn assert_not_served(addr: impl std::net::ToSocketAddrs, token: &str) {
+    use std::io::{Read as _, Write as _};
+    let Ok(mut stream) = TcpStream::connect(addr) else {
+        return;
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+    let request = format!(
+        "POST /mcp HTTP/1.1\r\nConnection: close\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    // Whoever has the port may close it or say nothing: only an answer counts.
+    let _ = stream.write_all(request.as_bytes());
+    let mut raw = String::new();
+    let _ = stream.read_to_string(&mut raw);
+    assert!(!raw.starts_with("HTTP/1.1 200"), "still served: {raw}");
+}
+
 #[test]
 fn the_token_file_is_its_owners_alone_and_goes_with_the_server() {
     let mut served = Served::tcp();
@@ -501,10 +525,7 @@ fn the_token_file_is_its_owners_alone_and_goes_with_the_server() {
     let addr = served.addr();
     served.server.stop().unwrap();
     assert!(!path.exists(), "the token does not outlive the server");
-    assert!(
-        TcpStream::connect(addr).is_err(),
-        "nothing listens any more"
-    );
+    assert_not_served(addr, body["token"].as_str().unwrap());
 }
 
 #[test]

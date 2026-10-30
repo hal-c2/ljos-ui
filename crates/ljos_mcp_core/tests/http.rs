@@ -153,6 +153,28 @@ impl Rig {
     }
 }
 
+/// Nothing answers the stopped server's token at `addr`. A refused connection
+/// is not asked of it: the port is free again, so a server another test starts
+/// may have it already, and a connect to a free ephemeral port can even meet
+/// itself. Neither knows this token.
+fn assert_not_served(addr: std::net::SocketAddr, bearer: &str) {
+    let Ok(mut stream) = std::net::TcpStream::connect(addr) else {
+        return;
+    };
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let request = format!(
+        "POST /mcp HTTP/1.1\r\nConnection: close\r\nHost: {addr}\r\nAuthorization: {bearer}\r\nContent-Length: {}\r\n\r\n{CALL}",
+        CALL.len()
+    );
+    // Whoever has the port may close it or say nothing: only an answer counts.
+    let _ = stream.write_all(request.as_bytes());
+    let mut raw = String::new();
+    let _ = stream.read_to_string(&mut raw);
+    assert!(!raw.starts_with("HTTP/1.1 200"), "still served: {raw}");
+}
+
 fn config() -> HttpConfig {
     HttpConfig::loopback(CapSet::of([Cap::Inspect]))
 }
@@ -342,8 +364,7 @@ fn the_token_file_is_the_owners_and_goes_when_the_server_stops() {
     let addr = rig.server.addr().unwrap();
     rig.server.stop().unwrap();
     assert!(!path.exists());
-    // Nothing is left listening.
-    assert!(std::net::TcpStream::connect(addr).is_err());
+    assert_not_served(addr, &rig.bearer);
 }
 
 #[test]
@@ -363,7 +384,7 @@ fn stopping_closes_a_connection_that_was_left_open() {
         Ok(n) => panic!("{n} unexpected bytes"),
         Err(e) => assert_ne!(e.kind(), std::io::ErrorKind::WouldBlock, "{e}"),
     }
-    assert!(std::net::TcpStream::connect(addr).is_err());
+    assert_not_served(addr, &rig.bearer);
 }
 
 /// A directory with a path short enough for a socket: `TMPDIR` may be

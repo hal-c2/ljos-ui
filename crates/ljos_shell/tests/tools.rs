@@ -257,6 +257,30 @@ mod inspector {
         (w, rx.recv().unwrap())
     }
 
+    /// Nothing answers the stopped server's token at `addr`. A refused connection
+    /// is not asked of it: the port is free again, so a server another test starts
+    /// may have it already, and a connect to a free ephemeral port can even meet
+    /// itself. Neither knows this token.
+    fn assert_not_served(addr: impl std::net::ToSocketAddrs, token: &str) {
+        use std::io::{Read as _, Write as _};
+        let Ok(mut stream) = TcpStream::connect(addr) else {
+            return;
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let request = format!(
+            "POST /mcp HTTP/1.1\r\nConnection: close\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        // Whoever has the port may close it or say nothing: only an answer counts.
+        let _ = stream.write_all(request.as_bytes());
+        let mut raw = String::new();
+        let _ = stream.read_to_string(&mut raw);
+        assert!(!raw.starts_with("HTTP/1.1 200"), "still served: {raw}");
+    }
+
     /// The token a client reads from the file the window wrote.
     fn token(address: &InspectorAddress) -> String {
         let text = fs::read_to_string(&address.token_file).unwrap();
@@ -489,7 +513,8 @@ mod inspector {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
-        assert_eq!(token(&address).len(), 64);
+        let bearer = token(&address);
+        assert_eq!(bearer.len(), 64);
 
         w.h.state_mut().stop_inspector().unwrap();
         assert!(!address.token_file.exists(), "the token file is removed");
@@ -498,10 +523,7 @@ mod inspector {
             .url
             .trim_start_matches("http://")
             .trim_end_matches("/mcp");
-        assert!(
-            TcpStream::connect(host).is_err(),
-            "nothing listens any more"
-        );
+        assert_not_served(host, &bearer);
     }
 
     #[test]
