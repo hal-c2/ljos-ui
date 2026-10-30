@@ -26,9 +26,7 @@ Feature: PrincipledMaterial and what every material has
         width: 200; height: 200; color: "black"
         View3D {
           anchors.fill: parent
-          environment: SceneEnvironment {
-            clearColor: "#202020"; backgroundMode: SceneEnvironment.Color
-          }
+          environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
           OrthographicCamera { z: 600 }
           DirectionalLight { objectName: "sun"; brightness: 0 }
           Model {

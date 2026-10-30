@@ -25,9 +25,7 @@ Feature: Blended models are drawn back to front
         width: 200; height: 200; color: "black"
         View3D {
           anchors.fill: parent
-          environment: SceneEnvironment {
-            clearColor: "black"; backgroundMode: SceneEnvironment.Color
-          }
+          environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
           OrthographicCamera { z: 600 }
           Model {
             objectName: "red"; source: "#Rectangle"; z: 50
