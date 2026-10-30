@@ -4533,8 +4533,6 @@ pub(crate) fn emit_mouse_event(
     accepted
 }
 
-/// Whether `node` and the nodes it is in are shown, or one of them is
-/// `sampled`.
 /// What of `node` a picture of `area` shows, in its own coordinates, at
 /// least a logical pixel a side so that an empty item still has one.
 fn picture_area(tree: &RenderTree, node: NodeId, area: PictureArea) -> kurbo::Rect {
@@ -4561,6 +4559,8 @@ fn picture_area(tree: &RenderTree, node: NodeId, area: PictureArea) -> kurbo::Re
     )
 }
 
+/// Whether `node` and the nodes it is in are shown, or one of them is
+/// `sampled`.
 fn in_view(tree: &RenderTree, node: NodeId, sampled: &FxHashSet<NodeId>) -> bool {
     let mut at = Some(node);
     while let Some(id) = at {
