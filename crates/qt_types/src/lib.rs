@@ -71,7 +71,8 @@
 //!         is singleton uncreatable value namespace parser
 //!         enum TransformOrigin TopLeft Top ...        `flags` when the keys combine
 //!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`, `reset`, `script`
-//!         signal clicked mouse          the arguments by name, `_` for one without
+//!         signal clicked mouse:QQuickMouseEvent   the arguments by name, `_` for one
+//!                                       without, each with `:` and its type when known
 //!         method forceActiveFocus
 //! ```
 //!
@@ -540,6 +541,10 @@ pub struct Signal {
     /// What a handler may call the arguments without declaring them. Empty
     /// for an argument Qt gives no name.
     pub parameters: Vec<&'static str>,
+    /// Each argument's type, beside `parameters`; empty where the table has
+    /// none. In Qt's table it is the C++ name (`QQuickMouseEvent`), in
+    /// Ljós's own the QML name (`real`).
+    pub parameter_types: Vec<&'static str>,
 }
 
 #[derive(Debug)]
@@ -872,10 +877,17 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     }
                     "signal" => {
                         let name = word();
-                        let parameters = words.map(|name| if name == "_" { "" } else { name });
+                        // Only the first `:`: a C++ type has `::` in it.
+                        let (parameters, parameter_types) = words
+                            .map(|word| {
+                                let (name, ty) = word.split_once(':').unwrap_or((word, ""));
+                                (if name == "_" { "" } else { name }, ty)
+                            })
+                            .unzip();
                         ty.signals.push(Signal {
                             name,
-                            parameters: parameters.collect(),
+                            parameters,
+                            parameter_types,
                         });
                     }
                     "method" => ty.methods.push(word()),

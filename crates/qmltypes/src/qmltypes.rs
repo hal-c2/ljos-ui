@@ -155,7 +155,16 @@ fn signal(object: &QmlObject<'_>) -> Signal {
     Signal {
         name: named(object),
         parameters: objects(object, "Parameter").map(named).collect(),
+        parameter_types: objects(object, "Parameter").map(typed).collect(),
     }
+}
+
+/// The object's `type`, empty when it has none.
+fn typed(object: &QmlObject<'_>) -> String {
+    bindings(object)
+        .find(|(name, _)| *name == "type")
+        .map(|(_, value)| text(value))
+        .unwrap_or_default()
 }
 
 /// The object's `name`, empty when it has none (a signal argument Qt's

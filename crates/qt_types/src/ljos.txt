@@ -684,8 +684,8 @@ module Qt.labs.synchronizer
 		signal sourcePropertyChanged
 		signal targetObjectChanged
 		signal targetPropertyChanged
-		signal valueBounced object property
-		signal valueIgnored object property
+		signal valueBounced object:QtObject property:string
+		signal valueIgnored object:QtObject property:string
 
 module QtCore
 	BluetoothPermission QtCore.BluetoothPermission
@@ -869,7 +869,7 @@ module QtMultimedia
 		signal activeTracksChanged
 		signal metaDataChanged
 		signal errorChanged
-		signal errorOccurred error errorString
+		signal errorOccurred error:int errorString:string
 		method play
 		method pause
 		method stop
@@ -937,7 +937,7 @@ module QtMultimedia
 		signal paused
 		signal playing
 		signal stopped
-		signal errorOccurred error errorString
+		signal errorOccurred error:int errorString:string
 		method play
 		method pause
 		method stop
@@ -968,7 +968,7 @@ module QtMultimedia
 		prop videoSize QtQml.size named readonly
 		signal subtitleTextChanged
 		signal videoSizeChanged
-		signal videoFrameChanged _
+		signal videoFrameChanged _:var
 
 module QtNetwork
 	NetworkInformation QtNetwork.NetworkInformation
@@ -1257,8 +1257,8 @@ module QtQml
 		signal asynchronousChanged
 		signal countChanged
 		signal objectChanged
-		signal objectAdded index object
-		signal objectRemoved index object
+		signal objectAdded index:int object:QtObject
+		signal objectRemoved index:int object:QtObject
 		method objectAt
 	type QtQml.Locale Locale
 		is uncreatable
@@ -1363,7 +1363,7 @@ module QtQml.Models
 		signal countChanged
 		signal nameChanged
 		signal includeByDefaultChanged
-		signal changed removed inserted
+		signal changed removed:var inserted:var
 		signal defaultIncludeChanged
 		method addGroups
 		method removeGroups
@@ -1381,7 +1381,7 @@ module QtQml.Models
 		signal invertedChanged
 		signal columnChanged
 		signal invalidateModel
-		signal invalidateCache filter
+		signal invalidateCache filter:QtObject
 		method invalidate
 	type QtQml.Models.ItemSelectionModel ItemSelectionModel
 		prototype QtQml.QtObject named
@@ -1396,10 +1396,10 @@ module QtQml.Models
 		signal hasSelectionChanged
 		signal currentIndexChanged
 		signal selectedIndexesChanged
-		signal selectionChanged selected deselected
-		signal currentChanged current previous
-		signal currentRowChanged current previous
-		signal currentColumnChanged current previous
+		signal selectionChanged selected:var deselected:var
+		signal currentChanged current:var previous:var
+		signal currentRowChanged current:var previous:var
+		signal currentColumnChanged current:var previous:var
 		method select
 		method setCurrentIndex
 		method clear
@@ -1422,24 +1422,24 @@ module QtQml.Models
 		prop dynamicRoles QtQml.bool named
 		signal countChanged
 		signal dynamicRolesChanged
-		signal dataChanged topLeft bottomRight roles
-		signal headerDataChanged orientation first last
-		signal layoutAboutToBeChanged parents hint
-		signal layoutChanged parents hint
+		signal dataChanged topLeft:var bottomRight:var roles:var
+		signal headerDataChanged orientation:int first:int last:int
+		signal layoutAboutToBeChanged parents:var hint:int
+		signal layoutChanged parents:var hint:int
 		signal modelAboutToBeReset
 		signal modelReset
-		signal rowsAboutToBeInserted parent first last
-		signal rowsInserted parent first last
-		signal rowsAboutToBeRemoved parent first last
-		signal rowsRemoved parent first last
-		signal rowsAboutToBeMoved sourceParent sourceStart sourceEnd destinationParent destinationRow
-		signal rowsMoved sourceParent sourceStart sourceEnd destinationParent destinationRow
-		signal columnsAboutToBeInserted parent first last
-		signal columnsInserted parent first last
-		signal columnsAboutToBeRemoved parent first last
-		signal columnsRemoved parent first last
-		signal columnsAboutToBeMoved sourceParent sourceStart sourceEnd destinationParent destinationColumn
-		signal columnsMoved sourceParent sourceStart sourceEnd destinationParent destinationColumn
+		signal rowsAboutToBeInserted parent:var first:int last:int
+		signal rowsInserted parent:var first:int last:int
+		signal rowsAboutToBeRemoved parent:var first:int last:int
+		signal rowsRemoved parent:var first:int last:int
+		signal rowsAboutToBeMoved sourceParent:var sourceStart:int sourceEnd:int destinationParent:var destinationRow:int
+		signal rowsMoved sourceParent:var sourceStart:int sourceEnd:int destinationParent:var destinationRow:int
+		signal columnsAboutToBeInserted parent:var first:int last:int
+		signal columnsInserted parent:var first:int last:int
+		signal columnsAboutToBeRemoved parent:var first:int last:int
+		signal columnsRemoved parent:var first:int last:int
+		signal columnsAboutToBeMoved sourceParent:var sourceStart:int sourceEnd:int destinationParent:var destinationColumn:int
+		signal columnsMoved sourceParent:var sourceStart:int sourceEnd:int destinationParent:var destinationColumn:int
 		method index
 		method get
 		method append
@@ -1504,7 +1504,7 @@ module QtQml.Models
 		signal priorityChanged
 		signal columnChanged
 		signal invalidateModel
-		signal invalidateCache filter
+		signal invalidateCache filter:QtObject
 		method invalidate
 	type QtQml.Models.StringSorter StringSorter
 		prototype QtQml.Models.RoleSorter named
@@ -1847,7 +1847,7 @@ module QtQuick
 		signal screensChanged
 		signal argumentsChanged
 		signal quitOnLastWindowClosedChanged
-		signal reopened hasVisibleWindows
+		signal reopened hasVisibleWindows:bool
 	type QtQuick.Behavior Behavior
 		prototype QtQml.QtObject named
 		default animation
@@ -1887,7 +1887,7 @@ module QtQuick
 		signal contextTypeChanged
 		signal renderTargetChanged
 		signal renderStrategyChanged
-		signal paint region
+		signal paint region:rect
 		signal painted
 		signal imageLoaded
 		method getContext
@@ -2008,7 +2008,7 @@ module QtQuick
 		signal persistentTranslationChanged
 		signal snapModeChanged
 		signal centroidChanged
-		signal translationChanged delta
+		signal translationChanged delta:vector2d
 		signal activeTranslationChanged
 	type QtQuick.DropArea DropArea
 		prototype QtQuick.Item named
@@ -2017,10 +2017,10 @@ module QtQuick
 		prop drag QtQuick.DropAreaDrag pointer readonly
 		signal containsDragChanged
 		signal keysChanged
-		signal entered drag
+		signal entered drag:QtObject
 		signal exited
-		signal positionChanged drag
-		signal dropped drop
+		signal positionChanged drag:QtObject
+		signal dropped drop:QtObject
 		signal sourceChanged
 	type QtQuick.Easing Easing
 		prototype QtQml.QtObject named
@@ -2539,16 +2539,16 @@ module QtQuick
 		signal preventStealingChanged
 		signal cursorShapeChanged
 		signal pressAndHoldIntervalChanged
-		signal pressAndHold mouse
-		signal pressed mouse
-		signal released mouse
-		signal clicked mouse
-		signal doubleClicked mouse
-		signal positionChanged mouse
+		signal pressAndHold mouse:QtObject
+		signal pressed mouse:QtObject
+		signal released mouse:QtObject
+		signal clicked mouse:QtObject
+		signal doubleClicked mouse:QtObject
+		signal positionChanged mouse:QtObject
 		signal entered
 		signal exited
 		signal canceled
-		signal wheel wheel
+		signal wheel wheel:QtObject
 	type QtQuick.MouseEvent MouseEvent
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -2875,10 +2875,10 @@ module QtQuick
 	type QtQuick.PinchArea PinchArea
 		prototype QtQuick.Item named
 		prop pinch QtQuick.Pinch pointer readonly
-		signal pinchStarted pinch
-		signal pinchUpdated pinch
-		signal pinchFinished pinch
-		signal smartZoom pinch
+		signal pinchStarted pinch:QtObject
+		signal pinchUpdated pinch:QtObject
+		signal pinchFinished pinch:QtObject
+		signal smartZoom pinch:QtObject
 	type QtQuick.PinchHandler PinchHandler
 		prototype QtQuick.PointerHandler named
 		prop minimumPointCount QtQml.int named
@@ -2914,9 +2914,9 @@ module QtQuick
 		signal activeTranslationChanged
 		signal persistentTranslationChanged
 		signal centroidChanged
-		signal scaleChanged delta
-		signal rotationChanged delta
-		signal translationChanged delta
+		signal scaleChanged delta:real
+		signal rotationChanged delta:real
+		signal translationChanged delta:vector2d
 	type QtQuick.PointHandler PointHandler
 		prototype QtQuick.PointerHandler named
 		prop point QtQuick.HandlerPoint pointer readonly
@@ -2978,8 +2978,8 @@ module QtQuick
 		signal acceptedPointerTypesChanged
 		signal acceptedButtonsChanged
 		signal acceptedModifiersChanged
-		signal grabChanged transition point
-		signal canceled point
+		signal grabChanged transition:int point:var
+		signal canceled point:var
 	type QtQuick.Positioner Positioner
 		attached QtQuick.PositionerAttached
 		is uncreatable
@@ -3048,8 +3048,8 @@ module QtQuick
 		signal modelChanged
 		signal delegateChanged
 		signal countChanged
-		signal itemAdded index item
-		signal itemRemoved index item
+		signal itemAdded index:int item:QtObject
+		signal itemRemoved index:int item:QtObject
 		method itemAt
 	type QtQuick.Rotation Rotation
 		prototype QtQuick.Transform
@@ -3435,8 +3435,8 @@ module QtQuick
 		signal resizableRowsChanged
 		signal editTriggersChanged
 		signal selectionModeChanged
-		signal columnMoved logicalIndex oldVisualIndex newVisualIndex
-		signal rowMoved logicalIndex oldVisualIndex newVisualIndex
+		signal columnMoved logicalIndex:int oldVisualIndex:int newVisualIndex:int
+		signal rowMoved logicalIndex:int oldVisualIndex:int newVisualIndex:int
 		signal layoutChanged
 		method forceLayout
 		method itemAtCell
@@ -3509,12 +3509,12 @@ module QtQuick
 		signal longPressThresholdChanged
 		signal timeHeldChanged
 		signal pointChanged
-		signal tapped eventPoint _
-		signal singleTapped eventPoint _
-		signal doubleTapped eventPoint _
-		signal canceled point
+		signal tapped eventPoint:var _:int
+		signal singleTapped eventPoint:var _:int
+		signal doubleTapped eventPoint:var _:int
+		signal canceled point:var
 		signal longPressed
-		signal grabChanged transition point
+		signal grabChanged transition:int point:var
 	type QtQuick.Text Text
 		prototype QtQuick.Item named
 		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8
@@ -3586,8 +3586,8 @@ module QtQuick
 		signal topPaddingChanged
 		signal rightPaddingChanged
 		signal bottomPaddingChanged
-		signal linkActivated link
-		signal linkHovered link
+		signal linkActivated link:string
+		signal linkHovered link:string
 		method linkAt
 	type QtQuick.TextDocument TextDocument
 		is uncreatable
@@ -3629,8 +3629,8 @@ module QtQuick
 		signal baseUrlChanged
 		signal textDocumentChanged
 		signal cursorSelectionChanged
-		signal linkActivated link
-		signal linkHovered link
+		signal linkActivated link:string
+		signal linkHovered link:string
 		method linkAt
 		method append
 		method remove
@@ -3715,8 +3715,8 @@ module QtQuick
 		prototype QtQuick.TableView named
 		prop rootIndex QtQml.var named reset
 		signal rootIndexChanged
-		signal expanded row depth
-		signal collapsed row recursively
+		signal expanded row:int depth:int
+		signal collapsed row:int recursively:bool
 		method depth
 		method isExpanded
 		method expand
@@ -3798,7 +3798,7 @@ module QtQuick
 		signal activeTimeoutChanged
 		signal blockingChanged
 		signal marginChanged
-		signal wheel event
+		signal wheel event:QtObject
 	type QtQuick.Window Window
 		prototype QtQuick.Rectangle named
 		attached QtQuick.WindowAttached
@@ -3838,7 +3838,7 @@ module QtQuick
 		signal screenChanged
 		signal activeFocusItemChanged
 		signal contentItemChanged
-		signal closing close
+		signal closing close:QtObject
 		method show
 		method hide
 		method showNormal
@@ -3856,7 +3856,7 @@ module QtQuick
 		prototype QtQuick.Item named
 		prop window QtQml.QtObject named pointer
 		signal windowChanged
-		signal containedWindowChanged window
+		signal containedWindowChanged window:QtObject
 	type QtQuick.XAnimator XAnimator
 		prototype QtQuick.Animator named
 	type QtQuick.YAnimator YAnimator
@@ -4019,7 +4019,7 @@ module QtQuick
 		signal proposedActionChanged
 		signal dragTypeChanged
 		signal dragStarted
-		signal dragFinished dropAction
+		signal dragFinished dropAction:int
 		method start
 		method startDrag
 		method cancel
@@ -4259,46 +4259,46 @@ module QtQuick
 		signal enabledChanged
 		signal forwardToChanged
 		signal priorityChanged
-		signal pressed event
-		signal released event
-		signal shortcutOverride event
-		signal asteriskPressed event
-		signal backPressed event
-		signal backtabPressed event
-		signal callPressed event
-		signal cancelPressed event
-		signal context1Pressed event
-		signal context2Pressed event
-		signal context3Pressed event
-		signal context4Pressed event
-		signal deletePressed event
-		signal digit0Pressed event
-		signal digit1Pressed event
-		signal digit2Pressed event
-		signal digit3Pressed event
-		signal digit4Pressed event
-		signal digit5Pressed event
-		signal digit6Pressed event
-		signal digit7Pressed event
-		signal digit8Pressed event
-		signal digit9Pressed event
-		signal downPressed event
-		signal enterPressed event
-		signal escapePressed event
-		signal flipPressed event
-		signal hangupPressed event
-		signal leftPressed event
-		signal menuPressed event
-		signal noPressed event
-		signal returnPressed event
-		signal rightPressed event
-		signal selectPressed event
-		signal spacePressed event
-		signal tabPressed event
-		signal upPressed event
-		signal volumeDownPressed event
-		signal volumeUpPressed event
-		signal yesPressed event
+		signal pressed event:QtObject
+		signal released event:QtObject
+		signal shortcutOverride event:QtObject
+		signal asteriskPressed event:QtObject
+		signal backPressed event:QtObject
+		signal backtabPressed event:QtObject
+		signal callPressed event:QtObject
+		signal cancelPressed event:QtObject
+		signal context1Pressed event:QtObject
+		signal context2Pressed event:QtObject
+		signal context3Pressed event:QtObject
+		signal context4Pressed event:QtObject
+		signal deletePressed event:QtObject
+		signal digit0Pressed event:QtObject
+		signal digit1Pressed event:QtObject
+		signal digit2Pressed event:QtObject
+		signal digit3Pressed event:QtObject
+		signal digit4Pressed event:QtObject
+		signal digit5Pressed event:QtObject
+		signal digit6Pressed event:QtObject
+		signal digit7Pressed event:QtObject
+		signal digit8Pressed event:QtObject
+		signal digit9Pressed event:QtObject
+		signal downPressed event:QtObject
+		signal enterPressed event:QtObject
+		signal escapePressed event:QtObject
+		signal flipPressed event:QtObject
+		signal hangupPressed event:QtObject
+		signal leftPressed event:QtObject
+		signal menuPressed event:QtObject
+		signal noPressed event:QtObject
+		signal returnPressed event:QtObject
+		signal rightPressed event:QtObject
+		signal selectPressed event:QtObject
+		signal spacePressed event:QtObject
+		signal tabPressed event:QtObject
+		signal upPressed event:QtObject
+		signal volumeDownPressed event:QtObject
+		signal volumeUpPressed event:QtObject
+		signal yesPressed event:QtObject
 	type QtQuick.LayoutMirroringAttached LayoutMirroringAttached
 		is uncreatable
 		prop enabled QtQml.bool named reset
@@ -4684,7 +4684,7 @@ module QtQuick.Controls
 		is uncreatable
 		prop menu QtQuick.Controls.Basic.Menu named pointer
 		signal menuChanged
-		signal requested position
+		signal requested position:point
 
 module QtQuick.Controls.Basic
 	AbstractButton QtQuick.Templates.AbstractButton
@@ -5598,7 +5598,7 @@ module QtQuick.Dialogs
 		signal informativeTextChanged
 		signal detailedTextChanged
 		signal buttonsChanged
-		signal buttonClicked button role
+		signal buttonClicked button:int role:int
 	type QtQuick.Dialogs.AbstractDialog AbstractDialog
 		prototype QtQml.QtObject named
 		default data
@@ -6209,10 +6209,10 @@ module QtQuick.Templates
 		signal sourceChanged
 		signal titleChanged
 		signal delegateChanged
-		signal clicked date
-		signal pressed date
-		signal released date
-		signal pressAndHold date
+		signal clicked date:var
+		signal pressed date:var
+		signal released date:var
+		signal pressAndHold date:var
 	type QtQuick.Templates.AbstractWeekNumberColumn AbstractWeekNumberColumn
 		prototype QtQuick.Templates.Control named
 		prop month QtQml.int named
@@ -6236,8 +6236,8 @@ module QtQuick.Templates
 		signal checkedChanged
 		signal enabledChanged
 		signal shortcutChanged
-		signal triggered source
-		signal toggled source
+		signal triggered source:QtObject
+		signal toggled source:QtObject
 		method trigger
 		method toggle
 	type QtQuick.Templates.ActionGroup ActionGroup
@@ -6252,7 +6252,7 @@ module QtQuick.Templates
 		signal checkedActionChanged
 		signal exclusiveChanged
 		signal enabledChanged
-		signal triggered action
+		signal triggered action:QtObject
 		method addAction
 		method removeAction
 	type QtQuick.Templates.ApplicationWindow ApplicationWindow
@@ -6295,7 +6295,7 @@ module QtQuick.Templates
 		signal checkedButtonChanged
 		signal exclusiveChanged
 		signal checkStateChanged
-		signal clicked button
+		signal clicked button:QtObject
 		method addButton
 		method removeButton
 	type QtQuick.Templates.CheckBox CheckBox
@@ -6369,8 +6369,8 @@ module QtQuick.Templates
 		signal implicitIndicatorWidthChanged
 		signal implicitIndicatorHeightChanged
 		signal implicitContentWidthPolicyChanged
-		signal activated index
-		signal highlighted index
+		signal activated index:int
+		signal highlighted index:int
 		signal accepted
 		method incrementCurrentIndex
 		method decrementCurrentIndex
@@ -6569,7 +6569,7 @@ module QtQuick.Templates
 		signal standardButtonsChanged
 		signal contentWidthChanged
 		signal contentHeightChanged
-		signal clicked button
+		signal clicked button:QtObject
 		signal accepted
 		signal rejected
 		signal applied
@@ -7276,9 +7276,9 @@ module QtQuick.Templates
 		signal hoverEnabledChanged
 		signal focusReasonChanged
 		signal focusPolicyChanged
-		signal pressed event
-		signal released event
-		signal pressAndHold event
+		signal pressed event:QtObject
+		signal released event:QtObject
+		signal pressAndHold event:QtObject
 	type QtQuick.Templates.TextField TextField
 		prototype QtQuick.TextInput named
 		prop background QtQuick.Item named pointer
@@ -7307,9 +7307,9 @@ module QtQuick.Templates
 		signal hoverEnabledChanged
 		signal focusReasonChanged
 		signal focusPolicyChanged
-		signal pressed event
-		signal released event
-		signal pressAndHold event
+		signal pressed event:QtObject
+		signal released event:QtObject
+		signal pressAndHold event:QtObject
 	type QtQuick.Templates.ToolBar ToolBar
 		prototype QtQuick.Templates.Pane named
 		enum Position Header=0 Footer=1
@@ -7859,8 +7859,8 @@ module QtQuick3D
 		signal modelChanged
 		signal delegateChanged
 		signal countChanged
-		signal objectAdded index object
-		signal objectRemoved index object
+		signal objectAdded index:int object:QtObject
+		signal objectRemoved index:int object:QtObject
 		method objectAt
 	type QtQuick3D.RuntimeLoader RuntimeLoader
 		prototype QtQuick3D.Node named
@@ -8094,7 +8094,7 @@ module QtSensors
 		signal readingChanged
 		signal skipDuplicatesChanged
 		signal typeChanged
-		signal sensorError error
+		signal sensorError error:int
 		method start
 		method stop
 	type QtSensors.SensorReading SensorReading

@@ -479,8 +479,9 @@ impl<'a, 'c> Module<'a, 'c> {
         }
         for signal in meta.own_signals() {
             let _ = write!(out, "\t\tsignal {}", signal.name);
-            for (name, _) in &signal.params {
-                let _ = write!(out, " {}", if name.is_empty() { "_" } else { name });
+            for (name, ty) in &signal.params {
+                let name = if name.is_empty() { "_" } else { name };
+                let _ = write!(out, " {name}:{}", ty.name());
             }
             out.push('\n');
         }

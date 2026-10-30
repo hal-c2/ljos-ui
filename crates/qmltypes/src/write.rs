@@ -132,14 +132,22 @@ fn class(out: &mut String, class: &Class, name: &str) {
         );
     }
     for signal in &class.signals {
+        // A name Qt's header does not give is still an argument. The table
+        // is lines of words, so a type of more than one word is left out.
+        let arguments: Vec<String> = signal
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let name = if name.is_empty() { "_" } else { name };
+                match signal.parameter_types.get(i) {
+                    Some(ty) if !ty.is_empty() && !ty.contains(' ') => format!("{name}:{ty}"),
+                    _ => name.to_owned(),
+                }
+            })
+            .collect();
         let mut words = vec!["signal", signal.name.as_str()];
-        // A name Qt's header does not give is still an argument.
-        words.extend(
-            signal
-                .parameters
-                .iter()
-                .map(|name| if name.is_empty() { "_" } else { name }),
-        );
+        words.extend(arguments.iter().map(String::as_str));
         line(out, 2, &words);
     }
     for method in &class.methods {

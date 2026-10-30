@@ -249,6 +249,18 @@ fn the_default_property_is_inherited() {
 }
 
 #[test]
+fn a_signal_says_the_type_of_each_parameter() {
+    let table = read(
+        "",
+        "module M\n\tT M.T\n\ttype M.T T\n\t\tsignal done a:real _:Qt::Key c\n",
+    );
+    let index = table.modules["M"].exports["T"];
+    let signal = &table.types[index].signals[0];
+    assert_eq!(signal.parameters, ["a", "", "c"]);
+    assert_eq!(signal.parameter_types, ["real", "Qt::Key", ""]);
+}
+
+#[test]
 #[cfg_attr(
     not(qt_types_table),
     ignore = "about Qt's own description of its types, and this build has no table of them"

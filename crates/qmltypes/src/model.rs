@@ -70,6 +70,8 @@ pub struct Property {
 pub struct Signal {
     pub name: String,
     pub parameters: Vec<String>,
+    /// Each argument's type as `.qmltypes` writes it, beside `parameters`.
+    pub parameter_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
