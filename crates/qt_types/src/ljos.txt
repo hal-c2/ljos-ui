@@ -8298,6 +8298,7 @@ module QtQuick3D.Helpers
 	GridGeometry QtQuick3D.Helpers.GridGeometry
 	HeightFieldGeometry QtQuick3D.Helpers.HeightFieldGeometry
 	InfiniteGrid QtQuick3D.Helpers.InfiniteGrid
+	LodManager QtQuick3D.Helpers.LodManager
 	LookAtNode QtQuick3D.Helpers.LookAtNode
 	OrbitCameraController QtQuick3D/Helpers/OrbitCameraController.qml
 	PlaneGeometry QtQuick3D.Helpers.PlaneGeometry
@@ -8431,6 +8432,14 @@ module QtQuick3D.Helpers
 		signal gridAxesChanged
 		signal gridIntervalChanged
 		signal visibleChanged
+	type QtQuick3D.Helpers.LodManager LodManager
+		prototype QtQuick3D.Node named
+		prop camera QtQml.QtObject named pointer
+		prop distances QtQml.var named
+		prop fadeDistance QtQml.real named
+		signal cameraChanged
+		signal distancesChanged
+		signal fadeDistanceChanged
 	type QtQuick3D.Helpers.LookAtNode LookAtNode
 		prototype QtQuick3D.Node named
 		prop target QtQml.QtObject named pointer

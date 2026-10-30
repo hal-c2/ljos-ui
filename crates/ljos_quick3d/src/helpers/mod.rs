@@ -9,6 +9,7 @@ mod geometry;
 mod height_field;
 mod infinite_grid;
 mod library;
+mod lod_manager;
 mod look_at;
 mod mesh;
 mod procedural_mesh;
@@ -23,6 +24,7 @@ use height_field::HeightFieldGeometry;
 use infinite_grid::InfiniteGrid;
 pub(crate) use infinite_grid::read as infinite_grid;
 use ljos::prelude::*;
+use lod_manager::LodManager;
 use look_at::LookAtNode;
 use procedural_mesh::{ProceduralMesh, ProceduralMeshSubset};
 use render_statistics::RenderStatistics;
@@ -49,6 +51,7 @@ pub(crate) fn register(engine: &Engine) {
         ProceduralMeshSubset,
         RenderStatistics,
         LookAtNode,
+        LodManager,
     ]));
     library::register(engine);
 }
