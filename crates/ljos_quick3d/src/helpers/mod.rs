@@ -6,6 +6,7 @@
 
 mod extended_environment;
 mod geometry;
+mod height_field;
 mod library;
 mod look_at;
 mod mesh;
@@ -15,6 +16,7 @@ use geometry::{
     CapsuleGeometry, ConeGeometry, CuboidGeometry, CylinderGeometry, GridGeometry, PlaneGeometry,
     SphereGeometry, TorusGeometry,
 };
+use height_field::HeightFieldGeometry;
 use ljos::prelude::*;
 use look_at::LookAtNode;
 
@@ -34,6 +36,7 @@ pub(crate) fn register(engine: &Engine) {
         ExtendedSceneEnvironment,
         InstanceRange,
         RandomInstancing,
+        HeightFieldGeometry,
         LookAtNode,
     ]));
     library::register(engine);

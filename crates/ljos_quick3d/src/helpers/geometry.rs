@@ -23,13 +23,13 @@ pub(super) fn status_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     )]
 }
 
-const NULL: i32 = 0;
-const READY: i32 = 2;
-const ERROR: i32 = 3;
+pub(super) const NULL: i32 = 0;
+pub(super) const READY: i32 = 2;
+pub(super) const ERROR: i32 = 3;
 
 /// What a generated geometry shares: where its `Geometry` and its
 /// "complete" flag are, and how it makes its mesh from its properties.
-trait Generated: QmlType + 'static {
+pub(super) trait Generated: QmlType + 'static {
     /// `None` for a geometry that has no `status`.
     const STATUS: Option<Prop<i32>>;
     fn geometry(&mut self) -> &mut Geometry;
@@ -39,7 +39,7 @@ trait Generated: QmlType + 'static {
 }
 
 /// Makes the mesh again and commits it, once the object is complete.
-fn rebuild<T: Generated>(cx: &Cx) {
+pub(super) fn rebuild<T: Generated>(cx: &Cx) {
     if !cx.with_mut(|t: &mut T| *t.complete()).unwrap_or(false) {
         return;
     }
@@ -54,11 +54,11 @@ fn rebuild<T: Generated>(cx: &Cx) {
     }
 }
 
-fn changed<T: Generated>(cx: &Cx, _: PropIndex) {
+pub(super) fn changed<T: Generated>(cx: &Cx, _: PropIndex) {
     rebuild::<T>(cx);
 }
 
-fn complete<T: Generated>(cx: &Cx) {
+pub(super) fn complete<T: Generated>(cx: &Cx) {
     let _ = cx.with_mut(|t: &mut T| *t.complete() = true);
     rebuild::<T>(cx);
 }

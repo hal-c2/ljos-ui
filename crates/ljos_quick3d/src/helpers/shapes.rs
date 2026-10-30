@@ -415,6 +415,85 @@ pub(crate) fn grid(
     b
 }
 
+/// A mesh over a grid of `cols` by `rows` heights (each 0 to 1, row by row
+/// from the far edge, as a picture is read). It spans `extents.x` by
+/// `extents.z`, centred on the origin, and `extents.y` up from the plane.
+/// `smooth` gives the normals of the surface at each vertex; without, every
+/// triangle has its own vertices and its face's normal.
+pub(super) fn height_field(
+    heights: &[f32],
+    cols: u32,
+    rows: u32,
+    extents: [f32; 3],
+    smooth: bool,
+) -> Built {
+    let mut b = Built::default();
+    if cols < 2 || rows < 2 || heights.len() < (cols * rows) as usize {
+        return b;
+    }
+    let h = |i: u32, j: u32| heights[(j * cols + i) as usize] * extents[1];
+    let point = |i: u32, j: u32| {
+        [
+            (i as f32 / (cols - 1) as f32 - 0.5) * extents[0],
+            h(i, j),
+            (j as f32 / (rows - 1) as f32 - 0.5) * extents[2],
+        ]
+    };
+    let uv = |i: u32, j: u32| [i as f32 / (cols - 1) as f32, j as f32 / (rows - 1) as f32];
+    // Counter-clockwise seen from above (+Y), where +Z is towards the viewer.
+    let quads = || (0..rows - 1).flat_map(|j| (0..cols - 1).map(move |i| (i, j)));
+    if smooth {
+        let dx = extents[0] / (cols - 1) as f32;
+        let dz = extents[2] / (rows - 1) as f32;
+        for j in 0..rows {
+            for i in 0..cols {
+                let (l, r) = (i.saturating_sub(1), (i + 1).min(cols - 1));
+                let (u, d) = (j.saturating_sub(1), (j + 1).min(rows - 1));
+                let sx = (h(r, j) - h(l, j)) / ((r - l) as f32 * dx);
+                let sz = (h(i, d) - h(i, u)) / ((d - u) as f32 * dz);
+                let n = normalise([-sx, 1.0, -sz]);
+                b.vertex(point(i, j), n, uv(i, j));
+            }
+        }
+        for (i, j) in quads() {
+            let at = |i: u32, j: u32| j * cols + i;
+            b.quad(at(i, j), at(i, j + 1), at(i + 1, j + 1), at(i + 1, j));
+        }
+    } else {
+        for (i, j) in quads() {
+            let (a, c, d, e) = ((i, j), (i, j + 1), (i + 1, j + 1), (i + 1, j));
+            for tri in [[a, c, d], [a, d, e]] {
+                let p: Vec<[f32; 3]> = tri.iter().map(|&(i, j)| point(i, j)).collect();
+                let n = face_normal(p[0], p[1], p[2]);
+                for (k, &(i, j)) in tri.iter().enumerate() {
+                    let v = b.vertex(p[k], n, uv(i, j));
+                    b.indices.push(v);
+                }
+            }
+        }
+    }
+    b
+}
+
+fn face_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
+    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    normalise([
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ])
+}
+
+fn normalise(v: [f32; 3]) -> [f32; 3] {
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if len < 1e-9 {
+        [0.0, 1.0, 0.0]
+    } else {
+        [v[0] / len, v[1] / len, v[2] / len]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,5 +624,27 @@ mod tests {
         let xs: Vec<f32> = b.positions.iter().map(|p| p[0]).collect();
         assert_eq!(xs.iter().cloned().fold(f32::MIN, f32::max), 2.0);
         assert!(grid(0, 1.0, 0, 1.0).is_empty());
+    }
+
+    #[test]
+    fn a_height_field_faces_up_with_one_vertex_per_pixel() {
+        let b = height_field(&[0.0, 0.5, 1.0, 0.25], 2, 2, [10.0, 8.0, 10.0], true);
+        assert_eq!(b.positions.len(), 4);
+        assert_eq!(b.indices.len(), 6);
+        assert!(triangles(&b).iter().all(|t| facing(t)[1] > 0.0));
+        // Heights scale by extents.y; the field is centred on the origin.
+        assert_eq!(b.positions[2], [-5.0, 8.0, 5.0]);
+    }
+
+    #[test]
+    fn a_flat_shaded_height_field_has_a_normal_for_each_face() {
+        let b = height_field(&[0.0, 0.0, 1.0, 0.0], 2, 2, [10.0, 10.0, 10.0], false);
+        assert_eq!(b.positions.len(), 6);
+        assert!(b.normals[0] != b.normals[3]);
+    }
+
+    #[test]
+    fn a_height_field_needs_two_pixels_each_way() {
+        assert!(height_field(&[1.0], 1, 1, [1.0; 3], true).is_empty());
     }
 }

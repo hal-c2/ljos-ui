@@ -8289,15 +8289,33 @@ module QtQuick3D.Helpers
 		signal lensFlareLensColorTextureChanged
 		signal lensFlareLensDirtTextureChanged
 		signal lensFlareLensStarburstTextureChanged
+	AxisHelper QtQuick3D/Helpers/AxisHelper.qml
 	CapsuleGeometry QtQuick3D.Helpers.CapsuleGeometry
 	ConeGeometry QtQuick3D.Helpers.ConeGeometry
 	CuboidGeometry QtQuick3D.Helpers.CuboidGeometry
 	CylinderGeometry QtQuick3D.Helpers.CylinderGeometry
 	GridGeometry QtQuick3D.Helpers.GridGeometry
+	HeightFieldGeometry QtQuick3D.Helpers.HeightFieldGeometry
 	LookAtNode QtQuick3D.Helpers.LookAtNode
+	OrbitCameraController QtQuick3D/Helpers/OrbitCameraController.qml
 	PlaneGeometry QtQuick3D.Helpers.PlaneGeometry
 	SphereGeometry QtQuick3D.Helpers.SphereGeometry
 	TorusGeometry QtQuick3D.Helpers.TorusGeometry
+	WasdController QtQuick3D/Helpers/WasdController.qml
+	type QtQuick3D/Helpers/AxisHelper.qml AxisHelper
+		prototype QtQuick3D.Node named
+		prop enableAxisLines QtQml.bool named
+		prop enableXYGrid QtQml.bool named
+		prop enableXZGrid QtQml.bool named
+		prop enableYZGrid QtQml.bool named
+		prop gridColor QtQuick.color named
+		prop gridOpacity QtQml.real named
+		signal enableAxisLinesChanged
+		signal enableXYGridChanged
+		signal enableXZGridChanged
+		signal enableYZGridChanged
+		signal gridColorChanged
+		signal gridOpacityChanged
 	type QtQuick3D.Helpers.CapsuleGeometry CapsuleGeometry
 		prototype QtQuick3D.Geometry named
 		enum Status Null=0 Loading=1 Ready=2 Error=3
@@ -8383,10 +8401,48 @@ module QtQuick3D.Helpers
 		signal horizontalStepChanged
 		signal verticalLinesChanged
 		signal verticalStepChanged
+	type QtQuick3D.Helpers.HeightFieldGeometry HeightFieldGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		prop status Status readonly
+		prop extents QtQuick.vector3d named
+		prop smoothShading QtQml.bool named
+		prop source QtQml.url named
+		signal statusChanged
+		signal extentsChanged
+		signal smoothShadingChanged
+		signal sourceChanged
 	type QtQuick3D.Helpers.LookAtNode LookAtNode
 		prototype QtQuick3D.Node named
 		prop target QtQml.QtObject named pointer
 		signal targetChanged
+	type QtQuick3D/Helpers/OrbitCameraController.qml OrbitCameraController
+		prototype QtQuick.Item named
+		prop origin QtQuick3D.Node named pointer
+		prop camera QtQuick3D.Node named pointer
+		prop xSpeed QtQml.real named
+		prop ySpeed QtQml.real named
+		prop xInvert QtQml.bool named
+		prop yInvert QtQml.bool named
+		prop mouseEnabled QtQml.bool named
+		prop panEnabled QtQml.bool named
+		prop automaticClipping QtQml.bool named
+		prop acceptedButtons QtQml.int named
+		prop minimumDistance QtQml.real named readonly
+		signal originChanged
+		signal cameraChanged
+		signal xSpeedChanged
+		signal ySpeedChanged
+		signal xInvertChanged
+		signal yInvertChanged
+		signal mouseEnabledChanged
+		signal panEnabledChanged
+		signal automaticClippingChanged
+		signal acceptedButtonsChanged
+		signal minimumDistanceChanged
+		method orbit
+		method pan
+		method zoom
 	type QtQuick3D.Helpers.PlaneGeometry PlaneGeometry
 		prototype QtQuick3D.Geometry named
 		enum Status Null=0 Loading=1 Ready=2 Error=3
@@ -8435,6 +8491,44 @@ module QtQuick3D.Helpers
 		signal tubeRadiusChanged
 		signal ringsChanged
 		signal segmentsChanged
+	type QtQuick3D/Helpers/WasdController.qml WasdController
+		prototype QtQuick.Item named
+		prop controlledObject QtQuick3D.Node named pointer
+		prop speed QtQml.real named
+		prop shiftSpeed QtQml.real named
+		prop forwardSpeed QtQml.real named
+		prop backSpeed QtQml.real named
+		prop leftSpeed QtQml.real named
+		prop rightSpeed QtQml.real named
+		prop upSpeed QtQml.real named
+		prop downSpeed QtQml.real named
+		prop xSpeed QtQml.real named
+		prop ySpeed QtQml.real named
+		prop xInvert QtQml.bool named
+		prop yInvert QtQml.bool named
+		prop keysEnabled QtQml.bool named
+		prop mouseEnabled QtQml.bool named
+		prop acceptedButtons QtQml.int named
+		prop inputsNeedProcessing QtQml.bool named readonly
+		signal controlledObjectChanged
+		signal speedChanged
+		signal shiftSpeedChanged
+		signal forwardSpeedChanged
+		signal backSpeedChanged
+		signal leftSpeedChanged
+		signal rightSpeedChanged
+		signal upSpeedChanged
+		signal downSpeedChanged
+		signal xSpeedChanged
+		signal ySpeedChanged
+		signal xInvertChanged
+		signal yInvertChanged
+		signal keysEnabledChanged
+		signal mouseEnabledChanged
+		signal acceptedButtonsChanged
+		signal inputsNeedProcessingChanged
+		method hold
+		method step
 
 module QtSensors
 	Accelerometer QtSensors.Accelerometer
