@@ -327,6 +327,12 @@ fn applied(source: &str, edit: Edit) -> String {
     apply(source, &edit).expect("the edit applies").text
 }
 
+/// An object opened up is laid out as the formatter lays it out.
+fn formatted(text: String) -> String {
+    assert_eq!(qml_fmt::format(&text).unwrap(), text);
+    text
+}
+
 fn set(object: NodePath, name: &str, value: &str) -> Edit {
     Edit::SetBinding {
         object,
@@ -518,5 +524,84 @@ fn groups_are_not_children() {
             }
         ),
         Err(Error::NotFound(root().child(1)))
+    );
+}
+
+#[test]
+fn members_that_share_lines_are_laid_out_one_a_line_to_take_several_lines() {
+    let source =
+        "Item {\n    Rectangle {\n        width: 1; height: 2\n        color: \"red\" }\n}\n";
+    assert_eq!(
+        formatted(applied(
+            source,
+            Edit::InsertObject {
+                parent: root().child(0),
+                index: 0,
+                text: "Text {\n    text: \"hi\"\n}".into(),
+            }
+        )),
+        "Item {\n    Rectangle {\n        width: 1\n        height: 2\n        color: \"red\"\n        Text {\n            text: \"hi\"\n        }\n    }\n}\n"
+    );
+}
+
+#[test]
+fn comments_stay_with_their_members_when_an_object_is_opened_up() {
+    let source =
+        "Row { // tools\n    spacing: 2; /* gap */ Button {} // first\n\n    Button {} }\n";
+    assert_eq!(
+        formatted(applied(
+            source,
+            Edit::InsertObject {
+                parent: root(),
+                index: 1,
+                text: "Item {\n    width: 1\n}".into(),
+            }
+        )),
+        // As `qml_fmt` has it, a comment on the line of a member trails it.
+        "Row { // tools\n    spacing: 2 /* gap */\n    Button {} // first\n\n    Item {\n        width: 1\n    }\n\n    Button {}\n}\n"
+    );
+}
+
+#[test]
+fn a_new_binding_of_several_lines_opens_an_object_up() {
+    let source = "Item { width: 1; height: 2 }\n";
+    assert_eq!(
+        formatted(applied(
+            source,
+            set(root(), "onWidthChanged", "{\n    log()\n}")
+        )),
+        "Item {\n    width: 1\n    height: 2\n    onWidthChanged: {\n        log()\n    }\n}\n"
+    );
+}
+
+#[test]
+fn an_empty_object_with_a_comment_keeps_it() {
+    let source = "Item { /* nothing yet */ }\n";
+    assert_eq!(
+        formatted(applied(
+            source,
+            Edit::InsertObject {
+                parent: root(),
+                index: 0,
+                text: "Item {}".into(),
+            }
+        )),
+        "Item { /* nothing yet */\n    Item {}\n}\n"
+    );
+}
+
+#[test]
+fn a_child_moved_within_an_object_that_opens_up_is_not_left_behind() {
+    let source = "Column {\n    Text { text: \"a\" } Text { text: \"b\" }\n    Item {\n        width: 1\n    } }\n";
+    assert_eq!(
+        applied(
+            source,
+            Edit::MoveObject {
+                object: root().child(2),
+                parent: root(),
+                index: 0,
+            }
+        ),
+        "Column {\n    Item {\n        width: 1\n    }\n    Text { text: \"a\" }\n    Text { text: \"b\" }\n}\n"
     );
 }

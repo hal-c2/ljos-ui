@@ -174,13 +174,14 @@ is parsed again and an edit that would not parse changes nothing
 (`WouldBreak`); a file that does not parse is refused. Undo is exact:
 `Applied::inverse` gives the changes that restore the input.
 
-The spike's evidence is in its tests: 18 golden cases and a corpus test
+The spike's evidence is in its tests: golden cases and a corpus test
 that, on every object of 581 QML files in this repository (2589 objects),
-adds and removes a binding, inserts and removes a child at both ends and
-moves a child away and back. 7727 round trips give the file back byte for
-byte; 40 opposite moves give the same document with a blank line or a
-binding order shifted (the inverse changes still restore the bytes); 29
-insertions are refused as unsupported (below).
+adds and removes a binding (plain and dotted), inserts and removes a child
+at both ends and moves a child away and back. 10316 round trips give the
+file back byte for byte; 1128 insertions open up an object whose members
+shared lines and give the same document back once removed; 51 opposite
+moves give the same document with a blank line or a binding order shifted
+(the inverse changes still restore the bytes). None is refused.
 
 ## Consequences
 
@@ -197,10 +198,6 @@ insertions are refused as unsupported (below).
 
 ## Open questions
 
-- **Insertion into an object whose members share a line with a brace** (`Item { width: 1
-  ⏎ height: 2 }`) is refused (the 29 cases). Opening such an object up
-  needs a choice of where its closing brace goes; until a designer needs
-  it, refusing is honest.
 - **Addresses.** Edits address objects by child-index paths (`root/0/2`)
   and by `id`. Paths change under other edits; a session of edits needs to
   re-resolve each address from an `id` or from the object key hot reload

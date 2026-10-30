@@ -53,7 +53,7 @@ struct Tally {
     round_trips: usize,
     /// Opposite moves that gave the same document but not the same bytes.
     respaced: Vec<String>,
-    /// Objects written on one line that an insertion opened up.
+    /// Objects whose members shared lines that an insertion opened up.
     opened: Vec<String>,
     /// Opposite moves that put a child elsewhere among its parent's
     /// bindings.
@@ -261,6 +261,13 @@ fn every_edit_on_the_repository_files_can_be_undone_byte_for_byte() {
         eprintln!("unsupported: {line}");
     }
     assert!(tally.files > 150, "the corpus went missing: {tally:?}");
+    // Every layout the files have is handled: objects whose members share
+    // lines with a brace are opened up rather than refused.
+    assert!(
+        tally.unsupported.is_empty(),
+        "edits refused: {:#?}",
+        tally.unsupported
+    );
 }
 
 fn split_child(path: &NodePath) -> Option<(NodePath, usize)> {

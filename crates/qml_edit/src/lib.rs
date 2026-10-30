@@ -32,6 +32,12 @@
 //!   bindings more often than it dots them; dotted when not. A name with a
 //!   capital first part is an attached property (`Layout.fillWidth`) and is
 //!   never grouped.
+//! - **Members that share a line** with each other or with a brace are
+//!   edited inside the line while what is put in fits on one. Text of
+//!   several lines opens the object up as `qml_fmt` lays it out: each
+//!   member on a line of its own one level in, comments where they were
+//!   relative to their member, one empty line where the author left any,
+//!   and the `}` on a line of its own. Only the object's inside changes.
 //!
 //! # What it promises
 //!
@@ -500,7 +506,9 @@ impl<'s> Text<'s> {
                     base: String::new(),
                     gaps: None,
                 };
-                Ok(vec![self.insertion(target, &members, at, &snippet, true)?])
+                Ok(vec![
+                    self.insertion(target, &members, at, &snippet, true, None)?,
+                ])
             }
             Edit::RemoveObject { object } => {
                 let (parent, n) = object
@@ -542,7 +550,12 @@ impl<'s> Text<'s> {
                 };
                 let at = child_member_index(&members, *index)
                     .ok_or_else(|| Error::NotFound(destination.child(*index)))?;
-                let put = self.insertion(target, &members, at, &moved, true)?;
+                let put = self.insertion(target, &members, at, &moved, true, Some(&cut))?;
+                if put.range.start <= cut.range.start && cut.range.end <= put.range.end {
+                    // The destination was opened up and its new inside was
+                    // written without what moves.
+                    return Ok(vec![put]);
+                }
                 if put.range.start > cut.range.start && put.range.start < cut.range.end {
                     return Err(Error::Unsupported(
                         "the place to move to is inside what moves",
@@ -589,7 +602,7 @@ impl<'s> Text<'s> {
             if let Some(last) = members.iter().rposition(|m| {
                 matches!(m, QmlMember::Binding(b) if b.name.parts.len() > 1 && b.name.parts[0] == first)
             }) {
-                return self.insertion(object, &members, last + 1, &snippet, false);
+                return self.insertion(object, &members, last + 1, &snippet, false, None);
             }
             if prefers_groups(root) {
                 // The value's own lines move in with it.
@@ -612,7 +625,7 @@ impl<'s> Text<'s> {
                 )
             })
             .map_or(0, |i| i + 1);
-        self.insertion(object, &members, at, &snippet, false)
+        self.insertion(object, &members, at, &snippet, false, None)
     }
 
     /// Whether a comment in `group` is not about its member `index`: one
@@ -663,6 +676,10 @@ impl<'s> Text<'s> {
     /// that member from what is above, one separates the new object from it
     /// too, so that the object stands on its own as its neighbours do and
     /// [`removal`](Self::removal) gives the file back as it was.
+    ///
+    /// `cut` is a change made with this one (what a move takes out): if
+    /// the object has to be opened up, its inside is written with `cut`
+    /// made.
     fn insertion(
         &self,
         object: &QmlObject<'_>,
@@ -670,11 +687,18 @@ impl<'s> Text<'s> {
         at: usize,
         snippet: &Snippet,
         grouped: bool,
+        cut: Option<&Change>,
     ) -> Result<Change, Error> {
         let one_line = !snippet.text.contains('\n');
         if members.is_empty() {
             let (open, close) = self.braces(object);
             let outer = self.indent_at(open).to_owned();
+            let close_line = line_start(self.src, close);
+            if self.comments.iter().any(|c| c.0 > open && c.0 < close)
+                || (self.src[open..close].contains('\n') && !is_blank(&self.src[close_line..close]))
+            {
+                return self.open_up(object, members, at, snippet, grouped, cut);
+            }
             if !self.src[open..close].contains('\n') {
                 let replacement = if one_line {
                     format!(" {} ", snippet.text)
@@ -690,10 +714,6 @@ impl<'s> Text<'s> {
                     range: open + 1..close,
                     replacement,
                 });
-            }
-            let close_line = line_start(self.src, close);
-            if !is_blank(&self.src[close_line..close]) {
-                return Err(Error::Unsupported("`}` shares its line with other text"));
             }
             let inner = format!("{}{}", self.indent_at(close), self.unit);
             return Ok(Change {
@@ -739,7 +759,9 @@ impl<'s> Text<'s> {
                     replacement: format!("{gap}{indent}{}{nl}", self.reindent(snippet, &indent)),
                 })
             }
-            (Extent::Inline { .. }, _) if !one_line => self.open_up(object, members, at, snippet),
+            (Extent::Inline { .. }, _) if !one_line => {
+                self.open_up(object, members, at, snippet, grouped, cut)
+            }
             // QML takes no `;` after an object or a block: a blank
             // separates them.
             (Extent::Inline { start, .. }, true) => Ok(Change {
@@ -761,48 +783,140 @@ impl<'s> Text<'s> {
         }
     }
 
-    /// Puts several lines into an object written on one line by giving
-    /// each of its members a line of its own: the object's inside is the
-    /// edited span, everything around it stays.
+    /// Puts several lines into an object whose members share lines, by
+    /// laying its inside out the way `qml_fmt` does: each member on a line
+    /// of its own one level in, a comment that trailed a member still
+    /// trailing it, one empty line where the author left any between two
+    /// members, and the `}` on a line of its own. The object's inside is the
+    /// edited span; everything around it stays.
+    ///
+    /// `members[at]` is the member the snippet goes before (`at` past the
+    /// end: after the last member). `members` may leave out a member of
+    /// `object` that moves; it goes, with what `cut` takes out with it.
     fn open_up(
         &self,
         object: &QmlObject<'_>,
         members: &[&QmlMember<'_>],
         at: usize,
         snippet: &Snippet,
+        grouped: bool,
+        cut: Option<&Change>,
     ) -> Result<Change, Error> {
         let (open, close) = self.braces(object);
-        if self.src[open..close].contains('\n') {
-            return Err(Error::Unsupported(
-                "several lines into a line shared by members",
-            ));
+        let cut = cut.filter(|c| c.range.start > open && c.range.end <= close);
+        let taken = |start: usize, end: usize| {
+            cut.is_some_and(|c| c.range.start <= start && end <= c.range.end)
+        };
+        // What the inside holds, in order: members, and comments that are
+        // in no member.
+        let mut pieces: Vec<Piece> = Vec::new();
+        for member in &object.members {
+            let span = member_span(member);
+            let (start, end) = (span.start as usize, self.end_of(span));
+            if !taken(start, end) {
+                pieces.push(Piece::Code { start, end });
+            }
         }
-        if self.comments.iter().any(|c| c.0 > open && c.0 < close) {
-            return Err(Error::Unsupported(
-                "a comment inside an object written on one line",
-            ));
+        let mut members_at = object.members.iter().map(member_span).peekable();
+        for &(start, end) in self.comments.iter().filter(|c| c.0 > open && c.1 < close) {
+            while members_at.peek().is_some_and(|s| s.end as usize <= start) {
+                members_at.next();
+            }
+            let in_member = members_at.peek().is_some_and(|s| s.start as usize <= start);
+            if !in_member && !taken(start, end) {
+                pieces.push(Piece::Comment { start, end });
+            }
         }
+        pieces.sort_by_key(Piece::start);
+
+        // Where the snippet goes: above the comment lines that are about the
+        // member it goes before.
+        let before = members.get(at).map(|m| {
+            let span = member_span(m);
+            match self.extent(span) {
+                Extent::Lines { start, .. } => start.max(open + 1),
+                Extent::Inline { start, .. } => start,
+            }
+        });
+        let new_at = before.map_or(pieces.len(), |key| {
+            pieces.partition_point(|p| p.start() < key)
+        });
+
         let outer = self.indent_at(open);
         let inner = format!("{outer}{}", self.unit);
-        let mut lines: Vec<String> = members
-            .iter()
-            .map(|m| {
-                let span = member_span(m);
-                self.src[span.start as usize..self.end_of(span)].to_owned()
-            })
-            .collect();
-        lines.insert(at, self.reindent(snippet, &inner));
-        let mut replacement = String::from(self.nl);
-        for line in lines {
-            replacement.push_str(&inner);
-            replacement.push_str(&line);
-            replacement.push_str(self.nl);
+        let new_line = |out: &mut String, blank: bool| {
+            out.push_str(self.nl);
+            if blank {
+                out.push_str(self.nl);
+            }
+            out.push_str(&inner);
+        };
+        let new_text = self.reindent(snippet, &inner);
+        let mut out = String::new();
+        let mut line_has_code = false;
+        let mut previous_comment = false;
+        let mut last_blank = false;
+        for (index, piece) in pieces.iter().enumerate() {
+            let (start, end) = (piece.start(), piece.end());
+            let gap_start = index.checked_sub(1).map_or(open + 1, |i| pieces[i].end());
+            let gap = self.copied(gap_start, start, cut);
+            if !gap.bytes().all(|b| b.is_ascii_whitespace() || b == b';') {
+                return Err(Error::Unsupported("text between the members of an object"));
+            }
+            let lines = gap.matches('\n').count();
+            let is_comment = matches!(piece, Piece::Comment { .. });
+            // No empty line is kept after `{`.
+            let blank = index > 0 && lines >= 2;
+            if index == new_at {
+                // An empty line above stays above. A new object also stands
+                // apart from the member below as that member stood apart.
+                new_line(&mut out, blank);
+                out.push_str(&new_text);
+                new_line(&mut out, grouped && blank);
+                line_has_code = false;
+            } else if lines == 0 && (is_comment || (previous_comment && !line_has_code)) {
+                // A comment trailing what is before it, or code after a
+                // comment that ends on its line, stays on that line.
+                out.push(' ');
+            } else {
+                new_line(&mut out, blank);
+                line_has_code = false;
+            }
+            out.push_str(&self.reindent(
+                &Snippet {
+                    text: self.copied(start, end, cut),
+                    base: self.indent_at(start).to_owned(),
+                    gaps: None,
+                },
+                &inner,
+            ));
+            line_has_code |= !is_comment;
+            previous_comment = is_comment;
+            last_blank = blank;
         }
-        replacement.push_str(outer);
+        if new_at == pieces.len() {
+            new_line(&mut out, grouped && last_blank);
+            out.push_str(&new_text);
+        }
+        out.push_str(self.nl);
+        out.push_str(outer);
         Ok(Change {
             range: open + 1..close,
-            replacement,
+            replacement: out,
         })
+    }
+
+    /// `start..end` of the text, with `cut` made if it is inside.
+    fn copied(&self, start: usize, end: usize, cut: Option<&Change>) -> String {
+        match cut {
+            Some(c) if start <= c.range.start && c.range.end <= end => format!(
+                "{}{}{}",
+                &self.src[start..c.range.start],
+                c.replacement,
+                &self.src[c.range.end..end]
+            ),
+            _ => self.src[start..end].to_owned(),
+        }
     }
 
     /// The change that takes `object.members[index]` out.
@@ -1028,6 +1142,26 @@ impl<'s> Text<'s> {
             out.push_str(line);
         }
         out
+    }
+}
+
+/// A thing of an object's inside that [`Text::open_up`] lays out.
+enum Piece {
+    Code { start: usize, end: usize },
+    Comment { start: usize, end: usize },
+}
+
+impl Piece {
+    fn start(&self) -> usize {
+        match self {
+            Piece::Code { start, .. } | Piece::Comment { start, .. } => *start,
+        }
+    }
+
+    fn end(&self) -> usize {
+        match self {
+            Piece::Code { end, .. } | Piece::Comment { end, .. } => *end,
+        }
     }
 }
 
