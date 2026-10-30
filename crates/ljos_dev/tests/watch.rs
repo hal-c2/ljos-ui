@@ -13,7 +13,7 @@ use std::{
 };
 
 use ljos_dev::{DevSession, Host, QUIET, Report};
-use ljos_engine::{Engine, ObjectId, Value};
+use ljos_engine::{Color, Engine, ObjectId, Value};
 use ljos_quick::QuickScene;
 use ljos_render::kurbo;
 use ljos_runtime::{Clock as _, SystemClock};
@@ -66,6 +66,9 @@ fn app_in(sub: &str, files: &[(&str, &str)], properties: Vec<(String, Value)>) -
     }
     let engine = Engine::new();
     ljos_quick::register(&engine);
+    // For the theme file's roles; nothing is made of it until a file
+    // imports it.
+    ljos_design_qml::register(&engine);
     let (tx, woke) = mpsc::channel();
     let session = DevSession::open_with(
         &engine,
@@ -931,4 +934,123 @@ Item {
     app.save("Panel.qml", &PANEL.replace('7', "9"));
     reloaded(&app.wait());
     assert_eq!(app.num("panel", "width"), 9.0);
+}
+
+const THEMED: &str = r#"import QtQuick
+import Ljos.Design
+Item {
+  objectName: "root"
+  property color accent: Colors.accent
+  property int gap: Spacing.md
+  Rectangle {
+    objectName: "box"
+    property int taps: 0
+    function tap() { taps += 1 }
+  }
+}
+"#;
+
+impl App {
+    fn color(&self, name: &str, property: &str) -> Value {
+        self.engine.read_by_name(self.find(name), property)
+    }
+
+    /// Waits until the watcher has brought a report, and returns those
+    /// of that pass.
+    fn wait_for_report(&mut self) -> Vec<Report> {
+        loop {
+            let reports = self.wait();
+            if !reports.is_empty() {
+                return reports;
+            }
+        }
+    }
+}
+
+fn colour(text: &str) -> Value {
+    Value::Color(Color::parse(text).unwrap())
+}
+
+#[test]
+fn a_theme_edit_sets_the_roles_and_makes_nothing_again() {
+    let mut app = app(&[
+        ("Main.qml", THEMED),
+        ("theme.json", r##"{ "Colors": { "accent": "#9c4dc4" } }"##),
+    ]);
+    assert_eq!(app.color("root", "accent"), colour("#9c4dc4"));
+    app.call("box", "tap");
+    let root = app.scene.root();
+
+    app.save("theme.json", r##"{ "Colors": { "accent": "#2e7d32" } }"##);
+    let reports = app.wait_for_report();
+    assert!(
+        matches!(reports[..], [Report::Theme { generation: 1, .. }]),
+        "{reports:?}"
+    );
+    assert_eq!(app.color("root", "accent"), colour("#2e7d32"));
+    assert_eq!(app.num("box", "taps"), 1.0);
+    assert_eq!(app.scene.root(), root);
+    assert_eq!(app.engine.reload_generation(), 1);
+    assert_eq!(
+        app.session.reloads(),
+        0,
+        "a theme is not a reload of the QML"
+    );
+}
+
+#[test]
+fn a_bad_theme_keeps_the_last_and_removing_it_gives_the_module_back() {
+    let mut app = app(&[
+        ("Main.qml", THEMED),
+        ("theme.json", r##"{ "Spacing": { "md": 20 } }"##),
+    ]);
+    assert_eq!(app.num("root", "gap"), 20.0);
+
+    app.save("theme.json", "{\n  \"Spacing\": { \"md\": \"wide\" }\n}\n");
+    let reports = app.wait_for_report();
+    assert!(
+        matches!(reports[..], [Report::Failed { .. }]),
+        "{reports:?}"
+    );
+    let fault = app.engine.last_reload_error().expect("the error stands");
+    assert_eq!((fault.file.as_str(), fault.line), ("theme.json", 2));
+    assert_eq!(app.num("root", "gap"), 20.0);
+    assert_eq!(app.engine.reload_generation(), 0);
+
+    fs::remove_file(app.dir.join("theme.json")).unwrap();
+    let reports = app.wait_for_report();
+    assert!(
+        matches!(reports[..], [Report::Theme { generation: 1, .. }]),
+        "{reports:?}"
+    );
+    assert_eq!(app.num("root", "gap"), 16.0);
+    assert!(app.engine.last_reload_error().is_none());
+}
+
+#[test]
+fn a_theme_that_starts_broken_starts_on_the_module_and_says_why() {
+    let app = app(&[
+        ("Main.qml", THEMED),
+        ("theme.json", r##"{ "Colors": { "acent": "#9c4dc4" } }"##),
+    ]);
+    assert_eq!(app.num("root", "gap"), 16.0);
+    let fault = app.engine.last_reload_error().expect("the window says why");
+    assert_eq!(fault.file, "theme.json");
+    assert!(fault.message.contains("acent"), "{}", fault.message);
+}
+
+#[test]
+fn a_flush_applies_a_theme_edit_before_the_answer_to_it() {
+    let mut app = app(&[("Main.qml", THEMED)]);
+    app.save("theme.json", r##"{ "Spacing": { "md": 20 } }"##);
+    app.session.reload_now(&app.engine);
+    let mut reports = Vec::new();
+    while !app.session.take_flushed() {
+        reports.extend(app.wait());
+    }
+    assert!(
+        matches!(reports[..], [Report::Theme { generation: 1, .. }]),
+        "{reports:?}"
+    );
+    assert_eq!(app.num("root", "gap"), 20.0);
 }

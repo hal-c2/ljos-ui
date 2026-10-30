@@ -19,8 +19,10 @@ use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 use ljos_runtime::{Clock, CoalesceKey, DrainBudget, UiInbox, WakeHook};
 use qml_front::{QtTypeOracle, TypeOracle};
 
+use ljos_design::theme::Theme;
+
 use crate::{
-    reloader::Reloader,
+    reloader::{Reloader, ThemeChange},
     text::ProjectTexts,
     watch::{DevMsg, WatchError, Watcher, lock},
 };
@@ -75,6 +77,81 @@ pub fn fault_of(fault: &CompileFault) -> ReloadFault {
         column: fault.column,
         message: fault.message.clone(),
     }
+}
+
+/// What a theme file is called where it is in the project: its path from
+/// the first of `roots`, or as given when it is outside them.
+#[must_use]
+pub fn theme_name(roots: &[PathBuf], path: &Path) -> String {
+    roots
+        .first()
+        .and_then(|root| path.strip_prefix(root).ok())
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// The theme file at `path` as the application starts: what it says
+/// (None when there is none), and what becomes of it.
+pub fn read_theme(name: &str, path: &Path) -> (Option<String>, ThemeChange) {
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let read = parse_theme(name, &text);
+            (Some(text), read)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, Ok(None)),
+        Err(e) => (
+            None,
+            Err(vec![CompileFault {
+                file: name.to_owned(),
+                line: 0,
+                column: 0,
+                message: format!("cannot be read: {e}"),
+            }]),
+        ),
+    }
+}
+
+/// [`ljos_design::theme::parse`], its errors as a build's.
+pub fn parse_theme(name: &str, text: &str) -> ThemeChange {
+    ljos_design::theme::parse(name, text)
+        .map(Some)
+        .map_err(|errors| errors.into_iter().map(theme_fault).collect())
+}
+
+fn theme_fault(e: ljos_design::theme::ThemeError) -> CompileFault {
+    CompileFault {
+        file: e.file,
+        line: e.line,
+        column: e.column,
+        message: e.message,
+    }
+}
+
+/// Puts `theme` on the roles of `Ljos.Design` in place of the one before
+/// (None: the module's own), and moves the engine to `generation`: a
+/// reload that makes nothing again, so what the user did is kept.
+///
+/// # Errors
+/// The theme was refused (its colours fail the contrast check); the one
+/// before stays, and the generation with it.
+pub fn set_theme(
+    engine: &Engine,
+    theme: Option<&Theme>,
+    generation: u64,
+) -> Result<(), Vec<CompileFault>> {
+    ljos_design_qml::theme::apply(engine, theme)
+        .map_err(|errors| errors.into_iter().map(theme_fault).collect::<Vec<_>>())?;
+    engine
+        .advance_reload(engine.reload_generation(), generation)
+        .map_err(|e| {
+            vec![CompileFault {
+                file: theme.map(|t| t.file.clone()).unwrap_or_default(),
+                line: 0,
+                column: 0,
+                message: e.to_string(),
+            }]
+        })
 }
 
 /// The files the application runs as the engine takes them, with why
@@ -284,6 +361,12 @@ pub enum Report {
         fault: ReloadFault,
         more: usize,
     },
+    /// The theme file was read again and the roles set again, at this
+    /// generation, in this long. Nothing was made again.
+    Theme {
+        generation: u64,
+        apply: Duration,
+    },
     /// The files are what runs again; the error is gone.
     Cleared,
     /// Pictures were saved, and this many images show them again.
@@ -350,6 +433,9 @@ const IDLE_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6577);
 /// Saved pictures are not news of the files either. The paths wait in
 /// [`DevSession::pictures`]; the message only says that some do.
 const PICTURES_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6578);
+/// A theme is news of another file than the QML: a build of the QML saved
+/// with it must not replace it.
+const THEME_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6579);
 
 /// An application under the watcher: its files compiled, its root made,
 /// and every save applied as it comes.
@@ -398,6 +484,9 @@ pub struct DevSession {
     /// Pictures saved and not yet shown again. A message that one waits
     /// may replace another in the inbox; the paths must not.
     pictures: Arc<Mutex<Vec<PathBuf>>>,
+    /// Why the theme file was refused, while it is: it stands until the
+    /// theme is read again, whatever the QML does.
+    theme_fault: Option<ReloadFault>,
 }
 
 impl DevSession {
@@ -472,6 +561,33 @@ impl DevSession {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
+        Self::open_themed(
+            engine, main, project, properties, aliases, None, oracle, wake,
+        )
+    }
+
+    /// As [`open_aliased`](Self::open_aliased), with the roles of
+    /// `Ljos.Design` set from the theme file `theme`, or from
+    /// [`THEME_FILE`] beside `main` when it is None. The file is watched
+    /// with the project: an edit sets the roles again
+    /// ([`Report::Theme`]), and one that cannot be read keeps the theme
+    /// before. A theme that is refused at the start leaves the module's
+    /// own roles, and [`Engine::last_reload_error`] says why.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_themed<O>(
+        engine: &Engine,
+        main: &Path,
+        project: Option<&Path>,
+        properties: Vec<(String, Value)>,
+        aliases: Aliases,
+        theme: Option<&Path>,
+        oracle: O,
+        wake: WakeHook,
+    ) -> Result<Self, DevError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
         // The watcher is told absolute paths; with the same root they
         // are the project's.
         let main = std::fs::canonicalize(main).map_err(|_| DevError::NotQml(main.to_owned()))?;
@@ -491,8 +607,17 @@ impl DevSession {
         else {
             return Err(DevError::NotQml(main));
         };
+        let theme = theme_path(theme, main.parent().unwrap_or(&dir));
         let reloader = Reloader::open_reaching_aliased(&dir, &entry, aliases, oracle)?;
-        Self::start(engine, reloader, vec![dir], vec![entry], properties, wake)
+        Self::start(
+            engine,
+            reloader,
+            vec![dir],
+            vec![entry],
+            properties,
+            theme,
+            wake,
+        )
     }
 
     /// As [`open_with`](Self::open_with), over every QML file under each
@@ -549,6 +674,29 @@ impl DevSession {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
+        Self::open_roots_themed(
+            engine, roots, entries, properties, aliases, None, oracle, wake,
+        )
+    }
+
+    /// As [`open_roots_aliased`](Self::open_roots_aliased), with a theme
+    /// as [`open_themed`](Self::open_themed) has: `theme`, or
+    /// [`THEME_FILE`] in the first root.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_roots_themed<O>(
+        engine: &Engine,
+        roots: &[&Path],
+        entries: &[&str],
+        properties: Vec<(String, Value)>,
+        aliases: Aliases,
+        theme: Option<&Path>,
+        oracle: O,
+        wake: WakeHook,
+    ) -> Result<Self, DevError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
         if entries.is_empty() || roots.is_empty() {
             return Err(DevError::NoEntry);
         }
@@ -559,7 +707,8 @@ impl DevSession {
         let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
         let reloader = Reloader::open_roots_aliased(&dirs, aliases, oracle)?;
         let entries = entries.iter().map(|e| (*e).to_owned()).collect();
-        Self::start(engine, reloader, roots, entries, properties, wake)
+        let theme = theme_path(theme, &roots[0]);
+        Self::start(engine, reloader, roots, entries, properties, theme, wake)
     }
 
     fn start<O>(
@@ -568,6 +717,7 @@ impl DevSession {
         roots: Vec<PathBuf>,
         entries: Vec<String>,
         properties: Vec<(String, Value)>,
+        theme: PathBuf,
         wake: WakeHook,
     ) -> Result<Self, DevError>
     where
@@ -575,6 +725,15 @@ impl DevSession {
         Reloader<O>: Send,
     {
         prepare(engine);
+        // Before the root is made, so that nothing shows the module's own
+        // roles first.
+        let theme_file = theme_name(&roots, &theme);
+        let (text, read) = read_theme(&theme_file, &theme);
+        let theme_fault = read
+            .and_then(|t| set_theme(engine, t.as_ref(), engine.reload_generation()))
+            .err()
+            .and_then(|faults| faults.first().map(fault_of));
+        reloader.watch_theme(&theme_file, Some(theme), text);
         let texts = ProjectTexts::over(&roots);
         engine.set_qml_text_compiler(Some(texts.compiler()));
         reloader.start();
@@ -638,7 +797,7 @@ impl DevSession {
                 }
             }
         }
-        if let Some(fault) = first_fault {
+        if let Some(fault) = first_fault.or_else(|| theme_fault.clone()) {
             engine.set_last_reload_error(Some(fault));
         }
         let runs = {
@@ -666,6 +825,7 @@ impl DevSession {
         let watcher = Watcher::spawn_shared(reloader, crate::debounce::QUIET, move |msg| {
             let (key, msg) = match msg {
                 DevMsg::Idle => (IDLE_KEY, msg),
+                DevMsg::Theme { .. } | DevMsg::ThemeFailed(_) => (THEME_KEY, msg),
                 DevMsg::Pictures(paths) => {
                     lock(&saved).extend(paths);
                     (PICTURES_KEY, DevMsg::Pictures(Vec::new()))
@@ -697,6 +857,7 @@ impl DevSession {
             set_aliases,
             project: roots[0].clone(),
             places,
+            theme_fault,
         })
     }
 
@@ -830,8 +991,24 @@ impl DevSession {
                         out.push(Report::Pictures { shown });
                     }
                 }
+                DevMsg::Theme { theme, generation } => {
+                    out.push(self.set_theme(engine, theme.as_deref(), generation));
+                }
+                DevMsg::ThemeFailed(faults) => {
+                    let Some(first) = faults.first() else {
+                        continue;
+                    };
+                    let fault = fault_of(first);
+                    self.theme_fault = Some(fault.clone());
+                    engine.set_last_reload_error(Some(fault.clone()));
+                    out.push(Report::Failed {
+                        fault,
+                        more: faults.len() - 1,
+                    });
+                }
                 DevMsg::Cleared => {
-                    engine.set_last_reload_error(None);
+                    // A theme that was refused is still wrong.
+                    engine.set_last_reload_error(self.theme_fault.clone());
                     self.more_errors = 0;
                     out.push(Report::Cleared);
                     // An entry before this one was mended back to what
@@ -936,6 +1113,33 @@ impl DevSession {
         }
     }
 
+    fn set_theme(&mut self, engine: &Engine, theme: Option<&Theme>, generation: u64) -> Report {
+        let started = Instant::now();
+        match set_theme(engine, theme, generation) {
+            Ok(()) => {
+                self.watcher.ack(generation);
+                let was = self.theme_fault.take();
+                if was.is_some() && engine.last_reload_error() == was {
+                    engine.set_last_reload_error(None);
+                }
+                Report::Theme {
+                    generation,
+                    apply: started.elapsed(),
+                }
+            }
+            Err(faults) => {
+                self.watcher.reject(generation);
+                let fault = fault_of(&faults[0]);
+                self.theme_fault = Some(fault.clone());
+                engine.set_last_reload_error(Some(fault.clone()));
+                Report::Failed {
+                    fault,
+                    more: faults.len() - 1,
+                }
+            }
+        }
+    }
+
     fn reload(
         &mut self,
         engine: &Engine,
@@ -995,6 +1199,10 @@ impl DevSession {
         // The roots were made again, so what a fault no boundary took had
         // left half done is gone, and its overlay with it.
         engine.clear_application_fault();
+        if let Some(fault) = &self.theme_fault {
+            // The reload cleared the error, but the QML was all it mended.
+            engine.set_last_reload_error(Some(fault.clone()));
+        }
         self.reloads += 1;
         // The session compiles every file of the project, so that a save
         // to any is one patch; the developer hears of the ones the program
@@ -1019,6 +1227,19 @@ impl DevSession {
             waited,
             shown: None,
         })
+    }
+}
+
+/// The file a theme is read from when none is named: beside the entry.
+pub const THEME_FILE: &str = ljos_design::theme::FILE;
+
+fn theme_path(named: Option<&Path>, beside: &Path) -> PathBuf {
+    match named {
+        // Absolute, as the watcher is told absolute paths; a file that is
+        // not there yet keeps the path as given, made absolute.
+        Some(p) => std::fs::canonicalize(p)
+            .unwrap_or_else(|_| std::path::absolute(p).unwrap_or_else(|_| p.to_owned())),
+        None => beside.join(THEME_FILE),
     }
 }
 

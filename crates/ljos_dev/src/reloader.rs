@@ -10,6 +10,7 @@ use std::{
 };
 
 use ljos_compiler::{AliasError, Aliases, CompileFault, FileSet, ReloadSession};
+use ljos_design::theme::Theme;
 use ljos_ir::{CompiledFile, ReloadPatch};
 use qml_front::TypeOracle;
 
@@ -78,7 +79,29 @@ pub struct Reloader<O> {
     /// The faults of a [`Build::Unsettled`], told by the next build when
     /// the files still say the same.
     held: Option<Vec<CompileFault>>,
+    /// The theme file, when the application has one where it looks.
+    theme: Option<ThemeFile>,
 }
+
+/// A theme file ([`ljos_design::theme`]): not QML, so not the session's,
+/// but saved and reloaded beside it.
+#[derive(Debug)]
+struct ThemeFile {
+    /// What errors call it: its path from the root, or as it was given.
+    name: String,
+    /// Where it is read; None for one given by [`Reloader::save_theme`].
+    path: Option<PathBuf>,
+    /// A save given as text; the inner None is a file that is gone.
+    staged: Option<Option<String>>,
+    /// Something happened to the file: it is read at the next build.
+    touched: bool,
+    /// What the file said when last read, so a save that says the same
+    /// reloads nothing.
+    seen: Option<String>,
+}
+
+/// What became of the theme file since the last build.
+pub type ThemeChange = Result<Option<Theme>, Vec<CompileFault>>;
 
 impl<O: TypeOracle + Clone> Reloader<O> {
     /// Over files given by [`save`](Self::save).
@@ -150,7 +173,67 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             pictures: BTreeSet::new(),
             read: BTreeSet::new(),
             held: None,
+            theme: None,
         }
+    }
+
+    /// Watches the theme file the application started with: `name` is
+    /// what errors call it, `path` where it is read (None when it is
+    /// given by [`save_theme`](Self::save_theme)), `text` what it said at
+    /// the start, None when there was none.
+    pub fn watch_theme(&mut self, name: &str, path: Option<PathBuf>, text: Option<String>) {
+        self.theme = Some(ThemeFile {
+            name: name.to_owned(),
+            path,
+            staged: None,
+            touched: false,
+            seen: text,
+        });
+    }
+
+    /// Where the theme file is read, to be watched.
+    pub fn theme_path(&self) -> Option<&Path> {
+        self.theme.as_ref()?.path.as_deref()
+    }
+
+    /// The theme file now says `text`; None: it is gone.
+    pub fn save_theme(&mut self, text: Option<String>) {
+        if let Some(t) = &mut self.theme {
+            t.staged = Some(text);
+        }
+    }
+
+    /// What the theme file says now, when it says something else than it
+    /// did: `Ok(None)` when it is gone, `Err` when it cannot be read as a
+    /// theme. None when nothing changed. The QML of the same saves is
+    /// built by [`build`](Self::build).
+    pub fn take_theme(&mut self) -> Option<ThemeChange> {
+        let t = self.theme.as_mut()?;
+        let text = match (t.staged.take(), std::mem::take(&mut t.touched), &t.path) {
+            (Some(text), ..) => text,
+            (None, true, Some(path)) => match std::fs::read_to_string(path) {
+                Ok(text) => Some(text),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                // Not readable now (being written): the event that ends the
+                // write brings it back.
+                Err(_) => return None,
+            },
+            _ => return None,
+        };
+        if text == t.seen {
+            return None;
+        }
+        t.seen.clone_from(&text);
+        Some(match text {
+            None => Ok(None),
+            Some(text) => crate::host::parse_theme(&t.name, &text),
+        })
+    }
+
+    /// Takes the generation a theme reload is applied at, to be answered
+    /// by [`ack`](Self::ack) or [`reject`](Self::reject) as a patch is.
+    pub fn advance(&mut self) -> u64 {
+        self.session.advance()
     }
 
     /// [`ReloadSession::set_controls_style`].
@@ -229,6 +312,12 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// wait for the quiet time. A picture is no build's, but it waits for
     /// the quiet time too: [`take_pictures`](Self::take_pictures).
     pub fn touch(&mut self, path: &Path, is_dir: bool) -> bool {
+        if let Some(t) = &mut self.theme
+            && t.path.as_deref() == Some(path)
+        {
+            t.touched = true;
+            return true;
+        }
         let places = self.session.places();
         let Some(root) = root_of(&places, path) else {
             return false;
@@ -272,11 +361,20 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// The directory may have changed in ways no event told of.
     pub fn touch_all(&mut self) {
         self.rescan = true;
+        if let Some(t) = &mut self.theme {
+            t.touched = true;
+        }
     }
 
     /// Whether a build would have anything to look at.
     pub fn has_saves(&self) -> bool {
-        self.rescan || !self.staged.is_empty() || !self.touched.is_empty()
+        self.rescan
+            || !self.staged.is_empty()
+            || !self.touched.is_empty()
+            || self
+                .theme
+                .as_ref()
+                .is_some_and(|t| t.touched || t.staged.is_some())
     }
 
     /// Whether `text`, a save of `key`, is a file emptied by a save that

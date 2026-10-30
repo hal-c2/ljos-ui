@@ -36,6 +36,9 @@ mcp = [
 # never depends on this crate (ARCHITECTURE.md principle 5); ljos_shell
 # takes it only behind its `dev` feature.
 ljos_compiler = { path = "../ljos_compiler" }
+# Theme files: their roles, how they are read and put on the module.
+ljos_design = { path = "../ljos_design" }
+ljos_design_qml = { path = "../ljos_design_qml" }
 ljos_engine = { path = "../ljos_engine" }
 ljos_ir = { path = "../ljos_ir" }
 ljos_quick = { path = "../ljos_quick" }

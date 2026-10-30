@@ -20,6 +20,7 @@ use std::{
 };
 
 use ljos_compiler::CompileFault;
+use ljos_design::theme::Theme;
 use ljos_ir::ReloadPatch;
 use notify::{
     EventKind, RecursiveMode, Watcher as _,
@@ -54,6 +55,16 @@ pub enum DevMsg {
         /// a build before it that was still being applied.
         quiet: Duration,
     },
+    /// The theme file changed: set the roles again (None: it is gone, and
+    /// the module's own come back), then [`Watcher::ack`] or
+    /// [`Watcher::reject`] the generation. Nothing is made again.
+    Theme {
+        theme: Option<Box<Theme>>,
+        generation: u64,
+    },
+    /// The theme file cannot be read as a theme; the roles stay as they
+    /// are. Not replaced by the news of the QML saved with it.
+    ThemeFailed(Vec<CompileFault>),
     /// The files do not compile; the application goes on as it is.
     Failed(Vec<CompileFault>),
     /// The files are what the application runs again: nothing is wrong.
@@ -72,6 +83,8 @@ impl DevMsg {
     pub fn kind(&self) -> &'static str {
         match self {
             DevMsg::Reload { .. } => "reload",
+            DevMsg::Theme { .. } => "theme",
+            DevMsg::ThemeFailed(_) => "theme_failed",
             DevMsg::Failed(_) => "failed",
             DevMsg::Cleared => "cleared",
             DevMsg::Idle => "idle",
@@ -180,7 +193,9 @@ impl Watcher {
         let root = roots.first().ok_or(WatchError::NoRoot)?.clone();
         let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let overflow = Arc::new(AtomicBool::new(false));
+        let theme = lock(&reloader).theme_path().map(Path::to_owned);
         let events = Events {
+            theme: theme.clone(),
             roots: roots.clone(),
             tx: tx.clone(),
             overflow: overflow.clone(),
@@ -205,6 +220,17 @@ impl Watcher {
                 }
                 Err(_) => {}
             }
+        }
+        // A theme named outside the project is watched in its directory
+        // alone; Events lets only the theme through from there.
+        if let Some(dir) = theme.as_deref().and_then(Path::parent)
+            && !watched.contains(dir)
+        {
+            fs.watch(dir, RecursiveMode::NonRecursive)
+                .map_err(|source| WatchError::Watch {
+                    path: dir.to_owned(),
+                    source,
+                })?;
         }
         let wakes = Arc::new(AtomicU64::new(0));
         let mut run = Run {
@@ -281,6 +307,7 @@ impl Drop for Watcher {
 /// on only what a build could care about, so a build into a directory
 /// beside the project does not wake the watcher.
 struct Events {
+    theme: Option<PathBuf>,
     roots: Vec<PathBuf>,
     tx: SyncSender<Cmd>,
     overflow: Arc<AtomicBool>,
@@ -312,6 +339,10 @@ impl Events {
             _ => (false, Save::Other),
         };
         for path in event.paths {
+            if self.theme.as_ref() == Some(&path) {
+                self.post(Cmd::Touched(path, false, save));
+                continue;
+            }
             let touch = root_of(&self.roots, &path).map(|root| classify(root, &path, is_dir));
             if touch.is_some_and(|t| t != Touch::Ignore) {
                 self.post(Cmd::Touched(path, is_dir, save));
@@ -458,7 +489,7 @@ impl<O: TypeOracle + Clone> Run<O> {
         if !self.build_files(flushed) {
             return false;
         }
-        !flushed || (self.sink)(DevMsg::Idle)
+        !flushed || self.flushing || (self.sink)(DevMsg::Idle)
     }
 
     /// `asked`: a reload was asked for, and files are taken as they are
@@ -468,6 +499,30 @@ impl<O: TypeOracle + Clone> Run<O> {
         let pictures = lock(&self.reloader).take_pictures();
         if !pictures.is_empty() && !(self.sink)(DevMsg::Pictures(pictures)) {
             return false;
+        }
+        // The theme first: it changes no object, so the QML saved with it
+        // is built against the generation it takes, once that is answered.
+        let theme = lock(&self.reloader).take_theme();
+        match theme {
+            Some(Ok(theme)) => {
+                let generation = lock(&self.reloader).advance();
+                self.in_flight = Some(generation);
+                if lock(&self.reloader).has_saves() {
+                    self.debounce.touch_within(started, Duration::ZERO);
+                    // An asked reload is answered once the QML is built too.
+                    self.flushing |= asked;
+                }
+                return (self.sink)(DevMsg::Theme {
+                    theme: theme.map(Box::new),
+                    generation,
+                });
+            }
+            Some(Err(faults)) => {
+                if !(self.sink)(DevMsg::ThemeFailed(faults)) {
+                    return false;
+                }
+            }
+            None => {}
         }
         if lock(&self.reloader).rescan_pending() {
             // Before the directory is read: what is written into a new

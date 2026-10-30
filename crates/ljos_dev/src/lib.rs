@@ -43,14 +43,14 @@ pub mod watch;
 pub use debounce::{Debounce, FINISHED_QUIET, QUIET};
 pub use fingerprint::Fingerprints;
 pub use host::{
-    DevError, DevSession, Host, ReloadStats, Report, STATE_PROPERTIES, apply, component_source,
-    fault_of, prepare,
+    DevError, DevSession, Host, ReloadStats, Report, STATE_PROPERTIES, THEME_FILE, apply,
+    component_source, fault_of, parse_theme, prepare, read_theme, set_theme, theme_name,
 };
 pub use ljos_compiler::{Alias, AliasError, Aliases};
 pub use overlay::Overlay;
 /// What the watched files are compiled against.
 pub use qml_front::{QtTypeOracle, TypeOracle};
-pub use reloader::{Build, Reloader, Touch, classify};
+pub use reloader::{Build, Reloader, ThemeChange, Touch, classify};
 pub use text::{ProjectTexts, text_compiler};
 pub use top::{FrameStats, Top, TopRow, TopView};
 pub use watch::{DevMsg, WatchError, Watcher};
