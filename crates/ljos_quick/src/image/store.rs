@@ -1211,8 +1211,8 @@ impl ImageStore {
 
     /// As [`ImageStore::load`], for a texture of a 3D scene: a Radiance
     /// HDR picture decodes too, to RGBE pixels
-    /// ([`ljos_render::ImageEncoding::Rgbe`]); everything else decodes as
-    /// `load` makes it. The request is a key of its own whatever the file
+    /// ([`ljos_render::ImageEncoding::Rgbe`]), and a raster picture keeps
+    /// its straight alpha ([`ljos_render::ImageEncoding::Straight`]). The request is a key of its own whatever the file
     /// is (a `data:` URL or a file without a name says nothing), so a
     /// picture both an `Image` and a texture show is decoded for each.
     pub fn load_texture(
@@ -1222,7 +1222,7 @@ impl ImageStore {
         reply: impl FnOnce(&Engine, Result<ImageHandle, LoadError>) + 'static,
     ) {
         let request = Request {
-            hdr: true,
+            texture: true,
             ..Request::default()
         };
         self.load_as(engine, url, request, reply);

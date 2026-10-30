@@ -72,6 +72,10 @@ pub enum ImageEncoding {
     /// item draws.
     #[default]
     Premultiplied,
+    /// sRGB red, green and blue not premultiplied, as a file holds them:
+    /// a 3D texture's, whose channels are read one by one and must keep
+    /// their value where the alpha is 0. No item draws these.
+    Straight,
     /// Radiance's RGBE: three mantissas and a shared exponent (biased by
     /// 128) of linear light that may go far beyond 1. Only a renderer of
     /// light (a 3D light probe) reads these; no item draws them.
@@ -247,6 +251,23 @@ impl ImageHandle {
             data: Mutex::new(Some(Arc::new(data))),
             opaque: true,
             encoding: ImageEncoding::Rgbe,
+            again: OnceLock::new(),
+            read_back: AtomicBool::new(false),
+        })))
+    }
+
+    /// Wrap straight-alpha RGBA8 pixels as they are
+    /// ([`ImageEncoding::Straight`]).
+    pub fn keeping_straight(width: u32, height: u32, data: Vec<u8>) -> Result<Self, ImageError> {
+        check(width, height, data.len())?;
+        let opaque = data.as_chunks::<4>().0.iter().all(|p| p[3] == 255);
+        Ok(Self(Arc::new(Pixels {
+            id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
+            width,
+            height,
+            data: Mutex::new(Some(Arc::new(data))),
+            opaque,
+            encoding: ImageEncoding::Straight,
             again: OnceLock::new(),
             read_back: AtomicBool::new(false),
         })))

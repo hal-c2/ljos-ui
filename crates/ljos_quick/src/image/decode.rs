@@ -41,10 +41,12 @@ pub struct Request {
     /// The page of a document asked for (`currentFrame`): 0, the first,
     /// for whatever has no pages.
     pub page: u32,
-    /// Light beyond what a byte holds is wanted as it is: a Radiance
-    /// picture decodes to RGBE pixels. What a 3D texture asks for; an
-    /// item, which shows sRGB, does not take such a picture.
-    pub hdr: bool,
+    /// The pixels as a 3D texture reads them: a Radiance picture decodes
+    /// to RGBE pixels of light beyond what a byte holds, and a raster
+    /// picture keeps its straight alpha, so a channel of a map is what the
+    /// file says even where the picture is clear. An item, which shows
+    /// premultiplied sRGB, asks for neither.
+    pub texture: bool,
 }
 
 impl Request {
@@ -251,6 +253,11 @@ pub(crate) fn cost(bytes: &[u8], request: Request) -> usize {
         return 0;
     };
     let area = |(w, h): (u32, u32)| (w as usize).saturating_mul(h as usize);
+    if request.texture {
+        // A texture is decoded whole and kept straight: the decoder's
+        // pixels and the four bytes a pixel kept.
+        return area((w, h)).saturating_mul(8);
+    }
     if request.animated && bytes.starts_with(GIF) {
         // Every frame whole at once, the canvas they are drawn on and the
         // copy of it a frame to be undone keeps, then each frame again at
@@ -409,10 +416,30 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
         });
     }
     within_budget(url, bytes, request)?;
-    if request.hdr && super::radiance::is_radiance(bytes) {
+    if request.texture && super::radiance::is_radiance(bytes) {
         let p = super::radiance::decode(bytes, MOST_PIXEL_BYTES)
             .map_err(|reason| LoadError::decode(url, reason))?;
         let image = ImageHandle::from_rgbe(p.width, p.height, p.data)
+            .map_err(|err| LoadError::decode(url, err.to_string()))?;
+        return Ok(Loaded {
+            natural: (image.width(), image.height()),
+            image,
+            vector: false,
+            frames: None,
+            pages: 1,
+        });
+    }
+    if request.texture {
+        let raw = decode_raw(url, bytes)?;
+        let rgba = match raw.channels {
+            4 => raw.data.into_owned(),
+            _ => raw
+                .data
+                .chunks_exact(raw.channels)
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect(),
+        };
+        let image = ImageHandle::keeping_straight(raw.width, raw.height, rgba)
             .map_err(|err| LoadError::decode(url, err.to_string()))?;
         return Ok(Loaded {
             natural: (image.width(), image.height()),
@@ -1724,8 +1751,25 @@ mod tests {
             animated: false,
             limit: 0,
             page: 0,
-            hdr: false,
+            texture: false,
         }
+    }
+
+    #[test]
+    fn a_texture_keeps_the_colour_of_a_clear_pixel() {
+        let png = png_of(1, 1, png::ColorType::Rgba, &[255, 0, 0, 0]);
+        let texture = Request {
+            texture: true,
+            ..Request::default()
+        };
+        let loaded = load_bytes("clear.png", &png, texture).unwrap();
+        assert_eq!(
+            loaded.image.encoding(),
+            ljos_render::ImageEncoding::Straight
+        );
+        assert_eq!(loaded.image.data(), [255, 0, 0, 0]);
+        let item = load_bytes("clear.png", &png, Request::default()).unwrap();
+        assert_eq!(item.image.data(), [0, 0, 0, 0]);
     }
 
     #[test]
@@ -1733,7 +1777,7 @@ mod tests {
         let mut hdr = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n".to_vec();
         hdr.extend([128, 64, 0, 129, 128, 64, 0, 129]);
         let light = Request {
-            hdr: true,
+            texture: true,
             ..Request::default()
         };
         let loaded = load_bytes("sky.hdr", &hdr, light).unwrap();

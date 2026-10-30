@@ -201,7 +201,8 @@ pub fn load_image(
 
 /// As [`load_image`], for a texture of a 3D scene: a Radiance HDR picture
 /// (`.hdr`) loads too, as RGBE pixels of light beyond 1
-/// ([`ljos_render::ImageEncoding::Rgbe`]).
+/// ([`ljos_render::ImageEncoding::Rgbe`]), and other pictures keep their
+/// straight alpha ([`ljos_render::ImageEncoding::Straight`]).
 pub fn load_texture(
     engine: &Engine,
     url: &str,
