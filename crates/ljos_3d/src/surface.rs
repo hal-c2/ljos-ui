@@ -1,11 +1,17 @@
 //! A scene drawn into a surface of its own: the embedding for a host that
-//! has no egui, such as a `<canvas>` on a web page (`SurfaceTarget::Canvas`)
-//! or a native window of an application's own.
+//! has no egui, such as a `<canvas>` on a web page or a native window of an
+//! application's own.
 //!
-//! The view owns its device, because such a host has no 2D painter whose
-//! device it could share. It presents only when the scene's revision or
-//! its size changed: the surface keeps showing the last picture, so a still
-//! scene costs nothing.
+//! The host gives a [`wgpu::SurfaceTarget`] (on the web
+//! `SurfaceTarget::Canvas` or `SurfaceTarget::OffscreenCanvas`) and its
+//! size in device pixels, and calls [`SurfaceView::draw`] when it has a
+//! scene to show. The view owns its device, because such a host has no 2D
+//! painter whose device it could share.
+//!
+//! The view has no frame loop and no timer: it draws only when the host
+//! calls it, and then only if the scene's revision or the size changed. The
+//! surface keeps showing the last picture, so a still scene costs nothing
+//! and a host may call `draw` from every frame callback it already has.
 
 use crate::gpu::{Renderer, Target};
 use crate::scene::Scene;
@@ -30,6 +36,9 @@ pub struct SurfaceView<'w> {
     /// The surface's format without its sRGB suffix: the picture is already
     /// sRGB and is copied, not encoded again.
     view_format: wgpu::TextureFormat,
+    /// Kept for [`SurfaceView::backend`]: a web host has to know whether
+    /// it got WebGPU or fell back to WebGL2, which nothing else tells it.
+    backend: wgpu::Backend,
     renderer: Renderer,
     target: Target,
     presented: Option<u64>,
@@ -40,13 +49,20 @@ impl std::fmt::Debug for SurfaceView<'_> {
         f.debug_struct("SurfaceView")
             .field("size", &[self.config.width, self.config.height])
             .field("format", &self.config.format)
+            .field("backend", &self.backend)
             .finish_non_exhaustive()
     }
 }
 
 impl<'w> SurfaceView<'w> {
-    /// A view over `target`, `width` by `height` device pixels. On the web
-    /// it takes WebGPU where the browser has it and WebGL2 where not.
+    /// A view over `target`, `width` by `height` device pixels (on the web
+    /// the canvas's CSS size times `devicePixelRatio`; the view sets the
+    /// canvas's `width` and `height` to it). On the web it takes WebGPU
+    /// where the browser has it and an adapter answers, and WebGL2 where
+    /// not; natively the backends wgpu's environment variables allow.
+    ///
+    /// Asynchronous because a browser answers for adapters and devices only
+    /// through promises; a native host may block on it.
     pub async fn new(
         target: impl Into<wgpu::SurfaceTarget<'w>>,
         width: u32,
@@ -71,6 +87,7 @@ impl<'w> SurfaceView<'w> {
                 ..Default::default()
             })
             .await?;
+        let backend = adapter.get_info().backend;
         let caps = surface.get_capabilities(&adapter);
         let format = caps
             .formats
@@ -115,12 +132,22 @@ impl<'w> SurfaceView<'w> {
             queue,
             config,
             view_format,
+            backend,
             renderer,
             target,
             presented: None,
         })
     }
 
+    /// The backend the view draws with: `BrowserWebGpu` or `Gl` (WebGL2)
+    /// on the web.
+    pub fn backend(&self) -> wgpu::Backend {
+        self.backend
+    }
+
+    /// Resizes the surface to `width` by `height` device pixels. The next
+    /// [`draw`](Self::draw) draws whatever the revision; until then the
+    /// surface shows nothing useful, so a host draws in the same frame.
     pub fn resize(&mut self, width: u32, height: u32) {
         let (width, height) = (width.max(1), height.max(1));
         if [width, height] == [self.config.width, self.config.height] {
@@ -134,23 +161,20 @@ impl<'w> SurfaceView<'w> {
     }
 
     /// Draws and presents `scene` if it changed since the last present or
-    /// the size did. Returns whether it presented; a surface that is lost,
-    /// out of date or hidden is configured again and drawn on the next
-    /// call.
+    /// the size did, and returns whether it presented. An unchanged scene
+    /// costs a comparison and no GPU work. Revisions are unique across
+    /// scenes, so a host may hand it another scene at any time.
+    ///
+    /// A surface that is lost or out of date is configured again and drawn
+    /// in the same call, because a host that draws only on change would not
+    /// call again. One that timed out or is hidden is not drawn; the next
+    /// call draws it.
     pub fn draw(&mut self, scene: &Scene) -> bool {
         if self.presented == Some(scene.revision()) {
             return false;
         }
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                return false;
-            }
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => return false,
+        let Some(frame) = self.frame() else {
+            return false;
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(self.view_format),
@@ -187,5 +211,21 @@ impl<'w> SurfaceView<'w> {
         self.queue.present(frame);
         self.presented = Some(scene.revision());
         true
+    }
+
+    fn frame(&mut self) -> Option<wgpu::SurfaceTexture> {
+        for _ in 0..2 {
+            match self.surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(t)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(t) => return Some(t),
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    self.surface.configure(&self.device, &self.config);
+                }
+                wgpu::CurrentSurfaceTexture::Timeout
+                | wgpu::CurrentSurfaceTexture::Occluded
+                | wgpu::CurrentSurfaceTexture::Validation => return None,
+            }
+        }
+        None
     }
 }
