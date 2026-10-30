@@ -1621,6 +1621,7 @@ module QtQuick
 	Translate QtQuick.Translate
 	TreeView QtQuick.TreeView
 	UniformAnimator QtQuick.UniformAnimator
+	Vector3dAnimation QtQuick.Vector3dAnimation
 	ViewSection QtQuick.ViewSection
 	ViewTransition QtQuick.ViewTransition
 	WheelEvent QtQuick.WheelEvent
@@ -3660,6 +3661,8 @@ module QtQuick
 		prototype QtQuick.Animator named
 		prop uniform QtQml.string named
 		signal uniformChanged
+	type QtQuick.Vector3dAnimation Vector3dAnimation
+		prototype QtQuick.PropertyAnimation named
 	type QtQuick.ViewSection ViewSection
 		is uncreatable
 		enum SectionCriteria FullString=0 FirstCharacter=1
@@ -7533,8 +7536,11 @@ module QtQuick3D
 	Object3D QtQuick3D.Object3D
 	OrthographicCamera QtQuick3D.OrthographicCamera
 	PerspectiveCamera QtQuick3D.PerspectiveCamera
+	PickResult QtQuick3D.PickResult
 	PointLight QtQuick3D.PointLight
 	PrincipledMaterial QtQuick3D.PrincipledMaterial
+	QuaternionAnimation QtQuick3D.QuaternionAnimation
+	Repeater3D QtQuick3D.Repeater3D
 	SceneEnvironment QtQuick3D.SceneEnvironment
 	SpotLight QtQuick3D.SpotLight
 	View3D QtQuick3D.View3D
@@ -7543,6 +7549,9 @@ module QtQuick3D
 		is uncreatable
 		prop frustumCullingEnabled QtQml.bool named
 		signal frustumCullingEnabledChanged
+		method mapToViewport
+		method mapFromViewport
+		method lookAt
 	type QtQuick3D.DefaultMaterial DefaultMaterial
 		prototype QtQuick3D.Material named
 		enum Lighting NoLighting=0 FragmentLighting=1
@@ -7594,6 +7603,7 @@ module QtQuick3D
 		signal pickableChanged
 	type QtQuick3D.Node Node
 		prototype QtQuick3D.Object3D named
+		enum TransformSpace LocalSpace=0 ParentSpace=1 SceneSpace=2
 		prop x QtQml.real named
 		prop y QtQml.real named
 		prop z QtQml.real named
@@ -7604,6 +7614,12 @@ module QtQuick3D
 		prop pivot QtQuick.vector3d named
 		prop opacity QtQml.real named
 		prop visible QtQml.bool named
+		prop scenePosition QtQuick.vector3d named readonly
+		prop sceneRotation QtQuick.quaternion named readonly
+		prop sceneScale QtQuick.vector3d named readonly
+		prop forward QtQuick.vector3d named readonly
+		prop up QtQuick.vector3d named readonly
+		prop right QtQuick.vector3d named readonly
 		signal xChanged
 		signal yChanged
 		signal zChanged
@@ -7614,6 +7630,21 @@ module QtQuick3D
 		signal pivotChanged
 		signal opacityChanged
 		signal visibleChanged
+		signal scenePositionChanged
+		signal sceneRotationChanged
+		signal sceneScaleChanged
+		signal forwardChanged
+		signal upChanged
+		signal rightChanged
+		method mapPositionToScene
+		method mapPositionFromScene
+		method mapPositionToNode
+		method mapPositionFromNode
+		method mapDirectionToScene
+		method mapDirectionFromScene
+		method mapDirectionToNode
+		method mapDirectionFromNode
+		method rotate
 	type QtQuick3D.Object3D Object3D
 		prototype QtQml.QtObject named
 		default data
@@ -7641,6 +7672,10 @@ module QtQuick3D
 		signal fieldOfViewOrientationChanged
 		signal clipNearChanged
 		signal clipFarChanged
+	type QtQuick3D.PickResult PickResult
+		prototype QtQml.QtObject named
+		is uncreatable
+		enum HitType Null=0 Model=1 Item=2
 	type QtQuick3D.PointLight PointLight
 		prototype QtQuick3D.Light named
 		prop constantFade QtQml.real named
@@ -7669,6 +7704,35 @@ module QtQuick3D
 		signal alphaModeChanged
 		signal alphaCutoffChanged
 		signal lightingChanged
+	type QtQuick3D.QuaternionAnimation QuaternionAnimation
+		prototype QtQuick.PropertyAnimation named
+		enum Type Slerp=0 Nlerp=1
+		prop type Type
+		prop fromXRotation QtQml.real named
+		prop fromYRotation QtQml.real named
+		prop fromZRotation QtQml.real named
+		prop toXRotation QtQml.real named
+		prop toYRotation QtQml.real named
+		prop toZRotation QtQml.real named
+		signal typeChanged
+		signal fromXRotationChanged
+		signal fromYRotationChanged
+		signal fromZRotationChanged
+		signal toXRotationChanged
+		signal toYRotationChanged
+		signal toZRotationChanged
+	type QtQuick3D.Repeater3D Repeater3D
+		prototype QtQuick3D.Node named
+		default delegate
+		prop model QtQml.var named
+		prop delegate QtQml.Component named pointer
+		prop count QtQml.int named readonly
+		signal modelChanged
+		signal delegateChanged
+		signal countChanged
+		signal objectAdded index object
+		signal objectRemoved index object
+		method objectAt
 	type QtQuick3D.SceneEnvironment SceneEnvironment
 		prototype QtQuick3D.Object3D named
 		enum BackgroundMode Transparent=0 Color=1 SkyBox=2 SkyBoxCubeMap=3 SkyMaterial=4
@@ -7708,6 +7772,12 @@ module QtQuick3D
 		signal environmentChanged
 		signal importSceneChanged
 		signal renderModeChanged
+		method pick
+		method pickAll
+		method rayPick
+		method rayPickAll
+		method mapFrom3DScene
+		method mapTo3DScene
 
 module QtSensors
 	Accelerometer QtSensors.Accelerometer
