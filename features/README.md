@@ -202,6 +202,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When an assistive technology sets the text of the "role" named "name" to "text"` | a screen reader types over the whole text (`@ljos-only`) |
 | `When the user presses "chord"` | press and release a key chord: `"Ctrl+S"`, `"Shift+Tab"`, `"Return"`, `"A"` (key names as in a `Shortcut` sequence) |
 | `When the user holds down "chord" until it repeats N times` | one press, `N` auto-repeated presses, one release |
+| `When the user keeps "chord" down` / `the user lets go of "chord"` | the press without its release, and the release, so time can pass between (`@ljos-only`) |
 | `When the window loses focus` / `When the window gains focus` | another window takes the keyboard, or gives it back |
 | `When the user touches X, Y` | touch at a position |
 | `When the user presses the pointer at X, Y` / `releases the pointer at X, Y` | the two halves of a click, for what happens while the button is held |
@@ -210,6 +211,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user double-clicks at X, Y` | two clicks at one place in quick succession |
 | `When the user clicks the right button at X, Y` | a click of the right (or `middle`) button, for a context menu |
 | `When the user drags from X, Y to X, Y` | press, move with the button held, release |
+| `When the user drags from X, Y to X, Y holding "Ctrl"` | the same with the keys held (`@ljos-only`) |
 | `When the user pinches at X, Y from D1 to D2 pixels apart` | two fingers on a line across, the second down a frame after the first, at most 4 pixels a finger a frame, then lifted |
 | `When the user turns two fingers D pixels apart at X, Y by A degrees` | two fingers about X, Y turned clockwise on the screen, at most 5 degrees a frame, then lifted |
 | `When the user turns the wheel N notch(es) down at X, Y` | a mouse wheel turns with the pointer at a position; `down` (or `up`, `left`, `right`) is where the view goes over the content, so `down` is towards the content's end (`@ljos-only`: the oracle's input channel has no wheel) |

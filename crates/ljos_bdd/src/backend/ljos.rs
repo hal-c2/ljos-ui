@@ -1290,6 +1290,19 @@ impl Input for LjosBackend {
         })
     }
 
+    fn key_state(&mut self, chord: &str, down: bool) -> Result<()> {
+        self.input(|b| {
+            let chord = Chord::parse(chord).map_err(failed)?;
+            b.live()?.drive(|d| {
+                if down {
+                    d.key_down(&chord)
+                } else {
+                    d.key_up(&chord)
+                }
+            })
+        })
+    }
+
     fn window_active(&mut self, active: bool) -> Result<()> {
         self.input(|b| {
             let live = b.live()?;
@@ -1352,6 +1365,14 @@ impl Input for LjosBackend {
         self.input(|b| {
             let (from, to) = (Point::new(from.0, from.1), Point::new(to.0, to.1));
             b.live()?.drive(|d| d.drag(from, to))
+        })
+    }
+
+    fn drag_holding(&mut self, modifiers: &str, from: (f64, f64), to: (f64, f64)) -> Result<()> {
+        self.input(|b| {
+            let held = parse_modifiers(modifiers).map_err(failed)?;
+            let (from, to) = (Point::new(from.0, from.1), Point::new(to.0, to.1));
+            b.live()?.drive(|d| d.drag_holding(held, from, to))
         })
     }
 

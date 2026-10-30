@@ -23,6 +23,17 @@ fn user_holds(w: &mut LjosWorld, chord: String, repeats: u32) -> StepResult {
     w.each(|b| b.input()?.key_hold(&chord, repeats))
 }
 
+// A key kept down while time passes, and let go of.
+#[when(regex = r#"^the user keeps "([^"]+)" down$"#)]
+fn user_keeps_down(w: &mut LjosWorld, chord: String) -> StepResult {
+    w.each(|b| b.input()?.key_state(&chord, true))
+}
+
+#[when(regex = r#"^the user lets go of "([^"]+)"$"#)]
+fn user_lets_go(w: &mut LjosWorld, chord: String) -> StepResult {
+    w.each(|b| b.input()?.key_state(&chord, false))
+}
+
 // Another window takes the keyboard, or gives it back.
 #[when(regex = r"^the window (loses|gains) focus$")]
 fn window_focus(w: &mut LjosWorld, which: String) -> StepResult {
@@ -97,6 +108,13 @@ fn user_triple_clicks(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
 #[when(regex = r"^the user drags from ([-\d.]+), ([-\d.]+) to ([-\d.]+), ([-\d.]+)$")]
 fn user_drags(w: &mut LjosWorld, x1: f64, y1: f64, x2: f64, y2: f64) -> StepResult {
     w.each(|b| b.input()?.drag((x1, y1), (x2, y2)))
+}
+
+// A drag with keys held, as a pan made with Ctrl is.
+#[rustfmt::skip]
+#[when(regex = r#"^the user drags from ([-\d.]+), ([-\d.]+) to ([-\d.]+), ([-\d.]+) holding "([^"]+)"$"#)]
+fn user_drags_holding(w: &mut LjosWorld, x1: f64, y1: f64, x2: f64, y2: f64, modifiers: String) -> StepResult {
+    w.each(|b| b.input()?.drag_holding(&modifiers, (x1, y1), (x2, y2)))
 }
 
 /// Two fingers come down one after the other at `ends(0)`, go through

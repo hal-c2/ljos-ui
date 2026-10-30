@@ -445,6 +445,16 @@ pub trait Input: Backend {
         Err(BackendError::NotImplemented("a drag"))
     }
 
+    /// The keys of `chord` go down and stay down (`down`), or come up.
+    fn key_state(&mut self, _chord: &str, _down: bool) -> Result<()> {
+        Err(BackendError::NotImplemented("a key held while time passes"))
+    }
+
+    /// [`Input::drag`] with the keys `modifiers` held, such as `"Ctrl"`.
+    fn drag_holding(&mut self, _modifiers: &str, _from: (f64, f64), _to: (f64, f64)) -> Result<()> {
+        Err(BackendError::NotImplemented("a drag with keys held"))
+    }
+
     /// Fingers on the screen, frame by frame: in each, every finger down
     /// then, as `(id, x, y)`. A finger new in a frame comes down, one gone
     /// from it is lifted, and after the last frame every finger is. Frames

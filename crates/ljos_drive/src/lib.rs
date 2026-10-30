@@ -346,14 +346,26 @@ impl<'a> Driver<'a> {
     /// Presses at `from`, moves to `to` in the steps a hand makes, and lets
     /// go there.
     pub fn drag(&mut self, from: Point, to: Point) -> Result<(), DriveError> {
+        self.drag_holding(Modifiers::empty(), from, to)
+    }
+
+    /// [`Driver::drag`] with the keys `modifiers` held throughout.
+    pub fn drag_holding(
+        &mut self,
+        modifiers: Modifiers,
+        from: Point,
+        to: Point,
+    ) -> Result<(), DriveError> {
         let t = self.now();
-        self.send_pointer(&PointerEvent::moved(from.x, from.y, self.state.buttons, t));
-        self.send_pointer(&PointerEvent::press(from.x, from.y, t));
+        self.send_pointer(
+            &PointerEvent::moved(from.x, from.y, self.state.buttons, t).with_modifiers(modifiers),
+        );
+        self.send_pointer(&PointerEvent::press(from.x, from.y, t).with_modifiers(modifiers));
         for p in steps_between(from, to) {
             let held = self.state.buttons | MouseButtons::LEFT;
-            self.send_pointer(&PointerEvent::moved(p.x, p.y, held, t));
+            self.send_pointer(&PointerEvent::moved(p.x, p.y, held, t).with_modifiers(modifiers));
         }
-        self.send_pointer(&PointerEvent::release(to.x, to.y, t));
+        self.send_pointer(&PointerEvent::release(to.x, to.y, t).with_modifiers(modifiers));
         self.settle()
     }
 
@@ -399,6 +411,41 @@ impl<'a> Driver<'a> {
     /// everything comes up in reverse. Then a settle.
     pub fn chord(&mut self, chord: &Chord, repeats: u32) -> Result<(), DriveError> {
         self.send_chord(chord, repeats);
+        self.settle()
+    }
+
+    /// The keys of `chord` go down and stay down until [`Driver::key_up`],
+    /// with no repeats: a key held while time passes.
+    pub fn key_down(&mut self, chord: &Chord) -> Result<(), DriveError> {
+        let mut held = Modifiers::empty();
+        for (modifier, code) in MODIFIER_KEYS {
+            if chord.modifiers.contains(modifier) {
+                self.send_key(&KeyEvent::press(code).with_modifiers(held));
+                held |= modifier;
+            }
+        }
+        self.send_key(
+            &KeyEvent::press(chord.key)
+                .with_modifiers(held)
+                .with_text(chord.text.clone()),
+        );
+        self.settle()
+    }
+
+    /// The keys [`Driver::key_down`] put down come up.
+    pub fn key_up(&mut self, chord: &Chord) -> Result<(), DriveError> {
+        let mut held = chord.modifiers;
+        self.send_key(
+            &KeyEvent::release(chord.key)
+                .with_modifiers(held)
+                .with_text(chord.text.clone()),
+        );
+        for (modifier, code) in MODIFIER_KEYS.into_iter().rev() {
+            if chord.modifiers.contains(modifier) {
+                held -= modifier;
+                self.send_key(&KeyEvent::release(code).with_modifiers(held));
+            }
+        }
         self.settle()
     }
 
