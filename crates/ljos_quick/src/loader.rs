@@ -18,22 +18,30 @@
 //! item (a panic in a native type, a JS run cut short) unloads the item
 //! and leaves the Loader at `Loader.Error`, and the rest of the
 //! application runs on. Loading again makes a new item from the source.
+//! A JS run cut short may not happen again (what it did before may have
+//! finished the work, or the data may have changed), so after one the Loader
+//! loads again by itself, once in [`SECOND_CHANCE`], and the log says so.
 //! An exception in a handler is not such a fault: Qt logs it and keeps
 //! the item, and so does this. The work of making the item is charged to
 //! the Loader as its owner.
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, CreationHandle, CreationJob, Cx, Engine, EngineError,
     FaultReport, Interception, LogLevel, ObjectId, PropIndex, QmlObject, Url, Value, WriteKind,
     qml_impl,
 };
-use ljos_runtime::{Fault, Intensity, Lane, Restart};
+use ljos_runtime::{Fault, Intensity, Lane, Restart, Time};
 
 use crate::enums::loader_status;
 use crate::item::{Item, is_a, is_item, size_follows_implicit, write_computed};
 use crate::tree;
+
+/// How long after loading again for an interrupted script a Loader takes
+/// another such fault as final.
+const SECOND_CHANCE: Duration = Duration::from_secs(10);
 
 /// `Loader` (QtQuick).
 #[derive(Debug, QmlObject)]
@@ -114,6 +122,8 @@ struct Run {
     /// An item was emptied without telling while the next one is made: a
     /// failure tells the empty item, as no item replaces it.
     emptied_quietly: bool,
+    /// When an interrupted script last made the Loader load again.
+    second_chance: Option<Time>,
 }
 
 #[qml_impl]
@@ -268,7 +278,8 @@ struct LoaderBoundary;
 impl Boundary for LoaderBoundary {
     fn config(&self, _: &Engine, _: ObjectId) -> BoundaryConfig {
         BoundaryConfig {
-            // The item stays unloaded until the application loads again.
+            // The supervisor restarts nothing: only an interrupted script
+            // has the Loader load again (`stop`), and it counts those itself.
             restart: Restart::Temporary,
             // Nothing is restarted, so nothing is counted.
             intensity: Intensity::new(0, std::time::Duration::ZERO),
@@ -277,7 +288,7 @@ impl Boundary for LoaderBoundary {
         }
     }
 
-    fn stop(&self, e: &Engine, me: ObjectId, _: &FaultReport) {
+    fn stop(&self, e: &Engine, me: ObjectId, report: &FaultReport) {
         let begun = with_run(e, me, |r| {
             // What a running job makes is not wanted any more.
             r.generation += 1;
@@ -297,6 +308,9 @@ impl Boundary for LoaderBoundary {
         drop_old(e, me, old);
         set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
         set(e, me, Loader::PROGRESS.index, 1.0.into());
+        if matches!(report.fault, Fault::JsInterrupted { .. }) {
+            load_again(e, me, report.at);
+        }
     }
 
     fn start(&self, _: &Engine, _: ObjectId) -> Result<(), Fault> {
@@ -307,6 +321,37 @@ impl Boundary for LoaderBoundary {
     fn failed(&self, e: &Engine, me: ObjectId) -> bool {
         e.untrack(|| e.read(me, Loader::STATUS.index).to_number())
             == f64::from(loader_status::ERROR)
+    }
+}
+
+/// After a script was interrupted at `at`: loads again unless that was just
+/// tried. The log has the fault already; this says what became of the item.
+fn load_again(e: &Engine, me: ObjectId, at: Time) {
+    let tried = with_run(e, me, |r| {
+        let tried = r
+            .second_chance
+            .is_some_and(|t| at.saturating_since(t) < SECOND_CHANCE);
+        if !tried {
+            r.second_chance = Some(at);
+        }
+        tried
+    });
+    let place = e.declared_at(me).unwrap_or_default();
+    match tried {
+        Some(false) => {
+            warn(
+                e,
+                format!("{place}Loader: a script was interrupted, loading again"),
+            );
+            reload(e, me, true);
+        }
+        Some(true) => warn(
+            e,
+            format!(
+                "{place}Loader: a script was interrupted again, so it stays at Loader.Error until it is told to load"
+            ),
+        ),
+        None => {}
     }
 }
 
