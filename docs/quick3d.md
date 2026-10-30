@@ -196,7 +196,7 @@ Measured on the commit that added the GL seam (`ljos_shell::gl_scene3d`); reprod
 | **M4 Textures and environment** | `Texture` (`source`, sampling, `Image` sources), skybox, `lightProbe` IBL, HDR images, tonemapping modes | `textures` and `environment` features `@qt-parity`; memory ≤ qml6 with a 2k HDR probe |
 | **M5 Shadows** | directional, point and spot shadow maps; `castsShadow`, `receivesShadow`, `shadowMapQuality`, `shadowBias` | `shadows` features within tolerance of qml6 pictures |
 | **M6 glTF** | `RuntimeLoader` (`source`, `status`, `errorString`, `bounds`), parsed on the compute pool, meshes, PBR materials and textures | `runtime-loader` features; `quick3d-gltf` load time and memory ≤ qml6 |
-| **M7 Picking and animation** | `View3D.pick`, `pickAll`, `rayPick`, `mapFrom3DScene` and `mapTo3DScene`; animations on `vector3d`/`quaternion` properties; `Repeater3D` | `picking` and `animation` features `@qt-parity`; `quick3d-spin` frame interval and CPU ≤ qml6 |
+| **M7 Picking and animation** (built; Qt check pending) | `View3D.pick`, `pickAll`, `rayPick`, `mapFrom3DScene` and `mapTo3DScene`; animations on `vector3d`/`quaternion` properties; `Repeater3D` | `picking` and `animation` features `@qt-parity`; `quick3d-spin` frame interval and CPU ≤ qml6. Built: `picking`, `picking-rays`, `picking-cameras`, `mapping`, `animation` and `repeater3d` features pass on Ljós, not yet checked on qml6 (no `qt6-quick3d`); `quick3d-grid` (1000 cubes, 4 lights, one moving) shows 50 frames/s at 17 % of a core |
 | **M8 Web** | `SurfaceView` as the web seam (done, § The web seam (SurfaceView)); ljos-web draws through it into a `<canvas>`; the WebGL2 fallback checked | the same scenes render in a browser with WebGPU and with WebGL2: done for the lit cube in a harness, equal to the native picture on both; ljos-web's embedding remains |
 | **Later** | 2D items in 3D, `CustomMaterial`, effects, Helpers | gallery's QtQuick3D examples render |
 
@@ -221,6 +221,11 @@ The riskiest seam was rendering 3D with egui's own wgpu device and queue and com
 - **Own small maths** instead of glam: a few dozen lines, no dependency, column-major and matching WGSL.
 - **wgpu 30.0.1,** the version egui-wgpu 0.37 is built on, with backends chosen per target.
 
+- **Picking is on the CPU** (`ljos_3d::pick`, no `gpu` needed, so it builds for wasm). It reads the scene the view draws, untracked, and goes through the camera's own projection, so a model is picked where it is drawn. A world bounding sphere rejects most models before the triangles are tested. Hits are on the mesh's triangles, with interpolated normals and UVs, where Qt's documentation speaks of bounding volumes. `pickable` stays a QML property, given to the pick as a filter.
+- **A node's parent is the object that owns it.** Scene properties (`scenePosition`, `forward`, …) are bound when first read, so nodes nobody asks pay nothing. A camera outside any `View3D` maps through a viewport one unit square. `lookAt` writes `eulerRotation`, keeping +Y up.
+- **`Repeater3D` puts its nodes in its own `data`,** not its parent's as `Repeater` does: it is a node, and its nodes move with it.
+- **`QuaternionAnimation` lives in `ljos_quick`** beside the animations it runs with; `ljos_quick3d` registers it through the facade. Its Euler ends compose as `eulerRotation` does (Z, then X, then Y). An animation declared `on` a member of a value (`eulerRotation.y`, `font.pixelSize`) moves the member, for any module.
+
 ## Open risks
 
 - **GL state shared with wgpu.** The GL painter and wgpu take turns on one context. What each sets for the other is listed in § The GL seam; a later wgpu that keeps more state from device creation, or a painter change that leaves more bound, shows as a broken frame, not an error. The desktop sandbox pictures (`cua-gl.png` on RADV and llvmpipe) are the check.
@@ -231,5 +236,8 @@ The riskiest seam was rendering 3D with egui's own wgpu device and queue and com
   - the strength of ambient light.
 - **Target lifetime** is handled on every path: egui-wgpu's `retain` and the GL painter keep the targets of the views the frame shows, and the read-back pictures keep those drawn in the frame. `ljos_quick3d`'s `a_destroyed_view_lets_go_of_its_picture` checks the read-back path through twenty Loader rounds; the GL painter's path was checked by hand in the desktop sandbox (a `Loader` turned on and off eleven times: no fault, the area empty after, 0 ticks idle), egui-wgpu's is left to its `retain`. Neither has an automated test.
 - **MSAA and the blit:** resolving before the blit keeps composition unchanged. The cost is to be measured at M3.
+- **Unchecked M7 conventions:** whether Qt's `pick` hits triangles or bounding boxes, `PickResult.uvPosition` for primitives, and `mapFrom3DScene`'s z (taken as the distance past the near plane) wait for qml6 with QtQuick3D.
+- **Unqualified calls to a root's native methods** (`pick(x, y)` inside the `View3D`'s own function) do not resolve in Ljós; the features write `view.pick`. Qt finds them through the scope object.
+- **Reparenting a node** is not followed by its scene properties: they track the owner, which does not change.
 - **The web wrapper's owner** is ljos-web. Its embedding API has to agree with `SurfaceView`.
 - **The web after M3.** The harness checks one flat-shaded cube with no MSAA, which is why its pictures match exactly. MSAA (M3) on WebGL2 needs a multisampled renderbuffer and resolve, which wgpu's GL backend does but with WebGL2's own sample counts; textures (M4) and HDR need formats WebGL2 may lack (`Rgba16Float` render targets are an extension there). Each milestone's scenes go through the harness on both backends before M8 is closed.
