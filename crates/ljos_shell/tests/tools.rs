@@ -606,7 +606,7 @@ mod inspector {
     fn a_log_handler_set_in_setup_leaves_app_logs_its_lines() {
         let (tx, rx) = mpsc::channel();
         let mut w = window(move |setup| {
-            let dir = tempfile::tempdir()?.keep();
+            let dir = token_dir()?;
             let address = setup.serve_inspector(
                 InspectorOptions {
                     port: 0,
