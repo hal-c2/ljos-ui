@@ -1,0 +1,19 @@
+[package]
+name = "ljos_example_jsonrows"
+description = "A list, a grid and a count over one JSON file through JsonListModel; save the file while it runs and only the rows that differ change"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+ljos = { path = "../../crates/ljos", features = ["dev-qml"] }
+ljos_jsonmodel = { path = "../../crates/ljos_jsonmodel" }
+ljos_compiler = { path = "../../crates/ljos_compiler" }
+
+[lints]
+workspace = true

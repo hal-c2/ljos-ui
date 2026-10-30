@@ -1,0 +1,6 @@
+[
+  {"name": "Bread", "price": 3.5, "stocked": true},
+  {"name": "Milk", "price": 1.25, "stocked": true},
+  {"name": "Tea", "price": 6, "stocked": false},
+  {"name": "Honey", "stocked": true}
+]
