@@ -81,7 +81,10 @@ impl Device3d {
         let vertex_array = NonZeroU32::new(bound as u32)
             .map(glow::NativeVertexArray)
             .ok_or("wgpu opened its device without a vertex array")?;
-        let renderer = Renderer::new(&device);
+        let mut renderer = Renderer::new(&device);
+        // WebGL2's limits ask for no float targets; the context may still
+        // have them, as a light probe's maps need.
+        renderer.use_adapter_formats(&adapter);
         Ok(Device3d {
             device,
             queue,

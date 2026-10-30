@@ -45,6 +45,7 @@ impl Scene3dResources {
             return;
         }
         let mut r = Renderer::new(&state.device);
+        r.use_adapter_formats(&state.adapter);
         r.prepare_blit(&state.device, state.target_format);
         renderer.callback_resources.insert(Scene3dResources {
             renderer: r,
