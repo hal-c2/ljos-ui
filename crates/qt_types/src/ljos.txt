@@ -8299,6 +8299,8 @@ module QtQuick3D.Helpers
 	LookAtNode QtQuick3D.Helpers.LookAtNode
 	OrbitCameraController QtQuick3D/Helpers/OrbitCameraController.qml
 	PlaneGeometry QtQuick3D.Helpers.PlaneGeometry
+	ProceduralMesh QtQuick3D.Helpers.ProceduralMesh
+	ProceduralMeshSubset QtQuick3D.Helpers.ProceduralMeshSubset
 	SphereGeometry QtQuick3D.Helpers.SphereGeometry
 	TorusGeometry QtQuick3D.Helpers.TorusGeometry
 	WasdController QtQuick3D/Helpers/WasdController.qml
@@ -8463,6 +8465,37 @@ module QtQuick3D.Helpers
 		signal planeChanged
 		signal reversedChanged
 		signal mirroredChanged
+	type QtQuick3D.Helpers.ProceduralMesh ProceduralMesh
+		prototype QtQuick3D.Geometry named
+		enum PrimitiveMode Points=0 LineStrip=1 Lines=2 TriangleStrip=3 TriangleFan=4 Triangles=5
+		prop positions QtQml.var named
+		prop normals QtQml.var named
+		prop tangents QtQml.var named
+		prop binormals QtQml.var named
+		prop uv0 QtQml.var named
+		prop uv1 QtQml.var named
+		prop colors QtQml.var named
+		prop indexes QtQml.var named
+		prop primitiveMode PrimitiveMode
+		prop subsets QtQml.var named list
+		signal positionsChanged
+		signal normalsChanged
+		signal tangentsChanged
+		signal binormalsChanged
+		signal uv0Changed
+		signal uv1Changed
+		signal colorsChanged
+		signal indexesChanged
+		signal primitiveModeChanged
+		signal subsetsChanged
+	type QtQuick3D.Helpers.ProceduralMeshSubset ProceduralMeshSubset
+		prototype QtQml.QtObject named
+		prop name QtQml.string named
+		prop length QtQml.int named
+		prop offset QtQml.int named
+		signal nameChanged
+		signal lengthChanged
+		signal offsetChanged
 	type QtQuick3D.Helpers.SphereGeometry SphereGeometry
 		prototype QtQuick3D.Geometry named
 		enum Status Null=0 Loading=1 Ready=2 Error=3

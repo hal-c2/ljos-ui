@@ -10,6 +10,7 @@ mod height_field;
 mod library;
 mod look_at;
 mod mesh;
+mod procedural_mesh;
 mod shapes;
 
 use geometry::{
@@ -19,6 +20,7 @@ use geometry::{
 use height_field::HeightFieldGeometry;
 use ljos::prelude::*;
 use look_at::LookAtNode;
+use procedural_mesh::{ProceduralMesh, ProceduralMeshSubset};
 
 use crate::random_instancing::{InstanceRange, RandomInstancing};
 pub use extended_environment::ExtendedSceneEnvironment;
@@ -37,6 +39,8 @@ pub(crate) fn register(engine: &Engine) {
         InstanceRange,
         RandomInstancing,
         HeightFieldGeometry,
+        ProceduralMesh,
+        ProceduralMeshSubset,
         LookAtNode,
     ]));
     library::register(engine);
