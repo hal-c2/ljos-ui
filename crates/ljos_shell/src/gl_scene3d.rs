@@ -67,11 +67,15 @@ impl Device3d {
             wgpu::hal::gles::Adapter::new_external(find, wgpu::GlBackendOptions::default())
         }
         .ok_or("wgpu cannot use the GL context (it needs GL 3.3 or GLES 3)")?;
+        // No backend of its own: the adapter is the context's, and wgpu's
+        // GL backend would start an EGL display of its own for nothing
+        // (4.7 ms of the first frame on radeonsi).
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::GL,
+            backends: wgpu::Backends::empty(),
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
-        // SAFETY: the adapter is of the GL backend the instance has.
+        // SAFETY: the instance has no backend whose adapters this one could
+        // be confused with; wgpu-core only wraps it.
         let adapter = unsafe { instance.create_adapter_from_hal::<wgpu::hal::api::Gles>(exposed) };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("ljos_shell 3D on GL"),
@@ -190,6 +194,12 @@ impl Views {
     pub(crate) fn pictures_into(&self, out: &mut Vec<(TextureId, glow::Texture)>) {
         out.clear();
         out.extend(self.pictures.values().map(|p| (p.id, p.texture)));
+    }
+
+    /// Whether drawing `primitives` needs the device: they show a view, or
+    /// there are pictures that views gone may have to let go of.
+    pub(crate) fn needs_device(&self, primitives: &[ClippedPrimitive]) -> bool {
+        !self.pictures.is_empty() || primitives.iter().any(|p| view_of(p).is_some())
     }
 
     /// Draws the views among `primitives` whose scene changed into their
@@ -470,6 +480,31 @@ mod tests {
         pictures.into_iter().map(|(_, t)| t).collect()
     }
 
+    /// A frame with no view and no picture to let go of does not open
+    /// wgpu: a program without a `View3D` never pays for the device.
+    #[test]
+    fn only_a_frame_with_a_view_needs_the_device() {
+        let flat = ClippedPrimitive {
+            clip_rect: Rect::EVERYTHING,
+            primitive: Primitive::Mesh(egui::Mesh::default()),
+        };
+        let view = ClippedPrimitive {
+            clip_rect: Rect::EVERYTHING,
+            primitive: Primitive::Callback(PaintCallback {
+                rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(10.0, 10.0)),
+                callback: Arc::new(View3dPaint {
+                    key: 1,
+                    scene: cube(),
+                    size_px: [10, 10],
+                }),
+            }),
+        };
+        let views = Views::default();
+        assert!(!views.needs_device(&[]));
+        assert!(!views.needs_device(std::slice::from_ref(&flat)));
+        assert!(views.needs_device(&[flat, view]));
+    }
+
     /// Views that come and go on the GL painter, as a `Loader` toggling
     /// one makes them: each picture's GL texture is deleted once its view
     /// is no longer shown, on the context, and wgpu holds as many textures
@@ -550,6 +585,10 @@ mod tests {
             assert!(
                 frame(h, device, &mut views, &scene, &[]).is_empty(),
                 "round {round} on {on}: the views are gone"
+            );
+            assert!(
+                !views.needs_device(&[]),
+                "round {round} on {on}: with the views gone, frames leave wgpu be"
             );
             assert_eq!(
                 live_textures(device),

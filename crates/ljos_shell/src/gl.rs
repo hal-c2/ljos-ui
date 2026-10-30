@@ -85,7 +85,8 @@ pub(crate) struct Clear(pub(crate) [f32; 4]);
 /// The display, the context and GL's functions all windows share.
 pub(crate) struct Gl {
     /// wgpu on this context, for 3D views: made with the first view drawn
-    /// (`None` until then, `Some(None)` if wgpu could not use it).
+    /// (`None` until then, and for good in a program without one;
+    /// `Some(None)` if wgpu could not use it).
     #[cfg(feature = "quick3d")]
     scene3d: std::cell::RefCell<Option<Option<crate::gl_scene3d::Device3d>>>,
     // Field order is drop order: the context goes before its display.
@@ -627,14 +628,18 @@ impl GlPainter {
         let started = Instant::now();
         // The 3D views first, so that what wgpu leaves bound is set again
         // before egui's pictures go up.
+        // Only a frame with a view, or with pictures to let go of, opens
+        // wgpu: a window that never shows one never pays for the device.
         #[cfg(feature = "quick3d")]
-        let views = {
+        let views = if self.views.needs_device(primitives) {
             let (gl, views) = (&self.gl, &mut self.views);
             gl.with_scene3d(|device| {
                 // SAFETY: the context was made current above.
                 unsafe { views.draw(device, &gl.glow, gw.px, primitives) }
             })
             .flatten()
+        } else {
+            None
         };
         #[cfg(feature = "quick3d")]
         let primitives = views.as_deref().unwrap_or(primitives);
