@@ -15,10 +15,16 @@ b0 = ["dep:egui", "dep:lyon_tessellation"]
 # R drawing a window may spread its work over threads; the reference
 # pictures never do, whatever this says.
 threads = ["vello_cpu/multithreading"]
+# A 3D view drawn where no painter draws it (R, B0 for a painter without
+# 3D) is a picture `ljos_3d` draws off-screen and reads back. The crate
+# itself names no wgpu: `ljos_3d` does.
+offscreen3d = ["ljos_3d/gpu"]
 
 [dependencies]
 # MemoryPressure is defined once, beside Evictable.
 ljos_runtime = { path = "../ljos_runtime" }
+# A View3D's scene, as data; the renderer only with `offscreen3d`.
+ljos_3d = { path = "../ljos_3d", default-features = false }
 # A ShaderEffect's programs, without naga.
 ljos_shader = { path = "../ljos_shader" }
 bitflags.workspace = true

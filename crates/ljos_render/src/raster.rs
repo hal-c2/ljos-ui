@@ -78,6 +78,8 @@ pub struct VelloCpuReference {
     settings: RenderSettings,
     /// What [`Self::render_area`] draws into, kept for the next part.
     area: Option<Pixmap>,
+    /// The 3D views' pictures, read back from `ljos_3d`.
+    views3d: crate::scene3d::Pictures,
 }
 
 /// Device pixels kept around an item's bounds when an area is culled:
@@ -169,6 +171,7 @@ impl VelloCpuReference {
                 num_threads: 0,
             },
             area: None,
+            views3d: crate::scene3d::Pictures::default(),
         }
     }
 
@@ -192,6 +195,11 @@ impl VelloCpuReference {
     /// The colour the picture is cleared to from the next render on.
     pub fn set_background(&mut self, background: Rgba) {
         self.config.background = background;
+    }
+
+    /// How many 3D views it keeps a read-back picture of.
+    pub fn view3d_pictures(&self) -> usize {
+        self.views3d.len()
     }
 
     /// How many image copies R holds (whole images and isolated parts).
@@ -323,6 +331,10 @@ impl VelloCpuReference {
         }
         for _ in pushed.drain(..) {
             ctx.pop_clip();
+        }
+        // A part of the picture may leave a view out that is still shown.
+        if !cull {
+            self.views3d.end_frame();
         }
     }
 
@@ -737,6 +749,23 @@ impl VelloCpuReference {
                     tracing::debug!("R: shader effects are not rendered");
                 }
             }
+            DrawOp::View3d { rect, view } => {
+                let scale = to_device.determinant().abs().sqrt();
+                let size = crate::scene3d::size_px(rect.width(), rect.height(), scale);
+                let Some(image) = self.views3d.picture(view, size) else {
+                    if warned.insert("view3d") {
+                        tracing::debug!("R: a 3D view has no picture");
+                    }
+                    return;
+                };
+                let blit = image_blit(image.rect(), *rect, None, [false, false]);
+                let look = Look {
+                    smooth: true,
+                    opacity,
+                    tint: None,
+                };
+                self.draw_blit(ctx, &image, &blit, look, warned);
+            }
             DrawOp::Embed { .. } => {
                 if warned.insert("embed") {
                     tracing::debug!("R: Embed surfaces are not rendered");
@@ -776,6 +805,7 @@ impl RenderBackend for VelloCpuReference {
 
     fn trim(&mut self, _pressure: MemoryPressure) {
         self.ctx = None;
+        self.views3d.clear();
         self.resources = Resources::new();
         self.outlines.clear();
         self.pixmaps.clear();

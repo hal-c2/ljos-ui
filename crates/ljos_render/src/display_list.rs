@@ -657,6 +657,13 @@ pub enum DrawOp {
         rect: Rect,
         op: Arc<crate::shader::ShaderOp>,
     },
+    /// A `View3D`'s scene over `rect`, drawn by `ljos_3d` (see
+    /// [`crate::scene3d`]).
+    View3d {
+        /// The item's rectangle, which the picture fills.
+        rect: Rect,
+        view: Arc<crate::scene3d::View3dOp>,
+    },
     /// Foreign surface (embedded egui widgets, video, ...). Splits batches.
     Embed {
         /// Surface id.
@@ -715,7 +722,10 @@ impl DrawOp {
                     .fold(run.bounds, |acc, bar| acc.union(bar))
                     + *origin
             }
-            Self::Text { rect, .. } | Self::Embed { rect, .. } | Self::Shader { rect, .. } => *rect,
+            Self::Text { rect, .. }
+            | Self::Embed { rect, .. }
+            | Self::Shader { rect, .. }
+            | Self::View3d { rect, .. } => *rect,
             Self::Shape { path, style, .. } => {
                 let r = style.reach();
                 path.bounding_box().inflate(r, r)
@@ -903,6 +913,11 @@ impl DisplayListBuilder {
     /// A shader effect over `rect`.
     pub fn shader(&mut self, rect: Rect, op: Arc<crate::shader::ShaderOp>) -> &mut Self {
         self.push(DrawOp::Shader { rect, op })
+    }
+
+    /// A 3D view's scene over `rect`.
+    pub fn view3d(&mut self, rect: Rect, view: Arc<crate::scene3d::View3dOp>) -> &mut Self {
+        self.push(DrawOp::View3d { rect, view })
     }
 
     /// Embedded surface placeholder.

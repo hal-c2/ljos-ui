@@ -4308,6 +4308,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags 2.13.2",
  "egui",
+ "ljos_3d",
  "ljos_runtime",
  "ljos_shader",
  "lyon_tessellation",

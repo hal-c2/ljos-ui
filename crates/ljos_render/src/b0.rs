@@ -71,6 +71,7 @@ use crate::glyph_atlas::{BINS, Full, GlyphAtlas, GlyphKey, Slot};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::image_atlas::{ImageAtlas, Place};
 use crate::rgba::Rgba;
+use crate::scene3d::{self, View3dOp, View3dPaint};
 use crate::shader::{ShaderOp, Viewport};
 use crate::tree::NodeId;
 
@@ -105,6 +106,11 @@ pub struct EguiSink<'a> {
     /// a [`ShaderPaint`]. Off by default: only a host whose painter runs
     /// them may turn it on; without it they are not drawn.
     pub shaders: bool,
+    /// Hand over 3D views as [`Shape::Callback`]s whose callback is a
+    /// [`View3dPaint`]. Off by default: only a host whose painter draws
+    /// 3D may turn it on; without it a view is drawn as a picture read
+    /// back from the off-screen renderer (feature `offscreen3d`).
+    pub scenes3d: bool,
 }
 
 impl<'a> EguiSink<'a> {
@@ -118,6 +124,7 @@ impl<'a> EguiSink<'a> {
             backdrop: None,
             solid_rects: false,
             shaders: false,
+            scenes3d: false,
         }
     }
 
@@ -143,6 +150,7 @@ enum LocalSeg {
     Image(ImageSeg),
     Shape(ShapeCmd),
     Shader(Rect, Arc<ShaderOp>),
+    View3d(Rect, Arc<View3dOp>),
 }
 
 /// Which texture an image quad samples: the image and how it is sampled.
@@ -701,10 +709,12 @@ fn carry_glyphs(old: &[WorldSeg], new: &mut [WorldSeg], clip: ERect, ppp: f32) {
 /// changed, where a segment keeps more than its vertices (a shape's cache, a
 /// shader's callback) and is built again.
 fn move_segs(segs: &mut [WorldSeg], by: Vec2, to_screen: Affine, clip: ERect, ppp: f32) -> bool {
-    if segs
-        .iter()
-        .any(|s| matches!(s, WorldSeg::Shape(_) | WorldSeg::Shader(_)))
-    {
+    if segs.iter().any(|s| {
+        matches!(
+            s,
+            WorldSeg::Shape(_) | WorldSeg::Shader(_) | WorldSeg::View3d(_)
+        )
+    }) {
         return false;
     }
     let shift = egui::vec2(by.x as f32, by.y as f32);
@@ -729,7 +739,9 @@ fn move_segs(segs: &mut [WorldSeg], by: Vec2, to_screen: Affine, clip: ERect, pp
                     g.mesh = Some(m);
                 }
             }
-            WorldSeg::Shape(_) | WorldSeg::Shader(_) => unreachable!("checked above"),
+            WorldSeg::Shape(_) | WorldSeg::Shader(_) | WorldSeg::View3d(_) => {
+                unreachable!("checked above")
+            }
         }
     }
     true
@@ -873,6 +885,16 @@ enum WorldSeg {
     Image(ImageSeg),
     Shape(ShapeSeg),
     Shader(ShaderSeg),
+    View3d(View3dSeg),
+}
+
+/// A 3D view placed on the screen.
+#[derive(Clone)]
+struct View3dSeg {
+    rect: Rect,
+    view: Arc<View3dOp>,
+    to_screen: Affine,
+    opacity: f32,
 }
 
 /// A shader effect placed on the screen. Its callback is made when it is
@@ -1002,6 +1024,8 @@ pub struct EpaintBackend {
     /// The nodes that hold a shape texture, so the ones that left the frame
     /// are found without walking every node.
     textured: FxHashSet<NodeId>,
+    /// The pictures of 3D views for a painter that draws no 3D itself.
+    views3d: scene3d::Pictures,
 }
 
 /// What the glyph atlas holds, for tests and diagnostics.
@@ -1323,6 +1347,7 @@ impl EpaintBackend {
             texture_uploads: 0,
             shapes: ShapeCache::default(),
             textured: FxHashSet::default(),
+            views3d: scene3d::Pictures::default(),
         }
     }
 
@@ -1380,6 +1405,12 @@ impl EpaintBackend {
     /// image is uploaded once, not once per frame or per item).
     pub fn texture_uploads(&self) -> u64 {
         self.texture_uploads
+    }
+
+    /// How many 3D views it keeps a read-back picture of (tests use it to
+    /// prove a view that is gone lets go of its picture).
+    pub fn view3d_pictures(&self) -> usize {
+        self.views3d.len()
     }
 
     /// What it keeps from frame to frame: one pass over its lists and
@@ -1732,6 +1763,12 @@ impl EpaintBackend {
                     }
                     segs.push(LocalSeg::Shader(*rect, Arc::clone(op)));
                 }
+                DrawOp::View3d { rect, view } => {
+                    if !cur.is_empty() {
+                        segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
+                    }
+                    segs.push(LocalSeg::View3d(*rect, Arc::clone(view)));
+                }
                 DrawOp::Embed { .. } => warn("Embed surfaces are not drawn by the shape encoder"),
             }
         }
@@ -1852,6 +1889,12 @@ impl EpaintBackend {
                     to_screen,
                     opacity,
                     paint: None,
+                }),
+                LocalSeg::View3d(rect, view) => WorldSeg::View3d(View3dSeg {
+                    rect: *rect,
+                    view: Arc::clone(view),
+                    to_screen,
+                    opacity,
                 }),
             })
             .collect()
@@ -2280,6 +2323,78 @@ impl RenderBackend for EpaintBackend {
                             }),
                         ));
                     }
+                    WorldSeg::View3d(seg) => {
+                        let Some(ctx) = sink.ctx else {
+                            continue;
+                        };
+                        let screen = seg.to_screen.transform_rect_bbox(seg.rect);
+                        let ppp = f64::from(self.ppp);
+                        let size_px = scene3d::size_px(screen.width(), screen.height(), ppp);
+                        if sink.scenes3d {
+                            let paint = View3dPaint {
+                                key: seg.view.key,
+                                scene: Arc::clone(&seg.view.scene),
+                                size_px,
+                            };
+                            sink.shapes.push(ClippedShape::new(
+                                clip,
+                                Shape::Callback(PaintCallback {
+                                    rect: erect(screen),
+                                    callback: Arc::new(paint),
+                                }),
+                            ));
+                            continue;
+                        }
+                        // The size of the picture is that of the view on
+                        // the screen, so it is sampled texel for pixel
+                        // where the view is not turned.
+                        let Some(image) = self.views3d.picture(&seg.view, size_px) else {
+                            continue;
+                        };
+                        let key = TextureKey {
+                            image: image.id(),
+                            smooth: true,
+                            repeat: false,
+                            mipmap: false,
+                            alone: true,
+                        };
+                        let Some((texture, uv)) = texture_for(
+                            &mut self.textures,
+                            &mut self.pages,
+                            &mut self.texture_uploads,
+                            self.frame,
+                            ctx,
+                            key,
+                            &image.downgrade(),
+                        ) else {
+                            continue;
+                        };
+                        let r = seg.rect;
+                        let corner = |x: f64, y: f64| {
+                            let p = seg.to_screen * Point::new(x, y);
+                            Pos2::new(p.x as f32, p.y as f32)
+                        };
+                        let mut mesh = Mesh::with_texture(texture);
+                        push_quad(
+                            &mut mesh,
+                            [
+                                corner(r.x0, r.y0),
+                                corner(r.x1, r.y0),
+                                corner(r.x1, r.y1),
+                                corner(r.x0, r.y1),
+                            ],
+                            [
+                                Pos2::new(0.0, 0.0),
+                                Pos2::new(1.0, 0.0),
+                                Pos2::new(1.0, 1.0),
+                                Pos2::new(0.0, 1.0),
+                            ],
+                            Color32::WHITE.gamma_multiply(seg.opacity),
+                        );
+                        place_uvs(&mut mesh, None, uv);
+                        sink.shapes
+                            .push(ClippedShape::new(clip, Shape::Mesh(Arc::new(mesh))));
+                    }
                     WorldSeg::Glyphs(g) => {
                         if sink.ctx.is_none() {
                             continue;
@@ -2374,6 +2489,7 @@ impl RenderBackend for EpaintBackend {
         // frames later.
         self.lists.retain(|_, e| e.owner.strong_count() > 0);
         self.shapes.forget_orphans();
+        self.views3d.end_frame();
         stats.shapes = sink.shapes.len() as u32;
         self.warnings = stats.warnings;
         stats
@@ -2382,6 +2498,7 @@ impl RenderBackend for EpaintBackend {
     fn trim(&mut self, pressure: MemoryPressure) {
         match pressure {
             MemoryPressure::Critical => {
+                self.views3d.clear();
                 self.lists.clear();
                 self.nodes.clear();
                 self.shapes.clear();

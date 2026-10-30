@@ -17,6 +17,7 @@ mod glyph;
 mod image;
 mod raster;
 mod rgba;
+pub mod scene3d;
 mod shader;
 mod shape;
 mod tree;
@@ -49,6 +50,7 @@ pub use image::{
     ImageAlign, ImageBlit, ImageError, ImageFit, ImageHandle, ImagePlacement, MakeAgain, PixelData,
     WeakImage, image_blit, nine_patch_blits, painted_size, place_image,
 };
+pub use ljos_3d;
 /// The programs a [`ShaderOp`] runs.
 pub use ljos_shader;
 pub use raster::{RasterConfig, TextMode, VelloCpuReference};
