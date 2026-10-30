@@ -510,6 +510,72 @@ impl Light {
     }
 }
 
+/// `Light.castsShadow` and what shapes the shadows: a light with one casts
+/// them. The sizes and distances are in scene units, as QML gives them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    /// `shadowMapQuality`: the side of the map, 256 to 4096.
+    pub map_size: u32,
+    /// `shadowBias`: how far towards the light a surface is taken before
+    /// it is compared with the map, so that it does not shadow itself.
+    pub bias: f32,
+    /// `shadowFactor` over 100: how much of the light a shadow keeps away.
+    pub factor: f32,
+    /// `shadowMapFar`: the farthest a point or spot light's map reaches,
+    /// and how far from the camera a directional light's cascades do.
+    pub far: f32,
+    /// `softShadowQuality`: samples per pixel, 1 for hard shadows.
+    pub samples: u32,
+    /// `pcfFactor`: the radius the samples are spread over.
+    pub pcf_radius: f32,
+    /// A directional light's cascades.
+    pub cascades: Cascades,
+}
+
+impl Default for Shadow {
+    /// The documentation's: a low quality map (256), a bias of 10, a
+    /// factor of 75, a far of 5000 and four samples 2 units apart.
+    fn default() -> Self {
+        Shadow {
+            map_size: 256,
+            bias: 10.0,
+            factor: 0.75,
+            far: 5000.0,
+            samples: 4,
+            pcf_radius: 2.0,
+            cascades: Cascades::default(),
+        }
+    }
+}
+
+/// `DirectionalLight`'s cascaded shadow maps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cascades {
+    /// `csmNumSplits`, 0 to 3. With none, one map covers every model that
+    /// casts or receives shadows, wherever the camera is.
+    pub splits: u32,
+    /// `csmSplit1` to `csmSplit3`: where each split is, as a share of the
+    /// distance from the camera's near plane to `Shadow::far`.
+    pub at: [f32; 3],
+    /// `csmBlendRatio`: the share of a cascade, at its far end, blended
+    /// into the next.
+    pub blend: f32,
+    /// `lockShadowmapTexels`: each cascade keeps its size and moves by
+    /// whole texels, so its edges do not shimmer as the camera moves.
+    pub lock_texels: bool,
+}
+
+impl Default for Cascades {
+    fn default() -> Self {
+        Cascades {
+            splits: 0,
+            at: [0.1, 0.25, 0.5],
+            blend: 0.05,
+            lock_texels: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     /// A plain `Node`: a transform for its children.
@@ -524,6 +590,16 @@ pub struct Node {
     pub kind: NodeKind,
     pub transform: Transform,
     pub visible: bool,
+    /// A model's `castsShadows`: whether it is drawn into shadow maps.
+    pub casts_shadows: bool,
+    /// A model's `receivesShadows`: whether shadows darken it.
+    pub receives_shadows: bool,
+    /// A light's shadow, where its `castsShadow` is true.
+    ///
+    /// These three are the node's rather than in [`Model`] and [`Light`]:
+    /// a light's uniforms and every model built elsewhere stay as they
+    /// were, and a node that is neither ignores them.
+    pub shadow: Option<Shadow>,
     parent: Option<NodeId>,
     children: Vec<NodeId>,
 }
@@ -534,6 +610,9 @@ impl Node {
             kind,
             transform: Transform::default(),
             visible: true,
+            casts_shadows: true,
+            receives_shadows: true,
+            shadow: None,
             parent: None,
             children: Vec::new(),
         }

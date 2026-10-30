@@ -52,8 +52,8 @@ const TONE: &str = include_str!("../src/shaders/tone.wgsl");
 fn the_lit_shader_runs_on_webgl2() {
     let source = include_str!("../src/shaders/lit.wgsl");
     translates("lit", &format!("{TONE}{source}"));
-    // Seven maps and the probe's two cubes: within the 16 textures a
-    // WebGL2 fragment shader may sample.
+    // Seven maps, the probe's two cubes and the shadow maps' array:
+    // within the 16 textures a WebGL2 fragment shader may sample.
     let textures = source.matches(": texture_").count();
     assert!(textures <= 16, "{textures} textures");
     // Every light lives in one bounded array; WebGL2's smallest uniform
@@ -84,4 +84,9 @@ fn the_light_probes_passes_run_on_webgl2() {
             "fs_irradiance",
         ],
     );
+}
+
+#[test]
+fn the_shadow_pass_runs_on_webgl2() {
+    translates("shadow", include_str!("../src/shaders/shadow.wgsl"));
 }

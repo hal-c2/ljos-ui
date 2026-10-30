@@ -12,6 +12,7 @@
 // prefiltered for each roughness, and the irradiance a normal gathers.
 
 const MAX_LIGHTS: u32 = 16u;
+const MAX_SHADOW_LAYERS: u32 = 24u;
 const PI: f32 = 3.14159265;
 
 struct Light {
@@ -23,6 +24,18 @@ struct Light {
     color: vec4<f32>,
     // The fade's constant, linear and quadratic terms, already scaled.
     fade: vec4<f32>,
+    // x its first shadow map, below 0 for none; y how many it has; z how
+    // much light a shadow keeps away; w the bias, in scene units.
+    shadow: vec4<f32>,
+    // x the radius samples are spread over; y how many; z the share of a
+    // cascade blended into the next.
+    shadow2: vec4<f32>,
+};
+
+struct ShadowLayer {
+    view_proj: mat4x4<f32>,
+    // x the camera's view depth a cascade ends at, y where it starts.
+    params: vec4<f32>,
 };
 
 struct Frame {
@@ -45,6 +58,7 @@ struct Frame {
     // See tone.wgsl; w the sky box's blur.
     tone: vec4<f32>,
     lights: array<Light, MAX_LIGHTS>,
+    shadow_layers: array<ShadowLayer, MAX_SHADOW_LAYERS>,
 };
 
 struct Model {
@@ -58,7 +72,8 @@ struct Model {
     // w roughness.
     params: vec4<f32>,
     // x the mask's cutoff, below 0 where nothing is masked; y the plain
-    // material's specular amount, z its specular roughness.
+    // material's specular amount, z its specular roughness; w 1 where
+    // shadows fall on it.
     params2: vec4<f32>,
     // Per map (base, metalness, roughness, normal, emissive, occlusion,
     // opacity), two rows taking the mesh's UV to the image's.
@@ -71,6 +86,9 @@ struct Model {
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
+// Every shadow map of the scene, a layer each.
+@group(0) @binding(1) var shadow_maps: texture_depth_2d_array;
+@group(0) @binding(2) var shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var<uniform> model: Model;
 // Colour maps are sRGB textures, read as linear light; the others as they
 // are stored. A missing map is white.
@@ -178,6 +196,102 @@ fn squared(roughness: f32) -> f32 {
     return r * r;
 }
 
+// How much of a map's light reaches `p`: 1 outside the map.
+fn shadow_tap(layer: u32, p: vec3<f32>) -> f32 {
+    let clip = frame.shadow_layers[layer].view_proj * vec4<f32>(p, 1.0);
+    if clip.w <= 0.0 {
+        return 1.0;
+    }
+    let ndc = clip.xyz / clip.w;
+    let uv = ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z > 1.0 {
+        return 1.0;
+    }
+    return textureSampleCompareLevel(shadow_maps, shadow_sampler, uv, layer, ndc.z);
+}
+
+// The cube face of a point light that `d`, from the light, falls in.
+fn cube_face(d: vec3<f32>) -> u32 {
+    let a = abs(d);
+    if a.x >= a.y && a.x >= a.z {
+        return select(1u, 0u, d.x > 0.0);
+    }
+    if a.y >= a.z {
+        return select(3u, 2u, d.y > 0.0);
+    }
+    return select(5u, 4u, d.z > 0.0);
+}
+
+// The samples' spread over a unit disk, the first at its centre, so that
+// fewer samples take the first of them and one is a hard shadow.
+const TAPS = array<vec2<f32>, 16>(
+    vec2<f32>(0.0, 0.0), vec2<f32>(0.7, 0.0), vec2<f32>(-0.7, 0.0), vec2<f32>(0.0, 0.7),
+    vec2<f32>(0.0, -0.7), vec2<f32>(0.5, 0.5), vec2<f32>(-0.5, -0.5), vec2<f32>(0.5, -0.5),
+    vec2<f32>(-0.5, 0.5), vec2<f32>(1.0, 0.0), vec2<f32>(-1.0, 0.0), vec2<f32>(0.0, 1.0),
+    vec2<f32>(0.0, -1.0), vec2<f32>(0.3, 0.9), vec2<f32>(-0.9, 0.3), vec2<f32>(0.9, -0.3),
+);
+
+// How much of one map's light reaches `p`, its samples spread across the
+// light around it.
+fn soft_tap(light: Light, layer: u32, p: vec3<f32>, l: vec3<f32>) -> f32 {
+    let side = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(l.y) > 0.9);
+    let t = normalize(cross(l, side));
+    let b = cross(l, t);
+    let n = clamp(u32(light.shadow2.y), 1u, 16u);
+    let point = light.position.w > 0.5 && light.position.w < 1.5;
+    var taps = TAPS;
+    var sum = 0.0;
+    for (var k = 0u; k < n; k++) {
+        let o = taps[k] * light.shadow2.x;
+        let q = p + t * o.x + b * o.y;
+        var face = layer;
+        if point {
+            face = layer + cube_face(q - light.position.xyz);
+        }
+        sum += shadow_tap(face, q);
+    }
+    return sum / f32(n);
+}
+
+// What a light's shadow leaves of its light at `p`, lit along `l`.
+fn shadowed(light: Light, p: vec3<f32>, l: vec3<f32>) -> f32 {
+    if light.shadow.x < 0.0 || model.params2.w < 0.5 {
+        return 1.0;
+    }
+    // Taken towards the light by the bias, a surface clears its own depth
+    // in the map.
+    let q = p + l * light.shadow.w;
+    var layer = u32(light.shadow.x);
+    var visible = 1.0;
+    if light.position.w < 0.5 {
+        // A directional light's cascades: the first that reaches as far
+        // from the camera, blended into the next over its far end.
+        let depth = dot(p - frame.camera.xyz, frame.camera_dir.xyz);
+        let count = u32(light.shadow.y);
+        var found = count;
+        for (var c = 0u; c < count; c++) {
+            if depth <= frame.shadow_layers[layer + c].params.x {
+                found = c;
+                break;
+            }
+        }
+        if found == count {
+            return 1.0;
+        }
+        layer += found;
+        visible = soft_tap(light, layer, q, l);
+        let range = frame.shadow_layers[layer].params;
+        let blend = (range.x - range.y) * light.shadow2.z;
+        if found + 1u < count && blend > 0.0 && depth > range.x - blend {
+            let next = soft_tap(light, layer + 1u, q, l);
+            visible = mix(visible, next, (depth - (range.x - blend)) / blend);
+        }
+    } else {
+        visible = soft_tap(light, layer, q, l);
+    }
+    return 1.0 - light.shadow.z * (1.0 - visible);
+}
+
 @fragment
 fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // Every map is read here, before anything branches, as sampling with
@@ -249,6 +363,7 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
             if nl <= 0.0 {
                 continue;
             }
+            radiance = radiance * shadowed(light, in.world, l);
             let h = normalize(l + v);
             let nh = max(dot(n, h), 0.0);
             if principled {

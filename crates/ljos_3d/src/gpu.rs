@@ -28,6 +28,7 @@ use crate::scene::{
     AlphaMode, Background, Camera, CullMode, Environment, Light, LightProbe, Lighting, Material,
     MeshSource, NodeKind, Primitive, Scene, Tonemap,
 };
+use crate::shadow::{self, Layer as ShadowLayer, Plan};
 
 /// What the picture is kept in: sRGB values written by the shader, so the
 /// same bytes blend in a 2D pass that works in gamma space.
@@ -50,6 +51,11 @@ struct LightUniform {
     /// w: the cosine of half the inner cone.
     color: [f32; 4],
     fade: [f32; 4],
+    /// The first shadow map (below 0 for none), how many, the shadow's
+    /// factor and its bias.
+    shadow: [f32; 4],
+    /// The samples' radius, their count and the cascades' blend.
+    shadow2: [f32; 4],
 }
 
 #[repr(C)]
@@ -72,6 +78,7 @@ struct FrameUniform {
     /// box's blur.
     tone: [f32; 4],
     lights: [LightUniform; MAX_LIGHTS],
+    shadow_layers: [ShadowLayer; shadow::MAX_LAYERS],
 }
 
 #[repr(C)]
@@ -83,7 +90,8 @@ struct ModelUniform {
     emissive: [f32; 4],
     /// Lit, metal-roughness, metalness, roughness.
     params: [f32; 4],
-    /// Mask cutoff (below 0 for none), specular amount and roughness.
+    /// Mask cutoff (below 0 for none), specular amount and roughness, and
+    /// 1 where shadows fall on the model.
     params2: [f32; 4],
     /// Per map, two rows taking a mesh UV to the image's.
     uv: [[f32; 4]; maps::MAPS * 2],
@@ -154,6 +162,14 @@ pub struct Renderer {
     /// Sample counts both the picture's and the depth's format take,
     /// ascending; 1 always among them.
     sample_counts: Vec<u32>,
+    shadow_shader: wgpu::ShaderModule,
+    shadow_layout: wgpu::PipelineLayout,
+    layer_layout: wgpu::BindGroupLayout,
+    layer_stride: u64,
+    shadow_pipelines: HashMap<CullMode, wgpu::RenderPipeline>,
+    shadow_sampler: wgpu::Sampler,
+    /// What a frame without shadows binds where the maps go.
+    no_shadows: shadow::Maps,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -207,6 +223,39 @@ pub struct Target {
     drawn: Option<u64>,
     /// How many models the last drawing drew.
     drawn_models: usize,
+    /// The shadow maps, while a light casts shadows.
+    shadows: Option<Shadows>,
+    /// Shadow maps drawn, a pass each, since the target was made.
+    shadow_passes: u64,
+}
+
+/// A target's shadow maps and what they were last drawn from.
+struct Shadows {
+    maps: shadow::Maps,
+    /// A slot per layer, the renderer's layer stride apart.
+    layer_buffer: wgpu::Buffer,
+    layer_group: wgpu::BindGroup,
+    /// `None` until drawn, or when the maps were made again.
+    drawn: Option<ShadowKey>,
+}
+
+/// Everything a scene's shadow maps show: while it stays the same, so do
+/// they, and they are not drawn again.
+#[derive(PartialEq)]
+struct ShadowKey {
+    layers: Vec<ShadowLayer>,
+    casters: Vec<(MeshKey, u64, [[f32; 4]; 4], CullMode)>,
+}
+
+/// A model drawn into the shadow maps.
+struct Caster {
+    mesh: MeshKey,
+    cull: CullMode,
+    world: Mat4,
+    centre: Vec3,
+    radius: f32,
+    /// Its uniforms' slot.
+    slot: usize,
 }
 
 impl std::fmt::Debug for Target {
@@ -287,14 +336,7 @@ impl Target {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d frame"),
-            layout: &renderer.frame_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: frame_buffer.as_entire_binding(),
-            }],
-        });
+        let frame_group = frame_group(device, renderer, &frame_buffer, &renderer.no_shadows);
         let model_capacity = 16;
         let (model_buffer, model_group) = model_slots(
             device,
@@ -319,7 +361,68 @@ impl Target {
             staging: Vec::new(),
             drawn: None,
             drawn_models: 0,
+            shadows: None,
+            shadow_passes: 0,
         }
+    }
+
+    /// How many shadow maps were drawn since the target was made: a
+    /// scene that keeps its casters, receivers and lights where they are
+    /// draws none again.
+    pub fn shadow_passes(&self) -> u64 {
+        self.shadow_passes
+    }
+
+    /// Makes the shadow maps the plan needs, unless they are there, or
+    /// drops them for a scene without shadows.
+    fn shadows(&mut self, device: &wgpu::Device, renderer: &Renderer, plan: &Plan) {
+        if plan.layers.is_empty() {
+            if self.shadows.take().is_some() {
+                self.frame_group =
+                    frame_group(device, renderer, &self.frame_buffer, &renderer.no_shadows);
+            }
+            return;
+        }
+        let layers = shadow::layer_count(plan.layers.len());
+        if self
+            .shadows
+            .as_ref()
+            .is_some_and(|s| s.maps.size == plan.size && s.maps.layers == layers)
+        {
+            return;
+        }
+        let maps = shadow::maps(device, plan.size, layers);
+        self.frame_group = frame_group(device, renderer, &self.frame_buffer, &maps);
+        let (layer_buffer, layer_group) = match self.shadows.take() {
+            Some(s) => (s.layer_buffer, s.layer_group),
+            None => {
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("ljos_3d shadow layers"),
+                    size: shadow::MAX_LAYERS as u64 * renderer.layer_stride,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("ljos_3d shadow layers"),
+                    layout: &renderer.layer_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &buffer,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(std::mem::size_of::<ShadowLayer>() as u64),
+                        }),
+                    }],
+                });
+                (buffer, group)
+            }
+        };
+        self.shadows = Some(Shadows {
+            maps,
+            layer_buffer,
+            layer_group,
+            drawn: None,
+        });
     }
 
     pub fn size(&self) -> [u32; 2] {
@@ -378,6 +481,32 @@ impl Target {
             depth: depth.create_view(&wgpu::TextureViewDescriptor::default()),
         });
     }
+}
+
+fn frame_group(
+    device: &wgpu::Device,
+    renderer: &Renderer,
+    buffer: &wgpu::Buffer,
+    maps: &shadow::Maps,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ljos_3d frame"),
+        layout: &renderer.frame_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&maps.array),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&renderer.shadow_sampler),
+            },
+        ],
+    })
 }
 
 fn uniform_layout(device: &wgpu::Device, label: &str, dynamic: bool) -> wgpu::BindGroupLayout {
@@ -489,6 +618,8 @@ fn light_uniform(light: &Light, world: &Mat4) -> LightUniform {
         direction: [d.x, d.y, d.z, 0.0],
         color: [c[0] * brightness, c[1] * brightness, c[2] * brightness, 0.0],
         fade: [1.0, 0.0, 0.0, 0.0],
+        shadow: [-1.0, 0.0, 0.0, 0.0],
+        shadow2: [0.0; 4],
     };
     match *light {
         Light::Directional { .. } => {}
@@ -600,11 +731,11 @@ fn pick_samples(counts: &[u32], wanted: u32) -> u32 {
 
 /// Writes the slots whose uniforms differ from what the buffer holds, a
 /// run of neighbours in one write.
-fn write_slots(queue: &wgpu::Queue, target: &mut Target, draws: &[Draw], stride: u64) {
+fn write_slots(queue: &wgpu::Queue, target: &mut Target, draws: &[ModelUniform], stride: u64) {
     let size = std::mem::size_of::<ModelUniform>();
     let stride = stride as usize;
     let written = &mut target.slots_written;
-    let changed = |i: usize, written: &[ModelUniform]| written.get(i) != Some(&draws[i].uniform);
+    let changed = |i: usize, written: &[ModelUniform]| written.get(i) != Some(&draws[i]);
     let mut i = 0;
     while i < draws.len() {
         if !changed(i, written) {
@@ -619,16 +750,15 @@ fn write_slots(queue: &wgpu::Queue, target: &mut Target, draws: &[Draw], stride:
         staging.clear();
         staging.resize((i - start - 1) * stride + size, 0);
         for (k, draw) in draws[start..i].iter().enumerate() {
-            staging[k * stride..k * stride + size]
-                .copy_from_slice(bytemuck::bytes_of(&draw.uniform));
+            staging[k * stride..k * stride + size].copy_from_slice(bytemuck::bytes_of(draw));
         }
         queue.write_buffer(&target.model_buffer, (start * stride) as u64, staging);
     }
     written.clear();
-    written.extend(draws.iter().map(|d| d.uniform));
+    written.extend_from_slice(draws);
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum MeshKey {
     Primitive(Primitive),
     Custom(u64),
@@ -642,6 +772,8 @@ struct Draw {
     /// How far in front of the camera: blended models are drawn from the
     /// farthest.
     depth: f32,
+    /// Its entry among the shadow casters.
+    caster: Option<usize>,
 }
 
 /// The lit shader, with the tone mapping it shares with the sky box.
@@ -649,6 +781,7 @@ const LIT_WGSL: &str = concat!(
     include_str!("shaders/tone.wgsl"),
     include_str!("shaders/lit.wgsl")
 );
+const SHADOW_WGSL: &str = include_str!("shaders/shadow.wgsl");
 const SKY_WGSL: &str = concat!(
     include_str!("shaders/tone.wgsl"),
     include_str!("shaders/sky.wgsl")
@@ -711,7 +844,8 @@ fn environment_uniforms(
 
 impl Renderer {
     pub fn new(device: &wgpu::Device) -> Self {
-        let frame_layout = uniform_layout(device, "ljos_3d frame", false);
+        let frame_layout = shadow::frame_layout(device);
+        let layer_layout = uniform_layout(device, "ljos_3d shadow layer", true);
         let model_layout = uniform_layout(device, "ljos_3d model", true);
         let maps = Maps::new(device);
         let ibl = Ibl::new(device);
@@ -738,6 +872,17 @@ impl Renderer {
         let align = u64::from(device.limits().min_uniform_buffer_offset_alignment);
         let size = std::mem::size_of::<ModelUniform>() as u64;
         let model_stride = size.div_ceil(align) * align;
+        let size = std::mem::size_of::<ShadowLayer>() as u64;
+        let layer_stride = size.div_ceil(align) * align;
+        let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ljos_3d shadow"),
+            source: wgpu::ShaderSource::Wgsl(SHADOW_WGSL.into()),
+        });
+        let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ljos_3d shadow"),
+            bind_group_layouts: &[Some(&layer_layout), Some(&model_layout)],
+            immediate_size: 0,
+        });
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ljos_3d blit"),
             entries: &[
@@ -791,6 +936,13 @@ impl Renderer {
             probes: true,
             // What WebGPU promises every device for these formats.
             sample_counts: vec![1, 4],
+            shadow_shader,
+            shadow_layout,
+            layer_layout,
+            layer_stride,
+            shadow_pipelines: HashMap::new(),
+            shadow_sampler: shadow::sampler(device),
+            no_shadows: shadow::maps(device, 1, shadow::layer_count(0)),
         }
     }
 
@@ -907,6 +1059,64 @@ impl Renderer {
                 cache: None,
             })
         });
+    }
+
+    /// The depth pass of casters culled `cull`: the faces the picture
+    /// shows are the ones the maps hold, so a surface's own depth is in
+    /// them and the bias is what keeps it from shadowing itself.
+    fn shadow_pipeline(&mut self, device: &wgpu::Device, cull: CullMode) {
+        let (shader, layout) = (&self.shadow_shader, &self.shadow_layout);
+        self.shadow_pipelines.entry(cull).or_insert_with(|| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("ljos_3d shadow"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: match cull {
+                        CullMode::Back => Some(wgpu::Face::Back),
+                        CullMode::Front => Some(wgpu::Face::Front),
+                        CullMode::None => None,
+                    },
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: shadow::FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        });
+    }
+
+    fn gpu_mesh(&self, key: MeshKey) -> &GpuMesh {
+        match key {
+            MeshKey::Primitive(p) => &self.meshes[&p],
+            MeshKey::Custom(id) => self.custom[&id]
+                .mesh
+                .as_ref()
+                .expect("only drawable geometries are drawn"),
+        }
     }
 
     fn sky(&mut self, device: &wgpu::Device, samples: u32) {
@@ -1079,6 +1289,8 @@ impl Renderer {
         }
         let mut ambient = [0.0f32; 3];
         let mut count = 0;
+        // The lights casting shadows, and where each is among the lights.
+        let mut shadowing = Vec::new();
         for (_, node, world) in &walked {
             let NodeKind::Light(light) = &node.kind else {
                 continue;
@@ -1091,17 +1303,24 @@ impl Renderer {
                 *sum += c;
             }
             frame.lights[count] = light_uniform(light, world);
+            if let Some(shadow) = &node.shadow
+                && shadowing.len() < shadow::MAX_SHADOW_LIGHTS
+            {
+                shadowing.push((count, light, world, shadow));
+            }
             count += 1;
         }
         frame.ambient = [ambient[0], ambient[1], ambient[2], 0.0];
         frame.counts[0] = count as u32;
-        if target.frame_written != Some(frame) {
-            queue.write_buffer(&target.frame_buffer, 0, bytemuck::bytes_of(&frame));
-            target.frame_written = Some(frame);
-        }
 
         let mut opaque = Vec::new();
         let mut blended = Vec::new();
+        // Models the camera leaves out still cast shadows into what it
+        // sees; their uniforms go after the drawn models'.
+        let mut casters: Vec<Caster> = Vec::new();
+        let mut unseen = Vec::new();
+        let mut bounds = Vec::new();
+        let shadows = !shadowing.is_empty();
         if let Some((camera, _)) = camera {
             let planes = camera.frustum_culling().then(|| frustum(&view_proj));
             for (_, node, world) in &walked {
@@ -1119,9 +1338,29 @@ impl Renderer {
                 };
                 let (centre, radius) = model.mesh.bounds();
                 let centre = transform_point(world, centre);
+                let radius = radius * largest_scale(world);
+                let mut uniform = model_uniform(&model.material, world);
+                uniform.params2[3] = f32::from(u8::from(node.receives_shadows));
+                let caster = (shadows && node.casts_shadows).then(|| {
+                    casters.push(Caster {
+                        mesh: key,
+                        cull: model.material.cull_mode(),
+                        world: *world,
+                        centre,
+                        radius,
+                        slot: 0,
+                    });
+                    casters.len() - 1
+                });
+                if shadows && (node.casts_shadows || node.receives_shadows) {
+                    bounds.push((centre, radius));
+                }
                 if let Some(planes) = &planes
-                    && outside(planes, centre, radius * largest_scale(world))
+                    && outside(planes, centre, radius)
                 {
+                    if let Some(c) = caster {
+                        unseen.push((c, uniform));
+                    }
                     continue;
                 }
                 let blends = model.material.blends();
@@ -1133,8 +1372,9 @@ impl Renderer {
                         depth_write: !blends,
                         samples,
                     },
-                    uniform: model_uniform(&model.material, world),
+                    uniform,
                     depth: -transform_point(&view, centre).z,
+                    caster,
                 };
                 if blends {
                     blended.push(draw);
@@ -1143,6 +1383,49 @@ impl Renderer {
                 }
             }
         }
+
+        let lights: Vec<shadow::Caster> = shadowing
+            .iter()
+            .map(|&(_, light, world, shadow)| shadow::Caster {
+                light,
+                world,
+                shadow,
+            })
+            .collect();
+        let plan = if shadows {
+            Plan::new(
+                &lights,
+                &bounds,
+                camera.as_ref().map(|(camera, _)| shadow::View {
+                    camera,
+                    view_proj: &view_proj,
+                }),
+                device.limits().max_texture_dimension_2d,
+            )
+        } else {
+            Plan::default()
+        };
+        for (&(i, _, _, s), &(first, n)) in shadowing.iter().zip(&plan.lights) {
+            frame.lights[i].shadow = [
+                first as f32,
+                n as f32,
+                s.factor.clamp(0.0, 1.0),
+                s.bias.max(0.0),
+            ];
+            frame.lights[i].shadow2 = [
+                s.pcf_radius.max(0.0),
+                s.samples.clamp(1, 16) as f32,
+                s.cascades.blend.clamp(0.0, 1.0),
+                0.0,
+            ];
+        }
+        frame.shadow_layers[..plan.layers.len()].copy_from_slice(&plan.layers);
+        target.shadows(device, self, &plan);
+        if target.frame_written != Some(frame) {
+            queue.write_buffer(&target.frame_buffer, 0, bytemuck::bytes_of(&frame));
+            target.frame_written = Some(frame);
+        }
+
         // Over what is opaque, from the farthest in: each blends over what
         // is behind it. A stable sort keeps the tree's order where two are
         // as far.
@@ -1150,8 +1433,18 @@ impl Renderer {
         let mut draws = opaque;
         draws.append(&mut blended);
 
-        if draws.len() as u64 > target.model_capacity {
-            target.model_capacity = (draws.len() as u64).next_power_of_two();
+        for (i, draw) in draws.iter().enumerate() {
+            if let Some(c) = draw.caster {
+                casters[c].slot = i;
+            }
+        }
+        let mut uniforms: Vec<ModelUniform> = draws.iter().map(|d| d.uniform).collect();
+        for (c, uniform) in unseen {
+            casters[c].slot = uniforms.len();
+            uniforms.push(uniform);
+        }
+        if uniforms.len() as u64 > target.model_capacity {
+            target.model_capacity = (uniforms.len() as u64).next_power_of_two();
             (target.model_buffer, target.model_group) = model_slots(
                 device,
                 &self.model_layout,
@@ -1161,13 +1454,20 @@ impl Renderer {
             // A new buffer holds nothing yet.
             target.slots_written.clear();
         }
-        write_slots(queue, target, &draws, self.model_stride);
+        write_slots(queue, target, &uniforms, self.model_stride);
         for draw in &draws {
             if let MeshKey::Primitive(p) = draw.mesh {
                 self.mesh(device, p);
             }
             self.pipeline(device, draw.key);
         }
+        for caster in &casters {
+            if let MeshKey::Primitive(p) = caster.mesh {
+                self.mesh(device, p);
+            }
+            self.shadow_pipeline(device, caster.cull);
+        }
+        self.draw_shadows(queue, encoder, target, &plan, &casters);
         // A geometry no scene holds is dropped with its buffers.
         self.custom.retain(|_, c| c.source.strong_count() > 0);
 
@@ -1239,13 +1539,7 @@ impl Renderer {
                     pass.set_bind_group(2, self.maps.group(&draw.maps), &[]);
                     bound_maps = Some(&draw.maps);
                 }
-                let mesh = match draw.mesh {
-                    MeshKey::Primitive(p) => &self.meshes[&p],
-                    MeshKey::Custom(id) => self.custom[&id]
-                        .mesh
-                        .as_ref()
-                        .expect("only drawable geometries are drawn"),
-                };
+                let mesh = self.gpu_mesh(draw.mesh);
                 let offset = (i as u64 * self.model_stride) as u32;
                 pass.set_bind_group(1, &target.model_group, &[offset]);
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
@@ -1256,6 +1550,80 @@ impl Renderer {
         target.drawn_models = draws.len();
         target.drawn = Some(scene.revision());
         true
+    }
+
+    /// Draws the shadow maps, unless they already show what the plan
+    /// and the casters would draw into them.
+    fn draw_shadows(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &mut Target,
+        plan: &Plan,
+        casters: &[Caster],
+    ) {
+        let Some(shadows) = target.shadows.as_mut() else {
+            return;
+        };
+        let key = ShadowKey {
+            layers: plan.layers.clone(),
+            casters: casters
+                .iter()
+                .map(|c| {
+                    let revision = match c.mesh {
+                        MeshKey::Primitive(_) => 0,
+                        MeshKey::Custom(id) => self.custom[&id].revision,
+                    };
+                    (c.mesh, revision, c.world.0, c.cull)
+                })
+                .collect(),
+        };
+        if shadows.drawn.as_ref() == Some(&key) {
+            return;
+        }
+        let stride = self.layer_stride as usize;
+        let size = std::mem::size_of::<ShadowLayer>();
+        let mut bytes = vec![0u8; (plan.layers.len() - 1) * stride + size];
+        for (i, layer) in plan.layers.iter().enumerate() {
+            bytes[i * stride..i * stride + size].copy_from_slice(bytemuck::bytes_of(layer));
+        }
+        queue.write_buffer(&shadows.layer_buffer, 0, &bytes);
+        for (i, layer) in plan.layers.iter().enumerate() {
+            let planes = frustum(&Mat4(layer.view_proj));
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("ljos_3d shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &shadows.maps.views[i],
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            let offset = (i as u64 * self.layer_stride) as u32;
+            pass.set_bind_group(0, &shadows.layer_group, &[offset]);
+            let mut bound = None;
+            for c in casters {
+                if outside(&planes, c.centre, c.radius) {
+                    continue;
+                }
+                if bound != Some(c.cull) {
+                    pass.set_pipeline(&self.shadow_pipelines[&c.cull]);
+                    bound = Some(c.cull);
+                }
+                let mesh = self.gpu_mesh(c.mesh);
+                let offset = (c.slot as u64 * self.model_stride) as u32;
+                pass.set_bind_group(1, &target.model_group, &[offset]);
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.count, 0, 0..1);
+            }
+            target.shadow_passes += 1;
+        }
+        shadows.drawn = Some(key);
     }
 
     /// Makes the pipeline that draws pictures into a pass of `format`;

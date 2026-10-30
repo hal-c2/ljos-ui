@@ -22,15 +22,17 @@ mod maps;
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub mod offscreen;
 #[cfg(feature = "gpu")]
+mod shadow;
+#[cfg(feature = "gpu")]
 pub mod surface;
 
 pub use geometry::{
     Attribute, ComponentType, CustomGeometry, GeometryError, PrimitiveType, Semantic,
 };
 pub use scene::{
-    AlphaMode, Background, Camera, Color, CullMode, DefaultMaterial, Environment, Fade, Light,
-    LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive,
-    PrincipledMaps, PrincipledMaterial, Scene, Tonemap, Transform,
+    AlphaMode, Background, Camera, Cascades, Color, CullMode, DefaultMaterial, Environment, Fade,
+    Light, LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive,
+    PrincipledMaps, PrincipledMaterial, Scene, Shadow, Tonemap, Transform,
 };
 pub use texture::{
     Channel, Filter, PixelEncoding, Sampling, Texture, TextureImage, TexturePixels, Tiling,
