@@ -3746,6 +3746,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_blocks"
+version = "0.0.0"
+dependencies = [
+ "qml_syntax",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ljos_child"
 version = "0.0.0"
 

@@ -1,0 +1,27 @@
+[package]
+name = "ljos_blocks"
+description = "The functional blocks an application offers and their contracts (state, inputs, actions, events, slots), read from its type dump and qmldir files without running it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# Contracts of blocks written in QML, read from their files, and a whole
+# project's registry from its directory. Off by default: it links the
+# parser, which a runtime-free reader of `ljostypes.json` does not need.
+source = ["dep:qml_syntax"]
+
+[dependencies]
+qml_syntax = { path = "../qml_syntax", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

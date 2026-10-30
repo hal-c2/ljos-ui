@@ -1,0 +1,68 @@
+{
+  "format": 2,
+  "modules": [
+    {
+      "uri": "App.Media",
+      "versions": ["1.0", "1.2"],
+      "types": [
+        {
+          "name": "Player",
+          "since": "1.2",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {"name": "playing", "type": "bool", "kind": "value", "list": false, "readonly": true,
+             "final": false, "required": false, "constant": false, "group": false, "notify": "playingChanged"},
+            {"name": "source", "type": "url", "kind": "value", "list": false, "readonly": false,
+             "final": false, "required": false, "constant": false, "group": false, "notify": "sourceChanged"},
+            {"name": "codec", "type": "string", "kind": "value", "list": false, "readonly": true,
+             "final": false, "required": false, "constant": true, "group": false, "notify": null},
+            {"name": "toolbar", "type": "list<Contribution>", "kind": "list", "list": true, "readonly": false,
+             "final": false, "required": false, "constant": false, "group": false, "notify": null}
+          ],
+          "signals": [
+            {"name": "finished", "parameters": [{"name": "position", "type": "real"}]}
+          ],
+          "methods": [
+            {"name": "play", "parameters": [], "returnType": "void"},
+            {"name": "seek", "parameters": [{"name": "to", "type": "real"}], "returnType": "bool"}
+          ],
+          "block": {"category": "Media", "summary": "Plays one source"},
+          "somethingNewer": [1, 2, 3]
+        },
+        {
+          "name": "Waveform",
+          "since": "1.0",
+          "base": "Item",
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "Clock",
+          "since": "1.0",
+          "base": null,
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {"name": "now", "type": "int", "readonly": true, "final": false, "required": false,
+             "constant": false, "group": false, "notify": "nowChanged"}
+          ],
+          "signals": [],
+          "methods": [],
+          "block": {}
+        }
+      ]
+    }
+  ],
+  "unnamed": []
+}
