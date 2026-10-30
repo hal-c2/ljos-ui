@@ -2002,6 +2002,10 @@ impl Renderer {
             timer.end(encoder, shadows_drawn);
         }
         target.drawn_models = draws.len();
+        crate::stats::record_render(
+            (draws.len() + usize::from(sky)) as u32,
+            target.shadow_passes,
+        );
         target.drawn = Some(scene.revision());
         true
     }

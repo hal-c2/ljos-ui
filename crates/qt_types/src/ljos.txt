@@ -8294,6 +8294,7 @@ module QtQuick3D.Helpers
 	ConeGeometry QtQuick3D.Helpers.ConeGeometry
 	CuboidGeometry QtQuick3D.Helpers.CuboidGeometry
 	CylinderGeometry QtQuick3D.Helpers.CylinderGeometry
+	DebugView QtQuick3D/Helpers/DebugView.qml
 	GridGeometry QtQuick3D.Helpers.GridGeometry
 	HeightFieldGeometry QtQuick3D.Helpers.HeightFieldGeometry
 	LookAtNode QtQuick3D.Helpers.LookAtNode
@@ -8301,6 +8302,7 @@ module QtQuick3D.Helpers
 	PlaneGeometry QtQuick3D.Helpers.PlaneGeometry
 	ProceduralMesh QtQuick3D.Helpers.ProceduralMesh
 	ProceduralMeshSubset QtQuick3D.Helpers.ProceduralMeshSubset
+	RenderStatistics QtQuick3D.Helpers.RenderStatistics
 	SphereGeometry QtQuick3D.Helpers.SphereGeometry
 	TorusGeometry QtQuick3D.Helpers.TorusGeometry
 	WasdController QtQuick3D/Helpers/WasdController.qml
@@ -8393,6 +8395,12 @@ module QtQuick3D.Helpers
 		signal lengthChanged
 		signal ringsChanged
 		signal segmentsChanged
+	type QtQuick3D/Helpers/DebugView.qml DebugView
+		prototype QtQuick.Rectangle named
+		prop source QtQuick3D.View3D named pointer
+		prop resourceDetailsVisible QtQml.bool named
+		signal sourceChanged
+		signal resourceDetailsVisibleChanged
 	type QtQuick3D.Helpers.GridGeometry GridGeometry
 		prototype QtQuick3D.Geometry named
 		prop horizontalLines QtQml.int named
@@ -8496,6 +8504,21 @@ module QtQuick3D.Helpers
 		signal nameChanged
 		signal lengthChanged
 		signal offsetChanged
+	type QtQuick3D.Helpers.RenderStatistics RenderStatistics
+		prototype QtQml.QtObject named
+		prop fps QtQml.real named readonly
+		prop frameTime QtQml.real named readonly
+		prop drawCalls QtQml.int named readonly
+		prop shadowPasses QtQml.int named readonly
+		prop frames QtQml.int named readonly
+		prop gpuTime QtQml.real named readonly
+		signal fpsChanged
+		signal frameTimeChanged
+		signal drawCallsChanged
+		signal shadowPassesChanged
+		signal framesChanged
+		signal gpuTimeChanged
+		method refresh
 	type QtQuick3D.Helpers.SphereGeometry SphereGeometry
 		prototype QtQuick3D.Geometry named
 		enum Status Null=0 Loading=1 Ready=2 Error=3

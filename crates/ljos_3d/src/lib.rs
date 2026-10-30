@@ -17,6 +17,7 @@ pub mod pick;
 pub mod scene;
 #[cfg(feature = "snippets")]
 pub mod snippet;
+pub mod stats;
 pub mod texture;
 
 #[cfg(feature = "gpu")]
