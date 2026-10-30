@@ -23,6 +23,94 @@ pub fn image_file(name: &str, width: u32, height: u32, colour: &str) -> Result<V
     }
 }
 
+/// A PNG split into four quadrants of one colour each, given top left,
+/// top right, bottom left and bottom right, so that a picture of it says
+/// which part of the image landed where. An odd side gives the extra
+/// row or column to the right and bottom quadrants.
+///
+/// # Errors
+/// There are not four colours, one is not a colour, or the size has no
+/// pixels.
+pub fn quadrants_png(width: u32, height: u32, colours: &[String]) -> Result<Vec<u8>, String> {
+    let [tl, tr, bl, br] = colours else {
+        return Err(format!(
+            "quadrants take four colours, not {}",
+            colours.len()
+        ));
+    };
+    if width == 0 || height == 0 {
+        return Err("an image has at least one pixel".to_owned());
+    }
+    let quads = [tl, tr, bl, br]
+        .into_iter()
+        .map(|c| parse_colour(c))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut data = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let i = usize::from(y >= height / 2) * 2 + usize::from(x >= width / 2);
+            let [a, r, g, b] = quads[i];
+            data.extend([r, g, b, a]);
+        }
+    }
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(Cursor::new(&mut out), width, height);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_color(png::ColorType::Rgba);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(&data).map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// A Radiance HDR picture (`.hdr`) whose upper half is one linear
+/// radiance and lower half another, written as flat RGBE scanlines,
+/// which every reader of the format takes. A light probe is laid around
+/// the scene from such a picture, its top row straight up.
+///
+/// # Errors
+/// The size has no pixels or a radiance is negative or not a number.
+pub fn radiance(
+    width: u32,
+    height: u32,
+    upper: [f32; 3],
+    lower: [f32; 3],
+) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 {
+        return Err("an image has at least one pixel".to_owned());
+    }
+    if upper
+        .iter()
+        .chain(&lower)
+        .any(|c| !(c.is_finite() && *c >= 0.0))
+    {
+        return Err("a radiance is a number of at least 0".to_owned());
+    }
+    let mut out =
+        format!("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {height} +X {width}\n").into_bytes();
+    let (up, down) = (rgbe(upper), rgbe(lower));
+    for y in 0..height {
+        let px = if y < height / 2 { up } else { down };
+        for _ in 0..width {
+            out.extend(px);
+        }
+    }
+    Ok(out)
+}
+
+/// One colour in Radiance's shared-exponent form.
+fn rgbe([r, g, b]: [f32; 3]) -> [u8; 4] {
+    let max = r.max(g).max(b);
+    if max < 1e-32 {
+        return [0; 4];
+    }
+    // max = m · 2^e with m in [0.5, 1); each channel keeps 8 bits of m.
+    let e = max.log2().floor() as i32 + 1;
+    let scale = 256.0 / 2f32.powi(e);
+    let byte = |c: f32| (c * scale).clamp(0.0, 255.0) as u8;
+    [byte(r), byte(g), byte(b), (e + 128) as u8]
+}
+
 /// A PNG of noise, the same each time: its bytes are about as many as its
 /// pixels, as a photograph's are, where a picture of one colour is a few
 /// hundred bytes whatever its size.

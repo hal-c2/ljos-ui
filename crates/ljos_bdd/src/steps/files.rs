@@ -58,6 +58,62 @@ fn an_image_file(
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
+// An image of four quadrants, each of one colour, so that where each part
+// of it is drawn can be told from the picture ("#ff0000, #00ff00, …" top
+// left, top right, bottom left, bottom right).
+#[given(regex = r#"^an? (\d+) by (\d+) image file "([^"]+\.png)" of quadrants "([^"]+)"$"#)]
+fn a_quadrants_image_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    colours: String,
+) -> StepResult {
+    let colours: Vec<String> = colours.split(',').map(|c| c.trim().to_owned()).collect();
+    let bytes = fixture::quadrants_png(width, height, &colours)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
+// A Radiance HDR picture of linear radiance ("0.5, 0.5, 0.5"), which goes
+// beyond 1 where an ordinary picture cannot: what a light probe is made of.
+#[given(regex = r#"^an? (\d+) by (\d+) Radiance image file "([^"]+)" filled with ([^"]+)$"#)]
+fn a_radiance_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    radiance: String,
+) -> StepResult {
+    let c = parse_radiance(&radiance)?;
+    let bytes = fixture::radiance(width, height, c, c)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
+#[given(
+    regex = r#"^an? (\d+) by (\d+) Radiance image file "([^"]+)" with an upper half of ([^"]+) and a lower half of ([^"]+)$"#
+)]
+fn a_radiance_file_of_halves(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    upper: String,
+    lower: String,
+) -> StepResult {
+    let (upper, lower) = (parse_radiance(&upper)?, parse_radiance(&lower)?);
+    let bytes = fixture::radiance(width, height, upper, lower)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
+/// "R, G, B" as three numbers of linear radiance.
+fn parse_radiance(text: &str) -> Result<[f32; 3], String> {
+    let parts = text
+        .split(',')
+        .map(|n| n.trim().parse::<f32>().map_err(|e| format!("{n:?}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    <[f32; 3]>::try_from(parts).map_err(|_| format!("{text:?} is not \"R, G, B\""))
+}
+
 // A PDF document beside the QML, with a page of each size in points
 // ("300 by 200, 150 by 400"), each painted in its middle half.
 #[given(regex = r#"^a PDF file "([^"]+)" of pages "([^"]+)" painted "(#[0-9a-fA-F]+)"$"#)]
