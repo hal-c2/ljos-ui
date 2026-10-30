@@ -508,13 +508,13 @@ module Ljos.Models
 		signal rolesChanged
 		signal statusChanged
 		signal errorChanged
-		signal dataChanged topLeft bottomRight roles
+		signal dataChanged topLeft:var bottomRight:var roles:var
 		signal modelAboutToBeReset
 		signal modelReset
-		signal rowsAboutToBeInserted parent first last
-		signal rowsInserted parent first last
-		signal rowsAboutToBeRemoved parent first last
-		signal rowsRemoved parent first last
+		signal rowsAboutToBeInserted parent:var first:int last:int
+		signal rowsInserted parent:var first:int last:int
+		signal rowsAboutToBeRemoved parent:var first:int last:int
+		signal rowsRemoved parent:var first:int last:int
 		method reload
 		method get
 
