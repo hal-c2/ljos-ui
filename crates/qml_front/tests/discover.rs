@@ -45,6 +45,26 @@ fn a_qmldir_names_the_module_and_its_types() {
 }
 
 #[test]
+fn a_block_comment_declares_its_type_once() {
+    // Qt reads the plain line; Ljós reads the block too, and either alone
+    // declares the type.
+    let text = "module App.Media\n\
+        Player 1.0 Player.qml\n\
+        # block Player 1.0 Player.qml Media \"Plays one source\"\n\
+        #block Clock 1.0 Clock.qml\n\
+        Clock 1.0 Clock.qml\n\
+        # blocks Other 1.0 Other.qml\n\
+        # block the layout below\n";
+    assert_eq!(
+        qmldir(text),
+        Some(module(
+            "App.Media",
+            &[("Player", "Player.qml"), ("Clock", "Clock.qml")],
+        ))
+    );
+}
+
+#[test]
 fn a_build_names_the_module_and_the_files_that_are_its_types() {
     let text = r#"
 cmake_minimum_required(VERSION 3.16)

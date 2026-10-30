@@ -68,11 +68,26 @@ pub struct Type {
 /// module Thermostat
 /// singleton Constants 1.0 Constants.qml
 /// RoomView 1.0 RoomView.qml
+/// # block Player 1.0 Player.qml Media "Plays one source"
 /// ```
+///
+/// A `# block` comment declares a functional block (ADR 0003; its grammar
+/// and the rest of its words are `ljos_blocks`'). It is a comment so that
+/// Qt, which fails an import on a line it does not know, reads past it;
+/// here it also declares its type, once even when a plain line says so
+/// too, which is what a qmldir shared with Qt writes (Qt sees only that).
 pub fn qmldir(text: &str) -> Option<Module> {
     let mut uri = None;
-    let mut types = Vec::new();
+    let mut types: Vec<Type> = Vec::new();
+    let mut blocks: Vec<usize> = Vec::new();
     for line in text.lines() {
+        if let Some(block) = block_type(line) {
+            if !types.contains(&block) {
+                blocks.push(types.len());
+                types.push(block);
+            }
+            continue;
+        }
         let line = line.split('#').next().unwrap_or(line);
         let mut words: Vec<&str> = line.split_whitespace().collect();
         if let ["module", name] = words.as_slice() {
@@ -86,11 +101,16 @@ pub fn qmldir(text: &str) -> Option<Module> {
         let (Some(name), Some(path)) = (words.first(), words.last()) else {
             continue;
         };
-        if matches!(words.len(), 2 | 3) && is_type_name(name) && path.ends_with(".qml") {
-            types.push(Type {
-                name: (*name).to_string(),
-                path: (*path).to_string(),
-            });
+        let ty = Type {
+            name: (*name).to_string(),
+            path: (*path).to_string(),
+        };
+        if matches!(words.len(), 2 | 3)
+            && is_type_name(name)
+            && path.ends_with(".qml")
+            && !blocks.iter().any(|&i| types[i] == ty)
+        {
+            types.push(ty);
         }
     }
     // A `qmldir` says nothing of what is kept with the module.
@@ -99,6 +119,21 @@ pub fn qmldir(text: &str) -> Option<Module> {
         types,
         resources: Vec::new(),
         prefix: PREFIX.to_string(),
+    })
+}
+
+/// The type a `# block Name 1.0 File.qml ...` comment declares.
+fn block_type(line: &str) -> Option<Type> {
+    let rest = line.trim_start().strip_prefix('#')?.trim_start();
+    let rest = rest.strip_prefix("block")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let mut words = rest.split_whitespace();
+    let (name, _version, path) = (words.next()?, words.next()?, words.next()?);
+    (is_type_name(name) && path.ends_with(".qml")).then(|| Type {
+        name: name.to_string(),
+        path: path.to_string(),
     })
 }
 

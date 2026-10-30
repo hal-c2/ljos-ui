@@ -60,10 +60,25 @@ shell drop, a plugin written against a block it cannot import), the generic
 adapter is `Block.invoke(name, args)` and `Block.read(name)` over the same
 metaobject, not a second path.
 
-**What makes a type a block** rather than any type: a `blocks` entry in the
-module's `qmldir` (`block Player 1.0 Player.qml`, read by Ljós and ignored
-as an unknown line by Qt's tools) or `#[qml(block)]` on a Rust type. The
-entry may carry a category and a one-line summary for a palette.
+**What makes a type a block** rather than any type: a `# block` comment in
+the module's `qmldir` or `#[qml(block, category = "...", summary = "...")]`
+on a Rust type. Either may carry a category and a one-line summary for a
+palette:
+
+```text
+module App.Media
+Player 1.0 Player.qml
+# block Player 1.0 Player.qml Media "Plays one source"
+```
+
+The grammar is `# block <Name> <major.minor> <File.qml> [<Category>]
+["<summary>"]`: the category is one word, the summary a double-quoted
+string, both optional. DECISION: a comment, not a bare `block` line. Qt
+6.11's `qml` and `qmllint` read an unknown first word as a type
+declaration and fail the import ("a component declaration requires two or
+three arguments, but 4 were provided"); they read past a comment. Ljós
+also declares the type from the comment, so a qmldir only Ljós reads needs
+no plain line, and one shared with Qt keeps its plain line for Qt.
 
 **Purity of skins.** A skin may hold view state (`hovered`, a scroll
 position, an open popup) but not application state. Ljós cannot know which
@@ -170,15 +185,15 @@ insertions are refused as unsupported (below).
 ## Consequences
 
 - **New general pieces in Ljós:** `qml_edit` (tool), `ljos_blocks`
-  (runtime-free), the `Ljos.Blocks` QML module, the `block` qmldir line and
+  (runtime-free), the `Ljos.Blocks` QML module, the `# block` qmldir comment and
   `#[qml(block)]`, theme-file watching, and inspector tools that read and
   drive blocks (`app_blocks`, `app_block_invoke`, `app_preview_alias`) and
   authoring tools that edit (`qml_edit_apply`, `blocks_list`). None of them
   names an application.
 - **No new runtime dependency on the parser.** `qml_edit` links only where
   `qml_fmt` does (tools, and an app that opts into the compiler, goal 9).
-- **A Qt-only author loses nothing:** the `block` qmldir line is ignored by
-  Qt's tools, `Ljos.Blocks` is plain QML, and a skin is ordinary QML.
+- **A Qt-only author loses nothing:** the `# block` qmldir comment is a
+  comment to Qt's tools, `Ljos.Blocks` is plain QML, and a skin is ordinary QML.
 
 ## Open questions
 
