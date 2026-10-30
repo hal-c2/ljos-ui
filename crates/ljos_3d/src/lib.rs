@@ -9,6 +9,7 @@
 pub mod geometry;
 pub mod math;
 pub mod mesh;
+pub mod pick;
 pub mod scene;
 
 #[cfg(feature = "gpu")]

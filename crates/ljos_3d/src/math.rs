@@ -137,6 +137,16 @@ impl Quat {
         Vec3::new(ax.to_degrees(), ay.to_degrees(), az.to_degrees())
     }
 
+    /// The inverse of a unit quaternion: the same turn the other way.
+    pub fn conjugate(self) -> Quat {
+        Quat {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+            w: self.w,
+        }
+    }
+
     pub fn rotate(self, v: Vec3) -> Vec3 {
         let u = Vec3::new(self.x, self.y, self.z);
         let t = u.cross(v) * 2.0;
@@ -231,8 +241,23 @@ impl Mat4 {
         )
     }
 
+    /// A point through an affine transform: rotated, scaled and moved.
+    pub fn transform_point(&self, p: Vec3) -> Vec3 {
+        self.transform_vector(p) + self.translation()
+    }
+
+    /// A point through a projection: its homogeneous coordinates, before
+    /// the divide by `w`, which is the caller's to do or refuse.
+    pub fn project(&self, p: Vec3) -> [f32; 4] {
+        let m = &self.0;
+        std::array::from_fn(|r| m[0][r] * p.x + m[1][r] * p.y + m[2][r] * p.z + m[3][r])
+    }
+
     /// `None` for a singular matrix: a node scaled to nothing in some
-    /// axis, which draws nothing and lights nothing.
+    /// axis, which draws nothing and lights nothing. Only a determinant of
+    /// exactly nothing counts: a projection's is tiny but sound (an
+    /// orthographic one 200 pixels wide with a far plane at 10000 has
+    /// 2e-8), and so is a node's scaled to a thousandth.
     pub fn inverse(&self) -> Option<Mat4> {
         let m = self.0;
         let a = |c: usize, r: usize| m[c][r];
@@ -252,7 +277,7 @@ impl Mat4 {
         let c1 = a(2, 0) * a(3, 2) - a(3, 0) * a(2, 2);
         let c0 = a(2, 0) * a(3, 1) - a(3, 0) * a(2, 1);
         let det = s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0;
-        if det.abs() < f32::EPSILON {
+        if !det.is_normal() {
             return None;
         }
         let d = 1.0 / det;
