@@ -309,6 +309,9 @@ into the answer's structured content.
 | `Given the inspector is connected on a platform that measures no process` | the same, with the process's threads, memory and CPU time unmeasured, as on a platform the inspector cannot read them on |
 | `Given the inspector is connected and masks every editable value` | the same, started so that the value of every editable field is masked, not only passwords |
 | `Given the inspector is connected with the capabilities "inspect, input"` | the agent was granted those capabilities (`--mcp=` names them: `inspect`, `input`, `mutate`, `eval`); `… and masks every editable value` as above |
+| `When the application watches the roots "a, b" for the entries "Main"` / `Given the application has watched the roots …` | `ljos run --watch` over those directories of the scenario, loading those keys |
+| `When the application watches the roots "a" for the entries "Main" with the module "M" aliased to "dir"` | the same, started with `--alias M=dir` |
+| `When the application is asked to watch the roots "a" for the entries "Main" with the module "M" aliased to "dir"` / `Then the application is refused with a message that mentions "text"` / `And the message mentions "text"` | the same, expected to be refused; every message it gave mentions the text |
 | `Given the files are watched` | the host watches the files, so that `app_reload` can be answered and reloads are told; the scenario also notes what a reload needs from the first load on |
 | `Given the host says the application has N windows` | what the host tells the inspector about its windows (`Inspector::set_windows`); `app_status` gives the count and says only the primary is inspected |
 | `Given the inspector is served on a socket` / `When the inspector is stopped` | the same on a Unix socket in a directory of the scenario; stopped as with the application |
