@@ -11,7 +11,6 @@
 # reference machine. The expectations come from the documentation; each
 # Rule is tagged as checked against Qt once qml6 has checked it.
 
-@backlog
 Feature: A 3D scene in a View3D
   A View3D is an item that shows a 3D scene: models, a camera and lights,
   placed by Nodes. It is drawn where the item is, in the order of the items

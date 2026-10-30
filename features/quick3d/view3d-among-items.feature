@@ -5,7 +5,6 @@
 # Not yet verified on Qt: QtQuick3D is not installed beside qml6 on the
 # reference machine. The expectations come from the documentation.
 
-@backlog
 Feature: A View3D among other items
   A View3D is an item like any other: the items declared after it are drawn
   over it, and its picture is clipped to its own area.

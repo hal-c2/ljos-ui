@@ -221,7 +221,7 @@ ljos-ui/
 │   ├── ljos_lottie/            Qt.labs.lottieqt: LottieAnimation, own Lottie model (7.7)
 │   ├── ljos_3d/                the scene a View3D shows and its wgpu renderer [feature gpu];
 │   │                           no egui, no engine (7.8)
-│   ├── ljos_quick3d/           QtQuick3D types writing an ljos_3d scene (7.8; to come)
+│   ├── ljos_quick3d/           QtQuick3D types writing an ljos_3d scene (7.8)
 │   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit loop, GL or wgpu (M2)
 │   ├── ljos_dev/               watcher, devtools WebSocket, error and `top` overlays,
 │   │                           MCP inspector [feature "mcp"]
@@ -735,7 +735,7 @@ QtQuick3D, to the Qt 6 documentation and how `qml6` behaves (`features/quick3d/`
 
 **Crates.**
 - `ljos_3d` is the scene and its renderer, and knows neither egui nor the engine. The scene is a slotmap of nodes (groups, models, cameras, lights) with local transforms, plus the scene environment. Every change bumps the scene's revision. Its `gpu` feature is the renderer: it draws the scene into a texture of its own and blits that texture into a pass the host gives it. Without `gpu` the crate is the scene alone and links no wgpu. It builds for `wasm32-unknown-unknown`, with WebGPU and WebGL2 there.
-- `ljos_quick3d` (to come) holds the QML types of the module `QtQuick3D`: `View3D`, `Node`, `Model`, the cameras, the lights, the materials and `SceneEnvironment`. They are written against the `ljos` facade, like `ljos_lottie`. They depend on `ljos_3d` without `gpu`: a type writes the scene and never touches a device.
+- `ljos_quick3d` holds the QML types of the module `QtQuick3D`: `View3D`, `Node`, `Model`, the cameras, the lights, the materials and `SceneEnvironment`. They are written against the `ljos` facade, like `ljos_lottie`, and a host registers them with `ljos_quick3d::register`. They depend on `ljos_3d` without `gpu`: a type writes the scene and never touches a device. A `View3D` is a paint item whose tracked `read` walks the nodes under it into a scene; a walk that comes out the same keeps the scene it had, so its picture is not drawn again. `QtQuick3D` no longer stands in as empty items; its add-on modules (`Helpers`, `Effects`, `Particles3D`, `AssetUtils`, `Physics`, `SpatialAudio`, `Xr`) still do. An application that imports `QtQuick3D` without registering the crate is told the module is not installed, as with any opt-in module.
 - `ljos_egui` (feature `quick3d`) is the adapter for egui-wgpu. `ljos_shell` turns it on.
 
 **The seam.** `View3D` paints a `DrawOp` that carries its scene (an `Arc`, the same while the revision is) and a key for the view. Each renderer handles it its own way:
