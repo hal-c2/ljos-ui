@@ -116,6 +116,27 @@ impl Quat {
         ry * rx * rz
     }
 
+    /// The `eulerRotation` that gives this rotation: degrees about X, Y
+    /// and Z, X within ±90°. Where X is ±90° the Z turn is folded into Y.
+    pub fn to_euler_degrees(self) -> Vec3 {
+        let Quat { x, y, z, w } = self;
+        // The rotation matrix's entries that Y·X·Z leaves simple.
+        let m12 = 2.0 * (y * z - w * x);
+        let m02 = 2.0 * (x * z + w * y);
+        let m22 = 1.0 - 2.0 * (x * x + y * y);
+        let m10 = 2.0 * (x * y + w * z);
+        let m11 = 1.0 - 2.0 * (x * x + z * z);
+        let ax = (-m12).clamp(-1.0, 1.0).asin();
+        let (ay, az) = if m12.abs() < 0.999_999 {
+            (m02.atan2(m22), m10.atan2(m11))
+        } else {
+            let m20 = 2.0 * (x * z - w * y);
+            let m00 = 1.0 - 2.0 * (y * y + z * z);
+            ((-m20).atan2(m00), 0.0)
+        };
+        Vec3::new(ax.to_degrees(), ay.to_degrees(), az.to_degrees())
+    }
+
     pub fn rotate(self, v: Vec3) -> Vec3 {
         let u = Vec3::new(self.x, self.y, self.z);
         let t = u.cross(v) * 2.0;
@@ -306,6 +327,23 @@ mod tests {
             "{:?}",
             m.forward()
         );
+    }
+
+    #[test]
+    fn euler_angles_come_back_from_the_quaternion() {
+        for e in [
+            Vec3::new(30.0, 45.0, 10.0),
+            Vec3::new(-80.0, 170.0, -120.0),
+            Vec3::new(0.0, -90.0, 0.0),
+        ] {
+            let back = Quat::from_euler_degrees(e).to_euler_degrees();
+            assert!(
+                (back.x - e.x).abs() < 1e-3
+                    && (back.y - e.y).abs() < 1e-3
+                    && (back.z - e.z).abs() < 1e-3,
+                "{e:?} came back as {back:?}"
+            );
+        }
     }
 
     #[test]

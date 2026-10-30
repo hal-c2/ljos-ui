@@ -47,6 +47,7 @@ pub fn lit_cube(background: Background) -> Scene {
             mesh: MeshSource::Primitive(Primitive::Cube),
             material: Material::Default(DefaultMaterial {
                 diffuse_color: Color::rgb(0x40 as f32 / 255.0, 0x80 as f32 / 255.0, 1.0),
+                ..DefaultMaterial::default()
             }),
         }))
         .with_transform(Transform {

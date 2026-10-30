@@ -102,17 +102,29 @@ pub enum MeshSource {
     Primitive(Primitive),
 }
 
+/// `DefaultMaterial.lighting`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lighting {
+    /// The diffuse colour as it is, whatever the lights.
+    None,
+    /// Qt's default: lit by the scene's lights.
+    #[default]
+    Fragment,
+}
+
 /// `DefaultMaterial`, as far as it is built: a diffuse colour lit by the
 /// scene's lights.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DefaultMaterial {
     pub diffuse_color: Color,
+    pub lighting: Lighting,
 }
 
 impl Default for DefaultMaterial {
     fn default() -> Self {
         DefaultMaterial {
             diffuse_color: Color::WHITE,
+            lighting: Lighting::Fragment,
         }
     }
 }

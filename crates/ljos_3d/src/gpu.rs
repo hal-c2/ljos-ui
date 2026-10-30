@@ -20,7 +20,7 @@ use wgpu::util::DeviceExt;
 
 use crate::math::Mat4;
 use crate::mesh::Mesh;
-use crate::scene::{Background, Light, Material, MeshSource, NodeKind, Primitive, Scene};
+use crate::scene::{Background, Light, Lighting, Material, MeshSource, NodeKind, Primitive, Scene};
 
 /// What the picture is kept in: sRGB values written by the shader, so the
 /// same bytes blend in a 2D pass that works in gamma space.
@@ -43,6 +43,8 @@ struct ModelUniform {
     world: [[f32; 4]; 4],
     normal: [[f32; 4]; 4],
     diffuse: [f32; 4],
+    /// x is 1 where the material is lit; the rest unused.
+    params: [f32; 4],
 }
 
 #[repr(C)]
@@ -434,6 +436,12 @@ impl Renderer {
                         world: world.0,
                         normal: world.normal_matrix().0,
                         diffuse: m.diffuse_color.to_linear(),
+                        params: [
+                            f32::from(u8::from(m.lighting == Lighting::Fragment)),
+                            0.0,
+                            0.0,
+                            0.0,
+                        ],
                     },
                 ));
             }

@@ -16,6 +16,8 @@ struct Model {
     normal: mat4x4<f32>,
     // Linear, not premultiplied.
     diffuse: vec4<f32>,
+    // x is 1 where the material is lit, 0 where it shows its colour as it is.
+    params: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -45,7 +47,8 @@ fn to_srgb(c: f32) -> f32 {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let n = normalize(in.normal);
     let lambert = max(dot(n, -frame.light_dir.xyz), 0.0) * frame.light_color.w;
-    let lit = model.diffuse.rgb * (frame.light_color.rgb * lambert + frame.ambient.rgb);
+    let light = frame.light_color.rgb * lambert + frame.ambient.rgb;
+    let lit = model.diffuse.rgb * mix(vec3<f32>(1.0), light, model.params.x);
     let a = model.diffuse.a;
     let rgb = vec3<f32>(to_srgb(clamp(lit.r, 0.0, 1.0)), to_srgb(clamp(lit.g, 0.0, 1.0)), to_srgb(clamp(lit.b, 0.0, 1.0)));
     return vec4<f32>(rgb * a, a);
