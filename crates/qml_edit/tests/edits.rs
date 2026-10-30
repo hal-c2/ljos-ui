@@ -1,6 +1,6 @@
 //! Each edit on a small file, with the exact text it must give.
 
-use qml_edit::{Edit, Error, NodePath, Step, apply, find_id};
+use qml_edit::{BadPath, Edit, Error, NodePath, Step, apply, find_id};
 
 const PAGE: &str = r#"import QtQuick
 
@@ -604,4 +604,42 @@ fn a_child_moved_within_an_object_that_opens_up_is_not_left_behind() {
         ),
         "Column {\n    Item {\n        width: 1\n    }\n    Text { text: \"a\" }\n    Text { text: \"b\" }\n}\n"
     );
+}
+
+#[test]
+fn a_path_reads_back_what_it_writes() {
+    let paths = [
+        NodePath::root(),
+        NodePath(vec![Step::Child(0), Step::Child(12)]),
+        NodePath(vec![
+            Step::Value("contentItem".into()),
+            Step::Child(2),
+            Step::Value("layer.effect".into()),
+        ]),
+        NodePath(vec![Step::Component("Badge".into()), Step::Child(1)]),
+    ];
+    for path in paths {
+        let text = path.to_string();
+        assert_eq!(text.parse::<NodePath>(), Ok(path), "{text}");
+    }
+}
+
+#[test]
+fn a_path_that_is_not_one_is_refused() {
+    for text in [
+        "",
+        "0/1",
+        "root/",
+        "root/x",
+        "root/-1",
+        "root/component ",
+        "root/a b:",
+        "root//0",
+    ] {
+        assert_eq!(
+            text.parse::<NodePath>(),
+            Err(BadPath(text.into())),
+            "{text}"
+        );
+    }
 }

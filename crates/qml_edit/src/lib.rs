@@ -116,6 +116,56 @@ impl fmt::Display for NodePath {
     }
 }
 
+/// Text that is not a path as [`NodePath`]'s `Display` writes it.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "`{0}` is not an object path: it is `root` then steps such as `/0`, `/contentItem:` or `/component Name`"
+)]
+pub struct BadPath(pub String);
+
+impl std::str::FromStr for NodePath {
+    type Err = BadPath;
+
+    /// Reads what `Display` writes, so a path can travel as text.
+    fn from_str(text: &str) -> Result<Self, BadPath> {
+        let bad = || BadPath(text.to_owned());
+        let mut parts = text.split('/');
+        if parts.next() != Some("root") {
+            return Err(bad());
+        }
+        let mut steps = Vec::new();
+        for part in parts {
+            let step = if let Some(name) = part.strip_prefix("component ") {
+                Step::Component(name.to_owned())
+            } else if let Some(name) = part.strip_suffix(':') {
+                Step::Value(name.to_owned())
+            } else if part.bytes().all(|b| b.is_ascii_digit()) {
+                Step::Child(part.parse().map_err(|_| bad())?)
+            } else {
+                return Err(bad());
+            };
+            let named = match &step {
+                Step::Value(name) => name.split('.').all(is_identifier),
+                Step::Component(name) => is_identifier(name),
+                Step::Child(_) => true,
+            };
+            if !named {
+                return Err(bad());
+            }
+            steps.push(step);
+        }
+        Ok(Self(steps))
+    }
+}
+
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+}
+
 /// What to change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Edit {
