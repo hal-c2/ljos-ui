@@ -52,6 +52,17 @@ fn backends(id: &str) -> Option<fn(&Engine)> {
     })
 }
 
+/// The functions of its root object the launcher of the example `id` calls
+/// once the object is made, in order (in Qt, its `main`, by way of
+/// `QMetaObject::invokeMethod`). Its assets are `gallery:assets`'s, already
+/// there when the example starts.
+pub fn launcher_calls(id: &str) -> &'static [&'static str] {
+    match id {
+        "fx-material-showroom" => &["downloadComplete"],
+        _ => &[],
+    }
+}
+
 /// The properties the launcher of the example `id` gives its root
 /// object (in Qt, `setInitialProperties`): those a root `required`
 /// property needs. An example whose launcher gives none has none.
@@ -107,6 +118,8 @@ mod tests {
         );
         assert_eq!(initial_properties("mediaplayer").len(), 3);
         assert!(initial_properties("clocks").is_empty());
+        assert_eq!(launcher_calls("fx-material-showroom"), ["downloadComplete"]);
+        assert!(launcher_calls("clocks").is_empty());
 
         let engine = ljos::engine();
         register(&engine, "rssnews");

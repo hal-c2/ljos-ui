@@ -764,13 +764,15 @@ impl Run {
                 ljos_controls::set_application_arguments(engine, arguments);
                 crate::render::stage(engine, &source.resources());
                 engine.set_component_source(source);
-                Ok(engine
+                let root = engine
                     .create_from_url(
                         &key,
                         None,
                         crate::render::example_properties(example.as_deref()),
                     )
-                    .map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+                crate::render::launch_example(engine, root, example.as_deref());
+                Ok(root)
             });
             // Its error first, as when it stopped the run before the window
             // system was asked for anything.

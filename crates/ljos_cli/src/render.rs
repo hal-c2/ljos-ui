@@ -232,6 +232,7 @@ impl Render {
             .map_err(|e| anyhow::anyhow!("{e}"));
         notes.said.clear();
         let root = root.inspect_err(|_| notes.said = said.0.borrow().clone())?;
+        launch_example(&engine, root, self.example.as_deref());
         let png = picture
             .png(&engine, root)
             .map_err(|e| anyhow::anyhow!("{e}"));
@@ -311,6 +312,17 @@ pub(crate) fn example_properties(example: Option<&str>) -> Vec<(String, ljos_eng
     example
         .map(ljos_gallery_backends::initial_properties)
         .unwrap_or_default()
+}
+
+/// Calls what the launcher of the gallery example `example` calls on its
+/// root once it is made. Shared with `ljos run --example`.
+pub(crate) fn launch_example(engine: &Engine, root: ljos_engine::ObjectId, example: Option<&str>) {
+    let calls = example.map_or(&[][..], ljos_gallery_backends::launcher_calls);
+    for call in calls {
+        if let Err(e) = engine.invoke_by_name(root, call, &[]) {
+            engine.log(LogLevel::Warning, "gallery", &format!("{call}: {e}"));
+        }
+    }
 }
 
 /// The compiler's knowledge of an example's types: the table of types as
