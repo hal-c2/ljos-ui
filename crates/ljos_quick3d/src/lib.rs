@@ -102,6 +102,7 @@ mod skin;
 mod source;
 mod space;
 mod texture;
+mod texture_data;
 mod view;
 
 #[cfg(test)]
@@ -126,6 +127,7 @@ pub use runtime_loader::RuntimeLoader;
 pub use skin::{Joint, Skeleton, Skin};
 pub use source::EngineSource;
 pub use texture::Texture;
+pub use texture_data::TextureData;
 pub use view::View3D;
 
 use ljos::item;
@@ -138,6 +140,7 @@ pub fn register(engine: &Engine) {
         Node,
         Model,
         Geometry,
+        TextureData,
         Camera,
         PerspectiveCamera,
         OrthographicCamera,

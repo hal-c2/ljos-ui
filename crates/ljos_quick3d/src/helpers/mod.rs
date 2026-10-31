@@ -14,6 +14,7 @@ mod lod_manager;
 mod look_at;
 mod mesh;
 mod procedural_mesh;
+mod procedural_texture;
 mod render_statistics;
 mod shapes;
 
@@ -29,6 +30,7 @@ use ljos::prelude::*;
 use lod_manager::LodManager;
 use look_at::LookAtNode;
 use procedural_mesh::{ProceduralMesh, ProceduralMeshSubset};
+use procedural_texture::{ProceduralSkyTextureData, ProceduralTextureData};
 use render_statistics::RenderStatistics;
 
 use crate::random_instancing::{InstanceRange, RandomInstancing};
@@ -56,6 +58,8 @@ pub(crate) fn register(engine: &Engine) {
         LodManager,
         InstanceModel,
         InstanceRepeater,
+        ProceduralTextureData,
+        ProceduralSkyTextureData,
     ]));
     library::register(engine);
 }

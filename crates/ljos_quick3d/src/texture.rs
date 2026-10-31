@@ -59,6 +59,9 @@ pub struct Texture {
     /// An item drawn into the texture, live, instead of `source`.
     #[qml(notify, object = "Item")]
     pub source_item: Option<ObjectId>,
+    /// Pixels given as data instead of `source`.
+    #[qml(notify, object = "TextureData")]
+    pub texture_data: Option<ObjectId>,
     #[qml(notify)]
     pub scale_u: f64,
     #[qml(notify)]
@@ -112,6 +115,7 @@ impl Default for Texture {
             object3d: Object3D::default(),
             source: Url::default(),
             source_item: None,
+            texture_data: None,
             scale_u: d::texture::SCALE_U,
             scale_v: d::texture::SCALE_V,
             position_u: d::texture::POSITION_U,
@@ -233,7 +237,7 @@ pub(crate) fn read(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d:
 }
 
 /// The pixels the texture `obj` shows in `view`: its `sourceItem`'s
-/// picture or its loaded `source`. Tracked.
+/// picture, its `textureData` or its loaded `source`. Tracked.
 pub(crate) fn image_of(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<TextureImage> {
     if !e.is::<Texture>(obj) {
         return None;
@@ -245,6 +249,10 @@ pub(crate) fn image_of(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<Text
             Some(TextureImage::new(ItemPixels(picture.image)))
         }
         None => {
+            // "If this property is set, the source property is ignored."
+            if let Some(data) = item::prop(e, obj, Texture::TEXTURE_DATA) {
+                return crate::texture_data::image(e, data);
+            }
             let source = item::prop(e, obj, Texture::SOURCE);
             // A source a file wrote is relative to that file, as an Image's.
             let url = e.resolve_url(obj, source.0.as_str());

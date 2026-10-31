@@ -888,3 +888,48 @@ View3D {
         assert_same(&e, view, &g, gv, &[("cube_", cube)]);
     }
 }
+
+/// What an application writes: texture data of its own, filled from Rust.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Test", name = "Pixels", extends = TextureData)]
+struct Pixels {
+    #[qml(base)]
+    data: TextureData,
+}
+
+#[test]
+fn texture_data_reaches_a_texture_once_it_is_updated() {
+    let e = ljos::engine();
+    register(&e);
+    e.register_module(ljos::module!("Test" 1.0 => [Pixels]));
+    let mut project = ljos_compiler::Project::new(ljos::dev::EngineOracle::from_engine(&e));
+    project.add(
+        "Main",
+        "import QtQuick\nimport QtQuick3D\nimport Test\nView3D {\n\
+         property QtObject tex_: tex\nproperty QtObject data_: data\n\
+         width: 10; height: 10\n\
+         Texture { id: tex; source: \"missing.png\"; textureData: Pixels { id: data } }\n}\n",
+    );
+    let compiled = ljos_compiler::compile_file(&project, "Main").expect("compiles");
+    let mut source = ljos::MapSource::new();
+    source.insert("Main", compiled.file);
+    e.set_component_source(source);
+    let view = e.create_from_url("Main", None, Vec::new()).expect("created");
+    let (tex, data) = (named(&e, view, "tex_"), named(&e, view, "data_"));
+    assert!(texture::image_of(&e, view, tex).is_none(), "nothing committed yet");
+
+    e.with_mut(data, |p: &mut Pixels| {
+        p.data.set_size(2, 1);
+        p.data.set_format(ljos::item::ljos_3d::texture_data::format::RGBA8);
+        p.data.set_texture_data(vec![255, 0, 0, 255, 0, 255, 0, 255]);
+    })
+    .expect("filled");
+    TextureData::update(&e, data);
+    let first = texture::image_of(&e, view, tex).expect("committed");
+    assert_eq!(first.size(), [2, 1]);
+    first.with_pixels(&mut |p| assert_eq!(p, [255, 0, 0, 255, 0, 255, 0, 255]));
+
+    TextureData::update(&e, data);
+    let second = texture::image_of(&e, view, tex).expect("committed again");
+    assert_ne!(first.id(), second.id(), "a revision is new pixels to upload");
+}
