@@ -11,10 +11,12 @@ use std::sync::Arc;
 use ljos::item::{self, ljos_3d};
 use ljos::ljos_engine::Vector4d;
 use ljos::prelude::*;
+use ljos_3d::fetch::Fetch;
 use ljos_3d::math::{Mat4, Quat, Vec3};
 use ljos_3d::{Instance, InstanceTable};
 
 use crate::Object3D;
+use crate::fetch::EngineFetch;
 use crate::node::{IDENTITY, quat, vec3};
 use crate::space::to_value;
 
@@ -364,7 +366,6 @@ fn load(e: &Engine, me: ObjectId) {
         );
         return;
     }
-    let platform = Platform::of(e);
     let got = move |e: &Engine, bytes: Result<Vec<u8>, String>| {
         if !e.is_alive(me) || e.with(me, |f: &FileInstancing| f.generation) != Ok(generation) {
             return;
@@ -374,19 +375,7 @@ fn load(e: &Engine, me: ObjectId) {
             Err(why) => e.log(LogLevel::Warning, CATEGORY, format!("{source}: {why}")),
         }
     };
-    if let Some(bytes) = platform.resource(&url) {
-        got(e, Ok(bytes.to_vec()));
-    } else if is_remote(&url) {
-        platform.fetch_for(Some(me), &url, move |e, r| {
-            got(e, r.map_err(|err| err.to_string()));
-        });
-    } else {
-        let read = url_path(&url)
-            .ok_or_else(|| "no such file".to_owned())
-            .and_then(|p| platform.env().real(&p).map_err(|err| err.to_string()))
-            .and_then(|p| std::fs::read(p).map_err(|err| err.to_string()));
-        got(e, read);
-    }
+    EngineFetch::at_once(me).fetch(e, &url, Box::new(got));
 }
 
 fn arrived(e: &Engine, me: ObjectId, entries: Vec<Entry>) {

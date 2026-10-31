@@ -88,6 +88,7 @@
 //! them, from 0, and checked against Qt once qml6 has QtQuick3D.
 
 mod custom;
+mod fetch;
 mod helpers;
 mod instancing;
 mod items;

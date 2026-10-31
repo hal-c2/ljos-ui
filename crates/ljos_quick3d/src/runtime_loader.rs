@@ -168,61 +168,38 @@ use gltf_load::start;
 
 #[cfg(feature = "gltf")]
 mod gltf_load {
-    use std::collections::HashMap;
-    use std::path::PathBuf;
     use std::sync::Arc;
 
+    use ljos::item::ljos_3d::fetch::{Fetch, Fetched, Files, fetch_all};
     use ljos::item::ljos_3d::gltf::{self, Asset, Document};
     use ljos::prelude::*;
+
+    use crate::fetch::EngineFetch;
 
     use super::{RuntimeLoader, finish, set_bounds, status};
     use crate::space::to_value;
 
     const CATEGORY: &str = "qt.quick3d.runtimeloader";
 
-    /// Where one file's bytes are: already had, or a local file the pool
-    /// reads.
-    enum Found {
-        Bytes(Vec<u8>),
-        Path(PathBuf),
-        Missing(String),
-    }
-
-    impl Found {
-        fn read(self) -> Result<Vec<u8>, String> {
-            match self {
-                Found::Bytes(b) => Ok(b),
-                Found::Path(p) => std::fs::read(&p).map_err(|err| err.to_string()),
-                Found::Missing(why) => Err(why),
-            }
-        }
-    }
-
     /// What the first pass on the pool carries back.
     enum Parsed {
         Built(Result<Asset, String>),
-        /// The document, and the files it names that must be found first.
+        /// The document, and the files it names that must be fetched first.
         Needs(Box<Document>, Vec<String>),
     }
 
     pub(super) fn start(e: &Engine, me: ObjectId, generation: u64, source: String) {
         let url = e.resolve_url(me, &source);
-        let platform = Platform::of(e);
-        let found = if let Some(bytes) = platform.resource(&url) {
-            Found::Bytes(bytes.to_vec())
-        } else if is_remote(&url) {
-            let base = url.clone();
-            platform.fetch_for(Some(me), &url, move |e, got| {
-                let found = got.map_or_else(|err| Found::Missing(err.to_string()), Found::Bytes);
-                parse(e, me, generation, source, base, found);
-            });
-            return;
-        } else if let Some(path) = url_path(&url).and_then(|p| platform.env().real(&p).ok()) {
-            Found::Path(path)
-        } else {
-            Found::Missing("no such file".to_owned())
-        };
-        parse(e, me, generation, source, url, found);
+        let base = url.clone();
+        EngineFetch::pooled(me).fetch(
+            e,
+            &url,
+            Box::new(move |e, got| {
+                if current(e, me, generation) {
+                    parse(e, me, generation, source, base, got);
+                }
+            }),
+        );
     }
 
     fn parse(
@@ -231,16 +208,15 @@ mod gltf_load {
         generation: u64,
         source: String,
         base: String,
-        found: Found,
+        got: Fetched,
     ) {
         let work = move || -> Result<Parsed, String> {
-            let bytes = found.read()?;
-            let doc = gltf::parse(&bytes).map_err(|err| err.to_string())?;
+            let doc = gltf::parse(&got?).map_err(|err| err.to_string())?;
             let uris = doc.external_uris();
             if uris.is_empty() {
-                let mut none = |uri: &str| Err(format!("{uri} is not in the file"));
                 Ok(Parsed::Built(
-                    doc.build(&mut none).map_err(|e| e.to_string()),
+                    doc.build(&mut |uri| Files::default().take(uri))
+                        .map_err(|e| e.to_string()),
                 ))
             } else {
                 Ok(Parsed::Needs(Box::new(doc), uris))
@@ -255,7 +231,12 @@ mod gltf_load {
                 Ok(Parsed::Built(built)) => arrived(e, me, generation, &source, built),
                 Ok(Parsed::Needs(doc, uris)) => {
                     if current(e, me, generation) {
-                        gather(e, me, generation, source, base, doc, uris, HashMap::new());
+                        let fetch = EngineFetch::pooled(me);
+                        fetch_all(&fetch, e, &base, uris, move |e, files| {
+                            if current(e, me, generation) {
+                                build(e, me, generation, source, doc, files);
+                            }
+                        });
                     }
                 }
                 Err(why) => arrived(e, me, generation, &source, Err(why)),
@@ -276,47 +257,18 @@ mod gltf_load {
         }
     }
 
-    /// Finds the files the document names one at a time (a remote one
-    /// answers later), then builds the model on the pool.
-    #[allow(clippy::too_many_arguments)]
-    fn gather(
+    /// Builds the model on the pool from the files the document names.
+    fn build(
         e: &Engine,
         me: ObjectId,
         generation: u64,
         source: String,
-        base: String,
         doc: Box<Document>,
-        mut rest: Vec<String>,
-        mut found: HashMap<String, Found>,
+        mut files: Files,
     ) {
-        let platform = Platform::of(e);
-        while let Some(uri) = rest.pop() {
-            let url = join(&base, &uri);
-            if let Some(bytes) = platform.resource(&url) {
-                found.insert(uri, Found::Bytes(bytes.to_vec()));
-            } else if is_remote(&url) {
-                platform.fetch_for(Some(me), &url, move |e, got| {
-                    if !current(e, me, generation) {
-                        return;
-                    }
-                    let f = got.map_or_else(|err| Found::Missing(err.to_string()), Found::Bytes);
-                    found.insert(uri, f);
-                    gather(e, me, generation, source, base, doc, rest, found);
-                });
-                return;
-            } else if let Some(path) = url_path(&url).and_then(|p| platform.env().real(&p).ok()) {
-                found.insert(uri, Found::Path(path));
-            } else {
-                found.insert(uri, Found::Missing("no such file".to_owned()));
-            }
-        }
         let work = move || -> Result<Asset, String> {
-            let mut fetch = |uri: &str| {
-                found
-                    .remove(uri)
-                    .map_or_else(|| Err("not named".to_owned()), Found::read)
-            };
-            doc.build(&mut fetch).map_err(|err| err.to_string())
+            doc.build(&mut |uri| files.take(uri))
+                .map_err(|err| err.to_string())
         };
         let spawned = ljos::task::spawn_for(
             e,
@@ -390,70 +342,5 @@ mod gltf_load {
                 e.create_native(model, Some(me)).ok().map(|m| (i, m))
             })
             .collect()
-    }
-
-    /// `rel` resolved against the URL of the file that names it. glTF
-    /// names its files by relative URI references; one with a scheme is
-    /// taken as it is.
-    pub(super) fn join(base: &str, rel: &str) -> String {
-        let scheme = rel
-            .find(':')
-            .is_some_and(|i| i > 0 && !rel[..i].contains(['/', '?', '#']));
-        if scheme {
-            return rel.to_owned();
-        }
-        let base = base.split(['?', '#']).next().unwrap_or(base);
-        if let Some(abs) = rel.strip_prefix('/') {
-            // From the root of the base's authority.
-            let after_scheme = base.find("://").map_or(0, |i| i + 3);
-            let root = base[after_scheme..]
-                .find('/')
-                .map_or(base.len(), |i| after_scheme + i);
-            return format!("{}/{abs}", &base[..root]);
-        }
-        let dir = base.rfind('/').map_or("", |i| &base[..=i]);
-        let mut out: Vec<&str> = dir.split('/').collect();
-        // `dir` ends in '/', so its last part is empty: the place for `rel`.
-        out.pop();
-        for part in rel.split('/') {
-            match part {
-                "." => {}
-                ".." => {
-                    // Never above the authority (`scheme://host`).
-                    if out.len() > 3 || (out.len() > 1 && !dir.contains("://")) {
-                        out.pop();
-                    }
-                }
-                p => out.push(p),
-            }
-        }
-        out.join("/")
-    }
-}
-
-#[cfg(all(test, feature = "gltf"))]
-mod tests {
-    use super::gltf_load::join;
-
-    #[test]
-    fn relative_uris_resolve_against_the_file() {
-        assert_eq!(join("file:///a/b/m.gltf", "m.bin"), "file:///a/b/m.bin");
-        assert_eq!(
-            join("file:///a/b/m.gltf", "tex/c.png"),
-            "file:///a/b/tex/c.png"
-        );
-        assert_eq!(join("file:///a/b/m.gltf", "../c.png"), "file:///a/c.png");
-        assert_eq!(
-            join("file:///a/b/m.gltf", "./c%20d.png"),
-            "file:///a/b/c%20d.png"
-        );
-        assert_eq!(join("https://h/x/m.gltf?v=1", "m.bin"), "https://h/x/m.bin");
-        assert_eq!(join("https://h/x/m.gltf", "/r/m.bin"), "https://h/r/m.bin");
-        assert_eq!(join("https://h/m.gltf", "../../m.bin"), "https://h/m.bin");
-        assert_eq!(join("qrc:/m/a.gltf", "a.bin"), "qrc:/m/a.bin");
-        assert_eq!(
-            join("file:///a/m.gltf", "https://h/m.bin"),
-            "https://h/m.bin"
-        );
     }
 }
