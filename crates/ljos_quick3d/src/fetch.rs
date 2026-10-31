@@ -10,10 +10,10 @@ use ljos::item::ljos_3d::fetch::{Fetch, Reply};
 use ljos::prelude::*;
 
 /// Reads for `owner`: what it asked is dropped, reply and all, once it is
-/// gone.
+/// gone. With no owner the reply always comes.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EngineFetch {
-    owner: ObjectId,
+    owner: Option<ObjectId>,
     /// Whether a file on disk is read on the compute pool, so the engine's
     /// thread never waits on it, or at once: an instance table is small,
     /// and its count is there as soon as the source is set, as it is in Qt.
@@ -23,14 +23,22 @@ pub(crate) struct EngineFetch {
 impl EngineFetch {
     pub(crate) fn pooled(owner: ObjectId) -> Self {
         EngineFetch {
-            owner,
+            owner: Some(owner),
+            pooled: true,
+        }
+    }
+
+    /// For a read many objects wait on, which outlives whichever asked first.
+    pub(crate) fn unowned() -> Self {
+        EngineFetch {
+            owner: None,
             pooled: true,
         }
     }
 
     pub(crate) fn at_once(owner: ObjectId) -> Self {
         EngineFetch {
-            owner,
+            owner: Some(owner),
             pooled: false,
         }
     }
@@ -45,7 +53,7 @@ impl Fetch for EngineFetch {
             return reply(e, Ok(bytes.to_vec()));
         }
         if is_remote(url) {
-            platform.fetch_for(Some(self.owner), url, move |e, got| {
+            platform.fetch_for(self.owner, url, move |e, got| {
                 reply(e, got.map_err(|err| err.to_string()));
             });
             return;
@@ -64,7 +72,7 @@ impl Fetch for EngineFetch {
         let spawned = ljos::task::spawn_for(
             e,
             format!("read {url}"),
-            Some(self.owner),
+            self.owner,
             move || std::fs::read(path).map_err(|err| err.to_string()),
             move |e, got| {
                 if let Some(reply) = answer.take() {

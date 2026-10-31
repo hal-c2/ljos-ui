@@ -17,6 +17,7 @@ use crate::custom::{CustomMaterial, Effect};
 use crate::geometry::CustomGeometry;
 use crate::instancing::Instancing;
 use crate::math::{Mat4, Quat, Vec3};
+use crate::mesh_file::MeshFile;
 use crate::scene::Node;
 use crate::texture::TextureImage;
 
@@ -210,6 +211,13 @@ pub trait SceneSource {
     /// are not ready; the host builds the scene again when they are.
     fn texture_image(&self, view: Self::Object, texture: Self::Object) -> Option<TextureImage> {
         let _ = (view, texture);
+        None
+    }
+
+    /// The mesh file the model `obj` names, once it is read: the host reads
+    /// it in the background and has `view` drawn again when it is there. A
+    /// host that reads no files leaves such a model empty.
+    fn mesh_file(&self, _view: Self::Object, _obj: Self::Object) -> Option<Arc<MeshFile>> {
         None
     }
 

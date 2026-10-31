@@ -204,6 +204,14 @@ impl SceneSource for EngineSource<'_> {
         crate::texture::image_of(self.e, view, texture)
     }
 
+    fn mesh_file(
+        &self,
+        view: ObjectId,
+        obj: ObjectId,
+    ) -> Option<Arc<ljos_3d::mesh_file::MeshFile>> {
+        crate::mesh_source::file_of(self.e, view, obj)
+    }
+
     fn geometry(&self, g: ObjectId) -> Option<Arc<ljos_3d::CustomGeometry>> {
         // The revision is what a commit notifies.
         item::prop(self.e, g, Geometry::REVISION);

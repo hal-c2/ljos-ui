@@ -313,8 +313,8 @@ fn euler_changed(cx: &Cx<'_>, _: PropIndex) {
 pub struct Model {
     #[qml(base)]
     pub node: Node,
-    /// A file (not drawn yet), or a built-in mesh: `#Cube`, `#Rectangle`,
-    /// `#Sphere`, `#Cylinder` or `#Cone`.
+    /// A `.mesh` file, read in the background, or a built-in mesh: `#Cube`,
+    /// `#Rectangle`, `#Sphere`, `#Cylinder` or `#Cone`.
     #[qml(notify)]
     pub source: Url,
     #[qml(notify, list)]
@@ -343,6 +343,8 @@ pub struct Model {
     /// `skeleton`'s inverse bind poses, as `Qt.matrix4x4` values.
     #[qml(notify)]
     pub inverse_bind_poses: Value,
+    #[qml(skip)]
+    pub(crate) mesh: RefCell<crate::mesh_source::Loaded>,
 }
 
 impl Default for Model {
@@ -360,6 +362,7 @@ impl Default for Model {
             skin: None,
             skeleton: None,
             inverse_bind_poses: Value::Undefined,
+            mesh: RefCell::default(),
         }
     }
 }

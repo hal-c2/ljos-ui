@@ -15,6 +15,7 @@ use crate::custom::{
 use crate::geometry::CustomGeometry;
 use crate::instancing::{MAX_JOINTS, Skin};
 use crate::math::{Quat, Vec3};
+use crate::mesh_file::MeshFile;
 use crate::scene::{
     AlphaMode, Background, Camera, Cascades, Color, CullMode, DefaultMaterial, Environment, Fade,
     Light, LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive,
@@ -28,8 +29,10 @@ pub struct Built<O> {
     pub scene: Scene,
     /// What a pick needs to say which object it hit.
     pub ids: HashMap<O, NodeId>,
-    /// The models a `RuntimeLoader` made of its file's meshes, a scene
-    /// node per mesh primitive: what a pick names when it hits one.
+    /// The nodes that are part of an object without being its own node: the
+    /// models a `RuntimeLoader` made of its file's meshes, a scene node per
+    /// mesh primitive, and a `Model`'s sub-meshes. What a pick names when it
+    /// hits one.
     pub loaded: Vec<(NodeId, O)>,
 }
 
@@ -224,6 +227,9 @@ impl<S: SceneSource> Walk<'_, S> {
         if is_model {
             self.later.push((obj, id));
         }
+        if is_model && let Some(file) = mesh_file(s, self.view, obj) {
+            self.mesh_file(obj, id, &file);
+        }
         // A loaded model's nodes are the loader's first children. Each
         // mesh is named by the Model the loader made for it.
         #[cfg(feature = "gltf")]
@@ -254,6 +260,40 @@ impl<S: SceneSource> Walk<'_, S> {
                 }
                 node.skin = skin;
             }
+        }
+    }
+
+    /// Adds the sub-meshes of the model `obj`'s file under its node `id`, a
+    /// scene node each, as a `RuntimeLoader` adds a file's primitives: each is
+    /// culled, sorted and drawn with its own material, and the model's own
+    /// settings hold for all of them. The shared geometries are one upload.
+    fn mesh_file(&mut self, obj: S::Object, id: NodeId, file: &MeshFile) {
+        let s = self.s;
+        let materials = s.objects(obj, P::Materials);
+        let (casts, receives, instancing) = match self.scene.node_mut(id) {
+            Some(n) => (n.casts_shadows, n.receives_shadows, n.instancing.clone()),
+            None => return,
+        };
+        for (i, part) in file.parts.iter().enumerate() {
+            if part.empty {
+                continue;
+            }
+            // "If the number of materials is less than the sub-meshes, the
+            // last material in the list is used for subsequent sub-meshes."
+            let m = materials.get(i).or(materials.last()).copied();
+            let Some(material) = material_of(s, self.view, m) else {
+                continue;
+            };
+            let mut n = Node::new(NodeKind::Model(Model {
+                mesh: MeshSource::Custom(part.geometry.clone()),
+                material,
+            }));
+            n.casts_shadows = casts;
+            n.receives_shadows = receives;
+            n.instancing.clone_from(&instancing);
+            let child = self.scene.add(Some(id), n);
+            self.loaded.push((child, obj));
+            self.later.push((obj, child));
         }
     }
 
@@ -416,12 +456,30 @@ fn model<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Model
     };
     // A built-in mesh has one part, drawn with the first material.
     let first = s.objects(obj, P::Materials).into_iter().next();
-    let material = match first {
-        // Snippets that make no program leave the model out, as Qt does.
-        Some(m) if s.is(m, T::CustomMaterial) => Material::Custom(s.custom_material(view, m)?),
-        _ => first.and_then(|m| material(s, view, m)).unwrap_or_default(),
-    };
+    let material = material_of(s, view, first)?;
     Some(Model { mesh, material })
+}
+
+/// What a mesh part is drawn with: `m`, or the default without one. `None`
+/// leaves the part out.
+fn material_of<S: SceneSource>(s: &S, view: S::Object, m: Option<S::Object>) -> Option<Material> {
+    match m {
+        // Snippets that make no program leave the model out, as Qt does.
+        Some(m) if s.is(m, T::CustomMaterial) => s.custom_material(view, m).map(Material::Custom),
+        _ => Some(m.and_then(|m| material(s, view, m)).unwrap_or_default()),
+    }
+}
+
+/// The file the model `obj` draws: not one whose `geometry` wins, nor a
+/// built-in mesh, which is named by its fragment.
+fn mesh_file<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Arc<MeshFile>> {
+    if s.object(obj, P::Geometry)
+        .is_some_and(|g| s.is(g, T::Geometry))
+        || s.url(obj, P::Source)?.contains('#')
+    {
+        return None;
+    }
+    s.mesh_file(view, obj)
 }
 
 fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Material> {

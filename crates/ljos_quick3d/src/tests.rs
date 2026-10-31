@@ -944,3 +944,37 @@ fn texture_data_reaches_a_texture_once_it_is_updated() {
         "a revision is new pixels to upload"
     );
 }
+
+/// Every Model naming one file draws the one mesh, so the renderer, which
+/// uploads by geometry, uploads it once.
+#[test]
+fn models_naming_one_file_share_its_meshes() {
+    use ljos::item::ljos_3d::MeshSource;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../features/quick3d/models/two-squares.mesh"
+    );
+    let (e, root) = load(&format!(
+        r##"View3D {{ width: 40; height: 40
+               OrthographicCamera {{ z: 300 }}
+               Model {{ source: "file://{path}" }}
+               Model {{ source: "file://{path}"; x: 10 }} }}"##
+    ));
+    let _ = ljos::render::Picture::new(40, 40).settle(0).png(&e, root);
+    let scene = scene::build(&e, root);
+    let mut ids: Vec<_> = scene
+        .walk()
+        .iter()
+        .filter_map(|(_, n, _)| match &n.kind {
+            NodeKind::Model(m) => match &m.mesh {
+                MeshSource::Custom(g) => Some(g.id()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 4, "two sub-meshes on each of two Models");
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), 2, "one geometry for each sub-mesh of the file");
+}

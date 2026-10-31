@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes the glTF and OBJ models the RuntimeLoader scenarios and bench load.
+"""Writes the glTF, OBJ and mesh models the scenarios and bench load.
 
 Run from anywhere: python3 features/quick3d/models/gen.py
 
@@ -528,6 +528,91 @@ f 1/1/1 2/2/1 3/3/1 4/4/1
     write(HERE / "quadrants.png", png(side, side, [top] * (side // 2) + [bottom] * (side // 2)))
 
 
+def mesh_file(path, rows, indices, subsets, attributes, stride, version=5, joints=0):
+    """A `.mesh` file: `rows` as one vertex buffer, `attributes` as (name,
+    number kind, count, offset). Each subset is (first index, index count).
+    The format goes on to the next multiple of four after each part, by four
+    when it is at one already."""
+    body = bytearray()
+
+    def align():
+        body.extend(b"\0" * (4 - len(body) % 4))
+
+    vertices = b"".join(rows)
+    index_bytes = struct.pack("<%dH" % len(indices), *indices)
+    body += struct.pack(
+        "<14I",
+        0,  # target attributes
+        len(attributes),
+        stride,
+        0,  # target bytes
+        len(vertices),
+        3,  # 16 bit indices
+        0,
+        len(index_bytes),
+        0,  # targets
+        len(subsets),
+        joints,
+        0,
+        7,  # triangles
+        2,  # counter-clockwise is the front
+    )
+    for _, kind, count, offset in attributes:
+        body += struct.pack("<4I", 0, kind, count, offset)
+    align()
+    for name, *_ in attributes:
+        raw = name.encode() + b"\0"
+        body += struct.pack("<I", len(raw)) + raw
+        align()
+    body += vertices
+    align()
+    body += index_bytes
+    align()
+    for first, count in subsets:
+        # The box of the subset is left wide open: these are few corners.
+        body += struct.pack("<2I6f2I", count, first, -1e4, -1e4, -1e4, 1e4, 1e4, 1e4, 0, 0)
+        body += struct.pack("<2I", 0, 0)  # the size of its light map
+    out = struct.pack("<IHHI", 3365961549, version, 0, 0) + bytes(body)
+    table = struct.pack("<QII", 0, 0, 0)  # where the file's one mesh starts
+    write(path, out + table + struct.pack("<4I", 555777497, 0, 0, 1))
+
+
+def square_rows(x0, x1, half):
+    """A square in the XY plane facing +Z, as positions, normals and UVs."""
+    corners = [(x0, -half), (x1, -half), (x1, half), (x0, half)]
+    return [struct.pack("<8f", x, y, 0, 0, 0, 1, 0, 0) for x, y in corners]
+
+
+def two_squares_mesh():
+    """Two subsets, each a square 40 units across: 40 left and 40 right of
+    the origin."""
+    rows = square_rows(-60, -20, 20) + square_rows(20, 60, 20)
+    quad = [0, 1, 2, 0, 2, 3]
+    attributes = [("attr_pos", 10, 3, 0), ("attr_norm", 10, 3, 12), ("attr_uv0", 10, 2, 24)]
+    mesh_file(
+        HERE / "two-squares.mesh",
+        rows,
+        quad + [i + 4 for i in quad],
+        [(0, 6), (6, 6)],
+        attributes,
+        32,
+    )
+
+
+def jointed_mesh():
+    """One square 40 units across at the origin, all of it following joint 0,
+    with joints kept as bytes."""
+    rows = [r + bytes([0, 0, 0, 0]) + struct.pack("<4f", 1, 0, 0, 0) for r in square_rows(-20, 20, 20)]
+    attributes = [
+        ("attr_pos", 10, 3, 0),
+        ("attr_norm", 10, 3, 12),
+        ("attr_uv0", 10, 2, 24),
+        ("attr_joints", 1, 4, 32),
+        ("attr_weights", 10, 4, 36),
+    ]
+    mesh_file(HERE / "jointed.mesh", rows, [0, 1, 2, 0, 2, 3], [(0, 6)], attributes, 52, joints=1)
+
+
 if __name__ == "__main__":
     square_gltf()
     pair_gltf()
@@ -538,3 +623,5 @@ if __name__ == "__main__":
     skin_gltf()
     morph_gltf()
     obj_files()
+    two_squares_mesh()
+    jointed_mesh()

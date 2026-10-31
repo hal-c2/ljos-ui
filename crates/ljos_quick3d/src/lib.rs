@@ -92,6 +92,7 @@ mod fetch;
 mod helpers;
 mod instancing;
 mod items;
+mod mesh_source;
 mod node;
 mod pick;
 mod random_instancing;
