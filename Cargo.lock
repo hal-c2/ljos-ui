@@ -4369,8 +4369,8 @@ dependencies = [
  "ljos_ir",
  "ljos_render",
  "png",
- "quick-xml 0.42.0",
  "qt_types",
+ "quick-xml 0.42.0",
  "slotmap",
 ]
 

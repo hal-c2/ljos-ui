@@ -7600,8 +7600,8 @@ module QtQuick3D
 	CustomMaterial QtQuick3D.CustomMaterial
 	DefaultMaterial QtQuick3D.DefaultMaterial
 	DirectionalLight QtQuick3D.DirectionalLight
-	FileInstancing QtQuick3D.FileInstancing
 	Effect QtQuick3D.Effect
+	FileInstancing QtQuick3D.FileInstancing
 	Geometry QtQuick3D.Geometry
 	InstanceList QtQuick3D.InstanceList
 	InstanceListEntry QtQuick3D.InstanceListEntry
@@ -7622,10 +7622,10 @@ module QtQuick3D
 	Repeater3D QtQuick3D.Repeater3D
 	RuntimeLoader QtQuick3D.RuntimeLoader
 	SceneEnvironment QtQuick3D.SceneEnvironment
-	Skeleton QtQuick3D.Skeleton
-	Skin QtQuick3D.Skin
 	SetUniformValue QtQuick3D.SetUniformValue
 	Shader QtQuick3D.Shader
+	Skeleton QtQuick3D.Skeleton
+	Skin QtQuick3D.Skin
 	SpotLight QtQuick3D.SpotLight
 	Texture QtQuick3D.Texture
 	TextureInput QtQuick3D.TextureInput
@@ -7714,16 +7714,16 @@ module QtQuick3D
 		signal csmSplit3Changed
 		signal csmBlendRatioChanged
 		signal lockShadowmapTexelsChanged
+	type QtQuick3D.Effect Effect
+		prototype QtQuick3D.Object3D named
+		prop passes QtQml.var named list
+		signal passesChanged
 	type QtQuick3D.FileInstancing FileInstancing
 		prototype QtQuick3D.Instancing named
 		prop source QtQml.url named
 		prop instanceCount QtQml.int named readonly
 		signal sourceChanged
 		signal instanceCountChanged
-	type QtQuick3D.Effect Effect
-		prototype QtQuick3D.Object3D named
-		prop passes QtQml.var named list
-		signal passesChanged
 	type QtQuick3D.Geometry Geometry
 		prototype QtQuick3D.Object3D named
 		is uncreatable
@@ -8048,14 +8048,6 @@ module QtQuick3D
 		signal skyboxBlurAmountChanged
 		signal antialiasingModeChanged
 		signal antialiasingQualityChanged
-	type QtQuick3D.Skeleton Skeleton
-		prototype QtQuick3D.Node named
-	type QtQuick3D.Skin Skin
-		prototype QtQuick3D.Object3D named
-		prop joints QtQml.var named list
-		prop inverseBindPoses QtQml.var named
-		signal jointsChanged
-		signal inverseBindPosesChanged
 		signal effectsChanged
 		signal aoEnabledChanged
 		signal aoStrengthChanged
@@ -8077,6 +8069,14 @@ module QtQuick3D
 		prop stage Stage
 		signal shaderChanged
 		signal stageChanged
+	type QtQuick3D.Skeleton Skeleton
+		prototype QtQuick3D.Node named
+	type QtQuick3D.Skin Skin
+		prototype QtQuick3D.Object3D named
+		prop joints QtQml.var named list
+		prop inverseBindPoses QtQml.var named
+		signal jointsChanged
+		signal inverseBindPosesChanged
 	type QtQuick3D.SpotLight SpotLight
 		prototype QtQuick3D.Light named
 		prop constantFade QtQml.real named
@@ -8161,149 +8161,24 @@ module QtQuick3D
 		method mapTo3DScene
 
 module QtQuick3D.Helpers
-	InstanceRange QtQuick3D.Helpers.InstanceRange
-	RandomInstancing QtQuick3D.Helpers.RandomInstancing
-	type QtQuick3D.Helpers.InstanceRange InstanceRange
-		prototype QtQuick3D.Object3D named
-		prop from QtQml.var named
-		prop to QtQml.var named
-		prop proportional QtQml.bool named
-		signal fromChanged
-		signal toChanged
-		signal proportionalChanged
-	type QtQuick3D.Helpers.RandomInstancing RandomInstancing
-		prototype QtQuick3D.Instancing named
-		enum ColorModel RGB=0 HSV=1 HSL=2
-		prop instanceCount QtQml.int named
-		prop randomSeed QtQml.int named
-		prop position QtQuick3D.Helpers.InstanceRange named pointer
-		prop scale QtQuick3D.Helpers.InstanceRange named pointer
-		prop rotation QtQuick3D.Helpers.InstanceRange named pointer
-		prop color QtQuick3D.Helpers.InstanceRange named pointer
-		prop customData QtQuick3D.Helpers.InstanceRange named pointer
-		prop colorModel ColorModel
-		signal instanceCountChanged
-		signal randomSeedChanged
-		signal positionChanged
-		signal scaleChanged
-		signal rotationChanged
-		signal colorChanged
-		signal customDataChanged
-		signal colorModelChanged
-	ExtendedSceneEnvironment QtQuick3D.Helpers.ExtendedSceneEnvironment
-	type QtQuick3D.Helpers.ExtendedSceneEnvironment ExtendedSceneEnvironment
-		prototype QtQuick3D.SceneEnvironment named
-		enum GlowBlendMode Additive=0 Screen=1 SoftLight=2 Replace=3
-		enum GlowLevel One=1 Two=2 Three=4 Four=8 Five=16 Six=32 Seven=64
-		prop exposure QtQml.real named
-		prop whitePoint QtQml.real named
-		prop sharpnessAmount QtQml.real named
-		prop fxaaEnabled QtQml.bool named
-		prop ditheringEnabled QtQml.bool named
-		prop colorAdjustmentsEnabled QtQml.bool named
-		prop adjustmentBrightness QtQml.real named
-		prop adjustmentContrast QtQml.real named
-		prop adjustmentSaturation QtQml.real named
-		prop depthOfFieldEnabled QtQml.bool named
-		prop depthOfFieldFocusDistance QtQml.real named
-		prop depthOfFieldFocusRange QtQml.real named
-		prop depthOfFieldBlurAmount QtQml.real named
-		prop glowEnabled QtQml.bool named
-		prop glowQualityHigh QtQml.bool named
-		prop glowUseBicubicUpscale QtQml.bool named
-		prop glowStrength QtQml.real named
-		prop glowIntensity QtQml.real named
-		prop glowBloom QtQml.real named
-		prop glowHDRMaximumValue QtQml.real named
-		prop glowHDRMinimumValue QtQml.real named
-		prop glowHDRScale QtQml.real named
-		prop glowLevel QtQml.int named
-		prop glowBlendMode QtQml.int named
-		prop vignetteEnabled QtQml.bool named
-		prop vignetteStrength QtQml.real named
-		prop vignetteColor QtQuick.color named
-		prop vignetteRadius QtQml.real named
-		prop lutEnabled QtQml.bool named
-		prop lutSize QtQml.real named
-		prop lutFilterAlpha QtQml.real named
-		prop lutTexture QtQuick3D.Texture named pointer
-		prop lensFlareEnabled QtQml.bool named
-		prop lensFlareBloomScale QtQml.real named
-		prop lensFlareBloomBias QtQml.real named
-		prop lensFlareGhostDispersal QtQml.real named
-		prop lensFlareGhostCount QtQml.int named
-		prop lensFlareHaloWidth QtQml.real named
-		prop lensFlareStretchToAspect QtQml.real named
-		prop lensFlareDistortion QtQml.real named
-		prop lensFlareBlurAmount QtQml.real named
-		prop lensFlareApplyDirtTexture QtQml.bool named
-		prop lensFlareApplyStarburstTexture QtQml.bool named
-		prop lensFlareCameraDirection QtQuick.vector3d named
-		prop lensFlareLensColorTexture QtQuick3D.Texture named pointer
-		prop lensFlareLensDirtTexture QtQuick3D.Texture named pointer
-		prop lensFlareLensStarburstTexture QtQuick3D.Texture named pointer
-		signal exposureChanged
-		signal whitePointChanged
-		signal sharpnessAmountChanged
-		signal fxaaEnabledChanged
-		signal ditheringEnabledChanged
-		signal colorAdjustmentsEnabledChanged
-		signal adjustmentBrightnessChanged
-		signal adjustmentContrastChanged
-		signal adjustmentSaturationChanged
-		signal depthOfFieldEnabledChanged
-		signal depthOfFieldFocusDistanceChanged
-		signal depthOfFieldFocusRangeChanged
-		signal depthOfFieldBlurAmountChanged
-		signal glowEnabledChanged
-		signal glowQualityHighChanged
-		signal glowUseBicubicUpscaleChanged
-		signal glowStrengthChanged
-		signal glowIntensityChanged
-		signal glowBloomChanged
-		signal glowHDRMaximumValueChanged
-		signal glowHDRMinimumValueChanged
-		signal glowHDRScaleChanged
-		signal glowLevelChanged
-		signal glowBlendModeChanged
-		signal vignetteEnabledChanged
-		signal vignetteStrengthChanged
-		signal vignetteColorChanged
-		signal vignetteRadiusChanged
-		signal lutEnabledChanged
-		signal lutSizeChanged
-		signal lutFilterAlphaChanged
-		signal lutTextureChanged
-		signal lensFlareEnabledChanged
-		signal lensFlareBloomScaleChanged
-		signal lensFlareBloomBiasChanged
-		signal lensFlareGhostDispersalChanged
-		signal lensFlareGhostCountChanged
-		signal lensFlareHaloWidthChanged
-		signal lensFlareStretchToAspectChanged
-		signal lensFlareDistortionChanged
-		signal lensFlareBlurAmountChanged
-		signal lensFlareApplyDirtTextureChanged
-		signal lensFlareApplyStarburstTextureChanged
-		signal lensFlareCameraDirectionChanged
-		signal lensFlareLensColorTextureChanged
-		signal lensFlareLensDirtTextureChanged
-		signal lensFlareLensStarburstTextureChanged
 	AxisHelper QtQuick3D/Helpers/AxisHelper.qml
 	CapsuleGeometry QtQuick3D.Helpers.CapsuleGeometry
 	ConeGeometry QtQuick3D.Helpers.ConeGeometry
 	CuboidGeometry QtQuick3D.Helpers.CuboidGeometry
 	CylinderGeometry QtQuick3D.Helpers.CylinderGeometry
 	DebugView QtQuick3D/Helpers/DebugView.qml
+	ExtendedSceneEnvironment QtQuick3D.Helpers.ExtendedSceneEnvironment
 	GridGeometry QtQuick3D.Helpers.GridGeometry
 	HeightFieldGeometry QtQuick3D.Helpers.HeightFieldGeometry
 	InfiniteGrid QtQuick3D.Helpers.InfiniteGrid
+	InstanceRange QtQuick3D.Helpers.InstanceRange
 	LodManager QtQuick3D.Helpers.LodManager
 	LookAtNode QtQuick3D.Helpers.LookAtNode
 	OrbitCameraController QtQuick3D/Helpers/OrbitCameraController.qml
 	PlaneGeometry QtQuick3D.Helpers.PlaneGeometry
 	ProceduralMesh QtQuick3D.Helpers.ProceduralMesh
 	ProceduralMeshSubset QtQuick3D.Helpers.ProceduralMeshSubset
+	RandomInstancing QtQuick3D.Helpers.RandomInstancing
 	RenderStatistics QtQuick3D.Helpers.RenderStatistics
 	SphereGeometry QtQuick3D.Helpers.SphereGeometry
 	TorusGeometry QtQuick3D.Helpers.TorusGeometry
@@ -8403,6 +8278,104 @@ module QtQuick3D.Helpers
 		prop resourceDetailsVisible QtQml.bool named
 		signal sourceChanged
 		signal resourceDetailsVisibleChanged
+	type QtQuick3D.Helpers.ExtendedSceneEnvironment ExtendedSceneEnvironment
+		prototype QtQuick3D.SceneEnvironment named
+		enum GlowBlendMode Additive=0 Screen=1 SoftLight=2 Replace=3
+		enum GlowLevel One=1 Two=2 Three=4 Four=8 Five=16 Six=32 Seven=64
+		prop exposure QtQml.real named
+		prop whitePoint QtQml.real named
+		prop sharpnessAmount QtQml.real named
+		prop fxaaEnabled QtQml.bool named
+		prop ditheringEnabled QtQml.bool named
+		prop colorAdjustmentsEnabled QtQml.bool named
+		prop adjustmentBrightness QtQml.real named
+		prop adjustmentContrast QtQml.real named
+		prop adjustmentSaturation QtQml.real named
+		prop depthOfFieldEnabled QtQml.bool named
+		prop depthOfFieldFocusDistance QtQml.real named
+		prop depthOfFieldFocusRange QtQml.real named
+		prop depthOfFieldBlurAmount QtQml.real named
+		prop glowEnabled QtQml.bool named
+		prop glowQualityHigh QtQml.bool named
+		prop glowUseBicubicUpscale QtQml.bool named
+		prop glowStrength QtQml.real named
+		prop glowIntensity QtQml.real named
+		prop glowBloom QtQml.real named
+		prop glowHDRMaximumValue QtQml.real named
+		prop glowHDRMinimumValue QtQml.real named
+		prop glowHDRScale QtQml.real named
+		prop glowLevel QtQml.int named
+		prop glowBlendMode QtQml.int named
+		prop vignetteEnabled QtQml.bool named
+		prop vignetteStrength QtQml.real named
+		prop vignetteColor QtQuick.color named
+		prop vignetteRadius QtQml.real named
+		prop lutEnabled QtQml.bool named
+		prop lutSize QtQml.real named
+		prop lutFilterAlpha QtQml.real named
+		prop lutTexture QtQuick3D.Texture named pointer
+		prop lensFlareEnabled QtQml.bool named
+		prop lensFlareBloomScale QtQml.real named
+		prop lensFlareBloomBias QtQml.real named
+		prop lensFlareGhostDispersal QtQml.real named
+		prop lensFlareGhostCount QtQml.int named
+		prop lensFlareHaloWidth QtQml.real named
+		prop lensFlareStretchToAspect QtQml.real named
+		prop lensFlareDistortion QtQml.real named
+		prop lensFlareBlurAmount QtQml.real named
+		prop lensFlareApplyDirtTexture QtQml.bool named
+		prop lensFlareApplyStarburstTexture QtQml.bool named
+		prop lensFlareCameraDirection QtQuick.vector3d named
+		prop lensFlareLensColorTexture QtQuick3D.Texture named pointer
+		prop lensFlareLensDirtTexture QtQuick3D.Texture named pointer
+		prop lensFlareLensStarburstTexture QtQuick3D.Texture named pointer
+		signal exposureChanged
+		signal whitePointChanged
+		signal sharpnessAmountChanged
+		signal fxaaEnabledChanged
+		signal ditheringEnabledChanged
+		signal colorAdjustmentsEnabledChanged
+		signal adjustmentBrightnessChanged
+		signal adjustmentContrastChanged
+		signal adjustmentSaturationChanged
+		signal depthOfFieldEnabledChanged
+		signal depthOfFieldFocusDistanceChanged
+		signal depthOfFieldFocusRangeChanged
+		signal depthOfFieldBlurAmountChanged
+		signal glowEnabledChanged
+		signal glowQualityHighChanged
+		signal glowUseBicubicUpscaleChanged
+		signal glowStrengthChanged
+		signal glowIntensityChanged
+		signal glowBloomChanged
+		signal glowHDRMaximumValueChanged
+		signal glowHDRMinimumValueChanged
+		signal glowHDRScaleChanged
+		signal glowLevelChanged
+		signal glowBlendModeChanged
+		signal vignetteEnabledChanged
+		signal vignetteStrengthChanged
+		signal vignetteColorChanged
+		signal vignetteRadiusChanged
+		signal lutEnabledChanged
+		signal lutSizeChanged
+		signal lutFilterAlphaChanged
+		signal lutTextureChanged
+		signal lensFlareEnabledChanged
+		signal lensFlareBloomScaleChanged
+		signal lensFlareBloomBiasChanged
+		signal lensFlareGhostDispersalChanged
+		signal lensFlareGhostCountChanged
+		signal lensFlareHaloWidthChanged
+		signal lensFlareStretchToAspectChanged
+		signal lensFlareDistortionChanged
+		signal lensFlareBlurAmountChanged
+		signal lensFlareApplyDirtTextureChanged
+		signal lensFlareApplyStarburstTextureChanged
+		signal lensFlareCameraDirectionChanged
+		signal lensFlareLensColorTextureChanged
+		signal lensFlareLensDirtTextureChanged
+		signal lensFlareLensStarburstTextureChanged
 	type QtQuick3D.Helpers.GridGeometry GridGeometry
 		prototype QtQuick3D.Geometry named
 		prop horizontalLines QtQml.int named
@@ -8432,6 +8405,14 @@ module QtQuick3D.Helpers
 		signal gridAxesChanged
 		signal gridIntervalChanged
 		signal visibleChanged
+	type QtQuick3D.Helpers.InstanceRange InstanceRange
+		prototype QtQuick3D.Object3D named
+		prop from QtQml.var named
+		prop to QtQml.var named
+		prop proportional QtQml.bool named
+		signal fromChanged
+		signal toChanged
+		signal proportionalChanged
 	type QtQuick3D.Helpers.LodManager LodManager
 		prototype QtQuick3D.Node named
 		prop camera QtQml.QtObject named pointer
@@ -8522,6 +8503,25 @@ module QtQuick3D.Helpers
 		signal nameChanged
 		signal lengthChanged
 		signal offsetChanged
+	type QtQuick3D.Helpers.RandomInstancing RandomInstancing
+		prototype QtQuick3D.Instancing named
+		enum ColorModel RGB=0 HSV=1 HSL=2
+		prop instanceCount QtQml.int named
+		prop randomSeed QtQml.int named
+		prop position QtQuick3D.Helpers.InstanceRange named pointer
+		prop scale QtQuick3D.Helpers.InstanceRange named pointer
+		prop rotation QtQuick3D.Helpers.InstanceRange named pointer
+		prop color QtQuick3D.Helpers.InstanceRange named pointer
+		prop customData QtQuick3D.Helpers.InstanceRange named pointer
+		prop colorModel ColorModel
+		signal instanceCountChanged
+		signal randomSeedChanged
+		signal positionChanged
+		signal scaleChanged
+		signal rotationChanged
+		signal colorChanged
+		signal customDataChanged
+		signal colorModelChanged
 	type QtQuick3D.Helpers.RenderStatistics RenderStatistics
 		prototype QtQml.QtObject named
 		prop fps QtQml.real named readonly
