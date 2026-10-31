@@ -529,3 +529,52 @@ fn morph_targets_move_the_vertices_by_their_weights() {
     let (min, max) = asset.bounds.unwrap();
     assert!(near(min, Vec3::new(0.0, -50.0, 0.0)) && near(max, Vec3::new(100.0, 50.0, 0.0)));
 }
+
+mod fetched {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::fetch::InMemory;
+
+    fn loaded(fetch: &InMemory, url: &str) -> Result<Asset, LoadError> {
+        let got = Rc::new(RefCell::new(None));
+        let g = got.clone();
+        crate::gltf::load(fetch, &(), url, move |_, asset| {
+            *g.borrow_mut() = Some(asset)
+        });
+        got.borrow_mut()
+            .take()
+            .expect("an in-memory fetch answers at once")
+    }
+
+    #[test]
+    fn a_gltf_with_its_buffer_beside_it_loads_through_the_hosts_fetch() {
+        let fetch = InMemory::default()
+            .with("https://h/m/pair.gltf", model("pair.gltf"))
+            .with("https://h/m/pair.bin", model("pair.bin"));
+        let fetched = loaded(&fetch, "https://h/m/pair.gltf").unwrap();
+        assert_eq!(
+            fetch.asked(),
+            ["https://h/m/pair.gltf", "https://h/m/pair.bin"]
+        );
+        let read = super::load("pair.gltf");
+        assert_eq!(fetched.nodes.len(), read.nodes.len());
+        assert_eq!(fetched.bounds, read.bounds);
+    }
+
+    #[test]
+    fn a_file_or_buffer_the_host_cannot_fetch_is_the_loads_error() {
+        let none = InMemory::default();
+        assert_eq!(
+            loaded(&none, "https://h/m/pair.gltf").unwrap_err(),
+            LoadError::File("no such file".to_owned())
+        );
+        let no_bin = InMemory::default().with("https://h/m/pair.gltf", model("pair.gltf"));
+        let err = loaded(&no_bin, "https://h/m/pair.gltf").unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Buffer { uri, reason, .. } if uri == "pair.bin" && reason == "no such file"),
+            "{err}"
+        );
+    }
+}

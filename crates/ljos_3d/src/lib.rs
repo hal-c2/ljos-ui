@@ -7,6 +7,7 @@
 //! the crate is the scene alone and links no wgpu.
 
 pub mod custom;
+pub mod fetch;
 pub mod geometry;
 #[cfg(feature = "gltf")]
 pub mod gltf;
@@ -48,6 +49,7 @@ pub use custom::{
     Effect, EffectBuffer, Glow, GlowBlend, Lut, Pass, PassTexture, PostProcess, Program,
     ProgramKind, UniformKind, UniformValue, Vignette,
 };
+pub use fetch::Fetch;
 pub use geometry::{
     Attribute, ComponentType, CustomGeometry, GeometryError, PrimitiveType, Semantic,
 };

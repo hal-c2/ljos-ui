@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::fetch::{Fetch, fetch_all};
 use crate::geometry::{ComponentType, CustomGeometry, PrimitiveType, Semantic};
 use crate::instancing::{MAX_JOINTS, Skin};
 use crate::math::{Mat4, Quat, Vec3};
@@ -45,6 +46,9 @@ pub enum LoadError {
     /// The file names no node that can be drawn.
     #[error("the file has no nodes")]
     Empty,
+    /// The file itself could not be had.
+    #[error("{0}")]
+    File(String),
 }
 
 /// A parsed glTF file whose external files have not been read yet.
@@ -201,6 +205,36 @@ impl Document {
         };
         builder.asset()
     }
+}
+
+/// Reads the file at `url` and the files it names beside itself through
+/// `fetch`, and calls `done` with the asset. For a host whose files and
+/// work are on one thread, such as a web page; one with a pool to parse on
+/// fetches with [`fetch_all`](crate::fetch::fetch_all) and calls
+/// [`parse`] and [`Document::build`] there, which is this in steps.
+pub fn load<F>(
+    fetch: &F,
+    cx: &F::Cx,
+    url: &str,
+    done: impl FnOnce(&F::Cx, Result<Asset, LoadError>) + 'static,
+) where
+    F: Fetch + Clone + 'static,
+{
+    let (others, base) = (fetch.clone(), url.to_owned());
+    fetch.fetch(
+        cx,
+        url,
+        Box::new(move |cx, got| {
+            let doc = match got.map_err(LoadError::File).and_then(|b| parse(&b)) {
+                Ok(doc) => doc,
+                Err(err) => return done(cx, Err(err)),
+            };
+            let uris = doc.external_uris();
+            fetch_all(&others, cx, &base, uris, move |cx, mut files| {
+                done(cx, doc.build(&mut |uri| files.take(uri)));
+            });
+        }),
+    );
 }
 
 // A data URI can be megabytes; an error message needs only its start.
