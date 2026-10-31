@@ -7,7 +7,8 @@ gallery-assets.py <id>...    download and unpack those of each, and put them whe
 
 corpus/assets.json says where they come from. `places` maps a directory of the example to one of
 the archive; `beside` puts each file of `listed` (a source of the example's that names them, one a
-line, each under `url`) in a directory of the example. The files are kept in LJOS_CORPUS_ASSETS,
+line, each under `url`) in a directory of the example; `standin` links the whole as `downloaded`
+beside the example's stand-ins, whose downloader says that is where it put them. The files are kept in LJOS_CORPUS_ASSETS,
 default <target>/corpus-assets/<id>, and linked into corpus/qtdoc, as the example's own build would
 copy them there. The links are excluded from the submodule's status."""
 import json, os, re, shutil, subprocess, sys, urllib.parse, urllib.request
@@ -72,6 +73,11 @@ def archive(directory, spec, kept):
         open(done, "w").close()
     for place, within in spec.get("places", {}).items():
         link(directory, place, os.path.join(kept, within))
+    if spec.get("standin"):
+        here = os.path.join(ROOT, "corpus", "standins", os.path.basename(kept), "downloaded")
+        if os.path.islink(here):
+            os.unlink(here)
+        os.symlink(kept, here)
 
 
 def main():

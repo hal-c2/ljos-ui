@@ -61,6 +61,21 @@ fi
 # beside it, watched or not.
 project=(--project "$root/corpus/qtdoc/$dir")
 
+# The example's Qt build compiles its controls configuration in, which `qml` would not read.
+if [ -f "$root/corpus/qtdoc/$dir/qtquickcontrols2.conf" ] && [ -z "${QT_QUICK_CONTROLS_CONF:-}" ]; then
+  export QT_QUICK_CONTROLS_CONF="$root/corpus/qtdoc/$dir/qtquickcontrols2.conf"
+fi
+
+# corpus/standins/<id> is QML for the C++ types of the example's own build: each module there
+# answers the import of its name.
+standins=()
+if [ -d "$root/corpus/standins/$id" ]; then
+  while IFS= read -r qmldir; do
+    module="$(sed -n 's/^module[[:space:]]\+//p' "$qmldir" | head -1)"
+    standins+=(--alias "$module=$(dirname "$qmldir")")
+  done < <(find "$root/corpus/standins/$id" -name qmldir -not -path '*/downloaded/*')
+fi
+
 # gallery:drive builds once before its examples (GALLERY_BUILT=1): a build here, after a source
 # changed or behind another cargo's lock on the target, would take the time the driver gives
 # the example to start, and its examples would not all run the same build.
@@ -77,4 +92,4 @@ fi
 # The window is as large as the root says, as qml6 opens it; the manifest's
 # size is the gallery's picture. A `--size` among the arguments sets one.
 exec "$target/$profile/ljos" run "$root/corpus/qtdoc/$dir/$entry" \
-  "${project[@]}" --example "$id" "$@"
+  "${project[@]}" --example "$id" ${standins[@]+"${standins[@]}"} "$@"

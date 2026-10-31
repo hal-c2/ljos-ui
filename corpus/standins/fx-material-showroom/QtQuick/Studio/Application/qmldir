@@ -1,0 +1,2 @@
+module QtQuick.Studio.Application
+StudioApplication 1.0 StudioApplication.qml

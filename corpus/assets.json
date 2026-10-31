@@ -11,7 +11,11 @@
   },
   "car-configurator": {
     "url": "https://download.qt.io/learning/examples/car-configurator-assets-v3.zip",
-    "without": ["content/images/_Desert.hdr", "content/images/HDR/_Desert.ktx"]
+    "without": [
+      "content/images/_Desert.hdr",
+      "content/images/HDR/_Desert.ktx"
+    ],
+    "standin": true
   },
   "fx-material-showroom": {
     "url": "https://download.qt.io/learning/examples/FX_Material_Showroom_Assets/",
