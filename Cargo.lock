@@ -4686,6 +4686,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_web"
+version = "0.0.0"
+dependencies = [
+ "js-sys",
+ "ljos_macros",
+ "ljos_render",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "ljos_xml"
 version = "0.0.0"
 dependencies = [
