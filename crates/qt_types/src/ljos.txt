@@ -8343,6 +8343,19 @@ module QtQuick3D.Helpers
 		prop lensFlareLensColorTexture QtQuick3D.Texture named pointer
 		prop lensFlareLensDirtTexture QtQuick3D.Texture named pointer
 		prop lensFlareLensStarburstTexture QtQuick3D.Texture named pointer
+		prop ssrEnabled QtQml.bool named
+		prop ssrMaxSteps QtQml.int named
+		prop ssrThickness QtQml.real named
+		prop ssgiEnabled QtQml.bool named
+		prop ssgiBufferSizeFactor QtQml.real named
+		prop ssgiHitThickness QtQml.real named
+		prop ssgiIndirectLightBoost QtQml.real named
+		prop ssgiIndirectLightEnabled QtQml.bool named
+		prop ssgiSampleCount QtQml.int named
+		prop ssgiSampleRadius QtQml.real named
+		prop ssgiSimulatedBounceEnabled QtQml.bool named
+		prop ssgiSimulatedBounceFactor QtQml.real named
+		prop ssgiSliceCount QtQml.int named
 		signal exposureChanged
 		signal whitePointChanged
 		signal sharpnessAmountChanged
@@ -8390,6 +8403,19 @@ module QtQuick3D.Helpers
 		signal lensFlareLensColorTextureChanged
 		signal lensFlareLensDirtTextureChanged
 		signal lensFlareLensStarburstTextureChanged
+		signal ssrEnabledChanged
+		signal ssrMaxStepsChanged
+		signal ssrThicknessChanged
+		signal ssgiEnabledChanged
+		signal ssgiBufferSizeFactorChanged
+		signal ssgiHitThicknessChanged
+		signal ssgiIndirectLightBoostChanged
+		signal ssgiIndirectLightEnabledChanged
+		signal ssgiSampleCountChanged
+		signal ssgiSampleRadiusChanged
+		signal ssgiSimulatedBounceEnabledChanged
+		signal ssgiSimulatedBounceFactorChanged
+		signal ssgiSliceCountChanged
 	type QtQuick3D.Helpers.ExtrudedTextGeometry ExtrudedTextGeometry
 		prototype QtQuick3D.Geometry named
 		enum Status Null=0 Loading=1 Ready=2 Error=3
