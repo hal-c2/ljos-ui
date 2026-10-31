@@ -426,7 +426,7 @@
     "read_only": true
   },
   {
-    "description": "Wait until the app changes: frames, drawn passes (`paints`), logs, reloads, `traces`, followed `models`, kept `wakes`, `items` drawn; by name, `rests` (the UI thread slept: `rest`). Answers when a `topics` count differs from `since` (last `counts`), else after `wait_ms`; `settle_ms` gathers a burst.",
+    "description": "Wait until the app changes: frames, `paints`, logs, reloads, `traces`, `models`, `wakes`, `items`; by name, `rests` (`rest`). Answers when a `topics` count differs from `since`, else after `wait_ms`; `settle_ms` gathers a burst. `until_rest` waits for `rest.at_rest`: the picture stopped moving.",
     "input_schema": {
       "$defs": {
         "Since": {
@@ -618,6 +618,11 @@
           },
           "type": "array"
         },
+        "until_rest": {
+          "default": false,
+          "description": "Wait until the application is at rest, for at most `wait_ms`,\nwhatever `since` and `topics` say; `rest.at_rest` says whether it\ncame. Input a tool sent counts at once. Input sent from outside\ndoes not until the application has seen it: wait for `rests` first.",
+          "type": "boolean"
+        },
         "wait_ms": {
           "default": null,
           "description": "How long to wait at most, in milliseconds (default 10000, at most\n3600000).",
@@ -636,7 +641,7 @@
     "read_only": true
   },
   {
-    "description": "Every object below `root` (default: the scene's root), with `@handle`, type, id, objectName, depth, bytes; `depth` limits, `next_cursor` pages. `models` lists models; `model` reads rows (`offset`, `limit`), a `holder` follows it. `components` lists loaded ones, `component` (an id) its instances.",
+    "description": "Every object below `root` (default: the scene's root): `@handle`, type, id, depth, `at` (file:line), an item's window `bounds`; `depth` limits, `next_cursor` pages. `models` lists models; `model` reads rows, a `holder` follows it. `components` lists loaded ones, `component` (an id) its instances.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
