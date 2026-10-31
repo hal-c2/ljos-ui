@@ -25,6 +25,10 @@ impl Demo {
                     }),
                 )
                 .with(
+                    ToolDef::new::<NoArgs>("who", "Names the connection the call came in on."),
+                    typed(|ctx, _: NoArgs| Ok(json!({ "connection": ctx.connection.get() }))),
+                )
+                .with(
                     ToolDef::new::<NoArgs>("write", "Needs the fs capability.").requires(Cap::Fs),
                     typed(|_, _: NoArgs| Ok(json!({ "written": true }))),
                 ),
@@ -69,7 +73,7 @@ async fn denied_tools_are_hidden_but_calls_report_capability_denied() {
         .into_iter()
         .map(|t| t.name.to_string())
         .collect();
-    assert_eq!(names, ["big"]);
+    assert_eq!(names, ["big", "who"]);
 
     let res = client
         .call_tool(CallToolRequestParams::new("write").with_arguments(args()))
@@ -107,4 +111,25 @@ async fn oversize_results_are_truncated_with_a_cursor_and_text_mirror() {
     // The budget covers both copies, not just the structured one.
     let both = serde_json::to_vec(&body).unwrap().len() + text.len();
     assert!(both <= 2048, "structured + text mirror = {both} bytes");
+}
+
+async fn connection_of(client: &rmcp::service::RunningService<rmcp::RoleClient, ()>) -> u64 {
+    let res = client
+        .call_tool(CallToolRequestParams::new("who").with_arguments(args()))
+        .await
+        .unwrap();
+    res.structured_content.unwrap()["connection"]
+        .as_u64()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn each_connection_has_its_own_id_that_holds_over_calls() {
+    // Both clients are the same unnamed `()` client: only the connection
+    // tells them apart.
+    let (a, b) = (connect(CapSet::EMPTY).await, connect(CapSet::EMPTY).await);
+    let (a1, a2) = (connection_of(&a).await, connection_of(&a).await);
+    let b1 = connection_of(&b).await;
+    assert_eq!(a1, a2, "one connection keeps its id over calls");
+    assert_ne!(a1, b1, "two connections differ");
 }

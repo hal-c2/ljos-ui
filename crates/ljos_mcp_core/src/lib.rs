@@ -50,7 +50,7 @@ pub use locator::{At, Locator, LocatorError, NameTest, Point, STATES, Step, Step
 #[cfg(feature = "inspect")]
 pub use refs::RefTable;
 pub use registry::{
-    CallCtx, NoArgs, ToolAnnotations, ToolDef, ToolHandler, ToolOutput, ToolRegistry,
+    CallCtx, ConnectionId, NoArgs, ToolAnnotations, ToolDef, ToolHandler, ToolOutput, ToolRegistry,
     ToolRegistryError, denied, typed,
 };
 pub use reply::{ResourceFuture, ToolFuture, ToolImage, ToolReply, base64_decode, base64_encode};

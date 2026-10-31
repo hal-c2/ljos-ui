@@ -17,7 +17,8 @@ use rmcp::{
 use serde_json::Value;
 
 use crate::{
-    CallCtx, CapSet, ErrorCode, McpSurface, SurfaceError, ToolDef, ToolReply, base64_encode,
+    CallCtx, CapSet, ConnectionId, ErrorCode, McpSurface, SurfaceError, ToolDef, ToolReply,
+    base64_encode,
 };
 
 #[cfg(feature = "http")]
@@ -29,6 +30,9 @@ pub mod local;
 pub struct RmcpServer<S: McpSurface> {
     surface: Arc<S>,
     caps: CapSet,
+    /// Fixed when the server is made, so every clone serves the same
+    /// connection and every `new` is a different one.
+    connection: ConnectionId,
 }
 
 impl<S: McpSurface> std::fmt::Debug for RmcpServer<S> {
@@ -44,6 +48,7 @@ impl<S: McpSurface> Clone for RmcpServer<S> {
         Self {
             surface: self.surface.clone(),
             caps: self.caps,
+            connection: self.connection,
         }
     }
 }
@@ -58,11 +63,19 @@ pub enum ServeError {
 
 impl<S: McpSurface> RmcpServer<S> {
     pub fn new(surface: Arc<S>, caps: CapSet) -> Self {
-        Self { surface, caps }
+        Self {
+            surface,
+            caps,
+            connection: ConnectionId::next(),
+        }
     }
 
     fn ctx(&self) -> CallCtx {
-        CallCtx::new(self.caps)
+        CallCtx {
+            caps: self.caps,
+            client: None,
+            connection: self.connection,
+        }
     }
 
     /// Serves over any rmcp transport (stdio, in-process duplex, worker).

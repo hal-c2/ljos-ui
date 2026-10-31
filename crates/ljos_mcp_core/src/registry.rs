@@ -127,12 +127,39 @@ pub struct CallCtx {
     /// The name the client gave itself: in the request's `_meta`
     /// (`io.modelcontextprotocol/clientInfo`), else when it connected.
     pub client: Option<String>,
+    /// Which connection the call came in on. Two clients may give the same
+    /// name, so a surface that must tell writers apart (to keep one's edit
+    /// from being taken for another's) uses this, never `client`.
+    pub connection: ConnectionId,
 }
 
 impl CallCtx {
-    /// A call from a client that gave no name.
+    /// A call from a client that gave no name, on a connection of its own.
     pub fn new(caps: CapSet) -> Self {
-        CallCtx { caps, client: None }
+        CallCtx {
+            caps,
+            client: None,
+            connection: ConnectionId::next(),
+        }
+    }
+}
+
+/// Names one connection for as long as the process runs. Ids are handed out
+/// from a counter, so none repeats and none is derived from anything a client
+/// said; they mean nothing across processes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ConnectionId(u64);
+
+impl ConnectionId {
+    /// A fresh id, different from every one handed out before.
+    pub fn next() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        ConnectionId(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// The number, for a log line or a map key a surface keeps outside Rust.
+    pub fn get(self) -> u64 {
+        self.0
     }
 }
 
