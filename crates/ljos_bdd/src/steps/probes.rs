@@ -14,6 +14,14 @@ fn drawn_on_processor(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.draw_on_processor())
 }
 
+#[then(regex = r"^the application has ended within (\d+) milliseconds$")]
+fn application_ended(w: &mut LjosWorld, within: u64) -> StepResult {
+    w.each(|b| {
+        b.probes()?
+            .application_ended(std::time::Duration::from_millis(within))
+    })
+}
+
 #[given("the application is a client of an X server")]
 fn x11_client(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.be_x11_client())

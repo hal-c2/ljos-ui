@@ -1223,6 +1223,16 @@ pub trait Probes: Backend {
         })
     }
 
+    /// Waits for the application's process to end by itself; says so if
+    /// it is still there after `within`.
+    fn application_ended(&mut self, within: std::time::Duration) -> Result<()> {
+        let _ = within;
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "watching the application's process end",
+        })
+    }
+
     /// Runs the application as a client of an X server: there a window's
     /// pictures are not kept while it is unmapped, and the server says
     /// when it has to be drawn again.

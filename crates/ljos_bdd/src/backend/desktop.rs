@@ -912,6 +912,23 @@ impl Probes for DesktopBackend {
         Ok(())
     }
 
+    fn application_ended(&mut self, within: Duration) -> Result<()> {
+        let until = Instant::now() + within;
+        let running = self.running()?;
+        loop {
+            if running.app.try_wait()?.is_some() {
+                return Ok(());
+            }
+            if Instant::now() > until {
+                return Err(BackendError::Failed(format!(
+                    "the application is still running after {} ms",
+                    within.as_millis()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     fn be_x11_client(&mut self) -> Result<()> {
         self.x11 = true;
         Ok(())
