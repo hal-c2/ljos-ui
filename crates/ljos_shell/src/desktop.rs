@@ -2038,6 +2038,14 @@ impl<M: Send + 'static> Desktop<M> {
                 return;
             }
             self.schedule(host, now, false);
+            // A pass that was due ran just now, and what it ran may have
+            // asked for the end (a timer's `Qt.quit()`, a message). Nothing
+            // else wakes a window at rest to look.
+            if self.should_exit(&engine, &sys) {
+                self.exiting = true;
+                host.exit();
+                return;
+            }
             if !self.unsettled() {
                 break;
             }
