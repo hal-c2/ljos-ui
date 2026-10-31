@@ -33,6 +33,7 @@ Arguments placed after `--` are passed to the QML application in `Application.ar
 - `--mcp-bind <ADDR>`: Bind the MCP HTTP listener to `<ip>:<port>` instead of `127.0.0.1:0`. Non-loopback addresses require `--mcp-insecure-lan`.
 - `--mcp-socket <PATH>`: Listen on a Unix domain socket (created mode `0600`, maximum 107 bytes on Linux and 103 bytes on macOS) instead of TCP.
 - `--mcp-rate <N>`: Answer a client up to `N` calls per second (1 to 1000) instead of 20. For a program that starts the application and drives it as part of its own interface. Grants no capability; the token file states the rate as `calls_per_second`.
+- `--quit-with-stdin`: End the run when standard input closes. A program that starts the application as its child keeps the other end of a pipe; the system closes it when the program ends in any way, also when it is killed.
 - `--top`: Show the `top` overlay over the window with the time of the last frame by lane and by owner.
 - `--example <ID>`: Look `<ID>` up in `corpus/examples.json` and use its imports.
 - `--types <FILE>`: The type dump describing the project's native types, instead of `ljostypes.json` in the project directory. Not with `--example`. See [Previewing without your Rust](../rust/native-types.md#previewing-without-your-rust).

@@ -75,6 +75,13 @@ pub struct Run {
     /// to it. Every `Window` is an item of the root's scene.
     #[arg(long)]
     headless: bool,
+    /// End the run when standard input closes. For a program that starts
+    /// the application as its own child and keeps the other end of a pipe:
+    /// the system closes that end when the program ends in any way, also
+    /// when it is killed and can tell nobody. What comes through the pipe
+    /// is ignored. The application quits as it does on `Qt.quit()`.
+    #[arg(long)]
+    quit_with_stdin: bool,
     /// Serve the running application to MCP clients on this machine, so
     /// that an agent can look at it and, if you say so, act on it. Each
     /// capability is granted by name: `--mcp=inspect,input,mutate,eval`.
@@ -514,6 +521,30 @@ fn launch(
     }
 }
 
+/// How long an application that was told to quit because its input closed
+/// has to do so. Whoever started it is gone, and nobody is left to end one
+/// that hangs.
+const QUIT_WITH_STDIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Quits the application when standard input closes (`--quit-with-stdin`).
+/// The thread sleeps in `read` until then: the run stays at no work at all.
+fn quit_with_stdin(setup: &mut Setup<'_, ()>) -> Result<(), SetupError> {
+    setup.on_message(|engine, ()| engine.request_quit());
+    let ui = setup.handle();
+    std::thread::Builder::new()
+        .name("ljos-stdin".into())
+        .spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+            // A full inbox means an application too busy to read it; the
+            // grace below ends that one too.
+            let _ = ui.send(());
+            std::thread::sleep(QUIT_WITH_STDIN_GRACE);
+            crate::stderr::line("ljos: standard input closed and the application did not quit");
+            std::process::exit(1);
+        })?;
+    Ok(())
+}
+
 impl Run {
     /// `Application.arguments`: as `qml6 FILE ARGS` gives them, the
     /// program, the file as it was given and the rest; `run`, its options
@@ -577,6 +608,7 @@ impl Run {
         let aliases: Aliases = self.alias.iter().cloned().collect();
         let arguments = self.arguments();
         let headless = self.headless;
+        let quit_on_close = self.quit_with_stdin;
         let icon = self.icon.as_deref().map(|path| {
             let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
             ljos_engine::file_url(&path)
@@ -592,6 +624,9 @@ impl Run {
             let project = self.project.is_some().then(|| dir.clone());
             let resources = dir.clone();
             launch(headless, config, move |setup| {
+                if quit_on_close {
+                    quit_with_stdin(setup)?;
+                }
                 // Every module qml6 would have; databases where Qt keeps them.
                 crate::render::register_modules(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
@@ -670,6 +705,9 @@ impl Run {
                     }
                     None => unreachable!("setup runs once"),
                 };
+                if quit_on_close {
+                    quit_with_stdin(setup)?;
+                }
                 // Every module qml6 would have; databases where Qt keeps them.
                 crate::render::register_modules(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());

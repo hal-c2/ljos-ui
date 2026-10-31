@@ -264,3 +264,19 @@ Feature: An application run with no window
       When the author runs "ljos run Main.qml --headless"
       Then the command exits with status 0
       And the command's output mentions "done at 120 by 90"
+
+  Rule: A run can end with the program that started it
+
+    # A program that was killed runs nothing more: the one thing the system
+    # still does for it is close its end of the pipe on the child's input.
+    Scenario: Its input closing ends a run that would go on
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            width: 120; height: 90
+            Timer { interval: 50; running: true; repeat: true }
+        }
+        """
+      When the author runs "ljos run Main.qml --headless --quit-with-stdin"
+      Then the command exits with status 0

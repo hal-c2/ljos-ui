@@ -1,7 +1,7 @@
 //! `ljos run` as far as it goes without a window: what it takes and what
 //! it refuses before it opens one.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn ljos(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ljos"))
@@ -175,4 +175,34 @@ fn run_offers_a_theme() {
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout);
     assert!(help.contains("--theme <FILE>"), "{help}");
+}
+
+// The parent that holds the pipe may be killed and say nothing; all the
+// child ever sees is its input closing.
+#[test]
+fn a_run_ends_when_the_input_it_was_told_to_follow_closes() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("Main.qml");
+    std::fs::write(
+        &main,
+        "import QtQuick\nItem { width: 10; height: 10; Timer { running: true; repeat: true; interval: 50 } }\n",
+    )
+    .unwrap();
+    let mut run = Command::new(env!("CARGO_BIN_EXE_ljos"))
+        .args(["run", "--headless", "--quit-with-stdin"])
+        .arg(&main)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("ljos runs");
+    // The run goes on for as long as the pipe is open.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    assert_eq!(
+        run.try_wait().unwrap(),
+        None,
+        "it ended with its input open"
+    );
+    drop(run.stdin.take());
+    assert!(run.wait().unwrap().success());
 }
