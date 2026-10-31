@@ -599,6 +599,27 @@ def two_squares_mesh():
     )
 
 
+def cube_mesh():
+    """A cube 100 long a side, centred, as `#Cube` is."""
+    faces = [
+        ((0, 0, 1), (1, 0, 0), (0, 1, 0)),
+        ((0, 0, -1), (-1, 0, 0), (0, 1, 0)),
+        ((1, 0, 0), (0, 0, -1), (0, 1, 0)),
+        ((-1, 0, 0), (0, 0, 1), (0, 1, 0)),
+        ((0, 1, 0), (1, 0, 0), (0, 0, -1)),
+        ((0, -1, 0), (1, 0, 0), (0, 0, 1)),
+    ]
+    rows, indices = [], []
+    for n, u, w in faces:
+        first = len(rows)
+        for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            p = [50 * (n[k] + a * u[k] + b * w[k]) for k in range(3)]
+            rows.append(struct.pack("<8f", *p, *n, (a + 1) / 2, (b + 1) / 2))
+        indices += [first, first + 1, first + 2, first, first + 2, first + 3]
+    attributes = [("attr_pos", 10, 3, 0), ("attr_norm", 10, 3, 12), ("attr_uv0", 10, 2, 24)]
+    mesh_file(HERE / "cube.mesh", rows, indices, [(0, len(indices))], attributes, 32)
+
+
 def jointed_mesh():
     """One square 40 units across at the origin, all of it following joint 0,
     with joints kept as bytes."""
@@ -624,4 +645,5 @@ if __name__ == "__main__":
     morph_gltf()
     obj_files()
     two_squares_mesh()
+    cube_mesh()
     jointed_mesh()

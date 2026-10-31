@@ -92,7 +92,7 @@ mod fetch;
 mod helpers;
 mod instancing;
 mod items;
-mod mesh_source;
+pub mod mesh_source;
 mod node;
 mod pick;
 mod random_instancing;
@@ -119,7 +119,7 @@ pub use ljos::item::ljos_3d::{ComponentType, PrimitiveType, Semantic, math::Vec3
 pub use node::{
     Camera, DefaultMaterial, DirectionalLight, Geometry, Light, Material, Model, Node, Object3D,
     OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
-    SpotLight,
+    SpotLight, host_write,
 };
 pub use pick::PickResult;
 pub use random_instancing::{InstanceRange, RandomInstancing};

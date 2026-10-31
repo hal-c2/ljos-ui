@@ -151,7 +151,7 @@ pub(crate) const IDENTITY: Quaternion = Quaternion {
     z: 0.0,
 };
 
-pub(crate) fn host_write<T: QmlValue>(e: &Engine, me: ObjectId, p: Prop<T>, v: T) {
+pub fn host_write<T: QmlValue>(e: &Engine, me: ObjectId, p: Prop<T>, v: T) {
     if let Err(err) = e.write(me, p.index, v.to_value(), WriteKind::Host) {
         e.warn(format!("QtQuick3D Node: {err}"));
     }
@@ -474,7 +474,7 @@ impl Geometry {
     }
 
     /// The data as last committed; `None` before the first update.
-    pub(crate) fn committed(&self) -> Option<Arc<CustomGeometry>> {
+    pub fn committed(&self) -> Option<Arc<CustomGeometry>> {
         self.snapshot.clone()
     }
 }

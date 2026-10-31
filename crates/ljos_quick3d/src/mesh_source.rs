@@ -17,6 +17,11 @@ use ljos::prelude::*;
 use crate::Model;
 use crate::fetch::EngineFetch;
 
+/// What came of reading a file: the mesh, or why there is none.
+pub type MeshResult = Result<Arc<MeshFile>, String>;
+
+type Answer = Box<dyn FnOnce(&Engine, MeshResult)>;
+
 /// What has come of a model's `source`.
 #[derive(Debug, Default)]
 pub(crate) struct Loaded {
@@ -36,10 +41,12 @@ enum State {
 }
 
 /// The engine's files: read or being read, by URL.
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct MeshFiles {
     /// Who waits on each read: a model, and a view to paint again.
     reading: RefCell<HashMap<String, Vec<(ObjectId, ObjectId)>>>,
+    /// Who else waits: what is not a model, a collision shape say.
+    answers: RefCell<HashMap<String, Vec<Answer>>>,
     /// Weak, as the models hold what is in use.
     ready: RefCell<HashMap<String, Weak<MeshFile>>>,
     /// The files already warned of, as a list of models naming a bad file
@@ -92,16 +99,42 @@ pub(crate) fn file_of(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<Arc<M
     if let Some(found) = found {
         return found;
     }
-    let first = {
-        let mut reading = files.reading.borrow_mut();
-        let first = !reading.contains_key(&url);
-        reading.entry(url.clone()).or_default().push((obj, view));
-        first
-    };
+    let first = !being_read(&files, &url);
+    files
+        .reading
+        .borrow_mut()
+        .entry(url.clone())
+        .or_default()
+        .push((obj, view));
     if first {
         read(e, url);
     }
     None
+}
+
+/// Calls `reply` with the file at `url` (absolute: [`Engine::resolve_url`]),
+/// now when it is at hand and later when it has to be read: the same read and
+/// the same file as the models that name it.
+pub fn load(e: &Engine, url: &str, reply: impl FnOnce(&Engine, MeshResult) + 'static) {
+    let files = e.extension::<MeshFiles>();
+    let shared = files.ready.borrow().get(url).and_then(Weak::upgrade);
+    if let Some(file) = shared {
+        return reply(e, Ok(file));
+    }
+    let first = !being_read(&files, url);
+    files
+        .answers
+        .borrow_mut()
+        .entry(url.to_owned())
+        .or_default()
+        .push(Box::new(reply));
+    if first {
+        read(e, url.to_owned());
+    }
+}
+
+fn being_read(files: &MeshFiles, url: &str) -> bool {
+    files.reading.borrow().contains_key(url) || files.answers.borrow().contains_key(url)
 }
 
 fn read(e: &Engine, url: String) {
@@ -139,6 +172,7 @@ fn parse(e: &Engine, url: String, bytes: Vec<u8>) {
 fn arrived(e: &Engine, url: &str, got: Result<Arc<MeshFile>, String>) {
     let files = e.extension::<MeshFiles>();
     let waiting = files.reading.borrow_mut().remove(url).unwrap_or_default();
+    let answers = files.answers.borrow_mut().remove(url).unwrap_or_default();
     match &got {
         Ok(file) => {
             files
@@ -169,5 +203,8 @@ fn arrived(e: &Engine, url: &str, got: Result<Arc<MeshFile>, String>) {
         if wanted.unwrap_or(false) {
             item::repaint(e, view);
         }
+    }
+    for answer in answers {
+        answer(e, got.clone());
     }
 }

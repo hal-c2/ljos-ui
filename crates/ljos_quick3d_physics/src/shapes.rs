@@ -12,7 +12,7 @@ use ljos::item::ljos_3d::mesh_file::MeshFile;
 use ljos::ljos_engine::Provenance;
 use ljos::prelude::*;
 use ljos_physics::{Part, Pose, Shape};
-use ljos_quick3d::{Geometry, Node, mesh_files};
+use ljos_quick3d::{Geometry, Node, mesh_source};
 
 /// `CollisionShape`: what all the shapes have.
 #[derive(Debug, Default, QmlObject)]
@@ -202,7 +202,7 @@ fn read_mesh(e: &Engine, me: ObjectId, url: String) {
         return;
     }
     let wanted = url.clone();
-    mesh_files::load(e, &url, move |e, got| {
+    mesh_source::load(e, &url, move |e, got| {
         if !e.is_alive(me) {
             return;
         }

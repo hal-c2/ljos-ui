@@ -377,6 +377,23 @@ struct Subset {
 }
 
 impl MeshFile {
+    /// Every corner and triangle of the mesh: what a collision shape is made
+    /// from.
+    pub fn triangles(&self) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
+        let mut positions = Vec::new();
+        let mut triangles = Vec::new();
+        for part in self.parts.iter().filter(|p| !p.empty) {
+            let Ok(mesh) = part.geometry.to_mesh() else {
+                continue;
+            };
+            let first = positions.len() as u32;
+            let (corners, _) = mesh.indices.as_chunks::<3>();
+            triangles.extend(corners.iter().map(|c| c.map(|i| first + i)));
+            positions.extend(mesh.positions);
+        }
+        (positions, triangles)
+    }
+
     /// Reads the file's first mesh.
     pub fn read(bytes: &[u8]) -> Result<MeshFile, MeshFileError> {
         let size = bytes.len();
