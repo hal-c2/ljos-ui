@@ -73,8 +73,15 @@
 //! ([`Diagnostic::BindingLoop`], with the cycle) and broken the way Qt
 //! breaks it: the other members are evaluated once against the new value
 //! and the binding does not run again, so the cycle settles instead of
-//! counting upwards. Effects that keep re-dirtying each other are capped per
-//! flush ([`Diagnostic::RerunLimit`]).
+//! counting upwards. The loop ends at the binding the change first entered,
+//! each other member keeping the value it had when it changed: a check walk
+//! passes a change on through a node it is already walking, and the binding
+//! holds until the outermost walk or flush is done. A watch handler of a
+//! bound property runs inside that binding's update, as Qt runs a type's
+//! setters and change handlers, so a loop through a value the handler places
+//! goes on to the next binding and ends at the bound property. Effects that
+//! keep re-dirtying each other are capped per flush
+//! ([`Diagnostic::RerunLimit`]).
 //!
 //! **Frozen scopes.** An effect owned by a frozen scope is parked when its
 //! turn comes. It stays dirty, so further changes coalesce; on thaw it runs

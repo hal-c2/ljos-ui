@@ -229,6 +229,9 @@ impl Flags {
     const NOTE_DUE: u16 = 1 << 13;
     /// A noted property whose change hook is still running.
     const NOTE_HOLD: u16 = 1 << 14;
+    /// While it settles: a mark was dropped here, so what lies upstream
+    /// may have to be brought up to date before it stops settling.
+    const MISSED: u16 = 1 << 15;
 
     fn has(self, f: u16) -> bool {
         self.0 & f != 0
@@ -378,6 +381,14 @@ struct Inner<V> {
     /// The node whose freshly computed value is being announced. A mark
     /// that travels back to it closes a dependency cycle.
     wave_origin: Option<NodeId>,
+    /// How many [`Graph::update`] walks are open since the innermost
+    /// computation began: a pull a binding's own reads start is a walk of
+    /// its own, not part of the one that ran it.
+    walks: u32,
+    /// Bindings whose cycle was found inside a walk, with the evaluation
+    /// depth they settled at and the cycle: they go on settling until that
+    /// walk is done (`Graph::settle`).
+    settling: Vec<(usize, NodeId, Vec<NodeId>)>,
     batch_depth: u32,
     flush_depth: u32,
     /// Scopes to freeze once the work under way is done (`set_frozen`).
@@ -579,14 +590,72 @@ impl<V: Clone + 'static> Drop for FlushGuard<'_, V> {
     }
 }
 
-/// Ends a node's settling on every exit, including unwinding.
-struct SettleGuard<'g, V: Clone + 'static>(&'g Graph<V>, NodeId);
+/// Ends a node's settling on every exit, including unwinding, unless it
+/// was handed on to the walk it settled in (`keep`).
+struct SettleGuard<'g, V: Clone + 'static> {
+    graph: &'g Graph<V>,
+    node: NodeId,
+    keep: bool,
+}
 
 impl<V: Clone + 'static> Drop for SettleGuard<'_, V> {
     fn drop(&mut self) {
-        if let Some(node) = self.0.inner.borrow_mut().nodes.get_mut(self.1) {
+        if self.keep {
+            return;
+        }
+        if let Some(node) = self.graph.inner.borrow_mut().nodes.get_mut(self.node) {
             node.flags.set(Flags::SETTLING, false);
         }
+    }
+}
+
+/// Holds a bound property while a handler of its change runs.
+struct HandlerHold<'g, V: Clone + 'static>(&'g Graph<V>, NodeId);
+
+impl<V: Clone + 'static> Drop for HandlerHold<'_, V> {
+    fn drop(&mut self) {
+        self.0.end_handler_hold(self.1);
+    }
+}
+
+/// One open [`Graph::update`] walk; the last to close ends what settled
+/// in it.
+struct WalkGuard<'g, V: Clone + 'static>(&'g Graph<V>);
+
+impl<'g, V: Clone + 'static> WalkGuard<'g, V> {
+    fn open(graph: &'g Graph<V>) -> Self {
+        graph.inner.borrow_mut().walks += 1;
+        WalkGuard(graph)
+    }
+}
+
+impl<V: Clone + 'static> Drop for WalkGuard<'_, V> {
+    fn drop(&mut self) {
+        let done = {
+            let mut i = self.0.inner.borrow_mut();
+            i.walks -= 1;
+            i.walks == 0 && !i.settling.is_empty()
+        };
+        if done {
+            self.0.end_settling();
+        }
+    }
+}
+
+/// While a node computes, the walks of whoever ran it are not its own;
+/// they are put back when it is done.
+struct WalksAside<'g, V: Clone + 'static>(&'g Graph<V>, u32);
+
+impl<'g, V: Clone + 'static> WalksAside<'g, V> {
+    fn new(graph: &'g Graph<V>) -> Self {
+        let walks = std::mem::take(&mut graph.inner.borrow_mut().walks);
+        WalksAside(graph, walks)
+    }
+}
+
+impl<V: Clone + 'static> Drop for WalksAside<'_, V> {
+    fn drop(&mut self) {
+        self.0.inner.borrow_mut().walks = self.1;
     }
 }
 
@@ -655,6 +724,8 @@ impl<V: Clone + 'static> Graph<V> {
                 eval_stack: Vec::new(),
                 after: Vec::new(),
                 wave_origin: None,
+                walks: 0,
+                settling: Vec::new(),
                 batch_depth: 0,
                 flush_depth: 0,
                 freeze_later: Vec::new(),
@@ -1112,7 +1183,77 @@ impl<V: Clone + 'static> Graph<V> {
     #[inline(never)]
     fn watched(&self, target: NodeId, handler: &mut dyn FnMut(&Graph<V>, &V)) {
         if let Some(v) = self.try_get(target) {
+            let _hold = self.hold_for_handler(target);
             self.untrack(|| handler(self, &v));
+        }
+    }
+
+    /// A handler of a bound property's change runs inside the binding's
+    /// update, as Qt's change signal is sent from the binding's write: what
+    /// the handler changes that comes back to the binding is the binding's
+    /// change coming back, a binding loop, and the binding keeps its value.
+    /// The loop so ends at the binding, also when it goes through values
+    /// the handler works out itself (a picture loaded at the size the
+    /// binding asks for, and the size that follows from it).
+    fn hold_for_handler(&self, target: NodeId) -> Option<HandlerHold<'_, V>> {
+        let mut i = self.inner.borrow_mut();
+        let node = i.nodes.get_mut(target)?;
+        let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
+        if !bound || node.flags.has(Flags::SETTLING) {
+            return None;
+        }
+        node.flags.set(Flags::SETTLING, true);
+        node.flags.set(Flags::CAME_BACK, false);
+        node.flags.set(Flags::MISSED, false);
+        Some(HandlerHold(self, target))
+    }
+
+    /// Ends the hold [`Graph::hold_for_handler`] took on `n`.
+    fn end_handler_hold(&self, n: NodeId) {
+        let (sources, cycle): (SmallVec<[NodeId; 4]>, Vec<NodeId>) = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            let Some(node) = i.nodes.get_mut(n) else {
+                return;
+            };
+            if !node.flags.take(Flags::MISSED) || std::thread::panicking() {
+                (SmallVec::new(), Vec::new())
+            } else {
+                let sources = node.sources.iter().map(|e| e.node).collect();
+                (sources, i.find_cycle(n))
+            }
+        };
+        if sources.is_empty() {
+            let mut i = self.inner.borrow_mut();
+            if let Some(node) = i.nodes.get_mut(n) {
+                node.flags.set(Flags::SETTLING, false);
+                node.flags.set(Flags::CAME_BACK, false);
+            }
+            return;
+        }
+        // What the handler changed upstream is worked out now, while the
+        // binding still holds, as Qt works it out inside the handler: a
+        // change of it that reaches the binding is the loop.
+        let mut guard = SettleGuard {
+            graph: self,
+            node: n,
+            keep: false,
+        };
+        for s in sources {
+            self.update(s);
+        }
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        if i.walks > 0 {
+            let depth = i.eval_stack.len();
+            i.settling.push((depth, n, cycle));
+            guard.keep = true;
+            return;
+        }
+        if let Some(node) = i.nodes.get_mut(n)
+            && node.flags.take(Flags::CAME_BACK)
+        {
+            i.emit(Diagnostic::BindingLoop { node: n, cycle });
         }
     }
 
@@ -1151,6 +1292,7 @@ impl<V: Clone + 'static> Graph<V> {
             std::mem::replace(&mut i.ahead, change)
         };
         let _ahead = AheadGuard(self, outer);
+        let _hold = self.hold_for_handler(target);
         self.untrack(|| handler(self, &v));
     }
 
@@ -2690,6 +2832,10 @@ impl<V: Clone + 'static> Graph<V> {
             i.flush_depth += 1;
         }
         let _guard = FlushGuard(self);
+        // The roots a change reached are part of its spreading, as Qt's
+        // handlers run inside the update that announced it: a binding that
+        // settles in this flush settles until the flush is done.
+        let walk = WalkGuard::open(self);
         loop {
             self.tell();
             // A statement, so the borrow ends before user code runs. A
@@ -2728,6 +2874,7 @@ impl<V: Clone + 'static> Graph<V> {
             };
             self.update(n);
         }
+        drop(walk);
         self.dispatch_diagnostics();
     }
 
@@ -2853,11 +3000,13 @@ impl<V: Clone + 'static> Graph<V> {
             // it in `finish`, where the loop is reported and broken.
             NodeState::Clean | NodeState::Computing => return,
             NodeState::Dirty => {
+                let _walk = WalkGuard::open(self);
                 self.recompute(n);
                 return;
             }
             NodeState::Check => {}
         }
+        let _walk = WalkGuard::open(self);
         enum Step {
             Pop,
             Recompute(NodeId),
@@ -2985,6 +3134,7 @@ impl<V: Clone + 'static> Graph<V> {
             i.eval_stack.push(n);
             (compute, node.binding_gen)
         };
+        let aside = WalksAside::new(self);
         let mut guard = ComputeGuard {
             graph: self,
             node: n,
@@ -3001,6 +3151,7 @@ impl<V: Clone + 'static> Graph<V> {
         guard.ok = true;
         // `finish` runs here; a cycle it found is settled outside it.
         drop(guard);
+        drop(aside);
         self.settle(n);
         self.run_after(n);
     }
@@ -3071,7 +3222,11 @@ impl<V: Clone + 'static> Graph<V> {
             // still marked.
             (sources, i.find_cycle(n))
         };
-        let _guard = SettleGuard(self, n);
+        let mut guard = SettleGuard {
+            graph: self,
+            node: n,
+            keep: false,
+        };
         // Every path from `n` back to itself ends in one of its sources,
         // so pulling those evaluates exactly the members of its cycles.
         for s in sources {
@@ -3079,10 +3234,43 @@ impl<V: Clone + 'static> Graph<V> {
         }
         let mut g = self.inner.borrow_mut();
         let i = &mut *g;
+        if i.walks > 0 {
+            // A walk that is still open ran `n`: members it is walking
+            // through count as unchanged to the pull above, and the walk
+            // brings them up to date itself once `n` is done. Qt's binding
+            // stays in its update until its change has spread, so their
+            // new values still find `n` settling and end the loop there.
+            let depth = i.eval_stack.len();
+            i.settling.push((depth, n, cycle));
+            guard.keep = true;
+            return;
+        }
         if let Some(node) = i.nodes.get_mut(n)
             && node.flags.take(Flags::CAME_BACK)
         {
             i.emit(Diagnostic::BindingLoop { node: n, cycle });
+        }
+    }
+
+    /// Ends the settling of the bindings the walk that just closed ran
+    /// (`settle`), and reports each whose change came back as a change.
+    fn end_settling(&self) {
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        let depth = i.eval_stack.len();
+        let mut k = 0;
+        while k < i.settling.len() {
+            if i.settling[k].0 < depth {
+                k += 1;
+                continue;
+            }
+            let (_, n, cycle) = i.settling.remove(k);
+            if let Some(node) = i.nodes.get_mut(n) {
+                node.flags.set(Flags::SETTLING, false);
+                if node.flags.take(Flags::CAME_BACK) {
+                    i.emit(Diagnostic::BindingLoop { node: n, cycle });
+                }
+            }
         }
     }
 
@@ -3671,6 +3859,10 @@ impl<V: Clone + 'static> Inner<V> {
     /// [`Inner::propagate_marks`] of `stack`, taken out of `mark_stack`.
     fn propagate(&mut self, stack: &mut Vec<(NodeId, NodeState, u64)>) {
         let all = self.options.eager;
+        // Stamps the nodes on a walk this pass carried a binding's result
+        // through (below), so a cycle of them is passed once.
+        self.tick += 1;
+        let pass = self.tick;
         while let Some((m, st, from_stamp)) = stack.pop() {
             let Some(node) = self.nodes.get_mut(m) else {
                 continue;
@@ -3688,6 +3880,7 @@ impl<V: Clone + 'static> Inner<V> {
                 if st == NodeState::Dirty {
                     node.flags.set(Flags::CAME_BACK, true);
                 }
+                node.flags.set(Flags::MISSED, true);
                 continue;
             }
             if node.state == NodeState::Computing {
@@ -3731,11 +3924,30 @@ impl<V: Clone + 'static> Inner<V> {
                 }
                 continue;
             }
+            // A node on a check walk is non-clean, yet what lies past it
+            // may have been brought up to date already: a walk that meets a
+            // node it is walking from takes it as unchanged, and that is
+            // how a cycle looks from inside a pull. A binding's new result
+            // that reaches it goes on, so that it comes back round to the
+            // binding and the loop ends there, at the first binding the
+            // change entered, as Qt ends it, and not at whichever member
+            // was read first.
+            let through_walk =
+                self.wave_origin.is_some() && node.flags.has(Flags::WALKING) && node.mark != pass;
             if node.state.rank() >= st.rank() {
                 // Already waiting, maybe on an outer flush level: this
                 // change is news to it, so it runs with this change's flush.
                 if node.is_eager(all) {
                     enqueue(&mut self.queues, m, node);
+                }
+                if through_walk {
+                    node.mark = pass;
+                    let stamp = node.read_stamp;
+                    stack.extend(
+                        node.observers
+                            .iter()
+                            .map(|o| (o.node, NodeState::Check, stamp)),
+                    );
                 }
                 continue;
             }
@@ -3743,6 +3955,15 @@ impl<V: Clone + 'static> Inner<V> {
             node.state = st;
             if node.is_eager(all) {
                 enqueue(&mut self.queues, m, node);
+            }
+            if through_walk {
+                node.mark = pass;
+                let stamp = node.read_stamp;
+                stack.extend(
+                    node.observers
+                        .iter()
+                        .map(|o| (o.node, NodeState::Check, stamp)),
+                );
             }
             if was_clean {
                 // A bound property may come out otherwise: its owner reads

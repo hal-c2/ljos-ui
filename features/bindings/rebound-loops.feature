@@ -68,10 +68,6 @@ Feature: Loops that close only once everything was evaluated
     And the property "least" of "tank" is 364
     And the property "side" of "tank" is 364
 
-  # Ljós stops this loop where the change comes back, and leaves layout, mobile
-  # and side from different rounds (init: 0, true, 364, 364; at 380: 1, false,
-  # 484, 484), where Qt leaves each as it was when it changed.
-  @backlog
   Scenario: A loop that never closes stops after one round, each property as it was when it changed
     When the property "layout" of "tank" is bound to "side > 400 ? 1 : 0"
     Then the property "layout" of "tank" is 1

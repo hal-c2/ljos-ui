@@ -50,10 +50,6 @@ Feature: A picture asked for at a size that follows from its own
     And the property "paintedWidth" of "loop" is 30
     And the property "paintedHeight" of "loop" is 20
 
-  # Ljós ends this loop in the Image's own size, which it settles at 1 by 1
-  # (sourceSize.height 0); Qt ends it at the binding and works the size out
-  # again whenever it is asked: 60 by 40.
-  @backlog
   Scenario: A width that follows the height when nothing else says how high
     Given the QML:
       """qml

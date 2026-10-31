@@ -361,3 +361,61 @@ fn a_panicking_member_leaves_the_graph_usable() {
     g.set(x, 20);
     assert_eq!(settled(&g, [p, q]), [28, 29]);
 }
+
+#[test]
+fn a_loop_through_bindings_stops_at_the_binding_the_change_entered() {
+    // A narrow layout picks a smaller least width; the side follows the
+    // larger of what it is given and the least; the layout is narrow while
+    // the side is wide. Given 380 the side takes 380, the layout goes wide
+    // and the least goes to 484, which would move the side again: Qt stops
+    // at `side`, the binding the change came in through, and leaves every
+    // other property as it was when it changed.
+    for eager in [false, true] {
+        let g = graph(eager);
+        let [layout, mobile, least, given, side] = props(&g);
+        g.set(given, 300);
+        g.bind(mobile, move |g| (g.get(layout) == 1) as i64)
+            .unwrap();
+        g.bind(least, move |g| if g.get(mobile) == 1 { 364 } else { 484 })
+            .unwrap();
+        g.bind(side, move |g| g.get(given).max(g.get(least)))
+            .unwrap();
+        g.take_diagnostics();
+        g.bind(layout, move |g| (g.get(side) > 400) as i64).unwrap();
+        let all = [layout, mobile, least, side];
+        assert_eq!(settled(&g, all), [1, 1, 364, 364], "eager {eager}");
+        g.take_diagnostics();
+        g.set(given, 600);
+        assert_eq!(settled(&g, all), [1, 1, 364, 600], "eager {eager}");
+        assert_eq!(loops(&g), [], "eager {eager}");
+        g.set(given, 380);
+        assert_eq!(settled(&g, all), [0, 0, 484, 380], "eager {eager}");
+        assert_eq!(loops(&g), [side], "eager {eager}");
+        g.set(given, 100);
+        assert_eq!(settled(&g, all), [1, 1, 364, 484], "eager {eager}");
+    }
+}
+
+#[test]
+fn a_loop_through_a_placed_value_goes_on_to_the_next_binding() {
+    // A picture: its implicit height is placed by the type (here a watch on
+    // the source size), not bound. The height follows the implicit height
+    // and the source size follows the height. Loading places 60; asking for
+    // 60 places 40, which the height takes; the source size would follow
+    // it, and that is where the loop ends, with the source size kept at 60.
+    for eager in [false, true] {
+        let g = graph(eager);
+        let [implicit, height, source] = props(&g);
+        g.bind(height, move |g| g.get(implicit)).unwrap();
+        g.bind(source, move |g| g.get(height)).unwrap();
+        g.watch(g.root(), source, move |g, v| g.set(implicit, v * 2 / 3))
+            .unwrap();
+        g.set(implicit, 60);
+        assert_eq!(
+            settled(&g, [implicit, height, source]),
+            [40, 40, 60],
+            "eager {eager}"
+        );
+        assert_eq!(loops(&g), [source], "eager {eager}");
+    }
+}

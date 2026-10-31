@@ -415,6 +415,7 @@ pub trait Reactive {
 **Binding loops**
 - Re-entering a node that is `Computing` is a binding loop. Ljós logs Qt's message once, returns the stale value and does not re-enter. The message names the property and points at its name in the source (`PropertyBinding.name_span`), as Qt's does.
 - Which member of a loop is reported depends on the order bindings first run. During creation the engine follows Qt's set-up order: bindings on some properties are installed but held back (`Graph::hold`) until the component's other bindings have run, then released. Without this an eager engine reports a loop on an acyclic chain.
+- A loop ends at the binding the change first entered, and each other member keeps the value it had when it changed, as in Qt, lazy or eager. A handler a type puts on a bound property (`Graph::watch`) runs inside that binding's update, as Qt runs setters and change handlers: a value it places (an Image's implicit size from its `sourceSize`) is not a binding, so the loop goes through it to the next binding and ends at the bound property (`features/bindings/rebound-loops.feature`, `features/items/image-source-size-loop.feature`).
 - A lazy binding is checked when it is first read, so a loop nobody reads is not reported until then. `--eager` reports it at creation, as Qt does.
 - Handlers that ping-pong between each other are capped at 100 re-dirties per node per flush; the flush ends with `RerunLimit`.
 
