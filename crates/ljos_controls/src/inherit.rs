@@ -998,7 +998,7 @@ fn resolve_palette(
     let in_use = in_use(engine, Which::Palette);
     let now = group_now(engine, obj, kind);
     // Tracked: every palette is resolved again when the scheme changes.
-    let dark = ljos_quick::color_scheme(engine) == ColorScheme::Dark;
+    let dark = palette_is_dark(engine);
     let roles = style_roles(engine);
     if !in_use && now == ACTIVE && !dark && roles.is_none() && !state.palette_touched.get() {
         return Ok(());
@@ -1522,8 +1522,23 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
             cur = above(engine, p);
         }
     }
-    let dark = ljos_quick::color_scheme(engine) == ColorScheme::Dark;
+    let dark = palette_is_dark(engine);
     Value::Color(style_roles(engine).unwrap_or(&ROLES)[i].colour(dark, g != DISABLED))
+}
+
+/// Whether the style's dark colours are the ones in use. Tracked. An
+/// application that imports `Ljos.Design` says with `Colors.dark`, which
+/// follows the scheme until it is set; for one that does not import it
+/// nothing of the module is made.
+fn palette_is_dark(engine: &Engine) -> bool {
+    use ljos_design_qml::URI;
+    if engine.uses_module(URI)
+        && let Some(colors) = engine.untrack(|| engine.singleton_by_name(URI, "Colors"))
+        && let Some(prop) = engine.find_property(colors, "dark")
+    {
+        return engine.read(colors, prop).to_boolean();
+    }
+    ljos_quick::color_scheme(engine) == ColorScheme::Dark
 }
 
 /// The colours of a style other than Basic whose module the application
