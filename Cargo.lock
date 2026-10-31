@@ -3825,6 +3825,7 @@ dependencies = [
  "oxc_semantic",
  "oxc_span",
  "oxc_syntax",
+ "qml_edit",
  "qml_front",
  "qml_syntax",
  "qt_types",
@@ -6100,6 +6101,7 @@ dependencies = [
 name = "qml_edit"
 version = "0.0.0"
 dependencies = [
+ "ljos_ir",
  "proptest",
  "qml_fmt",
  "qml_syntax",

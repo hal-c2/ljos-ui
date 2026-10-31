@@ -51,7 +51,9 @@
 //!
 //! [`transform`] rebases one writer's changes over another's made from the
 //! same text, refusing a change that touches bytes the other changed
-//! ([`Overlap`]).
+//! ([`Overlap`]). [`diff`] says what changed between two versions of a file
+//! object by object, matching objects by name and content rather than by
+//! the order-dependent part of their keys.
 //!
 //! # Where it lives
 //!
@@ -63,8 +65,10 @@ use std::fmt;
 use std::ops::Range;
 
 mod transform;
+mod tree;
 
 pub use transform::{Overlap, Ties, transform, transform_all, transform_all_with, transform_with};
+pub use tree::{Object, Templates, TreeChange, diff, diff_with, keys, keys_with, template_by_name};
 
 use qml_syntax::{
     Allocator, GetSpan, Span,
