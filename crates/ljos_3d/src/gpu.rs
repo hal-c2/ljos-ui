@@ -1944,11 +1944,8 @@ impl Renderer {
         // in two, the first keeping what it drew for the second.
         let picture = scene_view.as_ref().unwrap_or(&target.color_view);
         let cut = cut.min(draws.len());
-        let parts: &[_] = if cut < draws.len() {
-            &[0..cut, cut..draws.len()]
-        } else {
-            &[0..draws.len()]
-        };
+        let parts = [0..cut, cut..draws.len()];
+        let parts = &parts[..if cut < draws.len() { 2 } else { 1 }];
         let mut slot = 0;
         for (part, range) in parts.iter().enumerate() {
             let first = part == 0;
