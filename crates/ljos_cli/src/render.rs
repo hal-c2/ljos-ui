@@ -38,6 +38,11 @@ pub struct Render {
     /// at 0.
     #[arg(long, value_parser = parse_size, value_name = "WxH")]
     size: Option<(u32, u32)>,
+    /// Read the roles of `Ljos.Design` from FILE instead of from the
+    /// `theme.json` nearest the entry, in its directory or one above it up
+    /// to the project's.
+    #[arg(long, value_name = "FILE")]
+    theme: Option<PathBuf>,
     /// Milliseconds of application time to let pass before the picture.
     #[arg(long, default_value_t = 1500, value_name = "MS")]
     settle: u64,
@@ -193,6 +198,12 @@ impl Render {
             Some(_) => compile(&dir, &key, notes, EngineOracle::from_engine(&engine))?,
             None => compile(&dir, &key, notes, EngineOracle::table_only())?,
         };
+        // Before the root is made, so nothing binds to the module's own
+        // roles first. A theme that is refused stops the render, as a file
+        // that does not compile does.
+        let theme = crate::run::read_theme(self.theme.as_deref(), &dir.join(&self.entry), &dir)?;
+        ljos_design_qml::theme::apply(&engine, theme.as_ref())
+            .map_err(crate::run::theme_refused)?;
         let said = Said::default();
         // The reference picture of a window is of its items: the window's
         // own colour is not in it, and where no item paints the picture is
@@ -449,6 +460,7 @@ mod tests {
             now: None,
             system_fonts: false,
             network: false,
+            theme: None,
         };
         let mut notes = Notes::default();
         let result = r.render(&mut notes);
@@ -506,6 +518,7 @@ mod tests {
             now: None,
             system_fonts: false,
             network: true,
+            theme: None,
         };
         r.render(&mut Notes::default()).unwrap();
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
@@ -663,6 +676,7 @@ mod tests {
             now: Some(1_791_741_429_000.0),
             system_fonts: false,
             network: false,
+            theme: None,
         };
         r.render(&mut Notes::default()).unwrap();
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
@@ -687,6 +701,7 @@ mod tests {
             now: None,
             system_fonts: false,
             network: false,
+            theme: None,
         };
         let mut notes = Notes::default();
         r.render(&mut notes).unwrap();

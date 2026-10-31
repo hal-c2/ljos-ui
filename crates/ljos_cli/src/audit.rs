@@ -38,6 +38,11 @@ pub struct Audit {
     /// size, and 800x600 for a side it leaves at 0, as `ljos render`.
     #[arg(long, value_parser = render::parse_size, value_name = "WxH")]
     size: Option<(u32, u32)>,
+    /// Read the roles of `Ljos.Design` from FILE instead of from the
+    /// `theme.json` nearest the file, in its directory: the colours audited
+    /// are the theme's.
+    #[arg(long, value_name = "FILE")]
+    theme: Option<PathBuf>,
     /// Milliseconds of application time to let pass before the audit.
     #[arg(long, default_value_t = 500, value_name = "MS")]
     settle: u64,
@@ -122,6 +127,11 @@ impl Audit {
             picture
         };
         picture.install(&engine);
+        // Before the root is made, so nothing binds to the module's own
+        // roles first.
+        let theme = crate::run::read_theme(self.theme.as_deref(), &file, dir)?;
+        ljos_design_qml::theme::apply(&engine, theme.as_ref())
+            .map_err(crate::run::theme_refused)?;
         engine.set_component_source(source);
         render::stage_resources(&engine, dir);
         let root = engine

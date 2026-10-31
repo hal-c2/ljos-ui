@@ -30,7 +30,7 @@ pub(crate) struct DevSetup {
     qml_dirs: Vec<PathBuf>,
     /// The modules imported from a directory of the caller's choosing.
     aliases: Aliases,
-    /// The theme file named by the caller; None: the one beside the entry.
+    /// The theme file named by the caller; None: the one nearest the entry.
     theme: Option<PathBuf>,
     dev: Option<Dev>,
     on_report: Option<ReportHandler>,
@@ -202,7 +202,7 @@ impl<M> Setup<'_, M> {
 
     /// Reads the roles of `Ljos.Design` from `theme` in what the `watch`
     /// calls after this one start (`ljos run --theme`), in place of
-    /// `theme.json` beside the entry. The file is watched: an edit sets
+    /// the `theme.json` nearest the entry. The file is watched: an edit sets
     /// the roles again without making anything again.
     pub fn set_theme_file(&mut self, theme: impl Into<PathBuf>) {
         self.dev.theme = Some(theme.into());

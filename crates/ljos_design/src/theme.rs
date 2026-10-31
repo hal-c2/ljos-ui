@@ -28,6 +28,7 @@
 //! faint to read.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use crate::color::{Srgb, Srgba};
 use crate::limits;
@@ -220,15 +221,35 @@ pub struct Theme {
     pub entries: Vec<Entry>,
 }
 
+/// The name of a theme file, looked for by [`find`].
+pub const FILE: &str = "theme.json";
+
+/// The theme file an application whose entry is in `entry_dir` reads when
+/// none is named: the nearest [`FILE`] from `entry_dir` up to `project`,
+/// both included, so a module's own theme is nearer its entry than the
+/// project's. Nothing above `project` is looked in; an entry outside it
+/// is looked for beside alone. None when there is none.
+pub fn find(entry_dir: &Path, project: &Path) -> Option<PathBuf> {
+    let mut dir = Some(entry_dir);
+    while let Some(d) = dir {
+        let file = d.join(FILE);
+        if file.is_file() {
+            return Some(file);
+        }
+        if d == project || !d.starts_with(project) {
+            return None;
+        }
+        dir = d.parent();
+    }
+    None
+}
+
 /// Reads a theme. `file` names it in errors. Every mistake is told, the
 /// first in the file first.
 ///
 /// # Errors
 /// The text is not JSON, names a singleton or a role the module does not
 /// have, or gives a role a value of another kind.
-/// The file a theme is read from when none is named: beside the entry.
-pub const FILE: &str = "theme.json";
-
 pub fn parse(file: &str, text: &str) -> Result<Theme, Vec<ThemeError>> {
     let error = |at: Pos, message: String| ThemeError {
         file: file.to_owned(),
@@ -863,6 +884,22 @@ mod tests {
         let mut e = read(text).unwrap_err();
         assert_eq!(e.len(), 1, "{e:?}");
         e.remove(0)
+    }
+
+    #[test]
+    fn the_nearest_theme_from_the_entry_up_to_the_project_is_found() {
+        let project = std::env::temp_dir().join(format!("ljos-theme-find-{}", std::process::id()));
+        let module = project.join("app/Module");
+        std::fs::create_dir_all(&module).unwrap();
+        let write = |dir: &Path| std::fs::write(dir.join(FILE), "{}").unwrap();
+        assert_eq!(find(&module, &project), None);
+        write(&project);
+        assert_eq!(find(&module, &project), Some(project.join(FILE)));
+        // Not above the project.
+        assert_eq!(find(&module, &project.join("app")), None);
+        write(&module);
+        assert_eq!(find(&module, &project), Some(module.join(FILE)));
+        std::fs::remove_dir_all(&project).unwrap();
     }
 
     #[test]

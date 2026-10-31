@@ -576,7 +576,8 @@ impl DevSession {
 
     /// As [`open_aliased`](Self::open_aliased), with the roles of
     /// `Ljos.Design` set from the theme file `theme`, or from
-    /// [`THEME_FILE`] beside `main` when it is None. The file is watched
+    /// the [`THEME_FILE`] nearest `main`, in its directory or one above it
+    /// up to the project's, when it is None. The file is watched
     /// with the project: an edit sets the roles again
     /// ([`Report::Theme`]), and one that cannot be read keeps the theme
     /// before. A theme that is refused at the start leaves the module's
@@ -615,7 +616,7 @@ impl DevSession {
         else {
             return Err(DevError::NotQml(main));
         };
-        let theme = theme_path(theme, main.parent().unwrap_or(&dir));
+        let theme = theme_path(theme, &dir, &entry);
         let reloader = Reloader::open_reaching_aliased(&dir, &entry, aliases, oracle)?;
         Self::start(
             engine,
@@ -689,7 +690,7 @@ impl DevSession {
 
     /// As [`open_roots_aliased`](Self::open_roots_aliased), with a theme
     /// as [`open_themed`](Self::open_themed) has: `theme`, or
-    /// [`THEME_FILE`] in the first root.
+    /// the [`THEME_FILE`] nearest the first entry, up to the first root.
     #[allow(clippy::too_many_arguments)]
     pub fn open_roots_themed<O>(
         engine: &Engine,
@@ -714,8 +715,8 @@ impl DevSession {
             .collect::<Result<Vec<_>, _>>()?;
         let dirs: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
         let reloader = Reloader::open_roots_aliased(&dirs, aliases, oracle)?;
-        let entries = entries.iter().map(|e| (*e).to_owned()).collect();
-        let theme = theme_path(theme, &roots[0]);
+        let entries: Vec<String> = entries.iter().map(|e| (*e).to_owned()).collect();
+        let theme = theme_path(theme, &roots[0], &entries[0]);
         Self::start(engine, reloader, roots, entries, properties, theme, wake)
     }
 
@@ -1257,16 +1258,24 @@ impl DevSession {
     }
 }
 
-/// The file a theme is read from when none is named: beside the entry.
+/// The name of the file a theme is read from when none is named
+/// ([`ljos_design::theme::find`]).
 pub const THEME_FILE: &str = ljos_design::theme::FILE;
 
-fn theme_path(named: Option<&Path>, beside: &Path) -> PathBuf {
+/// The theme file to read and watch: `named`, else the nearest
+/// [`THEME_FILE`] from the entry `entry` (a key in `root`) up to `root`,
+/// else the one `root` would have, where a new theme is written first.
+fn theme_path(named: Option<&Path>, root: &Path, entry: &str) -> PathBuf {
     match named {
         // Absolute, as the watcher is told absolute paths; a file that is
         // not there yet keeps the path as given, made absolute.
         Some(p) => std::fs::canonicalize(p)
             .unwrap_or_else(|_| std::path::absolute(p).unwrap_or_else(|_| p.to_owned())),
-        None => beside.join(THEME_FILE),
+        None => {
+            let main = root.join(entry);
+            ljos_design::theme::find(main.parent().unwrap_or(root), root)
+                .unwrap_or_else(|| root.join(THEME_FILE))
+        }
     }
 }
 

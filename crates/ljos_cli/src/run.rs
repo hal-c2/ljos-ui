@@ -52,7 +52,8 @@ pub struct Run {
     #[arg(long, value_name = "MODULE=DIR", value_parser = parse_alias)]
     alias: Vec<Alias>,
     /// Read the roles of `Ljos.Design` (colours, spacing, type, motion)
-    /// from FILE instead of from `theme.json` beside the entry. With
+    /// from FILE instead of from the `theme.json` nearest the entry, in
+    /// its directory or one above it up to the project's. With
     /// `--watch` an edit of it sets the roles again and keeps the
     /// application's state.
     #[arg(long, value_name = "FILE")]
@@ -236,18 +237,17 @@ pub(crate) fn parse_alias(text: &str) -> Result<Alias, String> {
     Alias::parse(text).map_err(|e| e.to_string())
 }
 
-/// The theme the application starts with: `named`, or the one beside
-/// `main` when there is one.
-fn read_theme(named: Option<&Path>, main: &Path) -> anyhow::Result<Option<Theme>> {
-    let path = match named {
-        Some(path) => path.to_owned(),
-        None => {
-            let beside = main.with_file_name(ljos_design::theme::FILE);
-            if !beside.exists() {
-                return Ok(None);
-            }
-            beside
-        }
+/// The theme the application starts with: `named`, or the nearest
+/// `theme.json` from the entry `main` up to the `project` directory
+/// ([`ljos_design::theme::find`]) when there is one.
+pub(crate) fn read_theme(
+    named: Option<&Path>,
+    main: &Path,
+    project: &Path,
+) -> anyhow::Result<Option<Theme>> {
+    let found = || ljos_design::theme::find(main.parent().unwrap_or(project), project);
+    let Some(path) = named.map(Path::to_owned).or_else(found) else {
+        return Ok(None);
     };
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("the theme {}", path.display()))?;
@@ -257,7 +257,7 @@ fn read_theme(named: Option<&Path>, main: &Path) -> anyhow::Result<Option<Theme>
 }
 
 /// Every reason a theme was refused, one line each.
-fn theme_refused(errors: Vec<ljos_design::theme::ThemeError>) -> anyhow::Error {
+pub(crate) fn theme_refused(errors: Vec<ljos_design::theme::ThemeError>) -> anyhow::Error {
     let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
     anyhow::anyhow!("{}", lines.join("\n"))
 }
@@ -634,7 +634,7 @@ impl Run {
             // A theme that cannot be read stops the run as a file that does
             // not compile does; without --watch there is no overlay to say
             // so in.
-            let theme = read_theme(theme.as_deref(), &dir.join(format!("{key}.qml")))?;
+            let theme = read_theme(theme.as_deref(), &dir.join(format!("{key}.qml")), &dir)?;
             let stop = Arc::new(AtomicBool::new(false));
             let compiling = {
                 let (dir, key, example) = (dir.clone(), key.clone(), example.clone());
