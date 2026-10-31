@@ -35,6 +35,8 @@ rustc-hash = "2.1.3"
 # with an SPIR-V or WGSL front end.
 naga = { version = "30.0.1", default-features = false, features = ["glsl-in", "glsl-out", "wgsl-in"] }
 slotmap = "1.1.1"
+# QtQuick3D.Physics, only through ljos_physics.
+rapier3d = "=0.36.1"
 smallvec = { version = "1.16", features = ["union"] }
 bitflags = "2.13"
 # QuickJS through Ljós's fork of rquickjs-sys, whose dtoa writes the

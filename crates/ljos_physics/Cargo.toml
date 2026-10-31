@@ -1,0 +1,15 @@
+[package]
+name = "ljos_physics"
+description = "A rigid body world in QtQuick3D.Physics's terms and units, over rapier: bodies, shapes, materials, contacts, triggers and character moves, with no engine, no QML and no GPU, so that a web host can share it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+rapier3d.workspace = true
+
+[lints]
+workspace = true
