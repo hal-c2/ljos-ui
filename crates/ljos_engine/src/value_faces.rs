@@ -450,6 +450,99 @@ pub(crate) const FACES: &str = r##"
       this.x * v.y - this.y * v.x);
   });
 
+  // A quaternion's sums are Hamilton's, in single precision as it is kept.
+  const quaternionOf = (v) => {
+    if (v === null || typeof v !== "object" || Object.getPrototypeOf(v) !== quaternion.proto) refuse();
+    return [v.scalar, v.x, v.y, v.z];
+  };
+  const hamilton = ([w, x, y, z], [r, a, b, c]) => [
+    w * r - x * a - y * b - z * c,
+    w * a + x * r + y * c - z * b,
+    w * b - x * c + y * r + z * a,
+    w * c + x * b - y * a + z * r,
+  ];
+  const fourLength = ([w, x, y, z]) => Math.sqrt(w * w + x * x + y * y + z * z);
+  const quaternionMethods = {
+    dotProduct(q) {
+      count(arguments.length, 1);
+      const b = quaternionOf(q);
+      return f32(this.scalar * b[0] + this.x * b[1] + this.y * b[2] + this.z * b[3]);
+    },
+    times(v) {
+      if (arguments.length < 1) throw new Error("Unable to determine callable overload.");
+      const a = [this.scalar, this.x, this.y, this.z];
+      if (v !== null && typeof v === "object") {
+        const p = Object.getPrototypeOf(v);
+        if (p === vector3d.proto) {
+          // The vector turned: a v a*, which scales it by a's length twice
+          // when a is not of length one.
+          const [, x, y, z] = hamilton(hamilton(a, [0, v.x, v.y, v.z]), [a[0], -a[1], -a[2], -a[3]]);
+          return vector3d.make(x, y, z);
+        }
+        return quaternion.make(...hamilton(a, quaternionOf(v)));
+      }
+      const by = f32(Number(v));
+      return quaternion.make(...a.map((x) => x * by));
+    },
+    plus(q) {
+      count(arguments.length, 1);
+      const b = quaternionOf(q);
+      return quaternion.make(this.scalar + b[0], this.x + b[1], this.y + b[2], this.z + b[3]);
+    },
+    minus(q) {
+      count(arguments.length, 1);
+      const b = quaternionOf(q);
+      return quaternion.make(this.scalar - b[0], this.x - b[1], this.y - b[2], this.z - b[3]);
+    },
+    normalized() {
+      const a = [this.scalar, this.x, this.y, this.z];
+      const length = fourLength(a);
+      return length === 0 ? quaternion.make(0, 0, 0, 0) : quaternion.make(...a.map((x) => x / length));
+    },
+    inverted() {
+      const a = [this.scalar, this.x, this.y, this.z];
+      const squared = a.reduce((sum, x) => sum + x * x, 0);
+      if (squared === 0) return quaternion.make(0, 0, 0, 0);
+      return quaternion.make(a[0] / squared, -a[1] / squared, -a[2] / squared, -a[3] / squared);
+    },
+    conjugated() { return quaternion.make(this.scalar, -this.x, -this.y, -this.z); },
+    length() { return f32(fourLength([this.scalar, this.x, this.y, this.z])); },
+    // In degrees, about x, then y, then z, as the turns are made in reverse:
+    // what `Quaternion.fromEulerAngles` takes makes this quaternion again.
+    toEulerAngles() {
+      const a = [this.scalar, this.x, this.y, this.z];
+      const length = f32(fourLength(a));
+      if (length === 0) return vector3d.make(0, 0, 0);
+      // Each step in single precision: the last digits qml6 shows come of it.
+      const [w, x, y, z] = a.map((v) => f32(v / length));
+      const m = (p, q) => f32(p * q);
+      const degrees = 180 / Math.PI;
+      const sine = f32(-2 * f32(m(y, z) - m(w, x)));
+      // Straight up or down, y and z turn about one line and z is taken as none.
+      if (Math.abs(sine) >= 0.99999) {
+        return vector3d.make(Math.sign(sine) * 90,
+          degrees * Math.atan2(f32(-2 * f32(m(x, z) - m(w, y))), f32(1 - f32(2 * f32(m(y, y) + m(z, z))))), 0);
+      }
+      return vector3d.make(
+        degrees * Math.asin(sine),
+        degrees * Math.atan2(f32(2 * f32(m(x, z) + m(w, y))), f32(1 - f32(2 * f32(m(x, x) + m(y, y))))),
+        degrees * Math.atan2(f32(2 * f32(m(x, y) + m(w, z))), f32(1 - f32(2 * f32(m(x, x) + m(z, z))))));
+    },
+    toVector4d() { return vector4d.make(this.x, this.y, this.z, this.scalar); },
+    fuzzyEquals(q, epsilon) {
+      count(arguments.length, 1);
+      const a = [this.scalar, this.x, this.y, this.z];
+      const b = quaternionOf(q);
+      const loose = epsilon === undefined;
+      const margin = loose ? f32(0.00001) : Math.abs(f32(Number(epsilon)));
+      return a.every((x, i) => {
+        const d = Math.abs(f32(x - b[i]));
+        return d <= margin || (loose && f32(d * 100000) <= Math.min(Math.abs(x), Math.abs(b[i])));
+      });
+    },
+  };
+  for (const name of Object.keys(quaternionMethods)) hide(quaternion.proto, name, quaternionMethods[name]);
+
   // A font crosses as these, in this order (see `to_js` beside this text).
   // The two sizes cross as they were asked for and are kept out of sight;
   // a script reads each size in both units, as Qt gives them.

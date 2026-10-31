@@ -95,6 +95,7 @@ mod items;
 pub mod mesh_source;
 mod node;
 mod pick;
+mod quaternion;
 mod random_instancing;
 mod repeater;
 mod runtime_loader;
@@ -137,6 +138,10 @@ use ljos::prelude::*;
 
 /// Registers `QtQuick3D` on `engine`: the one seam a host calls.
 pub fn register(engine: &Engine) {
+    engine.register_singleton::<quaternion::Quaternion>(
+        "QtQuick3D",
+        ljos::prelude::Version::new(6, 0),
+    );
     engine.register_module(ljos::module!("QtQuick3D" 6.0 => [
         Object3D,
         Node,
