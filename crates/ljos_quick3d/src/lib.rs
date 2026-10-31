@@ -64,8 +64,8 @@
 //! with `InstanceRange`, the only types of that module built), and
 //! `Model.skin` or `Model.skeleton` with `inverseBindPoses` (`Skin`,
 //! `Skeleton`, `Joint`) bends a mesh that has joints.
-//! `Node.pivot` and `Node.opacity` are kept but do not change the drawing
-//! yet.
+//! `Node.opacity` multiplies down the tree and blends a model below 1.
+//! `Node.pivot` is kept but does not change the drawing yet.
 //!
 //! `CustomMaterial` (unshaded and shaded, with light processors and
 //! `TextureInput` samplers) and `SceneEnvironment.effects` (`Effect`,

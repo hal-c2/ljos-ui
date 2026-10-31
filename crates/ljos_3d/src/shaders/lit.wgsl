@@ -83,7 +83,8 @@ struct Model {
     // map read through the second UV set; w 1 where the joints of
     // `skin_joints` bend the mesh.
     maps: vec4<u32>,
-    // x the normal map's strength, y how much the occlusion map shades.
+    // x the normal map's strength, y how much the occlusion map shades, z the
+    // node's opacity with its parents'.
     map_params: vec4<f32>,
 };
 
@@ -396,6 +397,8 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         }
         a = 1.0;
     }
+    // After the mask: a node's fade is not a material's cut-out.
+    a *= model.map_params.z;
     var rgb = base.rgb;
     if model.params.x > 0.5 {
         // A face seen from behind (with culling off) is lit as its front.

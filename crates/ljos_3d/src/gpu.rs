@@ -788,7 +788,7 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
         params2: [-1.0, 0.0, 0.0, 0.0],
         uv: [[0.0; 4]; maps::MAPS * 2],
         maps: [0; 4],
-        map_params: [1.0, 1.0, 0.0, 0.0],
+        map_params: [1.0, 1.0, 1.0, 0.0],
     };
     for (i, slot) in maps::slots(material).iter().enumerate() {
         let Some((texture, _)) = slot else {
@@ -836,7 +836,7 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.map_params = [
                 maps.normal_strength,
                 maps.occlusion_amount.clamp(0.0, 1.0),
-                0.0,
+                1.0,
                 0.0,
             ];
         }
@@ -1596,10 +1596,17 @@ impl Renderer {
         let mut joint_slots: Vec<JointSlot> = vec![gpu_extra::joint_slot(&[])];
         if let Some((camera, _)) = camera {
             let planes = camera.frustum_culling().then(|| frustum(&view_proj));
+            let faded = scene.faded();
             for (id, node, world) in &walked {
                 let NodeKind::Model(model) = &node.kind else {
                     continue;
                 };
+                let opacity = faded
+                    .as_ref()
+                    .map_or(1.0, |f| f.get(*id).copied().unwrap_or(1.0));
+                if opacity <= 0.0 {
+                    continue;
+                }
                 let key = match &model.mesh {
                     MeshSource::Primitive(p) => MeshKey::Primitive(*p),
                     MeshSource::Custom(g) => {
@@ -1642,12 +1649,15 @@ impl Renderer {
                     _ => vec![sphere(&placed)],
                 };
                 let mut copies = Copies::ONE;
-                let mut transparent = false;
+                // A custom material's shader writes its own alpha, so it has
+                // no share of the node's to take.
+                let mut transparent =
+                    opacity < 1.0 && !matches!(model.material, Material::Custom(_));
                 let (centre, radius) = match &node.instancing {
                     None => gpu_extra::union(spheres.iter().copied()).unwrap_or_default(),
                     Some(instancing) => {
                         let first = rows.len();
-                        transparent = instancing.transparent;
+                        transparent |= instancing.transparent;
                         let opaque = !(transparent || model.material.blends());
                         copy_rows(scene, *id, world, instancing, opaque, &view, &mut rows);
                         if rows.len() == first {
@@ -1666,6 +1676,7 @@ impl Renderer {
                 };
                 let mut uniform = model_uniform(&model.material, &placed);
                 uniform.params2[3] = f32::from(u8::from(node.receives_shadows));
+                uniform.map_params[2] = opacity;
                 if let Some(palette) = &palette {
                     copies.joints = joint_slots.len() as u32;
                     joint_slots.push(gpu_extra::joint_slot(palette));

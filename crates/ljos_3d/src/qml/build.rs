@@ -210,6 +210,7 @@ impl<S: SceneSource> Walk<'_, S> {
         }
         let mut n = Node::new(kind(s, self.view, obj)).with_transform(transform(s, obj));
         n.visible = on(s, obj, P::Visible, d::node::VISIBLE);
+        n.opacity = num(s, obj, P::Opacity, d::node::OPACITY);
         let is_model = s.is(obj, T::Model);
         if is_model {
             n.casts_shadows = on(s, obj, P::CastsShadows, d::model::CASTS_SHADOWS);

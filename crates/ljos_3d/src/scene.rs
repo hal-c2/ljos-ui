@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use slotmap::{SlotMap, new_key_type};
+use slotmap::{SecondaryMap, SlotMap, new_key_type};
 
 use crate::custom::{AmbientOcclusion, CustomMaterial, Effect, PostProcess};
 use crate::geometry::CustomGeometry;
@@ -598,6 +598,9 @@ pub struct Node {
     pub kind: NodeKind,
     pub transform: Transform,
     pub visible: bool,
+    /// This node's own opacity; its children's are multiplied by it
+    /// ([`Scene::faded`]).
+    pub opacity: f32,
     /// A model's `castsShadows`: whether it is drawn into shadow maps.
     pub casts_shadows: bool,
     /// A model's `receivesShadows`: whether shadows darken it.
@@ -622,6 +625,7 @@ impl Node {
             kind,
             transform: Transform::default(),
             visible: true,
+            opacity: 1.0,
             casts_shadows: true,
             receives_shadows: true,
             shadow: None,
@@ -762,6 +766,31 @@ pub struct Scene {
 impl Scene {
     pub fn new() -> Self {
         Scene::default()
+    }
+
+    /// Each node's opacity with its parents' multiplied in, 0 to 1. `None`
+    /// when every node is whole, so a scene that fades nothing pays one look
+    /// over its nodes.
+    pub fn faded(&self) -> Option<SecondaryMap<NodeId, f32>> {
+        if self.nodes.values().all(|n| n.opacity >= 1.0) {
+            return None;
+        }
+        let mut out = SecondaryMap::with_capacity(self.nodes.len());
+        let mut stack: Vec<(NodeId, f32)> = self.roots.iter().map(|r| (*r, 1.0)).collect();
+        while let Some((id, above)) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            // A broken value hides rather than poison what is under it.
+            let own = if node.opacity.is_nan() {
+                0.0
+            } else {
+                above * node.opacity.clamp(0.0, 1.0)
+            };
+            out.insert(id, own);
+            stack.extend(node.children.iter().map(|c| (*c, own)));
+        }
+        Some(out)
     }
 
     /// Changes whenever anything a renderer reads changes.
@@ -991,5 +1020,22 @@ mod tests {
         assert_ne!(s.active_camera().unwrap().0, Camera::PERSPECTIVE);
         s.remove(second);
         assert_eq!(s.active_camera().unwrap().0, Camera::PERSPECTIVE);
+    }
+
+    #[test]
+    fn opacity_multiplies_down_the_tree_and_whole_scenes_pay_nothing() {
+        let group = || Node::new(NodeKind::Group);
+        let mut scene = Scene::new();
+        let top = scene.add(None, group());
+        let child = scene.add(Some(top), group());
+        assert!(scene.faded().is_none());
+        scene.node_mut(top).unwrap().opacity = 0.5;
+        scene.node_mut(child).unwrap().opacity = 0.5;
+        let faded = scene.faded().expect("something fades");
+        assert_eq!((faded[top], faded[child]), (0.5, 0.25));
+        scene.node_mut(child).unwrap().opacity = f32::NAN;
+        assert_eq!(scene.faded().unwrap()[child], 0.0);
+        scene.node_mut(child).unwrap().opacity = 7.0;
+        assert_eq!(scene.faded().unwrap()[child], 0.5);
     }
 }
