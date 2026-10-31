@@ -397,7 +397,7 @@ fn a_loop_through_bindings_stops_at_the_binding_the_change_entered() {
 }
 
 #[test]
-fn a_loop_through_a_placed_value_goes_on_to_the_next_binding() {
+fn a_handler_of_a_bound_property_runs_inside_its_update() {
     // A picture: its implicit height is placed by the type (here a watch on
     // the source size), not bound. The height follows the implicit height
     // and the source size follows the height. Loading places 60; asking for
@@ -417,5 +417,41 @@ fn a_loop_through_a_placed_value_goes_on_to_the_next_binding() {
             "eager {eager}"
         );
         assert_eq!(loops(&g), [source], "eager {eager}");
+    }
+}
+
+#[test]
+fn a_loop_through_a_placed_value_goes_on_to_the_next_binding() {
+    // The same picture with its sizes worked out by the type as bindings
+    // of its own: the implicit height from the source size it is loaded
+    // at (60 by default, two thirds of the width asked for), the height
+    // from that. Only the source size is the author's. Whichever is read
+    // first, the loop ends at the source size, kept at 60, and the placed
+    // values agree with it.
+    for eager in [false, true] {
+        for first in 0..3 {
+            let g = graph(eager);
+            let [implicit, height, source] = props(&g);
+            // A type marks what it places when it makes it.
+            g.set_placed(implicit, true).unwrap();
+            g.set_placed(height, true).unwrap();
+            g.batch(|| {
+                g.bind(implicit, move |g| match g.get(source) {
+                    0 => 60,
+                    wide => wide * 2 / 3,
+                })
+                .unwrap();
+                g.bind(height, move |g| g.get(implicit)).unwrap();
+                g.bind(source, move |g| g.get(height)).unwrap();
+            });
+            g.get([implicit, height, source][first]);
+            let at = format!("eager {eager}, {first} first");
+            assert_eq!(
+                settled(&g, [implicit, height, source]),
+                [40, 40, 60],
+                "{at}"
+            );
+            assert_eq!(loops(&g), [source], "{at}");
+        }
     }
 }

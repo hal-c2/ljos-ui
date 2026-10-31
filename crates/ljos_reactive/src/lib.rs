@@ -79,7 +79,10 @@
 //! holds until the outermost walk or flush is done. A watch handler of a
 //! bound property runs inside that binding's update, as Qt runs a type's
 //! setters and change handlers, so a loop through a value the handler places
-//! goes on to the next binding and ends at the bound property. Effects that
+//! goes on to the next binding and ends at the bound property. A runtime
+//! that works such values out as bindings of their own marks them
+//! ([`Graph::set_placed`]): a loop that closes at one goes on to the next
+//! binding the change reaches, which runs once more and ends it. Effects that
 //! keep re-dirtying each other are capped per flush
 //! ([`Diagnostic::RerunLimit`]).
 //!

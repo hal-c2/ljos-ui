@@ -64,6 +64,9 @@ struct Prop<V> {
     /// The step over the binding was the host's ([`WriteKind::Host`]),
     /// not an animation's. Only read while `animated`.
     host: bool,
+    /// What the property's type works out for itself, not an author's
+    /// binding ([`Graph::set_placed`]): a loop does not end here.
+    placed: bool,
 }
 
 /// The layers over a property's base, behind a box that only a property
@@ -389,6 +392,9 @@ struct Inner<V> {
     /// depth they settled at and the cycle: they go on settling until that
     /// walk is done (`Graph::settle`).
     settling: Vec<(usize, NodeId, Vec<NodeId>)>,
+    /// The bindings a loop through a placed property has gone on to and
+    /// that are being brought up to date for it (`settle`).
+    passed_on: Vec<NodeId>,
     batch_depth: u32,
     flush_depth: u32,
     /// Scopes to freeze once the work under way is done (`set_frozen`).
@@ -642,6 +648,18 @@ impl<V: Clone + 'static> Drop for WalkGuard<'_, V> {
     }
 }
 
+/// Takes a binding off `Inner::passed_on` however its update ends.
+struct PassedOn<'g, V: Clone + 'static>(&'g Graph<V>, NodeId);
+
+impl<V: Clone + 'static> Drop for PassedOn<'_, V> {
+    fn drop(&mut self) {
+        let mut i = self.0.inner.borrow_mut();
+        if let Some(at) = i.passed_on.iter().rposition(|&m| m == self.1) {
+            i.passed_on.remove(at);
+        }
+    }
+}
+
 /// While a node computes, the walks of whoever ran it are not its own;
 /// they are put back when it is done.
 struct WalksAside<'g, V: Clone + 'static>(&'g Graph<V>, u32);
@@ -726,6 +744,7 @@ impl<V: Clone + 'static> Graph<V> {
                 wave_origin: None,
                 walks: 0,
                 settling: Vec::new(),
+                passed_on: Vec::new(),
                 batch_depth: 0,
                 flush_depth: 0,
                 freeze_later: Vec::new(),
@@ -1034,6 +1053,7 @@ impl<V: Clone + 'static> Graph<V> {
                 overrides: Overrides::NONE,
                 animated: false,
                 host: false,
+                placed: false,
             }),
             Some(value),
             NodeState::Clean,
@@ -1062,6 +1082,7 @@ impl<V: Clone + 'static> Graph<V> {
                     overrides: Overrides::NONE,
                     animated: false,
                     host: false,
+                    placed: false,
                 }),
                 Some(initial),
                 NodeState::Dirty,
@@ -1234,27 +1255,7 @@ impl<V: Clone + 'static> Graph<V> {
         // What the handler changed upstream is worked out now, while the
         // binding still holds, as Qt works it out inside the handler: a
         // change of it that reaches the binding is the loop.
-        let mut guard = SettleGuard {
-            graph: self,
-            node: n,
-            keep: false,
-        };
-        for s in sources {
-            self.update(s);
-        }
-        let mut g = self.inner.borrow_mut();
-        let i = &mut *g;
-        if i.walks > 0 {
-            let depth = i.eval_stack.len();
-            i.settling.push((depth, n, cycle));
-            guard.keep = true;
-            return;
-        }
-        if let Some(node) = i.nodes.get_mut(n)
-            && node.flags.take(Flags::CAME_BACK)
-        {
-            i.emit(Diagnostic::BindingLoop { node: n, cycle });
-        }
+        self.settle_members(n, sources, cycle);
     }
 
     /// [`Graph::watch`] for a handler that is to run before what depends
@@ -2554,6 +2555,26 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(())
     }
 
+    /// Says whether the property `n` holds what its type works out for
+    /// itself (a picture's implicit size from the size it was loaded at,
+    /// each button's share of a box's width) rather than an author's
+    /// binding. Qt works such a value out whenever it is asked, so it has
+    /// no update of its own for a loop to end in: a loop that closes at a
+    /// placed property goes on to the next binding on its path, which runs
+    /// once more against the placed value and keeps the value it then has,
+    /// while every placed value on the loop agrees with what it reads.
+    pub fn set_placed(&self, n: NodeId, placed: bool) -> Result<(), ReactiveError> {
+        let mut i = self.inner.borrow_mut();
+        match i.nodes.get_mut(n).map(|node| &mut node.kind) {
+            Some(Kind::Property(p)) => {
+                p.placed = placed;
+                Ok(())
+            }
+            Some(_) => Err(ReactiveError::NotAProperty(n)),
+            None => Err(ReactiveError::DeadNode(n)),
+        }
+    }
+
     /// Has the note handler ([`Graph::set_note_handler`]) told of each
     /// change of the property `n` from now on: a value written to it, a
     /// binding put on it, or a change reaching its binding. Told after the
@@ -3206,7 +3227,7 @@ impl<V: Clone + 'static> Graph<V> {
     /// values they had (two views that follow each other's current index)
     /// is no loop, and is not reported.
     fn settle(&self, n: NodeId) {
-        let (sources, cycle): (SmallVec<[NodeId; 4]>, Vec<NodeId>) = {
+        let (sources, cycle, next) = {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
             let Some(node) = i.nodes.get_mut(n) else {
@@ -3216,21 +3237,75 @@ impl<V: Clone + 'static> Graph<V> {
                 return;
             }
             node.flags.set(Flags::CYCLIC, false);
-            node.flags.set(Flags::SETTLING, true);
-            let sources = node.sources.iter().map(|e| e.node).collect();
+            let placed = matches!(&node.kind, Kind::Property(p) if p.placed);
+            let sources: SmallVec<[NodeId; 4]> = node.sources.iter().map(|e| e.node).collect();
             // Found now, while the members the change went through are
             // still marked.
-            (sources, i.find_cycle(n))
+            let cycle = i.find_cycle(n);
+            if placed && let Some(next) = i.next_binding(&cycle) {
+                if i.passed_on.contains(&next) {
+                    // Another member of the loop passed it on already; the
+                    // update it started brings this one up to date too.
+                    return;
+                }
+                i.passed_on.push(next);
+                (sources, cycle, Some(next))
+            } else {
+                i.nodes[n].flags.set(Flags::SETTLING, true);
+                (sources, cycle, None)
+            }
         };
+        if let Some(next) = next {
+            let _passed = PassedOn(self, next);
+            // The change goes on to the next binding, which runs once more
+            // against the placed value. Its own change need not find its
+            // way back as a mark (members already marked pass none on), so
+            // the loop is ended there as if it had closed there: it keeps
+            // the value it now has and the rest, `n` with them, follow it.
+            self.update(next);
+            let settle = {
+                let mut g = self.inner.borrow_mut();
+                match g.nodes.get_mut(next) {
+                    Some(node) if !node.flags.has(Flags::SETTLING) => {
+                        node.flags.set(Flags::CYCLIC, false);
+                        node.flags.set(Flags::SETTLING, true);
+                        true
+                    }
+                    // Its run closed the loop itself and is settling it.
+                    _ => false,
+                }
+            };
+            if settle {
+                let at = cycle.iter().position(|&m| m == next).unwrap_or(0);
+                let mut cycle = cycle;
+                cycle.rotate_left(at);
+                // Pulled in the order the change travels: a lazy graph
+                // marks only the direct readers of a change, so the
+                // members further on are not known to be stale until the
+                // one before them has run.
+                let members = cycle.iter().skip(1).rev().copied().collect();
+                self.settle_members(next, members, cycle);
+            }
+            self.update(n);
+            return;
+        }
+        // Every path from `n` back to itself ends in one of its sources,
+        // so pulling those evaluates exactly the members of its cycles.
+        self.settle_members(n, sources, cycle);
+    }
+
+    /// The rest of [`Graph::settle`] for `n`, already marked settling:
+    /// brings the members of its cycle up to date against its value by
+    /// pulling `pull` in order, and reports the loop if its change came
+    /// back.
+    fn settle_members(&self, n: NodeId, pull: SmallVec<[NodeId; 4]>, cycle: Vec<NodeId>) {
         let mut guard = SettleGuard {
             graph: self,
             node: n,
             keep: false,
         };
-        // Every path from `n` back to itself ends in one of its sources,
-        // so pulling those evaluates exactly the members of its cycles.
-        for s in sources {
-            self.update(s);
+        for m in pull {
+            self.update(m);
         }
         let mut g = self.inner.borrow_mut();
         let i = &mut *g;
@@ -3655,6 +3730,18 @@ impl<V: Clone + 'static> Inner<V> {
             return;
         }
         self.diagnostics.push(d);
+    }
+
+    /// The first author's binding that the change of `cycle[0]` reaches
+    /// on its way round `cycle` ([`Inner::find_cycle`]'s order is against
+    /// the change's): where a loop through a placed property ends.
+    fn next_binding(&self, cycle: &[NodeId]) -> Option<NodeId> {
+        cycle.iter().skip(1).rev().copied().find(|&m| {
+            matches!(
+                self.nodes.get(m).map(|node| &node.kind),
+                Some(Kind::Property(p)) if p.is_bound() && !p.placed
+            )
+        })
     }
 
     /// The cycle through `n`: `n`, then one chain of sources that its
