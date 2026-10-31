@@ -108,3 +108,62 @@ Feature: A window drawn on the processor
     When 100 milliseconds pass
     Then the pixel at 20, 20 of the window is "#000080"
     And the log has 1 warnings matching "drawn on the processor: a ShaderEffect's program is left out"
+
+  # An X server keeps nothing of a window that is not mapped, and the window
+  # is mapped once there is a picture in it: that first picture is lost, and
+  # the redraw the server asks for may arrive as one the scene asked for too.
+  # This scene's layout asks for that pass in time. A window that stays blank
+  # is not mapped by XWayland at all, so the step that starts it says so.
+  Scenario: A picture drawn before the window was mapped is drawn again after
+    Given the shell chooses how the window is drawn
+    And the application is a client of an X server
+    And the text file "Hero.qml":
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Rectangle {
+        id: hero
+        property bool compact; property real gutter
+        width: parent.width
+        height: copy.height + 2 * (compact ? Spacing.xxl : Spacing.xxxl * 2)
+        color: "#204060"
+        Column {
+          id: copy; anchors.centerIn: parent
+          width: Math.min(parent.width - 2 * hero.gutter, 720)
+          spacing: Spacing.lg
+          Text {
+            width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+            text: "Words that wrap once their column has got its width"; color: Colors.text
+            font.pixelSize: hero.compact ? Typography.headlineSize : Typography.displaySize
+            font.weight: Typography.displayWeight
+          }
+          Text {
+            width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+            text: "More words below them, as many again and then some, so that this text also takes a second line here."
+            color: Colors.textMuted; font.pixelSize: Typography.subtitleSize
+          }
+        }
+      }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Rectangle {
+        id: root
+        width: 1280; height: 800; color: Colors.canvas
+        property int columns: 3
+        property bool compact: false
+        readonly property real gutter: compact ? Spacing.md : Spacing.xxl
+        Flickable {
+          id: page
+          anchors.fill: parent; contentHeight: sections.height; clip: true
+          Column {
+            id: sections
+            width: page.width
+            Hero { compact: root.compact; gutter: root.gutter }
+          }
+        }
+      }
+      """
+    Then the pixel at 5, 5 of the window is "#204060"

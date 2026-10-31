@@ -414,6 +414,8 @@ pub struct DesktopBackend {
     held: bool,
     /// What the application's environment has besides the sandbox's.
     env: Vec<(String, String)>,
+    /// The application is a client of the sandbox's XWayland.
+    x11: bool,
 }
 
 /// Each thread of process `pid` by id: its name, and how many times the
@@ -509,11 +511,19 @@ impl DesktopBackend {
             .current_dir(dir)
             .args(["run", entry, "--mcp=inspect,input,mutate,eval"])
             // A Wayland client of the sandbox's compositor, not an X11 one
-            // of its XWayland, and nothing of the developer's session.
+            // of its XWayland, unless the scenario says so, and nothing of
+            // the developer's session.
             .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
             .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
             .env_remove("AT_SPI_BUS_ADDRESS")
-            .envs(sandbox.env.iter().filter(|(k, _)| *k != "DISPLAY"))
+            .envs(sandbox.env.iter().filter(|(k, _)| {
+                *k != if self.x11 {
+                    "WAYLAND_DISPLAY"
+                } else {
+                    "DISPLAY"
+                }
+            }))
             // The sandbox's compositor composes in software, where the
             // shell would draw on the processor of itself: the scenarios
             // check GL's drawing unless one says otherwise.
@@ -899,6 +909,11 @@ impl Files for DesktopBackend {
 impl Probes for DesktopBackend {
     fn draw_on_processor(&mut self) -> Result<()> {
         self.env.push(("LJOS_PAINTER".to_owned(), "cpu".to_owned()));
+        Ok(())
+    }
+
+    fn be_x11_client(&mut self) -> Result<()> {
+        self.x11 = true;
         Ok(())
     }
 

@@ -1223,6 +1223,16 @@ pub trait Probes: Backend {
         })
     }
 
+    /// Runs the application as a client of an X server: there a window's
+    /// pictures are not kept while it is unmapped, and the server says
+    /// when it has to be drawn again.
+    fn be_x11_client(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "running as a client of an X server",
+        })
+    }
+
     /// Lets the shell choose what draws the windows the application opens
     /// from now on, as it does for a user who did not choose: the
     /// processor where a graphics driver would draw in software too.

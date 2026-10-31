@@ -14,6 +14,11 @@ fn drawn_on_processor(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.draw_on_processor())
 }
 
+#[given("the application is a client of an X server")]
+fn x11_client(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.probes()?.be_x11_client())
+}
+
 #[given("the shell chooses how the window is drawn")]
 fn shell_chooses_painter(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.probes()?.let_shell_choose_painter())
