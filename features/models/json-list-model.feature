@@ -466,6 +466,99 @@ Feature: JsonListModel
       When 500 milliseconds pass
       Then the property "first" of "o" is "file"
 
+    Scenario: A relative source in a component file is read beside that file
+      Given the text file "members.json":
+        """
+        [{"name": "beside the window"}]
+        """
+      And the text file "team/members.json":
+        """
+        [{"name": "beside the component"}]
+        """
+      And the file "team/Members.qml":
+        """qml
+        import QtQuick
+        import Ljos.Models
+        Item {
+          property alias model: m
+          JsonListModel { id: m; source: "members.json" }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "team"
+        Item {
+          objectName: "o"
+          Members { id: t }
+          property string first: t.model.count ? t.model.get(0).name : ""
+        }
+        """
+      When 500 milliseconds pass
+      Then the property "first" of "o" is "beside the component"
+
+    Scenario: A relative source on the root of a component file is read beside the file that uses it
+      Given the text file "members.json":
+        """
+        [{"name": "beside the window"}]
+        """
+      And the text file "team/members.json":
+        """
+        [{"name": "beside the component"}]
+        """
+      And the file "team/Members.qml":
+        """qml
+        import QtQuick
+        import Ljos.Models
+        JsonListModel {
+          property var model: this
+          source: "members.json"
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "team"
+        Item {
+          objectName: "o"
+          Members { id: t }
+          property string first: t.model.count ? t.model.get(0).name : ""
+        }
+        """
+      When 500 milliseconds pass
+      Then the property "first" of "o" is "beside the window"
+
+    Scenario: Qt.resolvedUrl on the root of a component file reads beside that file
+      Given the text file "members.json":
+        """
+        [{"name": "beside the window"}]
+        """
+      And the text file "team/members.json":
+        """
+        [{"name": "beside the component"}]
+        """
+      And the file "team/Members.qml":
+        """qml
+        import QtQuick
+        import Ljos.Models
+        JsonListModel {
+          property var model: this
+          source: Qt.resolvedUrl("members.json")
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "team"
+        Item {
+          objectName: "o"
+          Members { id: t }
+          property string first: t.model.count ? t.model.get(0).name : ""
+        }
+        """
+      When 500 milliseconds pass
+      Then the property "first" of "o" is "beside the component"
+
     Scenario: A file served over the network is read
       Given the web server serves the text file "rows.json":
         """

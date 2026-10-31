@@ -228,6 +228,72 @@ Feature: XmlListModel
     Then the property "status" of "m" is 1
     And the property "count" of "m" is 2
 
+  Scenario: A relative source in a component file is read beside that file
+    Given the text file "feed.xml":
+      """xml
+      <docs><doc><title>One</title></doc><doc><title>Two</title></doc></docs>
+      """
+    And the text file "team/feed.xml":
+      """xml
+      <docs><doc><title>Three</title></doc></docs>
+      """
+    And the file "team/Feed.qml":
+      """qml
+      import QtQuick
+      import QtQml.XmlListModel
+      Item {
+        property alias model: m
+        XmlListModel {
+          id: m; source: "feed.xml"; query: "/docs/doc"
+          XmlListModelRole { name: "t"; elementName: "title" }
+        }
+      }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import "team"
+      Item {
+        objectName: "o"
+        Feed { id: f }
+        property int count: f.model.count
+      }
+      """
+    When 500 milliseconds pass
+    Then the property "count" of "o" is 1
+
+  Scenario: A relative source on the root of a component file is read beside the file that uses it
+    Given the text file "feed.xml":
+      """xml
+      <docs><doc><title>One</title></doc><doc><title>Two</title></doc></docs>
+      """
+    And the text file "team/feed.xml":
+      """xml
+      <docs><doc><title>Three</title></doc></docs>
+      """
+    And the file "team/Feed.qml":
+      """qml
+      import QtQuick
+      import QtQml.XmlListModel
+      XmlListModel {
+        property var model: this
+        source: "feed.xml"; query: "/docs/doc"
+        XmlListModelRole { name: "t"; elementName: "title" }
+      }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import "team"
+      Item {
+        objectName: "o"
+        Feed { id: f }
+        property int count: f.model.count
+      }
+      """
+    When 500 milliseconds pass
+    Then the property "count" of "o" is 2
+
   Scenario: A new source replaces the rows of the old one
     Given the text file "one.xml":
       """xml
