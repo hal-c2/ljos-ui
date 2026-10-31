@@ -47,6 +47,9 @@ eframe = { workspace = true, optional = true }
 # (CLAUDE.md rule 5; tests/no_parser.rs keeps it so).
 ljos_dev = { path = "../ljos_dev", optional = true }
 
+# QtQuick3D's views, on every painter and platform (`quick3d`).
+ljos_3d = { path = "../ljos_3d", optional = true }
+
 # glibc's allocator is told to map large buffers from the system (`run`).
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc.workspace = true
@@ -113,7 +116,6 @@ libc.workspace = true
 x11rb.workspace = true
 # QtQuick3D on the GL painter (src/gl_scene3d.rs): wgpu's GL backend on the
 # painter's own context, so a window with a 3D view still has one driver.
-ljos_3d = { path = "../ljos_3d", optional = true }
 wgpu = { workspace = true, optional = true, features = ["gles"] }
 
 [features]
