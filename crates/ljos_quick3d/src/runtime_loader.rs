@@ -1,10 +1,11 @@
-//! `RuntimeLoader`: a node whose children come from a glTF file read
-//! while the application runs.
+//! `RuntimeLoader`: a node whose children come from a glTF or Wavefront OBJ
+//! file read while the application runs, told apart by its extension.
 //!
 //! The file is read and parsed on the compute pool. A `.gltf` that names
 //! other files (buffers, images) is parsed first; the main thread then
 //! finds those files as it finds any source (a resource, a local path or
-//! a fetch) and the pool reads and builds the model from them. A late
+//! a fetch) and the pool reads and builds the model from them. An `.obj`
+//! goes the same way twice: its `.mtl` files, then their pictures. A late
 //! answer for a source that has since changed is dropped by its
 //! generation.
 
@@ -20,7 +21,8 @@ use crate::Node;
 use crate::space::to_value;
 
 /// `RuntimeLoader`: the nodes, meshes and materials of a glTF 2.0 file
-/// (`.gltf` with its files, or `.glb`), as children of this node.
+/// (`.gltf` with its files, or `.glb`) or a Wavefront OBJ file (`.obj` with
+/// its `.mtl` files and their pictures), as children of this node.
 #[derive(Debug, Default, QmlObject)]
 #[qml(
     module = "QtQuick3D",
@@ -159,7 +161,7 @@ fn start(e: &Engine, me: ObjectId, _generation: u64, source: String) {
         e,
         me,
         status::ERROR,
-        format!("{source}: this build reads no glTF files (the `gltf` feature is off)"),
+        format!("{source}: this build reads no model files (the `gltf` feature is off)"),
     );
 }
 
@@ -172,6 +174,7 @@ mod gltf_load {
 
     use ljos::item::ljos_3d::fetch::{Fetch, Fetched, Files, fetch_all};
     use ljos::item::ljos_3d::gltf::{self, Asset, Document};
+    use ljos::item::ljos_3d::obj::{self, Reader};
     use ljos::prelude::*;
 
     use crate::fetch::EngineFetch;
@@ -190,16 +193,104 @@ mod gltf_load {
 
     pub(super) fn start(e: &Engine, me: ObjectId, generation: u64, source: String) {
         let url = e.resolve_url(me, &source);
+        let Some(reader) = obj::reader_for(&url) else {
+            let why = "only .obj, .gltf and .glb files are read".to_owned();
+            return arrived(e, me, generation, &source, Err(why));
+        };
         let base = url.clone();
         EngineFetch::pooled(me).fetch(
             e,
             &url,
             Box::new(move |e, got| {
                 if current(e, me, generation) {
-                    parse(e, me, generation, source, base, got);
+                    match reader {
+                        Reader::Gltf => parse(e, me, generation, source, base, got),
+                        Reader::Obj => parse_obj(e, me, generation, source, base, got),
+                    }
                 }
             }),
         );
+    }
+
+    /// A step of reading an OBJ file on the pool, and what follows it back
+    /// here if the source is still the same.
+    fn obj_step<T: Send + 'static>(
+        e: &Engine,
+        me: ObjectId,
+        generation: u64,
+        source: String,
+        work: impl FnOnce() -> Result<T, String> + Send + 'static,
+        next: impl FnOnce(&Engine, String, T) + 'static,
+    ) {
+        let spawned =
+            ljos::task::spawn_for(e, format!("OBJ {source}"), Some(me), work, move |e, got| {
+                match flatten(got) {
+                    Ok(done) if current(e, me, generation) => next(e, source, done),
+                    Ok(_) => {}
+                    Err(why) => arrived(e, me, generation, &source, Err(why)),
+                }
+            });
+        if spawned.is_err() {
+            refuse_pool_full(e, me, generation);
+        }
+    }
+
+    /// The `.obj`, its `.mtl` files, then their pictures: each answer names
+    /// what the next step fetches.
+    fn parse_obj(
+        e: &Engine,
+        me: ObjectId,
+        generation: u64,
+        source: String,
+        base: String,
+        got: Fetched,
+    ) {
+        let work = move || obj::parse(&got?).map_err(|err| err.to_string());
+        obj_step(e, me, generation, source, work, move |e, source, doc| {
+            let fetch = EngineFetch::pooled(me);
+            fetch_all(
+                &fetch,
+                e,
+                &base.clone(),
+                doc.libraries(),
+                move |e, files| {
+                    if current(e, me, generation) {
+                        obj_materials(e, me, generation, source, base, doc, files);
+                    }
+                },
+            );
+        });
+    }
+
+    fn obj_materials(
+        e: &Engine,
+        me: ObjectId,
+        generation: u64,
+        source: String,
+        base: String,
+        mut doc: obj::Document,
+        mut files: Files,
+    ) {
+        let work = move || {
+            doc.read_libraries(&base, &mut |uri| files.take(uri));
+            Ok(doc)
+        };
+        obj_step(e, me, generation, source, work, move |e, source, doc| {
+            let fetch = EngineFetch::pooled(me);
+            // Already whole URLs: each resolved against its `.mtl`.
+            fetch_all(&fetch, e, "", doc.image_urls(), move |e, mut files| {
+                if !current(e, me, generation) {
+                    return;
+                }
+                let work = move || {
+                    doc.build(&mut |uri| files.take(uri))
+                        .map_err(|err| err.to_string())
+                };
+                obj_step(e, me, generation, source, work, move |e, source, asset| {
+                    arrived(e, me, generation, &source, Ok(asset));
+                });
+            });
+        });
     }
 
     fn parse(

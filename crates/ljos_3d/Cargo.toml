@@ -13,9 +13,9 @@ default = ["gpu"]
 # The renderer. Without it the crate is the scene alone, which the QML
 # types build without linking wgpu (ARCHITECTURE.md §7.8).
 gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
-# glTF files read into a scene's nodes, meshes and materials, and their
-# images decoded to plain pixels (`gltf`). No GPU state: binding textures
-# is the renderer's business.
+# glTF and Wavefront OBJ files read into a scene's nodes, meshes and
+# materials, and their images decoded to plain pixels (`gltf`, `obj`). No
+# GPU state: binding textures is the renderer's business.
 gltf = ["dep:gltf", "dep:png", "dep:zune-jpeg"]
 # CustomMaterial's and Effect's GLSL snippets translated into the
 # renderer's WGSL (`snippet`), with the naga wgpu already links.

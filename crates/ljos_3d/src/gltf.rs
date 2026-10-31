@@ -49,6 +49,9 @@ pub enum LoadError {
     /// The file itself could not be had.
     #[error("{0}")]
     File(String),
+    /// The bytes are not a Wavefront OBJ file (`crate::obj`).
+    #[error("not an OBJ file: {0}")]
+    Obj(String),
 }
 
 /// A parsed glTF file whose external files have not been read yet.
@@ -369,6 +372,10 @@ pub struct MaterialTextures {
     pub occlusion: Option<TextureRef>,
     pub occlusion_strength: f32,
     pub emissive: Option<TextureRef>,
+    /// What an OBJ material's `map_d` says; glTF's opacity is in the base
+    /// colour's alpha.
+    pub opacity: Option<TextureRef>,
+    pub opacity_channel: Channel,
 }
 
 impl Default for MaterialTextures {
@@ -381,6 +388,8 @@ impl Default for MaterialTextures {
             occlusion: None,
             occlusion_strength: 1.0,
             emissive: None,
+            opacity: None,
+            opacity_channel: Channel::A,
         }
     }
 }
@@ -578,7 +587,8 @@ pub fn scene_material(m: &AssetMaterial) -> Material {
         occlusion: map(&t.occlusion),
         occlusion_channel: Channel::R,
         occlusion_amount: t.occlusion_strength,
-        ..PrincipledMaps::default()
+        opacity: map(&t.opacity),
+        opacity_channel: t.opacity_channel,
     });
     Material::Principled(material)
 }
@@ -623,7 +633,7 @@ fn gltf_default() -> PrincipledMaterial {
 }
 
 /// glTF's factors are linear; a scene's colour is sRGB, as QML's is.
-fn to_srgb(c: f32) -> f32 {
+pub(crate) fn to_srgb(c: f32) -> f32 {
     let c = c.clamp(0.0, 1.0);
     // The curve's float arithmetic gives 0.99999994 for 1, which would
     // make a pure colour from a file one step short of pure.
@@ -848,6 +858,7 @@ impl Builder<'_> {
             emissive: m
                 .emissive_texture()
                 .and_then(|t| self.texture(&t.texture(), t.tex_coord())),
+            ..MaterialTextures::default()
         };
         AssetMaterial {
             name: m.name().map(str::to_owned),
@@ -1189,7 +1200,7 @@ fn transform(t: ::gltf::scene::Transform) -> Transform {
 }
 
 /// The box positions, three floats each, lie in.
-fn position_box(positions: &[f32]) -> Option<(Vec3, Vec3)> {
+pub(crate) fn position_box(positions: &[f32]) -> Option<(Vec3, Vec3)> {
     let mut points = positions
         .as_chunks::<3>()
         .0
@@ -1216,7 +1227,7 @@ fn accessor_box(a: &::gltf::Accessor) -> Option<(Vec3, Vec3)> {
 
 /// The box every drawn primitive fills, through the node transforms from
 /// the roots down.
-fn bounds(asset: &Asset) -> Option<(Vec3, Vec3)> {
+pub(crate) fn bounds(asset: &Asset) -> Option<(Vec3, Vec3)> {
     let mut out: Option<(Vec3, Vec3)> = None;
     let mut stack: Vec<(usize, Mat4)> = asset.roots.iter().map(|r| (*r, Mat4::IDENTITY)).collect();
     let mut seen = vec![false; asset.nodes.len()];
@@ -1257,7 +1268,7 @@ fn bounds(asset: &Asset) -> Option<(Vec3, Vec3)> {
 
 /// A PNG or a JPEG, told apart by their first bytes rather than by a MIME
 /// type files often get wrong.
-fn decode_image(bytes: &[u8]) -> Result<TextureImage, String> {
+pub(crate) fn decode_image(bytes: &[u8]) -> Result<TextureImage, String> {
     if bytes.starts_with(b"\x89PNG") {
         decode_png(bytes)
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {

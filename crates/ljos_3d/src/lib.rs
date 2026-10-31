@@ -14,6 +14,8 @@ pub mod gltf;
 pub mod instancing;
 pub mod math;
 pub mod mesh;
+#[cfg(feature = "gltf")]
+pub mod obj;
 pub mod pick;
 pub mod qml;
 pub mod scene;
