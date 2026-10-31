@@ -28,6 +28,19 @@ pub struct Repeater3D {
     pub count: i32,
     #[qml(skip)]
     delegates: Option<Delegates>,
+    /// Where a type built on this one puts the node of a row once it is
+    /// made (`InstanceRepeater`).
+    #[qml(skip)]
+    pub(crate) place: Option<Placement>,
+}
+
+pub(crate) type Placement = fn(&Engine, ObjectId, usize, ObjectId);
+
+impl Repeater3D {
+    /// The node of row `row`, when it has one.
+    pub(crate) fn object_of(&self, row: usize) -> Option<ObjectId> {
+        self.delegates.as_ref()?.object_at(row)
+    }
 }
 
 struct Host(ObjectId);
@@ -69,6 +82,9 @@ impl DelegateHost for Host {
     }
 
     fn added(&self, e: &Engine, index: usize, object: ObjectId) {
+        if let Ok(Some(place)) = e.with(self.0, |r: &Repeater3D| r.place) {
+            place(e, self.0, index, object);
+        }
         let _ = e.emit_by_name(
             self.0,
             "objectAdded",

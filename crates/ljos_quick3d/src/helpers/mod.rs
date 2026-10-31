@@ -8,6 +8,7 @@ mod extended_environment;
 mod geometry;
 mod height_field;
 mod infinite_grid;
+mod instance_model;
 mod library;
 mod lod_manager;
 mod look_at;
@@ -21,6 +22,7 @@ use geometry::{
     SphereGeometry, TorusGeometry,
 };
 use height_field::HeightFieldGeometry;
+use instance_model::{InstanceModel, InstanceRepeater};
 pub(crate) use infinite_grid::InfiniteGrid;
 pub(crate) use infinite_grid::read as infinite_grid;
 use ljos::prelude::*;
@@ -52,6 +54,8 @@ pub(crate) fn register(engine: &Engine) {
         RenderStatistics,
         LookAtNode,
         LodManager,
+        InstanceModel,
+        InstanceRepeater,
     ]));
     library::register(engine);
 }

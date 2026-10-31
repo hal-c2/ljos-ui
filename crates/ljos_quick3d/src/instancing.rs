@@ -191,6 +191,17 @@ pub(crate) fn table(e: &Engine, obj: ObjectId) -> Option<Arc<InstanceTable>> {
         .ok()
 }
 
+/// The copies the table `obj` holds now, as QML wrote them: what a
+/// model of the table shows without asking the GPU. Empty when `obj` is
+/// not a table. Tracked.
+pub(crate) fn rows(e: &Engine, obj: ObjectId) -> Vec<Entry> {
+    if table(e, obj).is_none() {
+        return Vec::new();
+    }
+    e.with(obj, |t: &Instancing| t.kept.entries.clone())
+        .unwrap_or_default()
+}
+
 /// What a scene's model takes of the table `obj`: everything but the
 /// root, which is a scene node. Tracked.
 pub(crate) fn instancing(e: &Engine, obj: ObjectId) -> Option<ljos_3d::Instancing> {
